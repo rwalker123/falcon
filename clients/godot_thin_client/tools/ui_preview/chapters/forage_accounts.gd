@@ -81,6 +81,38 @@ const DEAD_SEASON_TOOLTIP := "up to +0.00/turn"
 ## past its Sustain ceiling (3 × 0.13 = 0.39 against 0.20) while the FOOD take (0.24) is still inside
 ## the patch's 0.60. One forager overdraws nothing at all, so a smaller crew would pass that state's
 ## claim vacuously.
+## **THE YIELDS CAPTION, AND THE ONE IT REPLACED.** The readings are what the crew banks NEXT TURN
+## (`SourceForecast.expected_next_turn_yield`), so the caption names a turn rather than a rate; the
+## retired needle is asserted ABSENT beside it, since a header that had stopped rendering entirely
+## would satisfy the positive on its own. Uppercased because `alloc_section_label` uppercases what it
+## is given.
+const YIELDS_HEADER_NEEDLE := "NEXT TURN"
+const RETIRED_PER_TURN_HEADER_NEEDLE := "PER TURN"
+
+## The two arrowed readings on `floor_chart_drawn_down` — a burst falling to the rate the patch holds.
+## Literals, because the CLAIM is the pair of numbers: the two come from one function asked with two
+## ceilings, and composing them here from that same function would assert only that it agrees with
+## itself.
+const BURST_FOOD_READING := "0.24 → 0.06"
+const BURST_FODDER_READING := "0.08 → 0.02"
+
+## **THE FORWARD-HEADLINE PAIR'S OWN TERMS** (`forage_at_floor` / `forage_below_floor`). The crew is
+## sized so the ROOM binds rather than the hands — a crew-bound take would read the same number
+## whichever ceiling the sheet quoted, and the claim would be vacuous.
+const AT_FLOOR_FORAGERS := 6
+
+## …and the stock the second state stands at, as a fraction of K: far enough under the food peak that
+## one turn's regrowth does not carry it back over, which is the one state that still pays nothing.
+const BELOW_FLOOR_STOCK_FRACTION := 0.2
+
+## The account the headline must still be stating, and the zero it must not be. `0.00` is what the
+## empty room used to print, so it is asserted absent at the floor and PRESENT below it.
+const AT_FLOOR_ACCOUNT_NEEDLE := "FOOD"
+const EMPTY_TAKE_NEEDLE := "0.00 FOOD"
+
+## …and the refusal's own words, which become true exactly when they are shown.
+const AT_FLOOR_REFUSAL_NEEDLE := "until it grows past"
+
 const HAY_OVERDRAW_FORAGERS := 8
 
 ## ---- THE LOCKED FODDER ACCOUNT (issue #485) ---------------------------------------------------
@@ -781,6 +813,89 @@ func _fodder_field_band_fixture() -> Dictionary:
 	band["labor_assignments"] = [_fodder_field_assignment()]
 	return band
 
+# ---- THE ROW'S TWO RATES, AND WHY EVERY OTHER FIXTURE IS BLIND TO THEM -------------------------
+# **THE PLAYTEST NUMBERS.** `realizedYield` is a 40-turn forward projection of this source's take and
+# `actualYield` is the take the sim resolved this turn; a patch sitting at its MSY inflection reads
+# `+1.96` against `+1.91`, which is the width of the projection window and NOT an error. The row's
+# face is the first and its hover carried the second under the word *Actual*, which asserted the face
+# was something other than actual while naming neither quantity.
+#
+# **EVERY OTHER FIXTURE IN BOTH HARNESSES SETS THE TWO EQUAL** — measured, every `realized_yield`
+# literal in `ui_preview` and `band_panel_preview` matches its own `actual_yield` — which is exactly
+# why the word survived: on every canned row the tooltip's number WAS the face's number, so no frame
+# and no assertion could tell a labelled pair from an unlabelled one. These two must DIFFER, or this
+# whole block passes with the defect fully restored.
+const READOUT_REALIZED_RATE := 1.96
+
+const READOUT_ACTUAL_RATE := 1.91
+
+## What the hunt half sustains — deliberately unlike either rate above, so a tooltip that quoted the
+## sustainable figure in one of the two named slots lands on a number this block can name.
+const READOUT_SUSTAINABLE_RATE := 1.20
+
+## The retired word, as a LITERAL. It is spelled here rather than read off a constant because the
+## constant is gone: the claim is that this string appears nowhere in a rendered readout, and a needle
+## composed from the code under test could not make it.
+const RETIRED_ACTUAL_NEEDLE := "Actual"
+
+## One worked row in the shape `source_yield_readout` reads, with the two rates SPREAD. `has_yield` is
+## the one key the readout needs that is not on a wire assignment, which is the same local seeding the
+## drawer's own standing summary does.
+func _spread_rate_assignment(kind: String, overdraws: bool) -> Dictionary:
+	return {
+		"kind": kind, "workers": 2, "workers_needed": 2, "has_yield": true,
+		"actual_yield": READOUT_ACTUAL_RATE,
+		"sustainable_yield": READOUT_SUSTAINABLE_RATE,
+		"realized_yield": READOUT_REALIZED_RATE,
+		"overdraws": overdraws, "wasted_yield": 0.0,
+	}
+
+## **THE ROW AND ITS HOVER ARE ONE CALL'S TWO KEYS, AND THE HOVER MUST NAME BOTH QUANTITIES.**
+## PNG-LESS AND DRIVEN, because a tooltip is not in any picture and because both readings render a
+## perfectly ordinary hover — `Actual +1.91` beside a face of `+1.96` is plausible, correctly
+## formatted, and wrong only in the word.
+func _assert_readout_names_both_rates() -> void:
+	var forage := SourceForecast.source_yield_readout(
+		_spread_rate_assignment(SourceForecast.LABOR_KIND_FORAGE, false),
+		SourceForecast.LABOR_KIND_FORAGE)
+	# (0) THE FIXTURE REALLY IS THE REGIME. Every other canned row in this harness collapses the two
+	# onto one number, and on such a row every claim below passes with the word restored.
+	h._assert_hud("the fixture's two published rates really do differ (%s vs %s)"
+			% [SourceForecast.format_yield(READOUT_REALIZED_RATE),
+				SourceForecast.format_yield(READOUT_ACTUAL_RATE)],
+		not is_equal_approx(READOUT_REALIZED_RATE, READOUT_ACTUAL_RATE))
+	# (1) THE FACE IS THE PROJECTION, which is what makes the hover's first slot the face's own number.
+	h._assert_hud("the row's face is the forward-projected average (%s)"
+			% SourceForecast.format_yield(float(forage["rate"])),
+		is_equal_approx(float(forage["rate"]), READOUT_REALIZED_RATE))
+	# (2) EQUALITY, never `contains`: half the claim is the LABELLING, and a containment test on either
+	# number passes on a line that quotes it anonymously.
+	var forage_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
+		SourceForecast.format_signed(READOUT_REALIZED_RATE),
+		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] + SourceForecast.YIELD_TOOLTIP_RENEWABLE
+	h._assert_hud("…and its hover names BOTH quantities — \"%s\"" % String(forage["tooltip"]),
+		String(forage["tooltip"]) == forage_tooltip)
+	# (3) THE OTHER BRANCH, because the renewable one appends nothing after the pair and an overdrawing
+	# row appends two more clauses — so a producer that composed the pair only on the quiet path fails
+	# here rather than above.
+	var hunt := SourceForecast.source_yield_readout(
+		_spread_rate_assignment(SourceForecast.LABOR_KIND_HUNT, true),
+		SourceForecast.LABOR_KIND_HUNT)
+	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
+		SourceForecast.format_signed(READOUT_REALIZED_RATE),
+		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] \
+		+ " · Sustainable %s" % SourceForecast.format_yield(READOUT_SUSTAINABLE_RATE) \
+		+ SourceForecast.YIELD_TOOLTIP_OVERDRAW
+	h._assert_hud("an overdrawing hunt row names the same pair ahead of its own clauses — \"%s\""
+			% String(hunt["tooltip"]),
+		String(hunt["tooltip"]) == hunt_tooltip)
+	# (4) AND THE WORD IS GONE, asserted on BOTH webs by literal needle. It is the negative that names
+	# the defect: the equalities above would also pass on a line that had merely been reworded around
+	# it, and this one would not.
+	h._assert_hud("…and the word `%s` appears in neither hover" % RETIRED_ACTUAL_NEEDLE,
+		not String(forage["tooltip"]).contains(RETIRED_ACTUAL_NEEDLE)
+			and not String(hunt["tooltip"]).contains(RETIRED_ACTUAL_NEEDLE))
+
 func run(harness) -> void:
 	h = harness
 
@@ -855,7 +970,8 @@ func run(harness) -> void:
 	# standing on — which the face's own words are what separate, both states being Labels now.
 	var stale_control = ForageFx.find_improvement_control(stale_sheet, "cultivate")
 	h._assert_hud("the finished rung reads as a DONE label, so no build in flight can explain a dip",
-		stale_control is Label and not (stale_control is CheckBox)
+		String(ForageFx.improvement_state(stale_sheet, "cultivate"))
+				== HudWidgets.IMPROVEMENT_STATE_DONE
 			and ForageFx.improvement_face(stale_sheet, "cultivate").contains(
 				String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
 	h._hud._band_labor._player_band = prior_player_band
@@ -1019,8 +1135,9 @@ func run(harness) -> void:
 	h._assert_hud("…so a completed Field retires Cultivate, as the sim's own rung test does",
 		SourceForecast.improvement_is_done(wild_sown, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 			SourceForecast.IMPROVEMENT_CULTIVATE))
-	h._assert_hud("…and the sheet offers no Cultivate box on it",
-		not (ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate") is CheckBox))
+	h._assert_hud("…and the sheet offers no Cultivate on it",
+		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "cultivate"))
+			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
 	# **THE PAIR THAT STOPS THIS BECOMING "CULTIVATE IS NEVER OFFERED".** A retire test that answered
 	# true unconditionally would satisfy every line above; a wild patch with the knowledge in hand must
 	# still offer the rung.
@@ -1135,8 +1252,15 @@ func run(harness) -> void:
 		str(ungated.get(rows_key, [])) != str(gated.get(rows_key, [])))
 	h._assert_hud("…so a crew that settles short is promised NO held rate",
 		not str(gated.get(rows_key, [])).contains(SourceForecast.YIELD_ROW_AFTER))
+	# **THE HEADER READS `NEXT TURN`, and the retired `PER TURN` is asserted ABSENT beside it.** The
+	# readings are composed from the room next turn's take actually has, so the old caption named a
+	# RATE for a figure that is one turn's answer — and at equilibrium the two coincide, which is what
+	# let it stand for so long. Both halves, because a header that had stopped rendering satisfies
+	# either alone.
 	h._assert_hud("…and a row with no transition is given a header with no arrow to key",
-		Readout.yields_header(h._hud._drawercompose._compose_sheet).contains("PER TURN")
+		Readout.yields_header(h._hud._drawercompose._compose_sheet).contains(YIELDS_HEADER_NEEDLE)
+			and not Readout.yields_header(h._hud._drawercompose._compose_sheet).contains(
+				RETIRED_PER_TURN_HEADER_NEEDLE)
 			and not Readout.yields_header(h._hud._drawercompose._compose_sheet).contains("→"))
 	# **THE PEAK ZONE CONTRIBUTES NOTHING, ANYWHERE.** Its line — "the most food this source can pay,
 	# turn after turn, forever" — restated the definition of the preset the player had just clicked and
@@ -1316,8 +1440,9 @@ func run(harness) -> void:
 	# rather than as a second row: the three accounts are one biomass flow through a fixed vector, so
 	# a second row would carry one new fact three times.
 	var burst_text = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	print("ui_preview: burst readings  %s" % burst_text)
 	h._assert_hud("a crew that reaches the floor states what it takes NOW and what it holds AFTER",
-		burst_text.contains("0.22 → 0.06") and burst_text.contains("0.07 → 0.02"))
+		burst_text.contains(BURST_FOOD_READING) and burst_text.contains(BURST_FODDER_READING))
 	# The `after` must be strictly SMALLER, or the reading would be claiming a drawdown pays less than
 	# it does — and the two numbers coming from one function with two ceilings is exactly what could
 	# silently swap them. Both parsed off the rendered face, never recomputed here.
@@ -1342,7 +1467,9 @@ func run(harness) -> void:
 	# own two words, which sit directly above it.
 	var burst_header = Readout.yields_header(h._hud._drawercompose._compose_sheet)
 	h._assert_hud("the row states its unit once in a header, not per account",
-		burst_header.contains("PER TURN") and not burst_text.contains("/TURN"))
+		burst_header.contains(YIELDS_HEADER_NEEDLE)
+			and not burst_header.contains(RETIRED_PER_TURN_HEADER_NEEDLE)
+			and not burst_text.contains("/TURN"))
 	h._assert_hud("…and the header keys the arrow while there is one to key",
 		burst_header.contains("NOW → AFTER"))
 	# **THE DRAG CONTRACT, which no frame can show.** A LIVE floor change must refill the readings that
@@ -1793,3 +1920,102 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(committed_hay)
 	await h._settle()
+
+	# ---------------------------------------------------------------------------------------------
+	# States forage_at_floor / forage_below_floor — **THE SHEET QUOTES NEXT TURN'S TAKE.**
+	#
+	# Reported from play: a patch sitting on its floor, regrowing and being harvested back to it every
+	# turn, read `PER TURN 0.00 FOOD` under *"takes nothing until it grows past N"* while the WORK
+	# BOARD showed `+0.96 /turn` for the same tile. Both were right about different questions — the
+	# board quotes the sim's forward projection and the sheet quoted the room standing RIGHT NOW,
+	# `B − floor·K`, which on such a patch is empty by construction.
+	#
+	# **THE SIM REGROWS A WHOLE STAGE BEFORE IT HARVESTS** (`advance_forage_regrowth` is in Logistics,
+	# `advance_labor_allocation` in Population), so what the crew banks next turn is
+	# `min(crew, (B + growth) − floor·K)` — and at equilibrium that IS the regrowth, which is why the
+	# headline reconciles with the board with nothing keeping the two in step by hand.
+	#
+	# **THE PAIR IS THE CLAIM.** A headline that had simply stopped answering zero would satisfy the
+	# first state alone; the second is a patch far enough below its floor that next turn's growth does
+	# not reach it, which really does pay nothing — and only there may the sheet say so.
+	var at_floor := BaseFx.food_tile_fixture()
+	at_floor["patch_biomass"] = SourceForecast.FLOOR_FOOD_PEAK \
+		* float(at_floor["patch_carrying_capacity"])
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._compose_forage(at_floor)
+	await h._settle()
+	await h._save("forage_at_floor")
+	# THE PRECONDITION, and it is the reported bug stated as a fact: the room standing now is EMPTY, so
+	# the old headline had nothing to quote. Read through `ForageFx.floorify`'s own output, since that
+	# is the dict the sheet was composed from.
+	var at_floor_priced := ForageFx.floorify(at_floor, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	h._assert_hud("the patch is standing exactly ON its floor, so the room above it is empty",
+		SourceForecast.escapement_room(at_floor_priced, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.FLOOR_FOOD_PEAK) <= 0.0
+		and SourceForecast.escapement_room_next_turn(at_floor_priced,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK) > 0.0)
+	# …and the headline states a LIVE number rather than that zero. Asserted as *not the zero* AND as
+	# the presence of the account, because a readout that had stopped rendering rows at all satisfies
+	# the negative on its own.
+	var at_floor_text = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	print("ui_preview: at the floor  %s | %s" % [at_floor_text,
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet)])
+	h._assert_hud("…so the headline states what NEXT turn pays, not the empty room (%s)"
+			% at_floor_text,
+		at_floor_text.contains(AT_FLOOR_ACCOUNT_NEEDLE)
+			and not at_floor_text.contains(EMPTY_TAKE_NEEDLE))
+	# **AND IT RECONCILES WITH THE HOLDING RATE, which is the whole reason the number is trustworthy.**
+	# At equilibrium next turn's room IS the regrowth, so the take equals what the source pays while
+	# held at this floor — the `hold_ceiling` reading the `after` half of an arrowed row is composed
+	# from. The two are computed from different ceilings and must land on one number here.
+	var held_take := SourceForecast.expected_yield_account(
+		SourceForecast.forecast_inputs(at_floor_priced, SourceForecast.SOURCE_KIND_FORAGE,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK),
+		AT_FLOOR_FORAGERS, h._hud._band_labor.player_band(), "per_worker", "hold_ceiling",
+		SourceForecast.FORECAST_FOOD_PER_ANIMAL_KEY)
+	h._assert_hud("…and it IS the rate this patch holds at that floor (%s)"
+			% SourceForecast.format_magnitude(held_take),
+		at_floor_text.contains(SourceForecast.format_magnitude(held_take)))
+	# …and the verdict says the source is HOLDING rather than that the crew takes nothing. The refusal
+	# is the sentence this state used to carry, so its absence here is half the claim.
+	h._assert_hud("…while the verdict states it is holding, not that it is empty (%s)"
+			% Readout.verdict_text(h._hud._drawercompose._compose_sheet),
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(
+				SourceForecast.VERDICT_HOLDS_AT_FLOOR)
+			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
+				== SourceForecast.VERDICT_OK)
+
+	# **THE HALF THAT KEEPS ZERO REACHABLE.** The same patch drawn far enough below its floor that one
+	# turn's growth does not carry it back over: that crew really does bank nothing, and the sentence
+	# it earns is the one the state above must never show.
+	var below_floor := BaseFx.food_tile_fixture()
+	below_floor["patch_biomass"] = BELOW_FLOOR_STOCK_FRACTION \
+		* float(below_floor["patch_carrying_capacity"])
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._compose_forage(below_floor)
+	await h._settle()
+	await h._save("forage_below_floor")
+	var below_priced := ForageFx.floorify(below_floor, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	h._assert_hud("a patch a turn's growth cannot lift over its floor really has no room next turn",
+		SourceForecast.escapement_room_next_turn(below_priced,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK) <= 0.0)
+	var below_text = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	print("ui_preview: below the floor  %s | %s" % [below_text,
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet)])
+	h._assert_hud("…so the headline states its zero (%s)" % below_text,
+		below_text.contains(EMPTY_TAKE_NEEDLE))
+	h._assert_hud("…and the *until it grows past* sentence is true exactly where it is shown (%s)"
+			% Readout.verdict_text(h._hud._drawercompose._compose_sheet),
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(AT_FLOOR_REFUSAL_NEEDLE)
+			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
+				== SourceForecast.VERDICT_BLOCKED)
+
+	# ---- THE ROW'S TWO RATES ARE NAMED, BOTH OF THEM (PNG-less) --------------------------------
+	# Appended last, and it renders nothing: the claim is about a HOVER, which no frame carries, and
+	# about a WORD, which every canned row in this harness was structurally unable to expose (see
+	# `_assert_readout_names_both_rates`).
+	_assert_readout_names_both_rates()

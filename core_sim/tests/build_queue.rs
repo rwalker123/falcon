@@ -29,7 +29,9 @@ use core_sim::{
     LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
     TileRegistry,
 };
-use sim_schema::{BUILD_METER_HOLDS, BUILD_QUEUE_BLOCKED, NOT_IN_ANY_BUILD_QUEUE};
+use sim_schema::{
+    BUILD_METER_HOLDS, BUILD_QUEUE_BLOCKED, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_TURNS_ESTIMATE,
+};
 
 // ---------------------------------------------------------------------------------------------
 // The fixture: one band, three cultivable patches in its work range, one builders pool
@@ -305,6 +307,17 @@ fn published_position(app: &App, source: UVec2) -> i32 {
     published(app, source, |patch| patch.buildQueuePosition())
 }
 
+/// **WHY the queue is blocked here**, off the encoded row — `""` for an entry that is not blocked.
+fn published_reason(app: &App, source: UVec2) -> String {
+    published(app, source, |patch| {
+        patch.buildBlockedReason().unwrap_or_default().to_string()
+    })
+}
+
+/// The wire's *"this entry is not blocked"* — the empty [`buildBlockedReason`], named because `""`
+/// at an assertion site says nothing about what it means.
+const NOT_BLOCKED: &str = "";
+
 /// **The keeping this band owes for three tended meters in flight** — read off the shipped ladder so
 /// a retune moves the fixture with the game. Staffed wherever an arm must not be measuring rot.
 fn keeping_for(sources: usize) -> u32 {
@@ -539,6 +552,15 @@ fn a_blocked_head_publishes_minus_four_and_every_entry_behind_it_says_the_same()
             BUILD_QUEUE_BLOCKED,
             "entry {index} is behind a head that never finishes, so it publishes the same news"
         );
+        // **AND WHY.** `-4` alone renders as *"stuck"* with nothing to act on — the playtest that
+        // filed this sat on one for turns. The cause is the conjunct that actually refused, and it
+        // is **carried down the queue** with the sentinel, because the head's reason is why the
+        // entries behind it are stuck too.
+        assert_eq!(
+            published_reason(&app, *source),
+            "knowledge",
+            "entry {index} must name the conjunct that refused — the unlearned Cultivation gate"
+        );
     }
 
     // **THE REMEDY.** Reopen the gate and the queue answers with real counts again.
@@ -555,6 +577,14 @@ fn a_blocked_head_publishes_minus_four_and_every_entry_behind_it_says_the_same()
             published_turns(&app, *source) > 0,
             "entry {index} recovers to a real count once the gate opens — a test that only ever \
              sees the failure passes with the remedy broken"
+        );
+        // **The NOT-blocked half of the pair.** A producer that stamped a cause unconditionally
+        // would satisfy the positive assertion above and leave every finishing build claiming a
+        // refusal, so the empty key is asserted as hard as the populated one.
+        assert_eq!(
+            published_reason(&app, *source),
+            NOT_BLOCKED,
+            "entry {index} is building again, so it must publish no blocked cause at all"
         );
     }
 }
@@ -610,7 +640,7 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
         // be asserting against a herd that had died in the meantime.
         let before = herd_meter(&app, &herd_id);
         resolve_an_animal_turn(&mut app);
-        let (turns, _, grace_left, _) = published_herd(&app, &herd_id);
+        let (turns, _, _, grace_left, _) = published_herd(&app, &herd_id);
         if turns == BUILD_QUEUE_BLOCKED && grace_left == GRACE_SPENT {
             assert_eq!(
                 herd_meter(&app, &herd_id),
@@ -651,10 +681,18 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
 
     // **THE PAIRING, on one encoded row.** A `-4` with no shortfall beside it would give the player
     // nothing to act on.
-    let (turns, shortfall, grace_left, has_grace) = published_herd(&app, &herd_id);
+    let (turns, reason, shortfall, grace_left, has_grace) = published_herd(&app, &herd_id);
     assert_eq!(
         turns, BUILD_QUEUE_BLOCKED,
         "the head of a staffed queue whose own gate refuses it says so"
+    );
+    // **AND WHICH CONJUNCT REFUSED.** This is the whole point of the pairing: the keeping shortfall
+    // beside it is *a* true fact, and the playtest that filed this fixed exactly that and stayed
+    // blocked — because the refusal is the herd standing below its escapement floor, which only the
+    // keeping can reopen and which no surface said out loud.
+    assert_eq!(
+        reason, "escapement",
+        "the stall must name the escapement room, not merely report that the queue is stuck"
     );
     assert!(
         shortfall > 0.0,
@@ -708,6 +746,13 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
     assert!(
         recovered > 0,
         "…and it recovers to a REAL count, not another sentinel: {recovered}"
+    );
+    // **The NOT-blocked half of the pair.** A cause stamped unconditionally would satisfy the
+    // `escapement` assertion above while telling every recovered build it was still refused.
+    assert_eq!(
+        published_herd(&app, &herd_id).1,
+        NOT_BLOCKED,
+        "…and it stops naming a cause, because it is no longer blocked"
     );
     assert!(
         herd_meter(&app, &herd_id) > frozen,
@@ -924,9 +969,9 @@ fn herd_meter(app: &App, id: &str) -> f32 {
     }
 }
 
-/// **The four fields the blocked pairing is read from, off the ENCODED buffer** — the countdown, the
-/// keeping shortfall and the grace, on one row, because that is how a client sees them.
-fn published_herd(app: &App, id: &str) -> (i32, f32, u32, bool) {
+/// **The five fields the blocked pairing is read from, off the ENCODED buffer** — the countdown, its
+/// cause, the keeping shortfall and the grace, on one row, because that is how a client sees them.
+fn published_herd(app: &App, id: &str) -> (i32, String, f32, u32, bool) {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -949,6 +994,7 @@ fn published_herd(app: &App, id: &str) -> (i32, f32, u32, bool) {
         .expect("the fixture herd is on the wire — it is OWNED, which passes the fog gate");
     (
         row.buildTurnsRemaining(),
+        row.buildBlockedReason().unwrap_or_default().to_string(),
         row.upkeepShortfall(),
         row.neglectGraceRemaining(),
         row.hasNeglectGrace(),
@@ -1352,9 +1398,9 @@ fn every_build_job_and_source_kind_is_stated() {
 /// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
 ///
 /// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
-/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
+/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as
 /// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
 /// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
@@ -1939,5 +1985,257 @@ fn a_lapsed_keeper_row_frees_its_ring_to_be_started_again() {
     assert!(
         a_second_ring_is_accepted(&mut app, &herd_id),
         "a lapsed keeper row frees the ring: `extend_pen` must be accepted again"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (13) A RUNG THAT ERODES BACK BELOW ITS COST IS REPAIRED BY RE-QUEUEING IT
+// ---------------------------------------------------------------------------------------------
+//
+// `docs/plan_standing_upkeep.md` §2.4: *"A rung that erodes back below its cost is NOT re-adopted…
+// repairing it is a fresh decision the player makes by putting it back in the queue."* Completion
+// retires the entry (arm 2 above) and the pool only ever aims at an entry, so **the whole repair
+// path is the queue**. The verb's own gate is pinned in `bin/server.rs`
+// (`an_eroded_tended_patch_is_re_tendable_and_a_full_one_is_not`); what is pinned here is that the
+// queue then actually does the work — and that an eroded meter **with no entry** publishes no
+// countdown, which is the reporting half the derived-verb quote had regressed.
+
+/// See [`erode_the_finished_meter`] — comfortably above the shipped `retain_fraction` of `0.75`, so
+/// the rung is unambiguously still held and the only thing short is the meter.
+const ERODED_BUT_STILL_HELD: f32 = 0.99;
+
+/// A bound on the turns a two-builder pool needs to buy back one per-cent of a 50-unit job. Its only
+/// job is to keep a broken repair from hanging the suite.
+const REPAIR_LIMIT: usize = 20;
+
+/// A generous bound on `work_cost / (builders × PER_WORKER_OUTPUT)` for one whole Cultivate — a
+/// guard against hanging, not a prediction.
+const A_WHOLE_CULTIVATE: usize = 80;
+
+/// **The state a finished Cultivate decays into**: the meter below its cost, the bar still stamped,
+/// and no queue entry — exactly what completion plus a few unkept turns leave behind. Written
+/// straight onto the patch so the arm is about the *repair*, not about how the erosion got there.
+fn erode_the_finished_meter(app: &mut App, source: UVec2) -> f32 {
+    let (cost, bar) = {
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        let rung = ladder.rung(RungKey::PlantTended);
+        let cost = rung
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("the tended rung has a build meter");
+        (cost, rung.retention_bar(cost))
+    };
+    let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
+    let patch = registry
+        .patch_mut(source)
+        .expect("the fixture patch is there");
+    patch.cultivation_cost = cost;
+    patch.cultivation_retain_bar = bar;
+    patch.cultivation_progress = cost * ERODED_BUT_STILL_HELD;
+    assert!(
+        patch.is_cultivated() && !patch.cultivation_meter_full(),
+        "fixture: the patch must be TENDED and still BUILDING"
+    );
+    cost
+}
+
+/// **THE PAIR.** An eroded meter with **no entry** publishes *no estimate* — nobody is building it
+/// and nobody will until the player says so — and the **same patch, once queued**, publishes a real
+/// countdown and banks progress back to a full meter.
+///
+/// The first half is the regression: the four build arms are entered on the **derived** verb, which
+/// answers for any meter carrying progress, so an eroded patch pushed a running quote with no entry
+/// behind it and `publish_build_chain`'s unqueued tail dated it at the **full pool** — a confident
+/// `≈1 turn`, every turn, for ever, for a build with no builders on it.
+#[test]
+fn an_unqueued_eroded_meter_publishes_no_estimate_and_a_re_queued_one_repairs_it() {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let source = sources[0];
+
+    // **The Cultivate is RUN, not fabricated**, and that is load-bearing: a patch whose meter was
+    // written straight onto it carries no committed crop, so the rung's own `NoCrop` gate would
+    // refuse it and the arm would publish "no estimate" for a reason that has nothing to do with
+    // the queue — a fixture that passes with the defect intact. Building it for real commits the
+    // species, sets the owner, and retires the entry exactly as play does.
+    let mut built = false;
+    for _ in 0..A_WHOLE_CULTIVATE {
+        resolve_a_turn(&mut app);
+        if queued_sources(&app, band).is_empty() {
+            built = true;
+            break;
+        }
+    }
+    assert!(
+        built,
+        "fixture: the Cultivate finishes and retires its entry"
+    );
+    assert!(
+        app.world
+            .resource::<core_sim::ForageRegistry>()
+            .patch(source)
+            .expect("the fixture patch survives")
+            .species
+            .is_some(),
+        "fixture: a real Cultivate commits the crop, which is what keeps the rung's gate open"
+    );
+
+    // Now wear the finished meter back below its cost — the state a few unkept turns produce.
+    let cost = erode_the_finished_meter(&mut app, source);
+    resolve_a_turn(&mut app);
+
+    assert_eq!(
+        published_turns(&app, source),
+        NO_BUILD_TURNS_ESTIMATE,
+        "a build with no entry and no builders has no answer to give — it must not publish one"
+    );
+    assert_eq!(
+        published_position(&app, source),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "…and it says plainly that it is in no queue"
+    );
+    let unbuilt = meter(&app, source);
+    assert!(
+        unbuilt < cost,
+        "fixture: the meter is genuinely short of its cost ({unbuilt} of {cost})"
+    );
+
+    // **The repair is one command: put it back in the queue.** The entry brings the builders — the
+    // pool is aimed at the head and at nothing else — so nothing else has to change.
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.enqueue_build(
+            BuildSource::Patch(source),
+            BuildJob::Rung(Improvement::Cultivate),
+        );
+    }
+    resolve_a_turn(&mut app);
+
+    assert!(
+        meter(&app, source) > unbuilt,
+        "re-queueing puts the builders back on it: the meter has to move"
+    );
+    let quoted = published_turns(&app, source);
+    assert!(
+        quoted > 0,
+        "…and the countdown comes back as a real number, not the sentinel ({quoted})"
+    );
+
+    let mut repaired = false;
+    for _ in 0..REPAIR_LIMIT {
+        resolve_a_turn(&mut app);
+        if meter(&app, source) >= cost {
+            repaired = true;
+            break;
+        }
+    }
+    assert!(
+        repaired,
+        "the repair finishes: the meter reaches its own cost again (stalled at {} of {cost})",
+        meter(&app, source)
+    );
+    assert!(
+        queued_sources(&app, band).is_empty(),
+        "…and the repaired entry retires like any other finished job"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (14) A KEEPING TOOL WEARS ON THE WORK IT SUPPLIED
+// ---------------------------------------------------------------------------------------------
+//
+// `WearQuantum::UpkeepWork`. §4.8 made one supply expression feed both accounts, but only the build
+// half had a quantum — so a hoe raised what a keeper supplied **for ever, free**. The charge is on
+// the work the pool actually **supplied** (`forage::patch_upkeep_supply`), which is what makes the
+// pair below true: keeping something wears the gear, keeping nothing wears none of it.
+
+/// The keeping tool the plant web's roster derives for the `agriculture` role (`tillage` → hoes).
+/// It wears on `build_progress` too, so both arms here staff **no builders**: the only work these
+/// hoes can be doing is the keeping.
+const KEEPING_TOOL: &str = "hoes";
+
+/// No builders at all, so nothing but the keeping can touch the gear.
+const NOBODY_BUILDING: u32 = 0;
+
+/// Enough turns that a per-turn charge is unmistakable against float noise.
+const A_FEW_TURNS: usize = 5;
+
+/// Hand the band a real ledger — without one the labor loop has nothing to charge, while the *rate*
+/// resolves off the absent-component fallback either way.
+fn stock_the_band(app: &mut App, band: Entity) {
+    let config = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let working = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the fixture band has a cohort")
+        .working
+        .to_f32();
+    let ledger = core_sim::BandEquipment::start_stocked_for(&config, working);
+    app.world.entity_mut(band).insert(ledger);
+}
+
+/// What is left of the band's keeping tool, in condition.
+fn tool_life(app: &App, band: Entity) -> f32 {
+    let config = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    app.world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("the fixture band carries a ledger")
+        .remaining(KEEPING_TOOL, &config)
+}
+
+/// **THE PAIR.** A keeping pool that actually holds a meter spends its tools on the work it
+/// supplied; a pool with nothing to keep spends nothing at all.
+///
+/// Both halves run the same band, the same role and the same turns — only the *ground* differs — so
+/// a charge that had crept onto the head count or onto the demand would fail the second half, and
+/// one that never fired at all would fail the first.
+#[test]
+fn a_keeping_pool_wears_its_tools_on_what_it_supplied_and_an_idle_one_wears_nothing() {
+    // (a) A meter at risk: the keepers hold it, so the hoes are worked.
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, NOBODY_BUILDING);
+    stock_the_band(&mut app, band);
+    erode_the_finished_meter(&mut app, sources[0]);
+    let fresh = tool_life(&app, band);
+    for _ in 0..A_FEW_TURNS {
+        resolve_a_turn(&mut app);
+    }
+    let kept = tool_life(&app, band);
+    assert!(
+        kept < fresh,
+        "a keeper who supplied work wore that work's worth of tool ({fresh} → {kept})"
+    );
+
+    // (b) The same band, the same keepers, the same turns — over ground with **nothing** banked on
+    // it. No source claims a share, so no work is supplied and no gear is spent.
+    let (mut idle_app, idle_band, idle_sources) = world_with_a_queue(ONE_SOURCE, NOBODY_BUILDING);
+    stock_the_band(&mut idle_app, idle_band);
+    {
+        let mut allocation = idle_app
+            .world
+            .get_mut::<LaborAllocation>(idle_band)
+            .expect("the band keeps its allocation");
+        allocation.build_queue.clear();
+    }
+    assert_eq!(
+        meter(&idle_app, idle_sources[0]),
+        0.0,
+        "fixture: there is nothing banked on this ground for the pool to hold"
+    );
+    let idle_fresh = tool_life(&idle_app, idle_band);
+    for _ in 0..A_FEW_TURNS {
+        resolve_a_turn(&mut idle_app);
+    }
+    assert_eq!(
+        tool_life(&idle_app, idle_band),
+        idle_fresh,
+        "a pool with nothing to keep supplies nothing and must wear nothing — this is a use \
+         count, not a turn clock"
     );
 }

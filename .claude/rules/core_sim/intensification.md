@@ -237,7 +237,8 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
 `decay_fraction_per_turn` it read: shortfall is the decay.)
 
 - **`build_accrual`** returns **the WORK UNITS THE BAND'S BUILDERS PRODUCE this turn** —
-  `builders × PER_WORKER_OUTPUT`, the pool's whole head count and no floor term, and only for the
+  `builders × (PER_WORKER_OUTPUT + gear per worker)`, the pool's whole head count and no floor term,
+  and only for the
   source at the **head** of that band's queue — **only** when
   `improvement` **is** the rung's own `verb` *and* the caller's rung-specific gates hold (`eligible` —
   knows the unlock knowledge, **the crew took something**, species ceiling allows, faction owns it);
@@ -250,28 +251,61 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   work)` lives, so the wire's `buildTurnsRemaining` cannot drift from the meter it describes. `None`
   means **no estimate**, and only a **stall** earns it — a crew producing nothing has no finite
   answer, and a huge number would read as a promise.
-  > **A bar the meter is already at or past is `1`, not `None`** (`BUILD_FINISHES_IN_ONE_TURN`), and
-  > the two states that reach it are one sentence: the work is already banked, or **the crew's gear
-  > pays the job off outright** — `effective_build_cost` is unfloored, so a well-equipped crew drives
-  > the bar below zero, and §6.2 of the plan says such a bar *"completes the build on its first worked
-  > turn"*. Answering `-1` there broke the arc's own headline claim at exactly the crew size that
-  > demonstrates it: on the shipped roster six geared keepers take `6 × 8.5 = 51` off a 50-unit
-  > `Tame`, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added. Pinned at the seam
-  > and on the exported snapshot (`build_turns_closed_form.rs`), in both the projection and the live
-  > stamp.
+  > **A cost the meter is already at or past is `1`, not `None`** (`BUILD_FINISHES_IN_ONE_TURN`) —
+  > the work is already banked, so one more turn finishes it. **Answering `-1` there would break the
+  > arc's headline claim**, and it is pinned at the seam and on the exported snapshot
+  > (`build_turns_closed_form.rs`), in both the projection and the live stamp.
+  >
+  > **The OTHER state that used to reach this branch is gone with the subtraction**: a crew whose gear
+  > "paid the job off outright" drove the bar below zero and completed on turn one having banked
+  > almost nothing. A job is only finished by work someone did now, so the sole route to one turn is
+  > out-producing what remains.
 - **`LadderConfig::projected_build_turns` — the same question asked of a rung nobody has started.**
   It assembles exactly the four calls the in-flight stamp makes (`build_cost` →
   `build_work_from_gear` → `effective_build_cost` → `build_accrual`, then `build_turns_remaining`)
   against a stated `banked` and the caller's composed `eligible`, so a quote for an unstarted job
   cannot be arithmetic the running build would disagree with. It is what makes `buildTurnsRemaining`
   a **projection** rather than a `-1` — see "The build on the wire".
-- **`effective_build_cost` — what the CREW BROUGHT** (issue #515, `equipment.md` → "The build
-  axis"). `intensification::build_work_from_gear` sums `EquipmentConfig::build_work_per_worker` over
-  the crew through the coverage seam, and the ladder subtracts it from the job: `cost − t`, with
-  **nothing under it**. `intensification::NO_BUILD_GEAR` (**`0.0`**) for a crew carrying nothing that
-  helps — every plant build today, and every animal one whose crew left the handling gear at camp. It touches **neither** `build_accrual` **nor** the upkeep: the
-  crew's hands are worth what they are worth, and what an unkept improvement forgets is what its
-  keepers did not supply, which no tool can change.
+> #### ⛔ RETIRED — `effective_build_cost`, and with it the idea that a tool shrinks a job
+>
+> **A KIT RAISES WHAT A WORKER DELIVERS PER TURN. A JOB'S WORK REQUIREMENT NEVER CHANGES.** A 50-work
+> Cultivate costs 50 work with hoes, without hoes, and with any tool that ever ships; gear decides how
+> fast the pile is worked off and never how big it is (`docs/plan_standing_upkeep.md` §4.8).
+>
+> The retired form was `effective_build_cost(cost, gear_work) = cost − workers × gear`, with nothing
+> under it. **Two things were wrong with it, and neither is the degenerate case** — that a large enough
+> gear value finishes a job outright is a CONFIG problem and never an argument about the model:
+>
+> - **It granted the kit's help as a LUMP, once, against the target** — however long the job ran. A
+>   tool is used every turn it is held, so its help belongs on the rate.
+> - **It has nothing to subtract from on an UPKEEP**, which is a rate rather than a pile. So gear could
+>   only ever touch builds, and making a hoe matter to *keeping* a Field would have needed a second,
+>   unrelated mechanism beside it.
+>
+> **One supply expression now feeds both accounts** — `pool_work_supply(workers, gear_per_worker)` =
+> `workers × (PER_WORKER_OUTPUT + gear)`. A build divides its pile by it to get turns; an upkeep
+> compares its demand against it to see whether it is covered. What that gives up is scale-sensitivity:
+> a multiple saves the same *percentage* of turns on a garden and a farm alike, where a subtraction
+> nearly freed a small job and barely dented a large one. That is accepted.
+>
+> **THE CONSTANT WAS A UNIT CONVERSION AND AN EXACT ROUND TRIP, NOT A TUNING CHOICE.** `build_work`
+> shipped at `8.5` meaning *units off the job, per worker* — and that 8.5 was itself minted from a
+> still earlier `build_rate` **×1.5** multiplier on the crew's output. This model is a per-worker
+> output term again, so inverting the mint needs no reference crew and no reference job:
+> `PER_WORKER_OUTPUT + build_work = 1.5` → **`build_work = 0.5`**. **Hoes are +0.5 build work per
+> worker per turn; hurdles are +0.5** — the same tools they always were, and an equipped worker is
+> 1.5× a bare one. Carrying 8.5 across unchanged would have meant a worker delivering **nine and a
+> half times** a bare one, which is why the old number is meaningless in the new units. Every number
+> here is provisional until the arc's tuning spread (§4.14).
+>
+> **A NUMBER TRAVELS WITH THE ITEM THAT OWNS IT.** Write "hoes are +0.5 build work per worker per
+> turn", never "`build_work` is 0.5" — the bare value names no owner and no per-what, and that
+> ambiguity has already cost one detour.
+
+- **`gear_work_supply` — what the CREW BROUGHT, as a RATE** (issue #515, `equipment.md` → "The build
+  axis"). It sums `EquipmentConfig::build_work_per_worker` over the crew through the coverage seam and
+  is a **readout** of what the pool's kits add per turn. `intensification::NO_BUILD_GEAR` (**`0.0`**)
+  for a crew carrying nothing that helps.
   **THE GEAR TERM IS QUOTED AT THE BUILD'S OWN CREW**, and so is the coverage behind it
   (`docs/plan_standing_upkeep.md` §2.2). `build_work_per_worker` is a **rate per worker**, so the
   count it multiplies has to be the workers actually doing the job — which means
@@ -285,12 +319,23 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   outright. `the_gear_offset_scales_with_the_build_crew_and_ignores_the_take_crew` pins all three
   readings: it scales with the builders, it saturates at the units held, and it does **not** move
   when only the gathering crew does.
-  **How far a kit may shrink a job is the JOBS' and the TOOLS' own dials, not a structural floor**:
-  a rung's `work_cost` and an item's `EquipmentStat::BuildWork` decide it between them, and later
-  work is meant to be *impractical* bare-handed — which requires that the right tool be able to
-  reduce a job to a small fraction of itself. A bar at or below zero completes on the first worked
-  turn, the same no-cap outcome as putting fifty hands on it; `build_fraction` divides by the **raw**
-  stamped cost and `build_turns_remaining` by the crew's output, so neither reads the bar at all.
+  **A kit may not shrink a job at all** — how much faster it is worked off is the tools' own dial, and
+  later work being *impractical* bare-handed is expressed by the multiple, never by the pile getting
+  smaller. `build_fraction` and `build_turns_remaining` both read the raw stamped cost, because there
+  is no longer a second cost for them to disagree about.
+
+  **AND THE SAME SUPPLY REACHES KEEPING NOW.** `maintenance_shares` pools
+  `workers × (PER_WORKER_OUTPUT + gear)` for the web's keeping role, so an equipped keeper covers more
+  of a rung's demand — the demand itself is untouched, which is the build rule's mirror one account
+  over. `tillage` gained the `agriculture` job and `hurdling` the `husbandry` one so the pools have
+  something to derive; the derivation is per web, needing no player pick, exactly as the builders row's
+  is per entry. **`default_kits` for both is `none`, and a stored `none` could beat that derivation
+  the way it did on the builders row** — the same fork guards all three now.
+
+  > **KNOWN HOLE — a keeping tool never wears.** `WearQuantum` has `BuildProgress` and no upkeep
+  > quantum, so a hoe raises what a keeper supplies **forever, free**. A wear quantum for upkeep is a
+  > new charge site and would move `_comment_durability`'s tuning and the `headline_wear` readouts,
+  > so it is not in this slice.
 - **NO `learn_multiplier(floor)` TERM** — see "THE FLOOR CAME OFF THE BUILD RATE". `build_accrual`
   takes no floor at all, and neither does the upkeep: what an improvement loses is the work its
   keepers did not supply, which is a fact about a crew and a rung rather than about how hard anyone
@@ -1009,9 +1054,65 @@ other row (§2.5).
   the completion hand-off that was its only caller.)
 - **The band's demand is the SUM** over everything it holds on that web, and **every meter carrying
   work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
-  exactly where it has a meter at risk — which is `systems::source_has_a_meter_at_risk`, the **one
-  seam** the row's own survival is decided by, so what the pool funds, what the decay pass bleeds and
-  what keeps a holding alive cannot come to be three questions.
+  through **`forage::patch_keeping_meter(patch, improvement)`** / **`fauna::herd_keeping_meter`** — one
+  function, three callers each: the claim gate, `*_upkeep_demand` and `*_upkeep_supply`.
+
+  > **⛔ IT USED TO BE `source_has_a_meter_at_risk`, AND THAT WAS A SECOND DEFINITION THAT DRIFTED.**
+  > That seam is **progress-only**; the payment side (`patch_upkeep_supply` → `patch_keeping_meter`) is
+  > **progress-OR-verb**. Reported from play: a band 6% into a Cultivate with Agriculture staffed read
+  > `Short 2 of the 2 work` — i.e. **supplied 0.0 on a staffed role**.
+  >
+  > **A within-turn ordering fault.** `maintenance_shares` runs *before* the assignment loop banks the
+  > meter, so on the turn a build banks its FIRST work the patch still reads `progress == 0`, is skipped,
+  > and gets a share of zero — which the payment side then dutifully pays, having correctly worked out
+  > that the pool owes for this meter from turn one. Capture reads the post-accrual patch: demand 2.0,
+  > supplied 0.0.
+  >
+  > **The animal web had it too, with a different cause**: `owner` is recorded on the first accrual,
+  > which happens after the shares are split, so a herd mid-Tame read as wild and claimed nothing.
+  >
+  > **`patch_unwinding_rung` / `herd_keeping_rung` are now that function asked with NO VERB**
+  > (`NOTHING_IN_FLIGHT`), not a parallel spelling — so the decay pass, the snapshot and the wire
+  > countdowns are byte-identical while the claim side gained the verb term. `source_has_a_meter_at_risk`
+  > survives as the **row-survival** seam alone, and its doc says so.
+
+  **THE VERB TERM IS NARROWED TO THE FUNDED HEAD, and that is deliberate.** Taking it straight from the
+  queue entry — the literal "same input as the payment side" — makes *every waiting entry* claim its full
+  demand, and `Spread` funds proportionally, so two queued-but-unfunded builds would dilute the share of
+  the Field the band actually holds. That is a new way to starve a real holding. `source_banking_its_first_work`
+  restricts it to `build_queue[0]` when `builders > 0`, mirroring the assignment loop's own `build_workers`
+  rule. **Claim-side verb ⊆ payment-side verb**, so the two cannot disagree in the direction that caused
+  the bug.
+  > **⛔ AND THE HEAD'S OWN GATE IS PART OF THE TERM — an earlier cut accepted that a blocked head
+  > would bill the pool, and that acceptance was wrong.** The note here read *"it self-announces as
+  > `BUILD_QUEUE_BLOCKED` and the player has explicitly staffed builders at it"*, which sounds
+  > self-limiting and is not: the default fund mode is **`Spread`**, so the claim is pro-rata and a head
+  > that banks **nothing** dilutes the share of everything the band actually holds. A band working a
+  > tended patch (demand 2.0) with a blocked `Cultivate` queued on bare ground supplies that patch
+  > **1.5 of 2.0** and bleeds it once its grace expires. `Priority` was never affected — an unbanked
+  > meter's `at_risk_cost` is 0 and sorts last. Found by PR review, and it is the animal case reported
+  > from play: a blocked `Tame` at the head permanently starving `husbandry`.
+  >
+  > **The gate cannot be read off the published cause.** `advance_cultivation` / `advance_husbandry`
+  > clear `build_blocked_reason` to `Open` in **Logistics**, which runs before Population, so at
+  > `maintenance_shares` time it is always `Open`. A one-turn-lagged read was rejected too — it
+  > re-opens the first-turn bug on the turn a block clears. `head_rung_gate` resolves the head's gate
+  > **fresh, pre-loop**.
+  >
+  > **The four rung term-lists are named functions both callers use** (`plant_tended_gate`,
+  > `plant_field_gate`, `animal_pastoral_gate`, `animal_pen_gate`), so the refusal ordering and the
+  > published cause have one home. **What is still evaluated twice is the terms**, from identical
+  > inputs — collapsing that means hoisting the per-rung resolution out of the 3k-line assignment loop,
+  > which was deliberately not attempted. **If the two drift, the symptom is a head that claims while
+  > banking nothing, or banks while claiming nothing**, and the two new guards catch both.
+  >
+  > **It narrows only, so the subset invariant holds**: the payment side reads any queued entry's
+  > declaration and applies no gate; the claim side was already `build_queue[0]` and the gate is a
+  > further conjunct. **Zero-progress only** — `patch_build_verb` honours a declaration solely at a
+  > zero meter, so a blocked head with banked work derives its verb from progress and keeps claiming.
+
+  So what the pool funds, what the decay pass bleeds and what keeps a holding alive cannot come to be
+  three questions.
   - **HOLDS, not harvests.** A row's eligibility is the *ground's* answer and never its take crew.
     `maintenance_shares` used to skip rows at `workers == 0`, which made a finished improvement's
     keeping depend on somebody still gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above.
@@ -1256,6 +1357,129 @@ stands on, and the per-web `knowledge_progress_per_turn` copies that used to dri
 gates `corral` + `extend_pen` (the §4.3 reshuffle; pinned by `builtin_ladder_describes_todays_rungs`,
 which asserts no two rungs share an unlock gate); and **both the build dials *and* the knowledge dials
 now live here**, so the two webs can only be tuned — and paced — together.
+
+### A RUNG ACHIEVED BUT SHORT IS REPAIRABLE — the gate tests the METER, not the rung (§4.7)
+
+Reported from play: a Tended patch decayed to 99% and **there was no way to get it back to 100%**.
+Four gates composed into a deadlock — completion retires the queue entry; no entry means no builders
+can be aimed at it; `cultivate` refused; and the client offered no `⌃`. With keeping paid there is no
+decay either, so the meter could not even fall out of the trap. The only escape was to *stop* paying
+keeping, bleed to the retention bar, lose the rung, and re-buy it.
+
+**§2.4 says it should be repairable** — *"repairing it is a fresh decision the player makes by putting
+it back in the queue"* — and the sim already agreed in two places whose comments were written to
+protect exactly this: the accrue guard is *"the METER, not the rung… refusing it here would make
+erosion a one-way ratchet"*, and `patch_rung_already_built` uses meter fullness *"because a meter that
+has eroded between the two is a rung the builders are legitimately repairing."* **Both were
+unreachable, because completion removed the entry before either could matter.**
+
+**The command's refusal now tests the meter, matching what the accrue path always did.** Locks 1 and 2
+then need nothing: re-queueing recreates the entry and the entry brings the builders — verified rather
+than assumed.
+
+| verb | gate before | verdict |
+|---|---|---|
+| `cultivate` | `is_cultivated()` — the **retention bar** (37.5 of 50) | **the bug** → `cultivation_meter_full()` |
+| `sow` | `is_field()` — the retention bar | **the same bug on rung 3**, found by the sweep → `field_meter_full()` |
+| `corral` | `is_corralled()` — the fence flag | wrong SHAPE, no behaviour change (flag and meter always agree); aligned anyway so a pen meter that ever learns to erode is repairable by the same rule |
+| `tame` | `is_domesticated()` | already correct — that predicate **is** `progress >= cost` |
+| `extend_pen` | `pen_extending` / `at_max` | no deadlock; the meter resets on completion and three paths clear the flag |
+
+**A FULL meter must still refuse** — that is the pair, and the case the *"already cultivated — forage
+it to tend it"* message exists for. Weakening the refusal into nothing would be the other bug.
+
+**One reporting defect rode along.** The board published `≈1 turn` **forever** for such a patch: the
+quote was pushed for the derived verb regardless of the queue, and the unqueued tail dated it at the
+**full pool** — a confident countdown for a build with no entry and no builders. A running quote is now
+pushed only for a source that carries a rung entry, so the field stays at `-1`. **`-1` here means the
+gate refused, at any staffing** — `eligible` takes no crew count — which is why the client must not
+render it as a crew problem.
+
+**The animal half is untestable and the fixture says so**: `domestication_progress` is monotone and no
+animal rung declares a `meter_decay`, so "eroded but achieved" cannot be produced there. The refusal is
+asserted on both webs; the accept only on the plant one.
+
+### A KEEPING TOOL WEARS NOW, ON THE WORK IT SUPPLIED
+
+Once gear fed the keeping pool (§4.8's upkeep half), a hoe raised what a keeper supplied **forever,
+free** — `WearQuantum` had `BuildProgress` and no upkeep quantum. `UpkeepWork` closes it.
+
+- **Charged on work SUPPLIED, not demand and not head count** — the value `patch_upkeep_supply` /
+  `herd_upkeep_supply` returns, which the distributor already caps at the demand. So an over-large pool
+  spends only what it was asked for, and a pool with nothing at risk claims no share and wears nothing.
+- **`0.16` per work unit, and there is NO conversion to invert** — unlike `build_work`'s `0.5` (an exact
+  round trip) this quantum never existed. What the model does supply is that **both quanta count the
+  same unit**, so a tool holds one life measured in work whichever account spends it: `100 / 0.16 = 625`
+  work units, identical to the build reading. Keeper-vs-builder life then matches by construction rather
+  than by a target. **Provisional; §4.14 owns the balance.**
+- **No item's headline gauge changed** — both entries are appended and `headline_wear` is the first, so
+  hoes still lead with the build quantum and hurdles with the slaughter.
+
+### A BLOCKED BUILD PUBLISHES **WHICH CONJUNCT REFUSED** (`docs/plan_standing_upkeep.md` §4.7)
+
+`BUILD_QUEUE_BLOCKED` (`-4`) is minted in exactly one place — `publish_build_chain`'s `None` arm —
+under one predicate:
+
+```text
+Blocked ⟺ position == 0 ∧ builders > 0 ∧ (the rung's own gate refused ∨ no quote this turn)
+```
+
+The pool is standing on the head of the queue, spending its worker-turns on an entry that banks
+nothing, and **everything behind it inherits the block**. Reported from play: a Tame sat at
+`Blocked 32%` with no cause on any surface, the player fixed the only thing the UI named — the keeping
+shortfall — and it stayed blocked. The real cause was an empty escapement room.
+
+**So the sentinel now travels with a CAUSE.** `BuildGate` replaces the old `BuildQuote::gate_holds`
+bool — deliberately, because a bool beside an enum is two producers of one verdict — and its `key()`
+is published as `buildBlockedReason` on `ForagePatchState` / `HerdTelemetryState`, `""` when the entry
+is not blocked, **carried down the queue** so an entry behind a blocked head reports the head's own
+reason rather than a second guess at its own.
+
+| key | the conjunct that refused |
+|---|---|
+| `knowledge` | the rung's `unlock_discovery_id()` is not known |
+| `escapement` | `crew_is_working_the_source(biomass − floor × K)` — no room above the floor |
+| `no_crop` | no committed species (Cultivate) / no commitment (Sow) |
+| `species_ceiling` | `can_domesticate()` / `can_pen()` — one fact about the animal, two rungs |
+| `rung_below` | Corral on a herd that is not tamed |
+| `owned_by_other` | the source is another faction's |
+| `site` | the land does not admit the rung |
+| `ring_idle` | a pen-ring entry with no extension running |
+| `undeclared` | the meter's rung is not the one this entry declared — a DEAD entry |
+| `unworked` | **not a conjunct** — no quote at all, the band's row on the source having lapsed |
+
+**THE KEY SET IS READ OFF THE ARMS, NOT AUTHORED.** Each is a term of some rung's own `eligible`, and
+two of them (`site`, `undeclared`) are terms of `sow_permitted` assembled OUTSIDE `accrue_field` — a
+reader who only traced the Tame arm would have missed both. `species_ceiling` is the one deliberate
+merge: the player's response to *this beast climbs no further* does not differ by rung, and the caller
+already knows which rung it asked about.
+
+**IT IS A CAUSE, NEVER A SENTENCE.** No player-facing prose lives in Rust; the client owns wording and
+its table carries a fallback, so a key this sim adds later renders honestly rather than blankly.
+
+> **THE KEEPING SHORTFALL IS NOT ONE OF THESE, and the client rule that said it was is corrected.**
+> It is not a conjunct of any `eligible`; it reaches a build only by suppressing regrowth until the
+> stock falls under the floor, which is the `escapement` key one step later. `selection-card.md` →
+> "THE BLOCKED ROW NAMES THE REMEDY" carries the autopsy.
+
+### AN UNNAMED `builders` KIT STORES **NOTHING**, OR THE PER-ENTRY DERIVATION IS DEAD
+
+`handle_assign_labor` resolves a kit for every staffed row, and for `builders` with no `kit` token it
+stored `default_kits.builders` — `"none"`. `EquipmentConfig::builders_kit_for` applies *a named row kit
+wins* first, so that stored `none` beat the per-branch derivation §4.6b exists for, and **the pool
+built bare-handed on every job**. Not cosmetic: `BuildersGear::resolve` reads the same field.
+
+The client was already right — `BandPanelController._commanded_role_kit_id` emits no `kit` token on
+that row precisely so the derivation stays live — and the server was filling the slot in on the way
+past. The fork lives in `handle_assign_labor`'s `crew_kit` rather than in `default_kit_for_target`,
+because the question is *what does this command store*, not *which kit is the absent one*; that helper
+also serves the raid path, which has no derivation to defer to. **An explicit `kit <id>` still stores
+and still wins.**
+
+**IT SURVIVED BECAUSE EVERY FIXTURE HAND-BUILT THE ROW** (`kit: Some(bare_builders())`), so no test
+ever drove `assign_labor … builders <n>` into `builders_kit`. The test that closes it drives the real
+command path on both webs **and** asserts an explicit `kit none` is still honoured — without that third
+case, "never store anything" satisfies the pair and silently deletes the override.
 
 ### The build on the wire — the fraction stays, the WORK is appended
 

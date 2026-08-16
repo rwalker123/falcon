@@ -1445,15 +1445,23 @@ func _on_hud_send_trade_expedition(payload: Dictionary) -> void:
 func _on_hud_extend_pen(payload: Dictionary) -> void:
     _send_formatted_command(format_extend_pen(payload))
 
-## DECLARE an improvement on a source the band already works (the second axis, issue #442). Sent
-## immediately after the `assign_labor` that guarantees the row is there — an improvement verb only
-## ever reaches bands already working the source.
+## DECLARE an improvement on a source the band already works (the second axis, issue #442). It is
+## sent ALONE now: the work row's `⌃` is the declaration (`docs/plan_standing_upkeep.md` §4.7a ①),
+## and a row exists only for a source the band already works — so the sim's *"an improvement verb
+## reaches only bands already working the source"* rule is satisfied by construction and no
+## `assign_labor` has to precede it.
 ##
 ## **IT NAMES NO CREW** (`docs/plan_standing_upkeep.md` §2.5): the verb appends a build-queue entry
 ## and the band's `builders` pool raises whatever is at the head. An EMPTY `improvement` means *there
 ## is nothing here to state* — `format_improvement` answers `{}` and nothing is sent.
+##
+## **A SEND THAT DID NOT GO TAKES THE HUD'S OPTIMISTIC WRITE WITH IT**, exactly as the labor path's
+## does: `Hud._on_work_row_improvement_requested` records the pending declaration BEFORE emitting,
+## the outcome is known only here, and the payload carries `pending_entity` so the drop names that
+## one entry. `format_improvement` never reads that key.
 func _on_hud_improvement(payload: Dictionary) -> void:
-    _send_formatted_command(format_improvement(payload))
+    if not _send_formatted_command(format_improvement(payload)):
+        _hud_invoke("drop_pending_assign", [payload])
 
 ## WITHDRAW a declaration — the undo for the verb above, and its own handler because its own command
 ## and its own grammar (it names a SOURCE, not a rung). See `format_unqueue`.

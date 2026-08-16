@@ -29,8 +29,8 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         LadderConfig, LadderConfigHandle, RungDef, RungKey, RungMovement, FABRICATED_BUILD_COST,
-        NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_UPKEEP_DECAY,
-        NO_UPKEEP_DEMAND, RUNG_UNSTARTED,
+        NEGLECT_NONE, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE,
+        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -429,10 +429,13 @@ pub struct Herd {
     /// [`crate::intensification::BuildTurns::Rotting`] its [`sim_schema::BUILD_METER_ROTS`] — see
     /// `ForagePatch::build_turns_remaining` for why the three are separate answers.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
-    /// **What the keepers' TOOLS took off this herd's running build**, in work units — the `t` in
-    /// `effective_cost = cost − t`
-    /// ([`crate::intensification::build_work_from_gear`]), published as
+    /// **What the keepers' TOOLS ADD to this herd's running build, per turn**, in work units —
+    /// [`crate::intensification::gear_work_supply`] over the pool, published as
     /// `HerdTelemetryState.buildWorkFromGear`.
+    ///
+    /// **It is an ADDEND on the pool's output, never a deduction from the job**
+    /// (`docs/plan_standing_upkeep.md` §4.8) — a `Tame` costs its species' whole
+    /// `work_cost × taming_cost_multiplier` with handling gear and without.
     ///
     /// [`crate::intensification::NO_BUILD_GEAR`] when no build is in flight or the crew left the
     /// handling gear at camp. Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle,
@@ -453,6 +456,19 @@ pub struct Herd {
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
     pub build_queue_position: i32,
+    /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS HERD** — the plant twin's rationale in full is on
+    /// [`crate::forage::ForagePatch::build_blocked_reason`]. The conjunct of the rung's own gate that
+    /// refused ([`crate::intensification::BuildGate`]), or
+    /// [`crate::intensification::BuildGate::Open`] (wire key `""`) when this herd is not a blocked
+    /// build.
+    ///
+    /// **The animal web is where the sentinel bites hardest**: an unkept flock's suppressed regrowth
+    /// pins it at the hunters' floor, so the `Tame`'s escapement gate never reopens and nothing on
+    /// the build line can move it (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH SUPPRESSION
+    /// CLOSES A LOOP").
+    ///
+    /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
+    pub build_blocked_reason: crate::intensification::BuildGate,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
@@ -613,7 +629,7 @@ pub struct Herd {
     /// the client wire), so a restored herd resumes the hunt exactly as wounded as it was.
     pub wounds: DamageLedger,
     /// Animals leave only while this **exceeds** the herd's current rung's
-    /// [`RungDef::neglect_grace_turns`] — `animal:pastoral`'s for a tamed herd, `animal:pen`'s for a
+    /// [`RungDef::upkeep_grace_turns`] — `animal:pastoral`'s for a tamed herd, `animal:pen`'s for a
     /// penned one, which is why the grace is per-rung: the fence holds a flock without a keeper for
     /// far longer than habit holds an unfenced one. The under-herded *notice* is deliberately **not**
     /// gated on it (see `advance_husbandry`): the grace is exactly when the player can still act.
@@ -702,6 +718,7 @@ impl Herd {
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
             build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
+            build_blocked_reason: crate::intensification::BuildGate::Open,
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
@@ -779,13 +796,7 @@ impl Herd {
     /// **Returns `true` only when THIS call finished the rung**, matching [`Herd::accrue_corral`] and
     /// `ForagePatch::accrue_cultivation`: `handle_tame` sets the verb on every band hunting the herd,
     /// so a post-hoc `is_domesticated()` test would push one "Tamed the …" feed line per band.
-    pub fn accrue_domestication(
-        &mut self,
-        faction: FactionId,
-        amount: f32,
-        cost: f32,
-        effective_cost: f32,
-    ) -> bool {
+    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32, cost: f32) -> bool {
         if self.is_domesticated() || !self.can_domesticate() {
             return false;
         }
@@ -796,11 +807,8 @@ impl Herd {
             return false;
         }
         self.domestication_cost = cost;
-        self.domestication_progress = crate::forage::banked_or_paid_off(
-            self.domestication_progress + amount,
-            cost,
-            effective_cost,
-        );
+        self.domestication_progress =
+            crate::forage::banked_up_to_cost(self.domestication_progress + amount, cost);
         self.is_domesticated()
     }
 
@@ -809,12 +817,7 @@ impl Herd {
     /// cannot fabricate a domesticated `wild` herd. It replaces the `accrue_domestication(f,
     /// RUNG_COMPLETE)` spelling, which stopped meaning anything the moment a job had a size.
     pub fn tame_outright(&mut self, faction: FactionId) -> bool {
-        self.accrue_domestication(
-            faction,
-            FABRICATED_BUILD_COST,
-            FABRICATED_BUILD_COST,
-            FABRICATED_BUILD_COST,
-        )
+        self.accrue_domestication(faction, FABRICATED_BUILD_COST, FABRICATED_BUILD_COST)
     }
 
     // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
@@ -902,7 +905,6 @@ impl Herd {
         faction: FactionId,
         amount: f32,
         cost: f32,
-        effective_cost: f32,
         tile: UVec2,
     ) -> bool {
         if self.is_corralled() || self.owner != Some(faction) {
@@ -910,7 +912,7 @@ impl Herd {
         }
         self.corral_cost = cost;
         self.corral_progress =
-            crate::forage::banked_or_paid_off(self.corral_progress + amount, cost, effective_cost);
+            crate::forage::banked_up_to_cost(self.corral_progress + amount, cost);
         if self.corral_progress >= cost {
             // The ceiling is already gated upstream (the `Corral` policy accrual + the commands), so
             // this can only refuse on a bug — and then the pen is genuinely not built, so say so.
@@ -939,22 +941,13 @@ impl Herd {
     /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
     /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
     /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
-    pub(crate) fn accrue_pen_extension(
-        &mut self,
-        amount: f32,
-        cost: f32,
-        effective_cost: f32,
-        radius_max: u32,
-    ) -> bool {
+    pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
         if !self.pen_extending {
             return false;
         }
         self.pen_extend_cost = cost;
-        self.pen_extend_progress = crate::forage::banked_or_paid_off(
-            self.pen_extend_progress + amount,
-            cost,
-            effective_cost,
-        );
+        self.pen_extend_progress =
+            crate::forage::banked_up_to_cost(self.pen_extend_progress + amount, cost);
         if self.pen_extend_progress >= cost {
             self.pen_radius = (self.pen_radius + 1).min(radius_max);
             self.pen_extend_progress = RUNG_UNSTARTED;
@@ -3415,7 +3408,7 @@ pub fn repopulate_fauna(
 ///
 ///   **The shed no longer bites on the first under-herded turn.** [`Herd::neglect_turns`] counts
 ///   consecutive turns the herd's keepers failed to hold it, and animals leave only while that
-///   exceeds the herd's rung's `grace_turns` ([`RungDef::neglect_grace_turns`] — `animal:pen`'s for a
+///   exceeds the herd's rung's `upkeep.grace_turns` ([`RungDef::upkeep_grace_turns`] — `animal:pen`'s for a
 ///   penned herd, `animal:pastoral`'s otherwise). The plant twin is the same counter gating the feral
 ///   bleed in [`crate::forage::advance_cultivation`]: one trigger, two penalties.
 ///
@@ -3487,6 +3480,7 @@ pub fn advance_husbandry(
         herd.build_turns_remaining = None;
         herd.build_work_from_gear = NO_BUILD_GEAR;
         herd.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
+        herd.build_blocked_reason = crate::intensification::BuildGate::Open;
         // **HOW WELL THE HERD WAS KEPT LAST TURN** — the same Population→Logistics lag
         // `pen_fed_fraction` runs on. Everything downstream of the staffing is resolved into locals
         // **here, before the field is cleared**, so the whole turn judges one reading: what went
@@ -3748,20 +3742,14 @@ fn shed_uncontained_animals(
 ///
 /// **One seam, two readers**, the twin of `forage::patch_unwinding_rung`: `advance_husbandry` gates
 /// the shed on this rung's grace and the snapshot publishes *that* rung's countdown.
+///
+/// **It is [`herd_keeping_meter`] asked with no verb in flight** ([`NOTHING_IN_FLIGHT`]) rather than
+/// a second copy of the same ownership-and-progress reading — the plant twin's rule, for the plant
+/// twin's reason: the eligibility gate carried a hand-written progress-only copy of this question
+/// and fell a turn behind the payment side on the turn a build banked its first work. Its callers
+/// all run after that accrual, so the progress-only reading is the honest one for them.
 pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'a RungDef> {
-    (herd.is_corralled() || herd.owner.is_some()).then(|| {
-        // **The NEWEST meter with progress on it**, the twin of `forage::patch_unwinding_rung`: a
-        // pen half-raised is already the thing at risk, so it owes its own rung's grace rather than
-        // the pastoral rung's. (`is_corralled()` alone would hand a herd mid-`Corral` the shorter
-        // forgiveness of the rung underneath, which is backwards — the fence is what buys time.)
-        ladder.rung(
-            if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
-                RungKey::AnimalPen
-            } else {
-                RungKey::AnimalPastoral
-            },
-        )
-    })
+    herd_keeping_meter(herd, NOTHING_IN_FLIGHT).map(|key| ladder.rung(key))
 }
 
 /// **WHICH RUNG THIS HERD IS BUILDING** — the animal twin of `forage::patch_build_verb`, with the
@@ -3924,20 +3912,30 @@ pub fn herd_upkeep_supply(
     improvement: Option<crate::components::Improvement>,
     keeping_share: f32,
 ) -> f32 {
-    match herd_meter_answering_for(herd, improvement) {
+    match herd_keeping_meter(herd, improvement) {
         Some(_) => keeping_share,
         None => NO_UPKEEP_DEMAND,
     }
 }
 
 /// **WHICH METER THIS TURN'S KEEPING ANSWERS FOR** — the newest of the meter with progress on it and
-/// the meter this crew's verb is filling, the animal twin of `forage::patch_meter_answering_for`.
+/// the meter this crew's verb is filling, the animal twin of `forage::patch_keeping_meter`.
 ///
 /// **The verb names the meter**, exactly as it does on the plant web and for the same reason: the
 /// supply is stamped in Population and read by the *next* Logistics pass, so it has to describe the
 /// meter that pass will judge. A `Corral` starting on a herd with no pen progress answers for
 /// `animal:pen` from its very first turn.
-fn herd_meter_answering_for(
+///
+/// # ⛔ THE CLAIM, THE DEMAND AND THE PAYMENT ALL READ THIS ONE FUNCTION
+///
+/// `crate::systems::labor::maintenance_shares` decides whether this herd claims a share of the
+/// band's `husbandry` pool here, [`herd_upkeep_demand`] says how much here, and
+/// [`herd_upkeep_supply`] pays it here. The animal web carried the plant web's exact defect: a
+/// `Tame` sets `owner` on its **first accrual**, which happens *after* the shares are split, so on
+/// the turn a Tame banked its first work `herd_keeping_rung` still read the herd as wild, the herd
+/// claimed nothing, and the capture — reading it after the accrual, owned — published the whole
+/// demand as a shortfall against a staffed `husbandry` role.
+pub fn herd_keeping_meter(
     herd: &Herd,
     improvement: Option<crate::components::Improvement>,
 ) -> Option<RungKey> {
@@ -3992,9 +3990,22 @@ pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -
 /// nobody's to keep.
 ///
 /// **THE one definition**, reached by the shed, the labor arm's stamp and the snapshot alike.
-pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
-    herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DEMAND, |rung| {
-        rung.upkeep_demand(herd_keeper_load(herd, fauna))
+///
+/// **IT TAKES THE VERB, for [`crate::forage::patch_upkeep_demand`]'s reason**: the claim side and
+/// the payment side must answer for the same meter ([`herd_keeping_meter`]), or a herd draws
+/// nothing from the pool and is then billed the whole rate against it. Callers that cannot see the
+/// band's queue pass [`NOTHING_IN_FLIGHT`] and get the ownership-and-progress reading, which is
+/// correct for them — they all run after the turn's accrual has recorded the owner.
+pub fn herd_upkeep_demand(
+    herd: &Herd,
+    improvement: Option<crate::components::Improvement>,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+) -> f32 {
+    herd_keeping_meter(herd, improvement).map_or(NO_UPKEEP_DEMAND, |key| {
+        ladder
+            .rung(key)
+            .upkeep_demand(herd_keeper_load(herd, fauna))
     })
 }
 
@@ -4006,7 +4017,7 @@ pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfi
 /// that are shedding.
 pub fn herd_upkeep_shortfall(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     crate::intensification::upkeep_shortfall(
-        herd_upkeep_demand(herd, fauna, ladder),
+        herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, fauna, ladder),
         herd.upkeep_supplied,
     )
 }
@@ -4018,7 +4029,7 @@ pub fn herd_upkeep_shortfall(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderCo
 /// published ratio and the shed can never disagree about the same turn's staffing. A herd that owes
 /// nothing — wild, or empty — is trivially [`FULLY_HERDED`].
 pub fn herd_herded_fraction(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
-    let demand = herd_upkeep_demand(herd, fauna, ladder);
+    let demand = herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, fauna, ladder);
     if demand <= NO_UPKEEP_DEMAND {
         return FULLY_HERDED;
     }
@@ -4028,11 +4039,18 @@ pub fn herd_herded_fraction(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderCon
 /// **Turns of neglect this herd can still absorb before its keepers start losing animals** — the wire's
 /// countdown, resolved through [`herd_keeping_rung`] so it always describes the rung
 /// [`advance_husbandry`] actually gates the shed on. `None` = a wild herd, with nothing at risk.
+///
+/// It reads the **upkeep's** grace ([`RungDef::upkeep_grace_turns`]), not the build's, exactly as
+/// [`crate::forage::patch_neglect_grace_remaining`] does: on both webs the neglect trigger is an unmet
+/// standing demand rather than an un-worked build, so every buildable rung declares
+/// `build.grace_turns: null` and the live number lives in its `upkeep` block. Reading the build's
+/// gave [`crate::intensification::NO_NEGLECT_GRACE`] for every herd, so a **fully kept** herd
+/// published *"sheds in 1 turn"* forever while [`advance_husbandry`] gated the shed on a grace of 2.
 pub fn herd_neglect_grace_remaining(herd: &Herd, ladder: &LadderConfig) -> Option<u32> {
     herd_keeping_rung(herd, ladder).map(|rung| {
         crate::intensification::neglect_grace_remaining(
             herd.neglect_turns,
-            rung.neglect_grace_turns(),
+            rung.upkeep_grace_turns(),
         )
     })
 }
@@ -4070,7 +4088,7 @@ fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) 
     // the supplier is a **build crew** rather than the keeping pool (a herd mid-`Tame` is owed the
     // same rate, from different hands).
     let fraction = crate::intensification::upkeep_shortfall_fraction(
-        herd_upkeep_demand(herd, fauna, ladder),
+        herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, fauna, ladder),
         herd.upkeep_supplied,
     );
     let head_count = herd.biomass / body_mass;

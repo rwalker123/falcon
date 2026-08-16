@@ -291,6 +291,10 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# pair above and is redacted with them: a queue position is live state about a band's declared
 	# work, which a remembered tile knows no better than it knows the countdown it explains.
 	"patch_build_queue_position",
+	# …and WHY that queue is blocked here. It names a gate refusing a band's declared job right
+	# now, so it is redacted with the countdown it explains rather than with the ground readings: a
+	# remembered tile knows no more about a live refusal than it knows the date behind it.
+	"patch_build_blocked_reason",
 	# The estimate's per-source TERM travels under the same rule as the answer beside it — it is a
 	# figure about a build being worked, and a remembered tile knows no more about that than it knows
 	# the progress. (The gear half of the estimate is not here at all: it rides the band's kit row.)
@@ -2773,6 +2777,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# the sentinel, never `0`, which would put every unqueued patch at the head of a queue.
 		info["patch_build_queue_position"] = int(patch.get(
 			"build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE))
+		# **WHY THAT QUEUE IS BLOCKED HERE** — `""` when this patch is not a blocked build, else the
+		# sim's own cause key for the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
+		# `site`, …). It crosses BESIDE the `-4` it explains: a countdown sentinel with no cause beside
+		# it is the state the field exists to end, and the client cannot re-derive the gate.
+		info["patch_build_blocked_reason"] = String(patch.get("build_blocked_reason", ""))
 		# **THE ESTIMATE'S PER-SOURCE TERM, so the compose sheet can price a crew the player is
 		# PROPOSING.** The turn count above is the sim's answer for the crew already here; this is
 		# what the sheet's stepper and floor slider evaluate `turns(workers)` from — see

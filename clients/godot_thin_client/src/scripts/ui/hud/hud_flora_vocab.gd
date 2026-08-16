@@ -71,7 +71,7 @@ const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Ta
 # that was still standing in the policy picker — "Already a Tended Patch — Sustain-forage it to
 # harvest" — a sentence only a UI that models a finished build as a selectable rung ever needs to
 # say. An improvement that completes now becomes a static DONE LABEL, so there is no control left to
-# grey and no dead end to explain: the state says what it is, and the next rung's checkbox sits
+# grey and no dead end to explain: the state says what it is, and the next rung's own line sits
 # beneath it. `SourceForecast.improvement_is_done` is the one test that retires a rung.
 
 # THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
@@ -122,7 +122,7 @@ const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people ca
 # the two COLLAPSED formats and the tooltip separator all served `HudWidgets.build_policy_picker`'s
 # greyed-and-explained rung. A harvest stance has no prerequisite, so no picker rung is ever gated
 # now, and the reasons themselves (which are still very much alive) render beneath the IMPROVEMENT
-# checkbox in the shared hint style — one reason per line, no collapsing, because the control is one
+# control in the shared hint style — one reason per line, no collapsing, because the control is one
 # rung and not six and there is no longer a height problem to solve.
 
 # RETIRED — the Cultivate rung's build verb AND the decaying state's verb (issue #545). Both were
@@ -293,7 +293,12 @@ const FLORA_CROP_RUNG_NOUNS := {
 
 # The fallback noun for a policy absent from the table above — the rungs that commit nothing quote no
 # payoff at all, so this is defensive rather than reachable.
-const FLORA_CROP_RUNG_NOUN_FALLBACK := "this rung"
+#
+# **IT SAYS `this ground` BECAUSE `rung` IS OURS AND NOT THE PLAYER'S.** The word is exact internally
+# and appears on no control, in no tutorial and in no other sentence a player reads; the two entries
+# above it already name what the player sees (*a tended patch*, *a sown field*), and a fallback in a
+# private vocabulary would be the one place the ladder's jargon leaked into a tooltip.
+const FLORA_CROP_RUNG_NOUN_FALLBACK := "this ground"
 
 # The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
 # the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea

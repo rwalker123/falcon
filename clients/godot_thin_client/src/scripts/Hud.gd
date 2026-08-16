@@ -66,20 +66,28 @@ signal split_band_requested(payload: Dictionary)
 ## pen rung as the pen it widens (`docs/plan_standing_upkeep.md` §2.2), so it cannot be the one build
 ## in the game that is free.
 signal extend_pen_requested(payload: Dictionary)
-## Emitted when the player commits an IMPROVEMENT — the second axis (issue #442). Payload keys:
-## { faction, improvement, x, y, herd_id }. Main formats the matching verb
-## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
-## only emitter, exactly as `extend_pen_requested` is.
+## Emitted when the player DECLARES an improvement — the second axis (issue #442). Payload keys:
+## { faction, improvement, kind, x, y, herd_id }. Main formats the matching verb
+## (`cultivate` / `sow` / `tame` / `corral`).
+##
+## **ITS EMITTER IS THE WORK ROW'S `⌃`, AND THE COMPOSE SHEET NO LONGER DECLARES AT ALL**
+## (`docs/plan_standing_upkeep.md` §4.7a ①). The sheet's checkbox was not the commit — the button
+## that committed it read `Forage` — so ticking it and closing the sheet did nothing, reported from
+## play repeatedly. The declaration is one click on the tab that owns the pool and the queue, and it
+## reaches this signal through `_on_work_row_improvement_requested`, which carries the optimistic
+## write. The sheet keeps the FORECAST.
 ##
 ## **IT CARRIES NO CREW** (`docs/plan_standing_upkeep.md` §2.5) — the verb DECLARES, appending an
 ## entry to the band's build queue, and the hands stand on the band-level `builders` role. A
-## `workers` key rode this payload for one slice and the trailing token it produced is now a parse
-## error.
+## `workers` key rode this payload for one slice as a COMMAND token and the trailing token it
+## produced is now a parse error; the one riding it today is the overlay's, and `format_improvement`
+## does not read it.
 signal improvement_requested(payload: Dictionary)
 
 ## The WITHDRAWAL of one of those declarations — { faction, x, y, herd_id }, Main formatting
 ## `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>` (`docs/plan_standing_upkeep.md` §2.5).
-## RELAYED from `DrawerComposeController` like the signal above.
+## RELAYED from `BandPanelController`'s BUILD QUEUE row `✕`, which is its only emitter since the
+## compose sheet's checkbox retired with the declaration (§4.7a ①).
 ##
 ## **ITS OWN SIGNAL BECAUSE ITS OWN GRAMMAR**: that one names a RUNG, this one names a SOURCE. It is
 ## also the fix for the defect where unticking re-sent the set verb at zero builders, which SET the
@@ -460,10 +468,16 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _drawercompose.extend_pen_requested.connect(
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
-    _drawercompose.improvement_requested.connect(
-        func(payload: Dictionary) -> void: improvement_requested.emit(payload))
-    _drawercompose.unqueue_requested.connect(
-        func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
+    # **THE COMPOSE SHEET ASKS FOR THE WORK TAB; THE PANEL IS REACHED ONLY FROM HERE** (§4.7a ①).
+    # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
+    # connection to its method — by the time a link can be clicked it is populated, which is the same
+    # lazy binding `TargetingController`'s `rerender` nudge takes for the same reason.
+    _drawercompose.work_tab_requested.connect(
+        func(band_entity: int) -> void: _bandpanel.show_work_tab(band_entity))
+    # **NO IMPROVEMENT RELAY FROM THE COMPOSE SHEET** (`docs/plan_standing_upkeep.md` §4.7a ①). It
+    # emitted `improvement_requested` off the rung checkbox's tick and `unqueue_requested` off its
+    # untick; the checkbox was never the commit, so both moved to `BandPanelController` — the `⌃` on
+    # a work row and the `✕` on a queue row. Their relays are wired beside that controller below.
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
     # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
     # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
@@ -507,6 +521,9 @@ func _ready() -> void:
     # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
     _bandpanel.unqueue_requested.connect(
         func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
+    # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
+    # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
+    _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
     _bandpanel.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(
@@ -971,6 +988,19 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     if band_id == HudConst.NO_BAND_ID or entity < 0:
         return
     var clamped: int = max(0, workers)
+    # **THE OPTIMISTIC WRITE HAPPENS BEFORE THE EMIT, AND THE ORDER IS THE ROLLBACK'S WHOLE
+    # CORRECTNESS.** `Main` is connected to this signal with no flags, so `emit_signal` runs
+    # `_on_hud_assign_labor` SYNCHRONOUSLY — send, and on failure `drop_pending_assign`. Emitting
+    # first meant that drop ran against an overlay this function had not written yet: it found
+    # nothing, returned false, and the phantom entry landed immediately afterwards and SURVIVED, so a
+    # command that never reached the server left the card showing workers the sim had never heard of
+    # until the next turn quietly reconciled them away. `hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS
+    # A ROLLBACK" already specified record-then-emit; the code had drifted from it.
+    #
+    # **THE WORK ROW'S `⌃` FOLLOWS THE SAME ORDER** (`_on_work_row_improvement_requested`), so there
+    # is ONE rule for every optimistic write on this layer rather than two orderings to reason about.
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
+    _after_pending_change()
     emit_signal("assign_labor_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": band_id,
@@ -1000,15 +1030,46 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "kit_id": kit_id,
         "default_kit_id": KitRoster.default_kit_for(kind,
             _band_labor.find_world_herd(herd_id), _band_labor.default_kit_id(kind)),
-        # **THE ROLLBACK HANDLE, AND IT IS NOT A COMMAND TOKEN.** The optimistic write below happens
-        # here and the send's OUTCOME is only known in `Main`, so the failure path has to be able to
+        # **THE ROLLBACK HANDLE, AND IT IS NOT A COMMAND TOKEN.** The optimistic write above has
+        # already happened and the send's OUTCOME is only known in `Main`, so the failure path has to be able to
         # name the entry it must undo — and every reader of the overlay looks a band up by the
         # client-local `entity`, never by `band_id` (see the two handles above). No `format_*` builder
         # reads this key; `Main._on_hud_assign_labor` hands it straight back to `drop_pending_assign`.
         "pending_entity": entity,
     })
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
-    _after_pending_change()
+
+## **A DECLARATION FROM THE WORK ROW'S `⌃`, AND ITS OPTIMISTIC HALF**
+## (`docs/plan_standing_upkeep.md` §4.7a ①). The verb goes on the wire; the declaration is ALSO
+## written to the pending overlay so the BUILD QUEUE block's row and the row's own `▦0%` state land
+## on the frame the mark was pressed, rather than a turn later.
+##
+## **IT IS ONE SEAM, NEVER A SECOND OVERLAY.** `record_pending_assign` already takes an
+## `improvement` — it exists so a crew edit does not blank a running build — and `_build_queue_models`
+## already admits a pending entry off exactly that field. So the declaration is that same write with
+## this source's CURRENT crew and floor restated and the improvement set.
+##
+## **AND NO `assign_labor` GOES WITH IT.** The overlay write is client-side only: the band already
+## works this source, so there is no staffing command to send, and issuing one would re-assert a crew
+## the player did not touch. Nothing here reaches the command socket but the verb.
+##
+## **THE RECORD PRECEDES THE EMIT, WHICH IS THE ROLLBACK'S WHOLE PRECONDITION.** `Main` handles the
+## signal SYNCHRONOUSLY and hands the payload straight back to `drop_pending_assign` when the send
+## fails, so an entry written afterwards would survive its own failed command.
+func _on_work_row_improvement_requested(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity >= 0:
+        _band_labor.record_pending_assign(entity, String(payload.get("kind", "")),
+            int(payload.get("workers", 0)), int(payload.get("x", -1)), int(payload.get("y", -1)),
+            String(payload.get("herd_id", "")), float(payload.get("floor",
+                SourceForecast.DEFAULT_HARVEST_FLOOR)),
+            String(payload.get("improvement", "")))
+        _after_pending_change()
+        # …and an OPEN compose sheet on that source flips OFFERED → DECLARED on the same frame. It
+        # reads the declaration through the overlay (`build_verb`'s `composed` argument), and
+        # `_after_pending_change` re-renders the drawer but not the floating sheet, so a sheet left
+        # open while the player declares from the board would go on offering a rung already queued.
+        _drawercompose.refresh_compose_sheet()
+    improvement_requested.emit(payload)
 
 # ---- Optimistic pending labor (slice 3b UX) --------------------------------
 # The pending-overlay DATA (record / reconcile / the effective-worker maps + `as_schedule`) lives on
@@ -1038,6 +1099,20 @@ func _after_pending_change() -> void:
 ## **`_after_pending_change()` RUNS ON THE ROLLBACK TOO** — the same re-render + MapView push the
 ## write got. Without it the card keeps the number it has just stopped believing, which is the whole
 ## defect one frame later.
+##
+## **AND THE ROLLBACK REFRESHES EVERYTHING THE WRITE REFRESHED, WHICH IS ONE SURFACE MORE THAN THAT.**
+## `_on_work_row_improvement_requested` — the declaration this same rollback undoes — follows
+## `_after_pending_change()` with an explicit compose-sheet refresh, because that helper re-renders
+## the drawer and the panel but NOT the floating sheet. Dropping the entry without the same call left
+## a sheet open on that source rendering DECLARED for a declaration the server refused, beside a queue
+## row that had already vanished: two surfaces disagreeing about one source, which is the failure this
+## arc keeps paying for.
+##
+## **IT GOES THROUGH `withdraw_declaration` RATHER THAN `refresh_compose_sheet`, and a plain refresh
+## really does leave the sheet saying DECLARED** — the sheet ADOPTS the overlay's rung into its own
+## composition on the frame the `⌃` is pressed, so the refresh alone re-renders a declaration nothing
+## is keeping. That seam withdraws the adoption for THIS source and THIS rung and then re-renders;
+## the whole reason it lives on the controller is that the compose state is the controller's.
 func drop_pending_assign(payload: Dictionary) -> void:
     var entity := int(payload.get("pending_entity", -1))
     if entity < 0:
@@ -1046,9 +1121,18 @@ func drop_pending_assign(payload: Dictionary) -> void:
             String(payload.get("kind", "")), int(payload.get("x", -1)),
             int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
         _after_pending_change()
+        _drawercompose.withdraw_declaration(String(payload.get("kind", "")),
+            int(payload.get("x", -1)), int(payload.get("y", -1)),
+            String(payload.get("herd_id", "")), String(payload.get("improvement", "")))
 
 ## The move twin. The move overlay is one slot per band, so the payload's rollback handle is the whole
 ## identity — see `HudBandLaborState.drop_pending_move`.
+##
+## **IT DOES NOT REFRESH THE COMPOSE SHEET, AND THAT IS NOT THE ASYMMETRY ABOVE.** A move is written
+## from targeting, and `TargetingController.begin_move_band` CLOSES the sheet before the player is
+## asked to click the map (§15 — a sheet floating over a targeting click is a trap), so no sheet can
+## be open on the source when the send fails. The write path refreshes nothing for the same reason, so
+## the pair still matches; adding a call here would only re-render a sheet nobody can have open.
 func drop_pending_move(payload: Dictionary) -> void:
     var entity := int(payload.get("pending_entity", -1))
     if entity < 0:

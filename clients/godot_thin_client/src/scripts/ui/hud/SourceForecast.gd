@@ -195,12 +195,35 @@ const YIELD_PER_TURN_SUFFIX := " /turn"
 const YIELD_RENEWABLE_NOTE := "renewable"
 const YIELD_TOOLTIP_RENEWABLE := " · " + YIELD_RENEWABLE_NOTE
 const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# **THE ROW'S TWO RATES, EACH NAMED** — `+1.96 a turn on average · +1.91 this turn`. The row's FACE is
+# `realizedYield`, the forward projection of this source's take; the number beside it is
+# `actualYield`, the take the sim resolved THIS turn. They are different quantities and routinely
+# differ by the width of the projection window — a patch sitting at its MSY inflection reads `+1.96`
+# against `+1.91`, which is the window and not an error — so the line names BOTH rather than
+# reconciling them.
+#
+# **IT READ `Actual %s`, AND THE WORD WAS THE DEFECT.** Quoting one of the two as *the actual*
+# asserts the face is something other than actual while naming neither quantity. It is a survivor of
+# the pre-`realizedYield` world, when the two WERE one number and the word was merely redundant.
+#
+# **ITS RATES ARE `format_signed`, NOT `format_yield`.** The unit is carried by the WORDS on both
+# sides — *a turn on average*, *this turn* — so the `/turn` suffix would print `+1.96 /turn a turn on
+# average`, i.e. the same unit twice in four words.
+const YIELD_TOOLTIP_RATES_FORMAT := "%s a turn on average · %s this turn"
 # Overstaffing (wasted labor) — DISTINCT from the ⚠ overdraw flag. Every policy caps a source's take at
 # its ceiling (policy ceiling / resource biomass), so past `workers_needed` extra workers produce
 # nothing HERE and should move elsewhere. A source can be overstaffed while perfectly sustainable (and
 # overdrawn while fully used), so this reads as its own WARN-tinted note on the row rather than
 # borrowing the ⚠. `workers_needed == 0` (rehydrated save) means "unknown" ⇒ no note, never a wrong one.
-const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
+# **IT NAMES THE CONSEQUENCE, NOT THE ACTIVITY** (`docs/plan_standing_upkeep.md` §4.7a). It read
+# `· only %d of %d working`, and *working* was read as *working ON WHAT* — a player with three
+# foragers on a patch at its floor took it for a build claim and reported the row as nonsense
+# (*"the Terrain tile says 2 of 3 workers, that doesn't make sense on a forage, I've never tried
+# cultivating this tile"*). **The arithmetic was correct and is untouched**: `workers_needed_for_take`
+# inverts the TAKE by the throughput the take actually ran at, so on a patch drawn down to its
+# escapement floor two gatherers carry the whole regrowth and the third brings nothing home. Nothing
+# on either side of it reads a build crew (`systems::labor`: *"both about the TAKE activity alone"*).
+const OVERSTAFF_NOTE_FORMAT := " · only %d of %d bring anything home"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped by the stock standing above its escapement floor; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
@@ -369,8 +392,13 @@ const YIELD_ACCOUNT_UNITS := {
 ## which sit directly above it, so the mapping from a crew count to the rate it buys is both verbal
 ## and spatial. Without a second reading on the row there is no arrow to key, and the header states
 ## the unit alone.
-const YIELD_ROW_HEADER := "per turn"
-const YIELD_ROW_HEADER_WITH_AFTER := "per turn · now → after"
+## **IT SAYS `next turn`, BECAUSE THAT IS WHAT THE READING IS.** The rows are composed from the room
+## next turn's take actually has (`escapement_room_next_turn`), so `per turn` was naming a rate for a
+## figure that is one turn's answer — and at equilibrium the two coincide anyway, which is what made
+## the old caption survive so long. `now → after` is unchanged: those are the crew buttons' own words
+## (`clear it now` / `hold it after`) and they key the ARROW, not the span.
+const YIELD_ROW_HEADER := "next turn"
+const YIELD_ROW_HEADER_WITH_AFTER := "next turn · now → after"
 ## **THE ONE RESOLUTION OF THE ROW'S CAPTION**, over the single fact that can key it: do these
 ## readings carry a holding rate to arrow toward.
 ##
@@ -778,6 +806,14 @@ const FORECAST_BUILD_TURNS_KEY := "build_turns_remaining"
 # the countdown is a CHAINED date — everything ahead of this entry plus its own span at the full
 # builders pool — and this is what makes that number explicable.
 const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
+# **WHY THE QUEUE IS BLOCKED HERE** — `""` on any source that is not a blocked build, else the sim's
+# own short cause key for the conjunct of the rung's gate that refused
+# (`docs/plan_standing_upkeep.md` §4.6b). It is READ BESIDE `FORECAST_BUILD_TURNS_KEY`'s `-4`, never
+# instead of it: the sentinel says the builders are held here, this says why, and a `-4` with no cause
+# beside it is the state that shipped and cost a playtest several turns on a Tame nobody could explain.
+# **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY** — this client holds no gate machinery for it and
+# must not re-derive one. It rides the SAME winning band as the three fields above.
+const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -855,6 +891,13 @@ const FORECAST_BUILD_PER_WORKER_TURN_KEY := "build_work_per_worker_turn"
 ## for a stalled build (a crew producing nothing has no finite answer) and for a source nobody is
 ## working. A missing line is honest; a zero is a promise the build is about to finish.
 const BUILD_TURNS_NO_ESTIMATE := -1
+
+## **THE BOUNDARY BELOW WHICH A COUNT HAS NO NUMBER TO STATE** — every reading at or under it either
+## has a face of its own (the two never-finishing sentinels, answered before this is reached) or has
+## none at all, and `DetailFormat.build_turns_clause` renders NO clause for it. Named because the test
+## is a producer's single guard rather than a list repeated at each call site: a bare `-1` compared
+## inline is exactly how `≈-1 turns` becomes reachable the next time the wire spells a new sentinel.
+const BUILD_TURNS_NONE_TO_STATE := 0
 
 ## **THE ANSWER FOR A STATED CREW THAT EXACTLY MATCHES THE ROT** — a build crew banking precisely
 ## what an under-kept meter is losing each turn (`docs/plan_standing_upkeep.md` §2.4). The crew's
@@ -991,8 +1034,11 @@ const BUILD_WORK_PREDICATE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_T
 const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 
 ## **THE GEAR TERM'S TWO HALVES, keyed on the dict a caller hands `build_turns_at`** — the work units
-## one equipped worker takes off a build, and how many of the band's workers this kit can actually
-## equip for one. `gear(w) = min(w, saturating crew) × per-worker worth`: coverage arms a PREFIX of
+## one equipped worker ADDS to what it delivers per turn (flint hoes, +0.5 on a plant build), and how
+## many of the band's workers this kit can actually equip for one. It is a term of the SUPPLY and
+## never a discount off the pile (`docs/plan_standing_upkeep.md` §4.8 — `build_turns_at` states the
+## form and is the one place this is evaluated).
+## `gear(w) = min(w, saturating crew) × per-worker worth`: coverage arms a PREFIX of
 ## the party, so the contribution rises with the crew until every unit is in somebody's hands and
 ## then stops, and the `min` is what makes the form exact rather than approximate.
 ##
@@ -1018,8 +1064,8 @@ const FORECAST_DONE_FLAG_KEYS := {
 ## because `Sow` skips rung 2. A Field sown from wild ground carries `cultivation_progress == 0`
 ## FOREVER (the sim: *"`Sow` needs no prior patch, so a Field may stand on ground that was never
 ## tended"*), so `is_cultivated` is honestly false on a finished Field. Reading the bare flag made a
-## completed Field offer `Cultivate this patch` — a live checkbox for a build the sim treats as
-## already built. Reported from play.
+## completed Field offer `Cultivate this patch` — an offer for a build the sim treats as already
+## built. Reported from play.
 ##
 ## **The sim already answers this correctly and this mirrors it**: `forage_rung_already_built` matches
 ## `Improvement::Cultivate => patch.is_managed()`, whose own docstring says *"a Field is above rung
@@ -1881,6 +1927,33 @@ static func escapement_room(src: Dictionary, prefix: String, floor: float) -> fl
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     return maxf(0.0, biomass - clamp_floor(floor) * capacity)
 
+## **THE ROOM NEXT TURN'S TAKE ACTUALLY HAS — this turn's growth first, then what stands above the
+## floor.** The room above is the INSTANTANEOUS one, `B − floor·K`, and on a source held at its floor
+## that is EMPTY by construction: a patch harvested back to its floor every turn showed
+## `PER TURN 0.00 FOOD` and *"takes nothing until it grows past 103"* beside a work board reading
+## `+0.96 /turn` for the same tile. Both were right about different questions — the board quotes the
+## sim's forward projection, the sheet quoted the room standing right now — and only one of them is
+## the question a compose sheet is asked.
+##
+## **IT IS THE PROJECTION'S OWN FIRST STEP, not a second model of the take.** `project_stock` regrows
+## and THEN takes, every turn, so this is that walk's first turn read out on its own — which is why the
+## sheet reconciles with the board automatically at equilibrium, where the take IS the regrowth.
+##
+## **ZERO STAYS REACHABLE, and that is the honest half.** A source far enough below its floor that one
+## turn's growth will not cross it really does pay nothing next turn, and the sheet then says so with
+## the same *until it grows past N* sentence — which becomes true exactly when it is shown.
+##
+## A source with no published curve regrows `0.0` here (`regrowth_at`'s own answer), so this collapses
+## to `escapement_room` and every such source reads exactly as it did.
+static func escapement_room_next_turn(src: Dictionary, prefix: String, floor: float) -> float:
+    var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
+    if capacity <= 0.0:
+        return escapement_room(src, prefix, floor)
+    var biomass := clampf(float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)), 0.0, capacity)
+    var grown := clampf(biomass + regrowth_at(regrowth_samples(src, prefix), biomass / capacity),
+        0.0, capacity)
+    return maxf(0.0, grown - clamp_floor(floor) * capacity)
+
 ## Is this source RUNG-3 MANAGED — a Field, or a built Pen? Such a source is never drawn down, so it
 ## pays its managed production at EVERY floor and the escapement composition does not apply to it (see
 ## `FORECAST_MANAGED_FLAG_KEYS`).
@@ -2051,10 +2124,15 @@ static func phase_zones(src: Dictionary, prefix: String) -> Array[Dictionary]:
         {"low": stressed, "high": 1.0, "phase": ECOLOGY_PHASE_THRIVING},
     ]
 
-## The learning/build multiplier this floor buys — the sim's `intensification::learn_multiplier`,
+## The LEARNING multiplier this floor buys — the sim's `intensification::learn_multiplier`,
 ## `floor / the food peak`, normalised so the peak is ×1.0. It is what the chart's gradient rail
 ## encodes, and it is a fact about **these people on this ground**, not a faction knowledge meter: a
 ## tile knows nothing.
+##
+## **IT SCALES THE KNOWLEDGE ACCRUAL AND NOTHING ELSE.** It paced the build meter too while one crew
+## both gathered and built; `build_supply` reads no floor at all now (`docs/plan_standing_upkeep.md`
+## §2.2), so a caller reaching for this to price a build is reading the wrong meter — see
+## `build_turns_at`, which takes the floor for the WORK PREDICATE alone.
 static func learn_multiplier(floor: float) -> float:
     return clamp_floor(floor) / FLOOR_FOOD_PEAK
 
@@ -2476,6 +2554,11 @@ const VERDICT_SETTLES_END := "."
 # one threshold and a sheet reading "leave 50% · ≈11 Red Deer" over "grows past 1075" states it twice
 # in two currencies.
 const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
+# THE SOURCE IS AT ITS FLOOR AND THE CREW IS LIVING OFF THE REGROWTH — the equilibrium the *reaches*
+# branch below promises, seen from inside rather than counted down to. It states no turn count because
+# there is nothing left to wait for, and it wears the same words the reaching verdict closes with, so
+# arriving at the floor and standing on it read as one state rather than two.
+const VERDICT_HOLDS_AT_FLOOR := "At the floor and holding it — taking only what grows back."
 # No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
 
@@ -2819,15 +2902,26 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
 ## walks. See `VERDICT_REACHES_STRIPPED_FORMAT`.
 static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
         floor: float, reaching_crew: int, crew_noun: String,
-        body_mass: float = 0.0, quarry: String = "", regrows: bool = true) -> Dictionary:
+        body_mass: float = 0.0, quarry: String = "", regrows: bool = true,
+        takes_next_turn: bool = true) -> Dictionary:
     if workers <= 0:
         return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
     var floor_stock := clamp_floor(floor) * capacity
-    if not crew_is_taking(workers, biomass, capacity, floor):
+    # **THE AT-FLOOR REFUSAL IS FORWARD-LOOKING NOW, and it has to be**: the headline above it states
+    # what NEXT turn's take is, so a sentence keyed on the INSTANTANEOUS room would say *"takes
+    # nothing"* over a live figure on every source held at its floor — which is exactly the pair
+    # reported from play. `takes_next_turn` is the same room that headline is composed from, so the
+    # two cannot disagree, and the sentence is true precisely when it renders.
+    if not takes_next_turn:
         return {
             "severity": VERDICT_BLOCKED,
             "text": VERDICT_AT_FLOOR_FORMAT % stock_face(floor_stock, body_mass, quarry),
         }
+    # **STANDING AT THE FLOOR AND PAYING THE REGROWTH IS ITS OWN STATE**, and neither branch below can
+    # word it: the walk never "reaches" a floor it started on (`project_stock` requires a DESCENT), so
+    # this would fall through to *"this crew can't draw it that low"* about a source already there.
+    if not crew_is_taking(workers, biomass, capacity, floor):
+        return {"severity": VERDICT_OK, "text": VERDICT_HOLDS_AT_FLOOR}
     var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
     if reached != PROJECTION_REACHED_NONE:
         var one_turn := VERDICT_REACHES_ONE_TURN if regrows else VERDICT_REACHES_ONE_TURN_STRIPPED
@@ -2932,8 +3026,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # verdict's promise of an aftermath, the `hold it after` count and the readout's `after`
         # reading are three consequences of one number and cannot contradict each other. They did:
         # this sheet read `0 hold it after` beside "then holds it — taking only what grows back".
+        # …and `takes_next_turn` from the SAME room the readout's headline is composed from
+        # (`escapement_room_next_turn`), so the sentence and the number above it are one answer.
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
-            crew_noun, body_mass, quarry, regrowth_at(samples, floor_value) > 0.0),
+            crew_noun, body_mass, quarry, regrowth_at(samples, floor_value) > 0.0,
+            escapement_room_next_turn(src, prefix, floor_value) > 0.0),
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
         # by every live drag, and this model IS what a drag recomposes. **It takes no `improvement`**:
@@ -2973,6 +3070,11 @@ static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
         # composition: whole-animal quantisation must run on BOTH readings or the holding rate would
         # be a smooth number beside a bodies-per-turn one.
         "hold_ceiling": float(forecast["axis_hold_ceiling"]),
+        # …and the ceiling NEXT TURN'S take actually has — this turn's growth first, then the room
+        # above the floor. The readout's headline is composed against it, for the reason
+        # `expected_next_turn_yield` carries: a herd held at its floor has an EMPTY room and a real
+        # take, and quoting the room reads `0.00` beside a work board quoting the regrowth.
+        "next_ceiling": float(forecast["axis_next_ceiling"]),
         "per_animal": float(forecast["axis_per_animal"]),
         # **THE ENGAGEMENT PAIR, so the delivered take can bound itself on the party's REACH.** The
         # quantised take (`DrawerComposeController._hunt_delivered_and_waste`) composes its own
@@ -3052,6 +3154,14 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     # scalars' hold twins have no material sibling** — nothing states a per-material `after`, so the
     # one that was computed here went out on every forecast for no reader (`expected_materials`).
     var ceiling_material: Array[Dictionary] = []
+    # …AND THE ROOM **NEXT TURN'S TAKE** ACTUALLY HAS — this turn's growth first, then what stands
+    # above the floor. It is a THIRD kind of ceiling beside the two above and answers a third question:
+    # the ROOM is what is standing there now (takeable once, which is what a preset's `up to +N/turn`
+    # tooltip quotes), the HOLD is what the source pays once it is sitting at the floor, and this is
+    # what the crew will BANK on the next resolved turn. Only the readout's headline reads it.
+    var next_ceiling := 0.0
+    var next_ceiling_fodder := 0.0
+    var next_ceiling_material: Array[Dictionary] = []
     if source_is_managed(src, kind, prefix):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
@@ -3070,9 +3180,15 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
                 src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[rung]), []))
         hold_ceiling = ceiling
         hold_ceiling_fodder = ceiling_fodder
+        # A managed source pays its production every turn, so *next turn* and *the room* are the same
+        # number and the readout renders one reading rather than an arrow pointing at itself.
+        next_ceiling = ceiling
+        next_ceiling_fodder = ceiling_fodder
+        next_ceiling_material = ceiling_material
     else:
         # ONE composition, both webs — the terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
+        #
         var room := escapement_room(src, prefix, floor)
         ceiling = room * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
         ceiling_fodder = room * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
@@ -3089,6 +3205,15 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         var growth := regrowth_at(regrowth_samples(src, prefix), clamp_floor(floor))
         hold_ceiling = growth * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
         hold_ceiling_fodder = growth * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+        # …and the FORWARD room through the SAME per-biomass vector the other two go through, so the
+        # headline's accounts stay in one ratio: a forward food figure beside an instantaneous
+        # material one would be two different turns stated on one row.
+        var next_room := escapement_room_next_turn(src, prefix, floor)
+        next_ceiling = next_room * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+        next_ceiling_fodder = next_room \
+            * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+        next_ceiling_material = scaled_material_rows(
+            src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), next_room)
     # ---- THE CREW'S THROUGHPUT, PER ACCOUNT, DIPPED ---------------------------------------------
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var per_worker_fodder := 0.0
@@ -3144,6 +3269,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # by name and no second take function exists to drift from the first.
         "hold_ceiling": hold_ceiling,
         "hold_ceiling_fodder": hold_ceiling_fodder,
+        # …and the NEXT-TURN ones, keyed the same way for the same reason. **The readout's headline is
+        # their ONE consumer**: the presets quote the ROOM (a quantity takeable once) and the worker
+        # cap divides the ROOM (how many hands the standing stock can use), and neither of those
+        # questions is *what lands next turn*.
+        "next_ceiling": next_ceiling,
+        "next_ceiling_fodder": next_ceiling_fodder,
+        "next_material_ceiling": next_ceiling_material,
         # The QUANTISED-AXIS triple every divide-by-a-quantum consumer reads (`max_useful_workers` and
         # the local preview). **The axis is provisions and is no longer a choice** (arc #527): the
         # trade account it could otherwise resolve to is retired, so these are aliases of the food
@@ -3152,6 +3284,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         "axis_per_worker": per_worker,
         "axis_ceiling": ceiling,
         "axis_hold_ceiling": hold_ceiling,
+        "axis_next_ceiling": next_ceiling,
         "axis_per_animal": food_per_animal,
         "whole_animal": whole_animal,
         # The floor this forecast was composed at, carried so a caller can re-state it without holding
@@ -3545,6 +3678,44 @@ static func improvement_is_done(src: Dictionary, prefix: String, improvement: St
             return true
     return false
 
+## **HAS THIS SOURCE ACHIEVED THIS RUNG AND THEN LET IT SLIP?** — the two facts `build_verb`'s own
+## docstring insists stay orthogonal, asked TOGETHER for the one question that needs both: the rung is
+## stamped BUILT and its meter is short of its cost, so there is room to put work back into it.
+##
+## **IT IS THE CLIENT HALF OF THE 99% REPAIR.** The sim's `cultivate` / `sow` / `corral` locks refuse
+## on the METER's fullness rather than on the achieved rung, so an eroded-but-achieved rung is legal to
+## re-queue — and the client offered no way to do it, the offer test filtering on the stamped flag
+## (true at 99%) and the work row reading the same source as *in progress*, so a row said DONE and
+## BUILDING at once and offered nothing. This is the seam both of those now consult.
+##
+## **THE ANIMAL WEB CANNOT REACH IT TODAY, and that is a property of the ladder rather than of this
+## test.** `IMPROVEMENT_TAME`'s achievement IS its meter (`improvement_is_done` reads
+## `domestication >= DOMESTICATION_COMPLETE`), so *done* and *short* are contradictory there; and no
+## animal rung declares decay, so a corral's meter does not fall back below its flag. It is written
+## per-rung anyway because the asymmetry is the LADDER's and could move.
+##
+## ⛔ **IT READS THE RUNG'S OWN FLAG, NEVER `improvement_is_done`, and that is not a shortcut — the
+## broader test answers TRUE for the wrong reason.** `improvement_is_done` also answers *built* when a
+## HIGHER rung retires this one (`FORECAST_RETIRED_BY_HIGHER_RUNG`), and a Field sown straight from
+## wild ground carries `cultivation_progress == 0` **forever** — Sow needs no prior patch — so through
+## that door every finished Field in the game reads as a Cultivate at 0% waiting to be repaired, and
+## the client re-offers a rung the sim treats as already built. That exact defect was reported from
+## play once and is pinned by `ui_preview`'s `forage_field_from_wild`; a rung a higher one stands on
+## has nothing to repair, because the higher rung is what is holding the ground.
+## ⛔ **AND THE METER MUST CARRY WORK, not merely read below its cost.** `improvement_progress` answers
+## `0.0` for a key the wire does not state, which is indistinguishable from a meter eroded to nothing —
+## so a bare `< BUILD_METER_FULL` reads every achieved rung whose meter is UNSTATED as a repair waiting
+## to be ordered, and puts a `⌃` on it. Measured on the harness's own keeping-pool patch, which states
+## `is_cultivated` and no `cultivationProgress`. **A repair is work partly banked and short of its
+## cost**, which is what the state actually is: `BUILD_METER_UNSTARTED < progress < BUILD_METER_FULL`.
+static func rung_needs_repair(src: Dictionary, prefix: String, improvement: String) -> bool:
+    if not FORECAST_DONE_FLAG_KEYS.has(improvement):
+        return false
+    if not bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false)):
+        return false
+    var progress := improvement_progress(src, prefix, improvement)
+    return progress > BUILD_METER_UNSTARTED and progress < BUILD_METER_FULL
+
 ## How far along this improvement's build meter is, 0..1. Clamped, so a wire value that overshoots
 ## cannot render a >100% meter. See `FORECAST_BUILD_METER_KEYS` for which meter each verb fills.
 static func improvement_progress(src: Dictionary, prefix: String, improvement: String) -> float:
@@ -3650,15 +3821,30 @@ static func build_queue_position(src: Dictionary, prefix: String) -> int:
     var position := int(src.get(prefix + FORECAST_BUILD_QUEUE_POSITION_KEY, NOT_IN_ANY_BUILD_QUEUE))
     return position if position >= BUILD_QUEUE_HEAD else NOT_IN_ANY_BUILD_QUEUE
 
+## **WHY THIS SOURCE'S BUILD IS BLOCKED** — the sim's own cause key, `""` when it is not blocked or
+## when the wire says nothing. Read it BESIDE `build_turns_remaining`'s `BUILD_TURNS_QUEUE_BLOCKED`,
+## which is what says the builders are standing here at all; this only ever says WHICH conjunct
+## refused (`docs/plan_standing_upkeep.md` §4.6b). Passed through verbatim, unrecognised keys
+## included — the wording table is the client's and answers an unknown key honestly rather than
+## dropping it, exactly as `HudFloraVocab.SOW_REFUSAL_FALLBACK` does for a site refusal.
+static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
+    return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
+
 ## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
 ## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other
 ## people's work.
 static func build_is_queue_head(src: Dictionary, prefix: String) -> bool:
     return build_queue_position(src, prefix) == BUILD_QUEUE_HEAD
 
-## **THE WORK UNITS THE CREW'S TOOLS TOOK OFF THE RUNNING BUILD.** `0` when no build is in flight or
-## the crew carries nothing that helps, which is what every readout gates its gear line on — a
-## `−0 work` line advertises a tool that did nothing.
+## **THE WORK UNITS THE POOL'S KITS ADD TO ITS OUTPUT THIS TURN** — `workers × gear_per_worker`, the
+## gear-only remainder of the build's supply (`intensification::gear_work_supply`). `0` when no build
+## is in flight or the crew carries nothing that helps, which is what every readout gates its gear
+## line on — a `+0 work` line advertises a tool that did nothing.
+##
+## ⛔ **IT MEANT *what the tools took OFF the job* AND DOES NOT ANY MORE** (§4.8). Nothing divides by
+## it and nothing subtracts it: the pace is `crew × per-worker + this`, of which this is one addend,
+## and quoting it apart is what lets a surface separate *what these people can do* from *what their
+## tools are worth*. A reader phrasing it as a discount states the opposite of what the sim sends.
 static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
     return maxf(float(src.get(prefix + FORECAST_BUILD_GEAR_WORK_KEY, BUILD_WORK_NONE)),
         BUILD_WORK_NONE)
@@ -3774,6 +3960,41 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## so there was one state wearing two names, and the `build_is_in_flight` split that kept them mutually
 ## exclusive went with them.
 
+## **WHAT A POOL OF `workers` SUPPLIES IN ONE TURN, in work units** — the client's copy of
+## `intensification::pool_work_supply`, and the ONE expression both halves of the work model divide
+## by: a build divides its pile by it (`build_turns_at`), and a KEEPING pool covers its bill out of it
+## (the pool card's coverage mark). Two spellings of it is how the two surfaces come to disagree about
+## what one hand is worth, which is the same two-producers failure the closed form already guards.
+##
+## **THE GEAR TERM SATURATES IN THE CREW.** Coverage arms a PREFIX of the pool, so ten sets of hoes
+## among twenty keepers raise ten of them and the other ten still bring their hands — hence the `min`
+## on the head count, which is what makes the form exact rather than approximate.
+##
+## `per_worker_turn` is the BARE rate the SOURCE publishes (`build_work_per_worker_turn`), never a
+## constant held here: the sim writes worker output as a sum of terms, and a client assuming today's
+## `1.0` would quote a number the sim disagrees with the moment a second term lands.
+static func pool_work_supply(workers: int, per_worker_turn: float,
+        kit_gear: Dictionary) -> float:
+    var crew := maxi(workers, BUILD_CREW_NONE)
+    var equipped := mini(crew, maxi(int(kit_gear.get(
+        BUILD_GEAR_SATURATING_CREW, BUILD_CREW_NONE)), BUILD_CREW_NONE))
+    return float(crew) * maxf(per_worker_turn, BUILD_WORK_NONE) \
+        + float(equipped) * gear_per_worker(kit_gear)
+
+## The kit's own addend, per EQUIPPED worker per turn — floored, so a malformed row cannot make a
+## worker worse than bare-handed. Its own reader because two call sites ask it: the supply above, and
+## `build_turns_at`'s *is this job priced at all* guard, which must see the bare rate and the tool
+## separately (a supply the kit alone pays is a real answer).
+static func gear_per_worker(kit_gear: Dictionary) -> float:
+    return maxf(float(kit_gear.get(BUILD_GEAR_PER_WORKER, BUILD_WORK_NONE)), BUILD_WORK_NONE)
+
+## **THE BARE WORK ONE WORKER BANKS ON THIS SOURCE IN A TURN**, off the wire's own
+## `buildWorkPerWorkerTurn`. `BUILD_WORK_NONE` where the source states none — a measured nothing that
+## every caller then guards, never a licence to substitute a constant.
+static func build_work_per_worker_turn(src: Dictionary, prefix: String) -> float:
+    return maxf(float(src.get(prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)),
+        BUILD_WORK_NONE)
+
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the
 ## stepper does.
@@ -3789,8 +4010,17 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## would lie about the very decision the card then reports.
 ##
 ##     gear(b)  = min(b, kit_gear's saturating crew) × kit_gear's per-worker worth
-##     net(b)   = b × PER_WORKER_TURN − <this SOURCE's meter rot per turn>
-##     turns(b) = ceil((cost − done − gear(b)) / net(b))
+##     net(b)   = b × PER_WORKER_TURN + gear(b) − <this SOURCE's meter rot per turn>
+##     turns(b) = ceil((cost − done) / net(b))
+##
+## ⛔ **THE GEAR TERM IS IN THE DENOMINATOR, and it was in the numerator until
+## `docs/plan_standing_upkeep.md` §4.8.** `cost − done − gear(b)` granted the kit's help as a LUMP
+## against the pile, once, however long the job ran; a tool is used every turn it is held, so it
+## raises what a worker DELIVERS and the job's size never moves. Transcribed from
+## `core_sim/tests/build_turns_closed_form.rs::client_turns_estimate`, which is the safety argument
+## for the client evaluating any of this — **do not re-derive it here.** The magnitudes moved with the
+## meaning and cannot be carried across: the shipped tool declared `8.5` as units off a job and
+## declares `0.5` as work added per equipped worker per turn.
 ##
 ## **THE MAINTENANCE RATE IS NOT IN THIS FORM, AND REMOVING IT IS SLICE 6a**
 ## (`docs/plan_standing_upkeep.md` §2.4). The build crew used to supply the rate while a meter was
@@ -3863,11 +4093,15 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## is NOT on that list any more** (§4.6a): on a meter carrying work it is a real, common state with a
 ## real answer, and the boundary is `is there work banked` — see above.
 ##
-## **A JOB THE GEAR ALONE ALREADY PAYS OFF IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate".** A bar
-## at or below zero completes on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is
-## an ANSWER; withholding the line there blanked the readout at exactly the crew size that
-## demonstrates this arc's own claim — a start-stocked band's handling gear covers a 50-unit Tame at
-## six keepers, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added.
+## **A METER ALREADY AT ITS COST IS `BUILD_FINISHES_IN_ONE_TURN`, NOT "no estimate".** A bar at or
+## below zero completes on the first worked turn (`docs/plan_unit_costed_work.md` §6.2), which is an
+## ANSWER; withholding the line there blanked the readout on a finished build.
+##
+## **GEAR CAN NO LONGER REACH THAT BRANCH, and that is the move stated as a consequence** (§4.8). It
+## used to be the common way in — a start-stocked band's handling gear covered a 50-unit Tame at six
+## keepers, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added — because the kit was
+## subtracted from the pile. A kit raises the RATE now, so more hands make the count smaller and never
+## make the job vanish.
 static func build_turns_at(src: Dictionary, prefix: String, improvement: String, workers: int,
         floor: float, kit_gear: Dictionary) -> int:
     # **A PROPOSAL OF NOBODY IS AN ANSWER WHEREVER WORK IS BANKED** (`docs/plan_standing_upkeep.md`
@@ -3899,13 +4133,26 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     if BUILD_WORK_PREDICATE_IMPROVEMENTS.has(improvement) \
             and escapement_room(src, prefix, floor) <= BUILD_NO_ESCAPEMENT_ROOM:
         return BUILD_TURNS_NO_ESTIMATE
-    var per_worker_turn := maxf(float(src.get(
-        prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)), BUILD_WORK_NONE)
-    if per_worker_turn <= BUILD_WORK_NONE:
-        # The source banks nothing per worker-turn, so there is no rate to divide by and no crew size
-        # that would change it — an absent question rather than a crew that falls short. Ungated for
-        # the reason the predicate above is: it is a fact about the SOURCE, and gating it on a crew
-        # would answer *held* where the sim answers *no estimate*.
+    var per_worker_turn := build_work_per_worker_turn(src, prefix)
+    # **THE GEAR TERM SATURATES IN THE CREW, and the `min` is on the HEAD COUNT.** Coverage arms a
+    # prefix of the pool, so an eleventh builder with ten sets of hurdles between them adds only their
+    # own hands — without the `min` this would keep crediting gear the band does not hold. The whole
+    # sum is `pool_work_supply`'s, so the pace a build divides by and the supply a keeping pool covers
+    # its bill out of are ONE expression rather than two spellings of it.
+    #
+    # ⛔ **IT IS AN ADDEND ON THE SUPPLY, NOT A LUMP OFF THE JOB** (`docs/plan_standing_upkeep.md`
+    # §4.8, transcribed from `core_sim/tests/build_turns_closed_form.rs::client_turns_estimate`). It
+    # used to be `workCost − workDone − gear(w)`: the kit's help granted ONCE against the pile,
+    # however long the job ran. A tool is used every turn it is held, so it raises what a worker
+    # DELIVERS per turn and the numerator is the job, whole. **`buildWorkPerWorkerTurn` stays the BARE
+    # rate on the wire** rather than arriving pre-averaged, which is what preserves this saturating
+    # prefix for a crew the sim has never resolved — the one crew a compose sheet exists for.
+    var supply := pool_work_supply(workers, per_worker_turn, kit_gear)
+    if per_worker_turn <= BUILD_WORK_NONE and gear_per_worker(kit_gear) <= BUILD_WORK_NONE:
+        # Nothing prices this job at all — no bare rate and no tool — so there is no rate to divide by
+        # and no crew size that would change it: an absent question rather than a crew that falls
+        # short. **The gear half of the test arrived with the term's move**: a supply the kit alone
+        # pays is a real answer, and testing the bare rate on its own would have withheld it.
         return BUILD_TURNS_NO_ESTIMATE
     # **THE ROT COMES OFF THE TOP, AND IT IS THE ONLY THING THAT DOES** — the published
     # `meter_rot_per_turn`, what this source's at-risk meter is losing while the band's keeping pool
@@ -3924,7 +4171,7 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     # **IT IS CONSTANT WITH RESPECT TO THE STEPPER**, which is why the sim can publish it and the
     # client can still price a crew the sim has never seen: dragging the builders moves the progress
     # and never the rot.
-    var work_per_turn := float(workers) * per_worker_turn - meter_rot_per_turn(src, prefix)
+    var work_per_turn := supply - meter_rot_per_turn(src, prefix)
     # **AND THE NON-FINISHING ANSWER FORKS ON THE SIGN, exactly where the sim forks it**
     # (`intensification::build_turns_estimate`, split on `BUILD_BALANCE_HOLDS`). A sheet that answered
     # `HOLDS` for both would quote an amber `∞` for the crew the tile card renders in red — the two
@@ -3934,17 +4181,12 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
         return BUILD_TURNS_ROTS
     if work_per_turn <= BUILD_WORK_NONE:
         return BUILD_TURNS_HOLDS
-    # **THE GEAR TERM SATURATES IN THE CREW, and the `min` is on the HEAD COUNT.** Coverage arms a
-    # prefix of the party, so an eleventh worker with ten sets of hurdles between them contributes
-    # nothing — without the `min` this would keep crediting gear the band does not hold and quote a
-    # build finishing sooner the more hands are added to it.
-    var equipped := mini(workers, maxi(int(kit_gear.get(
-        BUILD_GEAR_SATURATING_CREW, BUILD_CREW_NONE)), BUILD_CREW_NONE))
-    var gear := float(equipped) * maxf(float(kit_gear.get(
-        BUILD_GEAR_PER_WORKER, BUILD_WORK_NONE)), BUILD_WORK_NONE)
-    var remaining := cost - build_work_done(src, prefix, improvement) - gear
-    # **A BAR THE GEAR ALONE PAYS OFF FINISHES ON THE FIRST WORKED TURN** — an answer, and the sim's
-    # own (`intensification::build_turns_remaining` returns `Some(BUILD_FINISHES_IN_ONE_TURN)` here).
+    # **THE NUMERATOR IS THE JOB, WHOLE — no gear comes off it** (§4.8). A job's work requirement never
+    # changes: a 50-work Cultivate costs 50 work with hoes, without hoes, and with any tool that ever
+    # ships. What the kit decides is how fast the pile is worked off, which is the denominator above.
+    var remaining := cost - build_work_done(src, prefix, improvement)
+    # **A METER ALREADY AT ITS COST FINISHES ON THE FIRST WORKED TURN** — an answer, and the sim's own
+    # (`intensification::build_turns_remaining` returns `Some(BUILD_FINISHES_IN_ONE_TURN)` here).
     # Answering `BUILD_TURNS_NO_ESTIMATE` instead left the tile card quoting `≈1 turn` beside a sheet
     # quoting nothing for the same build.
     if remaining <= BUILD_WORK_NONE:
@@ -4138,6 +4380,24 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
     return expected_yield_account(forecast, workers, band, "per_worker", "ceiling",
         FORECAST_FOOD_PER_ANIMAL_KEY)
 
+## **WHAT THIS CREW ACTUALLY BANKS NEXT TURN** — the same `min` against `next_ceiling`, which is the
+## room after this turn's growth (`escapement_room_next_turn`). It is the compose readout's HEADLINE
+## and nothing else reads it.
+##
+## **A SOURCE HELD AT ITS FLOOR IS WHY IT EXISTS.** `ceiling` is the room standing right now, which on
+## such a source is EMPTY by construction — so the sheet read `PER TURN 0.00 FOOD` and *"takes nothing
+## until it grows past 103"* beside a work board quoting `+0.96 /turn` for the same tile, both correct
+## about different questions. At equilibrium this answers the regrowth, which is what reconciles the
+## two automatically.
+##
+## **THE OTHER TWO CEILINGS KEEP THEIR OWN QUESTIONS** and must not be re-pointed at this one: a
+## preset's `up to +N/turn` quotes the ROOM (a quantity takeable once) and `max_useful_workers`
+## divides the ROOM (how many hands the standing stock can use).
+static func expected_next_turn_yield(forecast: Dictionary, workers: int,
+        band: Dictionary) -> float:
+    return expected_yield_account(forecast, workers, band, "per_worker", "next_ceiling",
+        FORECAST_FOOD_PER_ANIMAL_KEY)
+
 ## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `floor(workers × engageRate × dip)`
 ## whole animals, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
 ## <account>PerBiomass` (the wire publishes the product as `food_per_animal`), so
@@ -4235,7 +4495,23 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # on Sustain reads clean; a Surplus/Deplete/Eradicate patch or an over-hunted herd trips ⚠.
         warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
-        tooltip = "Actual %s" % format_yield(actual)
+        # HEADLINE the row with the STEADY realized average, never the lumpy pulse. `realized_yield` is
+        # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
+        # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
+        # `sustainable` ceiling to the true realized average — which is what makes the row (and the
+        # Food-line income these rows sum into) steady. The pulse's overdraw is still carried by
+        # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
+        # absent (older snapshot).
+        #
+        # **IT IS RESOLVED BEFORE THE TOOLTIP NOW, because the tooltip NAMES IT.** The two are one
+        # call's `rate` and `tooltip` keys and are the same source's two quantities, so a tooltip
+        # composed above the headline could only quote the other one anonymously — which is exactly
+        # what it did.
+        if m.has("realized_yield"):
+            rate = float(m["realized_yield"])
+        else:
+            rate = sustainable if kind == LABOR_KIND_HUNT else actual
+        tooltip = YIELD_TOOLTIP_RATES_FORMAT % [format_signed(rate), format_signed(actual)]
         # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
         # stays the expectation — that is what `forecast == actual` is restated on — and the band
         # QUALIFIES it rather than replacing it. `""` where the distribution is degenerate, which is
@@ -4248,17 +4524,6 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             tooltip += " · Sustainable %s" % format_yield(sustainable)
             if warn:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
-        # HEADLINE the row with the STEADY realized average, never the lumpy pulse. `realized_yield` is
-        # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
-        # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
-        # `sustainable` ceiling to the true realized average — which is what makes the row (and the
-        # Food-line income these rows sum into) steady. The pulse's overdraw is still carried by
-        # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
-        # absent (older snapshot).
-        if m.has("realized_yield"):
-            rate = float(m["realized_yield"])
-        else:
-            rate = sustainable if kind == LABOR_KIND_HUNT else actual
         # THE SECOND PRODUCT (issue #449), under the SAME render-only-when-non-zero gate: a sown hay
         # Field pays no provisions, so without this its row headlined `+0.00 /turn` while it fed the
         # band's pens every turn. The word rather than a glyph — fodder has none, the reason
@@ -4578,9 +4843,20 @@ static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary
 ## **The two vectors are unioned by id, never zipped by position.** They come off the same species so
 ## they list the same materials today, but a missing term must read as `0` — a rate with no ceiling is
 ## a herd standing at its floor, which takes nothing and correctly renders no row.
-static func expected_materials(workers: float, forecast: Dictionary) -> Array[Dictionary]:
+## The two material rooms `expected_materials` can clamp against — the standing one and the forward
+## one. Named because a mistyped key clamps every material to zero, i.e. renders a source that pays
+## no materials at all.
+const MATERIAL_CEILING_ROOM_KEY := "material_ceiling"
+const MATERIAL_CEILING_NEXT_TURN_KEY := "next_material_ceiling"
+
+## `ceiling_key` names WHICH room the clamp is against — the standing one by default, and the
+## forward `next_material_ceiling` for the readout's headline, so the material rows and the two
+## scalars beside them describe the same TURN. An unknown key would clamp everything to zero, which
+## is why the two spellings are the callers' own constants rather than hand-typed strings.
+static func expected_materials(workers: float, forecast: Dictionary,
+        ceiling_key: String = MATERIAL_CEILING_ROOM_KEY) -> Array[Dictionary]:
     var ceilings: Dictionary = {}
-    for row_variant in forecast.get("material_ceiling", []):
+    for row_variant in forecast.get(ceiling_key, []):
         var row: Dictionary = row_variant
         ceilings[String(row.get(MATERIAL_PAYOFF_ID_KEY, ""))] = \
             float(row.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))

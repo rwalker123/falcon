@@ -188,19 +188,47 @@ control. The command
 `autoplay_timer`) is Inspector-level and carries every command the game sends, so it long outlives
 the tab.
 
-**A FAILED SEND HERE IS A TRANSPORT FAILURE AND CAN BE NOTHING ELSE, so it says so.** The line read
-`Command failed (assign_labor 0 1 builders 1): can't connect`, and reported from play it sent the
-player looking for a rules problem that does not exist. `CommandClient.send_line` answers
-`ERR_CANT_ACQUIRE_RESOURCE` when there is no bridge and `ERR_CANT_CONNECT` when the bridge could not
-deliver — **those are its only two values** — because a command the SIM refuses has already been
-written to the socket and its refusal arrives later on the server's own event stream. So there is no
-sim-refusal branch to fork against: the site has one meaning and states it, through
-`HudEventVocab.COMMAND_NOT_SENT_FORMAT` — `Not connected to the server — "assign_labor 0 1 builders
-1" was not sent.` The error CODE is not quoted (the two mean the same thing here and a player can act
-on neither); `CommandClient` already `push_warning`s the bridge's own message for a developer, and
-the Logs console keeps this line verbatim. `_ensure_command_connection`'s two messages are untouched
-— *"Command pending: command socket still connecting."* and *"Command unavailable (…)"* already name
-the socket rather than a refusal.
+**A FAILED SEND IS ONE OF *TWO* THINGS, AND CALLING BOTH A DISCONNECT SENT A PLAYER HUNTING A DEAD
+NETWORK THAT WAS FINE.** This paragraph used to read *"a failed send here is a transport failure and
+can be nothing else"*, on the reasoning that `CommandClient.send_line` answers
+`ERR_CANT_ACQUIRE_RESOURCE` with no bridge and `ERR_CANT_CONNECT` when the bridge could not deliver,
+and that **"those are its only two values"** — a command the SIM refuses having already gone down the
+socket, its refusal arriving later on the server's own event stream.
+
+> **⛔ THAT WAS TRUE UNTIL PARSING MOVED INTO THE BRIDGE, AND ITS OWN EXAMPLE IS WHAT BROKE.**
+> `bridge/command.rs` → `send_line` calls `parse_command_line` **before** it sends anything and returns
+> `{ok: false, error: …}` on a line it cannot read. That is a THIRD answer the invariant did not admit,
+> and the one that fired in play: `assign_labor 0 1 builders 1` — the line this section used as its
+> worked example — was **rejected locally**, because the role was missing from the text grammar
+> (`harness-band-panel.md` → "A ROLE PASSES TWO GATES"), and the player was told the server was
+> unreachable while it was answering perfectly.
+
+So the site forks, and **it forks on the error CODE rather than on the reason's prose**:
+
+- **`ERR_CANT_CONNECT` → `HudEventVocab.COMMAND_REFUSED_FORMAT`** — `Refused before it left the client
+  — "assign_labor 0 1 builders 1": unexpected token "builders"`. The bridge's reason is passed
+  **verbatim**, because that reason names the token that failed and is the only actionable thing in the
+  line. *"before it left the client"* is honest for every failure this code covers — an unparseable
+  line, a dispatch that never reached the worker, a write the worker could not make, a wait that timed
+  out — none of which is the server refusing anything.
+- **Anything else → `COMMAND_NOT_SENT_FORMAT`**, which **narrowed rather than widened** and keeps its
+  original meaning. Widening its wording to cover both would have traded a wrong message for a vague
+  one, which is the tempting repair and the worse one.
+
+**`CommandClient` retains the reason now** (`last_send_error`) instead of dropping it after a
+`push_warning` no player ever sees. **`command_connected` is NOT touched on the local-rejection path,
+and never was**: `_update_command_status()` re-reads `CommandClient.status()`, which answers
+`STATUS_CONNECTED` whenever a bridge exists — so the status indicator was correct throughout and **the
+log line alone was the lie**. That is written down here rather than left as an assumption, because the
+obvious "fix" is to stop flipping a flag that was never flipping.
+
+**KNOWN GAP — no harness drives this line.** Neither preview harness stands up `Inspector`, and
+`command_guard` exercises the builder rather than the send path's failure branch, so the fork is
+verified by reading. The cheapest seam if it needs pinning is a pure static mapping
+`(Error, reason) → message`, which is what the rest of this client does with a decision worth asserting.
+
+`_ensure_command_connection`'s two messages are untouched — *"Command pending: command socket still
+connecting."* and *"Command unavailable (…)"* already name the socket rather than a refusal.
 
 **Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab with no capability-gated actions (the former Found Camp action + its CAP_CONSTRUCTION gate were removed with the retired `found_camp` command). **Migrated tab panels don't grey out** — instead of disabling the tab (confusing: a dead tab with no explanation), the coordinator calls `panel.set_available(has_flag)` and the panel stays clickable, rendering a "🔒 Locked — unlocks via …" message while gated (see `PowerPanel`). `_set_tab_enabled` is still used for tabs not yet migrated to the panel contract. Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
 

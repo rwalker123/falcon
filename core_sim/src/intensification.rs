@@ -9,10 +9,12 @@
 //! at the job's declared cost the source steps up a rung.
 //!
 //! **AN IMPROVEMENT COSTS WORK, NOT TURNS** (`docs/plan_unit_costed_work.md`). A rung declares a fixed
-//! [`RungBuild::work_cost`] in work units; a crew produces [`PER_WORKER_OUTPUT`] per worker per turn,
-//! scaled by the floor it holds and the kit it brought; **turns are the output**. That is what lets a
+//! [`RungBuild::work_cost`] in work units; a builder produces [`PER_WORKER_OUTPUT`] per turn bare and
+//! more with a kit ([`build_work_per_worker_turn`]); **turns are the output**. That is what lets a
 //! rung up the ladder be a *bigger job* than the one below it, and what makes a build finish sooner as
-//! the faction improves.
+//! the faction improves. **A KIT NEVER CHANGES THE JOB'S SIZE**
+//! (`docs/plan_standing_upkeep.md` §4.8) — a 50-work Cultivate costs 50 work with hoes, without hoes
+//! and with any tool that ever ships.
 //!
 //! **THE PLAYER SPLITS THE BAND, and the sim splits nothing** (`docs/plan_standing_upkeep.md` §2.2).
 //! A source carries a **take** crew and a **build** crew, each a number the player typed, and the
@@ -114,10 +116,14 @@ pub const RUNG_UNSTARTED: f32 = 0.0;
 pub const FABRICATED_BUILD_COST: f32 = PER_WORKER_OUTPUT;
 
 /// **The grace of a rung there is nothing to neglect on** — a source standing on a rung with no
-/// build meter (either `wild` rung). Zero rather than "infinite" because it is never *used* as a
-/// grace: both webs consult [`RungDef::neglect_grace_turns`] only for a rung whose meter or flock is
+/// standing upkeep (either `wild` rung). Zero rather than "infinite" because it is never *used* as a
+/// grace: both webs consult [`RungDef::upkeep_grace_turns`] only for a rung whose meter or flock is
 /// actually at risk, and a value that silently forgave everything would be the more dangerous default
 /// if that ever stopped being true.
+///
+/// **It is also what [`RungDef::neglect_grace_turns`] answers for every shipped rung**, since none
+/// declares a `build.grace_turns` — the un-worked-build trigger both webs retired in favour of the
+/// upkeep's shortfall. A live reader of the build grace is therefore reading a constant zero.
 pub const NO_NEGLECT_GRACE: u32 = 0;
 
 // **RETIRED: `source_crew_needed(standing_crew, take_workers)`** — `max(standing, take)`, the one
@@ -192,45 +198,75 @@ pub fn learn_multiplier(floor: f32) -> f32 {
     (floor / crate::fauna::MSY_BIOMASS_FRACTION).max(0.0)
 }
 
-/// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK**, before the floor and the kit
-/// scale it — the per-worker half of [`crew_work_output`], and **the sum of terms** the model is
-/// written as (`docs/plan_unit_costed_work.md` §5).
+/// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK** — its bare output
+/// ([`PER_WORKER_OUTPUT`]) **plus what its kit delivers**, and **the sum of terms** the model is
+/// written as (`docs/plan_unit_costed_work.md` §5, as amended by `docs/plan_standing_upkeep.md`
+/// §4.8).
 ///
-/// **Exactly one term today**, and that shape is deliberate rather than premature: §5 rules that
-/// knowledge does **not** feed throughput (it reaches it through the tools it unlocks, which §6
-/// prices), so there is nothing to add here yet — but a future buff mechanic needs a place to land
-/// that is not a re-inversion of the model.
+/// # A KIT RAISES THE WORKER, IT NEVER SHRINKS THE JOB
+///
+/// `gear_per_worker` is [`crate::equipment_config::EquipmentConfig::build_work_per_worker`] resolved
+/// through the pool's coverage — *extra work delivered, per worker, per turn*. A job's
+/// [`RungBuild::work_cost`] is the same pile bare-handed and fully equipped; gear only changes how
+/// fast that pile is worked off. **Bare hands still deliver [`PER_WORKER_OUTPUT`]**, which is what
+/// keeps a kitless pool building at all.
 ///
 /// **It is a function rather than [`PER_WORKER_OUTPUT`] read directly, because it is PUBLISHED**
 /// (`ForagePatchState.buildWorkPerWorkerTurn` / `HerdTelemetryState.buildWorkPerWorkerTurn`). The
 /// compose sheet evaluates the turn estimate against a crew the player is *proposing*, so it needs
-/// this term rather than the sim's answer for the committed crew — and the day a second term lands
-/// here, the client tracks it with no change of its own.
-pub fn build_work_per_worker_turn() -> f32 {
-    PER_WORKER_OUTPUT
+/// this rate rather than the sim's answer for the committed crew.
+///
+/// Floored at [`NO_BUILD_GEAR`] so a config that somehow named a negative contribution cannot make a
+/// worker worse than bare-handed — `EquipmentConfig::validate` rejects one, and this is the
+/// arithmetic's own guard.
+pub fn build_work_per_worker_turn(gear_per_worker: f32) -> f32 {
+    PER_WORKER_OUTPUT + gear_per_worker.max(NO_BUILD_GEAR)
 }
 
-/// **WHAT THE CREW'S TOOLS TAKE OFF THE JOB** — `Σ over the crew`, which
-/// [`crate::equipment_config::KitCoverage::weighted_rate`] × head count already is
-/// (`docs/plan_unit_costed_work.md` §6.2).
+/// **WHAT A BUILD POOL SUPPLIES IN ONE TURN** — `workers × `[`build_work_per_worker_turn`], and THE
+/// one expression a build's pace is divided by (`docs/plan_standing_upkeep.md` §4.8).
 ///
-/// **The tool is WIELDED**: a worker holding one contributes its worth, a worker without one
-/// contributes nothing, so this is a **sum and not an average** — an un-geared hand adds zero rather
-/// than diluting, which is the pathology the retired `BuildRate` multiplier had when averaged
-/// (*bring fewer keepers and the pen goes up faster*). `per_worker` is
-/// [`crate::equipment_config::EquipmentConfig::build_work_per_worker`] resolved through the crew's
-/// coverage, so a partly-equipped party gets exactly the share it carries.
+/// **The tool is WIELDED, and the coverage seam is what makes that true of a part-equipped pool**:
+/// `gear_per_worker` comes from [`crate::equipment_config::KitCoverage::weighted_rate`], which arms a
+/// **prefix** of the pool, so ten sets of hurdles among twenty keepers raise ten of them and the
+/// other ten still bring their hands. Multiplying the *weighted* rate by the head count is therefore
+/// the sum of what the pool actually carries, not an average that would let a kitless hand dilute a
+/// geared one.
 ///
 /// **`workers` IS THE BUILD'S OWN CREW**, never the band's crew on the source
-/// (`docs/plan_standing_upkeep.md` §2.2). `per_worker` is a **rate per worker**, so the count it
-/// multiplies has to be the workers actually doing the job — and since
-/// [`LadderConfig::effective_build_cost`] is deliberately unfloored, pairing a band-wide count with a
-/// one-hand build would let a single builder beside a large gathering crew pay a whole job off
-/// outright. That became reachable the moment the two crews split.
+/// (`docs/plan_standing_upkeep.md` §2.2) — the pool standing on the head of the band's queue.
+pub fn pool_work_supply(workers: u32, gear_per_worker: f32) -> f32 {
+    workers as f32 * build_work_per_worker_turn(gear_per_worker)
+}
+
+/// **WHAT THE POOL'S KITS ADD TO ITS OUTPUT THIS TURN** — `workers × gear_per_worker`, the gear-only
+/// remainder of [`pool_work_supply`], published as `buildWorkFromGear` so a readout can say *"your
+/// hoes: +9 work a turn"* beside a `workCost` that does not move under the crew's kit.
 ///
-/// Floored at [`NO_BUILD_GEAR`] so a config that somehow named a negative contribution cannot *add*
-/// work to a job — `EquipmentConfig::validate` rejects one, and this is the arithmetic's own guard.
-pub fn build_work_from_gear(per_worker: f32, workers: u32) -> f32 {
+/// **It is a READOUT and nothing divides by it.** The pace is [`pool_work_supply`], of which this is
+/// one addend; quoting it apart is what lets a surface separate *what these people can do* from
+/// *what their tools are worth*.
+///
+// **RETIRED: `build_work_from_gear(per_worker, workers)`** — the same arithmetic under the reading
+// *"what the crew's tools TAKE OFF the job"*, which was subtracted from a rung's `work_cost` through
+// the retired `LadderConfig::effective_build_cost`.
+//
+// **A KIT RAISES WORKER PRODUCTIVITY; A JOB'S WORK REQUIREMENT NEVER CHANGES**
+// (`docs/plan_standing_upkeep.md` §4.8). Two things decided it:
+//
+// 1. **A LUMP AGAINST THE TARGET, WHERE A TOOL IS A RATE.** `cost − workers × gear` granted the
+//    kit's help **once**, against the pile, however long the job ran; a tool is used every turn it
+//    is held, so productivity pays it **every turn**. The subtraction's bonus was
+//    duration-independent, which is what made it a different quantity from the thing it modelled.
+// 2. **SUBTRACTION CANNOT EXPRESS AN UPKEEP.** A standing cost is a *rate*, and a rate has nothing
+//    to subtract from — so the shipped model needed a second mechanism for the other half of the
+//    same question, while **one supply expression feeds both**: a build divides a pile by it, an
+//    upkeep compares a demand against it.
+//
+// What the change gives up is scale-sensitivity: a productivity multiple saves the same *percentage*
+// of turns on a garden and on a farm alike, where a lump off the cost was a larger share of a small
+// job.
+pub fn gear_work_supply(per_worker: f32, workers: u32) -> f32 {
     (workers as f32 * per_worker).max(NO_BUILD_GEAR)
 }
 
@@ -265,13 +301,13 @@ pub fn build_fraction(done: f32, cost: f32) -> f32 {
 /// other no-answer cases before they ever reach here: no crew on the source, the top of the ladder,
 /// a gate that refuses.)
 ///
-/// **A bar the meter is already at or past is [`BUILD_FINISHES_IN_ONE_TURN`], not "no answer"**, and
-/// the two states that reach it are the same sentence: the work is already banked, or the crew's
-/// **gear pays the job off outright** ([`LadderConfig::effective_build_cost`] is unfloored, so a
-/// well-equipped crew drives the bar to or below zero). Both *"finish on the first worked turn"*
-/// (`docs/plan_unit_costed_work.md` §6.2), and answering `-1` there broke the arc's own headline
-/// claim at exactly the crew size that demonstrates it — the estimate fell 25 → 13 → 4 → 2 → *no
-/// estimate* as hands were added.
+/// **A cost the meter is already at or past is [`BUILD_FINISHES_IN_ONE_TURN`], not "no answer"** —
+/// the work is already banked, so there is nothing left to wait for. It is an answer, and collapsing
+/// it into *"no estimate"* would publish silence about a build that is finished.
+///
+/// **The bar it is measured against is the job's own cost**, always: gear is a term of
+/// [`pool_work_supply`] and never of the pile (§4.8), so a pool reaches this by banking the work,
+/// exactly as fifty bare hands do.
 ///
 /// **The sim answers it because the client cannot**: the client holds neither the crew's output, nor
 /// the floor multiplier, nor the kit's build rate — the same division of labour as `penFeedUpkeep`
@@ -402,8 +438,121 @@ pub fn build_turns_estimate(
     }
 }
 
-/// **THE FOUR NUMBERS A BUILD'S COUNTDOWN IS STRUCK FROM, at one crew** — the bar the meter must
-/// reach, what is banked on it, the signed supply, and whether the rung's own gate holds at all.
+/// **WHICH CONJUNCT OF A RUNG'S OWN GATE REFUSED** — the cause behind a [`BuildTurns::Blocked`]
+/// head, so a stuck queue can say *why* instead of only *that* (`docs/plan_standing_upkeep.md`
+/// §4.6b).
+///
+/// **It REPLACES the `gate_holds: bool` a quote used to carry rather than sitting beside it.** One
+/// stored fact cannot disagree with itself, and a second producer of one verdict is the failure this
+/// arc keeps repeating — [`Self::holds`] is the boolean the countdown arithmetic reads, and it is
+/// derived from the same value the wire states.
+///
+/// **THE CLIENT MUST NOT RE-DERIVE THIS.** The sim decides `eligible`, so the sim says why: a
+/// blocked build with no cause is the state a playtest sat on for turns, fixing the one thing a
+/// surface happened to name while the real refusal went unmentioned.
+///
+/// **A conjunction reports its FIRST failing term**, in the order the arm writes them
+/// ([`Self::first_refusal`]) — deterministic, and the reading order of the code it describes.
+///
+/// **Each variant is a CAUSE, not a sentence.** [`Self::key`] is a short lowercase token on the
+/// free-form-string convention `species` / `ecologyPhase` / `sowSiteRefusal` already use; the client
+/// owns the wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BuildGate {
+    /// Every conjunct held. The wire key is `""` — *"this entry is not blocked"* — which is what a
+    /// finishing, holding or rotting build publishes too.
+    #[default]
+    Open,
+    /// The faction does not know the rung's `unlock_knowledge` ([`RungDef::unlock_discovery_id`]).
+    /// Every built rung on both webs carries this term.
+    Knowledge,
+    /// **Nothing stands above the crew's escapement floor**
+    /// ([`crate::systems::labor`]'s `crew_is_working_the_source`). Carried by the two rung-2 arms —
+    /// plant `Cultivate` and animal `Tame` — and never by rung 3, where bare ground stands below
+    /// every floor by construction.
+    ///
+    /// **This is the animal web's escapement stall**, whose remedy is the `husbandry` pool rather
+    /// than anything on the build line (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH
+    /// SUPPRESSION CLOSES A LOOP").
+    Escapement,
+    /// **Nothing here climbs** — the patch carries no committed plant (`Cultivate`), or the tile's
+    /// whole basket stops below the quoted rung (a projection's `resolve_committed_species`).
+    NoCrop,
+    /// The species' `husbandry_ceiling` stops below this rung — `Herd::can_domesticate` for a
+    /// `Tame`, `Herd::can_pen` for a `Corral`. One key for both, because it is one fact about the
+    /// animal and the player's response to it is the same: this beast climbs no further.
+    SpeciesCeiling,
+    /// **The rung below is not built** — a `Corral` on a herd that is not domesticated yet.
+    RungBelow,
+    /// Another faction holds the source.
+    OwnedByOther,
+    /// The ground does not admit the rung ([`RungSiteRequirement`]) — `Sow`'s fresh-water and
+    /// gathering-site rule, and the same term in a projection's gate. The other three rung arms
+    /// carry no site term: rungs 1–2 are already standing on ground a crew was allowed onto.
+    Site,
+    /// **The band's queue entry does not name the rung its meter is on** — `Sow`'s
+    /// `declared == Some(Improvement::Sow)` term. Reachable where a patch's newest meter derives a
+    /// rung the entry never declared, and the remedy is to re-queue the job the ground is actually
+    /// half-way through.
+    Undeclared,
+    /// **The extension ring is not running** (`Herd::pen_extending`) — [`BuildJob::ExtendPen`]'s
+    /// whole gate, and the one entry kind with no rung meter of its own.
+    RingIdle,
+    /// **The source produced no quote this turn** — not a conjunct of any rung's `eligible` but a
+    /// real and different state, minted by the band's chain pass. The labor loop never reached this
+    /// source (the row lapsed, the patch or herd left its registry), so there is no gate to report
+    /// on and the honest cause is that nobody worked it.
+    Unworked,
+}
+
+impl BuildGate {
+    /// **Does the rung's own gate hold?** The boolean [`build_turns_estimate`] takes, so the
+    /// arithmetic and the published cause are one value read two ways.
+    pub fn holds(self) -> bool {
+        matches!(self, BuildGate::Open)
+    }
+
+    /// Stable wire key ([`SiteRefusal::as_str`]'s convention), `""` for [`BuildGate::Open`] — the
+    /// wire's *"not blocked"*, and what every entry that is not a blocked head publishes.
+    pub fn key(self) -> &'static str {
+        match self {
+            BuildGate::Open => BUILD_GATE_OPEN,
+            BuildGate::Knowledge => "knowledge",
+            BuildGate::Escapement => "escapement",
+            BuildGate::NoCrop => "no_crop",
+            BuildGate::SpeciesCeiling => "species_ceiling",
+            BuildGate::RungBelow => "rung_below",
+            BuildGate::OwnedByOther => "owned_by_other",
+            BuildGate::Site => "site",
+            BuildGate::Undeclared => "undeclared",
+            BuildGate::RingIdle => "ring_idle",
+            BuildGate::Unworked => "unworked",
+        }
+    }
+
+    /// **The first term that refused, in the order the arm states them** — an arm's `eligible`
+    /// conjunction, written as its terms so the *cause* survives the `&&` that would otherwise
+    /// collapse it to a bit.
+    ///
+    /// The terms are evaluated eagerly by the caller rather than short-circuited, which every arm's
+    /// conjuncts already permit: each is a registry field read or a ledger lookup, none has a side
+    /// effect, and stating them as a list is what keeps the published cause and the gate the sim
+    /// acts on the same expression.
+    pub fn first_refusal(terms: &[(bool, BuildGate)]) -> BuildGate {
+        terms
+            .iter()
+            .find(|(holds, _)| !*holds)
+            .map_or(BuildGate::Open, |(_, cause)| *cause)
+    }
+}
+
+/// The wire key for **"this entry is not blocked"** — [`BuildGate::Open`]'s key, and the neutral a
+/// source carries between turns. Named for [`SITE_ACCEPTED`]'s reason: `""` at a call site says
+/// nothing about what it means.
+pub const BUILD_GATE_OPEN: &str = "";
+
+/// **THE FOUR NUMBERS A BUILD'S COUNTDOWN IS STRUCK FROM, at one crew** — the job's cost, what is
+/// banked on it, the signed supply, and whether the rung's own gate holds at all.
 ///
 /// It exists because the countdown stopped being a per-source question
 /// (`docs/plan_standing_upkeep.md` §4.6b). A band's builders fund the **head** of its queue and
@@ -417,25 +566,33 @@ pub fn build_turns_estimate(
 /// than at whatever this source is funded at this turn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BuildQuote {
-    /// The **tooled** bar: the job's cost less what the pool's gear takes off it.
-    pub bar: f32,
+    /// **The job, whole** — [`RungDef::build_cost`] at this source's own multiplier, and the bar the
+    /// meter must reach whatever the pool is carrying. **A kit never moves it** (§4.8): gear is a
+    /// term of `balance` below, so a better-equipped pool reaches the same number sooner.
+    //
+    // **RETIRED: the `bar` this replaced** — `cost − what the pool's gear took off it`, struck
+    // through `LadderConfig::effective_build_cost`. See [`gear_work_supply`] for the two reasons
+    // the subtraction went.
+    pub cost: f32,
     /// The work already on this rung's meter.
     pub banked: f32,
     /// `build_supply(at the full pool) − meter_rot` ([`RungDef::build_balance`]).
     pub balance: f32,
-    /// The rung's own composed gate — knowledge, site, species, ownership, escapement room. `false`
-    /// is *"there is no answer"*, and at the head of a staffed queue it is [`BuildTurns::Blocked`].
-    pub gate_holds: bool,
+    /// The rung's own composed gate — knowledge, site, species, ownership, escapement room —
+    /// **and which conjunct refused** ([`BuildGate`]). Anything but [`BuildGate::Open`] is *"there
+    /// is no answer"*, and at the head of a staffed queue it is [`BuildTurns::Blocked`] carrying
+    /// this cause.
+    pub gate: BuildGate,
 }
 
 impl BuildQuote {
     /// This entry's **own span**, before any chaining — [`build_turns_estimate`] over the four.
     pub fn turns(&self, builders: u32) -> Option<BuildTurns> {
         build_turns_estimate(
-            self.bar,
+            self.cost,
             self.banked,
             self.balance,
-            self.gate_holds,
+            self.gate.holds(),
             builders,
         )
     }
@@ -473,16 +630,18 @@ pub const BUILD_FINISHES_IN_ONE_TURN: u32 = 1;
 /// animal is *more work*, not that the crew is worse at their job. See [`RungDef::build_cost`].
 pub const RUNG_COST_UNSCALED: f32 = 1.0;
 
-/// **The work a crew carrying no gear that helps takes off a job** — nothing. The neutral `0.0` a
-/// kit resolves to when none of its live items declares
+/// **The work a crew carrying no gear that helps ADDS to its own output** — nothing. The neutral
+/// `0.0` a kit resolves to when none of its live items declares
 /// [`crate::equipment_config::EquipmentStat::BuildWork`].
 ///
-/// **It is `0.0` and not `1.0`, because the gear is ADDITIVE off the job's cost now**
-/// (`docs/plan_unit_costed_work.md` §6): it was the neutral of a *multiplier* on the crew's output,
-/// under which a tool saved the same percentage of turns on a garden and on a farm alike — the
-/// multiplier problem the arc exists to escape. A neutral read as the wrong one of these is a build
-/// either free or unbuildable, which is why the two live on the stat
-/// ([`crate::equipment_config::EquipmentStat::neutral`]) rather than at the call sites.
+/// **It is `0.0` and not `1.0`, because the stat is an ADDEND on the worker's output**
+/// (`docs/plan_standing_upkeep.md` §4.8): a bare hand delivers [`PER_WORKER_OUTPUT`] and this adds
+/// nothing on top, where a `1.0` would silently double every kitless builder. It was never a
+/// multiplier's neutral — the retired `BuildRate` multiplier is what §6 of the work-cost plan
+/// escaped, and the additive reading survived that change by moving from the **job** to the
+/// **worker**. A neutral read as the wrong one of these is a build either free or unbuildable, which
+/// is why the two live on the stat ([`crate::equipment_config::EquipmentStat::neutral`]) rather than
+/// at the call sites.
 ///
 /// It is [`crate::equipment_config::EquipmentConfig::build_work_per_worker`]'s answer for a crew
 /// that went out bare **and for one carrying the other web's tool** — a hoe takes nothing off a
@@ -514,6 +673,17 @@ pub const SOLE_BUILDER: u32 = 1;
 /// an upkeep.
 pub const NO_UPKEEP_DEMAND: f32 = 0.0;
 
+/// **NO VERB IS FILLING A METER ON THIS SOURCE RIGHT NOW** — what the keeping seams
+/// (`forage::patch_keeping_meter` / `fauna::herd_keeping_meter`) are handed by every caller that
+/// asks the question **outside** the labor arm: the decay pass, the snapshot, the wire's countdowns.
+///
+/// Named rather than written `None` at those sites because the answer turns on it. With a verb the
+/// seams resolve *progress OR the meter that verb is filling*; without one they resolve progress
+/// alone — which is the honest reading **after** the turn's accrual has landed, and the wrong one
+/// before it. A bare `None` reads as "there is no improvement here" when what it says is "this
+/// caller cannot see the band's queue".
+pub const NOTHING_IN_FLIGHT: Option<crate::components::Improvement> = None;
+
 /// **A shortfall that costs the meter nothing** — what [`RungDef::upkeep_decay`] answers for a rung
 /// with no upkeep, and for one still inside its grace. Named for the same reason
 /// [`NO_NEGLECT_GRACE`] is: a bare `0.0` at a decay site reads as *"the meter is fine"* when the
@@ -535,9 +705,15 @@ pub const WHOLLY_UNSUPPLIED: f32 = 1.0;
 /// (`assign_labor … 0`), and for a whole band-level role (`… builders 0`).
 pub const NO_CREW_ON_THIS_ACTIVITY: u32 = 0;
 
-/// **THE WORK A CREW ON ONE ACTIVITY PRODUCES IN ONE TURN** — `workers × PER_WORKER_OUTPUT`, and the
-/// arithmetic that replaced the retired one-pool work budget
+/// **THE WORK A BARE-HANDED CREW ON ONE ACTIVITY PRODUCES IN ONE TURN** — `workers ×
+/// PER_WORKER_OUTPUT`, and the arithmetic that replaced the retired one-pool work budget
 /// (`docs/plan_standing_upkeep.md` §2.2).
+///
+/// **THE BUILD POOL IS NOT ONE OF ITS CALLERS ANY MORE** — a build reads [`pool_work_supply`],
+/// which is this plus what the pool's kits deliver (§4.8). What is left here is the **keeping**
+/// pools and the knowledge sites, where no kit has ever contributed; routing an upkeep's supply
+/// through the same gear-aware expression is §4.8's other half and is deliberately not built yet, so
+/// the two spellings say exactly what each account reads today.
 ///
 /// # THE PLAYER STATES THE SPLIT — there is nothing to derive
 ///
@@ -549,7 +725,7 @@ pub const NO_CREW_ON_THIS_ACTIVITY: u32 = 0;
 /// ```text
 /// upkeep_supplied  = this source's share of the band's keeping POOL — at ANY meter fullness
 /// upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)   // → the rot, past grace
-/// build_work       = build_workers × PER_WORKER_OUTPUT         // − what the crew's gear takes off the job
+/// build_work       = build_workers × (PER_WORKER_OUTPUT + the kit's own delivery)
 /// net              = build_work − rot                          // what the COUNTDOWN reads
 /// take             = min(take_workers × per_worker_capacity, source_offer)
 /// ```
@@ -566,7 +742,7 @@ pub const NO_CREW_ON_THIS_ACTIVITY: u32 = 0;
 /// degenerate `0/0` answer at a floor of zero (`learn_multiplier(0.0)` is `0`), plus a hard-coded
 /// ordering the player could neither see nor state. Three allocations answer it by not asking.
 pub fn activity_work(workers: u32) -> f32 {
-    workers as f32 * build_work_per_worker_turn()
+    workers as f32 * PER_WORKER_OUTPUT
 }
 
 // **RETIRED: `net_build_supply(supply, maintenance_rate)`** — `max(0, supply − rate)`, the
@@ -1033,10 +1209,14 @@ impl RungSiteRequirement {
 pub struct RungBuild {
     /// **WHAT THIS RUNG COSTS, IN WORK UNITS** — the fixed size of the job
     /// (`docs/plan_unit_costed_work.md` §1). One unit is one worker-turn at the food peak with no
-    /// gear ([`PER_WORKER_OUTPUT`]), so `50` reads as *"fifty worker-turns"* and the number needs no
-    /// second dial to interpret. **Turns are the OUTPUT**: `work_cost / (workers × output)` is how
-    /// long it takes, and that falls as the faction puts more hands, a shallower floor or better
-    /// tools on the same fixed job.
+    /// gear ([`PER_WORKER_OUTPUT`]), so `50` reads as *"fifty bare worker-turns"* and the number
+    /// needs no second dial to interpret. **Turns are the OUTPUT**: `work_cost / (workers × output)`
+    /// is how long it takes, and that falls as the faction puts more hands or better tools on the
+    /// same fixed job.
+    ///
+    /// **NOTHING SHRINKS IT** (`docs/plan_standing_upkeep.md` §4.8). A kit raises the *worker*
+    /// ([`build_work_per_worker_turn`]); this is the pile, and the pile is the same for a crew
+    /// holding the best tool on the roster as for one holding nothing.
     ///
     /// It replaced a `progress_per_turn` rate against a normalized `1.0` meter, under which every
     /// improvement on both webs was literally the same 25-turn job and a rung could only become
@@ -1377,19 +1557,19 @@ impl RungDef {
     }
 
     /// **The build seam — the accrual side. THE WORK UNITS THIS BUILD CREW PRODUCES THIS TURN**, not
-    /// a fraction of anything and net of nothing: [`activity_work`]`(workers)` when `improvement`
-    /// **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` — knows the
-    /// unlock knowledge, the species' ceiling allows it, the faction owns it), otherwise
-    /// [`NO_BUILD_PROGRESS`].
+    /// a fraction of anything and net of nothing: [`pool_work_supply`]`(workers, gear_per_worker)`
+    /// when `improvement` **is** the rung's verb *and* the caller's rung-specific gates hold
+    /// (`eligible` — knows the unlock knowledge, the species' ceiling allows it, the faction owns
+    /// it), otherwise [`NO_BUILD_PROGRESS`].
     ///
-    /// # THE MAINTENANCE RATE IS NOT A TAX ON BUILDING — `work_cost / crew` IS the pace
+    /// # THE MAINTENANCE RATE IS NOT A TAX ON BUILDING — `work_cost / supply` IS the pace
     ///
     /// **A build crew supplies nothing toward the rate; its whole output is progress**
     /// (`docs/plan_standing_upkeep.md` §4.6a). The band's keeping pool owes the rate for every meter
     /// carrying work, at **any** fullness, so there is nothing here to subtract:
     ///
     /// ```text
-    /// build_work = builders × PER_WORKER_OUTPUT
+    /// build_work = builders × (PER_WORKER_OUTPUT + gear_per_worker)
     /// turns      = work_cost / build_work            // …less whatever the meter is bleeding
     /// ```
     ///
@@ -1407,8 +1587,8 @@ impl RungDef {
     ///
     /// `LaborAllocation::workers_on(&LaborTarget::Builders)` — **not** the take crew this build
     /// rides beside, and the whole of it, because the pool funds only the **head** of the band's
-    /// queue (`docs/plan_standing_upkeep.md` §2.5). A worker is worth
-    /// [`PER_WORKER_OUTPUT`], so `n` workers produce `n` units a turn and a Cultivate staffed at
+    /// queue (`docs/plan_standing_upkeep.md` §2.5). A bare-handed worker is worth
+    /// [`PER_WORKER_OUTPUT`], so `n` of them produce `n` units a turn and a Cultivate staffed at
     /// fifty finishes in a turn. That is allowed: the constraint is opportunity cost across systems,
     /// not a rule forbidding a play style (`docs/plan_unit_costed_work.md` §1.2).
     ///
@@ -1428,20 +1608,27 @@ impl RungDef {
     /// peak, which is the floor a fresh assignment gets. Only sub-peak floors build faster now
     /// (`the_food_peak_preserves_every_rungs_stated_build_length` is the proof).
     ///
-    /// # THE GEAR IS NOT HERE EITHER, and that is the shape of §6
+    /// # THE GEAR IS HERE, AND IT RAISES THE WORKER — it does NOT shrink the job
     ///
-    /// A tool's help lands on the **job**, not on the crew's output: it takes work units off the cost
-    /// ([`LadderConfig::effective_build_cost`]), because a multiplier on the crew cancels the cost
-    /// (`turns_geared / turns_bare = w / (w + h)` for any job) and therefore saves the same
-    /// *percentage* of turns on a garden and on a farm alike. The retired `build_rate` parameter was
-    /// exactly that multiplier.
+    /// `gear_per_worker` is what each equipped builder's kit **delivers** per turn
+    /// ([`build_work_per_worker_turn`]), so this seam is `workers × (bare + kit)`. The rung's
+    /// [`Self::build_cost`] is untouched by any tool that ever ships.
+    ///
+    // **RETIRED: the gear's old home** — `LadderConfig::effective_build_cost`, which took the crew's
+    // tools off the **cost** (`cost − Σ over the crew`) and left this seam the bare head count. It
+    // was chosen because a *multiplier* on the crew cancels the cost (`turns_geared / turns_bare =
+    // w / (w + h)` for any job) and so saves the same percentage of turns on a garden and on a farm
+    // alike. That invariance is back and is accepted; what bought it is the pair of reasons on
+    // [`gear_work_supply`] — a lump granted once cannot model a tool used every turn, and it has
+    // nothing to subtract from on an upkeep.
     pub fn build_accrual(
         &self,
         improvement: Option<Improvement>,
         eligible: bool,
         workers: u32,
+        gear_per_worker: f32,
     ) -> f32 {
-        self.build_supply(improvement, eligible, workers)
+        self.build_supply(improvement, eligible, workers, gear_per_worker)
             .unwrap_or(NO_BUILD_PROGRESS)
     }
 
@@ -1474,9 +1661,10 @@ impl RungDef {
         improvement: Option<Improvement>,
         eligible: bool,
         workers: u32,
+        gear_per_worker: f32,
         rot_this_turn: f32,
     ) -> f32 {
-        self.build_supply(improvement, eligible, workers)
+        self.build_supply(improvement, eligible, workers, gear_per_worker)
             .map_or(NO_BUILD_BALANCE, |supply| supply - rot_this_turn)
     }
 
@@ -1492,12 +1680,13 @@ impl RungDef {
         improvement: Option<Improvement>,
         eligible: bool,
         workers: u32,
+        gear_per_worker: f32,
     ) -> Option<f32> {
         self.build.as_ref()?;
         if !eligible || improvement.is_none() || self.verb_improvement() != improvement {
             return None;
         }
-        Some(activity_work(workers))
+        Some(pool_work_supply(workers, gear_per_worker))
     }
 
     /// **The build seam — the cost side. WHAT THIS JOB COSTS ON THIS SOURCE**, in work units:
@@ -1536,6 +1725,16 @@ impl RungDef {
     ///
     /// `0` for a rung that declares no upkeep — the two **wild** rungs: nobody is needed to hold
     /// something that costs nothing to hold.
+    ///
+    /// # ⛔ IT IS THE BARE-HANDED COUNT, AND THAT IS A CEILING RATHER THAN A LIE
+    ///
+    /// A keeper's supply reads the pool's kit now ([`pool_work_supply`], §4.8), so an *equipped*
+    /// pool of this size over-covers the demand — which is the whole point of the change. This
+    /// still divides by [`PER_WORKER_OUTPUT`] because it is published **per source**
+    /// (`upkeepWorkersNeeded`) and a source holds no band, so there is no pool here whose coverage
+    /// could be read. Answering bare is the safe direction: *"send this many and you are covered
+    /// whatever they are carrying"* is true at every kit, where a gear-aware count would under-ask
+    /// the moment a tool wore out.
     pub fn upkeep_crew_needed(&self, source_measure: f32) -> u32 {
         let demand = self.upkeep_demand(source_measure);
         if demand <= NO_UPKEEP_DEMAND {
@@ -1885,31 +2084,25 @@ impl LadderConfig {
         self.rung(RungKey::built_by(improvement))
     }
 
-    /// **THE BAR A GEARED CREW'S METER MUST REACH** — `cost − t`, where `t` is
-    /// [`build_work_from_gear`].
-    ///
-    /// **The stored companion cost on the source stays the RAW job** (`work_cost ×
-    /// cost_multiplier`), un-tooled and stable, because that is what `is_cultivated()` and its three
-    /// siblings compare against and a meter whose bar moved with the crew's kit would un-complete a
-    /// rung the moment a tool wore out. The offset therefore applies at the **completion comparison
-    /// only**, and the accrue helpers set the meter to the raw cost when it is crossed — the jump is
-    /// the units the tool pre-paid, and it is honest: those units were worked, they were simply
-    /// worked by the tool.
-    ///
-    /// **Nothing floors it.** How far a kit may shrink a job is decided by the job's `work_cost` and
-    /// the tool's `EquipmentStat::BuildWork` — both dials — and later work is *meant* to be
-    /// impractical bare-handed, which means the right tool must be able to reduce a job to a small
-    /// fraction of itself. A bar at or below zero simply means the build completes on the first turn
-    /// it is worked, which is the same no-cap outcome as putting fifty hands on it.
-    pub fn effective_build_cost(&self, cost: f32, gear_work: f32) -> f32 {
-        cost - gear_work
-    }
+    // **RETIRED: `effective_build_cost(cost, gear_work)`** — `cost − t`, the bar a geared crew's
+    // meter had to reach, with `t` the retired `build_work_from_gear` summed over the pool.
+    //
+    // **THE BAR IS THE JOB'S OWN [`RungDef::build_cost`], ALWAYS** — a kit raises what a worker
+    // delivers per turn and never shrinks the pile (`docs/plan_standing_upkeep.md` §4.8). The two
+    // reasons the subtraction went are on [`gear_work_supply`]: it granted the kit's help as a
+    // **lump against the target** where a tool is used every turn, and it has nothing to subtract
+    // from on an **upkeep**, which is a rate — so one supply expression now feeds both accounts.
+    //
+    // **Two things went with it.** `forage::banked_or_paid_off` — the *"crossing the effective bar
+    // sets the meter to the RAW cost"* jump, which existed only to reconcile a bar the completion
+    // predicates did not share — and every caller that passed a reduced bar into an accrue helper.
+    // Completion is `progress >= work_cost`, full stop.
 
     /// **HOW MANY TURNS THIS CREW WOULD NEED TO CLIMB `rung`** — the *projection* half of the wire's
-    /// `buildTurnsRemaining`, assembled from exactly the four calls the in-flight stamp makes
-    /// ([`RungDef::build_cost`], [`build_work_from_gear`], [`Self::effective_build_cost`],
-    /// [`RungDef::build_accrual`], then [`build_turns_remaining`]) so a quote for a job nobody has
-    /// started cannot be arithmetic the running build would disagree with.
+    /// `buildTurnsRemaining`, assembled from exactly the calls the in-flight stamp makes
+    /// ([`RungDef::build_cost`], [`RungDef::build_balance`], then [`build_turns_remaining`]) so a
+    /// quote for a job nobody has started cannot be arithmetic the running build would disagree
+    /// with.
     ///
     /// **It exists because "nothing is being built" is the state the compose sheet is looking at**
     /// (`docs/plan_unit_costed_work.md` §11). `workCost` answers *what does this job cost*; this
@@ -1923,18 +2116,19 @@ impl LadderConfig {
     /// pre-commit case, and the real figure for a build the player walked away from, so the quote
     /// agrees with the `workDone` / `workCost` pair published beside it.
     ///
-    /// `eligible` is the caller's composed gate, exactly as [`RungDef::build_accrual`] takes it: the
-    /// web supplies the rung's own site / ceiling / knowledge / ownership terms. **A projection must
-    /// never quote a rung the gates would refuse**, so a caller that cannot answer one of them passes
-    /// `false` and the wire says "no estimate" instead of naming a job the player cannot take.
+    /// `gate` is the caller's composed gate, exactly as [`RungDef::build_accrual`] takes its
+    /// `eligible`: the web supplies the rung's own site / ceiling / knowledge / ownership terms,
+    /// **and which of them refused** ([`BuildGate::first_refusal`]). **A projection must never quote
+    /// a rung the gates would refuse**, so a caller that cannot answer one of them passes that
+    /// term's cause and the wire says "no estimate" instead of naming a job the player cannot take.
     ///
     /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, or a crew that
-    /// produces nothing. A meter already past the bar — including a bar the crew's **gear** pays off
-    /// outright — is [`BUILD_FINISHES_IN_ONE_TURN`], not `None`: it is an answer.
+    /// produces nothing. A meter already at or past the job's cost is [`BUILD_FINISHES_IN_ONE_TURN`],
+    /// not `None`: it is an answer.
     // The rung, its per-source price, its meter, and the two things a build crew brings (hands, kit)
-    // are all genuinely inputs — the same list `build_accrual` + `build_cost` +
-    // `effective_build_cost` take between them. The **floor** left this list with the floor's term in
-    // `build_accrual`: a build crew is not pulling on the source, so there is nothing for it to read.
+    // are all genuinely inputs — the same list `build_cost` + `build_balance` take between them. The
+    // **floor** left this list with the floor's term in `build_accrual`: a build crew is not pulling
+    // on the source, so there is nothing for it to read.
     #[allow(clippy::too_many_arguments)]
     pub fn projected_build_turns(
         &self,
@@ -1943,7 +2137,7 @@ impl LadderConfig {
         banked: f32,
         workers: u32,
         gear_per_worker: f32,
-        eligible: bool,
+        gate: BuildGate,
         rot_this_turn: f32,
     ) -> Option<BuildTurns> {
         self.projected_build_quote(
@@ -1952,7 +2146,7 @@ impl LadderConfig {
             banked,
             workers,
             gear_per_worker,
-            eligible,
+            gate,
             rot_this_turn,
         )
         .and_then(|quote| quote.turns(workers))
@@ -1971,26 +2165,33 @@ impl LadderConfig {
         banked: f32,
         workers: u32,
         gear_per_worker: f32,
-        eligible: bool,
+        gate: BuildGate,
         rot_this_turn: f32,
     ) -> Option<BuildQuote> {
+        // **THE JOB, WHOLE** — the kit is a term of the `balance` below and never of this
+        // (`docs/plan_standing_upkeep.md` §4.8).
         let cost = rung.build_cost(cost_multiplier)?;
-        let bar = self.effective_build_cost(cost, build_work_from_gear(gear_per_worker, workers));
         // **Quoted NET OF THE ROT, exactly as the live stamp is** — never net of the maintenance
         // rate, which the keeping pool owes whatever this crew does. `rot_this_turn` is the
         // **source's** live bleed ([`RungDef::meter_rot`] on the meter at risk), so a quote and the
         // card beside it describe one number. On ground nobody has started there is nothing banked
-        // and therefore nothing to rot, so the answer is `work_cost / crew`.
-        let balance = rung.build_balance(rung.verb_improvement(), eligible, workers, rot_this_turn);
+        // and therefore nothing to rot, so the answer is `work_cost / the pool's supply`.
+        let balance = rung.build_balance(
+            rung.verb_improvement(),
+            gate.holds(),
+            workers,
+            gear_per_worker,
+            rot_this_turn,
+        );
         // **A quoted crew that cannot out-raise the rot never gets there** — the same standing fact
         // a running build states, so a projection says so rather than withholding the line. And a
         // quote for a rung with **work already banked on it** answers even at a crew of zero: the
         // player paid for that work, so *"it holds"* / *"it is losing ground"* is the news.
         Some(BuildQuote {
-            bar,
+            cost,
             banked,
             balance,
-            gate_holds: eligible,
+            gate,
         })
     }
 
@@ -2566,7 +2767,12 @@ mod tests {
     /// **What one turn of the reference crew at the food peak with no gear produces** — the accrual
     /// every build-length assertion divides the rung's cost by.
     fn reference_accrual(rung: &RungDef) -> f32 {
-        rung.build_accrual(rung.verb_improvement(), true, reference_crew(rung))
+        rung.build_accrual(
+            rung.verb_improvement(),
+            true,
+            reference_crew(rung),
+            NO_BUILD_GEAR,
+        )
     }
 
     /// Mutate the builtin ladder JSON and expect `validate` (inside `from_json_str`) to reject it —
@@ -2654,7 +2860,7 @@ mod tests {
             "the pastoral rung is an investment — it has a build meter to staff"
         );
         assert_eq!(
-            pastoral.build_accrual(Some(Improvement::Tame), true, A_CREW_OF_TWO,),
+            pastoral.build_accrual(Some(Improvement::Tame), true, A_CREW_OF_TWO, NO_BUILD_GEAR,),
             expected_net(pastoral, A_CREW_OF_TWO),
             "…and its crew's output goes into that meter, less the maintenance rate it is also \
              paying — the rate is owed while building too"
@@ -2699,20 +2905,20 @@ mod tests {
         // keeping pool's whatever the builders do (`docs/plan_standing_upkeep.md` §4.6a).
         let crew = A_CREW_OF_TWO;
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Cultivate), true, crew),
+            tended.build_accrual(Some(Improvement::Cultivate), true, crew, NO_BUILD_GEAR),
             expected_net(tended, crew)
         );
         // Wrong verb → nothing, even though the crew is working the patch.
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Sow), true, crew),
+            tended.build_accrual(Some(Improvement::Sow), true, crew, NO_BUILD_GEAR),
             0.0
         );
         // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
         // its stance.
-        assert_eq!(tended.build_accrual(None, true, crew), 0.0);
+        assert_eq!(tended.build_accrual(None, true, crew, NO_BUILD_GEAR), 0.0);
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Cultivate), false, crew),
+            tended.build_accrual(Some(Improvement::Cultivate), false, crew, NO_BUILD_GEAR),
             0.0
         );
         // The cost is the job, in absolute units.
@@ -2740,7 +2946,8 @@ mod tests {
             RungKey::AnimalPen,
         ] {
             let rung = ladder.rung(key);
-            let work = |workers| rung.build_accrual(rung.verb_improvement(), true, workers);
+            let work =
+                |workers| rung.build_accrual(rung.verb_improvement(), true, workers, NO_BUILD_GEAR);
             assert_eq!(work(0), 0.0, "{key:?}: nobody working, nothing built");
             // **THERE IS NO MINIMUM VIABLE CREW ANY MORE** (`docs/plan_standing_upkeep.md` §4.6a).
             // The maintenance rate used to be netted off here, so a crew at or below it banked
@@ -2777,61 +2984,193 @@ mod tests {
         }
     }
 
-    /// **A TOOL'S SAVING IS A SHARE OF THE JOB, so it fades as the job grows** — the arithmetic §6.1
-    /// turns on, and the reason the contribution is subtracted from the cost rather than multiplied
-    /// into the crew.
-    ///
-    /// A **multiplier** would save the same *percentage* of turns whatever the job costs
-    /// (`turns_geared / turns_bare = w / (w + h)`, the cost cancels). Subtracted, the same 17 units
-    /// are a third of a 50-unit garden and a seventeenth of a 300-unit farm — **and the tool never
-    /// mentions either improvement by name**. The fade is therefore *config's* job (a Farm is born
-    /// large), not a property of the rule.
-    #[test]
-    fn a_tools_saving_shrinks_as_the_job_grows() {
-        let ladder = LadderConfig::builtin();
-        /// A fully-geared reference keeper crew: two hands, the hurdles' 8.5 each.
-        const GEAR_WORK: f32 = 17.0;
-        /// The shipped `plant:tended` cost, and a stand-in for the ~300-unit Farm rung 4 is born at.
-        const GARDEN: f32 = 50.0;
-        const FARM: f32 = 300.0;
+    // **RETIRED: `a_tools_saving_shrinks_as_the_job_grows`** — it pinned `(cost − 17) / cost` being a
+    // third of a 50-unit garden and a seventeenth of a 300-unit farm, i.e. that a lump off the cost
+    // is scale-sensitive where a multiplier on the crew is not.
+    //
+    // **That property is exactly what §4.8 gives up, deliberately.** A kit raises what a worker
+    // delivers per turn, so `turns_geared / turns_bare` is `1 / (1 + gear)` on a garden and on a
+    // farm alike. What a job's size decides is the number of turns it takes at that ratio. The pair
+    // that replaced it is [`gear_shortens_the_build_and_never_the_job`], which asserts the half the
+    // model does still guarantee — and the half that matters more.
 
-        let saved = |cost: f32| (cost - ladder.effective_build_cost(cost, GEAR_WORK)) / cost;
+    /// **⛔ THE PAIR: GEAR DOES SOMETHING, AND GEAR DOES NOT SHRINK THE JOB.**
+    ///
+    /// Ray's rule, verbatim: *"The build kits increase workers productivity ONLY, that is workers can
+    /// now do more work. A jobs work requirement NEVER changes."* Both halves are asserted here
+    /// because **either alone is satisfied by a broken model**: *"the work required is identical"*
+    /// passes for a kit that does nothing at all, and *"the equipped pool finishes sooner"* passes
+    /// for the retired subtraction, which finished sooner by shrinking the pile.
+    ///
+    /// **The work-required half is measured as the work the pool actually BANKED**, not as the
+    /// stamped cost — the stamped cost never moved even under the subtraction, because
+    /// `LadderConfig::effective_build_cost` shrank a *bar* the meter was compared against and the
+    /// retired `forage::banked_or_paid_off` then jumped the meter up to the raw cost. So a test
+    /// asserting on the cost field would have passed against the very model this replaced. What the
+    /// subtraction genuinely changed is how much work the crew had to produce: `cost − workers ×
+    /// gear`, strictly less than the job.
+    #[test]
+    fn gear_shortens_the_build_and_never_the_job() {
+        let ladder = LadderConfig::builtin();
+        // The tool each web ships is read off the roster rather than transcribed, so a retune moves
+        // the fixture with the game.
+        let equipped = crate::equipment_config::EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::start_stocked(&equipped);
+
+        /// A pool big enough that the shipped rungs finish in a handful of turns — the third
+        /// sample, so the pair is asserted across the whole crew axis rather than at a thin one.
+        const A_CREW_THAT_OUT_PRODUCES_A_RUNG: u32 = 12;
+
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPen,
+        ] {
+            let rung = ladder.rung(key);
+            let cost = rung
+                .build_cost(RUNG_COST_UNSCALED)
+                .expect("a rung the climb names has a build meter");
+            let per_worker = equipped
+                .build_kit_for_branch(key.branch())
+                .map(|kit| equipped.build_work_per_worker(&kit, &fresh, key.branch()))
+                .expect("the shipped roster serves both webs");
+            assert!(
+                per_worker > NO_BUILD_GEAR,
+                "fixture: {key:?}'s web must have a tool, or both arms are the same arm"
+            );
+
+            for pool in [SOLE_BUILDER, A_CREW_OF_TWO, A_CREW_THAT_OUT_PRODUCES_A_RUNG] {
+                let bare = raise_to_completion(rung, cost, pool, NO_BUILD_GEAR);
+                let geared = raise_to_completion(rung, cost, pool, per_worker);
+
+                // **(a) THE JOB IS THE SAME SIZE.** Neither pool finished for less work than the
+                // rung declares — which is what *"a job's work requirement never changes"* means
+                // when it is stated about the crew rather than about a field.
+                assert!(
+                    bare.banked >= cost && geared.banked >= cost,
+                    "{key:?} at {pool}: a build must be worked off in full — bare banked {} and \
+                     equipped banked {} against a job of {cost}",
+                    bare.banked,
+                    geared.banked
+                );
+                // And neither over-runs it by more than the last turn's supply, so the pair above is
+                // a real bracket rather than a one-sided inequality anything could pass.
+                assert!(
+                    bare.banked < cost + bare.supply && geared.banked < cost + geared.supply,
+                    "{key:?} at {pool}: a build must not be worked past its own cost by more than \
+                     one turn's supply — bare {} / equipped {} against {cost}",
+                    bare.banked,
+                    geared.banked
+                );
+
+                // **(b) AND THE GEAR STILL DOES SOMETHING.** Strictly sooner, at the same head
+                // count, on the same job.
+                assert!(
+                    geared.turns < bare.turns,
+                    "{key:?} at {pool}: the equipped pool must finish sooner — {} turns against {}",
+                    geared.turns,
+                    bare.turns
+                );
+            }
+        }
+    }
+
+    /// What one pool's run at one rung came to: how long it took, what it banked getting there, and
+    /// the per-turn supply that bracket is measured against.
+    struct RaisedBuild {
+        turns: u32,
+        banked: f32,
+        supply: f32,
+    }
+
+    /// Drive a rung's real accrual seam to completion and report the three. **The completion test is
+    /// the shipped one** — `progress >= cost`, the same comparison every source's predicate makes —
+    /// so a change to what "finished" means moves this with it.
+    fn raise_to_completion(
+        rung: &RungDef,
+        cost: f32,
+        pool: u32,
+        gear_per_worker: f32,
+    ) -> RaisedBuild {
+        /// A build that has not finished by here is a fixture fault, not a slow build: the slowest
+        /// arm above is a lone bare-handed builder on the dearest shipped rung, which is 75 turns.
+        const A_RUN_LONGER_THAN_ANY_SHIPPED_BUILD: u32 = 10_000;
+        let supply = rung.build_accrual(rung.verb_improvement(), true, pool, gear_per_worker);
         assert!(
-            (saved(GARDEN) - GEAR_WORK / GARDEN).abs() < 1e-6,
-            "the tool takes a THIRD off a garden: {}",
-            saved(GARDEN)
+            supply > NO_BUILD_PROGRESS,
+            "fixture: a staffed pool must produce something"
         );
-        assert!(
-            saved(FARM) * 3.0 < saved(GARDEN),
-            "and is noise against a farm — under a third of the share, not the same share: {} vs {}",
-            saved(FARM),
-            saved(GARDEN)
-        );
+        let mut banked = RUNG_UNSTARTED;
+        for turn in 1..=A_RUN_LONGER_THAN_ANY_SHIPPED_BUILD {
+            banked += supply;
+            if banked >= cost {
+                return RaisedBuild {
+                    turns: turn,
+                    banked,
+                    supply,
+                };
+            }
+        }
+        panic!("fixture: a staffed build must finish");
     }
 
     /// **THE GEAR IS A SUM OVER THE CREW, NEVER AN AVERAGE** (§6.2) — the partly-equipped-party rule
-    /// the carries already run on, and the property that lets the cost-side stat be
-    /// coverage-weighted where the retired multiplier could not be.
+    /// the carries already run on. The coverage seam arms a **prefix** of the pool, so the weighted
+    /// rate × head count is what the pool actually carries; an un-geared hand still brings its own
+    /// [`PER_WORKER_OUTPUT`] and neither dilutes the equipped one nor multiplies it.
     #[test]
     fn the_gear_contribution_sums_over_the_crew_and_floors_at_neutral() {
-        const PER_WORKER: f32 = 8.5;
-        assert_eq!(build_work_from_gear(PER_WORKER, 0), NO_BUILD_GEAR);
-        assert_eq!(build_work_from_gear(PER_WORKER, 2), 2.0 * PER_WORKER);
-        assert_eq!(build_work_from_gear(PER_WORKER, 20), 20.0 * PER_WORKER);
+        const PER_WORKER: f32 = 0.5;
+        assert_eq!(gear_work_supply(PER_WORKER, 0), NO_BUILD_GEAR);
+        assert_eq!(gear_work_supply(PER_WORKER, 2), 2.0 * PER_WORKER);
+        assert_eq!(gear_work_supply(PER_WORKER, 20), 20.0 * PER_WORKER);
         assert_eq!(
-            build_work_from_gear(NO_BUILD_GEAR, 20),
+            gear_work_supply(NO_BUILD_GEAR, 20),
             NO_BUILD_GEAR,
-            "a crew carrying nothing that helps takes nothing off, however many of them there are"
+            "a crew carrying nothing that helps delivers nothing, however many of them there are"
         );
-        // A negative contribution cannot *add* work — `EquipmentConfig::validate` rejects one, and
-        // this is the arithmetic's own guard.
-        assert_eq!(build_work_from_gear(-5.0, 2), NO_BUILD_GEAR);
+        // A negative contribution cannot make a worker worse than bare-handed —
+        // `EquipmentConfig::validate` rejects one, and this is the arithmetic's own guard.
+        assert_eq!(gear_work_supply(-5.0, 2), NO_BUILD_GEAR);
+        assert_eq!(
+            build_work_per_worker_turn(-5.0),
+            PER_WORKER_OUTPUT,
+            "and the per-worker rate floors at bare hands rather than below them"
+        );
     }
 
-    /// **A FULLY-GEARED ANIMAL BUILD IS UNMOVED, and that is this slice's pacing proof** — the
-    /// calibration §6.2 sets the hurdles' 8.5 by: the retired `build_rate` ×1.5 on a 50-unit
-    /// job at the reference keeper crew of 2 saved 8.33 of 25 turns, i.e. it was worth ≈17 units of
-    /// the job, which is 8.5 **per worker**.
+    /// **A KITLESS POOL STILL BUILDS** — bare hands deliver [`PER_WORKER_OUTPUT`], so `build_work` is
+    /// an **addend** rather than the whole rate. The neutral read as a multiplier's `1.0` would
+    /// double every un-geared builder; read as this model's `0.0` it changes nothing, which is what
+    /// [`NO_BUILD_GEAR`] states.
+    #[test]
+    fn bare_hands_deliver_the_worker_output_and_a_kit_adds_to_it() {
+        assert_eq!(build_work_per_worker_turn(NO_BUILD_GEAR), PER_WORKER_OUTPUT);
+        const A_KIT: f32 = 0.5;
+        assert_eq!(
+            build_work_per_worker_turn(A_KIT),
+            PER_WORKER_OUTPUT + A_KIT,
+            "a kit is worth its own delivery ON TOP of the hands holding it"
+        );
+        assert_eq!(
+            pool_work_supply(A_CREW_OF_TWO, NO_BUILD_GEAR),
+            activity_work(A_CREW_OF_TWO),
+            "and a bare build pool is exactly what any other bare pool of that size supplies"
+        );
+    }
+
+    /// **A FULLY-GEARED ANIMAL BUILD IS UNMOVED, AND THE CONVERSION IS A ROUND TRIP.**
+    ///
+    /// `build_work` shipped at `8.5` meaning *units taken off the job, per worker*, and that `8.5`
+    /// was itself **minted** from a still earlier `build_rate` **multiplier of ×1.5 on the crew's
+    /// output**, converted at the reference keeper crew of 2 on a 50-unit `Tame` (×1.5 saved 8.33 of
+    /// 25 turns, i.e. ≈17 units of the job, i.e. 8.5 per worker).
+    ///
+    /// §4.8 makes the stat a per-worker output term again, so inverting that mint needs **no
+    /// reference crew and no reference job**: `PER_WORKER_OUTPUT + build_work = 1.5` gives `0.5`, and
+    /// the tool is the same tool it always was. This asserts the round trip lands on the same turn
+    /// count the multiplier gave — which is what makes `0.5` a **unit conversion** rather than a
+    /// tuning choice. (Every number here is provisional until the arc's tuning spread, §4.14.)
     #[test]
     fn a_fully_geared_reference_crew_tames_in_the_turns_the_retired_multiplier_gave() {
         let ladder = LadderConfig::builtin();
@@ -2839,29 +3178,42 @@ mod tests {
         /// The reference keeper crew the animal costs were priced against — see
         /// `the_food_peak_preserves_every_rungs_stated_build_length`.
         const KEEPERS: u32 = 2;
-        /// What the hurdles' flint tier declares, per equipped worker.
-        const PER_WORKER: f32 = 8.5;
         /// What the retired ×1.5 multiplier bought at this crew: `ceil(50 / (2 × 1.5))`.
         const GEARED_TURNS: u32 = 17;
+
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::start_stocked(&equipment);
+        let per_worker = equipment
+            .build_kit_for_branch(RungBranch::Animal)
+            .map(|kit| equipment.build_work_per_worker(&kit, &fresh, RungBranch::Animal))
+            .expect("the shipped roster carries an animal build tool");
+        assert_eq!(
+            build_work_per_worker_turn(per_worker),
+            THE_RETIRED_BUILD_RATE_MULTIPLIER,
+            "the shipped `build_work` must be the retired multiplier re-expressed, or this is a \
+             tuning change wearing a conversion's clothes"
+        );
 
         let cost = pastoral
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the pastoral rung builds");
-        // **The gear is resolved at the reference KEEPERS, and so is the crew.** The calibration is
-        // about what the hurdles are worth *in units of the job* (17); the crew's own supply is
-        // the 2 worker-turns it was priced against, with nothing netted off it (§4.6a).
-        let accrual = pastoral.build_accrual(pastoral.verb_improvement(), true, KEEPERS);
-        let bar = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, KEEPERS));
+        let accrual =
+            pastoral.build_accrual(pastoral.verb_improvement(), true, KEEPERS, per_worker);
         assert_eq!(
-            build_turns_remaining(bar, RUNG_UNSTARTED, accrual),
+            build_turns_remaining(cost, RUNG_UNSTARTED, accrual),
             Some(GEARED_TURNS),
             "a fully-geared reference keeper crew must finish where the multiplier left it"
         );
-        // And a HALF-geared crew is honestly slower, which it was not before: the multiplier was
-        // resolved uncovered, so one set of hurdles among the crew bought the whole ×1.5.
-        let half = ladder.effective_build_cost(cost, build_work_from_gear(PER_WORKER, 1));
+        // And a HALF-geared crew is honestly slower, which it was not under the uncovered
+        // multiplier: one set of hurdles among the crew bought the whole ×1.5 there.
+        let half = pastoral.build_accrual(
+            pastoral.verb_improvement(),
+            true,
+            KEEPERS,
+            per_worker / KEEPERS as f32,
+        );
         let half_turns =
-            build_turns_remaining(half, RUNG_UNSTARTED, accrual).expect("a staffed build finishes");
+            build_turns_remaining(cost, RUNG_UNSTARTED, half).expect("a staffed build finishes");
         assert!(
             half_turns > GEARED_TURNS,
             "half the crew equipped must take longer than all of it: {half_turns} vs \
@@ -2869,15 +3221,19 @@ mod tests {
         );
     }
 
+    /// **What one equipped worker was worth before any of this** — the `build_rate` multiplier on the
+    /// crew's output that `build_work` was minted from, and the number the shipped `build_work` must
+    /// re-express now that the stat is a per-worker output term again.
+    const THE_RETIRED_BUILD_RATE_MULTIPLIER: f32 = 1.5;
+
     /// **The turns estimate is `ceil(remaining / this turn's work)`, and a STALL has no estimate.**
     /// `None` is the wire's [`NO_BUILD_TURNS_ESTIMATE`], and a stall is the only thing that earns it:
     /// a build nobody is advancing cannot be quoted a finish date, and a huge number would read as a
     /// promise.
     ///
-    /// **A bar already at or below the meter is `1`, NOT `None`** — the work is banked, so the job
-    /// finishes the first turn anybody works it. That is the case a well-geared crew reaches through
-    /// an unfloored [`LadderConfig::effective_build_cost`], and conflating it with *"no answer"* is
-    /// what made the estimate vanish as hands were added.
+    /// **A cost already at or below the meter is `1`, NOT `None`** — the work is banked, so the job
+    /// finishes the first turn anybody works it, and conflating that with *"no answer"* is what made
+    /// the estimate vanish as hands were added.
     #[test]
     fn the_turns_estimate_rounds_up_and_declines_to_quote_a_stall() {
         const COST: f32 = 50.0;
@@ -2896,8 +3252,10 @@ mod tests {
         assert_eq!(
             build_turns_remaining(-1.0, RUNG_UNSTARTED, 2.0),
             Some(BUILD_FINISHES_IN_ONE_TURN),
-            "and so does one the crew's gear paid off outright — the bar is below zero, which is an \
-             ANSWER"
+            "and so does a bar already below zero, which is an ANSWER rather than a stall. **No \
+             KIT can reach this state since §4.8** — gear is an addend on the pool's supply, not a \
+             subtraction from the job — so what it guards is a caller handing this seam a negative \
+             remainder, never an over-geared crew"
         );
         assert_eq!(
             build_turns_remaining(COST, 10.0, 0.0),
@@ -2910,13 +3268,23 @@ mod tests {
     /// shipped roster and at a crew a real band can staff, because that is where the defect was
     /// visible: the compose sheet is by definition looking at a rung nobody has started.
     ///
-    /// Six keepers each holding handling gear take `6 × 8.5 = 51` work units off a 50-unit `Tame`,
-    /// so [`LadderConfig::effective_build_cost`] — which is deliberately unfloored — hands
-    /// [`build_turns_remaining`] a bar below zero. The quote must fall to `1` and stop there rather
-    /// than disappearing at exactly the crew size that demonstrates *add hands and watch it drop*.
+    /// **⛔ ONE TURN IS REACHED BY OUT-PRODUCING THE JOB, NEVER BY ARITHMETIC — and this test used
+    /// to assert the opposite.**
+    ///
+    /// It read: *"six keepers each holding a set of handling gear take `6 × 8.5 = 51` work units off
+    /// a 50-unit `Tame`, so the unfloored `effective_build_cost` hands `build_turns_remaining` a bar
+    /// below zero — the quote must fall to `1`"*. That fixture **encoded the defect §4.8 corrected**:
+    /// the build completed on its first worked turn whatever the crew did, so past six keepers the
+    /// crew axis meant nothing at all.
+    ///
+    /// So it is re-aimed rather than deleted, and it now pins both sides of the claim:
+    ///
+    /// - the crew that used to finish by arithmetic is quoted an **honest span**;
+    /// - [`BUILD_FINISHES_IN_ONE_TURN`] is still **reachable and still an answer** — by a pool whose
+    ///   supply covers the whole job in one turn, which is the same no-cap outcome fifty bare hands
+    ///   reach and is allowed for that reason.
     #[test]
-    fn a_crew_whose_gear_pays_the_job_off_is_quoted_one_turn_not_no_estimate() {
-        const PER_WORKER: f32 = 8.5;
+    fn one_turn_is_reached_by_out_producing_the_job_not_by_the_gear_paying_it_off() {
         /// The `taming_cost_multiplier` of a species that costs exactly the rung's own price — the
         /// regime the shipped roster's rabbit, fowl, crag goat, wild sheep and snow hare are all in.
         const UNSCALED_SPECIES: f32 = RUNG_COST_UNSCALED;
@@ -2925,6 +3293,12 @@ mod tests {
         let cost = pastoral
             .build_cost(UNSCALED_SPECIES)
             .expect("the pastoral rung builds");
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::start_stocked(&equipment);
+        let per_worker = equipment
+            .build_kit_for_branch(RungBranch::Animal)
+            .map(|kit| equipment.build_work_per_worker(&kit, &fresh, RungBranch::Animal))
+            .expect("the shipped roster carries an animal build tool");
 
         let quote = |keepers: u32| {
             ladder.projected_build_turns(
@@ -2932,47 +3306,97 @@ mod tests {
                 UNSCALED_SPECIES,
                 RUNG_UNSTARTED,
                 keepers,
-                PER_WORKER,
-                true,
+                per_worker,
+                BuildGate::Open,
                 UNSCALED_UPKEEP,
             )
         };
 
-        // The fixture is only meaningful if the gear genuinely over-pays the job.
-        let over_geared = 6;
+        // **The span is struck from the BALANCE, not the raw supply** — a projection is quoted net
+        // of the rot exactly as the live stamp is, so the expectation reads the same seam.
+        let balance = |keepers: u32| {
+            pastoral.build_balance(
+                pastoral.verb_improvement(),
+                true,
+                keepers,
+                per_worker,
+                UNSCALED_UPKEEP,
+            )
+        };
+
+        /// The crew the retired subtraction finished this job by arithmetic at — `6 × 8.5 = 51`
+        /// against a 50-unit `Tame`. Named so the re-aiming is legible: it is the same fixture.
+        const THE_CREW_THE_SUBTRACTION_PAID_THE_JOB_OFF_AT: u32 = 6;
+        let honest = quote(THE_CREW_THE_SUBTRACTION_PAID_THE_JOB_OFF_AT)
+            .expect("a staffed crew on an open gate has an answer");
+        assert_eq!(
+            Some(honest),
+            build_turns_remaining(
+                cost,
+                RUNG_UNSTARTED,
+                balance(THE_CREW_THE_SUBTRACTION_PAID_THE_JOB_OFF_AT)
+            )
+            .map(BuildTurns::Turns),
+            "the crew that used to finish by arithmetic must be quoted the span it actually works"
+        );
         assert!(
-            build_work_from_gear(PER_WORKER, over_geared) >= cost,
-            "fixture: {over_geared} keepers' gear must cover the whole {cost}-unit job"
+            !matches!(honest, BuildTurns::Turns(BUILD_FINISHES_IN_ONE_TURN)),
+            "and that span must not still be one turn, or the fixture proves nothing"
+        );
+
+        // **The one-turn answer is still reachable, and still an ANSWER rather than silence** — by
+        // a pool that genuinely banks the whole job in a turn, net of what the meter bleeds.
+        let out_producing = (1..)
+            .find(|keepers| balance(*keepers) >= cost)
+            .expect("some pool out-produces a 50-unit job");
+        assert!(
+            out_producing > THE_CREW_THE_SUBTRACTION_PAID_THE_JOB_OFF_AT,
+            "fixture: out-producing the job must take strictly more hands than the subtraction \
+             needed, or the two arms are the same arm"
         );
         assert_eq!(
-            quote(over_geared),
+            quote(out_producing),
             Some(BuildTurns::Turns(BUILD_FINISHES_IN_ONE_TURN)),
-            "gear that pays the job off outright finishes it on the first worked turn"
+            "a pool that banks the whole job in a turn finishes it in a turn"
         );
         // **And a crew EXACTLY at the maintenance rate is quoted HOLDING, not silence** — a
         // projection states the same standing fact a running build does. The *rotting* half is
         // unreachable on this rung with whole hands (its demand is `1.0`, so the only staffing
         // under the rate is no staffing at all, which is `None` by design); the plant web's
         // demand of `2.0` is where that arm is pinned — `build_turns_on_the_wire.rs`.
+        //
+        // **Asked of a BARE pool, because `upkeep_crew_needed` is the bare-handed count** (§4.8):
+        // an equipped keeper out-produces the rate this rung asks of it, so the crew that exactly
+        // pays it is a crew carrying nothing — which is the state that reading has always
+        // described. That is the change working, not a hole in it.
         assert_eq!(
-            quote(pastoral.upkeep_crew_needed(UNSCALED_UPKEEP)),
+            ladder.projected_build_turns(
+                pastoral,
+                UNSCALED_SPECIES,
+                RUNG_UNSTARTED,
+                pastoral.upkeep_crew_needed(UNSCALED_UPKEEP),
+                NO_BUILD_GEAR,
+                BuildGate::Open,
+                UNSCALED_UPKEEP,
+            ),
             Some(BuildTurns::Holding),
-            "a quoted crew that exactly pays the rate holds the meter — and says so"
+            "a quoted bare crew that exactly pays the rate holds the meter — and says so"
         );
 
         // And the quote is monotone into that floor rather than falling off it: each added hand
-        // shortens the job until it cannot be shortened further. **Measured from the first crew that
-        // clears the maintenance rate** — below it there is no quote at all, by design.
-        let threshold = pastoral.upkeep_crew_needed(UNSCALED_UPKEEP);
-        let first = threshold + 1;
+        // shortens the job until it cannot be shortened further. **Measured from the first crew
+        // that clears the maintenance rate** — below it there is no finite quote at all, by design.
         let finite = |keepers: u32| -> u32 {
             match quote(keepers) {
                 Some(BuildTurns::Turns(turns)) => turns,
                 other => panic!("a crew of {keepers} above the rate must quote a count: {other:?}"),
             }
         };
+        let first = (1..)
+            .find(|keepers| matches!(quote(*keepers), Some(BuildTurns::Turns(_))))
+            .expect("some pool out-raises this rung's rot");
         let mut previous = finite(first);
-        for keepers in (first + 1)..=over_geared {
+        for keepers in (first + 1)..=out_producing {
             let turns = finite(keepers);
             assert!(
                 turns <= previous,
@@ -2999,7 +3423,7 @@ mod tests {
                 Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    wild.build_accrual(improvement, true, reference_crew(wild)),
+                    wild.build_accrual(improvement, true, reference_crew(wild), NO_BUILD_GEAR),
                     0.0
                 );
             }
@@ -3018,7 +3442,12 @@ mod tests {
         let build = pastoral.build.as_ref().expect("the pastoral rung builds");
 
         assert_eq!(
-            pastoral.build_accrual(Some(Improvement::Tame), true, reference_crew(pastoral),),
+            pastoral.build_accrual(
+                Some(Improvement::Tame),
+                true,
+                reference_crew(pastoral),
+                NO_BUILD_GEAR,
+            ),
             expected_net(pastoral, reference_crew(pastoral))
         );
         assert_eq!(
@@ -3032,14 +3461,19 @@ mod tests {
             Some(Improvement::Corral),
         ] {
             assert_eq!(
-                pastoral.build_accrual(improvement, true, reference_crew(pastoral),),
+                pastoral.build_accrual(improvement, true, reference_crew(pastoral), NO_BUILD_GEAR,),
                 0.0,
                 "{improvement:?} must not tame a herd — only Tame does"
             );
         }
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            pastoral.build_accrual(Some(Improvement::Tame), false, reference_crew(pastoral),),
+            pastoral.build_accrual(
+                Some(Improvement::Tame),
+                false,
+                reference_crew(pastoral),
+                NO_BUILD_GEAR,
+            ),
             0.0
         );
     }
@@ -3197,6 +3631,13 @@ mod tests {
     /// **The shipped rungs clear the grace bound**, and that is worth pinning positively: the bound
     /// moved from `1 / progress_per_turn` to `work_cost / reference_output`, so retuning a cost
     /// silently changes what a grace is allowed to be.
+    ///
+    /// **It reads the UPKEEP's grace, which is the live one** ([`RungDef::upkeep_grace_turns`]). It
+    /// asked [`RungDef::neglect_grace_turns`] until the build trigger retired off every rung, after
+    /// which it compared a constant [`NO_NEGLECT_GRACE`] against a positive turn count — an assertion
+    /// that passed because the thing it measured had moved, which reads as coverage while guarding
+    /// nothing. The invariant itself is unchanged: *a grace that outlasts its own build makes walking
+    /// away free*, on whichever trigger the rung actually counts.
     #[test]
     fn every_shipped_grace_is_shorter_than_its_own_reference_build() {
         let ladder = LadderConfig::builtin();
@@ -3214,10 +3655,19 @@ mod tests {
                 reference_accrual(rung),
             )
             .expect("a staffed build finishes");
+            // **The bound is only a bound on a grace that EXISTS** — a rung forgiving nothing is
+            // trivially inside it, which is exactly how this test came to pass while measuring a
+            // constant. Its sibling
+            // (`the_neglect_grace_is_per_rung_and_the_two_webs_disagree_about_its_direction`) owns
+            // the orderings; this restates only the liveness the bound needs.
+            let grace = rung.upkeep_grace_turns();
             assert!(
-                rung.neglect_grace_turns() < turns,
-                "{key:?}: grace {} must be shorter than its {turns}-turn reference build",
-                rung.neglect_grace_turns()
+                grace > NO_NEGLECT_GRACE,
+                "{key:?}: a buildable rung must declare the grace this bound is about"
+            );
+            assert!(
+                grace < turns,
+                "{key:?}: grace {grace} must be shorter than its {turns}-turn reference build"
             );
         }
     }
@@ -3479,7 +3929,12 @@ mod tests {
         let A_CREW_ABOVE_THE_RATE = a_crew_above_the_rate;
         for floor in [STRIP_IT_BARE_FLOOR, 0.15, FOOD_PEAK_FLOOR, 0.8, 1.0] {
             assert_eq!(
-                rung.build_accrual(Some(Improvement::Cultivate), true, A_CREW_ABOVE_THE_RATE,),
+                rung.build_accrual(
+                    Some(Improvement::Cultivate),
+                    true,
+                    A_CREW_ABOVE_THE_RATE,
+                    NO_BUILD_GEAR,
+                ),
                 expected_net(rung, A_CREW_ABOVE_THE_RATE),
                 "the build banks the same net whatever floor the gatherers hold ({floor})"
             );
@@ -3507,7 +3962,7 @@ mod tests {
                 continue;
             };
             for crew in [SOLE_BUILDER, A_CREW_OF_TWO, 10] {
-                let now = rung.build_accrual(Some(verb), true, crew);
+                let now = rung.build_accrual(Some(verb), true, crew, NO_BUILD_GEAR);
                 // The retired arithmetic, verbatim — and nothing is netted off it, because the
                 // maintenance rate never was a term in a build's accrual once §4.6a deleted the
                 // fullness test that made the builders supply it. What is compared is the floor's
@@ -3572,8 +4027,7 @@ mod tests {
             rung.build_accrual(
                 Some(Improvement::Cultivate),
                 true,
-                A_BIG_BUILD_CREW,
-            ),
+                A_BIG_BUILD_CREW, NO_BUILD_GEAR,),
             expected_net(rung, A_BIG_BUILD_CREW),
             "there is no cap on a build's crew: fifty hands finish a Cultivate in a turn, less the \
              rate they are also paying"
@@ -4046,7 +4500,8 @@ mod tests {
             "fifty hands on one patch learn exactly what one hand does — the seam has no worker \
              term to give them"
         );
-        let build = |workers| tended.build_accrual(tended.verb_improvement(), true, workers);
+        let build =
+            |workers| tended.build_accrual(tended.verb_improvement(), true, workers, NO_BUILD_GEAR);
         assert!(
             build(50) > build(1),
             "…while the same fifty hands build fifty times as fast: {} vs {}",
@@ -4195,7 +4650,7 @@ mod tests {
             // §4.6a): the maintenance rate is not a tax on building, so the staffing that banks the
             // reference `crew` worker-turns of progress is exactly `crew` hands. It briefly had to be
             // `crew` **plus** the hands the rate took, which is the reading this slice deleted.
-            let accrual = rung.build_accrual(rung.verb_improvement(), true, crew);
+            let accrual = rung.build_accrual(rung.verb_improvement(), true, crew, NO_BUILD_GEAR);
             assert_eq!(
                 accrual,
                 crew as f32 * PER_WORKER_OUTPUT,
@@ -4237,7 +4692,7 @@ mod tests {
         ] {
             let rung = ladder.rung(key);
             let crew = reference_crew(rung);
-            let banked = rung.build_accrual(rung.verb_improvement(), true, crew);
+            let banked = rung.build_accrual(rung.verb_improvement(), true, crew, NO_BUILD_GEAR);
             // Liveness first: an invariance sweep alone would pass on an accrual that returned zero
             // everywhere, which is exactly what a broken gate looks like.
             assert!(banked > 0.0, "{key:?} must actually build");
@@ -4262,7 +4717,12 @@ mod tests {
             // false and nothing is built. Asserted here as the seam's half of it — `eligible = false`
             // is always zero, whatever the floor.
             assert_eq!(
-                rung.build_accrual(rung.verb_improvement(), false, reference_crew(rung),),
+                rung.build_accrual(
+                    rung.verb_improvement(),
+                    false,
+                    reference_crew(rung),
+                    NO_BUILD_GEAR,
+                ),
                 0.0,
                 "{key:?}: watching a source builds nothing, however restrained the watching"
             );

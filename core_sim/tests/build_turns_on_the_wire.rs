@@ -871,20 +871,25 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     // and therefore nothing to rot. The quote used to read `-3` here — *"the meter never reaches its
     // cost"* — about a build that finishes perfectly well.
     let cost = published_patch_field(&app, source, |patch| patch.cultivationWorkCost());
-    // **LESS WHAT THE POOL'S TOOLS TAKE OFF IT.** The builders row names no kit, so the pool derives
-    // one per queue entry and the roster answers `tillage` for a patch — the hoes are the plant web's
-    // build tool. Read off the band's own kit row rather than stated as a literal, so retuning the
-    // tool moves the fixture with the game.
+    // **PLUS WHAT THE POOL'S TOOLS DELIVER, IN THE DIVISOR** (`docs/plan_standing_upkeep.md` §4.8).
+    // The builders row names no kit, so the pool derives one per queue entry and the roster answers
+    // `tillage` for a patch — the hoes are the plant web's build tool. Read off the band's own kit
+    // row rather than stated as a literal, so retuning the tool moves the fixture with the game.
+    //
+    // **The gear used to sit in the NUMERATOR** (`(cost − gear) / crew`), which let a tool shrink
+    // the job; it raises what a worker delivers now, so the published `cultivationWorkCost` above is
+    // the whole job and the kit shortens the span by supplying more of it per turn.
     let gear = published_tillage_gear(&app, A_CREW_UNDER_THE_RATE);
     assert!(
         gear > core_sim::NO_BUILD_GEAR,
-        "fixture: the derived builders kit must take real work off a plant build, or this arm is \
+        "fixture: the derived builders kit must deliver real work on a plant build, or this arm is \
          the un-geared quote wearing a gear term's clothes (gear {gear})"
     );
     assert_eq!(
         published_build_turns(&app, source),
-        ((cost - gear) / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
-        "one builder is quoted `(work_cost − gear) / crew` turns — the rate is the keeping's bill"
+        (cost / (A_CREW_UNDER_THE_RATE as f32 * core_sim::PER_WORKER_OUTPUT + gear)).ceil() as i32,
+        "one builder is quoted `work_cost / (crew + its gear)` turns — the rate is the keeping's \
+         bill, and the tool is in the divisor"
     );
     assert_eq!(
         published_patch_field(&app, source, |patch| patch.meterRotPerTurn()),
@@ -901,5 +906,101 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
         published_patch_field(&app, source, |patch| patch.upkeepDemand()),
         published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand()),
         "a source mid-build is BILLED exactly what the rung it is raising is QUOTED at"
+    );
+}
+
+/// **A BLOCKED HEAD AT ZERO PROGRESS PUBLISHES `upkeepSupplied 0` AGAINST ITS `upkeepDemand 0`** —
+/// a row that no longer disagrees with itself (`docs/plan_standing_upkeep.md` §4.6a).
+///
+/// The keeping pool's claim side carries a **verb** term because `maintenance_shares` runs before
+/// the accrual that banks a build's first work. The capture does not: it reads a source's demand
+/// with **no verb in flight**, which is `0` for a meter at zero. So a head whose gate refuses —
+/// which banks nothing on any turn — used to be stamped a positive share against a published demand
+/// of `0`, on the wire, for as long as the block lasted. (The other half of that defect is the
+/// dilution it inflicted on the band's real holdings; that is pinned in `forage_cultivation.rs` and
+/// `fauna_husbandry.rs`, where the pool's split is visible.)
+///
+/// **The pair is what carries it.** A claim gate that answered *never* would pass the blocked arm
+/// alone, so the same unstarted head with its knowledge granted must publish a **positive** supply
+/// against a positive demand — the first-turn case the verb term exists for.
+#[test]
+fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
+    /// The pool standing on the head — a blocked head is only reportable when a pool is committed.
+    const BUILDERS: u32 = 2;
+
+    // One turn on an **unstarted** patch carrying a queue entry, with the keeping staffed.
+    // `NOTHING_BANKED` is the state the whole defect lives in: with progress on the meter the claim
+    // comes from the ground rather than from the verb, and must keep coming.
+    let run = |knows_cultivation: bool| -> (f32, f32, String, i32) {
+        let (mut app, source) =
+            world_with_a_patch_knowing(BUILDERS, NOTHING_BANKED, knows_cultivation, A_GATHERER);
+        // **The declaration.** `world_with_a_patch_knowing` queues nothing on an unstarted meter —
+        // that is its pre-commit shape — so the entry is stated here, which is what puts the pool on
+        // this head.
+        {
+            let mut query = app.world.query::<&mut LaborAllocation>();
+            let mut found = false;
+            for mut allocation in query.iter_mut(&mut app.world) {
+                if allocation.assignments.iter().any(|assignment| {
+                    matches!(assignment.target, LaborTarget::Forage { tile, .. } if tile == source)
+                }) {
+                    allocation.build_queue.push(core_sim::BuildQueueEntry {
+                        source: core_sim::BuildSource::Patch(source),
+                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
+                    });
+                    found = true;
+                }
+            }
+            assert!(found, "fixture: the band holds the source patch");
+        }
+        let keepers = keeping_demand_in_hands(&app);
+        staff_the_keeping(&mut app, source, keepers);
+        core_sim::run_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+        (
+            published_patch_field(&app, source, |patch| patch.upkeepSupplied()),
+            published_patch_field(&app, source, |patch| patch.upkeepDemand()),
+            published_patch_field(&app, source, |patch| {
+                patch.buildBlockedReason().unwrap_or_default().to_string()
+            }),
+            published_patch_field(&app, source, |patch| patch.buildTurnsRemaining()),
+        )
+    };
+
+    let (supplied, demand, reason, turns) = run(!THE_GATE_IS_OPEN);
+    assert_eq!(
+        turns, BUILD_QUEUE_BLOCKED,
+        "fixture: the head must be blocked with a pool standing on it, got {turns}"
+    );
+    assert_eq!(
+        reason, "knowledge",
+        "fixture: and blocked by the gate this arm staged, got '{reason}'"
+    );
+    assert_eq!(
+        demand, 0.0,
+        "the capture reads a meter at zero as owing nothing — that is what a client sees ({demand})"
+    );
+    assert_eq!(
+        supplied, 0.0,
+        "…so the pool must publish nothing against it, or the row disagrees with itself ({supplied})"
+    );
+
+    let (supplied, demand, reason, turns) = run(THE_GATE_IS_OPEN);
+    assert_eq!(
+        reason, "",
+        "fixture: granting the knowledge must open the gate, still blocked on '{reason}'"
+    );
+    assert_ne!(
+        turns, BUILD_QUEUE_BLOCKED,
+        "fixture: …and the pool must actually be raising it now"
+    );
+    assert!(
+        demand > 0.0,
+        "the build banked its first work, so the capture now reads a real demand ({demand})"
+    );
+    assert!(
+        supplied > 0.0,
+        "…and the keeping pool answered for it on that very turn — the case the claim side's verb \
+         term exists for ({supplied})"
     );
 }

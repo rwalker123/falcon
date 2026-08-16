@@ -69,17 +69,49 @@ const KIND_COMMAND_ECHO := "command_echo"
 ##
 ## **IT IS NEVER A SIM REFUSAL, AND THE OLD WORDING SAID IT WAS.** The line read
 ## `Command failed (assign_labor 0 1 builders 1): can't connect`, which reported from play sent a
-## player looking for a rules problem that does not exist. `CommandClient.send_line` returns
-## `ERR_CANT_ACQUIRE_RESOURCE` when there is no bridge and `ERR_CANT_CONNECT` when the bridge could
-## not deliver, and **those are the only two values it can produce** — a command the sim REFUSES has
-## already been written to the socket, and its refusal arrives later on the server's own event
-## stream. So this site has exactly one meaning and states it: nothing reached the server, and the
-## line the player composed is still theirs to re-issue.
+## player looking for a rules problem that does not exist. A command the sim REFUSES has already been
+## written to the socket, and its refusal arrives later on the server's own event stream.
+##
+## ⛔ **AND IT IS NOT THE ONLY WAY A SEND CAN FAIL — THE COMMENT THAT SAID SO IS WHAT HID A BUG FOR A
+## WHOLE SLICE.** It read *"`CommandClient.send_line` returns `ERR_CANT_ACQUIRE_RESOURCE` when there
+## is no bridge and `ERR_CANT_CONNECT` when the bridge could not deliver, and those are the only two
+## values it can produce"* — true of the codes, and false about their meanings, because the bridge
+## PARSES a line before it sends it (`bridge/command.rs` → `parse_command_line`). A line the client
+## itself could not build comes back as `ERR_CANT_CONNECT` too, and this message then blamed the
+## network for it. Reported from play: the Builders pool's `+` emitted
+## `assign_labor 0 1 builders 1`, the text grammar did not know the `builders` role, and the dock
+## read *"Not connected to the server"* on a client that was connected — so the pool has never been
+## staffable since `docs/plan_standing_upkeep.md` §2.5 introduced it, and no build queue could move.
+##
+## **SO THIS CONST NARROWED RATHER THAN WIDENED.** It fires for `ERR_CANT_ACQUIRE_RESOURCE` alone —
+## there is no bridge, nothing was attempted — and `COMMAND_REFUSED_FORMAT` below carries the case
+## where the bridge answered with a reason. Widening this one to cover both would have traded a wrong
+## message for a vague one.
 ##
 ## **The underlying error code is NOT quoted**, because it carries nothing a player can act on and
-## the two codes mean the same thing here; `CommandClient` already `push_warning`s the bridge's own
-## message for a developer, and the Logs console keeps this line verbatim.
+## this site now has exactly one code; `CommandClient` `push_warning`s the bridge's own message for a
+## developer, and the Logs console keeps this line verbatim.
 const COMMAND_NOT_SENT_FORMAT := "Not connected to the server — \"%s\" was not sent."
+
+## **THE BRIDGE ANSWERED, AND IT SAID NO** — the third outcome the comment above denied for a slice.
+##
+## **IT NAMES THE SIDE, WHICH IS THE WHOLE CORRECTION.** *"before it left the client"* is true of
+## every failure `CommandClient` reports as `ERR_CANT_CONNECT`: a line the bridge could not PARSE, a
+## dispatch that never reached the worker, a write the worker could not make, and a wait that timed
+## out. None of them is the server refusing anything, and none of them is a dead network — which is
+## what the player was being told.
+##
+## **AND IT CARRIES THE BRIDGE'S OWN REASON, because that reason names the token.** A parse error
+## reads `unexpected token "builders"`, which is the one string in this whole path that says what is
+## actually wrong; collapsing it to a category is what made the Builders defect unreadable. It is
+## quoted verbatim rather than re-worded — a second phrasing of the parser's own answer could only
+## drift from it.
+const COMMAND_REFUSED_FORMAT := "Refused before it left the client — \"%s\": %s"
+
+## What stands in when the bridge refused without saying why. It should be unreachable — the code
+## that selects this message is the one `CommandClient` sets its reason alongside — so the wording
+## admits the gap rather than inventing a cause, which is the mistake the whole pair is a repair for.
+const COMMAND_REFUSED_UNKNOWN_REASON := "no reason given"
 
 # ---- kinds the DOCK ignores ------------------------------------------------
 ## Kinds the dock drops at INGEST, in both inlets (`ingest_events` and `note_system`), never storing

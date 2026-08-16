@@ -927,6 +927,107 @@ body minimum is unchanged to the pixel — so this is a fit that was wrong on on
 resize of the family. `_fit_pending` is already false by then, so a refit arriving during the second
 wait is not swallowed.
 
+### THE SHEET DISMISSES ON PRESS **AND** RELEASE, BOTH OUTSIDE THE CARD
+
+`ComposeSheet` mounts a full-viewport catcher at `MOUSE_FILTER_STOP` and used to close on
+`event.pressed` alone. Its geometry settles **asynchronously for at least two frames** after it
+renders: `_body.minimum_size_changed → refit → _place_card`, `refit` re-arms itself, and `_place_card`
+has two boundary flips that move the card by hundreds of pixels (the beside-the-anchor → hug-the-left
+branch, and the height clamp).
+
+**So a player pressing a control during that window lost their composition silently.** The card moved
+out from under the pointer between the frame they saw and the frame they clicked, the press hit the
+catcher, and the sheet vanished. The window reopens on *any* later re-render that changes the body's
+height — a forecast reply landing, a per-snapshot refresh.
+
+**One condition fixes it**: dismiss requires the press **and** the release, both outside the card. A
+press that lands where the card *was* is then harmless. **Deliberately no timer, no frame-count guard
+and no "recently moved" flag** — a second mechanism guarding the first is worse than the bug. Escape
+and the `✕` are different paths and are untouched.
+
+The pair that matters: a press outside then a drag ONTO the card must not dismiss, and a press on the
+card then a release outside must not dismiss. Both are asserted, and the sabotage (restoring
+press-only) fails exactly the three negatives while the positive stays green.
+
+> **This is also the `ui_preview` flake, wearing a synthetic pointer.** `compose_band_switch_forage`
+> failed and passed clean three times: the harness pressed a rect it had computed, the card had moved,
+> the press hit the catcher, the sheet closed, and **five assertions failed as a cascade from one bad
+> press** — which read as five independent problems. `_pick_actor_band` now settles first, **asserts
+> the press point is inside the card**, waits on `about_to_popup` rather than counting frames, and
+> **asserts the sheet survived the press**. That last line is what turns the cascade into one legible
+> failure naming the rect it aimed at. The pointer drive itself was NOT retired — driving the real
+> control is the whole value of that state, and this repo has been bitten by a faked signal passing
+> through a dead picker.
+
+### A RUNG ERODED BELOW ITS COST OFFERS THE `⌃` AGAIN (§4.7)
+
+A Tended patch that decayed even slightly below its cost could never be repaired. `§2.4` says it
+should be — *"repairing it is a fresh decision the player makes by putting it back in the queue"* — and
+the sim's locks are open now (`intensification.md` → "A RUNG ACHIEVED BUT SHORT IS REPAIRABLE"). The
+client's own two suppressions were the last lock: `next_rung_ready` filtered on `improvement_is_done`,
+which reads the achieved FLAG (true at 99%), and the work row forced `ready` empty whenever
+`rung_in_progress` answered, which it does at any partial meter. **The row read the rung as *done* and
+*in progress* at once, and each suppression hid the other.**
+
+`RungGates.rung_has_room` replaces the bare done test, and `_rung_is_an_unordered_repair` clears
+`building` for a repair that is undeclared and unqueued — so the existing `⌃` path is restored whole,
+with no new glyph and no new slot. **A repair is a climb**; the mark already means *this source can
+climb*.
+
+**Two guards the first cut needed, both found by the harness rather than by review:**
+
+- **`improvement_is_done` is also true when a HIGHER rung retires this one.** A Field sown from wild
+  ground carries `cultivation_progress == 0` forever, so a naive test re-offered Cultivate on every
+  finished Field. The test reads the rung's **own** flag.
+- **An absent meter reads 0 and is indistinguishable from "eroded to nothing"**, which put a spurious
+  `⌃` on an unimproved patch. It requires `progress > BUILD_METER_UNSTARTED`.
+
+**Plant-only, and the fixture says why**: on the animal web `improvement_is_done` *is* the meter test,
+so done-and-short is a contradiction there and no honest fixture can produce one.
+
+> **RETIRED BEFORE IT SHIPPED — a `build_crew == 0` fork on the `-1` face.** An eroded unqueued source
+> now publishes no estimate, and it was tempting to render that as *"No estimate"* rather than
+> `⚠ Stalled`. It is wrong: `RungDef::build_accrual`'s `eligible` reads the stock against the floor and
+> **takes no crew count**, so `-1` means *the gate refused* at any staffing. This client shipped a
+> crew-gated version of exactly that once and fixed it; the attempt is recorded at both sites so it is
+> not tried a third time.
+
+### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
+
+Reported from play: a patch at **102** against a floor of **103**, regrowing and being harvested back
+to 102 every turn. The work board read `+0.96 /turn`. This sheet read **`PER TURN 0.00 FOOD`** and
+*"takes nothing until it grows past 103."*
+
+**Both were computed correctly and only one described what happens next.** The board quotes the sim's
+forward projection; the sheet quoted the instantaneous room `B − floor × K`, which is empty by one
+animal. Ray: *"there really is something to take each turn… It is just taking the math too literally.
+It might be better to show what will be taken the 'next' turn."*
+
+- **The caption is `NEXT TURN`** (`NEXT TURN · NOW → AFTER` on the walk) and the figure is
+  `expected_next_turn_yield` — what the crew will actually draw. At equilibrium that IS the regrowth,
+  which is why it reconciles with the board automatically rather than by a second agreement.
+- **The sim regrows BEFORE it harvests** — `advance_forage_regrowth` / `advance_herds` run a whole
+  `TurnStage` ahead of `advance_labor_allocation` — so the forward room is the honest basis, not an
+  optimistic one. Verified against the schedule, not assumed.
+- **ZERO STAYS REACHABLE AND BECOMES HONEST.** A source far enough below its floor that next turn's
+  growth will not cross it really does pay nothing, and then the sheet says so with the same *until it
+  grows past N* sentence — which is now true exactly when it is shown, instead of whenever the room
+  happened to be empty. `forage_at_floor` (`0.15 FOOD`, holding) and `forage_below_floor` (`0.00 FOOD`,
+  *until it grows past 50*) are the pair.
+- **The at-floor SUPPRESSION went with it.** The `now → after` walk was withheld on a source already at
+  its floor, which is why the sheet had nothing left to show; the forward headline is what made the
+  suppression unnecessary. They were one defect.
+- **The new verdict is `At the floor and holding it — taking only what grows back.`**
+- **Scoped to the two ceilings the headline reads.** The floor presets still quote the ROOM (`up to
+  +N/turn`, takeable once) and `max_useful_workers` still divides the ROOM — those answer *different*
+  questions, and re-pointing them moved a dozen unrelated assertions. The sustainability bar DID move
+  onto the take's basis, or a crew taking exactly what the patch offers at the peak tripped
+  `⚠ OVERDRAWS THE PATCH`.
+
+> **KNOWN GAP — the hunt web's quantisation was not re-derived.** `_hunt_delivered_and_waste` reads the
+> forward ceiling like the plant web now, but its *waste* and animal-count quantisation still work off
+> the old basis. Worth a look if a herd sheet at its floor reads oddly.
+
 ### THE VERDICT LINE IS THE POINT OF THE REDESIGN (§7.1)
 
 The four-stance picker let a player select Eradicate with one worker and never eradicate anything:
@@ -2565,6 +2666,75 @@ retires, so no rung of that picker can be disabled.
    BUILDERS stepper beneath this control until §2.5 took the build crew off the tile).
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
+
+> #### ⛔ THERE IS NO CHECKBOX ANY MORE — THE SHEET JUDGES A RUNG, THE WORK TAB DECLARES IT (§4.7a ①)
+>
+> Every state above is a `Label` now (the OFFERED one a `RichTextLabel`, see below). The passages in
+> this file that describe a tick, an untick, `on_toggle` or a `disabled_reason` are kept for the
+> reasoning they carry and are **read against this**.
+>
+> **The trap it removes**: the `🌱 Cultivate this patch` checkbox was not the action — the only thing
+> that committed it was a button reading **`Forage`** — so ticking it and closing the sheet did nothing
+> at all. Reported from play as *"I just click cultivate and not the Forage button — that seems
+> completely unnatural."* The committing act is the Work board's `⌃` mark (`band-city-panel.md` → "…AND
+> THE `⌃` IS THE CONTROL THAT DECLARES THE BUILD"); the sheet keeps the FORECAST, which is what a 28px
+> work row cannot hold.
+>
+> **The four faces, and none of them reads as an offer to act except by naming the control elsewhere:**
+>
+> | state | line |
+> |---|---|
+> | AVAILABLE | `🌱 Cultivate this patch from the Work tab.` |
+> | QUEUED | `🌱 Cultivate this patch · ◷ Queued` + `⚠ Not started — nobody is on this band's Builders role.` |
+> | RUNNING | `🌱 Cultivating 30 / 50 work (60%) — ≈7 turns` |
+> | DONE | `🌾 Tended Patch`, with `▦ Sow a field here from the Work tab.` beneath |
+>
+> - **ONE LINE, AND `Work tab` IS A LIVE LINK.** It shipped for an hour as a fact line plus a smaller
+>   remedy note beneath, and Ray's verdict was that one line is all it needs and the pointer should be
+>   clickable. `work_tab_requested(band_entity)` is a `DrawerComposeController` signal relayed by
+>   `HudLayer` to the panel — **the compose sheet never reaches the dock itself**.
+> - **THE LINK CARRIES THE ACTING BAND, and shipping it without one was a defect.** It named the tab
+>   alone, so from the FACTION page it landed on the faction's Work **rollup** — a list of bands, with
+>   no `⌃` anywhere on it — delivering the player to a surface that cannot do what the sentence
+>   promised. The band it carries is the one the sheet's `Band:` picker names, which is the band whose
+>   `⌃` will queue the job and whose pool will pay for it.
+>   - **The guard is *not already this band*, never *is the faction page*.** The faction page is the
+>     reported symptom; a panel cycled to a DIFFERENT band is the same defect, and a guard written
+>     against the symptom would miss it.
+>   - **It routes through `jump_to_band_entity`**, the faction page's own drill-down path, whose note
+>     forbids a second way to make a band the subject — *"a popover row reaches a band the same way the
+>     cycler does … rather than by a second path that could drift from it."*
+>   - **The tab is set AFTER the jump.** `render_band` re-declares the zone layout and arriving from the
+>     four-zone faction page can flip the shell, so a tab set first is overwritten by the render.
+>   - **`entity`, not `band_id`** — nothing here builds a command, and every overlay reader keys on the
+>     client-local handle.
+>   - An unresolvable band still switches the tab, so a bad handle cannot swallow the interaction.
+>   - **The jump is COUNTED, not inferred** (`alert_focus_requested` emissions: 1 when it must jump, 0
+>     when the panel is already there), which is what catches *always jumps* and *never jumps* alike.
+>     Four cases: the faction page, a different band, the right band already, and an unresolvable one.
+> - **What it still does NOT do is focus the source's ROW** on that board — that needs a public focus
+>   seam the board does not have.
+> - **AVAILABLE is the one state built as a `RichTextLabel`**, and the reason is layout, not style:
+>   `build_inline_link` returns a `Button`, which is atomic — a `[Label][link][Label]` sentence cannot
+>   break inside either half and overflows the ~245px card. An inline `[url]` flows. Every other state
+>   stays a `Label`.
+> - **THE PRICE IS NOT ON THIS SHEET.** `50 work · 2 work a turn to hold` moved to the `⌃` mark's
+>   tooltip — Ray: *"That information should be on the work tab. No need to have it here, it is
+>   useless."* `_improvement_offer_face` and `IMPROVEMENT_OFFER_PRICED_FORMAT` are retired;
+>   `DetailFormat.build_price_clause` survives with its one caller moved, **keeping `from Agriculture`**,
+>   which is a closed defect (it read as a demand on the crew under the stepper) and must not be
+>   re-opened by stripping it there.
+> - **THE CROP PICKER LEFT ENTIRELY**, `extra_rows` with it — Ray: *"the CROP TO TEND shouldn't be a
+>   selection here as the user can't do the cultivate here."* It is a setting of a job, and the job's
+>   settings are the queue row's expansion (`band-city-panel.md` → "A ROW EXPANDS INTO THE JOB'S
+>   SETTINGS"). It still commits through the **same** `assign_labor` builder — the crop was never a
+>   queue-entry field, only a `species` token on the forage row — so nothing moved on the wire.
+> - **THE LIMIT IS STATED RATHER THAN RELAXED, and that was a decision.** A source the band does not work
+>   has no work row, so the `⌃` cannot reach it; the alternative was relaxing the sim's rule, which is a
+>   different membership test for the queue *plus* a per-entry band id on the wire, and buys one saved
+>   click on ground you are about to staff anyway. So the unworked sheet says
+>   `🌱 Send gatherers here first, then Cultivate this patch from the Work tab.` **The two sentences are
+>   a PAIR and are asserted as one** — a builder that always prints one passes any single check.
 
 **ONLY ONE improvement is ever offered — the source's next rung.** `RungGates.next_rung_offered` is
 that answer and shares its ordering with `next_rung_ready` through the private `_next_rung`: highest

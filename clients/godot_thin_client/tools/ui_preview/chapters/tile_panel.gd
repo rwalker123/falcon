@@ -76,10 +76,16 @@ const QUICK_HUNT_IDLE_WORKERS := 3
 ## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
 ## harness has no OS input, so this is how a click/wheel gesture is put through the shipped code path
 ## rather than calling the handler's effect directly.
-func _mouse_button_event(button_index: int) -> InputEventMouseButton:
+## A synthetic catcher event. **It takes BOTH halves of a click now** — the compose sheet dismisses on
+## a press AND a release that both land outside the card, so a press-only driver can no longer state
+## either the positive or the negatives (`ComposeSheet._on_catcher_input`). The position is in the
+## catcher's own space, which is what that handler measures the card's rect in.
+func _mouse_button_event(button_index: int, pressed: bool = true,
+		at: Vector2 = Vector2.ZERO) -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()
 	event.button_index = button_index
-	event.pressed = true
+	event.pressed = pressed
+	event.position = at
 	return event
 
 ## How many Buttons under `root` wear this face — the "is the same order offered twice?" test.
@@ -755,9 +761,34 @@ func run(harness) -> void:
 	await h._settle()
 	h._assert_hud("a wheel tick on the catcher leaves the compose sheet OPEN",
 		h._hud.is_compose_sheet_open())
-	h._hud._drawercompose._compose_sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT))
+	# (5) A DISMISS NEEDS BOTH HALVES OF THE CLICK OUTSIDE THE CARD. It dismissed on the PRESS alone,
+	# and the card's geometry settles asynchronously for at least two frames after a render — with two
+	# boundary flips in `_place_card` that move it by hundreds of pixels — so a player pressing a
+	# control could have the card move out from under the pointer between the frame they saw and the
+	# frame they clicked, and their press threw the composition away. The four claims are a SET: the
+	# positive alone passes on the old press-only handler, and any one negative alone passes on a
+	# catcher that stopped dismissing at all.
+	var sheet: ComposeSheet = h._hud._drawercompose._compose_sheet
+	var on_the_card: Vector2 = sheet._card.position + sheet._card.size * 0.5
+	var off_the_card := Vector2.ZERO
+	sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT, true, off_the_card))
 	await h._settle()
-	h._assert_hud("a left-click on the catcher still CLOSES the compose sheet",
+	h._assert_hud("a PRESS alone leaves the compose sheet OPEN — the card may still be moving under it",
+		h._hud.is_compose_sheet_open())
+	sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT, false, on_the_card))
+	await h._settle()
+	h._assert_hud("…and a press outside DRAGGED onto the card leaves it OPEN",
+		h._hud.is_compose_sheet_open())
+	# The release above cleared the latch, which is exactly the state a press that landed ON the card
+	# leaves the catcher in — Godot routes the release to whichever control took the press.
+	sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT, false, off_the_card))
+	await h._settle()
+	h._assert_hud("…and a release with no press of its own leaves it OPEN",
+		h._hud.is_compose_sheet_open())
+	sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT, true, off_the_card))
+	sheet.gui_input.emit(_mouse_button_event(MOUSE_BUTTON_LEFT, false, off_the_card))
+	await h._settle()
+	h._assert_hud("a press AND release outside the card still CLOSES the compose sheet",
 		not h._hud.is_compose_sheet_open())
 
 	# tile_panel_standing — §14's own frame: the drawer's CLOSED read state on a source the player

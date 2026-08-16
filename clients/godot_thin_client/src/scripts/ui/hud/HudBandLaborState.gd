@@ -434,6 +434,27 @@ func pending_assigns_for(entity: int) -> Dictionary:
 	var a: Variant = (e as Dictionary).get("assign", {})
 	return a if a is Dictionary else {}
 
+## **THE DECLARATION THE OVERLAY IS CARRYING FOR ONE SOURCE** — `IMPROVEMENT_NONE` when this band has
+## no un-acknowledged edit on it (`docs/plan_standing_upkeep.md` §4.7a ①).
+##
+## It exists so an OPEN compose sheet can see a `⌃` pressed on the Work board a moment ago: the sheet
+## derives its rung through `SourceForecast.build_verb`, whose `declared` argument is honoured at a
+## zero meter, and without this the sheet would go on OFFERING a rung the band has just queued.
+##
+## **IT READS THE OVERLAY ALONE, NEVER THE CONFIRMED ASSIGNMENT.** `improvement_for_forage` / `_hunt`
+## answer that other question and the compose sheet already seeds from them; folding the two here
+## would make the composition un-clearable — a sheet that deliberately composes *no build* over a
+## source the wire says is building one is a state the harnesses stage directly.
+##
+## The key shape is `pending_key`'s, so this cannot drift from what `record_pending_assign` wrote.
+func pending_improvement_for(band: Dictionary, kind: String, x: int, y: int,
+		herd_id: String) -> String:
+	var entry: Variant = pending_assigns_for(int(band.get("entity", -1))).get(
+		pending_key(kind, x, y, herd_id), null)
+	if not (entry is Dictionary):
+		return SourceForecast.IMPROVEMENT_NONE
+	return String((entry as Dictionary).get("improvement", SourceForecast.IMPROVEMENT_NONE))
+
 ## `improvement` is what the source will be building once the edit lands — the composed improvement on
 ## a sheet that just ticked one on, else whatever it was already building. It is recorded because
 ## `assign_labor` deliberately does NOT touch that axis (issue #442), so an optimistic overlay that
@@ -774,12 +795,30 @@ func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
 ## source is paid a SHARE of the pool. A headcount is therefore no longer available per source, and
 ## the pool's own state is the only thing that answers *"is this band keeping what it holds"*.
 ##
-## **THE SUM IS OVER THE SOURCES THE SIM ITSELF FUNDS.** A row with nobody on the take is skipped
-## exactly as `systems::labor::maintenance_shares` skips it — its supply is never stamped, so counting
-## its demand would show a shortfall the sim is not charging anybody for. A source whose at-risk meter
-## is still being BUILT contributes its demand too, deliberately: the sim leaves it out of the pool
-## (its builders answer for it), but its published `upkeepShortfall` is still what that meter bleeds,
-## and a band summary that hid it would go quiet on a walked-away build.
+## **THE SUM IS OVER EVERY SOURCE THIS BAND HOLDS ON THIS WEB, TAKE CREW OR NOT.** It skipped a row
+## with nobody on the take, on the reasoning that `systems::labor::maintenance_shares` skips it —
+## which is exactly backwards. **That function deliberately EXCLUDES the take crew from eligibility**
+## (`core_sim/tests/forage_cultivation.rs`: *"a patch with no gatherers is still kept by the band's
+## pool"*): the row's licence to exist is the ground's own at-risk meter, never who happens to be
+## standing on it. So a band that finished a Cultivate and moved its foragers to a richer stand was
+## billed by the sim and contributed nothing here — the card understating both its demand and its
+## shortfall, silently, on the one state the sim has a regression test for.
+##
+## **WHAT THE FILTER WAS ALSO DOING IS DONE BY TWO TESTS THAT REMAIN**, and neither is a headcount:
+## the KIND test above it excludes every band-wide role (`agriculture` / `husbandry` / `builders` /
+## `scout` / `warrior` carry their own kinds, none of which is a web's), and `_upkeep_source_for`
+## answers `{}` for a row whose patch or herd the snapshot does not carry — so *"is this row a real
+## source rather than a band-wide role"* survives structurally.
+##
+## A source whose at-risk meter is still being BUILT contributes its demand too, deliberately: the sim
+## leaves it out of the pool (its builders answer for it), but its published `upkeepShortfall` is
+## still what that meter bleeds, and a band summary that hid it would go quiet on a walked-away build.
+##
+## **IT ALSO CARRIES THE BARE PER-WORKER WORK RATE the sources it summed publish**, which is what lets
+## the pool card project what its OWN hands supply against that demand — read off the same sources the
+## demand came from, so a pool with something to pay for always has a rate to price its hands at.
+## `maxf` over them rather than the first: every source publishes the same constant, and taking the
+## largest means a single malformed row cannot silently zero the projection.
 ##
 ## `kind` is `LABOR_KIND_FORAGE` for the agriculture pool and `LABOR_KIND_HUNT` for the husbandry one
 ## — the two webs' own labor kinds, so the caller never invents a third vocabulary for the split.
@@ -787,13 +826,12 @@ func upkeep_pool_state(band: Dictionary, kind: String) -> Dictionary:
 	var demand := 0.0
 	var supplied := 0.0
 	var shortfall := 0.0
+	var per_worker := SourceForecast.BUILD_WORK_NONE
 	for entry in labor_assignments_of(band):
 		if not (entry is Dictionary):
 			continue
 		var assignment: Dictionary = entry
 		if String(assignment.get("kind", "")).to_lower() != kind:
-			continue
-		if int(assignment.get("workers", 0)) <= 0:
 			continue
 		var source := _upkeep_source_for(assignment, kind)
 		if source.is_empty():
@@ -802,7 +840,15 @@ func upkeep_pool_state(band: Dictionary, kind: String) -> Dictionary:
 		demand += float(state.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
 		supplied += float(state.get("supplied", SourceForecast.NO_UPKEEP_DEMAND))
 		shortfall += float(state.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND))
-	return {"demand": demand, "supplied": supplied, "shortfall": shortfall}
+		per_worker = maxf(per_worker, SourceForecast.build_work_per_worker_turn(
+			source, HudComposeVocab.BARE_FORECAST_PREFIX))
+	return {"demand": demand, "supplied": supplied, "shortfall": shortfall,
+		POOL_PER_WORKER_TURN_KEY: per_worker}
+
+## The key the bare per-worker work rate rides out on. **Named rather than spelled at each reader**,
+## unlike the three figures beside it, because it is read from another script: a typo in a `get` there
+## is a silent zero, which would read as *this pool supplies nothing* and mark a fully staffed card.
+const POOL_PER_WORKER_TURN_KEY := "per_worker_turn"
 
 ## **WHICH WAY THIS BAND SPLITS A POOL IT CANNOT STRETCH** — `PopulationCohortState.upkeepFundMode`,
 ## normalized to one of the two tokens `upkeep_mode` takes.

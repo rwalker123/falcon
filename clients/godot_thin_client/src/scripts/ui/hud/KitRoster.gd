@@ -67,17 +67,28 @@ const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
 ## its live wear (`BAND_KIT_TIERS_KEY`), never the roster's fresh vantage.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
-## **THE BUILD AXIS — the WORK UNITS one equipped worker takes off an improvement's cost.** Neutral
-## `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off the `none` kit and
-## `kit_uses` reads *"declares more than neutral"* with no special case.
+## **THE BUILD AXIS — the WORK UNITS one equipped worker DELIVERS per turn, over and above its bare
+## hands.** Neutral `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off
+## the `none` kit and `kit_uses` reads *"declares more than neutral"* with no special case. The value
+## belongs to the ITEM the kit carries: flint hoes deliver +0.5 a turn on a PLANT build and hurdles
+## the same on an ANIMAL one, which is why the branch below is read with it and never without.
+##
+## ⛔ **IT IS NOT SUBTRACTED FROM ANYTHING, AND IT WAS UNTIL `docs/plan_standing_upkeep.md` §4.8.**
+## The axis shipped as *"work units taken off an improvement's cost"* — a lump against the pile,
+## granted once however long the job ran — and a job's work requirement never changes now: the term
+## is an addend of the SUPPLY the remaining work is divided by, so it is paid every turn the tool is
+## held. The magnitudes moved with the meaning and cannot be carried across: the shipped tool
+## declared `8.5` as units off a job and declares `0.5` as work added per equipped worker per turn.
+## The client evaluates it in exactly one place, `SourceForecast.build_turns_at`.
 ##
 ## **IT SUPERSEDES THE RETIRED `build_rate` MULTIPLIER** (`docs/plan_unit_costed_work.md` §6). That
 ## stat multiplied the CREW's output, and a multiplier cancels the job's cost — it saves the same
-## PERCENTAGE of turns on a garden and on a farm alike, which is exactly the shape the work-costed
-## arc exists to escape. Subtracted from the JOB instead, the job's own size decides what the tool is
-## worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no longer
-## decodes it: a reader left on it reads "changes no build" for every kit in the game, which silently
-## drops the husbandry kit's own clause AND withholds it from a herd being tamed (see `kit_offer`).
+## PERCENTAGE of turns on a garden and on a farm alike, which is the shape the work-costed arc exists
+## to escape. Stated as a per-worker QUANTITY of work instead, the job's own size decides what the
+## tool is worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no
+## longer decodes it: a reader left on it reads "changes no build" for every kit in the game, which
+## silently drops the husbandry kit's own clause AND withholds it from a herd being tamed (see
+## `kit_offer`).
 ##
 ## **IT IS NOT A TIER AND HAS NO HINT-LINE HOME.** The four axes above are rates a readout can quote
 ## per worker; this one prices a build the sheet is not otherwise talking about, and the surface that
@@ -86,9 +97,10 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 
 ## **THE BUILD AXIS'S NEUTRAL — `0.0`, and NOT the multipliers' `1.0`.** It is a quantity of work a
-## tool takes off a job, so *no tool* is *no work*; reading the multipliers' neutral here would hand
-## every bare-handed crew a free work unit per worker off every build. The sim states the same split
-## on `EquipmentStat::neutral`.
+## tool ADDS to what a worker delivers, so *no tool* is *no extra work*; reading the multipliers'
+## neutral here would hand every bare-handed crew a free work unit per worker on every build, on top
+## of the bare rate the source already publishes. The sim states the same split on
+## `EquipmentStat::neutral`.
 const BUILD_WORK_NONE := 0.0
 
 ## **HOW MANY OF THIS BAND'S WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD** — the head count at or
@@ -111,7 +123,8 @@ const KIT_BUILD_SATURATING_CREW_KEY := "build_work_saturating_crew"
 ## and a spent tool declares nothing.
 ##
 ## **THE THREE BUILD FIELDS ARE ONE READING** (`equipment.md` → "A `build_work` EFFECT MUST DECLARE
-## ITS `branch`"). A hoe takes 8.5 off a Cultivate and NOTHING off a Tame; hurdles do the reverse. So
+## ITS `branch`"). Flint hoes add +0.5 a turn to a worker raising a Cultivate and NOTHING to one
+## raising a Tame; hurdles do the reverse. So
 ## a worth read without its branch is a number that is real and simply not real HERE — the same
 ## discipline `attack_max_body_mass` imposes on `attack`, and the same failure if it is skipped: a
 ## sheet quoting the hurdles' contribution against a garden promises a build that cannot land.
@@ -280,16 +293,16 @@ const JOB_BUILDERS := "builders"
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
 ## work appear: a hunt or forage crew's carry axis is a property of the SOURCE (`carry_axis_for`)
 ## rather than of the job alone, and the two questions must not collapse into one table.
+##
+## **THE BUILDERS ARE ABSENT AGAIN, AND THIS TABLE FOLLOWS ITS READERS.** `KIT_BUILD_WORK_KEY` had an
+## entry here for exactly as long as the Builders card carried a read-only gear line
+## (`docs/plan_standing_upkeep.md` §2.5); §4.7 retired that line — the BUILD QUEUE head states the
+## pool's kit adjacent to the jobs it prices — so nothing resolves a build-axis hint any more, and a
+## row here with no reader is a lever that looks live. A builders kit picker landing on a queue row
+## (§7's ②) puts it back, with that row as its caller.
 const ROLE_AXES := {
 	JOB_SCOUT: KIT_SCOUT_VANTAGE_KEY,
 	JOB_WARRIOR: KIT_ATTACK_KEY,
-	# **AND THE BUILD AXIS, which the builders role card gave a home**
-	# (`docs/plan_standing_upkeep.md` §2.5). `KIT_BUILD_WORK_KEY`'s own note said it had no hint-line
-	# home; that was true while no card was priced on it, and the moment the pool became a role card
-	# the omission stopped being a decision and became a WRONG READOUT — `build_kit_row` falls through
-	# to the compose sheets' `tier_hint` for a job this table does not name, so a Builders card read
-	# `attack 1.0 · carry 12.0 per hunter`, a hunter's haul quoted on a builder's row.
-	JOB_BUILDERS: KIT_BUILD_WORK_KEY,
 }
 
 ## Is this a BAND-WIDE role — one standing slot, no source, priced on `ROLE_AXES`? The one test, so a
@@ -1091,12 +1104,48 @@ static func builders_kit_for(kits: Array, row_kit_id: String, branch: String,
 ## same fresh-tier test, and the same reason it is a lookup rather than a table: ⛔ no `web → kit id`
 ## match is spelled anywhere, so a third build tool is a roster edit on both halves.
 static func build_kit_for_branch(kits: Array, branch: String) -> String:
+	return work_kit_for_branch(kits, JOB_BUILDERS, branch)
+
+## **THE ROSTER'S ANSWER FOR ONE JOB AND ONE WEB** — the earliest entry offering `job`, in roster
+## order, whose build tool serves `branch` at the fresh tier. The sim's `EquipmentConfig::work_kit_for`,
+## which is the ONE lookup both its derivations are: the builders' kit and the KEEPING pool's are the
+## same question asked of two job lists, so a second walk here could only drift from this one.
+static func work_kit_for_branch(kits: Array, job: String, branch: String) -> String:
 	if branch == BUILD_BRANCH_NONE:
 		return NO_KIT_ID
-	for kit_variant in kits_for_job(kits, JOB_BUILDERS):
+	for kit_variant in kits_for_job(kits, job):
 		if kit_serves_build_branch(kits, kit_variant, branch):
 			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
 	return NO_KIT_ID
+
+## The two KEEPING roles and the web each keeps — `agriculture` keeps ground, `husbandry` keeps
+## animals. Spelled here as the file spells `JOB_SCOUT` and `JOB_BUILDERS`, so this layer keeps
+## depending on nothing but `SourceForecast` and the leaves below it.
+const JOB_AGRICULTURE := "agriculture"
+const JOB_HUSBANDRY := "husbandry"
+const KEEPING_JOB_BUILD_BRANCHES := {
+	JOB_AGRICULTURE: BUILD_BRANCH_PLANT,
+	JOB_HUSBANDRY: BUILD_BRANCH_ANIMAL,
+}
+
+## **THE KIT A BAND'S KEEPING POOL IS ACTUALLY WORKING WITH** — the client's read of the sim's
+## `EquipmentConfig::keeping_kit_for`, which derives the tool off the ROSTER because
+## `default_kits.agriculture` / `.husbandry` are both `none` and a pool that waited to be handed a kit
+## would keep bare-handed forever.
+##
+## **THE ROW'S OWN `kitId` IS DELIBERATELY NOT CONSULTED, unlike the builders'.** The sim honours a
+## kit NAMED on the keeping row (`named_kit_on`), and the wire publishes that row's kit already
+## RESOLVED — so a row nobody has named reads back as the job default `none`, which is
+## indistinguishable here from a deliberate bare-handed pin (the trap `builders_kit_for` records one
+## rule over). There is no keeping kit picker in this client, so the only way to make that pin is the
+## command line; deriving is therefore right for every band a player can produce from the UI, and a
+## pin would be quoted one tool too generous rather than silently ignored.
+##
+## `NO_KIT_ID` for a role that keeps no web, and for a roster carrying no tool that serves it — a real
+## answer meaning the pool works bare-handed.
+static func keeping_kit_for(kits: Array, role_kind: String) -> String:
+	return work_kit_for_branch(kits, role_kind,
+		String(KEEPING_JOB_BUILD_BRANCHES.get(role_kind, BUILD_BRANCH_NONE)))
 
 ## **THE ROSTER'S BARE ENTRY FOR ONE JOB — the kit that carries nothing.** `kit_supplies_any` is the
 ## derived reading of "the null kit" (`item_ids` empty), which is why nothing here spells the id
@@ -1224,25 +1273,6 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 				DetailFormat.kit_item_label(item_id), DetailFormat.kit_condition_face(band, item_id)])
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
-## **A ROLE CARD'S READ-ONLY GEAR LINE — the kit's NAME and then what it buys**, e.g.
-## `Tillage kit · 8.5 work off a build, per builder · Hoes 100`.
-##
-## **IT CARRIES THE NAME BECAUSE THERE IS NO PICKER LEFT TO CARRY IT.** `role_hint` alone states the
-## effect and the condition of the gear; the kit those are true OF was the picker's own face, so a
-## card that drops the control and keeps only the hint stops naming the tool its pool is holding.
-## Joined with `KIT_HINT_SEPARATOR`, so the name reads as the first clause of one line rather than as
-## a second row competing with the description beneath it.
-##
-## **A KIT WITH NOTHING TO SAY IS ITS NAME ALONE.** The bare entry takes nothing off a build and
-## carries no item, so `role_hint` is empty and this reads `No kit` — the same face the build queue's
-## own header states for that band, both being `BandPanelController._role_kit_id`'s one answer.
-static func role_gear_line(kits: Array, kit_id: String, band: Dictionary, job: String) -> String:
-	var display := display_name_for_id(kits, kit_id)
-	var hint := role_hint(kits, kit_by_id(kits, kit_id), band, job)
-	if hint == "":
-		return display
-	return HudComposeVocab.KIT_HINT_SEPARATOR.join([display, hint])
-
 ## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
 ## whole number**, so each takes the rounding the Gear popover already gives it — the vantage its own
 ## (the sim reveals in whole tiles), the attack the popover's shared whole-number face — and neither
@@ -1255,14 +1285,6 @@ static func _role_effect_phrase(job: String, tier: float) -> String:
 		JOB_WARRIOR:
 			return DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 				tier, DetailFormat.KIT_CONDITION_DECIMALS)
-		JOB_BUILDERS:
-			# **A NEUTRAL CONTRIBUTION STATES NOTHING**, the "absent terms render no line" convention:
-			# `none` — which is the builders' own default — takes nothing off a build, and `0 work off a
-			# build` costs a line to say so. The condition clauses beside it still render, so a kit that
-			# grants no build work but is wearing out still says which items it is spending.
-			if tier <= BUILD_WORK_NONE:
-				return ""
-			return DetailFormat.KIT_ROLE_BUILDERS_BUILD_FORMAT % DetailFormat.format_work_units(tier)
 	return ""
 
 ## One item's condition clause, appended only where there is something true to say: the band has to

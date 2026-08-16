@@ -81,7 +81,8 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         let ladder = core_sim::LadderConfig::builtin();
         let mut forage = app.world.resource_mut::<ForageRegistry>();
         let patch = forage.patch_mut(field_tile).expect("the Field persists");
-        patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
+        patch.upkeep_supplied =
+            core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder);
     }
 
     // --- Set up a completed, worked corral (pen) on a real herd. --------------------------------

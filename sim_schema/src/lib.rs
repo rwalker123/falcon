@@ -77,7 +77,7 @@ mod tests {
                     dispersion: 1.0,
                     exposure: 1.0,
                     build_rate: RETIRED_BUILD_RATE,
-                    // Carrying nothing takes NOTHING off a build — the additive stat's neutral is
+                    // Carrying nothing ADDS nothing to a build — the additive stat's neutral is
                     // `0`, not the retired multiplier's `1`.
                     build_work_per_worker: 0.0,
                     // ...and names no web, because there is no tool here to serve one.
@@ -1214,14 +1214,15 @@ mod tests {
         );
     }
 
-    /// **WHAT THE CREW'S TOOLS TOOK OFF THE JOB SURVIVES THE WIRE, on both webs — and it is quoted
-    /// BESIDE the raw price rather than folded into it** (`docs/plan_unit_costed_work.md` §6). That
-    /// separation is the readout: *"your hurdles: −17 work"* only means anything against a
-    /// `workCost` that does not move under the crew's kit.
+    /// **WHAT THE CREW'S TOOLS ADD PER TURN SURVIVES THE WIRE, on both webs — and it is quoted
+    /// BESIDE the raw price rather than folded into it** (`docs/plan_standing_upkeep.md` §4.8). That
+    /// separation is the readout: *"your hurdles: +1.0 work/turn"* only means anything against a
+    /// `workCost` that does not move under the crew's kit — and a reader that netted it out of the
+    /// price would double-count the kit, which is the retired subtraction's shape.
     ///
-    /// `0` is asserted positively on the plant row, because it is both the schema default and the
-    /// honest reading for every plant build today — a codec that dropped the field would decode the
-    /// same `0`, so the live half is asserted beside it.
+    /// `0` is asserted positively on one row, because it is both the schema default and the honest
+    /// reading for a pool carrying nothing that helps — a codec that dropped the field would decode
+    /// the same `0`, so the live half is asserted beside it.
     #[test]
     fn the_gears_contribution_to_a_build_survives_the_wire() {
         const HERD_GEAR_WORK: f32 = 17.0;
@@ -1447,10 +1448,14 @@ mod tests {
     /// **THE KIT'S PER-WORKER BUILD CONTRIBUTION SURVIVES THE WIRE, and the retired multiplier's
     /// slot publishes only its neutral.** Both halves matter: a consumer must be able to read the
     /// successor, and one still reading `buildRate` must not be handed a number in work units — it
-    /// renders that field as a *factor*, so `8.5` would say *"×8.5 build speed"*.
+    /// renders that field as a *factor*, so the shipped `0.5` would say *"×0.5 build speed"* — a kit
+    /// that HALVED the crew's output.
     #[test]
     fn the_kits_build_contribution_supersedes_the_retired_multiplier_on_the_wire() {
-        const PER_WORKER: f32 = 8.5;
+        /// **The shipped per-worker-per-turn contribution** of either builders kit
+        /// (`equipment.json`, `docs/plan_standing_upkeep.md` §4.8) — a value in this field's real
+        /// units, so the round trip is checked on a number the sim actually sends.
+        const PER_WORKER: f32 = 0.5;
         let snapshot = WorldSnapshot {
             kits: vec![KitOptionState {
                 id: "husbandry".to_string(),

@@ -387,6 +387,9 @@ fn create_herds<'a>(
         // consumer comparing its player's selection against an absent string would read every herd
         // as a mismatch.
         let default_kit_id = builder.create_string(herd.default_kit_id.as_str());
+        // **Always written, `""` included** — the empty string is *"this herd is not a blocked
+        // build"*, which is a statement, and an absent field would make a reader guess.
+        let build_blocked_reason = builder.create_string(herd.build_blocked_reason.as_str());
         // **An EMPTY curve is absent, not a vector of zeros** — the convention every repeated field
         // on this table follows, and the one that lets a client tell "this source published no
         // curve" from "this source does not grow", which are different facts.
@@ -517,6 +520,8 @@ fn create_herds<'a>(
                 // `buildTurnsRemaining` and `buildWorkFromGear`, which is what makes a chained date
                 // legible (docs/plan_standing_upkeep.md 4.6b).
                 buildQueuePosition: herd.build_queue_position,
+                // …and WHY it is stuck, when it is. `""` = not blocked.
+                buildBlockedReason: Some(build_blocked_reason),
             },
         );
         entries.push(entry);
@@ -535,6 +540,8 @@ fn create_forage_patches<'a>(
         let per_worker_material = create_material_payoffs(builder, &patch.per_worker_material);
         let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
         let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
+        // Always written, `""` included — see the herd twin.
+        let build_blocked_reason = builder.create_string(patch.build_blocked_reason.as_str());
         let composition = create_flora_shares(builder, &patch.composition);
         // The committed crop (S1) — both empty when the patch is the wild mixed basket.
         let committed_species = builder.create_string(patch.committed_species.as_str());
@@ -617,6 +624,7 @@ fn create_forage_patches<'a>(
                 meterRotPerTurn: patch.meter_rot_per_turn,
                 // The plant twin — see the herd row above.
                 buildQueuePosition: patch.build_queue_position,
+                buildBlockedReason: Some(build_blocked_reason),
             },
         );
         entries.push(entry);

@@ -84,6 +84,9 @@ var _anchor_rect: Rect2 = Rect2()
 ## "a different source" on a per-snapshot re-render. Opaque to this node.
 var _subject_key: String = ""
 var _fit_pending: bool = false
+## Whether the press half of a dismiss gesture landed on the CATCHER. A dismiss needs both halves
+## outside the card — see `_on_catcher_input`.
+var _press_landed_outside: bool = false
 
 func _ready() -> void:
 	# The catcher: full-screen, STOP, so a click anywhere outside the card dismisses. No scrim —
@@ -187,6 +190,10 @@ func close() -> void:
 		return
 	visible = false
 	_subject_key = ""
+	# A half-finished dismiss gesture must not survive the sheet it was aimed at: without this, a
+	# press on the catcher followed by an Esc or a `✕` would leave the latch armed for the NEXT sheet,
+	# whose first release outside would then close it with no press of its own.
+	_press_landed_outside = false
 	for child in _body.get_children():
 		child.queue_free()
 	emit_signal("closed")
@@ -303,12 +310,61 @@ func _place_card() -> void:
 
 # ---- input -----------------------------------------------------------------
 
+## **A DISMISS NEEDS BOTH HALVES OF THE CLICK OUTSIDE THE CARD, and that is a player-facing fix.**
+##
+## Only a deliberate CLICK dismisses — a wheel tick must not. This is the second place the sheet
+## departs from `NarrativeForkPanel` (rule 3 above is the first), and for the same reason: a fork is
+## a modal story beat, whereas an assignment is composed AGAINST a live map the player is still
+## reading (docs/plan_tile_panel_layout.md §"NO SCRIM"), so scrolling over the map is an ordinary
+## reading gesture and must never throw the composition away. An ALLOWLIST, not a wheel exclusion,
+## so a future Godot wheel/extra button index stays non-dismissing by default.
+##
+## **IT DISMISSED ON THE PRESS ALONE, AND THE CARD MOVES UNDER THE POINTER.** The geometry settles
+## ASYNCHRONOUSLY for at least two frames after a render — `_body.minimum_size_changed → refit →
+## _place_card`, with `refit` re-arming itself — and `_place_card` has two boundary flips that move
+## the card by hundreds of pixels (beside-the-anchor → hug-the-left-edge, and the height clamp). So a
+## player pressing a control during that window, or on any later re-render that changes the body's
+## height (a forecast reply landing, a per-snapshot refresh), pressed where the card WAS and hit the
+## catcher — and the composition was silently gone. Requiring the release to land outside too is the
+## standard idiom and makes a press that lands where the card was harmless.
+##
+## **ONE CONDITION, NO SECOND MECHANISM.** No timer, no frame-count guard, no "recently moved" flag:
+## a dismiss that sometimes ignores a genuine click is worse than the bug it would paper over.
+##
+## The two clauses each carry a case the other cannot:
+##
+## * **the latch** — Godot routes a button RELEASE to whichever control took the PRESS, so a press on
+##   the card never reaches this handler at all; the latch is what says the press we are releasing
+##   from is the one we saw, rather than a stale event from before the sheet opened.
+## * **the rect test** — that same routing means a press outside followed by a DRAG onto the card
+##   delivers the release here anyway, so the release's own position is what keeps that gesture from
+##   dismissing. It is measured against the card's rect merged with the `PanelContainer`'s, because
+##   that panel can draw OUTSIDE the fitted card (see `_panel`) and the player is pointing at what is
+##   drawn.
+##
+## Escape and the `✕` are unaffected — different paths, both calling `close()` directly.
 func _on_catcher_input(event: InputEvent) -> void:
-	# Only a deliberate CLICK dismisses — a wheel tick must not. This is the second place the sheet
-	# departs from `NarrativeForkPanel` (rule 3 above is the first), and for the same reason: a fork is
-	# a modal story beat, whereas an assignment is composed AGAINST a live map the player is still
-	# reading (docs/plan_tile_panel_layout.md §"NO SCRIM"), so scrolling over the map is an ordinary
-	# reading gesture and must never throw the composition away. An ALLOWLIST, not a wheel exclusion,
-	# so a future Godot wheel/extra button index stays non-dismissing by default.
-	if event is InputEventMouseButton and event.pressed and DISMISS_BUTTONS.has(event.button_index):
+	if not (event is InputEventMouseButton):
+		return
+	var button := event as InputEventMouseButton
+	if not DISMISS_BUTTONS.has(button.button_index):
+		return
+	if button.pressed:
+		_press_landed_outside = true
+		return
+	var was_outside := _press_landed_outside
+	_press_landed_outside = false
+	if was_outside and not _card_rect_local().has_point(button.position):
 		close()
+
+## The card as the player sees it, in this catcher's own coordinates. **Local, never global**: the
+## sheet lives under a `CanvasLayer` whose transform the interface scale moves, and an event's
+## `global_position` and a Control's `global_position` are not obliged to share a space under one.
+## `_card` is this node's direct child and `_panel` is `_card`'s, so a plain position sum is exact.
+func _card_rect_local() -> Rect2:
+	if _card == null:
+		return Rect2()
+	var rect := Rect2(_card.position, _card.size)
+	if _panel != null:
+		rect = rect.merge(Rect2(_card.position + _panel.position, _panel.size))
+	return rect

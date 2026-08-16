@@ -42,10 +42,16 @@ var _forage_count: int = 0
 # consumed, never set by a −/+ tick, so manual counts survive the rebuild.
 var _forage_autofill := false
 var _forage_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
-# **THE SECOND AXIS** (issue #442) — the improvement this compose will COMMIT TO on the patch, or
-# `IMPROVEMENT_NONE` for "build nothing". Seeded from the standing assignment's own `improvement` when
-# the source changes, then toggled by the improvement checkbox; committing sends its own verb beside
-# `assign_labor`, which never touches this axis.
+# **THE SECOND AXIS** (issue #442) — the improvement this sheet renders the patch as building, or
+# `IMPROVEMENT_NONE` for "building nothing". Seeded from the standing assignment's own `improvement`
+# when the source changes.
+#
+# **IT IS NO LONGER A COMPOSED COMMITMENT, and nothing on this sheet writes it from a click**
+# (`docs/plan_standing_upkeep.md` §4.7a ①). The improvement checkbox that toggled it is retired — it
+# was never the commit — and the declaration is the Work board's `⌃`. What still writes it is the
+# builder's own derivation (`SourceForecast.build_verb`, written back so the sheet composes whatever
+# the METERS report) and the harnesses, which stage a build state through it directly. `assign_labor`
+# has never carried this axis and still does not: it rides the OPTIMISTIC OVERLAY alone.
 var _forage_improvement: String = ""
 # The crop the composed Cultivate/Sow will commit this patch to (flora roster S1); "" = send nothing,
 # which is VALID and yields the sim's own default (`default_species_for_rung` — the highest-share

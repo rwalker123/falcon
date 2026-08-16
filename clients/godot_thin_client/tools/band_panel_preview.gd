@@ -976,7 +976,13 @@ func _ready() -> void:
 	# The fixture carries a hay larder AND a pen feed bill, productivity below full, a fertility
 	# reading, and the projected arrivals the FOOD OUTLOOK chart needs, so
 	# every gate in `build_band_zone` / `unit_summary_lines` is live at once.
+	#
+	# **IT IS PINNED TO THE SHORT-TIER PROBE CANVAS, and both merges are why.** §4.7's taller strip
+	# puts a one-column horizontal dock at COMPACT, which does not merge — so docking T/B no longer
+	# reaches the tier these two claims are about. `SHORT_TIER_PROBE_HEIGHT` restores the pre-raise
+	# 300px box through the clamp, so the frame is the geometry it always was.
 	_push_bands([_vitals_worst_case_band_fixture()])
+	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, SHORT_TIER_PROBE_HEIGHT))
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
 	await _settle()   # let the deferred fit_content re-pack settle before capture
@@ -990,7 +996,12 @@ func _ready() -> void:
 	# frame as the Food merge because this is the frame that carries every optional row at once — the
 	# only state in which the zone is asked to hold the full set.
 	_assert_merged_morale_growth_fits()
-
+	# **RELEASED, not re-pinned to `PREVIEW_SIZE`.** Nothing had pinned a canvas before this state, so
+	# the states below it render at `project.godot`'s own 1920-wide base through the `expand` stretch —
+	# pinning the 1500px WINDOW size here instead takes 420px of logical width off every one of them,
+	# which is enough to drop the four-zone faction page out of its wide shell.
+	_release_canvas_pin()
+	await _settle()
 
 	# (b3) THE GEAR BREAKDOWN — the Kit row's popover, opened on the reference band, which carries one
 	# condition row per item the shipped config has. It is the ONLY surface that states what each item
@@ -1157,7 +1168,7 @@ func _ready() -> void:
 	_assert_role_card_gear()
 	_assert_role_cards_are_level()
 	_assert_role_kit_command_carries_the_pick()
-	_assert_builders_stepper_sends_no_kit()
+	await _assert_builders_stepper_sends_no_kit()
 	# Put the shared band back exactly as the later states expect it: the pick above is real zone
 	# state and its emit is a real pending assign, and either one left behind would render a `No kit`
 	# Scout card with an amber title in every band frame from here down.
@@ -1215,6 +1226,9 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# The strip's BASE shape — no notes, no arrivals, picker closed — which is what the reserved
+	# constant is authored against. The states below add one conditional child each.
+	_assert_work_inspector_fits("band_panel_inspector")
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# The Work menu's destructive action asks first, and the confirm names what is SPARED.
@@ -1299,6 +1313,9 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# …and the strip with its POLICY PICKER open, which is the one conditional child that is panel
+	# state rather than model state.
+	_assert_work_inspector_fits("band_panel_work_policy_investment")
 	# A BUILDING row lights its STANCE like any other — the state that used to light nothing.
 	_assert_lit_rung(INVESTMENT_ROW_PRESET)
 	_assert_policy_pick_confirms(INVESTMENT_ROW_HERD_ID, false)
@@ -1363,6 +1380,29 @@ func _ready() -> void:
 	await _save("band_panel_rung_ready_filter")
 	_assert_ready_filter_narrows()
 	_hud._bandpanel._set_work_filter(HudWorkVocab.WORK_FILTER_ALL)
+
+	# **THE `⌃` IS THE CONTROL THAT QUEUES THE JOB** (`docs/plan_standing_upkeep.md` §4.7a ①). It was a
+	# `Label` advertising an opportunity with no way to take it: the declaration lived on the TILE
+	# sheet's checkbox, which was not the commit either — the button that sent the verb read `Forage`,
+	# so ticking the box and closing the sheet did nothing at all. Reported from play, repeatedly.
+	#
+	# **THE BOARD IS A THREE-ROW SET AND ALL THREE VERBS ARE REACHED**: a tended patch offers `sow`
+	# (tile-targeted), a fully-tamed pen-ceiling Aurochs offers `corral` (tile-targeted, a herd's rung
+	# addressed by the pen's PLACE) and a pastoral-ceiling Wild Boar offers `tame` (HERD-targeted).
+	# `format_improvement` forks on exactly that last distinction, so a board without a Tame on it
+	# cannot tell a builder that has the grammar backwards from one that has it right.
+	_hud.update_food_modules(_declare_forage_modules())
+	_set_forage_patches(_declare_patch_fixtures())
+	_set_world_herds(_declare_herd_fixtures())
+	_push_bands([_declare_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_ready_declare")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	await _assert_ready_mark_declares()
+
 	_hud.update_intensification([])
 
 	# THE FORAGE JUMP NAMES THE LAND (issue #412, a pre-existing defect the marks made reachable-looking).
@@ -1476,6 +1516,10 @@ func _ready() -> void:
 	# the SHORT tier keeps the presets alone exactly as the band zone's outlook chart is kept out. The
 	# frame is judged on the ABSENCE plus the fit: a gate that never fired and a chart clipped off the
 	# bottom of the zone are the same picture.
+	#
+	# **PINNED TO THE SHORT-TIER PROBE CANVAS since §4.7 raised the strip** — a one-column horizontal
+	# dock is COMPACT at the new budget, and the tier gate's NEGATIVE half has nowhere else to be made.
+	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, SHORT_TIER_PROBE_HEIGHT))
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
 	await _save("band_panel_compose_hunt_short")
@@ -1498,6 +1542,7 @@ func _ready() -> void:
 	# **AND A MARK LATCHED IN THE SHORT DOCK MUST NOT SURVIVE THE MOVE TO THE TALL ONE.** Staged here,
 	# judged after the real `set_dock` → render below.
 	var staged_mark := _stage_impossible_compose_mark()
+	_release_canvas_pin()
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	_assert_mark_dropped_on_dock_change("band_panel_compose_hunt", staged_mark)
@@ -2183,11 +2228,17 @@ func _ready() -> void:
 
 	await _assert_builders_card_kit_faces()
 
+	await _assert_work_tab_link_routes()
+
 	await _render_build_queue_states()
 
 	await _render_work_build_state_states()
 
 	await _render_pending_queue_states()
+
+	await _render_repair_and_declare_states()
+
+	await _render_work_inspector_width_states()
 
 	_assert_pending_assign_rollback()
 
@@ -2957,6 +3008,9 @@ func _render_keeper_warning_states() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_keeper_warning("band_panel_keepers_short", true)
+	# …and the strip carrying a `note` — the slipping sentence, one of the four conditional children
+	# the reservation was blind to.
+	_assert_work_inspector_fits("band_panel_keepers_short")
 
 	# THE SAME HERD, THE SAME HUNTERS, THE KEEPING FUNDED. The inspector is left open so the note's
 	# absence is a change in the same surface rather than a surface that stopped rendering.
@@ -3019,12 +3073,17 @@ const KEEPING_POOL_HERD_DEMAND := 4
 ## The tile the patch sits on — its own coordinates, so the band's forage row and the patch lookup
 ## agree about which source is being kept.
 const KEEPING_POOL_TILE := Vector2i(66, 14)
+## …and the chained countdown on the entry it has queued. An ordinary positive count, so the date
+## column renders a completion turn rather than a sentinel.
+const KEEPING_POOL_BUILD_TURNS := 17
 
 func _render_upkeep_mode_states() -> void:
 	_set_world_herds(_keeping_pool_herd_fixtures())
 	_set_forage_patches(_keeping_pool_patch_fixtures())
 	_panel.set_dock(SIDE_LEFT)
-	_panel.set_active_tab(&"band")
+	# **THE WORK TAB SINCE §4.7** — the three pools and the fund-mode row that governs two of them
+	# moved off the band flank onto the tab that shows what they pay for.
+	_panel.set_active_tab(&"work")
 	for mode in [HudConst.UPKEEP_FUND_MODE_SPREAD, HudConst.UPKEEP_FUND_MODE_PRIORITY]:
 		_push_bands([_keeping_pool_band_fixture(mode)])
 		await _settle()
@@ -3032,13 +3091,404 @@ func _render_upkeep_mode_states() -> void:
 		_assert_zones_within_bounds()
 		_assert_zone_content_fits()
 		_assert_upkeep_mode_control(mode)
+	# THE POOLS BLOCK's own claims, on the band that carries the fund-mode row: the head, the three
+	# cards drawing LEVEL behind a precondition that their content differs, and the reserved height
+	# matching the drawn one. This is the TALL LEFT dock half of the pair.
+	_report_zone_content_extent("band_panel_upkeep_mode_priority")
+	_assert_pools_block("the tall LEFT dock", true)
+	_assert_pool_cards_are_level("the tall LEFT dock")
+	# …and the BOTTOM dock, so the block's height is in the MEASURED budget rather than only in the
+	# arithmetic — that is the 300px box the work zone's whole chrome has to fit inside.
+	#
+	# **THIS BAND IS THE WORK ZONE'S WORST CASE, and it is asserted rather than merely measured**: it
+	# is short of keepers AND has a build queued, so the fund-mode row and the queue block are both
+	# up at once. It wanted **331px of this 300px box** while the fund-mode row was three lines; the
+	# `Short of keepers` head retiring and the buttons folding in beside the shortfall line took the
+	# row 67 → 22 and the zone to **284**, which is the whole reason the state can carry a fit claim.
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_pools_wide")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_pools_wide")
+	_assert_pools_block("the BOTTOM dock", true)
+	_assert_pool_cards_are_level("the BOTTOM dock")
+	# …and the queue really IS up beside it, or "the worst case fits" is a claim about a lesser state.
+	_assert_band_panel("the BOTTOM dock: …with the BUILD QUEUE block up beside the fund-mode row, which is what makes this the zone's worst case",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) != null)
+
+	# **THE SAME WORST CASE ON A SPAN THAT EARNS THE FLANK TWO COLUMNS, and it is the OTHER HALF of the
+	# claim rather than a repeat.** `_body_budget()` forks on `band_zone_columns()`, so a one-column
+	# frame passes on a budget the two-column path never uses — and that path used to hand EVERY zone
+	# `PANEL_HEIGHT_WIDE_TWO_COLUMN`'s 275px box, which is 9px under this zone's own 284px floor. The
+	# work zone clips, so it clipped silently: no overflow, no warning, fewer board rows than the pager
+	# thought it drew. `_body_budget()` takes the taller of the two budgets now and this is the frame
+	# that fails if it stops.
+	await _pin_canvas(BAND_COLUMNS_TWO_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_pools_wide_two_column")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_pools_wide_two_column")
+	# The PRECONDITION: this span really does widen the flank, or the whole state is the one above it
+	# rendered twice.
+	_assert_band_columns("band_panel_pools_wide_two_column", 2)
+	_assert_pools_block("the TWO-COLUMN bottom dock", true)
+	_assert_pool_cards_are_level("the TWO-COLUMN bottom dock")
+	_assert_band_panel("band_panel_pools_wide_two_column: …with the BUILD QUEUE block up beside the fund-mode row",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) != null)
+	# **AND THE BUDGET IS THE ONE-COLUMN ONE, asserted on the PUBLISHED strip.** The claim is not merely
+	# that the zone fits — it is that the two-column saving can no longer hand a zone less room than the
+	# one-column budget, which is what `_body_budget()`'s max says and what a re-derivation would agree
+	# with itself about.
+	_assert_band_panel("band_panel_pools_wide_two_column: the two-column strip is never SHORTER than the one-column budget (%.0f, floor %.0f)"
+			% [_panel.current_reservation_size(), BandCityPanel.PANEL_HEIGHT_WIDE],
+		_panel.current_reservation_size() + ZONE_BOUNDS_TOLERANCE
+			>= BandCityPanel.PANEL_HEIGHT_WIDE)
+
+	# **THE SAME WORST CASE WITH A ROW SELECTED — the frame family that did not exist.** Reported from
+	# play: the panel's content ran past the bottom of the screen *only when something is selected in
+	# the work list*. Every inspector-open state in this file is a TALL LEFT dock with room to spare,
+	# and every worst-case ZONE state is a BOTTOM dock with nothing selected — two disjoint families,
+	# with the defect living in the gap between them.
+	#
+	# The row opened is the UNDER-KEPT herd, deliberately: its model carries a `note`, which is one of
+	# the four conditional children the reservation used to be blind to, so the strip here is taller
+	# than its base rather than the cheapest one on the board.
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	_open_work_inspector_for_herd(UNDER_HERDED_WORK_HERD_ID)
+	await _settle()
+	await _save("band_panel_pools_wide_selected")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_pools_wide_selected")
+	_assert_work_inspector_fits("band_panel_pools_wide_selected")
+	await _assert_work_inspector_worst_case_fits("band_panel_pools_wide_selected")
+	# The PRECONDITION, without which the state is `band_panel_pools_wide` rendered twice: a strip
+	# really is open, and the queue block really is up beside it.
+	_assert_band_panel("band_panel_pools_wide_selected: a work inspector strip really is open",
+		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META) != null)
+	_assert_band_panel("band_panel_pools_wide_selected: …with the BUILD QUEUE block still beside it",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) != null)
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+	await _settle()
+
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
 	# THE NEGATIVE, on the reference band: nothing built, nothing to keep, so no fund-mode row. It is
 	# the half a rendered pair cannot make — a control shown unconditionally is a plausible control.
+	# **The BLOCK itself must still render there**, which is the other half of the same pairing: three
+	# steppers at 0 are a live control, and only a band with nothing to keep can tell the two apart.
 	_set_forage_patches([])
 	_push_bands([_band_fixture()])
 	await _settle()
 	_assert_band_panel("a band with nothing to keep renders no fund-mode control",
 		_find_meta_control(_panel, BandPanelController.UPKEEP_MODE_BLOCK_META) == null)
+	_assert_pools_block("a band with nothing to keep", false)
+
+## GUARD: **the POOLS block renders on EVERY band, and its RESERVED height is its DRAWN one.**
+##
+## The three-cards claim is what stops the block being satisfied by a head over nothing; the
+## fund-mode claim is a PAIR across its two call sites (present on a band short on both webs, absent
+## on the reference band), since a row shown unconditionally is a plausible row.
+##
+## **The height claim is the one no frame can carry.** The work zone `clip_contents`, so a block that
+## drew taller than `HudWorkVocab.pools_block_height` reserved would take the difference off the
+## bottom of the board with nothing on screen to show for it — and `_assert_zone_content_fits` cannot
+## see it either, a clipped row still reporting a rect inside its host. It is asked as
+## *reserved >= drawn* rather than as an equality: under-reserving is the failure, and a few pixels of
+## slack is a fit rather than a bug.
+func _assert_pools_block(where: String, want_fund_mode: bool) -> void:
+	var block := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
+	if block == null:
+		_fail("%s renders no POOLS block at all" % where)
+		return
+	var cards := _pool_cards()
+	_assert_band_panel("%s: the POOLS block carries all THREE pool cards (%d)" % [where, cards.size()],
+		cards.size() == POOL_CARD_COUNT)
+	_assert_band_panel("%s: …and its fund-mode row is %s" % [where,
+			"rendered" if want_fund_mode else "absent"],
+		bool(block.get_meta(HudWorkVocab.POOLS_BLOCK_META)) == want_fund_mode
+			and (_find_meta_control(block, BandPanelController.UPKEEP_MODE_BLOCK_META) != null)
+				== want_fund_mode)
+	var reserved: float = HudWorkVocab.pools_block_height(want_fund_mode)
+	var drawn: float = block.get_combined_minimum_size().y
+	_assert_band_panel("%s: …and the height it RESERVES covers what it DRAWS (%.0f reserved, %.0f drawn)"
+			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
+	if want_fund_mode:
+		_assert_upkeep_mode_row_fits(where, block)
+	else:
+		# **THE PAIRED NEGATIVE FOR THE SHORTFALL MARK, on the one band that can carry it.** A band with
+		# nothing to keep is short of nothing, so all three cards must be bare — and without this the
+		# marked pair two states along passes on a builder that marks every keeping card there is.
+		_assert_pool_card_marks(where, [], [HudWorkVocab.ROLE_NAME_AGRICULTURE,
+			HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.ROLE_NAME_BUILDERS])
+
+## GUARD: **the fund-mode row is the TWO BUTTONS and nothing else, and it draws inside the height
+## reserved for it** (§4.7). It carried an arithmetic line beside them until the per-web marks landed;
+## that line SUMMED both webs, so it could not name the one that was short, and its covered form
+## announced that nothing was wrong in a noun no control in the game uses. Both are deleted, so what
+## is measured is the buttons — the row's only remaining content — and `UPKEEP_MODE_ROW_HEIGHT` was
+## re-derived for them.
+##
+## **THE MEASUREMENT IS THE POINT.** The work zone `clip_contents`, so a row drawing taller than
+## `pools_block_height` reserved takes the difference off the bottom of the board with nothing on
+## screen to show for it — which is why the reserved height is not merely re-guessed at when its
+## content changes.
+func _assert_upkeep_mode_row_fits(where: String, block: Control) -> void:
+	var buttons := _collect_meta_controls(block, BandPanelController.UPKEEP_MODE_BUTTON_META)
+	if buttons.size() != UPKEEP_MODE_BUTTON_COUNT:
+		_fail("%s — the fund-mode row carries %d buttons, not %d"
+			% [where, buttons.size(), UPKEEP_MODE_BUTTON_COUNT])
+		return
+	# …and the retired note is ABSENT, which the height claim below cannot see: a row that still drew
+	# it would simply be taller, and a re-derived constant would quietly make room for it again.
+	_assert_band_panel("%s: …and the fund-mode row states no arithmetic line beside them" % where,
+		_find_meta_control(block, RETIRED_UPKEEP_MODE_NOTE_META) == null)
+	var row_top: float = INF
+	var row_bottom := 0.0
+	for control in buttons:
+		row_top = minf(row_top, control.global_position.y)
+		row_bottom = maxf(row_bottom, control.global_position.y + control.size.y)
+	# The measured height is PRINTED to one decimal beside the claim, because the reserved constant is
+	# re-derived from it: a row that fits comfortably and one that fits by a rounding are the same
+	# green line otherwise.
+	_assert_band_panel("%s: …and the two buttons draw inside the row's reserved height (%.1f of %.1fpx)"
+			% [where, row_bottom - row_top, HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT],
+		row_bottom - row_top <= HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT + ZONE_BOUNDS_TOLERANCE)
+
+## GUARD: **the WORK INSPECTOR strip draws inside the height it RESERVED** — the pools block's own
+## rule (`_assert_pools_block`), asked of the one block in this zone that never got it.
+##
+## `BandPanelController._work_inspector_height` forked on ONE panel-state bool and never read the
+## model, while `_build_work_inspector` draws four children CONDITIONALLY on what the model says — the
+## overdraw line, the slipping `note`, the `muted_note` and the `ArrivalStrip`. Each drew with nothing
+## reserved for it, and the zone `clip_contents`, so the shortfall came off the bottom in silence.
+##
+## **THE DRAWN FIGURE IS THE STRIP'S CONTENT, NOT THE STRIP.** Godot folds `custom_minimum_size` INTO
+## `get_combined_minimum_size`, so asking the `PanelContainer` what it needs hands the reservation
+## straight back and the claim passes with the defect fully restored (measured). What is measured is
+## the inner column's own minimum plus the card's stylebox margins — the two things Godot would have
+## aggregated — and the reserved figure is read off the meta the builder stamped rather than
+## re-derived here, which would agree with the builder by construction.
+func _assert_work_inspector_fits(where: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("%s — no work inspector strip is open to measure" % where)
+		return
+	var column: Control = null
+	for child in strip.get_children():
+		if child is Control:
+			column = child
+			break
+	if column == null:
+		_fail("%s — the work inspector strip has no content column" % where)
+		return
+	var reserved := float(strip.get_meta(HudWorkVocab.WORK_INSPECTOR_META))
+	var chrome := strip.get_theme_stylebox("panel").get_minimum_size().y
+	var drawn := column.get_combined_minimum_size().y + chrome
+	# The two figures are PRINTED beside the claim, exactly as the fund-mode row's are: a strip that
+	# fits comfortably and one that fits by a rounding are the same green line otherwise, and both of
+	# these constants are re-derived from measurements like this one.
+	_assert_band_panel("%s: the work inspector RESERVES what it DRAWS (%.0f reserved, %.0f drawn)"
+			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
+
+## GUARD: **the same claim at the strip's WORST CASE, driven rather than staged — and this is the half
+## that can see the model-blind reservation.** `WORK_INSPECTOR_HEIGHT` carries ~20px of slack over what
+## the base strip draws (measured: 118 reserved against 98 drawn), which is enough to hide exactly ONE
+## conditional child: a rendered row with a single `note` passes with the fork fully restored. No
+## fixture on any board carries all four at once, and staging one would move an existing frame's
+## subject, so the worst case is BUILT — a real board model with every conditional field stamped on it,
+## through the builder's own `_build_work_inspector`.
+##
+## It is measured OFFSCREEN (`visible = false`, freed immediately) because a Label's font-size override
+## resolves on TREE ENTRY: a strip measured outside the tree reports the default theme's line height
+## and the comparison is against numbers no frame ever draws.
+func _assert_work_inspector_worst_case_fits(where: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	if models.is_empty():
+		_fail("%s — no work model to build a worst-case inspector from" % where)
+		return
+	var model: Dictionary = (models[0] as Dictionary).duplicate(true)
+	model["warn"] = true
+	model["note"] = WORST_CASE_INSPECTOR_NOTE
+	model["muted_note"] = WORST_CASE_INSPECTOR_MUTED_NOTE
+	# A schedule with a zero in it is what `ArrivalStrip.has_gap` admits — the whole of what makes the
+	# strip mount at all.
+	model["schedule"] = PackedFloat32Array(WORST_CASE_INSPECTOR_SCHEDULE)
+	var was_open: bool = _hud._bandpanel._work_floor_open
+	_hud._bandpanel._work_floor_open = true
+	var reserved: float = _hud._bandpanel._work_inspector_height(model)
+	var strip: Control = _hud._bandpanel._build_work_inspector(band, model)
+	_hud._bandpanel._work_floor_open = was_open
+	strip.visible = false
+	add_child(strip)
+	await _settle()
+	var column: Control = null
+	for child in strip.get_children():
+		if child is Control:
+			column = child
+			break
+	var drawn := 0.0
+	if column != null:
+		drawn = column.get_combined_minimum_size().y \
+			+ strip.get_theme_stylebox("panel").get_minimum_size().y
+	_assert_band_panel("%s: the work inspector RESERVES what it DRAWS at its WORST case — every note, the arrivals and the picker (%.0f reserved, %.0f drawn)"
+			% [where, reserved, drawn],
+		column != null and reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
+	# …and this staged model really IS the ceiling `HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT`
+	# documents, which is the figure `BandCityPanel.PANEL_HEIGHT_WIDE` records as deliberately
+	# unreserved. A fifth conditional child would move the constant and leave this fixture behind,
+	# and the documented number would quietly stop describing the worst case.
+	_assert_band_panel("%s: …and that worst case IS the documented ceiling (%.0f of %.0f)"
+			% [where, reserved, HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT],
+		is_equal_approx(reserved, HudWorkVocab.WORK_INSPECTOR_CEILING_HEIGHT))
+	strip.queue_free()
+
+## The three conditional lines and the gapped schedule the worst-case strip is built from. Their WORDS
+## are irrelevant — what is measured is that each mounts a line — but they are stated rather than
+## borrowed from the vocabulary so the fixture cannot change under a copy edit.
+const WORST_CASE_INSPECTOR_NOTE := "Animals are drifting off."
+const WORST_CASE_INSPECTOR_MUTED_NOTE := "Some of the take went to waste."
+const WORST_CASE_INSPECTOR_SCHEDULE: Array[float] = [1.0, 0.0, 1.0]
+
+## The fund-mode row's whole content: `Spread` and `Priority`.
+const UPKEEP_MODE_BUTTON_COUNT := 2
+
+## The RETIRED note's meta, as a literal — `BandPanelController` no longer declares it, and an absence
+## claim composed from live code could only describe whatever the code still tags.
+const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
+
+## How many cards the POOLS block carries — Agriculture, Husbandry, Builders.
+const POOL_CARD_COUNT := 3
+
+## GUARD: **which POOL CARDS fly the shortfall mark, asserted as a PAIR of lists.** A mark on every
+## card and a mark on none are the same picture at a glance, so the claim is which cards carry it AND
+## which do not — and the figure behind it is on that card's own `tooltip_text`, per web, which is the
+## whole reason the summed line under the buttons was retired.
+##
+## The card's own `POOL_CARD_SHORT_META` is what is read, never the glyph: the mark is a Label beside
+## the title and the figure is a hover, neither of which a harness can assert without re-spelling the
+## vocabulary the builder used. This is the builder's own answer to *are you short*.
+func _assert_pool_card_marks(where: String, short_roles: Array, calm_roles: Array) -> void:
+	for role_variant in short_roles:
+		var role := String(role_variant)
+		var card := _find_pool_card(role)
+		if card == null:
+			_fail("%s — no %s pool card to read" % [where, role])
+			continue
+		_assert_band_panel("%s: the %s card flies the shortfall mark" % [where, role],
+			bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
+		# …and the FIGURE is on that card's hover, in ITS OWN WEB'S words — the plant card must not
+		# describe the animal one, which is exactly what one summed line could not avoid doing. Both
+		# halves: its own web's tail AND not the other's, since a card quoting both webs' sentences
+		# would satisfy a lone positive.
+		_assert_band_panel("%s: …and quotes its own web's shortfall on its hover (%s)"
+				% [where, card.tooltip_text],
+			card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
+			and card.tooltip_text.contains(_pool_short_tail(role))
+			and not card.tooltip_text.contains(_pool_short_tail(_other_keeping_role(role))))
+	for role_variant in calm_roles:
+		var role := String(role_variant)
+		var card := _find_pool_card(role)
+		if card == null:
+			_fail("%s — no %s pool card to read" % [where, role])
+			continue
+		_assert_band_panel("%s: …while the %s card wears no mark and quotes no figure (%s)"
+				% [where, role, card.tooltip_text],
+			not bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false))
+			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE))
+
+## **THE SHORTFALL SENTENCE'S OWN MIDDLE, AND THE TAIL THAT NAMES ITS WEB.** The lead was `"Short "`
+## for one run and it was VACUOUS in both directions: the Agriculture card's ordinary role HINT reads
+## *"Keeps every tended patch and Field this band works. Short of the sum, they rot."*, so a calm card
+## failed the negative and a short one passed the positive on the hint alone. This phrase appears in
+## the shortfall sentences and in no hint.
+const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn; this band's"
+
+## …and the two webs' tails, which is what makes the per-web claim a claim: the whole point of moving
+## the figure onto the cards is that a summed line could not say WHICH web was short.
+const POOL_SHORT_TAIL_PLANT := "tended ground and queued jobs need"
+const POOL_SHORT_TAIL_ANIMAL := "tamed animals and queued jobs need"
+
+func _pool_short_tail(role: String) -> String:
+	return POOL_SHORT_TAIL_ANIMAL if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
+		else POOL_SHORT_TAIL_PLANT
+
+func _other_keeping_role(role: String) -> String:
+	return HudWorkVocab.ROLE_NAME_AGRICULTURE if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
+		else HudWorkVocab.ROLE_NAME_HUSBANDRY
+
+## GUARD: **the three pool cards draw LEVEL, and none of them clips its role name.**
+##
+## ⛔ **THERE IS NO CONTENT-DIFFERS PRECONDITION HERE, AND THAT IS MEASURED RATHER THAN SKIPPED.** The
+## role cards' own levelness claim is preconditioned on the two cards' CONTENT heights differing — the
+## Scout's hint wraps to three lines against the Warrior's two — and a pool card has no prose, no
+## picker and no gear line, so its content is a title Label over a stepper. Measured, all three come
+## out **114 × 56**: the stepper's own 100px minimum dominates every role name, so the three cards are
+## structurally identical in BOTH axes and no fixture can make them differ. A precondition either way
+## round could only ever be vacuous, which is exactly what this file's own rule says not to ship.
+##
+## **What is asserted instead is the pairing that CAN bite**: the minimums really are the stepper's
+## (so a card that grew content would fail here first), all three render at one width and one height,
+## and no title is CLIPPED at the shell being measured — three abreast is the arrangement the narrow
+## shell was measured to fit, and an ellipsised name is the reading that says it does not.
+func _assert_pool_cards_are_level(where: String) -> void:
+	var cards := _pool_cards()
+	if cards.size() != POOL_CARD_COUNT:
+		_fail("%s — all three pool cards must render to compare their heights" % where)
+		return
+	var widths: Array[float] = []
+	var drawn_widths: Array[float] = []
+	var drawn: Array[float] = []
+	for card in cards:
+		widths.append(card.get_combined_minimum_size().x)
+		drawn_widths.append(card.size.x)
+		drawn.append(card.size.y)
+	var width_differs := false
+	for width in widths:
+		if not is_equal_approx(width, widths[0]):
+			width_differs = true
+	_assert_band_panel("%s: the three pool cards' own minimums are the STEPPER's, not their names' (%s)"
+			% [where, str(widths.map(func(w: float) -> String: return "%.0f" % w))],
+		not width_differs and widths.min() > 0.0)
+	_assert_band_panel("%s: …and all three RENDER at one width (%s)"
+			% [where, str(drawn_widths.map(func(w: float) -> String: return "%.0f" % w))],
+		absf(drawn_widths.max() - drawn_widths.min()) <= ROLE_CARD_HEIGHT_EPSILON
+			and drawn_widths.min() > 0.0)
+	_assert_band_panel("%s: …and all three RENDER at one height (%s)"
+			% [where, str(drawn.map(func(h: float) -> String: return "%.0f" % h))],
+		absf(drawn.max() - drawn.min()) <= ROLE_CARD_HEIGHT_EPSILON and drawn.min() > 0.0)
+	var clipped: Array[String] = []
+	for card in cards:
+		var title := _pool_card_title(card)
+		if title != null and _label_text_width(title) > title.size.x + ZONE_BOUNDS_TOLERANCE:
+			clipped.append("%s (%.0f of %.0fpx)" % [title.text, _label_text_width(title), title.size.x])
+	_assert_band_panel("%s: …and no card CLIPS its role name (%s)"
+			% [where, "none clipped" if clipped.is_empty() else str(clipped)], clipped.is_empty())
+
+## A pool card's own title Label — the one carrying the role name it was found by.
+func _pool_card_title(card: Control) -> Label:
+	for role_name in [HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.ROLE_NAME_HUSBANDRY,
+			HudWorkVocab.ROLE_NAME_BUILDERS]:
+		var found := _label_titled_under(card, String(role_name))
+		if found != null:
+			return found
+	return null
+
+func _label_titled_under(node: Node, title: String) -> Label:
+	if node is Label and (node as Label).text == title:
+		return node as Label
+	for child in node.get_children():
+		var found := _label_titled_under(child, title)
+		if found != null:
+			return found
+	return null
 
 ## The band under both fund-mode frames: it works a tended patch and a tamed herd, and staffs both
 ## keeping roles too thinly to cover either. The roles are ORDINARY ROWS of the assignment list, which
@@ -3049,8 +3499,12 @@ func _keeping_pool_band_fixture(mode: String) -> Dictionary:
 	band["id"] = "Band 21"
 	band["upkeep_fund_mode"] = mode
 	band["labor_assignments"] = [
+		# The forage row DECLARES a build, so this band carries a queue as well as a fund-mode row —
+		# which is the WORK zone's genuine worst case and the one its 300px horizontal box is
+		# measured against (§4.7).
 		{"kind": "forage", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"target_x": KEEPING_POOL_TILE.x, "target_y": KEEPING_POOL_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_SOW,
 			"actual_yield": 0.97, "sustainable_yield": 0.97},
 		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"fauna_id": UNDER_HERDED_WORK_HERD_ID, "target_x": 70, "target_y": 17,
@@ -3071,6 +3525,11 @@ func _keeping_pool_patch_fixtures() -> Array:
 		"upkeep_shortfall": KEEPING_POOL_PATCH_DEMAND - KEEPING_POOL_PATCH_SUPPLIED,
 		"upkeep_workers_needed": int(KEEPING_POOL_PATCH_DEMAND),
 		"has_neglect_grace": true, "neglect_grace_remaining": 2,
+		# …and the queue entry that makes this the work zone's WORST case: a band that both holds
+		# something short of keepers AND has a build on the list carries the fund-mode row and the
+		# queue block at once. `band_panel_pools_wide` is that state on the 300px horizontal dock.
+		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
+		"build_turns_remaining": KEEPING_POOL_BUILD_TURNS,
 	}]
 
 ## …and the herd on the other web, short by the same construction.
@@ -3108,12 +3567,14 @@ func _assert_upkeep_mode_control(expected_mode: String) -> void:
 		offered == [HudConst.UPKEEP_FUND_MODE_PRIORITY, HudConst.UPKEEP_FUND_MODE_SPREAD])
 	_assert_band_panel("band_panel_upkeep_mode_%s: exactly the band's own mode is lit (%s)"
 		% [expected_mode, lit], lit == [expected_mode])
-	var note := _find_meta_control(block, BandPanelController.UPKEEP_MODE_NOTE_META)
-	var note_text := (note as Label).text if note is Label else ""
-	_assert_band_panel("band_panel_upkeep_mode_%s: the note quotes the pool's shortfall (\"%s\")"
-		% [expected_mode, note_text],
-		note_text.begins_with(HudWorkVocab.UPKEEP_MODE_SHORT_FORMAT.split("%s")[0])
-		and note_text != HudWorkVocab.UPKEEP_MODE_COVERED_TEXT)
+	# **THE ARITHMETIC IS ON THE POOL CARDS NOW, PER WEB, and the pairing is the claim.** The summed
+	# line this replaces could not name the web that was short — both its terms were the plant pool's
+	# plus the animal pool's — so a band whose Agriculture is fine and whose Husbandry is starving read
+	# one number belonging to neither card. This band is short on BOTH webs, so both keeping cards fly
+	# the mark and quote their own figure, while the BUILDERS card beside them stays bare: a mark on
+	# every card says nothing, and that pool has no keeping to be short of.
+	_assert_pool_card_marks(expected_mode, [HudWorkVocab.ROLE_NAME_AGRICULTURE,
+		HudWorkVocab.ROLE_NAME_HUSBANDRY], [HudWorkVocab.ROLE_NAME_BUILDERS])
 	if others.is_empty():
 		_fail("band_panel_upkeep_mode_%s — no unlit mode to press" % expected_mode)
 		return
@@ -3247,13 +3708,32 @@ func _assert_keeper_warning(state_name: String, expect_warned: bool) -> void:
 		var note := String(model.get("note", ""))
 		if warned != expect_warned:
 			failures.append("under_herded is %s, expected %s" % [warned, expect_warned])
+		# **THE ROW'S HOVER IS THE ONE SURFACE THAT CARRIES THE COUNTDOWN, and the asymmetry IS the
+		# claim.** The source's own card states the same first sentence and no figure at all — this
+		# board is where staffing is decided this turn, so *how long you have* is actionable here.
+		# Asserting one surface passes on a producer that puts the countdown everywhere, so the
+		# CARD's answer for the same herd is asserted beside it.
+		var tooltip := String(model.get("tooltip", ""))
+		var card_hover := HudWorkVocab.under_kept_tooltip_for_source(
+			SourceForecast.SOURCE_KIND_HERD)
 		if expect_warned:
 			if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
 				failures.append("expected the ⚠ mark, got marks %s" % [marks])
 			if note != HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
 				failures.append("expected the Husbandry note, got %s" % [note])
-		elif note == HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
-			failures.append("the Husbandry note survived a herd the pool covers")
+			if not tooltip.contains(note):
+				failures.append("the row hover states no remedy: %s" % [tooltip])
+			if not tooltip.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+				failures.append("the row hover states no countdown: %s" % [tooltip])
+			if card_hover.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+				failures.append("the CARD's hover states a countdown too: %s" % [card_hover])
+			if not card_hover.contains(note):
+				failures.append("the CARD's hover states no remedy: %s" % [card_hover])
+		else:
+			if note == HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
+				failures.append("the Husbandry note survived a herd the pool covers")
+			if tooltip.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+				failures.append("a covered herd's row hover counts down: %s" % [tooltip])
 	if not found:
 		_fail("%s — no Hunt work row for %s" % [state_name, UNDER_HERDED_WORK_HERD_ID])
 		return
@@ -3385,6 +3865,7 @@ func _render_band_column_states() -> void:
 	_push_bands([_band_fixture()])
 	await _settle()
 
+
 	# ONE column — the regression bar. Everything here must read exactly as it did before the flank
 	# could widen at all.
 	await _pin_canvas(BAND_COLUMNS_ONE_CANVAS)
@@ -3394,35 +3875,50 @@ func _render_band_column_states() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_band_columns("band_panel_band_columns_one", 1)
-	# THE REGRESSION BAR, stated as its own claim: one column must still pick the tier it always did.
-	# The tier budget is now the box TIMES the count, so a bug in that arithmetic would show up first
-	# as a one-column flank quietly promoted into a taller tier it has no room for.
-	_assert_band_panel("band_panel_band_columns_one: one column still picks the SHORT tier (%s)"
-		% _band_zone_tier_name(),
-		_hud._bandpanel._band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT)
+	# THE REGRESSION BAR, stated as its own claim: one column picks the tier its own box affords, and
+	# the tier budget is the box TIMES the count — so a bug in that arithmetic shows up first as a
+	# one-column flank quietly promoted past what it has room for.
+	#
+	# **IT READS COMPACT SINCE §4.7, AND THAT IS THE RAISE RATHER THAN A REGRESSION.**
+	# `BandCityPanel.PANEL_HEIGHT_WIDE` went 360 → 440 to pay for the POOLS block and 440 → 456 for the
+	# WORK INSPECTOR, which hands the zones a **396px** box — past `BAND_ZONE_CHART_MIN_HEIGHT` (340),
+	# so this flank gets the compact food-outlook chart and the role-card hints back. It is still short
+	# of `BAND_ZONE_TALL_MIN_HEIGHT` (420), which is the claim that matters here: the tier that follows
+	# from the box, not the tallest one going — and the second raise was held to the minimum that
+	# clears the overflow precisely so this stays true (24px of room left before the flip).
+	#
+	# **The box is READ rather than restated**, so the claim cannot go stale against the budget again.
+	_assert_band_panel("band_panel_band_columns_one: one column picks the COMPACT tier its %.0fpx box affords (%s)"
+		% [_hud._bandpanel._zone_box().y, _band_zone_tier_name()],
+		_hud._bandpanel._band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_COMPACT)
 	_report_zone_content_extent("band_panel_band_columns_one")
 	var one_column_strip: float = _panel.current_reservation_size()
 
-	# **THE TWO-COLUMN STRIP IS SHORTER, AND THE ONE-COLUMN STRIP IS UNTOUCHED.** Two claims, not one,
-	# and the second is the regression bar: a one-column flank still stacks 299px into its 300px box,
-	# so a budget cut applied flat would slice it — and every TOP dock is one column (the lateral
-	# bounds cost it 704px of span), which is why no top-dock frame may move.
+	# **NEITHER STRIP IS SHORTER THAN THE ONE-COLUMN BUDGET, AND THAT IS THE CLAIM NOW.** It used to be
+	# that two columns SHORTENED the strip to `PANEL_HEIGHT_WIDE_TWO_COLUMN` and this asserted that
+	# equality. `docs/plan_standing_upkeep.md` §4.7 ended the saving: the two-column budget hands its
+	# shorter box to EVERY zone, and the WORK zone stopped being able to absorb one — the POOLS and
+	# BUILD QUEUE blocks are fixed-height and do not page, giving that zone a 284px floor against the
+	# 275px the saving offered. `_body_budget()` takes the MAX of the two budgets, so the branch is
+	# currently INERT and both strips read `PANEL_HEIGHT_WIDE`.
 	#
-	# Asserted as EQUALITIES against the panel's own two consts rather than as an inequality: "shorter"
-	# is satisfied by any cut, including one that drops the strip under the parked chrome's
-	# requirement, which is the failure `_assert_parked_chrome_margin` exists for.
+	# **Asserted as an EQUALITY on one column and a FLOOR on two**, which is the asymmetry the max
+	# introduces: the one-column strip is pinned (every TOP dock is one column — the lateral bounds
+	# cost it 704px of span — so no top-dock frame may move), while the two-column one may legitimately
+	# rise again if `BAND_ZONE_TWO_COLUMN_EXTENT` is ever re-measured above it. What it may never do is
+	# fall back under the one-column budget, which is the defect this pair exists to catch.
 	#
 	# **THE RAW STRIP IS COMPARED, ACTION REGISTRY AND ALL, and that is a claim about the registry too.**
 	# A horizontal dock mounts its actions on the SUBJECT ROW, so the bar is hidden and charges the
-	# strip nothing; a bar that leaked a row here would push both numbers off their consts and fail
-	# these two before `_assert_action_mount_pairing` ever ran.
-	_assert_band_panel("band columns: ONE column keeps the full body budget (%.0f, want %.0f) — its flank still stacks 299 of a 300px box"
+	# strip nothing; a bar that leaked a row here would push both numbers off and fail these two before
+	# `_assert_action_mount_pairing` ever ran.
+	_assert_band_panel("band columns: ONE column keeps the full body budget (%.0f, want %.0f)"
 		% [one_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE],
 		is_equal_approx(one_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE))
-	_assert_band_panel("band columns: TWO columns shorten the strip to the two-column budget (%.0f, want %.0f) — %.0fpx of map handed back"
-		% [two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN,
-			one_column_strip - two_column_strip],
-		is_equal_approx(two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN))
+	_assert_band_panel("band columns: TWO columns never take the strip BELOW the one-column budget (%.0f, floor %.0f) — the two-column saving is inert at %.0f"
+		% [two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE,
+			BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN],
+		two_column_strip + ZONE_BOUNDS_TOLERANCE >= BandCityPanel.PANEL_HEIGHT_WIDE)
 
 	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
 	await _settle()
@@ -3435,12 +3931,21 @@ func _render_band_column_states() -> void:
 ## passed at 88%, because 88% was the tall column's number and the short one was invisible to it. The
 ## flank's OWN emptiness is a total, so the total is what is measured.
 ##
-## 0.60 clears the chartless flank's arithmetic CEILING with room to spare — its three blocks total
-## 393px against the 600px two columns of a 300px box offer, i.e. 66%, and no split can beat that,
-## because the total is the total however it is dealt out — while a SHORT-tier two-column flank fails
-## it. It is deliberately not tighter:
-## the number it must catch is a tier that failed to rise, not a block that gained a row.
-const BAND_FLANK_FILL_FLOOR := 0.60
+## **IT WAS 0.60, AND WHAT MOVED IT WAS THE ROOM RATHER THAN THE CONTENT.** That number cleared the
+## chartless flank's arithmetic ceiling — its blocks totalled 430px against the 550px two columns of a
+## 275px box offered, i.e. 78% — while a SHORT-tier two-column flank failed it.
+## `docs/plan_standing_upkeep.md` §4.7 raised `BandCityPanel.PANEL_HEIGHT_WIDE` to 440 for the WORK
+## zone's sake and `_body_budget()`'s max carried that to the two-column path, so the same 430px of
+## blocks now sits in **760px** of room: **57% charted-less, 72% charted**, with the split and its
+## balance unchanged (68% / 88%). Nothing about the flank got emptier — its box got taller.
+##
+## **0.50 is the re-derivation, and it still bites.** It clears the chartless ceiling of 57% by 7
+## points, and a flank that LOST a block fails it outright: without WORKFORCE it reads 23%, without
+## PEOPLE 49%. What it can no longer catch at two columns is a tier that failed to rise, and that is
+## structural rather than a weakening — the tier is the box TIMES the count, so 380 × 2 is 760 and
+## always clears `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT`. `_assert_band_tier_rises` states that claim
+## on its own and is where it belongs.
+const BAND_FLANK_FILL_FLOOR := 0.50
 ## How short the LESSER column may be against the taller before the flank reads as lopsided rather
 ## than laid out. 0.65 passes the ONE authored split at its MEASURED worst — **290/256 = 0.88 charted,
 ## 174/256 = 0.68 chartless** — and still fails every rival ordering of a chartless flank by a wide
@@ -5461,6 +5966,9 @@ func _assert_role_kit_command_carries_the_pick() -> void:
 ## stepper's own face) and the REAL `assign_labor_requested` payload.
 func _assert_builders_stepper_sends_no_kit() -> void:
 	var scout_card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	# **THE BUILDERS HALF LIVES ON THE OTHER TAB SINCE §4.7** — the three pool cards moved to the WORK
+	# zone — so the tab is switched between the two presses and put back afterwards. The claim is
+	# unchanged: one role's stepper must carry its pinned kit and the builders' must carry none.
 	var picker := _find_meta_control(scout_card, KitRoster.KIT_PICKER_META) as OptionButton \
 		if scout_card != null else null
 	if picker == null:
@@ -5478,16 +5986,21 @@ func _assert_builders_stepper_sends_no_kit() -> void:
 	var scout_line := _emitted_stepper_line(HudWorkVocab.ROLE_NAME_SCOUT)
 	_assert_band_panel("a Scout stepper on a PINNED kit still carries its tail — \"%s\"" % scout_line,
 		scout_line != "" and scout_line.contains(" kit "))
-	var builders_line := _emitted_stepper_line(HudWorkVocab.ROLE_NAME_BUILDERS)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	var builders_line := _emitted_stepper_line(HudWorkVocab.ROLE_NAME_BUILDERS, true)
 	_assert_band_panel("…while the Builders stepper emits a line at all — \"%s\"" % builders_line,
 		builders_line.contains(" %s " % HudConst.LABOR_KIND_BUILDERS))
 	_assert_band_panel("…carrying NO kit token, so the sim keeps deriving per queue entry — \"%s\""
 			% builders_line, builders_line != "" and not builders_line.contains(" kit "))
+	_panel.set_active_tab(&"band")
+	await _settle()
 
 ## Press one role card's `+` and hand back the command line the HUD's emit produced, `""` when
 ## nothing was emitted. The card is re-found on every call because each press rebuilds the zone.
-func _emitted_stepper_line(role_name: String) -> String:
-	var card := _find_role_card(role_name)
+## `in_pools` picks the WORK zone's POOL cards over the band flank's role cards.
+func _emitted_stepper_line(role_name: String, in_pools: bool = false) -> String:
+	var card := _find_pool_card(role_name) if in_pools else _find_role_card(role_name)
 	if card == null:
 		_fail("no %s card to drive the stepper on" % role_name)
 		return ""
@@ -5534,6 +6047,23 @@ func _emitted_assign_line(picker: OptionButton, index: int) -> String:
 func _find_role_card(role_name: String) -> PanelContainer:
 	var host := _band_flank_host()
 	return null if host == null else _role_card_under(host, role_name)
+
+## The WORK zone's POOL card, found the same way — by its own title label, deepest match first — but
+## under the POOLS BLOCK rather than under the band flank. Scoped to the block rather than to the
+## whole zone so a future card elsewhere in the work column cannot answer for one of the three.
+func _find_pool_card(role_name: String) -> PanelContainer:
+	var block := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
+	return null if block == null else _role_card_under(block, role_name)
+
+## All three pool cards, in the order the row builds them, `[]` when the block is absent.
+func _pool_cards() -> Array[PanelContainer]:
+	var cards: Array[PanelContainer] = []
+	for role_name in [HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.ROLE_NAME_HUSBANDRY,
+			HudWorkVocab.ROLE_NAME_BUILDERS]:
+		var card := _find_pool_card(String(role_name))
+		if card != null:
+			cards.append(card)
+	return cards
 
 func _role_card_under(node: Node, role_name: String) -> PanelContainer:
 	for child in node.get_children():
@@ -5674,9 +6204,13 @@ func _assert_zone_content_fits() -> void:
 		_collect_zone_content_shortfall(host, host, failures)
 	if failures.is_empty():
 		print("band_panel_preview: assert OK — every zone's content fits its zone box (%s)" % _current_state)
-		return
-	for failure in failures:
-		_fail("%s — %s" % [_current_state, failure])
+	else:
+		for failure in failures:
+			_fail("%s — %s" % [_current_state, failure])
+	# The WIDTH twin rides every call site of the HEIGHT one rather than being asked at a handful of
+	# states: a zone that clips clips on both axes, and the defect this caught shipped precisely
+	# because no state anywhere measured the second one.
+	_assert_zone_content_width_fits()
 
 ## Walk a zone host looking for content the BOX cannot hold. The zone content roots are plain
 ## `Control` wrappers (`HudWidgets.wrap_zone`) that report NO minimum size, so the measurable thing is the
@@ -5700,6 +6234,105 @@ func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[
 			failures.append("zone %s: %s (%s) needs %.0fpx from y=%.0f but the box is only %.0fpx (short by %.0f)" % [
 				host.name, content.name, content.get_class(), needed, top, box, top + needed - box])
 
+## GUARD: nothing a zone renders may run past the zone's RIGHT edge either — the WIDTH twin of
+## `_assert_zone_content_fits`, and a separate defect rather than the same one on another axis.
+##
+## **A VERTICAL DOCK RESERVES ITS WIDTH**, so the narrow shell's one zone is a fixed
+## `PANEL_WIDTH − PANEL_CHROME_H` box and content wider than it has nowhere to go. Godot clamps a
+## `Control`'s size UP to its combined minimum, so the zone content — anchored full-rect into a host
+## that CLIPS — is laid out at its own minimum width rather than at the box's, and every row inside it
+## is then laid out that wide. **The clip therefore lands on the RIGHT END OF EVERY ROW AT ONCE**: a
+## head's right-justified readout, a stepper's `+`, a queue row's `✕`. One over-wide row makes every
+## other row lose its trailing control, which is why this is asked of the whole zone and not of the
+## row that happens to be widest.
+##
+## Reported from play as *"the band panel is still not wide enough when something is selected"* — the
+## work inspector strip being the one thing a selection adds.
+func _assert_zone_content_width_fits() -> void:
+	var failures: Array[String] = []
+	var widest := ""
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		_collect_zone_content_overrun(host, host, failures)
+		# **THE MARGIN IS PRINTED, not merely asserted** — the `band_panel_vitals_worst_case` rule. A
+		# zone one pixel inside its box and one with 200px to spare are the same green line otherwise,
+		# and this axis has almost no slack: EVERY Work-tab state reads **354 of a 356px box**, the
+		# POOLS block's three cards abreast being what asks for it, so two pixels is the whole margin
+		# a new control in that zone has to spend.
+		_widest_name = ""
+		var reach := _zone_content_width(host, host)
+		if reach > 0.0:
+			widest += " %s %.0f/%.0f [%s]" % [host.name, reach, host.size.x, _widest_name]
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — every zone's content fits its zone WIDTH (%s) —%s" % [
+			_current_state, widest])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [_current_state, failure])
+
+## The control `_zone_content_width` last measured, for the report beside its number.
+var _widest_name := ""
+
+## What this zone's CONTENT COLUMN asks for in width — the number the box is spent against, and the
+## width twin of `_zone_content_extent`.
+##
+## **IT IS THE COLUMN'S OWN COMBINED MINIMUM, not the furthest-right control.** Every zone's head ends
+## in a right-justified control, so "how far right does anything reach" answers the box width back at
+## itself on every state and says nothing. A `BoxContainer` propagates its children's minimums — the
+## max of them down a column, the sum of them across a row — so the column's minimum IS the widest
+## single ask in the zone, and comparing it against the box is the whole question.
+##
+## It names the control it measured on `_widest_name` — an out-parameter rather than a return pair,
+## since the reader is one `print` and the walk is a recursion with an early return.
+func _zone_content_width(node: Node, host: Control) -> float:
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var needed := content.get_combined_minimum_size().x
+		if needed > 0.0:
+			_widest_name = "%s %s" % [content.name, content.get_class()]
+			return needed
+		# `HudWidgets.wrap_zone` produces plain `Control` wrappers that report no minimum at all, so
+		# the measurable column is one or more levels down — the `_collect_zone_content_shortfall`
+		# recursion, for the same reason.
+		var deeper := _zone_content_width(content, host)
+		if deeper > 0.0:
+			return deeper
+	return 0.0
+
+## Walk a zone host looking for the control that is ASKING for the width, and answer whether anything
+## beneath this node overran.
+##
+## **IT REPORTS THE DEEPEST OFFENDER, which is the opposite of the height walk's rule.** A column's
+## own minimum width is the MAX of its children's, so the outermost container always overruns too and
+## naming it says only "something in this zone is too wide". The recursion therefore descends first
+## and a node reports itself only when nothing below it did — so a row whose CHILDREN each fit while
+## their sum does not is named as the row, which is the answer a fix can act on.
+func _collect_zone_content_overrun(node: Node, host: Control, failures: Array[String]) -> bool:
+	var overran := false
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		if _collect_zone_content_overrun(content, host, failures):
+			overran = true
+			continue
+		var needed := content.get_combined_minimum_size().x
+		if needed <= 0.0:
+			continue
+		var left := content.global_position.x - host.global_position.x
+		var box := host.size.x
+		if left + needed > box + ZONE_BOUNDS_TOLERANCE:
+			failures.append("zone %s: %s (%s) needs %.0fpx from x=%.0f but the box is only %.0fpx wide (over by %.0f)" % [
+				host.name, content.name, content.get_class(), needed, left, box, left + needed - box])
+			overran = true
+	return overran
+
 ## GUARD: nothing a zone renders may fall outside the zone rect it was given. Checked RECURSIVELY —
 ## the top-level content is anchored full-rect and so always "fits", while the thing that actually
 ## overflows is a board row off the bottom of the column. The hosts clip, so an overflow is invisible
@@ -5721,6 +6354,17 @@ const BAND_ZONE_TIER_NAMES := ["SHORT", "COMPACT", "TALL"]
 ## paid by the zone, and a probe pinned to a fixed canvas silently slides into the tier below. Re-derive
 ## this whenever a row is added to or removed from the card's content column.
 const COMPACT_TIER_PROBE_HEIGHT := 524
+
+## The canvas height that lands a HORIZONTAL dock's band zone in the SHORT tier, and it exists because
+## §4.7 raised `BandCityPanel.PANEL_HEIGHT_WIDE` 360 → 410. That budget hands the zones a **350px**
+## box, which is past `HudWorkVocab.BAND_ZONE_CHART_MIN_HEIGHT` (340) — so a one-column horizontal dock
+## renders at COMPACT now, and every state that used to reach SHORT by simply docking T/B stopped
+## reaching it.
+##
+## **The lever is `MAX_WIDE_HEIGHT_FRACTION` (0.6), not a second budget**: at 600 the clamp holds the
+## strip to 360 and the zones to exactly the 300px box they had before the raise, so the SHORT-tier
+## claims below measure precisely what they always measured. Re-derive it if either number moves.
+const SHORT_TIER_PROBE_HEIGHT := 600
 
 ## Which content tier the band zone is rendering at RIGHT NOW — read off the controller rather than
 ## re-derived from the zone height, so the reported tier is the one that actually built the rows.
@@ -7390,6 +8034,212 @@ func _assert_ready_marks() -> void:
 		models.filter(func(m): return String(m["herd_id"]) == "ready_never" \
 			and String(m["ready_policy"]) == "").size() == 1)
 
+# =====================================================================================
+#  THE `⌃` DECLARES (`docs/plan_standing_upkeep.md` §4.7a ①)
+# =====================================================================================
+
+## The declare board's tile, chosen away from the rung-ready frame's so a leaked patch cannot answer
+## for this one.
+const DECLARE_PATCH := Vector2i(64, 22)
+
+## The pen-ceiling herd (offers `corral`, addressed by its own TILE) and the pastoral-ceiling one
+## (offers `tame`, addressed by its HERD ID) — the pair `Main.format_improvement` forks between.
+const DECLARE_CORRAL_HERD := "declare_pen_aurochs"
+
+const DECLARE_TAME_HERD := "declare_wild_boar"
+
+const DECLARE_CORRAL_TILE := Vector2i(63, 21)
+
+const DECLARE_TAME_TILE := Vector2i(65, 23)
+
+## Three rows, three rungs. Sized so the board renders all three at the narrow shell.
+const DECLARE_ROW_COUNT := 3
+
+func _declare_forage_modules() -> Array:
+	return [{"x": DECLARE_PATCH.x, "y": DECLARE_PATCH.y, "module": "savanna_grassland",
+		"kind": "gather"}]
+
+## A TENDED patch on willing ground → its next rung is Sow.
+func _declare_patch_fixtures() -> Array:
+	return [{
+		"x": DECLARE_PATCH.x, "y": DECLARE_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		# **THE SOW RUNG IS PRICED, and that is what the ⌃'s hover reads.** A rung the wire prices
+		# nothing on states no clause at all — correct behaviour, and a fixture that omitted the pair
+		# would leave the price claim asserting an empty string against an empty string.
+		"field_work_cost": DECLARE_SOW_WORK_COST,
+		"field_upkeep_demand": DECLARE_SOW_UPKEEP_PER_TURN,
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+
+## The Sow rung's two published prices on the declare board — the pile once and the rate forever.
+## Distinct numbers on purpose: one figure serving both would let a clause that quoted the wrong one
+## still read correctly.
+const DECLARE_SOW_WORK_COST := 75.0
+
+const DECLARE_SOW_UPKEEP_PER_TURN := 4.0
+
+## **THE TWO ANIMAL RUNGS, ON TWO HERDS.** A fully tamed `pen`-ceiling herd has Tame retired and so
+## offers Corral; a `pastoral`-ceiling herd at zero domestication offers Tame and can never offer
+## Corral. One herd cannot stage both — `next_rung_ready` answers ONE rung — and the pair is what the
+## grammar fork needs.
+func _declare_herd_fixtures() -> Array:
+	return [
+		{"id": DECLARE_CORRAL_HERD, "species": "Aurochs",
+			"x": DECLARE_CORRAL_TILE.x, "y": DECLARE_CORRAL_TILE.y,
+			"population": 210, "ecology_phase": "thriving", "huntable": true,
+			"domestication": 1.0, "husbandry_ceiling": "pen", "per_worker_yield": 0.15,
+			"hunt_policy_ceilings": {"sustain": 0.30, "surplus": 0.90, "deplete": 1.40,
+				"eradicate": 2.00, "corral": 0.70}},
+		{"id": DECLARE_TAME_HERD, "species": "Wild Boar",
+			"x": DECLARE_TAME_TILE.x, "y": DECLARE_TAME_TILE.y,
+			"population": 140, "ecology_phase": "thriving", "huntable": true,
+			"domestication": 0.0, "husbandry_ceiling": "pastoral", "per_worker_yield": 0.12,
+			"hunt_policy_ceilings": {"sustain": 0.24, "surplus": 0.70, "deplete": 1.10,
+				"eradicate": 1.60}},
+	]
+
+## A band working all three sources, so all three carry a WORK ROW — which is the whole precondition
+## the `⌃` rests on: a row exists only for a source the band already works, which is exactly the sim's
+## own rule that an improvement verb reaches only such bands.
+func _declare_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 941
+	band["id"] = "Band 13"
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": DECLARE_PATCH.x, "target_y": DECLARE_PATCH.y,
+			"actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
+			"fauna_id": DECLARE_CORRAL_HERD,
+			"target_x": DECLARE_CORRAL_TILE.x, "target_y": DECLARE_CORRAL_TILE.y,
+			"actual_yield": 0.30, "sustainable_yield": 0.30},
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
+			"fauna_id": DECLARE_TAME_HERD,
+			"target_x": DECLARE_TAME_TILE.x, "target_y": DECLARE_TAME_TILE.y,
+			"actual_yield": 0.20, "sustainable_yield": 0.20},
+	]
+	return band
+
+## **EVERY `⌃` ON THE BOARD, KEYED BY ITS ROW'S NAME LABEL** — Buttons only, so the two BUILDING states
+## (which stay `Label`s, there being nothing to declare on a rung already in flight) cannot be counted
+## as offers. The name Label is the one control in a work row with `SIZE_EXPAND_FILL`; every other slot
+## is a fixed column, which is what makes it findable without matching text.
+func _ready_mark_buttons() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_STATE_META, []):
+		if not (control is Button):
+			continue
+		var line := control.get_parent()
+		if line == null:
+			continue
+		for child in line.get_children():
+			if child is Label and (child as Label).size_flags_horizontal == Control.SIZE_EXPAND_FILL:
+				out[(child as Label).text] = control
+				break
+	return out
+
+## **THE `⌃` PRESS, DRIVEN THROUGH THE REAL HANDLER, ON BOTH WEBS AND BOTH GRAMMARS**
+## (`docs/plan_standing_upkeep.md` §4.7a ①).
+##
+## The chain is the player's: find the mark on the rendered board, press it, capture the payload off
+## `HudLayer.improvement_requested` and run it through `Main.format_improvement` — the pure static
+## `Main._on_hud_improvement` dispatches to. **Asserting the LINE rather than the payload is what makes
+## this a test of the shipped representation**: a payload can carry a perfectly good herd id and still
+## be formatted into the tile-targeted grammar, which is precisely the mistake the two webs' differing
+## targeting rules invite. Three rungs, and the SET is the claim — `sow` and `corral` name a tile while
+## `tame` names a herd, so a board carrying only one of the two shapes passes a builder that has the
+## fork backwards.
+##
+## **AND THE PRESS MUST LAND ON THE SAME FRAME IT IS MADE.** Two further claims per row, checked after
+## the board re-renders: the source appears in the BUILD QUEUE block as a pending entry, and the `⌃`
+## has LEFT that row's slot — the overlay's declaration makes `building_glyph` non-empty, and that
+## state owns the slot.
+##
+## **THE OVERLAY IS CLEARED ON THE WAY OUT.** A pending entry tints every later frame's rows amber and
+## would put a queue block on states that stage none; the probe is about the press, not about what the
+## overlay looks like afterwards.
+func _assert_ready_mark_declares() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var marks := _ready_mark_buttons()
+	_assert_band_panel("declare — all %d ready rows carry a PRESSABLE ⌃ (found %d)"
+		% [DECLARE_ROW_COUNT, marks.size()], marks.size() == DECLARE_ROW_COUNT)
+	# **THE PRICE IS ON THE `⌃`'s OWN HOVER** (`docs/plan_standing_upkeep.md` §4.7a ①). It was on the
+	# compose sheet's offered face until Ray took it off — *"That information should be on the work
+	# tab. No need to have it here, it is useless."* — so the pile and the standing rate ride the mark
+	# that spends them, one hover from the control. **No TURN COUNT**: the BUILD QUEUE row's date is
+	# the sim's own chained answer, and a second estimate here would be two producers for one number.
+	# Composed through the SHIPPED formats, so the claim pins the numbers rather than the wording.
+	var plant_mark: Button = null
+	for label in marks.keys():
+		if String(label).begins_with(HudWorkVocab.WORK_ROW_TEND_FORMAT.split(" ")[0]):
+			plant_mark = marks[label] as Button
+	if plant_mark == null:
+		_fail("declare — no plant ⌃ to read a price off")
+	else:
+		var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(DECLARE_PATCH, {})
+		var priced := DetailFormat.build_price_clause(
+			SourceForecast.build_work_cost(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
+				SourceForecast.IMPROVEMENT_SOW),
+			SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+			SourceForecast.build_upkeep_demand(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
+				SourceForecast.IMPROVEMENT_SOW),
+			SourceForecast.SOURCE_KIND_FORAGE)
+		_assert_band_panel("declare — the ⌃'s hover quotes the rung's price — \"%s\" (got \"%s\")"
+			% [priced, plant_mark.tooltip_text],
+			priced != "" and plant_mark.tooltip_text.contains(priced))
+		# The needle is the count clause's own `≈` stem, which no other part of this hover carries.
+		_assert_band_panel("declare — …and no turn count, the queue row's date being the sim's own",
+			not plant_mark.tooltip_text.contains(
+				HudComposeVocab.BUILD_TURNS_COUNT_FORMAT.split("%")[0]))
+	var lines: Array[String] = []
+	for label in marks.keys():
+		var seen: Array = []
+		var sink := func(payload: Dictionary) -> void: seen.append(payload)
+		_hud.improvement_requested.connect(sink)
+		(marks[label] as Button).pressed.emit()
+		_hud.improvement_requested.disconnect(sink)
+		if seen.is_empty():
+			_fail("declare — pressing the ⌃ on `%s` emitted nothing" % label)
+			continue
+		lines.append(String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", "")))
+	lines.sort()
+	var want: Array[String] = [
+		"corral %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+			DECLARE_CORRAL_TILE.x, DECLARE_CORRAL_TILE.y],
+		"sow %d %d %d" % [HudConst.PLAYER_FACTION_ID, DECLARE_PATCH.x, DECLARE_PATCH.y],
+		"tame %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_TAME_HERD],
+	]
+	want.sort()
+	_assert_band_panel("declare — the three ⌃ presses transmit %s (got %s)" % [str(want), str(lines)],
+		lines == want)
+	# **THE OTHER HALF OF THE PRESS, and it is a PAIR per row**: the declaration reaches the queue on
+	# the frame it was made, and the offer leaves the slot it was made from.
+	#
+	# **THE BAND IS RE-PUSHED FIRST, AND THAT IS A HARNESS FACT RATHER THAN A CLIENT ONE.** The press
+	# runs `Hud._after_pending_change`, which also re-renders the SELECTION card — and this harness
+	# stages that card's occupant separately, a `_band_fixture()`-shaped Band 2 pushed long before this
+	# block, so the panel's subject is replaced by the OTHER band and the board that comes back is its.
+	# A live client cannot reach that: both dicts come from one snapshot. (`_declare_pending_build`
+	# sidesteps the same trap by never calling that method.)
+	_push_bands([_declare_band_fixture()])
+	await _settle()
+	var queued: Array = _hud._bandpanel._build_queue_models(band,
+		_hud._bandpanel._work_source_models(band, 0))
+	_assert_band_panel("declare — all %d declarations are in the build queue on the same frame (found %d)"
+		% [DECLARE_ROW_COUNT, queued.size()], queued.size() == DECLARE_ROW_COUNT)
+	_assert_band_panel("declare — …and every one of them is a PENDING entry the wire has not placed",
+		queued.filter(func(m): return int(m.get("build_queue_position",
+			SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) >= SourceForecast.BUILD_QUEUE_HEAD).is_empty())
+	_assert_band_panel("declare — and no ⌃ survives on the board, the rung now being in flight (found %d)"
+		% _ready_mark_buttons().size(), _ready_mark_buttons().is_empty())
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_declare_band_fixture()])
+	await _settle()
+	_assert_band_panel("declare — dropping the overlay restores all %d offers, so the frames after this one are unperturbed"
+		% DECLARE_ROW_COUNT, _ready_mark_buttons().size() == DECLARE_ROW_COUNT)
+
 ## The ready chip narrows the board to the offering rows and nothing else.
 func _assert_ready_filter_narrows() -> void:
 	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
@@ -7474,7 +8324,18 @@ func _under_herded_work_herd_fixtures(pool_share: int = KEEPER_POOL_UNFUNDED) ->
 	}
 	_set_managed_herders(penned, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	_set_keeper_demand(penned, UNDER_HERDED_WORK_HERDERS_NEEDED, pool_share)
+	# **AND THE GRACE, because the row's hover COUNTS DOWN.** `hasNeglectGrace` is read before
+	# `neglectGraceRemaining` and the two zeros are opposite news — an unflagged source states *being
+	# lost now*, which is the wrong half of the fork to leave a keeping frame staging. A herd whose
+	# keeping just lapsed has turns in hand, and the countdown is the whole reason the board's hover
+	# says more than the source's card does.
+	penned["has_neglect_grace"] = true
+	penned["neglect_grace_remaining"] = UNDER_HERDED_WORK_GRACE_TURNS
 	return [penned]
+
+## The turns of grace the under-kept herd has left — enough that the hover reads the COUNTDOWN form
+## rather than the already-being-lost one.
+const UNDER_HERDED_WORK_GRACE_TURNS := 3
 
 ## "The pool paid this herd nothing this turn" — the default for the under-herded fixtures, and the
 ## state the board's ⚠ is about.
@@ -7581,6 +8442,12 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 		print(("band_panel_preview: assert OK — both cap twins gate at the take-useful %d, "
 			+ "below the keeper crew of %d the keeping row now answers for")
 			% [HERDER_FLOOR_TAKE_USEFUL, HERDER_FLOOR_HERDERS_NEEDED])
+
+## The countdown's own verb, as a LITERAL — the sentence it opens (`Domesticated is lost in 3 turns.`)
+## is the WORK BOARD's alone, so this needle is asserted PRESENT on the row's hover and ABSENT on the
+## source card's. Spelled here rather than composed from `HudWorkVocab`, which would assert only that
+## the producer agrees with itself about a string it also chose.
+const UNDER_KEPT_COUNTDOWN_NEEDLE := "is lost in"
 
 ## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
 ## `under_herded` model flag the row + inspector tint from.
@@ -10605,23 +11472,36 @@ func _builders_band_fixture() -> Dictionary:
 		"kind": HudConst.LABOR_KIND_BUILDERS, "workers": BUILDERS_SEGMENT_CREW,
 		"target_x": -1, "target_y": -1, "fauna_id": "",
 	})
+	# **A CONFIRMED FORAGE ROW ON THE PENDING TILE, CARRYING A COMMITTED CROP.** The queue-row crop
+	# picker opens on the band's OWN `species`, so without a row that states one the claim below would
+	# be about a picker correctly falling back to `Sim picks` — true, and not what it is written to
+	# test. It also puts the pending declaration on ground the band really works, which is the state
+	# the work row's `⌃` produces in play.
+	# **IT CARRIES NO WORKERS, and that is what keeps this fixture shared.** `species_for_forage` reads
+	# the CONFIRMED assignment and cares only that a row for this tile exists, while the board row and
+	# the queue entry both come from the PENDING overlay, which merges over it by key. A staffed row
+	# here would add a hand to the WORKFORCE bar the `band_panel_builders_segment` state partitions
+	# against `working_age` — measured, 16 became 17 — for a claim that needs no hands at all.
+	rows.append({
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": 0, "workers_needed": 0, "floor": 0.5,
+		"target_x": PENDING_QUEUE_TILE.x, "target_y": PENDING_QUEUE_TILE.y, "fauna_id": "",
+		"species": QUEUE_CROP_COMMITTED_SPECIES,
+	})
 	return band
 
 # =====================================================================================
-#  THE BUILDERS CARD STATES ITS DERIVED KIT, AND OFFERS NO PICKER
+#  THE BUILD QUEUE HEAD STATES THE POOL'S DERIVED KIT — and it is the ONLY surface that does
 # =====================================================================================
 # There are two builders kits — `hurdling` (hurdles, ANIMAL) and `tillage` (hoes, PLANT) — and which
-# one a queue entry gets is DERIVED from that entry's own web (`equipment.md` → "THE BUILDERS' KIT IS
-# DERIVED PER QUEUE ENTRY"). So the card cannot have one standing answer, and it does not offer one:
-# it STATES the kit the band's queue HEAD implies, on a read-only gear line, and mounts no control at
-# all. A per-BAND pick could only be sent as a `kit` token on the `builders` row, which the sim treats
-# as an override that wins permanently — so the one thing the control could express is the one thing
-# the derivation must not be told.
+# one a queue entry gets is DERIVED from that entry's own web (`equipment.md` -> "THE BUILDERS' KIT IS
+# DERIVED PER QUEUE ENTRY"). The Builders role card stated it on a read-only gear line until §4.7,
+# which retired that line: the BUILD QUEUE head reads the SAME `_role_kit_id` and prints
+# `3 builders \u00b7 Tillage kit` adjacent to the jobs that kit prices, so keeping both was two surfaces
+# for one fact and the card's was the one further from the decision.
 #
 # **THE PAIR IS THE CLAIM, on ONE band with only the queue head moving.** A resolver stuck on one web
-# satisfies either frame alone. Each state asserts the gear line's whole text by EQUALITY — the kit's
-# name AND what it buys — beside the ABSENCE of any picker on that card, which is a claim about the
-# CONTROL and not about the label's wording.
+# satisfies either frame alone. Each state asserts the head's WHOLE readout by EQUALITY — the pool
+# count and the kit's display name — composed from the vocabulary rather than through the producer.
 
 ## The two sources the reference band already works, one per web. The head moves by dialling those
 ## SOURCES' own `buildQueuePosition`, so the band itself is byte-identical across the pair.
@@ -10631,7 +11511,7 @@ const BUILDERS_KIT_HERD_TILE := Vector2i(70, 17)
 
 func _render_builders_kit_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
-	_panel.set_active_tab(&"band")
+	_panel.set_active_tab(&"work")
 
 	#   (a) A PLANT build at the head — the Cultivate this band has declared on its own patch.
 	_set_forage_patches([_builders_kit_patch(SourceForecast.BUILD_QUEUE_HEAD)])
@@ -10641,7 +11521,7 @@ func _render_builders_kit_states() -> void:
 	await _save("band_panel_builders_kit_plant")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_builders_gear_line("a PLANT queue head", BandFx.KIT_ID_TILLAGE)
+	_assert_queue_head_kit("a PLANT queue head", BandFx.KIT_ID_TILLAGE)
 
 	#   (b) THE SAME BAND with an ANIMAL build at the head: the patch leaves the queue and the herd
 	# takes it, so nothing but the head's web moves between the two frames.
@@ -10652,7 +11532,7 @@ func _render_builders_kit_states() -> void:
 	await _save("band_panel_builders_kit_animal")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_builders_gear_line("an ANIMAL queue head", BandFx.KIT_ID_HURDLING)
+	_assert_queue_head_kit("an ANIMAL queue head", BandFx.KIT_ID_HURDLING)
 
 	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
 	# pushed, and the states below read whatever this block leaves behind.
@@ -10676,56 +11556,29 @@ func _builders_kit_herd(queue_position: int) -> Dictionary:
 		"build_queue_position": queue_position,
 	}
 
-## **THE CARD STATES THE HEAD'S OWN KIT, AND MOUNTS NOTHING TO CHANGE IT WITH.**
+## **THE HEAD STATES THE POOL AND THE KIT ITS HEAD ENTRY IMPLIES.**
 ##
-## Two claims, and neither is worth anything alone: the gear line's WHOLE TEXT by equality (a
-## `contains` on the kit name passes on a line that has lost what the kit buys), and the ABSENCE of a
-## kit picker on that card. The second is asked of the CONTROL — `KitRoster.KIT_PICKER_META` — never
-## of the label, because a picker mounted beside an honest gear line renders as an ordinary card and
-## the whole defect is that pressing it pins the pool for good.
-##
-## **THE EXPECTATION IS COMPOSED FROM THE VOCABULARY AND THE FIXTURE, never through
-## `KitRoster.role_gear_line`** — re-deriving it through the code under test agrees with itself.
-func _assert_builders_gear_line(where: String, kit_id: String) -> void:
-	var card := _find_role_card(HudWorkVocab.ROLE_NAME_BUILDERS)
+## The readout is asserted by EQUALITY against `BUILD_QUEUE_BUILDERS_FORMAT` composed from the
+## vocabulary and the fixture's own pool count — a `contains` on the kit name passes on a head that
+## has lost the count beside it — and the POOLS block's Builders card is asserted to mount neither a
+## kit picker nor a gear line, which is the claim that the fact lives in exactly one place.
+func _assert_queue_head_kit(where: String, kit_id: String) -> void:
+	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
+	if block == null:
+		_fail("no BUILD QUEUE block to read the head's kit off on %s" % where)
+		return
+	var wanted := HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [BUILDERS_SEGMENT_CREW,
+		KitRoster.display_name_for_id(_hud._band_labor.kits(), kit_id)]
+	_assert_band_panel("the queue head states the pool and its head entry\'s own kit on %s — \"%s\""
+			% [where, wanted], _has_label_containing(block, wanted))
+	var card := _find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS)
 	if card == null:
-		_fail("the Builders card is missing on %s" % where)
+		_fail("the Builders POOL card is missing on %s" % where)
 		return
-	_assert_band_panel("the Builders card mounts NO kit picker on %s" % where,
+	_assert_band_panel("…while the Builders pool card mounts NO kit picker on %s" % where,
 		_find_meta_control(card, KitRoster.KIT_PICKER_META) == null)
-	var gear := _find_meta_control(card, HudWorkVocab.ROLE_CARD_GEAR_META) as Label
-	if gear == null:
-		_fail("the Builders card has no gear line on %s" % where)
-		return
-	var wanted := _builders_gear_line_text(kit_id)
-	_assert_band_panel("…and states the derived kit and what it buys on %s — \"%s\" (got \"%s\")"
-			% [where, wanted, gear.text], gear.text == wanted)
-
-## The gear line this roster's builders kit must produce for THIS harness's band — the kit's name,
-## what its tool takes off a build, and the condition of the item behind it.
-##
-## **Composed from the vocabulary and the fixture's OWN authored numbers**, item by item, so a
-## producer that dropped the effect clause or quoted the wrong item's wear fails rather than agreeing
-## with itself. The bare kit takes nothing off a build and carries no item, so its whole line is its
-## name — which is what makes the EMPTY-queue state a real third claim rather than a restatement.
-func _builders_gear_line_text(kit_id: String) -> String:
-	var display := KitRoster.display_name_for_id(_hud._band_labor.kits(), kit_id)
-	var item := ""
-	var condition := 0.0
-	match kit_id:
-		BandFx.KIT_ID_TILLAGE:
-			item = BandFx.KIT_ITEM_HOES
-			condition = BandFx.KIT_CONDITION_HOES
-		BandFx.KIT_ID_HURDLING:
-			item = BandFx.KIT_ITEM_HURDLES
-			condition = BandFx.KIT_CONDITION_HURDLES
-		_:
-			return display
-	return HudComposeVocab.KIT_HINT_SEPARATOR.join([display,
-		DetailFormat.KIT_ROLE_BUILDERS_BUILD_FORMAT % DetailFormat.format_work_units(
-			BandFx.KIT_BUILD_WORK_HANDLING),
-		HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [DetailFormat.kit_item_label(item),
-			String.num(condition, DetailFormat.KIT_CONDITION_DECIMALS)]])
+	_assert_band_panel("…and no gear line either, the queue head being the one surface that states it",
+		_find_meta_control(card, KitRoster.KIT_HINT_META) == null)
 
 # =====================================================================================
 #  THE BUILD QUEUE BLOCK — the band's ordered list, above the work board's chips
@@ -10752,22 +11605,55 @@ const QUEUE_THIRD_PATCH := Vector2i(73, 18)
 const QUEUE_HERD_ID := "game_deer_07"
 const QUEUE_HERD_TILE := Vector2i(70, 17)
 
-## The chained countdowns, ascending down the queue. They are ordinary positive counts so the date
-## column renders `RUNG_TURNS_FORMAT` rather than a sentinel — the sentinel branch is
-## `band_panel_build_queue_blocked`'s subject.
+## The chained countdowns, ascending down the queue. The first two are ordinary positive counts, so
+## the date column renders `RUNG_COMPLETES_FORMAT` off `current_turn + turns` (§4.7).
+##
+## **THE THIRD IS A SENTINEL, DELIBERATELY AND IN THIS SAME FRAME.** A date column that added
+## `current_turn` to whatever the wire carried would render `turn 37` for a `-3` and pass every
+## ascending claim on an all-positive fixture; `band_panel_build_queue_blocked` covers the whole-queue
+## case, and this covers a sentinel sitting BESIDE two live dates, which is the common state.
 const QUEUE_TURNS_HEAD := 42
 const QUEUE_TURNS_SECOND := 61
-const QUEUE_TURNS_THIRD := 98
+const QUEUE_TURNS_THIRD := SourceForecast.BUILD_TURNS_ROTS
 const QUEUE_TURNS_FOURTH := 140
 
 ## The pool funding it. Three, so the header states a plural and the count is distinguishable from
 ## both the "nobody" branch and from `WORKER_STEP`.
 const QUEUE_BUILDERS := 3
 
+## The cause the HERD entry is blocked on, deliberately NOT the patches' `escapement`: a wording table
+## that answered the same sentence for every key passes any single-key check, so the blocked state
+## states TWO different causes and asserts them apart.
+const QUEUE_BLOCKED_HERD_REASON := "knowledge"
+
 ## The take crew on each queued source. Non-zero, because `_work_source_models` admits a row on its
 ## TAKE crew — which is also why every queue entry is guaranteed a model (`prune_build_queue` keeps
 ## an entry only while its source holds an assignment).
 const QUEUE_ROW_WORKERS := 1
+
+## **WHAT THE HORIZONTAL WORK ZONE AFFORDS THE QUEUE once the POOLS block is above it** (§4.7).
+## MEASURED, not authored, and it is the number the strip was RAISED to restore: at the old 300px box
+## a four-entry queue wanted 342px and `build_queue_rows_max` resolved ONE row, so
+## `BandCityPanel.PANEL_HEIGHT_WIDE` went 360 → 410 and the 350px box carries the authored ceiling
+## again. **Stated as its own const rather than as `BUILD_QUEUE_ROWS_MAX` even though the two now
+## agree**: this is what the ZONE resolved and that is the authored cap, and a state that quietly
+## started reading the ceiling would stop noticing the day the room drops below it.
+##
+## **IT IS BACK TO ONE, AND THE RESERVATION IS WHY.** `build_queue_rows_max` budgeted the work
+## inspector's GAP and not its HEIGHT, so this number was the room the zone has while NOTHING is
+## selected — and selecting a row is one click, after which the board (floored at one row) has nothing
+## left to give back. With the strip's base height in the reservation the horizontal dock's box
+## resolves ONE entry row plus its overflow. The tall LEFT dock still draws all three.
+##
+## **That is a re-measurement, not a re-tune**: the 380px box that budget used to hand out never had
+## room for the queue AND a selection, and the authored three were being drawn on credit.
+##
+## **AND THE STRIP HAS SINCE BEEN RAISED TO 456 WITHOUT BUYING THEM BACK, which is worth knowing
+## before reaching for this number again.** The 396px box that raise hands out clears the selection
+## overflow exactly and leaves the four-entry queue at one row still; restoring the authored three
+## needs a 480px box (a 540 strip), which crosses `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` and flips
+## the band flank's tier. That was weighed and declined — see `BandCityPanel.PANEL_HEIGHT_WIDE`.
+const WIDE_DOCK_QUEUE_ROWS := 1
 
 func _render_build_queue_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
@@ -10784,13 +11670,15 @@ func _render_build_queue_states() -> void:
 	_assert_build_queue_block(3, "the three-entry queue")
 	_assert_build_queue_dates_ascend()
 	_assert_build_queue_head_readout()
+	_assert_build_queue_states_no_cause()
 
 	#   (b) THE HEAD IS BLOCKED, and every entry behind it carries the SAME sentinel — which is the
 	# sim's own behaviour (the whole pool stands on the head, so nothing behind it moves) and the
 	# half a block showing only the head would misreport.
-	_set_forage_patches(_build_queue_patches(3, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED))
+	_set_forage_patches(_build_queue_patches(3, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED,
+		HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT))
 	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1,
-		SourceForecast.BUILD_TURNS_QUEUE_BLOCKED))
+		SourceForecast.BUILD_TURNS_QUEUE_BLOCKED, QUEUE_BLOCKED_HERD_REASON))
 	_push_bands([_build_queue_band_fixture(3)])
 	await _settle()
 	await _save("band_panel_build_queue_blocked")
@@ -10798,6 +11686,7 @@ func _render_build_queue_states() -> void:
 	_assert_zone_content_fits()
 	_assert_build_queue_block(3, "the blocked queue")
 	_assert_build_queue_all_blocked()
+	_assert_build_queue_states_the_cause()
 
 	#   (c) THE PAIRED NEGATIVE — a band with a work board and NOTHING queued renders NO block at
 	# all. Without it every claim above passes on a block drawn unconditionally, and the
@@ -10821,19 +11710,28 @@ func _render_build_queue_states() -> void:
 	_push_bands([_build_queue_band_fixture(4)])
 	await _settle()
 	await _save("band_panel_build_queue_wide")
+	await _assert_open_settings_fits_the_wide_zone()
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_build_queue_wide")
-	_assert_build_queue_block(4, "the wide dock's four-entry queue")
-	_assert_build_queue_overflow(4)
+	# **THE WIDE DOCK DRAWS ONE ENTRY AND ITS OVERFLOW, and that is the measurement rather than the
+	# ceiling** (§4.7): the POOLS block takes ~82px out of this 300px box, so the zone affords
+	# `WIDE_DOCK_QUEUE_ROWS` of the authored three. The tall LEFT dock above still draws all three.
+	_assert_build_queue_block(4, "the wide dock's four-entry queue", WIDE_DOCK_QUEUE_ROWS)
+	_assert_build_queue_overflow(4, WIDE_DOCK_QUEUE_ROWS)
 	_assert_build_queue_leaves_the_board_rows()
-
-	# The `✕` is PNG-LESS: an emitted command line is a string, and a frame renders a plausible
-	# control whichever grammar it carries.
-	_assert_unqueue_command_grammar()
 
 	await _pin_canvas(PREVIEW_SIZE)
 	_panel.set_dock(SIDE_LEFT)
+	# The `✕` is PNG-LESS: an emitted command line is a string, and a frame renders a plausible
+	# control whichever grammar it carries. **It runs on the TALL dock, because it needs BOTH webs'
+	# rows drawn** — the wide dock's cap is whatever its box resolves rather than the authored
+	# ceiling, so the herd's row is only guaranteed to be drawn here.
+	_set_forage_patches(_build_queue_patches(3))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
+	_push_bands([_build_queue_band_fixture(3)])
+	await _settle()
+	_assert_unqueue_command_grammar()
 	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
 	# pushed, and everything below reads whatever this block leaves behind.
 	_set_forage_patches([])
@@ -10882,7 +11780,8 @@ func _build_queue_forage_row(tile: Vector2i, improvement: String) -> Dictionary:
 ## The patches, carrying the two fields the block reads and nothing else — the queue POSITION and the
 ## chained countdown. `turns_override` states the same sentinel on every entry, which is the blocked
 ## state's own claim.
-func _build_queue_patches(entries: int, turns_override: int = 0) -> Array:
+func _build_queue_patches(entries: int, turns_override: int = 0,
+		blocked_reason: String = "") -> Array:
 	var tiles := [QUEUE_HEAD_PATCH, QUEUE_SECOND_PATCH, QUEUE_THIRD_PATCH]
 	# The head is entry 0, the herd entry 1, so the plant entries take 0, 2 and 3.
 	var positions := [SourceForecast.BUILD_QUEUE_HEAD, 2, 3]
@@ -10897,17 +11796,33 @@ func _build_queue_patches(entries: int, turns_override: int = 0) -> Array:
 				else SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
 			"build_turns_remaining": (turns_override if turns_override != 0 else turns[i]) \
 				if queued else SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+			# **THE CAUSE, AND ONLY A BLOCKED ENTRY CARRIES ONE** — `""` is the wire's own "this
+			# source is not a blocked build", so an unqueued or unblocked fixture states it and the
+			# no-cause negative below is a real reading rather than a missing key.
+			"build_blocked_reason": blocked_reason if queued else "",
+			# **THE BASKET IS WHAT MAKES THE CROP PICKER RENDER** (`docs/plan_standing_upkeep.md`
+			# §4.7a ③), and it is here rather than on one state's own fixture so the WIDTH it takes is
+			# inside the measured frames — a control proved only by a driven assertion is a control
+			# nobody has measured against the zone it clips in. An entry with no basket correctly
+			# mounts nothing, which is the animal rows' state on these same frames.
+			"composition": [
+				{"species": QUEUE_CROP_PICK_SPECIES, "display_name": "Wild Emmer", "share": 0.6,
+					"can_cultivate": true, "can_sow": true},
+				{"species": QUEUE_CROP_COMMITTED_SPECIES, "display_name": "Ground Nut",
+					"share": 0.4, "can_cultivate": true, "can_sow": false},
+			],
 		})
 	return out
 
 ## …and the herd the band's hunt row already names, at its own place in the queue.
-func _build_queue_herds(position: int, turns: int) -> Array:
+func _build_queue_herds(position: int, turns: int, blocked_reason: String = "") -> Array:
 	return [{
 		"id": QUEUE_HERD_ID, "species": "Red Deer",
 		"x": QUEUE_HERD_TILE.x, "y": QUEUE_HERD_TILE.y,
 		"population": 120, "ecology_phase": "stressed",
 		"build_queue_position": position,
 		"build_turns_remaining": turns,
+		"build_blocked_reason": blocked_reason,
 	}]
 
 # ---- the block's own claims -------------------------------------------------------------------
@@ -10916,7 +11831,7 @@ func _build_queue_herds(position: int, turns: int) -> Array:
 ##
 ## **THE MARKER IS ASSERTED BOTH WAYS**: a `▸` on the head alone is the claim, and "the head has one"
 ## passes on a block that marks every row.
-func _assert_build_queue_block(entries: int, where: String) -> void:
+func _assert_build_queue_block(entries: int, where: String, rows_drawn: int = -1) -> void:
 	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
 	if block == null:
 		_fail("%s renders no BUILD QUEUE block at all" % where)
@@ -10924,7 +11839,10 @@ func _assert_build_queue_block(entries: int, where: String) -> void:
 	_assert_band_panel("%s renders a BUILD QUEUE block naming %d entries" % [where, entries],
 		int(block.get_meta(HudWorkVocab.BUILD_QUEUE_BLOCK_META)) == entries)
 	var rows := _build_queue_rows()
-	var wanted := mini(entries, HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
+	# **THE DRAWN COUNT IS STATED BY THE CALL SITE, NOT RE-DERIVED** (§4.7): the cap is the ZONE's
+	# answer now, so re-computing it here through `build_queue_rows_max` would agree with the code
+	# under test. `-1` means "the ceiling has room", which is every state but the wide dock's.
+	var wanted := mini(entries, HudWorkVocab.BUILD_QUEUE_ROWS_MAX if rows_drawn < 0 else rows_drawn)
 	_assert_band_panel("…drawing %d entry rows of %d queued (%d drawn)"
 			% [wanted, entries, rows.size()], rows.size() == wanted)
 	var marked: Array[int] = []
@@ -10936,20 +11854,37 @@ func _assert_build_queue_block(entries: int, where: String) -> void:
 			% [HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, str(marked)],
 		marked == [SourceForecast.BUILD_QUEUE_HEAD])
 
-## **THE DATES ARE STRICTLY ASCENDING, which is the whole point of a CHAINED countdown.** Equal dates
-## would pass a "the dates render" check while proving nothing, so the claim is the ordering — read
-## back off the rendered value through the vocabulary's own format rather than off the fixture.
+## **THE DATE COLUMN STATES A COMPLETION TURN, AND THE CLAIM IS THE ADDITION** (§4.7). The chained
+## `≈42` / `≈61` counts read as three independent spans when they are cumulative, so the column now
+## states the turn each entry lands on — and this asserts it by EQUALITY against
+## `current_turn + turns` composed from the fixture's OWN numbers, which is what makes it a claim
+## about the ARITHMETIC rather than about a number rendering.
+##
+## **THE ORDERING IS THE SECOND CLAIM**, because equal dates would pass a "the dates render" check
+## while proving nothing about the chaining the block exists to make legible.
+##
+## **AND THE THIRD IS THAT ONE ROW IS A SENTINEL, in this same frame.** A renderer that put
+## `current_turn + value` on every row would pass both claims above on an all-positive fixture; the
+## last entry therefore carries `BUILD_TURNS_ROTS`, which must still read as its own hazard face.
 func _assert_build_queue_dates_ascend() -> void:
-	var wanted := [QUEUE_TURNS_HEAD, QUEUE_TURNS_SECOND, QUEUE_TURNS_THIRD]
+	var wanted := [QUEUE_TURNS_HEAD, QUEUE_TURNS_SECOND]
+	var turn: int = _hud._band_labor.current_turn()
 	var seen: Array[String] = []
 	for row in _build_queue_rows():
 		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
 		seen.append("" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META)))
 	var expected: Array[String] = []
 	for turns in wanted:
-		expected.append(HudSelectionVocab.RUNG_TURNS_FORMAT % [turns, 0])
-	_assert_band_panel("the queue's three dates are the CHAINED counts, strictly ascending — %s"
-			% str(seen), seen == expected)
+		expected.append(HudSelectionVocab.RUNG_COMPLETES_FORMAT % [turn + int(turns), 0])
+	expected.append(HudSelectionVocab.RUNG_ROTTING_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
+		DetailFormat.BUILD_TURNS_NEVER_GLYPH, HudSelectionVocab.RUNG_ROTTING_PHRASE, 0])
+	_assert_band_panel("the queue states COMPLETION TURNS off turn %d — %s (want %s)"
+			% [turn, str(seen), str(expected)], seen == expected)
+	_assert_band_panel("…and they are STRICTLY ASCENDING, which is what a chained schedule means",
+		wanted.size() >= 2 and turn + int(wanted[0]) < turn + int(wanted[1]))
+	_assert_band_panel("…while the SENTINEL entry beside them still reads as its own hazard — \"%s\""
+			% (seen[-1] if not seen.is_empty() else ""),
+		not seen.is_empty() and seen[-1] == expected[-1])
 
 ## The head's readout names the pool and the kit it is holding.
 func _assert_build_queue_head_readout() -> void:
@@ -10978,6 +11913,59 @@ func _assert_build_queue_all_blocked() -> void:
 	_assert_band_panel("a blocked HEAD blocks the whole queue — all 3 entries read \"%s\" (%s)"
 			% [needle, str(seen)], blocked == 3)
 
+## **WHY THE BUILDERS ARE HELD, ON THE QUEUE'S OWN SURFACE** (`docs/plan_standing_upkeep.md` §4.6b).
+## The date column can only say `⚠ Blocked N%`, which is the STATE; the cause is a sentence, and a
+## 28px row's one place for a sentence is its hover. **It is the SOURCE CARD's producer**
+## (`DetailFormat.build_blocked_lines`), so the two surfaces cannot come to disagree about a refusal —
+## which is what this asserts by composing the wanted text from the shipped table rather than from a
+## literal.
+##
+## **TWO DIFFERENT KEYS, BY EQUALITY, and that pairing is the claim** — a table answering the same
+## string for everything passes any single-key check, and `escapement` is the one the playtest hit.
+## The herd entry deliberately carries a different cause from the patches beside it.
+func _assert_build_queue_states_the_cause() -> void:
+	# **THE EXPECTATION IS THE TABLE, NOT THE PRODUCER** — composed through
+	# `build_blocked_reason_text` it would only assert that the lookup agrees with itself, and a
+	# lookup answering one key for every cause would satisfy both claims.
+	var wanted_plant := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
+	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
+	var plant_rows := 0
+	var herd_rows := 0
+	for row in _build_queue_rows():
+		var tooltip := String(row.tooltip_text)
+		if tooltip.contains(wanted_plant):
+			plant_rows += 1
+		if tooltip.contains(wanted_herd):
+			herd_rows += 1
+	_assert_band_panel("a blocked entry's hover states the ESCAPEMENT cause — \"%s\" (%d rows)"
+			% [wanted_plant, plant_rows], plant_rows > 0)
+	# …and the SECOND key, which is what stops a table that answers one sentence for every cause.
+	_assert_band_panel("…and the herd entry blocked on KNOWLEDGE states its own cause instead — \"%s\""
+			% wanted_herd, herd_rows > 0)
+	_assert_band_panel("…and the two causes are DIFFERENT sentences on different rows",
+		wanted_plant != wanted_herd and plant_rows + herd_rows == _build_queue_rows().size())
+
+## **THE PAIRED NEGATIVE, and it is the half a producer that always emitted a line would fail.** A
+## queue that is moving states no cause at all — not a fallback, not an empty indented line — so the
+## hover is exactly what it was before a cause existed.
+func _assert_build_queue_states_no_cause() -> void:
+	var causes: Array[String] = []
+	for key in HudSelectionVocab.BUILD_BLOCKED_REASONS.keys():
+		causes.append(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[key]))
+	causes.append(HudSelectionVocab.BUILD_BLOCKED_FALLBACK)
+	# …and the ONE cause worded per web, which is not in the table above.
+	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD)
+	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
+	var offenders := 0
+	for row in _build_queue_rows():
+		var tooltip := String(row.tooltip_text)
+		for cause in causes:
+			if tooltip.contains(cause):
+				offenders += 1
+				break
+	_assert_band_panel("a queue that is MOVING states no blocked cause on any row (%d did)"
+			% offenders, offenders == 0)
+
 ## **THE PAIRED NEGATIVE.** No queue means no block AT ALL — no head, no rows, no chrome — and the
 ## board must still render, or "the block is gone" is satisfied by a zone that renders nothing.
 func _assert_build_queue_absent() -> void:
@@ -10987,12 +11975,12 @@ func _assert_build_queue_absent() -> void:
 			% _work_board_row_count(), _work_board_row_count() > 0)
 
 ## The overflow row stands for the rest, and it says how many.
-func _assert_build_queue_overflow(entries: int) -> void:
+func _assert_build_queue_overflow(entries: int, rows_drawn: int) -> void:
 	var overflow := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
 	if overflow == null:
 		_fail("a %d-entry queue draws no `+N more` row" % entries)
 		return
-	var remaining := entries - HudWorkVocab.BUILD_QUEUE_ROWS_MAX
+	var remaining := entries - rows_drawn
 	_assert_band_panel("…and the overflow row stands for the rest — `%s`"
 			% (HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining),
 		int(overflow.get_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)) == remaining
@@ -11044,29 +12032,366 @@ func _assert_unqueue_command_grammar() -> void:
 			% [herd_line, String(lines.get(1, ""))],
 		String(lines.get(1, "")) == herd_line)
 
-## **THE BUILDERS CARD STATES THE KIT THE QUEUE HEAD IMPLIES, and `No kit` when there is no head to
-## imply one.** Three states, PNG-LESS and by EQUALITY, because a resolver stuck on ONE web satisfies
-## any one of them: a plant head, an animal head, and the EMPTY queue — which is the state that
-## shipped wrong, `KitRoster.resolve_selection`'s terminal fall-through being ROSTER ORDER, so the
-## card presented `hurdling` as a decision the player had never made.
+## **THE QUEUE HEAD STATES THE KIT ITS OWN ENTRY IMPLIES, and `No kit` when nothing can be derived.**
+## Three states, PNG-LESS and by EQUALITY, because a resolver stuck on ONE web satisfies any one of
+## them: a plant head, an animal head, and a queue whose only entry is one declared THIS TURN.
 ##
-## **It re-asserts the picker's absence in all three**, which the rendered pair above asserts in two:
-## the empty queue is the state a card that had regrown a control would look most ordinary in.
+## **THAT THIRD STATE IS WHAT THE EMPTY-QUEUE CASE BECAME** (§4.7). `KitRoster.resolve_selection`'s
+## terminal fall-through is ROSTER ORDER — `hurdling` on the shipped config — so a band with nothing
+## derivable used to read the ANIMAL web's kit as a decision the player had never made, and
+## `bare_kit_id` is the honest answer to *nothing is chosen and nothing can be derived*. With the
+## Builders card's gear line retired the empty queue renders no surface at all (no queue, no block, no
+## head), so the reachable shape of that state is a queue holding ONLY a PENDING entry: the wire has
+## placed nothing, `build_is_queue_head` answers false, and the head has nothing to derive from.
 func _assert_builders_card_kit_faces() -> void:
 	var cases := [
 		["a PLANT queue head", SourceForecast.BUILD_QUEUE_HEAD,
 			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_TILLAGE],
 		["an ANIMAL queue head", SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
 			SourceForecast.BUILD_QUEUE_HEAD, BandFx.KIT_ID_HURDLING],
-		["an EMPTY queue", SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
-			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_NONE],
 	]
 	for case in cases:
 		_set_forage_patches([_builders_kit_patch(int(case[1]))])
 		_set_world_herds([_builders_kit_herd(int(case[2]))])
 		_push_bands([_builders_band_fixture()])
 		await _settle()
-		_assert_builders_gear_line(String(case[0]), String(case[3]))
+		_assert_queue_head_kit(String(case[0]), String(case[3]))
+	# **…AND THE PENDING-ONLY HEAD, WHICH DERIVES** (`docs/plan_standing_upkeep.md` §4.7a). It read
+	# `No kit` for one slice and Ray reported it: `head_build_branch` needs the entry the WIRE put at
+	# position 0, and a declaration made THIS turn has none, so nothing derived and the fall-through
+	# answered the bare kit. That fall-through was right while an EMPTY queue was the only underivable
+	# case; the work row's `⌃` makes a pending-only queue the ORDINARY state — every declaration passes
+	# through it for exactly one turn — so the head derives from the entry the client itself placed.
+	# The pending declaration is a CULTIVATE, i.e. the plant web, so the answer is the plant kit.
+	# **THE PENDING TILE CARRIES A BASKET, and that is what the crop claim below needs.** The kit
+	# claim reads only the entry's WEB, so a bare patch answers it; a crop picker has to have crops to
+	# choose between, and the basket is where they come from.
+	_set_forage_patches([_builders_kit_patch(SourceForecast.NOT_IN_ANY_BUILD_QUEUE),
+		_pending_crop_patch()])
+	_set_world_herds([_builders_kit_herd(SourceForecast.NOT_IN_ANY_BUILD_QUEUE)])
+	_push_bands([_builders_band_fixture()])
+	await _settle()
+	# **THE PAIRED NEGATIVE FIRST, and it is what stops the derivation being a blanket answer**: with
+	# nothing queued at all there is no block, no head and nothing to state a kit on. `bare_kit_id`
+	# survives for exactly this case and has no surface to render on, which is the honest end of it.
+	_assert_band_panel("a band with NOTHING queued renders no BUILD QUEUE block at all",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) == null)
+	_declare_pending_build()
+	await _settle()
+	_assert_queue_head_kit("a queue holding only a PENDING entry", BandFx.KIT_ID_TILLAGE)
+	# **AN ANIMAL ENTRY, DECLARED HERE AND NOT IN `_declare_pending_build`.** The settings PAIR needs
+	# one — a Tame commits no species, so its row must not offer a click that opens nothing, and a
+	# queue holding only plant entries cannot say whether that is true or whether the rule fires for
+	# everything. It is NOT added to the shared helper: three other states count that helper's rows,
+	# and a second entry there fails all of them for a reason unrelated to what they assert. Recorded
+	# SECOND, so the plant entry stays the pending HEAD and the kit claim above still reads the plant
+	# web.
+	_hud._band_labor.record_pending_assign(
+		int(_hud._band_labor.panel_band().get("entity", -1)),
+		SourceForecast.LABOR_KIND_HUNT, QUEUE_ROW_WORKERS, -1, -1, BUILDERS_KIT_HERD, 0.5,
+		SourceForecast.IMPROVEMENT_TAME)
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _assert_queue_row_settings()
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## **THE `Work tab` LINK LANDS ON THE ACTING BAND'S BOARD, NOT MERELY ON A WORK TAB**
+## (`docs/plan_standing_upkeep.md` §4.7a ①).
+##
+## Reported from play on PR #562: with the panel on the FACTION page the link switched to the
+## FACTION's Work tab — a rollup reading `Band 1 · 6 sources`, with no `⌃` anywhere on it — so the
+## sentence delivered the player to a surface that could not do what it had just promised.
+##
+## **THREE CASES, AND THE THIRD IS WHAT MAKES THE FIRST TWO MEAN ANYTHING.** A builder that ALWAYS
+## jumps passes the faction case and the different-band case; one that NEVER jumps passes the
+## already-showing case. Only the set separates them, so the jump is COUNTED rather than inferred:
+## `alert_focus_requested` is what `_select_band_on_map` emits on its way, so a jump that happened is
+## observable and a jump that did not is too.
+##
+## **THE GUARD UNDER TEST IS *NOT ALREADY THIS BAND*, NOT *IS THE FACTION PAGE*** — which is why the
+## different-band case is here at all. The faction page is the reported symptom; a panel cycled to
+## another band is the same defect and an `is_faction_page()` test would walk past it.
+##
+## **DRIVEN THROUGH THE REAL RELAY.** The controller's own signal is emitted, so `Hud`'s connection
+## and `BandPanelController.show_work_tab` both run — the link's `[url]` → signal hop is asserted on
+## the sheet itself, in `ui_preview`, where a compose sheet exists.
+##
+## **PNG-LESS**: a Work tab showing band 1 and a Work tab showing band 2 are the same picture.
+func _assert_work_tab_link_routes() -> void:
+	var roster := _faction_roster()
+	_set_world_herds(_herd_fixtures() + _under_herded_work_herd_fixtures())
+	_push_bands(roster)
+	var acting := int((roster[0] as Dictionary).get("entity", -1))
+	var other := int((roster[1] as Dictionary).get("entity", -1))
+	if acting < 0 or other < 0 or acting == other:
+		_fail("work tab link — the roster does not stage two distinct bands")
+		return
+	# (1) THE REPORTED CASE — the FACTION page, reached through the REAL cycler like every other
+	# faction state in this file, never by poking `render_faction`.
+	_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
+	await _settle()
+	_assert_band_panel("work tab link — the panel really is on the faction page first",
+		_hud._bandpanel.is_faction_page())
+	var jumps := _count_work_tab_link_jumps(acting)
+	await _settle()
+	# The message carries the PAGE as well as the subject: on the faction page the subject dict is
+	# still whatever band was last shown, so a failure that printed only the entity would read
+	# `(subject 904, want 904)` — the right number under the wrong page, which names nothing.
+	_assert_band_panel("…and pressing the link leaves the faction page for the ACTING band (faction page %s, subject %d, want %d)"
+			% [str(_hud._bandpanel.is_faction_page()),
+				int(_hud._band_labor.panel_band().get("entity", -1)), acting],
+		not _hud._bandpanel.is_faction_page()
+			and int(_hud._band_labor.panel_band().get("entity", -1)) == acting)
+	_assert_band_panel("…and selects the WORK tab, which is the half that was already right (%s)"
+			% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…having actually jumped (%d focus emits)" % jumps, jumps > 0)
+	# (2) A DIFFERENT BAND — the general case the faction page is a special case of, and the one an
+	# `is_faction_page()` guard would miss entirely.
+	_hud._bandpanel.jump_to_band_entity(other)
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	_assert_band_panel("work tab link — the panel is showing the OTHER band before the press (%d)"
+			% int(_hud._band_labor.panel_band().get("entity", -1)),
+		int(_hud._band_labor.panel_band().get("entity", -1)) == other)
+	jumps = _count_work_tab_link_jumps(acting)
+	await _settle()
+	_assert_band_panel("…and the press moves the subject to the ACTING band (subject %d, want %d)"
+			% [int(_hud._band_labor.panel_band().get("entity", -1)), acting],
+		int(_hud._band_labor.panel_band().get("entity", -1)) == acting
+			and _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…having jumped for that too (%d focus emits)" % jumps, jumps > 0)
+	# (3) ALREADY SHOWING IT — the tab alone, and NO jump. Without this half a builder that jumps on
+	# every press passes both cases above while re-centring the map under a player who was already
+	# where they needed to be.
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	jumps = _count_work_tab_link_jumps(acting)
+	await _settle()
+	_assert_band_panel("work tab link — a panel ALREADY on that band switches the tab (%s)"
+			% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK
+			and int(_hud._band_labor.panel_band().get("entity", -1)) == acting)
+	_assert_band_panel("…and does NOT re-jump, the subject already being right (%d focus emits)"
+		% jumps, jumps == 0)
+	# (4) AN UNKNOWN BAND STILL GETS THE TAB — the fallback that stops a stale entity swallowing the
+	# whole interaction.
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	_count_work_tab_link_jumps(WORK_TAB_LINK_UNKNOWN_BAND)
+	await _settle()
+	_assert_band_panel("work tab link — an unresolvable band still switches the tab (%s)"
+		% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## Press the link for `band_entity` through the REAL relay, and answer how many map-focus emits the
+## jump made on its way — `_select_band_on_map`'s own signal, which is what tells a jump that happened
+## from one that did not.
+func _count_work_tab_link_jumps(band_entity: int) -> int:
+	var seen: Array = []
+	var sink := func(_x: int, _y: int) -> void: seen.append(true)
+	_hud._bandpanel.alert_focus_requested.connect(sink)
+	_hud._drawercompose.work_tab_requested.emit(band_entity)
+	_hud._bandpanel.alert_focus_requested.disconnect(sink)
+	return seen.size()
+
+## An entity no band in the roster carries, for the unresolvable-band fallback.
+const WORK_TAB_LINK_UNKNOWN_BAND := 99_999
+
+## **THE JOB'S SETTINGS ARE A ROW EXPANSION** (`docs/plan_standing_upkeep.md` §4.7a ②, ③). Ray, from
+## play: *"The CROP TO TEND shouldn't be a selection here as the user can't do the cultivate here."* —
+## so the crop left the compose sheet for the job it belongs to. It then shipped for a pass as a
+## picker IN the row, and the tall LEFT dock rendered `▸ 🌱 Cultiv…  [Sim pic ⌄]  turn 82 (0%)  ✕`:
+## two of five columns ellipsised into fragments, one of them a truncated crop name reading as a word.
+## The settings open BENEATH the row instead, the WORK BOARD's own inspector pattern.
+##
+## **PNG-LESS, and it has to be**: an `OptionButton` in a strip is a few pixels of chrome, and what is
+## under test is which rows EXPAND, which entries the picker holds, which one it opens on, and what a
+## pick TRANSMITS.
+##
+## **THE PAIR IS THE CLAIM.** A plant entry expands and shows a FULL crop name; an animal entry does
+## not expand at all. Either alone passes on a builder that expands everything or nothing — and the
+## full-name half is the whole reason the control moved, so a strip that merely EXISTS is not the fix.
+func _assert_queue_row_settings() -> void:
+	var rows := _build_queue_rows()
+	var plant_row: Control = null
+	var animal_row: Control = null
+	for row in rows:
+		var face := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_FACE_META)
+		if face == null:
+			continue
+		# **THE NEEDLE IS THE ROW'S OWN VERB FACE (), not the compose sheet's
+		# offer LABEL.** The queue row reads `◎ Tame Red Deer`; the sheet's label is `Tame this herd`,
+		# which appears nowhere on this surface — matching it finds no animal row and silently leaves
+		# the PAIR half-asserted, which is exactly what it did.
+		if String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)).contains(
+				HudFormat.policy_face(SourceForecast.IMPROVEMENT_TAME)):
+			animal_row = row
+		else:
+			plant_row = row
+	# **THE ROW ITSELF IS UNCLIPPED AGAIN, which is the reported defect stated as a measurement.** The
+	# face is the row's one expanding child, so a control taking width off it shows up here and
+	# nowhere else — the row's rect is identical either way and its tooltip carries the face regardless.
+	if plant_row == null:
+		_fail("declare — no PLANT queue row to open settings on")
+		return
+	var face_label := _find_meta_control(plant_row, HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
+	var wanted_face := String(face_label.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
+	_assert_band_panel("the queue row's job face renders UNCLIPPED — `%s` in %.0fpx"
+			% [wanted_face, face_label.size.x],
+		face_label.size.x + QUEUE_FACE_WIDTH_TOLERANCE
+			>= face_label.get_theme_font("font").get_string_size(wanted_face,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+				face_label.get_theme_font_size("font_size")).x)
+	# **NOTHING IS OPEN UNTIL A ROW IS CLICKED**, so the strip costs the block nothing at rest — which
+	# is what `build_queue_block_height`'s open-only term means in arithmetic.
+	_assert_band_panel("no settings strip is open until a row is clicked",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
+	# **THE ANIMAL HALF OF THE PAIR** — taming commits no species, so its row must not offer a click
+	# that opens nothing. Driven through the REAL `gui_input`, so this is the row's own handler and
+	# not a state poke.
+	if animal_row == null:
+		# **A SKIPPED HALF IS A FAILED HALF.** The pair is the claim, so a fixture that has stopped
+		# staging an animal entry must say so rather than leave the positive half passing alone.
+		_fail("declare — no ANIMAL queue row, so the expansion PAIR is only half asserted")
+	else:
+		_click_control(animal_row)
+		await _settle()
+		_assert_band_panel("an ANIMAL entry does not expand — there is nothing to configure on a Tame",
+			_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
+	_click_control(plant_row)
+	await _settle()
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		_fail("clicking the PLANT queue row opened no settings strip")
+		return
+	_assert_band_panel("…while the PLANT entry expands, and the strip belongs to THAT row",
+		String(strip.get_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META))
+			== String((_hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+				_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))[0]
+					as Dictionary).get("key", "")))
+	var picker := _find_first_of_type(strip, "OptionButton") as OptionButton
+	if picker == null:
+		_fail("the settings strip carries no crop picker")
+		return
+	# It opens on the band's own committed crop rather than on the list's first entry — the picker's
+	# `select` contract, and the difference between stating a choice and inventing one.
+	_assert_band_panel("…opening on the crop the band's own row carries — \"%s\"" % picker.text,
+		picker.text != HudWorkVocab.BUILD_QUEUE_CROP_DEFAULT_LABEL)
+	# **AND IT RENDERS THE WHOLE NAME, which the in-row control could not.** Measured against the
+	# font's own width for the face, so it is the reported defect as a number rather than a hope.
+	_assert_band_panel("…at a width that renders the crop's FULL name — `%s` in %.0fpx"
+			% [picker.text, picker.size.x],
+		picker.size.x >= picker.get_theme_font("font").get_string_size(picker.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, picker.get_theme_font_size("font_size")).x)
+	# **`""` IS AN ENTRY, NOT AN EMPTY FACE** — *let the sim pick* is a real instruction, so the list
+	# must offer it rather than leaving the player unable to hand the choice back.
+	var has_default := false
+	for index in picker.item_count:
+		if picker.get_item_text(index) == HudWorkVocab.BUILD_QUEUE_CROP_DEFAULT_LABEL:
+			has_default = true
+	_assert_band_panel("…and offering `%s`, since letting the sim choose is a real instruction"
+		% HudWorkVocab.BUILD_QUEUE_CROP_DEFAULT_LABEL, has_default)
+	# **THE PICK IS THE BAND'S OWN FORAGE ROW, RESTATED** — driven through the REAL `item_selected`
+	# wiring and read off the REAL builder, so the crew, the floor, the improvement and the kit are all
+	# asserted to survive a crop change rather than merely assumed to.
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.assign_labor_requested.connect(sink)
+	picker.item_selected.emit(QUEUE_CROP_PICK_INDEX)
+	_hud.assign_labor_requested.disconnect(sink)
+	if seen.is_empty():
+		_fail("picking a crop on the queue row emitted no assign_labor")
+		return
+	var line := String(MAIN_SCRIPT.format_assign_labor(seen[0] as Dictionary).get("line", ""))
+	# **THE HEAD AND THE TAIL, NOT THE WHOLE LINE.** The band id is this fixture's own and the floor's
+	# spelling is `format_assign_labor`'s (it trims trailing zeros), so pinning either would assert the
+	# harness's arithmetic rather than the crop's journey.
+	var head := "assign_labor %d %d forage %d %d " % [HudConst.PLAYER_FACTION_ID,
+		int((seen[0] as Dictionary).get("band_id", HudConst.NO_BAND_ID)),
+		PENDING_QUEUE_TILE.x, PENDING_QUEUE_TILE.y]
+	var tail := " %s %d" % [QUEUE_CROP_PICK_SPECIES, QUEUE_ROW_WORKERS]
+	_assert_band_panel("…and a pick re-sends the row with the crop MOVED and the crew unchanged — `%s… %s` (got \"%s\")"
+		% [head, tail, line], line.begins_with(head) and line.ends_with(tail))
+	# …and the crop it moved OFF is gone from the line, or "names the new crop" is satisfied by a
+	# builder that appended one beside the old.
+	_assert_band_panel("…and never the crop it moved off",
+		not line.contains(QUEUE_CROP_COMMITTED_SPECIES))
+	# Close it, so the states after this one are not rendered with a strip open.
+	_click_control(plant_row)
+	await _settle()
+
+## **THE OPEN STRIP IS PAID FOR, AND THE WIDE DOCK IS WHERE THAT MATTERS** — with the strip CLOSED
+## `Zone_work` reads 340 of the 396px box there, and it read the whole box before the queue's own
+## reservation started budgeting the work inspector's height; a strip that drew without being charged
+## would take its height off the bottom of a CLIPPING zone in silence either way.
+##
+## **WHAT ABSORBS IT IS THE BOARD, not the box.** `build_queue_block_height`'s open term is subtracted
+## in `_work_board_capacity`'s chrome, so the board pages one row shorter and the zone's total is
+## unchanged — which is the whole reason the strip could be added to a zone with no spare room.
+## Reported as well as asserted: 0 spare is a real fit rather than a comfortable one.
+func _assert_open_settings_fits_the_wide_zone() -> void:
+	var queued: Array = _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+		_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))
+	var plant := ""
+	for entry_variant in queued:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+			plant = String(entry.get("key", ""))
+			break
+	if plant == "":
+		_fail("wide queue — no plant entry to open settings on")
+		return
+	_hud._bandpanel._toggle_queue_settings(plant)
+	await _settle()
+	_assert_band_panel("the wide dock holds an OPEN settings strip — the board pays for it in rows",
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null)
+	_report_zone_content_extent("band_panel_build_queue_wide (settings open)")
+	_assert_zone_content_fits()
+	_assert_band_panel("…and the board still draws rows rather than being squeezed out — %d"
+		% _work_board_row_count(), _work_board_row_count() > 0)
+	_hud._bandpanel._toggle_queue_settings(plant)
+	await _settle()
+
+## A laid-out width may sit a sub-pixel under the text server's float for the same string, the
+## faction page's `KEYLESS_KEY_WIDTH_TOLERANCE` reason.
+const QUEUE_FACE_WIDTH_TOLERANCE := 1.0
+
+## Press a control through its own `gui_input`, which is where both the queue row and the work row
+## put their toggle — never by calling the handler, which would assert the harness's own routing.
+func _click_control(control: Control) -> void:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	control.gui_input.emit(event)
+
+## The patch the pending declaration lands on, carrying a BASKET so its queue row has crops to choose
+## between. Two plants, both legal for Cultivate, so the picker holds `Sim picks` plus two real
+## entries — one of which the band is already committed to, which is what the *opens on the band's own
+## crop* claim reads.
+func _pending_crop_patch() -> Dictionary:
+	return {
+		"x": PENDING_QUEUE_TILE.x, "y": PENDING_QUEUE_TILE.y,
+		"build_queue_position": SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		"composition": [
+			{"species": QUEUE_CROP_PICK_SPECIES, "display_name": "Wild Emmer", "share": 0.6,
+				"can_cultivate": true, "can_sow": true},
+			{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.4,
+				"can_cultivate": true, "can_sow": false},
+		],
+	}
+
+## The crop the queue-row picker is driven onto, and its index in that picker's list. Index 1 is the
+## first real plant — index 0 is the `Sim picks` entry, which is the state the row is already in and
+## which Godot therefore refuses to report a pick of.
+const QUEUE_CROP_PICK_INDEX := 1
+
+const QUEUE_CROP_PICK_SPECIES := "wild_emmer"
+
+## …and the crop the band's own row already carries, so the picker has something to OPEN on and the
+## pick has something to move OFF.
+const QUEUE_CROP_COMMITTED_SPECIES := "ground_nut"
 
 # =====================================================================================
 #  THE WORK ROW'S BUILD STATES — AND THE MAP BADGE'S SAME VERDICT
@@ -11517,3 +12842,553 @@ func _assert_no_pending_queue_row() -> void:
 		% pending, pending == 0)
 	_assert_band_panel("…and no row wears the `%s` pending mark (found %d)" % [wanted, marked],
 		marked == 0)
+
+# =====================================================================================
+#  THE 99% REPAIR, AND THE KEEPING WARNING THAT USED TO ARRIVE A TURN LATE
+# =====================================================================================
+#
+# Two client-only repairs, both PNG-LESS and both for the same reason: every state either of them can
+# be in renders as a perfectly ordinary board. A row offering `⌃` and a row reporting `🌱99%` are one
+# glyph apart in a thumbnail; a pool card marked and a pool card unmarked are the same card; and the
+# whole point of the second repair is that NOTHING CHANGES on the following turn, which is a claim
+# about two frames and no picture can carry it.
+#
+# **THEY SHARE A BLOCK BECAUSE THEY SHARE A FIXTURE FAMILY, not a mechanism.** The repair is about a
+# rung that has slipped; the warning is about a rung that has not started. Both need a band whose
+# keeping pools the harness controls exactly, which is what makes staging them together cheaper than
+# staging them apart — and the block restores the reference band on the way out, this file's own rule.
+
+## The eroded rung both repair claims are staged at. **A patch, never a herd**: an eroded-but-achieved
+## ANIMAL rung is unreachable today (`domestication_progress` is monotone and no animal rung declares
+## decay, so `improvement_is_done` and *the meter is short* are contradictory there), and a fixture
+## staging one would assert against a state the sim cannot produce.
+const REPAIR_PATCH_TILE := Vector2i(64, 21)
+## 90% — **achieved and short**, which is the whole state. The exact figure is arbitrary; what matters
+## is that it is strictly between `BUILD_METER_UNSTARTED` and `BUILD_METER_FULL`.
+const REPAIR_ERODED_PROGRESS := 0.9
+## …and the CONTROL's meter, standing exactly at its cost. A rung with nothing left to put work into
+## must offer nothing, or the `⌃` would appear on every finished improvement in the game.
+const REPAIR_FULL_PROGRESS := 1.0
+const REPAIR_WORK_COST := 50.0
+## What the rung costs to HOLD, per turn.
+const REPAIR_UPKEEP_DEMAND := 2.0
+const REPAIR_BAND_ENTITY := 962
+const REPAIR_BAND_ID := "Band 30"
+const REPAIR_FORAGE_WORKERS := 2
+
+## The queued Tame the declare-time warning is staged on, and the herd that carries it.
+const KEEPING_DECLARE_HERD_ID := "declare_tame_target"
+const KEEPING_DECLARE_WORK_COST := 80.0
+## The keeping the queued Tame will owe once it starts — the number the Husbandry card's hover quotes.
+const KEEPING_DECLARE_UPKEEP := 3.0
+const KEEPING_DECLARE_TURNS := 24
+const KEEPING_DECLARE_BAND_ENTITY := 963
+const KEEPING_DECLARE_BAND_ID := "Band 31"
+const KEEPING_DECLARE_HERD_TILE := Vector2i(70, 17)
+## The staffing the three states of the sequence differ by, and NOTHING else differs between them.
+##
+## **ONE KEEPER IS THE WHOLE CLAIM.** A bare keeper supplies `KEEPING_DECLARE_PER_WORKER_TURN` — one
+## work unit a turn — against a job that will owe THREE, so a mark that cleared there would be telling
+## the player they were set up on a pool covering a third of the bill. That is the reported defect: the
+## mark cleared on the first hand and came back the next turn.
+const KEEPING_DECLARE_KEEPERS_NONE := 0
+const KEEPING_DECLARE_KEEPERS_ONE := 1
+## …and the staffing that genuinely covers it, which is what makes the mark mean something when it
+## clears. `KEEPING_DECLARE_UPKEEP` work a turn at one work unit per bare keeper.
+const KEEPING_DECLARE_KEEPERS_COVER := 3
+## The BARE work one keeper supplies, which every live source publishes as `buildWorkPerWorkerTurn`
+## (`intensification::PER_WORKER_OUTPUT`). Stated on the fixture rather than assumed by the client, for
+## the reason the wire publishes it at all: the sim writes worker output as a sum of terms.
+const KEEPING_DECLARE_PER_WORKER_TURN := 1.0
+## What the sim publishes once the job has banked its first work and the bill has switched on — the
+## `next turn` half of the transition claim.
+const KEEPING_DECLARE_LIVE_SHORTFALL := KEEPING_DECLARE_UPKEEP
+
+func _render_repair_and_declare_states() -> void:
+	# ---- (1) THE 99% REPAIR: an achieved rung whose meter has room offers the `⌃` ---------------
+	# The faction knows every craft, so nothing here is knowledge-gated and the offer test's answer is
+	# about the METER alone — which is the axis under test.
+	_hud.update_intensification([_standing_knowledge_row()])
+	_set_world_herds([])
+	_set_forage_patches([_repair_patch_fixture(REPAIR_ERODED_PROGRESS)])
+	_push_bands([_repair_band_fixture()])
+	await _settle()
+	_assert_repair_offer("a Tended patch eroded below its cost", true)
+
+	# …and the CONTROL, one number apart: the SAME patch at a full meter. Without it "offer the repair"
+	# is satisfied by a client that puts a `⌃` on every tended patch on the map.
+	_set_forage_patches([_repair_patch_fixture(REPAIR_FULL_PROGRESS)])
+	_push_bands([_repair_band_fixture()])
+	await _settle()
+	_assert_repair_offer("the same patch at a FULL meter", false)
+
+	# **AND THE SENTINEL IS NOT THIS REPAIR'S PROBLEM, which was checked rather than assumed.** An
+	# eroded, unqueued source publishes `-1`, and the two surfaces that could call it a stall do not:
+	# `DetailFormat.rung_row_value` answers on its `built` branch first, so the CARD reads
+	# `🌾 Tended 90%` and never reaches the countdown; and the BOARD's stalled face is exactly what the
+	# offer above replaces. A crew fork was built in `build_sentinel_value` for it and reverted —
+	# `ui_preview`'s `tile_meter_stalled` pins that a refused gate reads `⚠ Stalled` at ANY staffing,
+	# the sim's `eligible` taking no crew count.
+	_assert_repair_card_states_no_countdown()
+
+	# ---- (2) THE DECLARE-TIME KEEPING WARNING --------------------------------------------------
+	# A band that has QUEUED a Tame and has nobody on Husbandry. The herd is billed NOTHING today —
+	# the meter is empty, so the sim owes no keeping yet — which is exactly the state in which the
+	# warning used to be silent until the turn resolved.
+	_set_forage_patches([])
+	_set_world_herds(_keeping_declare_herd_fixture())
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_NONE)])
+	await _settle()
+	_assert_declare_time_keeping("a queued Tame with nobody on Husbandry", true,
+		KEEPING_DECLARE_KEEPERS_NONE)
+	_assert_queue_row_states_the_price("a queued Tame with nobody on Husbandry")
+
+	# **…AND ONE KEEPER DOES NOT CLEAR IT, which is the whole of the reported defect.** The trigger is
+	# COVERAGE, never *unstaffed*: a bare keeper supplies one work unit against a job that will owe
+	# three, so a mark that cleared here would tell the player they were set up and come back the next
+	# turn. The sentence moves with the staffing — same shape, new numbers — rather than switching to a
+	# second warning.
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_ONE)])
+	await _settle()
+	_assert_declare_time_keeping("the same queue with ONE keeper on Husbandry", true,
+		KEEPING_DECLARE_KEEPERS_ONE)
+
+	# …the paired NEGATIVE, differing in the STAFFING and in nothing else: a pool that COVERS what it
+	# is asked for wears no mark, which is what makes the mark mean something when it is there.
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_COVER)])
+	await _settle()
+	_assert_declare_time_keeping("the same queue with Husbandry covering it", false,
+		KEEPING_DECLARE_KEEPERS_COVER)
+
+	# ---- (3) THE TRANSITION, which is the claim the whole change exists to make ------------------
+	# **NOTHING NEW APPEARS NEXT TURN.** Advance the turn and publish the bill the sim switches on once
+	# the job has banked its first work: the card must be marked BEFORE and AFTER, so the player is not
+	# shown a second warning about a decision they already made. A frame cannot carry this — the mark
+	# looks identical either way, and what is being asserted is that it did not CHANGE.
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_NONE)])
+	await _settle()
+	var marked_before := _pool_card_is_marked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	# …and what the card ASKS FOR must not double when the bill switches on. A queue entry keeps its
+	# position while its meter climbs, so the queued rate and the live one are the same job's — a card
+	# that counted both would read `6 work` the turn after a 3-work job started, with nothing about the
+	# band having changed.
+	var asked_before := _pool_coverage_asked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	_hud._band_labor.set_turn(_hud._band_labor.current_turn() + 1)
+	_set_world_herds(_keeping_declare_herd_fixture(KEEPING_DECLARE_LIVE_SHORTFALL))
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_NONE)])
+	await _settle()
+	var marked_after := _pool_card_is_marked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	# The PRECONDITION: the turn really did switch the bill on, or "the mark is unchanged" is a claim
+	# about two identical frames and says nothing at all.
+	var now_short := SourceForecast.upkeep_is_short(_hud._band_labor.upkeep_pool_state(
+		_hud._band_labor.panel_band(), SourceForecast.LABOR_KIND_HUNT))
+	_assert_band_panel("the turn advance really switched the keeping bill on (short=%s)" % now_short,
+		now_short)
+	_assert_band_panel("…and the Husbandry mark is UNCHANGED across it — no second warning appears (before %s, after %s)"
+			% [marked_before, marked_after], marked_before and marked_after)
+	var asked_after := _pool_coverage_asked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	_assert_band_panel("…and it asks for the SAME work across it — one job, billed once (%.2f → %.2f)"
+			% [asked_before, asked_after],
+		is_equal_approx(asked_before, KEEPING_DECLARE_UPKEEP)
+			and is_equal_approx(asked_after, KEEPING_DECLARE_UPKEEP))
+
+	# ---- (4) THE SOURCE THE SIM BILLS AND THE CARD USED TO SKIP ---------------------------------
+	await _assert_kept_source_without_gatherers()
+
+	# Put the world back for whatever runs after this block.
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches([])
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## A Tended patch whose cultivation meter stands at `progress`. **`is_cultivated` is TRUE at both
+## values**, which is the point: the flag is the rung's ACHIEVEMENT and the meter is its fullness, and
+## the repair is exactly the state in which those two disagree.
+##
+## `can_sow` is FALSE so the offer test's highest-rung-first walk cannot answer `Sow` instead — the
+## claim is about the CULTIVATE repair, and a patch that could also be sown would be offered a real
+## climb and prove nothing about the eroded rung beneath it.
+func _repair_patch_fixture(progress: float) -> Dictionary:
+	return {
+		"x": REPAIR_PATCH_TILE.x, "y": REPAIR_PATCH_TILE.y, "ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		"cultivation_progress": progress,
+		"cultivation_work_cost": REPAIR_WORK_COST,
+		"cultivation_work_done": progress * REPAIR_WORK_COST,
+		"cultivation_upkeep_demand": REPAIR_UPKEEP_DEMAND,
+		# **NOTHING QUEUED AND NO ESTIMATE — the wire's own answer for a source with no entry and no
+		# builders.** Both halves matter: the queue position is what the offer gates on, and the `-1`
+		# is the sentinel the readouts must not call a stall.
+		"build_queue_position": SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
+			"share": 1.0, "can_cultivate": true, "can_sow": false}],
+	}
+
+## The band working that patch, with NO improvement declared on the row — a repair nobody has ordered.
+func _repair_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = REPAIR_BAND_ENTITY
+	band["id"] = REPAIR_BAND_ID
+	band["labor_assignments"] = [
+		{"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": REPAIR_FORAGE_WORKERS,
+			"workers_needed": REPAIR_FORAGE_WORKERS, "floor": 0.5,
+			"target_x": REPAIR_PATCH_TILE.x, "target_y": REPAIR_PATCH_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_NONE,
+			"actual_yield": 0.44, "sustainable_yield": 0.44},
+	]
+	return band
+
+## GUARD: **the eroded rung is OFFERED as a repair, and a full one is not** — asserted on the MODEL
+## (which rung the board resolved) and on the RENDERED slot (a `Button`, i.e. actually pressable),
+## because either alone passes on half the fix. The model answering `cultivate` with the slot still a
+## `Label` is the state that shipped: the row read the rung as done AND in progress at once, so the
+## only way to order the repair was to type the command.
+func _assert_repair_offer(where: String, want_offer: bool) -> void:
+	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
+	if models.is_empty():
+		_fail("%s — no work row to read" % where)
+		return
+	var model: Dictionary = models[0]
+	var offered := String(model.get("ready_policy", ""))
+	var building := String(model.get("building_policy", ""))
+	_assert_band_panel("%s: the board offers %s (ready=%s, building=%s)"
+			% [where, SourceForecast.IMPROVEMENT_CULTIVATE if want_offer else "nothing",
+				offered, building],
+		offered == (SourceForecast.IMPROVEMENT_CULTIVATE if want_offer else "") and building == "")
+	# …and the slot is a real control rather than a reported percentage. `_ready_mark_buttons` counts
+	# Buttons only, so a row still rendering the BUILDING face answers zero here.
+	var buttons := _ready_mark_buttons()
+	_assert_band_panel("%s: …and the offer slot is a pressable Button (found %d)"
+			% [where, buttons.size()],
+		buttons.size() == (1 if want_offer else 0))
+
+## GUARD: **the eroded rung's CARD row states its badge, not the sim's `-1`.** The claim is that the
+## sentinel never reaches this row at all — `rung_row_value` forks on `built` before it reads the
+## countdown — so the surface a player looks at states *Tended, 90%, slipping* rather than a hazard
+## about a crew nobody put on it. Driven on the producer, a rung row being one short string among
+## several in a `[table]` cell.
+##
+## **The PAIRED NEGATIVE is what makes it a claim**: the same source at a meter the wire prices a real
+## countdown on must still render that countdown, or "never states the sentinel" is satisfied by a row
+## that has stopped reading the wire.
+func _assert_repair_card_states_no_countdown() -> void:
+	var patch := _repair_patch_fixture(REPAIR_ERODED_PROGRESS)
+	var percent := HudFormat.progress_percent(REPAIR_ERODED_PROGRESS)
+	var row := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
+		DetailFormat.cultivation_built_label(), true, REPAIR_ERODED_PROGRESS,
+		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
+	var stalled := HudSelectionVocab.RUNG_STALLED_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+	_assert_band_panel("the eroded rung's card row states its BADGE, not the sim's `-1` (got \"%s\")"
+			% row,
+		row.contains(DetailFormat.cultivation_built_label()) and not row.contains(stalled))
+	# …and the row that is NOT built still reads the wire, or the claim above is about a producer that
+	# ignores the countdown everywhere.
+	var unbuilt := DetailFormat.rung_row_value(patch, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
+		DetailFormat.cultivation_built_label(), false, REPAIR_ERODED_PROGRESS,
+		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
+	_assert_band_panel("…while the same row UNBUILT still states the sim's own sentinel (got \"%s\")"
+			% unbuilt, unbuilt == stalled)
+
+## The herd the band has queued a Tame on. **`upkeep_demand` is ZERO by default**, which is the sim
+## being honest — the meter is empty, nothing is owned yet, so nothing is billed — and it is exactly
+## the state the warning used to be silent in. Pass a shortfall to stage the turn AFTER.
+func _keeping_declare_herd_fixture(shortfall: float = 0.0) -> Array:
+	var herd := {
+		"id": KEEPING_DECLARE_HERD_ID, "species": "Aurochs",
+		"x": KEEPING_DECLARE_HERD_TILE.x, "y": KEEPING_DECLARE_HERD_TILE.y,
+		"population": 180, "ecology_phase": "thriving", "huntable": true,
+		"domestication": 0.0, "husbandry_ceiling": "pastoral", "per_worker_yield": 0.15,
+		"tame_work_cost": KEEPING_DECLARE_WORK_COST,
+		"tame_work_done": 0.0,
+		"tame_upkeep_demand": KEEPING_DECLARE_UPKEEP,
+		# **THE BARE WORK ONE HAND SUPPLIES, which every live source publishes** — what the pool card
+		# prices this band's keepers at. Stated rather than left absent: without it the projection has
+		# no rate and every staffing reads as supplying nothing, which is a fixture answering the
+		# question the assertion is asking.
+		"build_work_per_worker_turn": KEEPING_DECLARE_PER_WORKER_TURN,
+		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
+		"build_turns_remaining": KEEPING_DECLARE_TURNS,
+		"upkeep_demand": shortfall,
+		"upkeep_supplied": 0.0,
+		"upkeep_shortfall": shortfall,
+		"hunt_policy_ceilings": {"sustain": 0.30, "surplus": 0.90, "deplete": 1.40,
+			"eradicate": 2.00, "corral": 0.70},
+	}
+	return [herd]
+
+## The band that queued it. `keepers` is the ONE thing the pair of states differs by.
+func _keeping_declare_band_fixture(keepers: int) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = KEEPING_DECLARE_BAND_ENTITY
+	band["id"] = KEEPING_DECLARE_BAND_ID
+	band["labor_assignments"] = [
+		{"kind": SourceForecast.LABOR_KIND_HUNT, "workers": 2, "workers_needed": 2, "floor": 0.5,
+			"fauna_id": KEEPING_DECLARE_HERD_ID,
+			"target_x": KEEPING_DECLARE_HERD_TILE.x, "target_y": KEEPING_DECLARE_HERD_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_TAME,
+			"actual_yield": 0.30, "sustainable_yield": 0.30},
+		{"kind": HudConst.LABOR_KIND_BUILDERS, "workers": 2,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+		{"kind": HudConst.LABOR_KIND_HUSBANDRY, "workers": keepers,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+	]
+	return band
+
+## The kept patch of the take-crew block below, and the band that holds it. **A Tended patch, billed
+## and short**, which is exactly what a band that finished a Cultivate and moved its foragers on is
+## left holding.
+const KEEPING_KEPT_PATCH_TILE := Vector2i(66, 24)
+const KEEPING_KEPT_UPKEEP := 2.0
+const KEEPING_KEPT_SHORTFALL := 1.5
+const KEEPING_KEPT_BAND_ENTITY := 964
+const KEEPING_KEPT_BAND_ID := "Band 32"
+## The ONE thing the pair differs by: whether anybody is still gathering the ground the band keeps.
+const KEEPING_KEPT_GATHERERS := 2
+const KEEPING_KEPT_NO_GATHERERS := 0
+
+## GUARD: **a source with a live keeping bill and NO take crew is in the pool's totals**, PNG-LESS —
+## the card understating its own demand renders as a perfectly ordinary card, and the figures are on a
+## hover.
+##
+## `systems::labor::maintenance_shares` deliberately EXCLUDES the take crew from eligibility
+## (`core_sim/tests/forage_cultivation.rs`: *"a patch with no gatherers is still kept by the band's
+## pool"*), so a band that finished a Cultivate and moved its foragers to a richer stand is billed for
+## that ground and the client skipped it — understating both the demand and the shortfall, silently, on
+## the one state the sim has a regression test for.
+##
+## **THE PAIR IS THE CLAIM.** The same band, the same patch, the same bill, differing only in whether
+## anybody is gathering: a client that had stopped summing anything reads zero in BOTH halves, and one
+## that reads the gatherers' half correctly says nothing about the half that was dropped.
+func _assert_kept_source_without_gatherers() -> void:
+	_set_world_herds([])
+	_set_forage_patches([_kept_patch_fixture()])
+	_push_bands([_kept_band_fixture(KEEPING_KEPT_GATHERERS)])
+	await _settle()
+	var staffed: Dictionary = _hud._band_labor.upkeep_pool_state(_hud._band_labor.panel_band(),
+		SourceForecast.LABOR_KIND_FORAGE)
+	_assert_band_panel("a kept patch WITH gatherers is in the Agriculture pool's totals (demand %.2f, short %.2f)"
+			% [float(staffed.get("demand", 0.0)), float(staffed.get("shortfall", 0.0))],
+		is_equal_approx(float(staffed.get("demand", 0.0)), KEEPING_KEPT_UPKEEP)
+			and is_equal_approx(float(staffed.get("shortfall", 0.0)), KEEPING_KEPT_SHORTFALL))
+	_push_bands([_kept_band_fixture(KEEPING_KEPT_NO_GATHERERS)])
+	await _settle()
+	var kept: Dictionary = _hud._band_labor.upkeep_pool_state(_hud._band_labor.panel_band(),
+		SourceForecast.LABOR_KIND_FORAGE)
+	_assert_band_panel("…and the SAME patch with its foragers gone still is (demand %.2f, short %.2f)"
+			% [float(kept.get("demand", 0.0)), float(kept.get("shortfall", 0.0))],
+		is_equal_approx(float(kept.get("demand", 0.0)), KEEPING_KEPT_UPKEEP)
+			and is_equal_approx(float(kept.get("shortfall", 0.0)), KEEPING_KEPT_SHORTFALL))
+	# …and the card says so, which is what the totals are FOR: an unstaffed keeping pool against a live
+	# bill does not cover it, so the Agriculture card flies the mark on ground nobody is gathering.
+	_assert_band_panel("…and the Agriculture card marks the ground it is still keeping",
+		_pool_card_is_marked(HudWorkVocab.ROLE_NAME_AGRICULTURE))
+
+## The kept patch itself — the BARE forecast keys, which is how a raw wire patch spells them
+## (`forage_patch_lookup`, never the `patch_`-prefixed `tile_info` cross-ref).
+func _kept_patch_fixture() -> Dictionary:
+	return {
+		"x": KEEPING_KEPT_PATCH_TILE.x, "y": KEEPING_KEPT_PATCH_TILE.y,
+		"ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+		"cultivation_progress": 1.0,
+		"upkeep_demand": KEEPING_KEPT_UPKEEP,
+		"upkeep_supplied": KEEPING_KEPT_UPKEEP - KEEPING_KEPT_SHORTFALL,
+		"upkeep_shortfall": KEEPING_KEPT_SHORTFALL,
+		"build_work_per_worker_turn": KEEPING_DECLARE_PER_WORKER_TURN,
+		"build_queue_position": SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+	}
+
+## The band holding it. **The row SURVIVES at zero workers, which is the sim's own behaviour** — the
+## take crew is not the row's licence to exist, the ground's at-risk meter is — so the fixture keeps
+## the assignment and drops only its hands.
+func _kept_band_fixture(gatherers: int) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = KEEPING_KEPT_BAND_ENTITY
+	band["id"] = KEEPING_KEPT_BAND_ID
+	band["labor_assignments"] = [
+		{"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": gatherers,
+			"workers_needed": KEEPING_KEPT_GATHERERS, "floor": 0.5,
+			"target_x": KEEPING_KEPT_PATCH_TILE.x, "target_y": KEEPING_KEPT_PATCH_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_NONE,
+			"actual_yield": 0.44, "sustainable_yield": 0.44},
+		{"kind": HudConst.LABOR_KIND_AGRICULTURE, "workers": 0,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+	]
+	return band
+
+## **WHAT THIS WEB'S POOL IS BEING ASKED FOR, off the panel's OWN producer.** Driven through
+## `_pool_coverage` with the same arguments the block hands it, because the number is what the claim is
+## about and no card renders it on its own — the hover states it, and a hover is a string that reads
+## plausibly at any figure.
+func _pool_coverage_asked(role_name: String) -> float:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var animal := role_name == HudWorkVocab.ROLE_NAME_HUSBANDRY
+	var source_kind := SourceForecast.LABOR_KIND_HUNT if animal else SourceForecast.LABOR_KIND_FORAGE
+	var role_kind := HudConst.LABOR_KIND_HUSBANDRY if animal else HudConst.LABOR_KIND_AGRICULTURE
+	var queued: Array = _hud._bandpanel._build_queue_models(band,
+		_hud._bandpanel._work_source_models(band, 0))
+	var cover: Dictionary = _hud._bandpanel._pool_coverage(band, source_kind, role_kind,
+		int(_hud._band_labor.effective_role_workers(band, role_kind).get("workers", 0)),
+		_hud._band_labor.upkeep_pool_state(band, source_kind), queued)
+	return float(cover.get(HudWorkVocab.POOL_COVERAGE_ASKED_KEY, 0.0))
+
+## Is this pool card flying the mark? The card's own answer, never the glyph — `_assert_pool_card_marks`'
+## rule, for its reason.
+func _pool_card_is_marked(role_name: String) -> bool:
+	var card := _find_pool_card(role_name)
+	return card != null \
+		and bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false))
+
+## GUARD: **the pool a queued job will need is marked while it does not COVER that job, and the hover
+## states what it supplies against what it is asked for** — with the OTHER web's card left alone, which
+## is what stops "mark everything" passing. The Builders card is deliberately no part of this: a job
+## needs builders by definition, and the queue block one row down already says whether anybody is on the
+## role.
+##
+## **`keepers` IS WHY THE SENTENCE IS ASSERTED BY EQUALITY, at figures composed from the fixture's own
+## numbers.** The mark alone cannot tell the fix from the defect: an *unstaffed* trigger and a coverage
+## one both mark an empty pool and both leave a covered one bare, and they differ ONLY at the one keeper
+## in between. What separates them everywhere is the SENTENCE — the supply figure moves with the
+## staffing under coverage and there is no supply figure at all under the retired trigger.
+func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) -> void:
+	var card := _find_pool_card(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	if card == null:
+		_fail("%s — no Husbandry pool card to read" % where)
+		return
+	# The PRECONDITION: the job really is in the queue AND the sim is billing nothing for it yet. Both
+	# halves, because the whole claim is that the client speaks BEFORE the bill exists.
+	_assert_band_panel("%s: the job really is queued and the sim bills nothing for it yet" % where,
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) != null
+		and not SourceForecast.upkeep_is_short(_hud._band_labor.upkeep_pool_state(
+			_hud._band_labor.panel_band(), SourceForecast.LABOR_KIND_HUNT)))
+	_assert_band_panel("%s: the Husbandry card %s the mark"
+			% [where, "flies" if want_mark else "does NOT fly"],
+		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_mark)
+	# The pool carries no keeping gear on this roster, so its supply is the bare rate every source
+	# publishes times the hands on it — composed here rather than asked of the code under test.
+	var wanted := HudWorkVocab.upkeep_pool_coverage_format(HudWorkVocab.ROLE_NAME_HUSBANDRY) % [
+		DetailFormat.format_work_units(float(keepers) * KEEPING_DECLARE_PER_WORKER_TURN),
+		DetailFormat.format_work_units(KEEPING_DECLARE_UPKEEP)]
+	_assert_band_panel("%s: …and its hover %s what the pool supplies against what it is asked for, by equality (%s)"
+			% [where, "states" if want_mark else "does not state", card.tooltip_text],
+		card.tooltip_text.contains(wanted) == want_mark)
+	# …and where it is calm it states NO coverage sentence at all, at any figures — without which
+	# "does not state THIS sentence" passes on a card quoting some other pair of numbers.
+	_assert_band_panel("%s: …and a covered card quotes no coverage figures at all (%s)"
+			% [where, card.tooltip_text],
+		card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE) == want_mark)
+	# THE OTHER WEB IS UNTOUCHED. A queued ANIMAL job says nothing about the plant pool, and a warning
+	# that marked both would send the player to the wrong card.
+	var plant := _find_pool_card(HudWorkVocab.ROLE_NAME_AGRICULTURE)
+	_assert_band_panel("%s: …while the Agriculture card is untouched" % where,
+		plant != null and not bool(plant.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
+	# …and so is the BUILDERS card, which has no keeping to owe.
+	var builders := _find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS)
+	_assert_band_panel("%s: …and so is the Builders card, which owes no keeping" % where,
+		builders != null \
+			and not bool(builders.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
+
+## …and the queue ROW states the job's full price on its own hover — the work pile and the keeping rate
+## it will owe. **Tooltip only**: the row is five slots and cannot take a sixth, and the price is the
+## other half of the decision the mark above is warning about.
+func _assert_queue_row_states_the_price(where: String) -> void:
+	var rows := _build_queue_rows()
+	if rows.is_empty():
+		_fail("%s — no build queue row to read" % where)
+		return
+	var wanted := DetailFormat.build_price_clause(KEEPING_DECLARE_WORK_COST,
+		SourceForecast.BUILD_TURNS_NO_ESTIMATE, KEEPING_DECLARE_UPKEEP,
+		SourceForecast.SOURCE_KIND_HERD)
+	_assert_band_panel("%s: the queue row's hover states the job's full price — \"%s\" (got \"%s\")"
+			% [where, wanted, rows[0].tooltip_text],
+		wanted != "" and rows[0].tooltip_text.contains(wanted))
+
+# ---- THE WORK TAB'S WIDTH, WITH A ROW SELECTED ------------------------------------------------
+#
+# Reported from play: *"the band panel is still not wide enough when something is selected."* A LEFT
+# dock in the narrow shell, Work tab, one row open — and the panel's whole RIGHT EDGE sliced, ~20px
+# of it, taking the POOLS readout's last word, the Builders card's `+`, the BUILD QUEUE head's kit
+# name, the queue row's `✕` and EVERY work row's `+` stepper with it.
+#
+# **ONE control caused all of it.** The zone content is anchored full-rect into a host that CLIPS,
+# and Godot clamps a `Control`'s size UP to its combined minimum — so a single line whose minimum
+# exceeds the box widens the whole column, and every row in the tab is then laid out that wide and
+# loses its trailing control to the clip. The strip's own prose is where such a line comes from: it
+# is a bare `Label` at one line, and `SourceForecast.yield_components` states EVERY material a source
+# pays, so a quarry paying meat and two materials writes a sentence half again as long as a forage
+# patch's.
+#
+# **The state is a LEFT dock deliberately** — that is the shipped default edge and the narrowest box
+# the zone is ever given. The same sentence on a bottom dock has 789px to sit in and says nothing.
+
+## The two materials the reproduction's quarry pays, beside its meat. **TWO, not one**: the existing
+## `band_panel_work_trade_inspector` already opens a strip on a one-material row and its sentence fits
+## with room to spare, so a single-material fixture asserts the width claim vacuously. A deer paying
+## hide and bone is an ordinary roster animal, not a contrived worst case.
+const WIDE_SENTENCE_MATERIALS := [
+	{"material_id": "hide", "amount": 0.22},
+	{"material_id": "bone", "amount": 0.15},
+]
+## The quarry the strip is opened on — the shared deer, so the row also pays FOOD and the sentence
+## carries every account at once, which is the whole point of it.
+const WIDE_SENTENCE_HERD_ID := "game_deer_07"
+
+## A band whose deer pays meat AND two materials, so its work inspector's one-line sentence states
+## every account at once. Everything else is `_concerning_food_band_fixture`'s, which already gives
+## the tab a POOLS block, a work board and the chips above it.
+func _wide_sentence_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18,
+			"actual_yield": 0.15, "sustainable_yield": 0.15},
+		{"kind": "hunt", "workers": 2, "fauna_id": WIDE_SENTENCE_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
+			"realized_yield": 0.46,
+			"material_yield": WIDE_SENTENCE_MATERIALS.duplicate(true)},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+func _render_work_inspector_width_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_push_bands([_wide_sentence_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(WIDE_SENTENCE_HERD_ID)
+	await _settle()
+	await _save("band_panel_work_inspector_width")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_inspector_width")
+	# **THE PRECONDITIONS, without which the width claim above is a claim about an ordinary tab.** The
+	# shell has to be the narrow one (a wide shell hands the zone twice the box), a strip has to be
+	# open, and its sentence has to be the long one — a fixture whose materials never reached the
+	# model would render a perfectly short line and pass.
+	_assert_shell_is_wide(false, "band_panel_work_inspector_width")
+	_assert_band_panel("band_panel_work_inspector_width: a work inspector strip really is open",
+		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META) != null)
+	_assert_work_inspector_sentence_states_every_account("band_panel_work_inspector_width")
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## GUARD: the open strip's sentence really names both materials — the fixture claim beneath the width
+## one. Asked of the RENDERED strip rather than of `_work_inspector_sentence`, because a builder that
+## composed the line correctly and mounted something else would satisfy a producer-side check.
+func _assert_work_inspector_sentence_states_every_account(state_name: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("%s — no work inspector strip to read" % state_name)
+		return
+	var missing: Array[String] = []
+	for row in WIDE_SENTENCE_MATERIALS:
+		var material := String((row as Dictionary).get("material_id", ""))
+		if not _has_label_containing(strip, material):
+			missing.append(material)
+	_assert_band_panel("%s: the strip's sentence states every account it pays (missing %s)"
+		% [state_name, missing], missing.is_empty())

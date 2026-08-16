@@ -2332,7 +2332,22 @@ fn validate_cultivate(
     let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) else {
         return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
     };
-    if patch.is_cultivated() {
+    // **THE REFUSAL IS THE METER'S FULLNESS, NOT THE ACHIEVED RUNG** — the same question
+    // `forage::patch_rung_already_built` and `forage::patch_build_verb` ask, so the command and the
+    // queue can never disagree about whether there is work left on this ground.
+    //
+    // **A tended patch eroded below its cost is a REPAIR, and this used to forbid it.**
+    // `is_cultivated()` compares against the *retention bar*, which sits well below the cost, so a
+    // patch at 99% answered *"already cultivated"* — while completion had already retired its queue
+    // entry, and `build_workers` aims the pool only at a head that declares. The three composed into
+    // a rung that could never be repaired: no entry, no builders, and no command that could make one
+    // (`docs/plan_standing_upkeep.md` §2.4 — *"repairing it is a fresh decision the player makes by
+    // putting it back in the queue"*). Re-queueing is the whole fix: the entry brings the builders,
+    // and the accrual's own guard is already the meter (`ForagePatch::accrue_cultivation`).
+    //
+    // **A FULL meter is still refused, and that is the pair.** This message exists for ground with
+    // genuinely nothing left to build; only the eroded case moved.
+    if patch.cultivation_meter_full() {
         return Err(format!(
             "The patch at ({}, {}) is already cultivated — forage it to tend it.",
             tile.x, tile.y
@@ -2396,7 +2411,13 @@ fn validate_corral(
     if !herd.can_pen() {
         return Err(format!("{} cannot be penned.", herd.species));
     }
-    if herd.is_corralled() {
+    // **The meter's fullness, not the fence flag** — [`validate_cultivate`]'s rule on the animal
+    // web, so this refusal asks exactly what `fauna::herd_rung_already_built` asks. The two agree on
+    // every herd the sim can reach today (`corral_at` sets the meter to its own cost, and nothing
+    // bleeds it), so this is the *shape* being made uniform rather than a behaviour change: it is
+    // what keeps a pen meter that ever learns to erode repairable by the same one-line rule the
+    // plant web already needed.
+    if herd.corral_meter_full() {
         return Err(format!("{} is already corralled.", fauna_id));
     }
     if !herd.is_domesticated() {
@@ -2485,7 +2506,11 @@ fn validate_sow(
     // A tile with no patch at all is a LEGAL target — the create-from-nothing case. Only an existing
     // patch can be in a state that refuses the seed.
     if let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) {
-        if patch.is_field() {
+        // **The meter's fullness, not the achieved rung** — [`validate_cultivate`]'s rule one rung
+        // up, and the same deadlock: `is_field()` reads the *retention bar*, so a Field eroded to
+        // 99% of its cost refused the very `sow` that would repair it, with its queue entry already
+        // retired by completion. A **full** meter is still refused.
+        if patch.field_meter_full() {
             return Err(format!(
                 "The field at ({}, {}) is already sown — forage it to work it.",
                 tile.x, tile.y
@@ -2578,7 +2603,11 @@ fn validate_species_selection(
 /// 3. **The species' `husbandry_ceiling` allows domestication** (Grazing 2d-δ) — checked *before*
 ///    ownership, because it is a property of the *animal*, not of who is hunting it (the rule the
 ///    retired `domesticate` handler established).
-/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb.
+/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb. This
+///    one already reads the **meter** (`Herd::is_domesticated` *is* `progress >= cost`; the
+///    pastoral rung has no separate retention bar), so it needed nothing when the plant verbs' gates
+///    were moved off the retention bar — and `fauna::herd_rung_already_built` asks the same
+///    expression, which is why a `Tame` was never caught in the repair deadlock.
 /// 5. **Not another faction's** — mirrors the plant side's "another people are cultivating it".
 ///
 /// Deliberately **not** gated on the herd being Thriving, unlike the patch: a herd's phase swings as
@@ -2854,7 +2883,43 @@ fn handle_assign_labor(
     // Trapping — the silent substitution the refusal above exists to prevent, arriving through the
     // absent-token door instead. `default_kits.hunt` stays the answer wherever there is no quarry
     // to score: every other role, and a Hunt row whose herd or species will not resolve.
-    let crew_kit = if workers == 0 {
+    //
+    // **A BUILDERS ROW WITH NO KIT NAMED STORES NOTHING**, which is the one row where "resolve the
+    // absent case here" is the wrong move. The builders' default is **per queue entry** — a hoe for
+    // a Cultivate, hurdles for a Tame (`docs/plan_standing_upkeep.md` §4.6b) — and that derivation
+    // is reachable only while the row carries no named kit
+    // ([`EquipmentConfig::builders_kit_for`] rule ②, keyed off `named_kit_on`). Storing
+    // `default_kits.builders` (`none`) here made rule ① fire on every row the UI ever wrote, so the
+    // pool really did build bare-handed ([`BuildersGear::resolve`] reads the same field) and the
+    // panel's *"No kit"* was an honest readout of it.
+    //
+    // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
+    // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
+    // resolved `KitChoice` for the raid path too, and widening it to an `Option` would push the
+    // absent-means-derive case into two call sites that have no derivation to defer to. Only the
+    // builders arm is touched — the other six roles' stored default is load-bearing (the wire and
+    // the turn both read the row's kit for them, and there is nothing per-entry to derive).
+    //
+    // **An explicit `kit <id>` on a builders row is still stored and still wins**, `none` included:
+    // that is how a player sends the pool out bare-handed to conserve gear, and it is validated by
+    // the same failing-closed resolution as every other role.
+    //
+    // The two are separate rules reaching the same store, so they are named separately and OR'd
+    // rather than written as two arms of one `if` — which is the same block twice, and reads as an
+    // accident.
+    let unstaffing = workers == 0;
+    let builders_default_is_per_entry = matches!(target, LaborTarget::Builders) && kit_id.is_none();
+    // **AND THE TWO KEEPING ROLES ARE THE SAME RULE, ONE ACCOUNT OVER**
+    // (`docs/plan_standing_upkeep.md` §4.8). An upkeep reads the same per-worker supply a build
+    // does now, so `agriculture` derives the plant tool and `husbandry` the animal one
+    // ([`EquipmentConfig::keeping_kit_for`] rule ②) — reachable only while the row carries no named
+    // kit. `default_kits.agriculture` / `.husbandry` are both `none`, so storing the job default
+    // here would fire rule ① on every row the UI ever wrote and every keeper would work bare-handed,
+    // which is the identical defect the builders row had and is why this is written beside it rather
+    // than discovered again.
+    let keeping_default_is_per_web =
+        matches!(target, LaborTarget::Agriculture | LaborTarget::Husbandry) && kit_id.is_none();
+    let crew_kit = if unstaffing || builders_default_is_per_entry || keeping_default_is_per_web {
         None
     } else {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
@@ -9324,6 +9389,234 @@ mod tests {
         ));
     }
 
+    // --- AN ACHIEVED RUNG SHORT OF ITS COST IS REPAIRABLE; A FULL ONE IS REFUSED ----------------
+    //
+    // `docs/plan_standing_upkeep.md` §2.4: *"repairing it is a fresh decision the player makes by
+    // putting it back in the queue"*. Three gates composed to make that impossible — completion
+    // retires the queue entry, no entry means no builders, and the verb's own refusal read the
+    // **retention bar** (37.5 of 50) rather than the **cost**, so a patch eroded to 99% answered
+    // *"already cultivated"* and could not be re-queued at all. The escape was to stop paying
+    // keeping, bleed 12 units, lose the rung and re-buy it.
+    //
+    // The refusal now asks the meter, which is what the accrual guard, `patch_rung_already_built`
+    // and `herd_rung_already_built` already asked. **The pair is what these tests pin**: an eroded
+    // meter accepts, a FULL meter still refuses with the message that exists for it.
+
+    /// **The rung's own cost and the bar it is held down to**, read off the shipped ladder so a
+    /// retune moves the fixture with the game rather than leaving a literal behind.
+    fn rung_cost_and_bar(app: &bevy::prelude::App, key: RungKey) -> (f32, f32) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let rung = ladder.rung(key);
+        let cost = rung
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("a rung a verb builds has a build meter");
+        (cost, rung.retention_bar(cost))
+    }
+
+    /// **The fraction of its cost an ERODED meter is left standing at** — comfortably above the
+    /// shipped `retain_fraction` of `0.75`, so the rung is unambiguously still achieved and the only
+    /// thing the command can be refusing on is the *cost*.
+    const ERODED_BUT_STILL_HELD: f32 = 0.99;
+
+    /// Put `coord`'s patch in the state a finished Cultivate decays into: **tended** (its bar is
+    /// stamped and its meter is above it) and **building** (its meter is below its cost).
+    fn erode_a_tended_patch(app: &mut bevy::prelude::App, coord: UVec2, faction: FactionId) {
+        let (cost, bar) = rung_cost_and_bar(app, RungKey::PlantTended);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry
+            .patch_mut(coord)
+            .expect("the fixture patch is there");
+        patch.cultivation_cost = cost;
+        patch.cultivation_retain_bar = bar;
+        patch.cultivation_progress = cost * ERODED_BUT_STILL_HELD;
+        patch.owner = Some(faction);
+        assert!(
+            patch.is_cultivated() && !patch.cultivation_meter_full(),
+            "the fixture must be TENDED and still BUILDING, or it tests neither half"
+        );
+    }
+
+    /// A patch worn below its cost is ground the builders may legitimately repair, so `cultivate`
+    /// takes it — and a patch whose meter is genuinely full is still refused, which is the case the
+    /// *"already cultivated"* message exists for.
+    #[test]
+    fn an_eroded_tended_patch_is_re_tendable_and_a_full_one_is_not() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        grant_cultivation(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        erode_a_tended_patch(&mut app, coord, faction);
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(
+            !cultivate_failure_detail_contains(&app, "already cultivated"),
+            "a tended patch eroded below its cost is a repair, not a finished job"
+        );
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "and re-queueing it is what puts the builders back on it — the entry IS the declaration"
+        );
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .is_cultivated(),
+            "the rung is not given up to repair it: the ground stays tended throughout"
+        );
+
+        // The other half, in its own world so the first half's (absent) failure cannot be read for
+        // this one's.
+        let mut full = build_headless_app();
+        seed_thriving_patch(&mut full, coord);
+        grant_cultivation(&mut full, faction);
+        spawn_working_band(
+            &mut full,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        {
+            let (cost, bar) = rung_cost_and_bar(&full, RungKey::PlantTended);
+            let mut registry = full.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.cultivation_cost = cost;
+            patch.cultivation_retain_bar = bar;
+            patch.cultivation_progress = cost;
+            patch.owner = Some(faction);
+        }
+
+        handle_cultivate(&mut full, faction, coord);
+
+        assert!(
+            cultivate_failure_detail_contains(&full, "already cultivated"),
+            "a FULL meter has nothing left to build and must still be refused"
+        );
+    }
+
+    /// The rung-3 twin, on the same pair: a Field worn below its cost is re-sowable, a full one is
+    /// not.
+    #[test]
+    fn an_eroded_field_is_re_sowable_and_a_full_one_is_not() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        grant_seed_selection(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        let (cost, bar) = rung_cost_and_bar(&app, RungKey::PlantField);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.field_cost = cost;
+            patch.field_retain_bar = bar;
+            patch.field_progress = cost * ERODED_BUT_STILL_HELD;
+            patch.owner = Some(faction);
+            assert!(patch.is_field() && !patch.field_meter_full());
+        }
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            !sow_failure_detail_contains(&app, "already sown"),
+            "a Field eroded below its cost is a repair"
+        );
+        assert_eq!(band_improvement(&app, band), Some(Improvement::Sow));
+
+        let mut full = build_world_app();
+        let coord = find_sowable_tile(&full);
+        seed_thriving_patch(&mut full, coord);
+        grant_seed_selection(&mut full, faction);
+        spawn_working_band(
+            &mut full,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        {
+            let mut registry = full.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.complete_field(faction);
+            patch.owner = Some(faction);
+        }
+
+        handle_sow(&mut full, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&full, "already sown"),
+            "a FULL Field meter is still refused"
+        );
+    }
+
+    /// **The animal web's half of the same sweep.** `tame`'s gate always read the meter
+    /// (`is_domesticated()` *is* `progress >= cost`), and `corral`'s read the **fence flag**; the
+    /// pen's meter never bleeds today, so the two answer alike — this pins that they do, and that
+    /// the refusal survives, so the shape can be made uniform without moving play.
+    #[test]
+    fn a_full_pen_and_a_tamed_herd_are_both_still_refused() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_penning(&mut app, faction);
+        // Both rungs' knowledge, because both verbs are asked below and a missing gate would refuse
+        // for the wrong reason.
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: 0.5,
+            },
+        );
+        {
+            let mut herds = app.world.resource_mut::<HerdRegistry>();
+            let herd = herds
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == id)
+                .expect("the fixture herd is there");
+            assert!(herd.corral_at(coord), "the fixture herd can be penned");
+            assert!(
+                herd.is_corralled() && herd.corral_meter_full(),
+                "the fence flag and the meter agree on every herd the sim can reach"
+            );
+        }
+
+        handle_corral(&mut app, faction, coord);
+        assert!(corral_failure_detail_contains(&app, "already corralled"));
+
+        handle_tame(&mut app, faction, id);
+        assert!(tame_failure_detail_contains(&app, "already domesticated"));
+    }
+
     // --- A build is never refused for the state of the ground under it -------------------------
     //
     // The `Cultivate` verb used to demand `EcologyPhase::Thriving` as a **start** gate, with an
@@ -11384,12 +11677,7 @@ mod tests {
             .iter_mut()
             .find(|h| h.id == id)
             .unwrap()
-            .accrue_domestication(
-                owner,
-                PART_PREPARED_WORK,
-                PART_PREPARED_JOB,
-                PART_PREPARED_JOB,
-            );
+            .accrue_domestication(owner, PART_PREPARED_WORK, PART_PREPARED_JOB);
         grant_herding(&mut app, intruder);
         spawn_working_band(
             &mut app,
@@ -11899,6 +12187,122 @@ mod tests {
             !staffed(&mut app),
             "unassigning names a kit the roster no longer carries — the crew must still clear, or \
              the player is locked into an assignment by a kit that does not exist"
+        );
+    }
+
+    /// **A `builders` row the player named no kit on leaves the per-entry derivation LIVE**
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// The command boundary resolved *every* row's absent kit into a stored id, so a builders row
+    /// carried `default_kits.builders` = `none` — and `builders_kit_for`'s rule ① (*"a kit named on
+    /// the row wins"*) then beat rule ② (the head entry's web-derived kit) on every row the UI ever
+    /// wrote. The whole derivation was unreachable through the client, which deliberately emits no
+    /// `kit` token on that row precisely so it would stay reachable. It is not cosmetic:
+    /// `BuildersGear::resolve` reads the same field, so the pool built bare-handed.
+    ///
+    /// **Every previous fixture hand-built the assignment** (`tests/build_queue.rs`,
+    /// `tests/build_turns_closed_form.rs` both write `kit: Some(bare_builders())`), which is why
+    /// nothing caught it — this one drives the real `assign_labor … builders <n>` handler.
+    ///
+    /// **The explicit case is asserted with the two derived ones and is what makes them mean
+    /// something**: a fix that simply never stored anything on a builders row would satisfy the
+    /// first two and silently retire the bare-handed override the design keeps.
+    #[test]
+    fn an_unnamed_builders_kit_is_derived_from_the_head_entry_rather_than_stored() {
+        /// The roster kit the plant web's builds want (`equipment.json` → `build_work` on `hoes`).
+        const PLANT_BUILD_KIT: &str = "tillage";
+        /// …and the animal web's (`hurdles`).
+        const ANIMAL_BUILD_KIT: &str = "hurdling";
+        /// The bare-handed roster entry: `default_kits.builders`, and what an explicit `kit none`
+        /// names. Both readings must be distinguishable, which is the point of the third case.
+        const BARE_KIT: &str = "none";
+        /// Hands on the builders row — any positive count; the fork only asks `workers > 0`.
+        const BUILDERS: u32 = 2;
+
+        /// One trip through the real command path: a band whose build queue head is on `animal_head`'s
+        /// web takes an `assign_labor … builders` carrying `named`, and the kit the pool ends up
+        /// working with is read back through the one seam the turn and the wire both resolve through.
+        fn resolved_builders_kit(animal_head: bool, named: Option<&str>) -> String {
+            let mut app = build_headless_app();
+            let faction = FactionId(0);
+            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+            let patch = UVec2::new(2, 2);
+            let (worked, head) = if animal_head {
+                (
+                    LaborTarget::Hunt {
+                        fauna_id: herd_id.clone(),
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    },
+                    core_sim::BuildQueueEntry {
+                        source: BuildSource::Herd(herd_id.clone()),
+                        declared: BuildJob::Rung(Improvement::Tame),
+                    },
+                )
+            } else {
+                (
+                    LaborTarget::Forage {
+                        tile: patch,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                    },
+                    core_sim::BuildQueueEntry {
+                        source: BuildSource::Patch(patch),
+                        declared: BuildJob::Rung(Improvement::Cultivate),
+                    },
+                )
+            };
+            let band = spawn_resident_working_band(&mut app, faction, worked);
+            app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+            app.world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .build_queue
+                .push(head);
+
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(FIXTURE_BAND_ID),
+                "builders".to_string(),
+                BUILDERS,
+                None,
+                None,
+                None,
+                None,
+                None,
+                named.map(str::to_string),
+            );
+
+            let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+            let allocation = app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation");
+            assert_eq!(
+                allocation.workers_on(&LaborTarget::Builders),
+                BUILDERS,
+                "the command must actually staff the builders row, or this measures nothing"
+            );
+            allocation.builders_kit(&equipment).id().to_string()
+        }
+
+        assert_eq!(
+            resolved_builders_kit(false, None),
+            PLANT_BUILD_KIT,
+            "a builders pool on a plant-web head with no kit named must work the roster's plant \
+             build kit — storing the job default here makes §4.6b's derivation unreachable and \
+             sends the pool out bare-handed"
+        );
+        assert_eq!(
+            resolved_builders_kit(true, None),
+            ANIMAL_BUILD_KIT,
+            "…and the same row on an animal-web head must work the roster's animal build kit"
+        );
+        assert_eq!(
+            resolved_builders_kit(true, Some(BARE_KIT)),
+            BARE_KIT,
+            "an EXPLICIT `kit none` is a real selection and must still beat the derivation — that \
+             is how a player conserves gear"
         );
     }
 

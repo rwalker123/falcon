@@ -1924,9 +1924,9 @@ fn kit_roster_states(
                 build_rate: sim_schema::RETIRED_BUILD_RATE,
                 build_work_per_worker: tiers.build_work_per_worker,
                 // **WHICH WEB THAT WORTH IS FOR**, `""` for a kit carrying no build tool. The pair
-                // is one reading: a hoe is worth `8.5` on a Cultivate and nothing at all on a
-                // `Tame`, so a picker greys the kit where the branches disagree rather than quoting
-                // a saving the sim will never pay.
+                // is one reading: a hoe is worth `+0.5` per worker per turn on a Cultivate and
+                // nothing at all on a `Tame`, so a picker greys the kit where the branches disagree
+                // rather than quoting an uplift the sim will never pay.
                 build_work_branch: tiers
                     .build_work_branch
                     .map(|branch| branch.as_str().to_string())

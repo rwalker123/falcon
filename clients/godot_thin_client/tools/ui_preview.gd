@@ -697,23 +697,25 @@ func _forage_open_button() -> Button:
 ##
 ## **SO THIS PROBE MAKES TWO CLAIMS, and the pair is what it is for.**
 ##
-## (1) **THE RUNNING CONTROL IS A `Label`, and a running build therefore sends NOTHING.** The verb is
-## DERIVED from the meter, so a source with work banked answers its own rung whatever the composition
-## says — clearing the composed improvement cannot express a withdrawal there, and the commit must
-## emit no improvement command and no `unqueue`. Withdrawing work already banked is `abandon`, which
-## is command-line only in this slice.
+## (1) **THE SHEET'S COMMIT SENDS `assign_labor` AND NOTHING ELSE** (§4.7a ①). It used to send the
+## improvement verb second; the declaration is the Work board's `⌃` now, so the press must produce no
+## `improvement_requested` and no `unqueue_requested` **on any state** — and this frame stages the
+## sharpest one, a RUNNING build, where the verb is DERIVED from the meter and so answers itself
+## whatever the composition says. Withdrawing work already banked is `abandon`, command-line only.
 ##
 ## (2) **THE WITHDRAWAL'S OWN LINE, through `Main.format_unqueue`.** `unqueue` names a SOURCE, and its
 ## two shapes are told apart exactly as the sim's parser tells them apart — two integer tokens are a
 ## TILE, one token is a HERD id. That split is what a shared branch gets wrong, and it is the reason
-## this probe is worth making on both webs. The DECLARED control's own untick is driven where a
-## declared rung is actually staged (`chapters/improvements.gd`'s `tile_build_unstaffed`).
+## this probe is worth making on both webs. The live control that SENDS it is the BUILD QUEUE row's
+## `✕`, driven in `band_panel_preview`.
 func _assert_walk_away_emits(kind: String, improvement: String, want_line: String,
 		payload: Dictionary) -> void:
 	var sheet := _hud._drawercompose._compose_sheet
 	var control := ForageFx.find_improvement_control(sheet, improvement)
-	_assert_hud("a running %s build is a STATE, not a checkbox to uncheck" % kind,
-		control is Label and not (control is CheckBox))
+	# By STATE, not by type — every state of this control is a `Label` since §4.7a ①.
+	_assert_hud("a running %s build renders the RUNNING state" % kind,
+		control != null and String(control.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_RUNNING)
 	var captured: Array[Dictionary] = []
 	var sink := func(p: Dictionary) -> void: captured.append(p)
 	_hud.improvement_requested.connect(sink)
@@ -738,7 +740,7 @@ func _assert_walk_away_emits(kind: String, improvement: String, want_line: Strin
 	commit.pressed.emit()
 	_hud.improvement_requested.disconnect(sink)
 	_hud.unqueue_requested.disconnect(sink)
-	_assert_hud("a RUNNING %s build sends no improvement order — its meter is the declaration" % kind,
+	_assert_hud("the %s sheet's commit sends no improvement order at all — the `⌃` declares" % kind,
 		captured.is_empty())
 	var line := String(MAIN_SCRIPT.format_unqueue(payload).get("line", ""))
 	print("ui_preview: walk away %s -> %s" % [kind, line])

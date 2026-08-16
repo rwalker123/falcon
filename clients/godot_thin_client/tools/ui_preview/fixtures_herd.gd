@@ -384,10 +384,16 @@ const ANIMAL_CORRAL_WORK_COST := 75.0
 ## reading and renders as no line at all.
 const ANIMAL_BUILD_TURNS_REMAINING := 6
 
-## What this herd's KEEPERS took off the job with the handling gear — the shipped `hurdles`
-## flint tier at 8.5 per equipped worker, over the reference two-keeper crew. **The animal web is
-## where this readout is judged**, no plant item declaring the stat yet (issue #539).
-const ANIMAL_BUILD_WORK_FROM_GEAR := 17.0
+## **WHAT THIS HERD'S BUILDERS ADD WITH THE HANDLING GEAR, PER TURN** — the shipped `hurdles` flint
+## tier at `BandFx.KIT_BUILD_WORK_HANDLING` (0.5) per equipped worker, over the reference two-keeper
+## crew, so `2 × 0.5` = 1.0. **The animal web is where this readout is judged**, no plant item
+## declaring the stat yet (issue #539).
+##
+## ⛔ **IT WAS `17.0` — `2 × 8.5` UNDER THE RETIRED SUBTRACTION** (`docs/plan_standing_upkeep.md`
+## §4.8). `buildWorkFromGear` was *what the tools took OFF the job* and is *what the pool's kits ADD
+## per turn*; the magnitude moved with the meaning, and 17 work a turn from two keepers would be a
+## band out-building its own 50-unit Tame twice over in a single turn.
+const ANIMAL_BUILD_WORK_FROM_GEAR := 1.0
 
 ## Price a herd's two rungs in WORK, deriving each meter's `work_done` from the fraction the fixture
 ## already states — so a fixture that re-dials a meter cannot end up with a percentage and an

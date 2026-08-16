@@ -336,18 +336,23 @@ pub struct BandKitTiersState {
     /// default), so a reader wanting this band's own reading takes the row whose `kit_id` matches.
     #[serde(default = "kit_multiplier_neutral")]
     pub build_rate: f32,
-    /// **The work units ONE EQUIPPED WORKER of this band takes off a build's cost**, at its live wear
-    /// (`docs/plan_unit_costed_work.md` §6). Neutral `0.0`; the handling gear ships `8.5`.
+    /// **The extra work ONE EQUIPPED WORKER of this band delivers per turn on a build**, at its live
+    /// wear (`docs/plan_standing_upkeep.md` §4.8). Neutral `0.0`; **hoes are `+0.5` per worker per
+    /// turn on the plant web and hurdles `+0.5` on the animal one**.
     ///
     /// **It supersedes [`Self::build_rate`]**, which is retired and now publishes only its neutral —
-    /// a multiplier on the crew's output cancels the job's cost, so it saved the same *percentage* of
-    /// turns whatever the job's size. `0` here means *this crew's tools take nothing off a build*,
-    /// which is the honest reading for every kit but `husbandry` on the shipped roster.
+    /// that stat was a multiplier on the crew's output and this is an addend on the same account.
+    /// `0` here means *this crew's tools add nothing to what it delivers*, which is the honest
+    /// reading for every kit but the two builders kits on the shipped roster.
+    ///
+    /// ⛔ **THE UNITS CHANGED.** It shipped as *"work units taken **off the job**"* at `8.5`
+    /// (`docs/plan_unit_costed_work.md` §6); a job's work requirement never changes now, so this is a
+    /// rate on the crew and the two numbers are not comparable.
     #[serde(default)]
     pub build_work_per_worker: f32,
     /// **How many workers this kit can actually equip for a build out of what this band holds** —
-    /// the head count at or **above** which extra hands take no further work off a job. `0` = the
-    /// kit carries nothing live that helps, which is every row but the handling gear's today.
+    /// the head count at or **above** which extra hands add no further gear work. `0` = the
+    /// kit carries nothing live that helps, which is every row but the two builders kits' today.
     ///
     /// **It is the other half of the gear term**, and it is what makes that term a closed form a
     /// client can evaluate against a crew the player is *proposing*:
@@ -372,7 +377,8 @@ pub struct BandKitTiersState {
     /// neutral `0`).
     ///
     /// **The three build fields are ONE reading, and a consumer that takes the worth without this is
-    /// wrong.** A hoe takes `8.5` off a Cultivate and *nothing* off a `Tame`; hurdles do the reverse.
+    /// wrong.** Hoes add `+0.5` per worker per turn to a Cultivate and *nothing* to a `Tame`;
+    /// hurdles do the reverse.
     /// A sheet pricing a build must compare this against the branch of the rung the entry names and
     /// treat a mismatch as `0` — the same discipline `attack_min_body_mass` imposes on `attack`.
     ///
@@ -397,12 +403,14 @@ fn kit_multiplier_neutral() -> f32 {
 /// The stat it carried was a **multiplier on the crew's build output** and is gone
 /// (`docs/plan_unit_costed_work.md` §6): a multiplier cancels the job's cost, so it saved the same
 /// *percentage* of turns on a garden and on a farm alike, which is the defect the arc exists to
-/// close. Its successor is `build_work_per_worker` beside it — work units taken **off the job**.
+/// close. Its successor is `build_work_per_worker` beside it — extra work **delivered per equipped
+/// worker per turn** (`docs/plan_standing_upkeep.md` §4.8 re-cut it out of the retired subtraction).
 ///
 /// **The slot is held at the neutral rather than `(deprecated)`**, because the FlatBuffers keyword
 /// drops the accessor and the client's native reader still calls `buildRate()`. Publishing the
 /// successor's number under the old name would be worse than publishing nothing: the client renders
-/// it as a factor, so `8.5` would read as *"×8.5 build speed"*.
+/// it as a factor, so the successor's `0.5` would read as *"×0.5 build speed"* — a kit that HALVED
+/// the crew's output.
 pub const RETIRED_BUILD_RATE: f32 = 1.0;
 
 /// Hand-written for the reason [`KitOptionState`]'s is: two of these fields are multipliers whose

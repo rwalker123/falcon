@@ -63,12 +63,12 @@ const KIND_STARVING_PEN := "starving_pen"
 # A narrative fork awaiting an answer (The Telling). Non-locating — it opens a panel, not a hex —
 # and the only `blocking` producer today.
 const KIND_DECISION := "decision"
-# A built rung with nobody on it — a Tended Patch / Field the player owns and has stopped working, or
-# a managed herd short of its keepers. Two kinds rather than one so each web wears the glyph its own
-# ladder already uses (the compose sheet's rung faces, the work board's rung mark), which is what lets
-# the row say WHICH investment is bleeding before the label is read.
-const KIND_UNWORKED_RUNG := "unworked_rung"
-const KIND_UNDER_CREWED_HERD := "under_crewed_herd"
+# A built rung the band's keeping pool did not cover — a Tended Patch / Field whose Agriculture pool
+# came up short, or a tamed herd whose Husbandry pool did. Two kinds rather than one so each web wears
+# the glyph its own ladder already uses (the compose sheet's rung faces, the work board's rung mark),
+# which is what lets the row say WHICH investment is bleeding before the label is read.
+const KIND_UNDER_KEPT_RUNG := "under_kept_rung"
+const KIND_UNDER_KEPT_HERD := "under_kept_herd"
 # A finished build's crew moved — onto the new rung's keeping, or back to the idle pool
 # (`docs/plan_standing_upkeep.md` §2.3). The icon is the workers' own glyph rather than a rung's: the
 # row is about the HANDS, and which rung finished is already in the sim's own sentence on it.
@@ -79,8 +79,8 @@ const KIND_ICON := {
 	KIND_LOSING_POPULATION: "📉",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
-	KIND_UNWORKED_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
-	KIND_UNDER_CREWED_HERD: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_TAME],
+	KIND_UNDER_KEPT_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
+	KIND_UNDER_KEPT_HERD: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_TAME],
 	KIND_CREW_HANDOFF: "🛠",
 	# A question put to the people, awaiting their answer. Line art, NOT the ❔ emoji: emoji
 	# presentation renders as tofu/a blob at row size (the hazard that forced MagnifierButton and
@@ -276,6 +276,13 @@ const ROW_H_PADDING := 12
 const ROW_SEPARATION := 12
 const SEV_STRIPE_WIDTH := 3
 const ROW_ICON_SIZE := 30
+# **THE DETAIL IS SMALL PRINT AND NOW SAYS SO.** It took the theme's default size, i.e. the LABEL's,
+# and read as a second headline in a fainter ink — while the rows CLIP, so every point it did not
+# need was a word of the detail cut off the card. Under-kept rows carry three facts (the pool, its
+# bill and the countdown) and lost the countdown to that clip; at 12 the widest of them fits with the
+# card, its position and its row height all unchanged, which is what makes this cheaper than widening
+# `POPOVER_WIDTH`. `ROW_MIN_HEIGHT` floors the row, so the shorter line costs no height either.
+const ROW_DETAIL_FONT_SIZE := 12
 
 # The end-turn gate. When a `blocking` entry is present the footer button wears the reason in
 # place of `Advance ▸` — an unexplained dead button is worse than no button at all.
@@ -1094,6 +1101,7 @@ func _reason_row(entry: Variant) -> Button:
 	var detail := Label.new()
 	detail.text = String(entry.get("detail", ""))
 	detail.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	detail.add_theme_font_size_override("font_size", ROW_DETAIL_FONT_SIZE)
 	detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	detail.clip_text = true
 	text_box.add_child(label)

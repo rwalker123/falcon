@@ -403,7 +403,12 @@ const NOT_HERDED_FIXTURE: f32 = 0.0;
 fn keeping_demand(app: &App, id: &str) -> f32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    core_sim::herd_upkeep_demand(&herd_of(app, id), &fauna, &ladder)
+    core_sim::herd_upkeep_demand(
+        &herd_of(app, id),
+        core_sim::NOTHING_IN_FLIGHT,
+        &fauna,
+        &ladder,
+    )
 }
 
 /// **Seat the herd's keeping at `fraction` of what it owes** — the fixture's stand-in for
@@ -2659,7 +2664,9 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     // And the maintain activity's published count follows the same rate.
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    assert!(core_sim::herd_upkeep_demand(&herd, &fauna, &ladder) > 0.0);
+    assert!(
+        core_sim::herd_upkeep_demand(&herd, core_sim::NOTHING_IN_FLIGHT, &fauna, &ladder) > 0.0
+    );
     // **AND NOTHING EATS AN ANIMAL BUILD** — neither animal rung declares a `meter_decay`, so a
     // wholly unkept herd's meter rot is `0` and the shed is what its shortfall costs.
     let unkept = herd_of(&app, &id);
@@ -2667,6 +2674,110 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
         core_sim::herd_meter_rot(&unkept, &fauna, &ladder),
         0.0,
         "the animal web pays a shortfall in animals, never in meter"
+    );
+}
+
+/// **ON THE TURN A `Tame` BANKS ITS FIRST WORK, THE HUSBANDRY POOL IS ALREADY PAYING FOR IT** — the
+/// animal twin of `forage_cultivation::a_builds_first_turn_draws_the_keeping_pool_and_bare_ground_draws_nothing`,
+/// and the same defect.
+///
+/// # The animal web had the identical hole, for its own reason
+///
+/// `Herd::accrue_domestication` records `owner` on the **first accrual**, which happens inside the
+/// assignment loop — *after* `systems::labor::maintenance_shares` has already split the band's
+/// keeping pool. The claim gate read `herd_keeping_rung`, which answers `None` for a herd nobody
+/// owns yet, so on that one turn a wild herd being tamed claimed nothing, drew a share of `0`, and
+/// the stamp paid that zero through `herd_upkeep_supply` — whose own resolver knows a `Tame` names
+/// `animal:pastoral` from its first turn. Capture then read the herd *owned*, and published the
+/// whole demand as a shortfall on a staffed `husbandry` role.
+///
+/// Both seams read `fauna::herd_keeping_meter` now.
+///
+/// **The pair is the test**: a wild herd nobody is taming must still claim nothing, or the gate has
+/// become *"always"* and would bill a band for every animal it hunts.
+#[test]
+fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
+    /// What one turn left on the herd.
+    struct Kept {
+        supplied: f32,
+        demand: f32,
+        progress: f32,
+    }
+
+    let read = |app: &App, id: &str| -> Kept {
+        let herd = herd_of(app, id);
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        Kept {
+            supplied: herd.upkeep_supplied,
+            // Read as the capture reads it — after the accrual, with no verb in hand.
+            demand: core_sim::herd_upkeep_demand(
+                &herd,
+                core_sim::NOTHING_IN_FLIGHT,
+                &fauna,
+                &ladder,
+            ),
+            progress: herd.domestication_progress,
+        }
+    };
+
+    // (a) **A `Tame` on its very first turn.** The herd is wild and unowned when the shares split.
+    let taming = {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        assert!(
+            herd_of(&app, &id).owner.is_none(),
+            "fixture: the herd must be unowned before the turn, or the ownership term carries the \
+             claim and the verb term is never exercised"
+        );
+        grant_herding(&mut app);
+        spawn_builder(&mut app, &id, Improvement::Tame);
+        // **A whole turn in stage order**, because the fixture seats the herd exactly *at* the food
+        // peak: the escapement room a build's `eligible` reads is `0` there until Logistics regrows
+        // it, so a bare labor pass would measure a Tame that never started.
+        run_turns_with_hunt(&mut app, 1);
+        read(&app, &id)
+    };
+
+    // (b) **The same band hunting the same wild herd with nothing declared** — the other half.
+    let hunting = {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        let keepers = keeper_crew(&app, &id);
+        spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        run_turns_with_hunt(&mut app, 1);
+        read(&app, &id)
+    };
+
+    assert!(
+        taming.progress > 0.0,
+        "fixture: the Tame must bank work on this very turn, or nothing about the ordering is \
+         under test"
+    );
+    assert!(
+        taming.supplied > 0.0,
+        "the turn a Tame banks its first work, the husbandry pool must supply something — got {} \
+         against a demand of {}",
+        taming.supplied,
+        taming.demand
+    );
+    assert!(
+        taming.demand > 0.0,
+        "fixture: the herd must actually owe a keeping once it is owned, or the arm above is \
+         asserting against nothing"
+    );
+
+    // **The pair.** A wild herd is nobody's to keep and nothing is being started on it, so the pool
+    // must put nothing on it — a gate that answered *"always"* fails exactly here.
+    assert_eq!(
+        hunting.demand, 0.0,
+        "a wild herd owes no keeping ({})",
+        hunting.demand
+    );
+    assert_eq!(
+        hunting.supplied, 0.0,
+        "…so a keeping pool must put nothing on it ({})",
+        hunting.supplied
     );
 }
 
@@ -2696,9 +2807,34 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
     seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE);
     app.world.run_system_once(advance_labor_allocation);
 
+    // **ONE KEEPER'S SUPPLY IS THE SAME EXPRESSION A BUILDER'S IS** (`docs/plan_standing_upkeep.md`
+    // §4.8) — its bare `PER_WORKER_OUTPUT` plus whatever the band's derived `husbandry` kit
+    // delivers. Read off the roster rather than stated as a literal, so retuning the hurdles moves
+    // the fixture with the game.
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let one_keeper = core_sim::pool_work_supply(
+        1,
+        equipment
+            .keeping_kit_for_branch(core_sim::RungBranch::Animal)
+            .map(|kit| {
+                equipment.build_work_per_worker(
+                    &kit,
+                    &core_sim::BandEquipment::start_stocked(&equipment),
+                    core_sim::RungBranch::Animal,
+                )
+            })
+            .expect("the shipped roster serves the animal web's keeping"),
+    );
+    // **THE NO-OP GUARD.** A derivation that answered `none` would leave every keeper bare and this
+    // whole seam would change nothing while every other assertion still passed.
+    assert!(
+        one_keeper > core_sim::PER_WORKER_OUTPUT,
+        "fixture: a start-stocked band's derived keeping kit must actually deliver something — a \
+         bare {one_keeper} means the derivation resolved `none`"
+    );
     assert_eq!(
         herd_of(&app, &id).upkeep_supplied,
-        2.0 * core_sim::PER_WORKER_OUTPUT,
+        2.0 * one_keeper,
         "both bands' keepers are on the herd, so both are counted"
     );
 }
@@ -2723,10 +2859,10 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
 /// zero adds no row, which is the honest reading of *"this band is building nothing"*.
 ///
 /// ⛔ **THE POOL GOES OUT BARE, and that is an isolation rather than a default.** An absent kit means
-/// *derive per entry*, and the roster's answer for a herd — `hurdling` — takes `8.5` off the job per
-/// covered worker. A start-stocked band holds a unit per worker and a half, so at the crews these
-/// fixtures staff the gear alone pays a whole `Tame` off and every pacing claim here collapses to
-/// *"one turn versus one turn"*. Naming `none` holds the gear axis at its identity so these arms
+/// *derive per entry*, and the roster's answer for a herd — `hurdling` — adds `+0.5` work per
+/// covered worker per turn. A start-stocked band holds a unit per worker and a half, so at the crews
+/// these fixtures staff every builder is geared and the pool delivers half again what these arms
+/// assert. Naming `none` holds the gear axis at its identity so these arms
 /// measure the **crew**, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
 /// across the hunt suites; the geared default is pinned in
 /// `core_sim/tests/build_turns_closed_form.rs` and in `equipment_config`'s own unit tests.
@@ -3514,5 +3650,281 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
         core_sim::herd_build_verb(&tamed, Some(Improvement::Corral)),
         Some(Improvement::Corral),
         "but the pen's meter is at zero, so climbing to it is still the player's to say"
+    );
+}
+
+/// **WHAT ONE OF A BAND'S ANIMAL KEEPERS SUPPLIES PER TURN** — its bare `PER_WORKER_OUTPUT` plus
+/// whatever the derived `husbandry` kit delivers (`docs/plan_standing_upkeep.md` §4.8: one supply
+/// expression, two consumers). Read off the roster rather than stated as a literal, so retuning the
+/// hurdles moves the fixture with the game.
+fn animal_keeper_supply(keepers: u32) -> f32 {
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let per_worker = equipment
+        .keeping_kit_for_branch(core_sim::RungBranch::Animal)
+        .map(|kit| {
+            equipment.build_work_per_worker(
+                &kit,
+                &core_sim::BandEquipment::start_stocked(&equipment),
+                core_sim::RungBranch::Animal,
+            )
+        })
+        .expect("the shipped roster serves the animal web's keeping");
+    core_sim::pool_work_supply(keepers, per_worker)
+}
+
+/// **A SECOND HERD THE SAME BAND CAN WORK** — inside `band_work_range + hunt_leash_tiles` of
+/// `near`, and tameable, so it can stand as the band's real pastoral holding beside a blocked head.
+fn second_tameable_herd_in_reach(app: &App, near: &str) -> String {
+    let reach = app.world.resource::<LaborConfigHandle>().get().hunt_reach();
+    let sim = app.world.resource::<SimulationConfig>();
+    let (width, wrap) = (sim.grid_size.x, sim.map_topology.wrap_horizontal);
+    let registry = app.world.resource::<HerdRegistry>();
+    let anchor = registry
+        .find(near)
+        .expect("the anchor herd exists")
+        .position();
+    registry
+        .herds
+        .iter()
+        .filter(|herd| herd.id != near && herd.can_domesticate())
+        .find(|herd| {
+            core_sim::grid_utils::hex_distance_wrapped(anchor, herd.position(), width, wrap)
+                <= reach
+        })
+        .map(|herd| herd.id.clone())
+        .expect("a second tameable herd inside the band's hunt reach")
+}
+
+/// **A BLOCKED `Tame` AT THE HEAD CLAIMS NO KEEPING, AND THE BAND'S PASTORAL FLOCK IS PAID IN FULL**
+/// — the animal twin of `forage_cultivation`'s
+/// `a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full`, and the case
+/// reported from play (`docs/plan_standing_upkeep.md` §4.6a).
+///
+/// The claim side's verb term is narrowed to the **funded head**, which still admitted a head whose
+/// own rung gate refuses. A `Tame` on a herd standing at its crew's escapement floor banks nothing
+/// on any turn — `crew_is_working_the_source` reads no room — while claiming the pastoral rung's
+/// whole demand, and the default `Spread` then divided the band's `husbandry` pool pro rata across a
+/// build that was never going to move.
+///
+/// **Escapement is the staged cause deliberately**: it is the one the playtest sat on, and on the
+/// animal web it is self-sustaining (the hunters draw the flock to the floor and an unmet keeping
+/// suppresses its regrowth), so nothing on the build line reopens it.
+#[test]
+fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_full() {
+    /// The pool standing on the head. A blocked head is only reportable — and only dilutive — when
+    /// the player has actually committed builders to it.
+    const BUILDERS: u32 = 2;
+    /// The blocked herd sits exactly AT this floor, so `max(0, B − floor·K)` is `0` and the Tame's
+    /// escapement term refuses. The unblocked arm lifts the flock above it and changes nothing else.
+    const AT_THE_FLOOR: f32 = MSY_BIOMASS_FRACTION;
+    /// Well above it, so the same crew is genuinely working the same herd.
+    const ABOVE_THE_FLOOR: f32 = 0.8;
+
+    struct Turn {
+        holding_supplied: f32,
+        holding_demand: f32,
+        build_supplied: f32,
+        build_demand: f32,
+        build_progress: f32,
+        blocked_reason: String,
+    }
+
+    let run = |standing_crop: f32| -> Turn {
+        let mut app = spawn_world();
+        grant_herding(&mut app);
+        let build = prime_thriving_herd(&mut app);
+        let holding = second_tameable_herd_in_reach(&app, &build);
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == build)
+                .expect("the blocked herd exists");
+            herd.biomass = herd.carrying_capacity * standing_crop;
+        }
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == holding)
+                .expect("the holding herd exists");
+            herd.tame_outright(FactionId(0));
+            // **This turn's supply, cleared.** `Herd::upkeep_supplied` accumulates across the bands
+            // working a source and is zeroed by the Logistics decay pass; this fixture runs the
+            // labor arm alone, so a seeded value would be added to rather than replaced.
+            herd.upkeep_supplied = 0.0;
+        }
+        // **The pool covers the holding outright and NOT both**, so "paid in full" and "diluted" are
+        // distinguishable outcomes on one fixture. Sized off the shipped seams rather than a
+        // literal, because an animal rung's demand rides the flock's own keeper load.
+        let holding_demand = keeping_demand(&app, &holding);
+        let build_demand_if_claimed = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            core_sim::herd_upkeep_demand(
+                &herd_of(&app, &build),
+                Some(Improvement::Tame),
+                &fauna,
+                &ladder,
+            )
+        };
+        let keepers = (holding_demand / animal_keeper_supply(1)).ceil().max(1.0) as u32;
+        let pool = animal_keeper_supply(keepers);
+        assert!(
+            pool >= holding_demand && pool < holding_demand + build_demand_if_claimed,
+            "fixture: the pool must cover the holding alone and not both — {pool} against \
+             {holding_demand} + {build_demand_if_claimed}"
+        );
+
+        let pos = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&build)
+            .expect("the blocked herd exists")
+            .position();
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(pos.x, pos.y)
+            .expect("the herd's tile resolves");
+        let hunt_row = |id: &str| LaborAssignment {
+            target: LaborTarget::Hunt {
+                fauna_id: id.to_string(),
+                floor: AT_THE_FLOOR,
+            },
+            workers: DIP_VISIBLE_HUNTERS,
+            kit: None,
+        };
+        let rows = with_keeping_role(
+            with_builders_pool(vec![hunt_row(&holding), hunt_row(&build)], BUILDERS),
+            keepers,
+        );
+        let staffed: u32 = rows.iter().map(|row| row.staffed_total()).sum();
+        app.world.spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 30,
+                children: scalar_zero(),
+                working: scalar_from_f32(staffed as f32),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_one(),
+                last_food_consumption: 0.0,
+                last_turn_transfer_received: 0.0,
+                last_turn_transfer_sent: 0.0,
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                last_fertility_factors: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0 as GenerationId,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            StartingUnit {
+                kind: "BandHunter".to_string(),
+                tags: Vec::new(),
+            },
+            LaborAllocation {
+                assignments: rows,
+                build_queue: vec![core_sim::BuildQueueEntry {
+                    source: core_sim::BuildSource::Herd(build.clone()),
+                    declared: core_sim::BuildJob::Rung(Improvement::Tame),
+                }],
+                ..Default::default()
+            },
+            ResidentBand,
+        ));
+        app.world.run_system_once(advance_labor_allocation);
+
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let read = |id: &str| -> (f32, f32) {
+            let herd = herd_of(&app, id);
+            (
+                herd.upkeep_supplied,
+                // **Read the way the CAPTURE reads it** — after the accrual, with no verb in hand.
+                core_sim::herd_upkeep_demand(&herd, core_sim::NOTHING_IN_FLIGHT, &fauna, &ladder),
+            )
+        };
+        let (holding_supplied, holding_demand) = read(&holding);
+        let (build_supplied, build_demand) = read(&build);
+        let built = herd_of(&app, &build);
+        Turn {
+            holding_supplied,
+            holding_demand,
+            build_supplied,
+            build_demand,
+            build_progress: built.domestication_progress,
+            blocked_reason: built.build_blocked_reason.key().to_string(),
+        }
+    };
+
+    // --- (a) THE BLOCKED HEAD ------------------------------------------------------------------
+    let blocked = run(AT_THE_FLOOR);
+    assert_eq!(
+        blocked.blocked_reason, "escapement",
+        "fixture: the head must be blocked, and by the escapement gate — got '{}'",
+        blocked.blocked_reason
+    );
+    assert_eq!(
+        blocked.build_progress, 0.0,
+        "fixture: a blocked Tame banks nothing, so its meter must still be at zero (got {})",
+        blocked.build_progress
+    );
+    assert!(
+        blocked.holding_demand > 0.0,
+        "fixture: the pastoral flock must owe something, or 'paid in full' is vacuous"
+    );
+    assert!(
+        (blocked.holding_supplied - blocked.holding_demand).abs() < 1e-4,
+        "a blocked Tame must not dilute the band's pastoral flock: supplied {} of {}",
+        blocked.holding_supplied,
+        blocked.holding_demand
+    );
+    // **THE WIRE HALF** — a wild herd with nothing banked owes nothing once the verb is out of the
+    // reading, so a stamped share would be a row disagreeing with itself.
+    assert_eq!(
+        blocked.build_demand, 0.0,
+        "a wild herd with nothing banked owes nothing ({})",
+        blocked.build_demand
+    );
+    assert_eq!(
+        blocked.build_supplied, 0.0,
+        "…so the pool must have put nothing on it either ({})",
+        blocked.build_supplied
+    );
+
+    // --- (b) THE SAME HEAD, UNBLOCKED ----------------------------------------------------------
+    let open = run(ABOVE_THE_FLOOR);
+    assert_eq!(
+        open.blocked_reason, "",
+        "fixture: standing the flock above the floor must open the gate — still blocked on '{}'",
+        open.blocked_reason
+    );
+    assert!(
+        open.build_progress > 0.0,
+        "fixture: the unblocked Tame must bank its first work this turn, or the verb term is never \
+         exercised"
+    );
+    assert!(
+        open.build_supplied > 0.0,
+        "the turn a Tame banks its first work, its keeping pool must supply something ({})",
+        open.build_supplied
+    );
+    assert!(
+        open.holding_supplied < open.holding_demand - 1e-4,
+        "…and the flock beside it is legitimately diluted by a build that IS being raised — {} of \
+         {}",
+        open.holding_supplied,
+        open.holding_demand
     );
 }

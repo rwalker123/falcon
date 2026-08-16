@@ -222,27 +222,64 @@ pub(crate) fn herds_to_array(
         // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
         // sooner estimate wins, and all three come from that band, so the three are read as one set.
         let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
-        // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
-        // `effective_cost = work_cost − t`. `0` = no build in
-        // flight, or the crew carries nothing that helps. It rides BESIDE the raw job rather than
-        // folded into it: the cost above must not move under a tool, or the readout's price would
-        // change every time a hurdle wore out.
+        // **WHY THAT QUEUE IS BLOCKED HERE** — `""` whenever this herd is not a blocked build, else a
+        // short lowercase cause key (`escapement`, `knowledge`, `rung_below`, `species_ceiling`,
+        // `owned_by_other`, `ring_idle`, `undeclared`, `unworked`; the `.fbs` comment on
+        // `buildBlockedReason` carries the whole table). It is READ BESIDE the `-4` above, never
+        // instead of it: that sentinel says the pool is stuck, this says which conjunct of the rung's
+        // own gate refused, and a `-4` with no cause beside it is the state this field exists to end —
+        // a playtest sat on a blocked Tame for turns, fixed the one cause the client happened to name
+        // (the keeping shortfall), and stayed blocked because the herd was standing below its
+        // escapement floor. **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY**: nothing here or above
+        // may re-derive it. It is a CAUSE and not a sentence — the wording is the client's, on the
+        // same free-form-string convention as `ecology_phase` / `sow_site_refusal`.
+        if let Some(build_blocked_reason) = herd.buildBlockedReason() {
+            let _ = dict.insert("build_blocked_reason", build_blocked_reason);
+        }
+        // **WHAT THE POOL'S KITS ADD TO THIS BUILD EACH TURN**, in work units — the builders'
+        // head count times what one equipped builder's kit delivers
+        // (`intensification::gear_work_supply`). `0` = no build in flight, or the crew carries
+        // nothing that helps THIS web. It rides BESIDE the raw job rather than folded into it: the
+        // cost above must not move under a tool, or the readout's price would change every time a
+        // hurdle wore out.
+        //
+        // ⛔ **IT IS AN ADDEND, NOT A DISCOUNT, and it meant the opposite until
+        // `docs/plan_standing_upkeep.md` §4.8** — a kit raises what a worker DELIVERS per turn and a
+        // job's work requirement never changes, so nothing subtracts this from a cost and nothing
+        // divides by it. **A figure here belongs to an ITEM**: the shipped flint hoes deliver
+        // +0.5 build work per equipped worker per turn on a PLANT build and nothing on an animal
+        // one; hurdles mirror them on the animal side. A reader phrasing the number as *what the
+        // tools took off the job* states the opposite of what the sim sends —
+        // `DetailFormat.build_gear_lines` renders it as `+1.0 work a turn` for exactly that reason.
         let _ = dict.insert("build_work_from_gear", herd.buildWorkFromGear());
         // **THE SOURCE'S HALF OF THE ESTIMATE'S TERMS**, beside the sim's own answer above rather
         // than instead of it (`.claude/rules/core_sim/yield-forecast.md` → "THE BOUNDARY, stated
         // once"). `build_turns_remaining` answers for the crew ALREADY working the herd, which is the
         // right and only thing for a card with no stepper; a sheet with one has to answer for the
-        // crew the player is PROPOSING, and this term is what makes that a closed form:
+        // crew the player is PROPOSING, and this term is what makes that a closed form.
         //
-        //   gear(w)  = min(w, <the kit row's `build_work_saturating_crew`>)
-        //              × <that row's `build_work_per_worker`>
-        //   turns(w) = ceil((cost − done − gear(w)) / (w × build_work_per_worker_turn × floor/peak))
+        // **IT IS THE BARE RATE — what one worker banks with no kit at all.** The closed form the
+        // sheet evaluates is written out ONCE, on `SourceForecast.build_turns_at`, transcribed there
+        // from `core_sim/tests/build_turns_closed_form.rs`; it is not restated here, because two
+        // transcriptions of one model is how they come to disagree — which is the state this comment
+        // was in. What it says, in words: the crew's bare output and its kits' contribution are both
+        // terms of the SUPPLY the remaining work is divided by, and the source's meter rot is
+        // subtracted from that supply (`docs/plan_standing_upkeep.md` §4.8, §4.6a).
+        //
+        // ⛔ **TWO THINGS THIS BLOCK USED TO CLAIM ARE RETIRED.** The gear term was `cost − done −
+        // gear(w)`, a lump off the pile granted once however long the job ran — §4.8 moved it to the
+        // denominator, where a tool is paid every turn it is held and the job's size never moves.
+        // And the rate carried a `× floor/peak` factor: `learn_multiplier` scaled the accrual while
+        // ONE crew both gathered and built, and the builders are a band-level pool that pulls on
+        // nothing, so `intensification::build_supply` reads no floor at all (the floor still paces
+        // the KNOWLEDGE accrual, which is a different meter).
         //
         // It is READ, never assumed to be the `1.0` it is today: the sim writes worker output as a
         // sum of terms so a future buff lands there, and a client hard-coding the constant would
         // quote a number the sim disagrees with. **The GEAR half is not here** — both its terms are
-        // facts about the band's ledger, so they ride the kit row (`dict/population.rs`), which is
-        // what lets a compose sheet re-price the whole estimate when the player picks another kit.
+        // facts about the band's ledger, so they ride the kit row (`dict/population.rs`) as
+        // `build_work_per_worker` / `build_work_saturating_crew`, which is what lets a compose sheet
+        // re-price the whole estimate when the player picks another kit.
         let _ = dict.insert("build_work_per_worker_turn", herd.buildWorkPerWorkerTurn());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
@@ -653,6 +690,14 @@ pub(crate) fn forage_patches_to_array(
         // there for why the countdown beside it is a CHAINED date and why the three build fields are
         // read as one set off one winning band.
         let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
+        // The plant twin of the herd row's blocked CAUSE — `""` when this patch is not a blocked
+        // build, else the key naming the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
+        // `site`, `owned_by_other`, `undeclared`, `unworked`). See the herd block for why it is read
+        // beside the `-4` rather than instead of it, and why the client does the wording and the sim
+        // the verdict.
+        if let Some(build_blocked_reason) = patch.buildBlockedReason() {
+            let _ = dict.insert("build_blocked_reason", build_blocked_reason);
+        }
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
         // `build_turns_remaining` rather than replacing it, why the figure is read rather than

@@ -47,81 +47,17 @@ const CORRAL_GATE_PENNING := 0.35
 
 const TWO_METER_PENNING := 0.45
 
-## Find the IMPROVEMENT control anywhere under `root`, by `HudWidgets.IMPROVEMENT_CONTROL_META` — its
-## identity, never its face (which carries a live meter and a payoff and so changes every frame). The
-## NODE TYPE is half the assertion: a `CheckBox` is offered or running (`button_pressed` tells those
-## apart) and a plain `Label` is done, which is exactly the three-state contract. Returns the Control,
-## so a caller can type-test it.
-## The luminance gap an improvement checkbox's indicator must clear against the panel it sits on.
-## 0.25 of the full range is far below what the fix delivers (~0.5 for both states) and far above what
-## the defect scored: Godot's stock `unchecked` art is `#191919` at half alpha, which composites over
-## `PANEL_SOLID` to a gap of ~0.001 — invisible, which is exactly the bug.
-const CHECKBOX_INDICATOR_MIN_CONTRAST := 0.25
-
-## How visible one of a CheckBox's indicator states is: composite every pixel of the art it would draw
-## over `HudStyle.PANEL_SOLID` at that pixel's own alpha, and keep the largest luminance distance from
-## the panel. **Measured off the art, not off a theme override**, because "the box is invisible" is a
-## claim about pixels — an assertion phrased as "an override is set" would have passed on a
-## `icon_normal_color` override, which a `CheckBox` ignores.
-func _checkbox_indicator_contrast(control: Control, icon: String) -> float:
-	var box := control as CheckBox
-	if box == null:
-		return 0.0
-	var tex := box.get_theme_icon(icon)
-	if tex == null:
-		return 0.0
-	var img := tex.get_image()
-	if img == null:
-		return 0.0
-	var panel := HudStyle.PANEL_SOLID
-	var panel_luminance := panel.get_luminance()
-	var best := 0.0
-	for y in img.get_height():
-		for x in img.get_width():
-			var px := img.get_pixel(x, y)
-			var over := panel.lerp(Color(px.r, px.g, px.b), px.a)
-			best = maxf(best, absf(over.get_luminance() - panel_luminance))
-	return best
-
-## How far the TICKED art's colour may sit from `HudStyle.SIGNAL` once brightness is divided out.
-## Godot's stock tick chip is neutral grey, which scores ~0.65 on this measure, so 0.1 separates
-## "recoloured to the live token" from "whatever the theme shipped" with room to spare.
-const CHECKBOX_TICK_COLOUR_TOLERANCE := 0.1
-
-## The ticked indicator's own colour, compared to `SIGNAL` with BRIGHTNESS DIVIDED OUT: take the art's
-## most prominent pixel, scale it and `SIGNAL` so each has a largest channel of 1, and measure the
-## distance. Brightness is normalised away because the chip's absolute level comes from the stock art
-## being recoloured rather than redrawn; what is being pinned is that a running build wears the
-## console's live colour instead of the stock theme's grey.
-func _checkbox_tick_colour_gap(control: Control) -> float:
-	var box := control as CheckBox
-	if box == null:
-		return 1.0
-	var tex := box.get_theme_icon("checked")
-	if tex == null:
-		return 1.0
-	var img := tex.get_image()
-	if img == null:
-		return 1.0
-	var best := Color(0, 0, 0, 0)
-	var best_weight := 0.0
-	for y in img.get_height():
-		for x in img.get_width():
-			var px := img.get_pixel(x, y)
-			var weight := px.get_luminance() * px.a
-			if weight > best_weight:
-				best_weight = weight
-				best = px
-	return _unit_channel(best).distance_to(_unit_channel(HudStyle.SIGNAL))
-
-## A colour as a hue-only vector: its RGB scaled so the largest channel is 1. `Vector3.ONE` (neutral
-## white/grey) for a black input, which reads as "no colour of its own" — the right answer for the
-## degenerate case and the same answer a grey chip gives.
-func _unit_channel(c: Color) -> Vector3:
-	var peak: float = maxf(maxf(c.r, c.g), c.b)
-	if peak <= 0.0:
-		return Vector3.ONE
-	return Vector3(c.r, c.g, c.b) / peak
+## **RETIRED — the CHECKBOX-ART probe pair** (`docs/plan_standing_upkeep.md` §4.7a ①):
+## `CHECKBOX_INDICATOR_MIN_CONTRAST` / `_checkbox_indicator_contrast`,
+## `CHECKBOX_TICK_COLOUR_TOLERANCE` / `_checkbox_tick_colour_gap` and their `_unit_channel` helper.
+##
+## They measured pixels of the improvement control's own `CheckBox` — whether the stock `unchecked`
+## art (a filled near-black square, drawn for a LIGHT surface) cleared the panel it sat on, and
+## whether the ticked chip wore `SIGNAL`. **That control has no checkbox left**: the declaration moved
+## to the Work board's `⌃` and every state of it is a `Label`, so both probes would resolve a null
+## widget and fail for a reason unrelated to what they were written to catch.
+##
+## The autopsy they came from lives on `HudStyle.apply_checkbox`, which is untouched.
 
 ## The same herd, STRESSED — the "why isn't my Tame progressing?" case. Taming accrues only while the
 ## herd is Thriving, but the verb is NOT gated on it (a herd's phase swings as you hunt it): the sim
@@ -258,6 +194,31 @@ func _lines_any_contain(lines: Array, text: String) -> bool:
 		if String(line).contains(text):
 			return true
 	return false
+
+## ONE named row of a produced list — `Husbandry: 🐄 Domesticated 100% ⚠ drifting`. The state word is
+## also in the shed SENTENCE two lines down, so a whole-list `contains` for it is vacuous: the claim
+## is that the RUNG ROW carries it.
+func _line_with_key(lines: Array, key: String) -> String:
+	for line in lines:
+		if String(line).begins_with(key + ": "):
+			return String(line)
+	return ""
+
+## The RETIRED `At risk:` row, as a literal — the vocabulary no longer holds it, so a needle taken
+## from live code could only describe whatever the code now says.
+const RETIRED_AT_RISK_ROW_NEEDLE := "At risk"
+
+## …and the probe for a rung row's HOVER, which is the only way to read one back: a drawer is ONE
+## `RichTextLabel`, so the remedy rides its BBCode as `[hint=…]` rather than on any node's
+## `tooltip_text`. `""` is a herd whose keeping is paid.
+const HERD_HOVER_PROBE_ROW := "probe"
+
+func _herd_under_kept_hover(herd: Dictionary,
+		improvement: String = SourceForecast.IMPROVEMENT_TAME) -> String:
+	var ctx := DetailFormat.Context.new()
+	DetailFormat.note_under_kept_hover(ctx, HERD_HOVER_PROBE_ROW, herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_HERD, improvement)
+	return String(ctx.row_tooltips.get(HERD_HOVER_PROBE_ROW, ""))
 
 func _danger_verdict_word_present(lines: Array) -> bool:
 	for line in lines:
@@ -596,8 +557,13 @@ func run(harness) -> void:
 	h._assert_hud("a covered herd states its rung and nothing else — no mark, no bill, no risk row",
 		_lines_any_contain(fully_lines, DetailFormat.HUSBANDRY_BUILT_WORD)
 		and not _lines_any_contain(fully_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
-		and not _lines_any_contain(fully_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and not _lines_any_contain(fully_lines, RETIRED_AT_RISK_ROW_NEEDLE)
 		and not _lines_any_contain(fully_lines, "drawn from the band"))
+	# …and it registers NO row hover either, which is the other half of "nothing is wrong here": the
+	# remedy the `At risk:` row used to carry hangs off the rung row's own `[hint=…]` now, and a card
+	# that hung it off every rung would say the ground is slipping wherever it is not.
+	h._assert_hud("…and hangs no remedy off its Husbandry row",
+		_herd_under_kept_hover(_fully_herded_herd_fixture()) == "")
 
 	# SHORT: the herd wants 6 keepers' worth and the pool paid 4 → the ⚠ on its own Husbandry row, the
 	# `At risk:` row pricing the shortfall, and the shed line naming the band's Husbandry role and the
@@ -615,7 +581,16 @@ func run(harness) -> void:
 	h._assert_hud("an under-kept herd flags the deficit and names the Husbandry role that stops it",
 		_lines_any_contain(under_lines, "animals are drifting off")
 		and _lines_any_contain(under_lines, "Husbandry")
-		and not _lines_any_contain(under_lines, "slipping"))
+		and not _lines_any_contain(under_lines, HudSelectionVocab.RUNG_UNDER_KEPT_PLANT_WORD))
+	# **THE ANIMAL WEB SAYS IT IN ITS OWN WORDS** — `drifting`, never the plant web's `slipping`, and
+	# the remedy on the row's hover is the Husbandry note rather than the Agriculture one. The two
+	# webs' pair is asserted together, since one picker answering both is a wrong answer that looks
+	# like a right one.
+	h._assert_hud("…and the built rung reads ⚠ drifting, with the HUSBANDRY remedy on its hover",
+		_line_with_key(under_lines, DetailFormat.HUSBANDRY_ROW).contains(
+			HudSelectionVocab.RUNG_UNDER_KEPT_ANIMAL_WORD)
+		and _herd_under_kept_hover(_under_herded_herd_fixture())
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_HERD))
 	h._assert_hud("…and the standing keeper/keeping bill is gone from the drawer entirely",
 		not _lines_any_contain(under_lines, "drawn from the band")
 		and not _lines_any_contain(under_lines, "the pool covers"))
@@ -644,7 +619,7 @@ func run(harness) -> void:
 	# shortfall costs.
 	# Neither is on a herd whose build IS being paid, which is what makes the silence readable.
 	h._assert_hud("a herd mid-Tame whose build is paid states no shortfall and no keeper bill",
-		not _lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_RISK_ROW)
+		not _lines_any_contain(mid_tame_lines, RETIRED_AT_RISK_ROW_NEEDLE)
 		and not _lines_any_contain(mid_tame_lines, "the pool covers")
 		and not _lines_any_contain(mid_tame_lines, "under-herded"))
 	# …and the WARNING half of the same fork, which the row above cannot make: the identical herd with
@@ -657,9 +632,11 @@ func run(harness) -> void:
 	unpaid_tame["build_turns_remaining"] = SourceForecast.BUILD_TURNS_HOLDS
 	var unpaid_lines := DetailFormat.herd_summary_lines(
 		unpaid_tame, h._hud._band_labor.world_herds())
-	h._assert_hud("…while the same build going UNPAID is marked on its rung row AND priced at risk",
+	h._assert_hud("…while the same build going UNPAID is marked on its rung row and hangs the remedy",
 		_lines_any_contain(unpaid_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
-		and _lines_any_contain(unpaid_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and _herd_under_kept_hover(unpaid_tame)
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_HERD)
+		and not _lines_any_contain(unpaid_lines, RETIRED_AT_RISK_ROW_NEEDLE)
 		and not _lines_any_contain(unpaid_lines, "the pool covers"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
@@ -787,9 +764,12 @@ func run(harness) -> void:
 	await h._save("herd_corral_ungated")
 	var corral_ungated = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_CORRAL)
-	h._assert_hud("Penning alone unlocks Corral — the same herd now offers it as a live choice",
-		corral_ungated is CheckBox and not (corral_ungated as CheckBox).disabled
-		and not (corral_ungated as CheckBox).button_pressed)
+	# **BY STATE, NOT BY TYPE** (`docs/plan_standing_upkeep.md` §4.7a ①). Every state of this control
+	# is a `Label` now, so the type says nothing; what says the gate cleared is that the state moved
+	# from GATED to OFFERED. The gated frame above pins the other half.
+	h._assert_hud("Penning alone unlocks Corral — the same herd now OFFERS it",
+		corral_ungated != null and String(corral_ungated.get_meta(
+			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
 	# **AND THE ASIDE STOPS TEACHING IT, in the same breath.** This is the animal half of the A/B the
 	# plant web runs on `forage_lesson_known`: nothing about the herd moved between the two frames, so
 	# the gated one above naming `penning` and this one naming nothing is the whole claim that the line
@@ -797,21 +777,12 @@ func run(harness) -> void:
 	# survives — a line, not a blank.
 	h._assert_hud("…and the aside stops teaching a craft the faction has finished learning",
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet) == "")
-	# **AN UNTICKED BOX HAS TO BE THERE TO BE TICKED.** Godot's stock `unchecked` art is a FILLED
-	# near-black square drawn for a LIGHT surface, so on this console it reserved its width and painted
-	# nothing: an offer that read as a line of prose with no control on it. Measure the thing that was
-	# actually wrong — CONTRAST against the panel — rather than the presence of an override: the first
-	# cut of the fix set `icon_normal_color`, which a CheckBox ignores entirely, and an override-shaped
-	# assertion would have passed on it.
-	h._assert_hud("an offered rung's box is VISIBLE against the panel, not black on black",
-		_checkbox_indicator_contrast(corral_ungated, "unchecked")
-		>= CHECKBOX_INDICATOR_MIN_CONTRAST)
-	# The ticked half needs a DIFFERENT question asked of it: the stock `checked` art is a light chip and
-	# already clears the contrast bar, so re-using that measure here would pass with the fix removed —
-	# a vacuous assertion. What the designer asked for is that a running build be unmistakable, so pin
-	# the HUE: ticked reads in `SIGNAL`, the colour this HUD uses for nothing but live state.
-	h._assert_hud("…and the ticked art reads in SIGNAL, so a running build is unmistakably running",
-		_checkbox_tick_colour_gap(corral_ungated) <= CHECKBOX_TICK_COLOUR_TOLERANCE)
+	# **RETIRED — the two CHECKBOX-ART probes** (`docs/plan_standing_upkeep.md` §4.7a ①). They measured
+	# the offered rung's indicator against the panel (Godot's stock `unchecked` art is a filled
+	# near-black square drawn for a LIGHT surface, so it reserved its width and painted nothing) and
+	# the ticked chip's hue against `SIGNAL`. There is no box on this control any more — every state
+	# is a `Label` — so both would now measure a widget that is not there and fail for the wrong
+	# reason. `HudStyle.apply_checkbox` keeps the autopsy for the next `CheckBox` the HUD grows.
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
 	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
@@ -840,17 +811,21 @@ func run(harness) -> void:
 		Q.compose_commit_button(h._hud._drawercompose._compose_sheet) != null
 			and Q.compose_commit_button(h._hud._drawercompose._compose_sheet).text
 				== HudComposeVocab.ASSIGN_LOCAL_HERD_BUTTON)
-	# **WHAT THE GEAR TOOK OFF THE JOB** (`docs/plan_unit_costed_work.md` §11) — the readout that is
-	# the ONLY way a player can tell a tool is worth carrying to a garden and not to a farm: the
-	# contribution is a fixed number of work units against a job whose size is not. **The ANIMAL web is
-	# where it is judged**, no plant item declaring the stat yet (issue #539), and this herd's keepers
-	# carry the shipped handling gear.
+	# **WHAT THE GEAR ADDS PER TURN** (`docs/plan_standing_upkeep.md` §4.8) — the readout that is the
+	# ONLY way a player can tell a tool is worth carrying at all: a build's pace is its crew plus this.
+	# **The ANIMAL web is where it is judged**, no plant item declaring the stat yet (issue #539), and
+	# this herd's keepers carry the shipped handling gear.
+	#
+	# ⛔ **IT READ `−17 work off this job` AND THE MODEL TURNED OVER UNDER IT.** `buildWorkFromGear` is
+	# what the pool'''s kits ADD, not units taken off the pile, so the row states a rate with a `+` and
+	# the fixture'''s magnitude was re-minted with the stat (8.5 off a job → 0.5 delivered per worker
+	# per turn, so two keepers publish 1.0).
 	#
 	# Judged as a PAIR with the plant tile beside it, because a line rendered unconditionally would
 	# satisfy the positive alone — and the negative is the `> 0` gate's whole contract: a crew that
 	# carries nothing that helps must read no line, never `−0 work`.
 	var corral_drawer: String = h._hud.occupant_detail.text
-	h._assert_hud("a geared animal build states what its keepers took off the job",
+	h._assert_hud("a geared animal build states what its keepers ADD to it each turn",
 		corral_drawer.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT
 			% DetailFormat.format_work_units(HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR)))
 	# **THE TURN COUNT IS THE ROW ITSELF NOW** (issue #545), not an indented line under a meter
