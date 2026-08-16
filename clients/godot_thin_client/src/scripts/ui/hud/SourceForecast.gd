@@ -195,6 +195,21 @@ const YIELD_PER_TURN_SUFFIX := " /turn"
 const YIELD_RENEWABLE_NOTE := "renewable"
 const YIELD_TOOLTIP_RENEWABLE := " · " + YIELD_RENEWABLE_NOTE
 const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# **THE ROW'S TWO RATES, EACH NAMED** — `+1.96 a turn on average · +1.91 this turn`. The row's FACE is
+# `realizedYield`, the forward projection of this source's take; the number beside it is
+# `actualYield`, the take the sim resolved THIS turn. They are different quantities and routinely
+# differ by the width of the projection window — a patch sitting at its MSY inflection reads `+1.96`
+# against `+1.91`, which is the window and not an error — so the line names BOTH rather than
+# reconciling them.
+#
+# **IT READ `Actual %s`, AND THE WORD WAS THE DEFECT.** Quoting one of the two as *the actual*
+# asserts the face is something other than actual while naming neither quantity. It is a survivor of
+# the pre-`realizedYield` world, when the two WERE one number and the word was merely redundant.
+#
+# **ITS RATES ARE `format_signed`, NOT `format_yield`.** The unit is carried by the WORDS on both
+# sides — *a turn on average*, *this turn* — so the `/turn` suffix would print `+1.96 /turn a turn on
+# average`, i.e. the same unit twice in four words.
+const YIELD_TOOLTIP_RATES_FORMAT := "%s a turn on average · %s this turn"
 # Overstaffing (wasted labor) — DISTINCT from the ⚠ overdraw flag. Every policy caps a source's take at
 # its ceiling (policy ceiling / resource biomass), so past `workers_needed` extra workers produce
 # nothing HERE and should move elsewhere. A source can be overstaffed while perfectly sustainable (and
@@ -4477,7 +4492,23 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # on Sustain reads clean; a Surplus/Deplete/Eradicate patch or an over-hunted herd trips ⚠.
         warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
-        tooltip = "Actual %s" % format_yield(actual)
+        # HEADLINE the row with the STEADY realized average, never the lumpy pulse. `realized_yield` is
+        # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
+        # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
+        # `sustainable` ceiling to the true realized average — which is what makes the row (and the
+        # Food-line income these rows sum into) steady. The pulse's overdraw is still carried by
+        # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
+        # absent (older snapshot).
+        #
+        # **IT IS RESOLVED BEFORE THE TOOLTIP NOW, because the tooltip NAMES IT.** The two are one
+        # call's `rate` and `tooltip` keys and are the same source's two quantities, so a tooltip
+        # composed above the headline could only quote the other one anonymously — which is exactly
+        # what it did.
+        if m.has("realized_yield"):
+            rate = float(m["realized_yield"])
+        else:
+            rate = sustainable if kind == LABOR_KIND_HUNT else actual
+        tooltip = YIELD_TOOLTIP_RATES_FORMAT % [format_signed(rate), format_signed(actual)]
         # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
         # stays the expectation — that is what `forecast == actual` is restated on — and the band
         # QUALIFIES it rather than replacing it. `""` where the distribution is degenerate, which is
@@ -4490,17 +4521,6 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             tooltip += " · Sustainable %s" % format_yield(sustainable)
             if warn:
                 tooltip += YIELD_TOOLTIP_OVERDRAW
-        # HEADLINE the row with the STEADY realized average, never the lumpy pulse. `realized_yield` is
-        # the honest long-run average of this source's `actual_yield`, so BOTH hunt and forage read it:
-        # forage's realized ≈ its old `actual` (no visible change), while hunt switches off the
-        # `sustainable` ceiling to the true realized average — which is what makes the row (and the
-        # Food-line income these rows sum into) steady. The pulse's overdraw is still carried by
-        # the ⚠ flag + tooltip. Falls back to the old sustainable/actual split if `realized_yield` is
-        # absent (older snapshot).
-        if m.has("realized_yield"):
-            rate = float(m["realized_yield"])
-        else:
-            rate = sustainable if kind == LABOR_KIND_HUNT else actual
         # THE SECOND PRODUCT (issue #449), under the SAME render-only-when-non-zero gate: a sown hay
         # Field pays no provisions, so without this its row headlined `+0.00 /turn` while it fed the
         # band's pens every turn. The word rather than a glyph — fodder has none, the reason

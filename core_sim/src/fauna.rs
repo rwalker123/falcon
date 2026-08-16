@@ -629,7 +629,7 @@ pub struct Herd {
     /// the client wire), so a restored herd resumes the hunt exactly as wounded as it was.
     pub wounds: DamageLedger,
     /// Animals leave only while this **exceeds** the herd's current rung's
-    /// [`RungDef::neglect_grace_turns`] — `animal:pastoral`'s for a tamed herd, `animal:pen`'s for a
+    /// [`RungDef::upkeep_grace_turns`] — `animal:pastoral`'s for a tamed herd, `animal:pen`'s for a
     /// penned one, which is why the grace is per-rung: the fence holds a flock without a keeper for
     /// far longer than habit holds an unfenced one. The under-herded *notice* is deliberately **not**
     /// gated on it (see `advance_husbandry`): the grace is exactly when the player can still act.
@@ -3408,7 +3408,7 @@ pub fn repopulate_fauna(
 ///
 ///   **The shed no longer bites on the first under-herded turn.** [`Herd::neglect_turns`] counts
 ///   consecutive turns the herd's keepers failed to hold it, and animals leave only while that
-///   exceeds the herd's rung's `grace_turns` ([`RungDef::neglect_grace_turns`] — `animal:pen`'s for a
+///   exceeds the herd's rung's `upkeep.grace_turns` ([`RungDef::upkeep_grace_turns`] — `animal:pen`'s for a
 ///   penned herd, `animal:pastoral`'s otherwise). The plant twin is the same counter gating the feral
 ///   bleed in [`crate::forage::advance_cultivation`]: one trigger, two penalties.
 ///
@@ -4039,11 +4039,18 @@ pub fn herd_herded_fraction(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderCon
 /// **Turns of neglect this herd can still absorb before its keepers start losing animals** — the wire's
 /// countdown, resolved through [`herd_keeping_rung`] so it always describes the rung
 /// [`advance_husbandry`] actually gates the shed on. `None` = a wild herd, with nothing at risk.
+///
+/// It reads the **upkeep's** grace ([`RungDef::upkeep_grace_turns`]), not the build's, exactly as
+/// [`crate::forage::patch_neglect_grace_remaining`] does: on both webs the neglect trigger is an unmet
+/// standing demand rather than an un-worked build, so every buildable rung declares
+/// `build.grace_turns: null` and the live number lives in its `upkeep` block. Reading the build's
+/// gave [`crate::intensification::NO_NEGLECT_GRACE`] for every herd, so a **fully kept** herd
+/// published *"sheds in 1 turn"* forever while [`advance_husbandry`] gated the shed on a grace of 2.
 pub fn herd_neglect_grace_remaining(herd: &Herd, ladder: &LadderConfig) -> Option<u32> {
     herd_keeping_rung(herd, ladder).map(|rung| {
         crate::intensification::neglect_grace_remaining(
             herd.neglect_turns,
-            rung.neglect_grace_turns(),
+            rung.upkeep_grace_turns(),
         )
     })
 }

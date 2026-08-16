@@ -116,10 +116,14 @@ pub const RUNG_UNSTARTED: f32 = 0.0;
 pub const FABRICATED_BUILD_COST: f32 = PER_WORKER_OUTPUT;
 
 /// **The grace of a rung there is nothing to neglect on** — a source standing on a rung with no
-/// build meter (either `wild` rung). Zero rather than "infinite" because it is never *used* as a
-/// grace: both webs consult [`RungDef::neglect_grace_turns`] only for a rung whose meter or flock is
+/// standing upkeep (either `wild` rung). Zero rather than "infinite" because it is never *used* as a
+/// grace: both webs consult [`RungDef::upkeep_grace_turns`] only for a rung whose meter or flock is
 /// actually at risk, and a value that silently forgave everything would be the more dangerous default
 /// if that ever stopped being true.
+///
+/// **It is also what [`RungDef::neglect_grace_turns`] answers for every shipped rung**, since none
+/// declares a `build.grace_turns` — the un-worked-build trigger both webs retired in favour of the
+/// upkeep's shortfall. A live reader of the build grace is therefore reading a constant zero.
 pub const NO_NEGLECT_GRACE: u32 = 0;
 
 // **RETIRED: `source_crew_needed(standing_crew, take_workers)`** — `max(standing, take)`, the one
@@ -3625,6 +3629,13 @@ mod tests {
     /// **The shipped rungs clear the grace bound**, and that is worth pinning positively: the bound
     /// moved from `1 / progress_per_turn` to `work_cost / reference_output`, so retuning a cost
     /// silently changes what a grace is allowed to be.
+    ///
+    /// **It reads the UPKEEP's grace, which is the live one** ([`RungDef::upkeep_grace_turns`]). It
+    /// asked [`RungDef::neglect_grace_turns`] until the build trigger retired off every rung, after
+    /// which it compared a constant [`NO_NEGLECT_GRACE`] against a positive turn count — an assertion
+    /// that passed because the thing it measured had moved, which reads as coverage while guarding
+    /// nothing. The invariant itself is unchanged: *a grace that outlasts its own build makes walking
+    /// away free*, on whichever trigger the rung actually counts.
     #[test]
     fn every_shipped_grace_is_shorter_than_its_own_reference_build() {
         let ladder = LadderConfig::builtin();
@@ -3642,10 +3653,19 @@ mod tests {
                 reference_accrual(rung),
             )
             .expect("a staffed build finishes");
+            // **The bound is only a bound on a grace that EXISTS** — a rung forgiving nothing is
+            // trivially inside it, which is exactly how this test came to pass while measuring a
+            // constant. Its sibling
+            // (`the_neglect_grace_is_per_rung_and_the_two_webs_disagree_about_its_direction`) owns
+            // the orderings; this restates only the liveness the bound needs.
+            let grace = rung.upkeep_grace_turns();
             assert!(
-                rung.neglect_grace_turns() < turns,
-                "{key:?}: grace {} must be shorter than its {turns}-turn reference build",
-                rung.neglect_grace_turns()
+                grace > NO_NEGLECT_GRACE,
+                "{key:?}: a buildable rung must declare the grace this bound is about"
+            );
+            assert!(
+                grace < turns,
+                "{key:?}: grace {grace} must be shorter than its {turns}-turn reference build"
             );
         }
     }

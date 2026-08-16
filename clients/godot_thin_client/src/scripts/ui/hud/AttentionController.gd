@@ -98,7 +98,7 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## starving pen's coordinates are deliberately the HERD's rather than the keeper's — so locating an
 ## alert and attributing it are different questions with different answers.
 ##
-## The UNWORKED-RUNG producer stamps no owner, and that is a fact about the sim rather than an
+## The UNDER-KEPT-RUNG producer stamps no owner, and that is a fact about the sim rather than an
 ## omission: a patch is owned by the FACTION (`patch.owner == PLAYER_FACTION_ID`), never by a band, so
 ## there is no band whose row it could sit on. `OWNER_NONE` is what it reads as.
 const OWNER_NONE := -1
@@ -270,19 +270,21 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner
         # field client-side) and what lets the row name the keeper who has to fix it.
         attention.append_array(_starving_pen_attention(entry))
-        # Producer 7 — a MANAGED herd this band keeps with fewer keepers than it demands (amber/warn).
-        # Keyed off the band's own hunt assignments for the `_starving_pen_attention` reason: a herd
-        # carries no owner field client-side, so a scan of `world_herds()` would alarm on a rival's.
-        attention.append_array(_under_crewed_herd_attention(entry, player_bands))
+        # Producer 7 — a MANAGED herd this band keeps whose keeping its Husbandry pool did not cover
+        # (amber/warn). Keyed off the band's own hunt assignments for the `_starving_pen_attention`
+        # reason: a herd carries no owner field client-side, so a scan of `world_herds()` would alarm
+        # on a rival's.
+        attention.append_array(_under_kept_herd_attention(entry))
     # Producer 4 — awaiting orders: a detached party parked at its objective, burning provisions
     # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
     # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
     attention.append_array(_awaiting_orders_attention(player_expeditions))
-    # Producer 6 — a BUILT plant rung with nobody on it. Runs over the PATCHES, outside the band loop,
-    # and that is structural rather than stylistic: the whole point is that there is no assignment to
-    # hang it on, so there is no band whose roster it could be found through. Patches carry an owner on
-    # the wire (herds do not), which is what makes an assignment-free scan attributable here.
-    attention.append_array(_unworked_rung_attention(player_bands))
+    # Producer 6 — a BUILT plant rung whose keeping the Agriculture pool did not cover. Runs over the
+    # PATCHES, outside the band loop, and that is structural rather than stylistic: the whole point is
+    # that there may be no assignment to hang it on, so there is no band whose roster it could be found
+    # through. Patches carry an owner on the wire (herds do not), which is what makes an
+    # assignment-free scan attributable here.
+    attention.append_array(_under_kept_rung_attention())
     # Producer 8 — a finished build's crew moved (§2.3). Outside the band loop and fed by the command
     # stream rather than by the roster: a hand-off is an EVENT, and no band field records that it
     # happened.
@@ -299,18 +301,18 @@ func on_turn_orb_focus(x: int, y: int) -> void:
     if not exp.is_empty():
         _bandpanel.select_expedition(int(exp.get("entity", -1)), x, y)
         return
-    # A starving-pen or under-crewed-herd row jumps to the HERD, not just its hex: `focus_labor_source`
+    # A starving-pen or under-kept-herd row jumps to the HERD, not just its hex: `focus_labor_source`
     # (the very path the Band panel's Hunt row uses) recenters AND pins the herd, so the drawer that
-    # explains the alert — the "⚠ Starving" Corral row, the Pen feed cost, the Herders count — is what
-    # actually opens.
+    # explains the alert — the "⚠ Starving" Corral row, the Pen feed cost, the husbandry rung's own
+    # under-kept note — is what actually opens.
     var alerted_herd := _alerted_herd_at(x, y)
     if alerted_herd != "":
         _bandpanel.focus_labor_source(x, y, alerted_herd)
         return
-    # An unworked-rung row names the LAND, the forage twin of the herd branch above: the patch's rung
+    # An under-kept-rung row names the LAND, the forage twin of the herd branch above: the patch's rung
     # rows and its improvement control live on the land card, so a bare recentre would land on the hex
     # and then let its auto-pick open whichever band or herd happens to stand there.
-    if _unworked_rung_at(x, y):
+    if _under_kept_rung_at(x, y):
         _bandpanel.focus_labor_source(x, y)
         return
     alert_focus_requested.emit(x, y)
@@ -439,7 +441,15 @@ static func _neglect_clause(src: Dictionary, prefix: String,
     return soon_format % [remaining,
         "" if remaining == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]
 
-## Turn-orb items for every BUILT plant rung the player owns that nobody is working (Producer 6).
+## Turn-orb items for every BUILT plant rung the player owns whose keeping the band's AGRICULTURE pool
+## did not cover this turn (Producer 6).
+##
+## **IT ASKS THE SHORTFALL, NOT THE HARVEST CREW** (`docs/plan_standing_upkeep.md` §2.5). It read
+## `forage_effort_at(x, y).workers <= 0` — *is anybody GATHERING here* — and then said the tending was
+## lapsing. Those are two different questions: a patch's rung rots from an unpaid KEEPING bill, which a
+## band-level pool pays whether or not a single forager stands on the ground, so an idle-but-kept patch
+## was alarmed on every turn and a harvested-but-underpaid one was silent. `SourceForecast.is_under_kept`
+## is the gate the tile card's own rung row uses, so the orb and the card now answer as one.
 ##
 ## **COMPLETED RUNGS ONLY, and that matches the sim's own announce rule**: `forage::announce_rung_lost`
 ## fires when a *finished* meter crosses back below complete and stays silent through the partial bleed
@@ -450,11 +460,11 @@ static func _neglect_clause(src: Dictionary, prefix: String,
 ## Ownership is the patch's OWN `owner` field, so this scan cannot alarm on a rival's ground. Sorted
 ## most-urgent-first and capped like the awaiting-orders rows, for the same off-screen-popover reason.
 ##
-## `player_bands` is THIS snapshot's roster, and passing it is load-bearing: the producers run BEFORE
-## `ingest_snapshot_bands`, so `HudBandLaborState`'s own roster is still last turn's and a crew the
-## client has not ingested yet would read as absent — every improved patch the player works would
-## alarm as unworked on the first snapshot after a load.
-func _unworked_rung_attention(player_bands: Array) -> Array:
+## **IT TAKES NO ROSTER ANY MORE, and that is the shortfall test's doing.** It used to be handed THIS
+## snapshot's `player_bands` because it folded crews over them and the producers run BEFORE
+## `ingest_snapshot_bands`; the shortfall is the sim's own published number on the patch, so there is
+## no crew to fold and no stale-roster hazard left to guard against.
+func _under_kept_rung_attention() -> Array:
     var candidates: Array = []
     for tile_key in _band_labor.forage_patch_lookup():
         var patch: Dictionary = _band_labor.forage_patch_lookup()[tile_key]
@@ -470,14 +480,18 @@ func _unworked_rung_attention(player_bands: Array) -> Array:
             rung = SourceForecast.IMPROVEMENT_CULTIVATE
         if rung == "":
             continue
+        # THE ONE UNDER-KEPT TEST — the source's published `upkeepShortfall` against its published
+        # demand, which is the same number the decay acts on and the same call the tile card's rung
+        # row makes.
+        if not SourceForecast.is_under_kept(patch, HudComposeVocab.BARE_FORECAST_PREFIX):
+            continue
         var x := int(patch.get("x", -1))
         var y := int(patch.get("y", -1))
-        # UNWORKED means no crew from ANY of the player's bands, pending edits included — a patch two
-        # bands can reach is worked if either one is on it.
-        if int(_band_labor.forage_effort_at(x, y, player_bands).get("workers", 0)) > 0:
-            continue
         candidates.append({
             "x": x, "y": y, "rung": rung,
+            # The bill the pool did not pay, in the sim's own work units — what the detail quotes.
+            "shortfall": float(SourceForecast.upkeep_state(
+                patch, HudComposeVocab.BARE_FORECAST_PREFIX).get("shortfall", 0.0)),
             # Sort key: the wire's countdown, with "nothing at risk" pushed to the back rather than
             # colliding with the biting-now zero.
             "urgency": int(patch.get("neglect_grace_remaining", 0)) \
@@ -492,83 +506,95 @@ func _unworked_rung_attention(player_bands: Array) -> Array:
     var items: Array = []
     for i in candidates.size():
         var c: Dictionary = candidates[i]
-        if i >= HudAttentionVocab.ATTENTION_UNWORKED_MAX_ROWS:
+        if i >= HudAttentionVocab.ATTENTION_UNDER_KEPT_MAX_ROWS:
             items.append({
-                "kind": HudAttentionVocab.ATTENTION_KIND_UNWORKED_RUNG,
+                "kind": HudAttentionVocab.ATTENTION_KIND_UNDER_KEPT_RUNG,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-                "label": HudAttentionVocab.ATTENTION_UNWORKED_OVERFLOW_LABEL_FORMAT % (
+                "label": HudAttentionVocab.ATTENTION_UNDER_KEPT_OVERFLOW_LABEL_FORMAT % (
                     candidates.size() - i),
-                "detail": HudAttentionVocab.ATTENTION_UNWORKED_OVERFLOW_DETAIL,
+                "detail": HudAttentionVocab.ATTENTION_UNDER_KEPT_OVERFLOW_DETAIL,
                 "x": int(c["x"]), "y": int(c["y"]),
             })
             break
         items.append({
-            "kind": HudAttentionVocab.ATTENTION_KIND_UNWORKED_RUNG,
+            "kind": HudAttentionVocab.ATTENTION_KIND_UNDER_KEPT_RUNG,
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-            "label": HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+            "label": HudAttentionVocab.ATTENTION_UNDER_KEPT_LABEL_FORMAT % [
                 String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(String(c["rung"]), "")),
                 int(c["x"]), int(c["y"])],
-            "detail": String(c["clause"]),
+            "detail": _under_kept_detail(SourceForecast.SOURCE_KIND_FORAGE,
+                float(c["shortfall"]), String(c["clause"])),
             "x": int(c["x"]), "y": int(c["y"]),
         })
     return items
 
-## Turn-orb items for the MANAGED herds one band keeps with fewer keepers than the sim demands
-## (Producer 7) — the animal half of "you built this and then walked away".
+## **THE ONE UNDER-KEPT DETAIL LINE, for both webs** — *"Husbandry short 1 work — sheds in 3 turns"*.
+## The pool name is `HudWorkVocab.keeping_role_name`'s, so the row names the card the player has to
+## raise in the same word that card wears; the bill is in WORK units, because keeping is a rate the
+## band pays out of a pool and the hands that pay it are worth different amounts once they carry gear.
+## The trailing clause is the web's own consequence, produced by `_neglect_clause`.
 ##
-## **UNDER-CREWED, NOT UNWORKED, and the difference is what the client can attribute.** A herd carries
-## no owner field, so a herd with NO assignment cannot be tied to the player at all (the same reason
+## **IT IS BUILT FOR THE POPOVER'S OWN WIDTH.** Orb rows CLIP, so a row that says three things has to
+## say each of them in as few words as the reading allows — which is why the clause vocabulary lost
+## its subjects and the bill lost its `a turn`. The label above already names the source.
+static func _under_kept_detail(source_kind: String, shortfall: float, clause: String) -> String:
+    return HudAttentionVocab.ATTENTION_UNDER_KEPT_DETAIL_FORMAT % [
+        HudWorkVocab.keeping_role_name(source_kind),
+        DetailFormat.format_work_units(shortfall), clause]
+
+## Turn-orb items for the MANAGED herds one band keeps whose keeping the band's HUSBANDRY pool did not
+## cover (Producer 7) — the animal half of "you built this and then walked away".
+##
+## **THE ATTRIBUTION IS THE ASSIGNMENT; THE ALARM IS THE SHORTFALL.** A herd carries no owner field, so
+## a herd with NO assignment cannot be tied to the player at all (the same reason
 ## `_starving_pen_attention` walks assignments rather than `world_herds()`); a band that abandons its
-## herd outright is told by the sim's own `too_few_workers` / lapse feed line instead. What is
-## attributable — and is the common, quiet case — is a standing crew that has fallen below
-## `herders_needed`, which is exactly when the shed clock starts.
+## herd outright is told by the sim's own `too_few_workers` / lapse feed line instead. The walk answers
+## *is this ours*, and nothing else — whether the keeping is being paid is `is_under_kept`'s answer,
+## off the herd's own published shortfall.
 ##
-## `player_bands` is THIS snapshot's roster, for the `_unworked_rung_attention` reason: the keeper
-## count is folded over it rather than over the not-yet-ingested one, or the row quotes LAST turn's
-## crew — and reads `0 of 4` for a band the client is seeing for the first time.
-func _under_crewed_herd_attention(band: Dictionary, player_bands: Array) -> Array:
+## **IT USED TO SUBTRACT TWO DIFFERENT ACTIVITIES.** The gate was `hunt_effort_on(herd) < herders_needed`
+## — the TAKE crew against the KEEPING demand — which fires on every managed herd whose hunting party
+## is smaller than its keeper bill, i.e. the normal case. Measured on a live report: a herd with six
+## keepers supplying 9.0 against a demand of 8.27 and `upkeepShortfall == 0` raised this row while its
+## own herd card, reading the shortfall, correctly stayed silent.
+func _under_kept_herd_attention(band: Dictionary) -> Array:
     var items: Array = []
     for entry in _hunted_herds_of(band):
         var herd_id: String = entry["herd_id"]
         var herd: Dictionary = entry["herd"]
-        if not _herd_is_under_crewed(herd_id, herd, player_bands):
+        if not _herd_is_under_kept(herd):
             continue
-        var staffed := int(_band_labor.hunt_effort_on(herd_id, player_bands).get("workers", 0))
-        var needed := int(herd.get("herders_needed", 0))
         items.append({
-            "kind": HudAttentionVocab.ATTENTION_KIND_UNDER_CREWED_HERD,
+            "kind": HudAttentionVocab.ATTENTION_KIND_UNDER_KEPT_HERD,
             "owner": int(band.get("entity", -1)),
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-            "label": HudAttentionVocab.ATTENTION_UNDER_CREWED_LABEL_FORMAT % _herd_label_for_id(herd_id),
-            "detail": HudAttentionVocab.ATTENTION_UNDER_CREWED_DETAIL_FORMAT % [
-                staffed, needed,
+            "label": HudAttentionVocab.ATTENTION_UNDER_KEPT_HERD_LABEL_FORMAT % _herd_label_for_id(herd_id),
+            "detail": _under_kept_detail(SourceForecast.SOURCE_KIND_HERD,
+                float(SourceForecast.upkeep_state(
+                    herd, HudComposeVocab.BARE_FORECAST_PREFIX).get("shortfall", 0.0)),
                 _neglect_clause(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
                     HudAttentionVocab.ATTENTION_SHED_SOON_FORMAT,
                     HudAttentionVocab.ATTENTION_SHED_NOW,
-                    HudAttentionVocab.ATTENTION_LAPSE_UNKNOWN)],
-            # The HERD's live tile — herds migrate, and the drawer that explains the alert (its Herders
-            # row) opens on the animals, not on the keeper band.
+                    HudAttentionVocab.ATTENTION_LAPSE_UNKNOWN)),
+            # The HERD's live tile — herds migrate, and the drawer that explains the alert (its
+            # husbandry rung row) opens on the animals, not on the keeper band.
             "x": int(herd.get("x", -1)), "y": int(herd.get("y", -1)),
         })
     return items
 
-## Is this managed herd short of the keepers the sim demands? `herders_needed` is OWNERSHIP-GATED —
-## `0` on a wild herd — so it doubles as the "this herd is managed at all" test and a wild hunt can
-## never trip it. The staffed count is folded across every player band and is pending-aware, so a
-## just-issued reinforcement clears the alert on the same frame. `bands` empty = the INGESTED roster,
-## which is what the JUMP routing wants (it runs on a click, long after the ingest); the producer
-## passes the incoming one.
-func _herd_is_under_crewed(herd_id: String, herd: Dictionary, bands: Array = []) -> bool:
-    var needed := int(herd.get("herders_needed", 0))
-    if needed <= 0:
-        return false
-    return int(_band_labor.hunt_effort_on(herd_id, bands).get("workers", 0)) < needed
+## **Is this herd's keeping being underpaid?** `SourceForecast.is_under_kept` and nothing else — one
+## gate for the orb row, the herd card's rung row and the work board's note, so the three surfaces
+## cannot contradict each other about a single herd. It carries its own "is this herd managed at all"
+## test (`upkeepWorkersNeeded > 0` is `0` on a wild herd), so a wild hunt can never trip it, and it
+## needs no roster: the shortfall is the sim's, not a fold over crews the client may not have ingested.
+func _herd_is_under_kept(herd: Dictionary) -> bool:
+    return SourceForecast.is_under_kept(herd, HudComposeVocab.BARE_FORECAST_PREFIX)
 
 ## The alerting herd (if any) standing on `(x, y)`, for the orb's jump routing — the herd twin of
 ## `_awaiting_expedition_at`. Only herds the player's own bands work, via the same `_hunted_herds_of`
 ## walk the producers use, so a row can never route to a herd no producer would have alerted on.
-## Both herd producers share it: a starving pen and an under-crewed herd want the same jump (open the
-## animals' own drawer, where the fed fraction and the Herders row explain the alert).
+## Both herd producers share it: a starving pen and an under-kept herd want the same jump (open the
+## animals' own drawer, where the fed fraction and the husbandry rung row explain the alert).
 func _alerted_herd_at(x: int, y: int) -> String:
     for band_variant in _band_labor.player_bands():
         if not (band_variant is Dictionary):
@@ -578,21 +604,22 @@ func _alerted_herd_at(x: int, y: int) -> String:
             var herd: Dictionary = entry["herd"]
             if int(herd.get("x", -1)) != x or int(herd.get("y", -1)) != y:
                 continue
-            if PenStatus.herd_is_starving(herd) or _herd_is_under_crewed(herd_id, herd):
+            if PenStatus.herd_is_starving(herd) or _herd_is_under_kept(herd):
                 return herd_id
     return ""
 
-## Is there an unworked BUILT rung on `(x, y)` — i.e. did Producer 6 put a row here? Its jump names
+## Is there an under-kept BUILT rung on `(x, y)` — i.e. did Producer 6 put a row here? Its jump names
 ## the LAND rather than merely recentring, because the patch's own rung rows and its improvement
-## control live on the land card and that is what the player has to reach to fix it.
-func _unworked_rung_at(x: int, y: int) -> bool:
+## control live on the land card and that is what the player has to reach to fix it. It asks the SAME
+## three questions the producer does, in the same order, so a row and its jump cannot disagree.
+func _under_kept_rung_at(x: int, y: int) -> bool:
     var patch: Dictionary = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
     if patch.is_empty() or not bool(patch.get("has_owner", false)) \
             or int(patch.get("owner", -1)) != HudConst.PLAYER_FACTION_ID:
         return false
     if not (bool(patch.get("is_cultivated", false)) or bool(patch.get("is_field", false))):
         return false
-    return int(_band_labor.forage_effort_at(x, y).get("workers", 0)) <= 0
+    return SourceForecast.is_under_kept(patch, HudComposeVocab.BARE_FORECAST_PREFIX)
 
 ## The awaiting expedition standing on (x, y), or {} — lets the orb's Jump reuse the panel's own
 ## expedition-focus path instead of a second, weaker one (see `on_turn_orb_focus`).

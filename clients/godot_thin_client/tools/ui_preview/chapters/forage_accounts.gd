@@ -813,6 +813,89 @@ func _fodder_field_band_fixture() -> Dictionary:
 	band["labor_assignments"] = [_fodder_field_assignment()]
 	return band
 
+# ---- THE ROW'S TWO RATES, AND WHY EVERY OTHER FIXTURE IS BLIND TO THEM -------------------------
+# **THE PLAYTEST NUMBERS.** `realizedYield` is a 40-turn forward projection of this source's take and
+# `actualYield` is the take the sim resolved this turn; a patch sitting at its MSY inflection reads
+# `+1.96` against `+1.91`, which is the width of the projection window and NOT an error. The row's
+# face is the first and its hover carried the second under the word *Actual*, which asserted the face
+# was something other than actual while naming neither quantity.
+#
+# **EVERY OTHER FIXTURE IN BOTH HARNESSES SETS THE TWO EQUAL** — measured, every `realized_yield`
+# literal in `ui_preview` and `band_panel_preview` matches its own `actual_yield` — which is exactly
+# why the word survived: on every canned row the tooltip's number WAS the face's number, so no frame
+# and no assertion could tell a labelled pair from an unlabelled one. These two must DIFFER, or this
+# whole block passes with the defect fully restored.
+const READOUT_REALIZED_RATE := 1.96
+
+const READOUT_ACTUAL_RATE := 1.91
+
+## What the hunt half sustains — deliberately unlike either rate above, so a tooltip that quoted the
+## sustainable figure in one of the two named slots lands on a number this block can name.
+const READOUT_SUSTAINABLE_RATE := 1.20
+
+## The retired word, as a LITERAL. It is spelled here rather than read off a constant because the
+## constant is gone: the claim is that this string appears nowhere in a rendered readout, and a needle
+## composed from the code under test could not make it.
+const RETIRED_ACTUAL_NEEDLE := "Actual"
+
+## One worked row in the shape `source_yield_readout` reads, with the two rates SPREAD. `has_yield` is
+## the one key the readout needs that is not on a wire assignment, which is the same local seeding the
+## drawer's own standing summary does.
+func _spread_rate_assignment(kind: String, overdraws: bool) -> Dictionary:
+	return {
+		"kind": kind, "workers": 2, "workers_needed": 2, "has_yield": true,
+		"actual_yield": READOUT_ACTUAL_RATE,
+		"sustainable_yield": READOUT_SUSTAINABLE_RATE,
+		"realized_yield": READOUT_REALIZED_RATE,
+		"overdraws": overdraws, "wasted_yield": 0.0,
+	}
+
+## **THE ROW AND ITS HOVER ARE ONE CALL'S TWO KEYS, AND THE HOVER MUST NAME BOTH QUANTITIES.**
+## PNG-LESS AND DRIVEN, because a tooltip is not in any picture and because both readings render a
+## perfectly ordinary hover — `Actual +1.91` beside a face of `+1.96` is plausible, correctly
+## formatted, and wrong only in the word.
+func _assert_readout_names_both_rates() -> void:
+	var forage := SourceForecast.source_yield_readout(
+		_spread_rate_assignment(SourceForecast.LABOR_KIND_FORAGE, false),
+		SourceForecast.LABOR_KIND_FORAGE)
+	# (0) THE FIXTURE REALLY IS THE REGIME. Every other canned row in this harness collapses the two
+	# onto one number, and on such a row every claim below passes with the word restored.
+	h._assert_hud("the fixture's two published rates really do differ (%s vs %s)"
+			% [SourceForecast.format_yield(READOUT_REALIZED_RATE),
+				SourceForecast.format_yield(READOUT_ACTUAL_RATE)],
+		not is_equal_approx(READOUT_REALIZED_RATE, READOUT_ACTUAL_RATE))
+	# (1) THE FACE IS THE PROJECTION, which is what makes the hover's first slot the face's own number.
+	h._assert_hud("the row's face is the forward-projected average (%s)"
+			% SourceForecast.format_yield(float(forage["rate"])),
+		is_equal_approx(float(forage["rate"]), READOUT_REALIZED_RATE))
+	# (2) EQUALITY, never `contains`: half the claim is the LABELLING, and a containment test on either
+	# number passes on a line that quotes it anonymously.
+	var forage_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
+		SourceForecast.format_signed(READOUT_REALIZED_RATE),
+		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] + SourceForecast.YIELD_TOOLTIP_RENEWABLE
+	h._assert_hud("…and its hover names BOTH quantities — \"%s\"" % String(forage["tooltip"]),
+		String(forage["tooltip"]) == forage_tooltip)
+	# (3) THE OTHER BRANCH, because the renewable one appends nothing after the pair and an overdrawing
+	# row appends two more clauses — so a producer that composed the pair only on the quiet path fails
+	# here rather than above.
+	var hunt := SourceForecast.source_yield_readout(
+		_spread_rate_assignment(SourceForecast.LABOR_KIND_HUNT, true),
+		SourceForecast.LABOR_KIND_HUNT)
+	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
+		SourceForecast.format_signed(READOUT_REALIZED_RATE),
+		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] \
+		+ " · Sustainable %s" % SourceForecast.format_yield(READOUT_SUSTAINABLE_RATE) \
+		+ SourceForecast.YIELD_TOOLTIP_OVERDRAW
+	h._assert_hud("an overdrawing hunt row names the same pair ahead of its own clauses — \"%s\""
+			% String(hunt["tooltip"]),
+		String(hunt["tooltip"]) == hunt_tooltip)
+	# (4) AND THE WORD IS GONE, asserted on BOTH webs by literal needle. It is the negative that names
+	# the defect: the equalities above would also pass on a line that had merely been reworded around
+	# it, and this one would not.
+	h._assert_hud("…and the word `%s` appears in neither hover" % RETIRED_ACTUAL_NEEDLE,
+		not String(forage["tooltip"]).contains(RETIRED_ACTUAL_NEEDLE)
+			and not String(hunt["tooltip"]).contains(RETIRED_ACTUAL_NEEDLE))
+
 func run(harness) -> void:
 	h = harness
 
@@ -1930,3 +2013,9 @@ func run(harness) -> void:
 		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(AT_FLOOR_REFUSAL_NEEDLE)
 			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
 				== SourceForecast.VERDICT_BLOCKED)
+
+	# ---- THE ROW'S TWO RATES ARE NAMED, BOTH OF THEM (PNG-less) --------------------------------
+	# Appended last, and it renders nothing: the claim is about a HOVER, which no frame carries, and
+	# about a WORD, which every canned row in this harness was structurally unable to expose (see
+	# `_assert_readout_names_both_rates`).
+	_assert_readout_names_both_rates()

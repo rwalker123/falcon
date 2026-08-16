@@ -71,18 +71,39 @@ paths:
     `turn_orb_starving_pen` renders exactly that pair.
   - The detail line is deliberately terse: orb rows **clip at `POPOVER_WIDTH`**, and appending the
     keeper's name ("· Band 1") pushed this row past it (rendered, seen cut, shortened).
-  - **`unworked_rung`** (warn) — an IMPROVED plant source sitting with no foragers: a Tended Patch or
-    Field whose tending is now on the neglect clock. **This producer exists because there is nowhere
-    else the warning could live** — the work board lists ASSIGNMENTS, and an unworked patch has none,
-    so it is not "understaffed" there, it is absent. A player can only be told by something that finds
-    them, which is what the orb is for.
-    **The urgency rides the detail TEXT, not a card row** (`"the tending lapses in 3 turns"`) — a
-    deliberate call: a persistent countdown on the tile card would be a permanent readout of a
-    condition that is usually irrelevant.
-  - **`under_crewed_herd`** (warn) — the animal twin: a managed herd below its keeper count, on the
-    same clock. Label names the species, detail names BOTH counts and the countdown
-    (`"2 of 4 keepers — sheds in 3 turns"`). Ownership is established the `starving_pen` way — through
-    the band's own labor assignments, never a scan of `herds`, which would alarm on a rival's herd.
+  - **`under_kept_rung` / `under_kept_herd`** (warn) — an improved source the band's **keeping pool is
+    not covering**, on the neglect clock. **This producer exists because there is nowhere else the
+    warning could live** — the work board lists ASSIGNMENTS, and the pool is a band-level role, so a
+    source can be perfectly staffed with gatherers and still be losing its rung. A player can only be
+    told by something that finds them, which is what the orb is for.
+    **The urgency rides the detail TEXT, not a card row** — a persistent countdown on the tile card
+    would be a permanent readout of a condition that is usually irrelevant. Detail names the pool, the
+    bill and the clock: `Husbandry short 1 work — sheds in 3 turns` /
+    `Agriculture short 1.5 work — lapses in 2 turns`.
+
+    > #### ⛔ RETIRED — `unworked_rung` / `under_crewed_herd`, AND THE CREW COUNT THEY COMPARED
+    >
+    > They asked *"is anybody WORKING this source"* — the plant one gated on
+    > `forage_effort_at(...).workers > 0`, the animal one compared `hunt_effort_on(...).workers`
+    > against `herders_needed` and rendered `"2 of 4 keepers — sheds in 3 turns"`. **Both sides of that
+    > comparison are wrong under a pooled model**: the left is a TAKE crew, and keeping has been a
+    > band-level pool since `docs/plan_standing_upkeep.md` §2.5, so there are no per-source keepers to
+    > count. `SourceForecast` already recorded the identical shape as retired one surface over — the
+    > orb kept it and substituted the hunt crew, which is worse, because a hunting party is normally
+    > smaller than a keeper demand and so it fired on **every managed herd**.
+    >
+    > **Reported from play**: a herd with 6 keepers supplying 9.0 against a demand of 8.27 —
+    > `upkeepShortfall == 0`, fully covered — with the orb crying under-crewed while the herd card
+    > correctly stayed silent. One screen, two answers, and the wrong one was the one that found the
+    > player.
+    >
+    > **Both producers now call `SourceForecast.is_under_kept`, the herd card's own gate**, which reads
+    > the sim's published `upkeepShortfall` — the same number the decay and the shed act on. One
+    > function, both surfaces. The roster threading below went with the crew reads.
+    >
+    > **What this deliberately stops raising**: a built patch nobody harvests but the pool keeps. There
+    > is no mechanism by which that decays, so there was nothing to warn about. What it newly raises is
+    > a harvested-but-underpaid source, which is the thing that actually loses the rung.
   - **BOTH read the wire's countdown; neither computes one.** `neglectGraceRemaining` is
     `(grace + 1) − neglect`, so **`0` means the penalty is biting NOW** and `N > 0` means it bites in
     N more unworked turns. **`hasNeglectGrace == false` means nothing is at risk** — a wild patch, a
@@ -91,9 +112,16 @@ paths:
     countdown at all.** Rows sort biting-now above still-counting-down.
     ui_preview `turn_orb_unworked_rung`.
 
-  ### A producer that asks "is this source WORKED?" must be handed THIS snapshot's roster
+  ### RETIRED — a producer that asks "is this source WORKED?" must be handed THIS snapshot's roster
 
-  `_unworked_rung_attention(player_bands)` and `_under_crewed_herd_attention(band, player_bands)` take
+  > **The problem this solved is gone because the question is gone.** Neither producer asks whether a
+  > source is worked any more — both read the sim's own published `upkeepShortfall`, which is a fact
+  > about the SOURCE and needs no roster, no crew fold and no snapshot ordering. `_under_kept_rung_at`
+  > takes no `bands` argument. **The reasoning below is kept because it still governs any producer
+  > that folds crews before the ingest**, and because the build-before-ingest ordering it describes is
+  > unchanged.
+
+  `_unworked_rung_attention(player_bands)` and `_under_crewed_herd_attention(band, player_bands)` took
   the incoming roster and thread it into `HudBandLaborState.forage_effort_at(x, y, bands)` /
   `hunt_effort_on(herd_id, bands)`, whose `bands` parameter means "fold the crews over THIS list";
   empty (every other caller) means the ingested one. **That is forced by the build-before-ingest

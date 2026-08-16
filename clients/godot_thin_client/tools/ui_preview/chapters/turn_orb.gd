@@ -18,7 +18,14 @@ var h
 # ONE string all three lookups answer, never against a hand-typed copy of it.
 const RED_DEER_LABEL := "Red Deer"
 
-# The unworked-rung / under-crewed state's wire numbers (`turn_orb_unworked_rung`).
+# The COVERED herd's own id and species. Distinct from the deer's so the row COUNT is not the only
+# thing separating the two halves of the pair — a row naming this species is a failure that says which
+# herd it came from.
+const KEPT_HERD_ID := "game_boar_11"
+
+const KEPT_HERD_LABEL := "Wild Boar"
+
+# The under-kept state's wire numbers (`turn_orb_under_kept`).
 # `neglectGraceRemaining` ships as `(grace + 1) - neglect`, so every one of these is a COUNTDOWN to the
 # penalty, never a count of neglected turns:
 #   • NEGLECT_GRACE_SOON — the tended patch has 2 turns left. Deliberately not 1: the countdown
@@ -26,9 +33,9 @@ const RED_DEER_LABEL := "Red Deer"
 #     the plural entirely would still match.
 #   • NEGLECT_GRACE_NOW — the wire's `0`, which is "the ground is reverting THIS turn", the most urgent
 #     reading there is. It must never render as a `0`-turn countdown.
-#   • NEGLECT_GRACE_FULL — what a source that IS being kept reads (the rung's whole window). The worked
-#     control carries it, so its silence is the WORKED test and not an incidentally absent countdown.
-#   • NEGLECT_GRACE_HERD — the animal web's twin, on the under-crewed herd; plural for the same reason.
+#   • NEGLECT_GRACE_FULL — what a source the pool COVERS reads (the rung's whole window). The kept
+#     control carries it, so its silence is the SHORTFALL test and not an incidentally absent countdown.
+#   • NEGLECT_GRACE_HERD — the animal web's twin, on the under-kept herd; plural for the same reason.
 # The third patch of the set has NO number here at all: it carries `has_neglect_grace == false`
 # (nothing at risk), which is the one reading the pair of fields exists to keep distinct from the zero.
 const NEGLECT_GRACE_SOON := 2
@@ -39,18 +46,42 @@ const NEGLECT_GRACE_FULL := 4
 
 const NEGLECT_GRACE_HERD := 3
 
-# The under-crewed herd's staffing PAIR — 2 keepers standing where the sim demands 4. Like the
-# corral-deficit pair above they must DISAGREE for the alert to fire at all, and both halves are read
-# back off the RENDERED row (`2 of 4 keepers — sheds in 3 turns`).
-const UNDER_CREWED_HERD_STAFFED := 2
+# **THE KEEPING BILLS THE CONTROL SET IS STAGED AT** — `intensification_ladder.json`'s own
+# `upkeep.work_per_turn` for the two plant rungs, both `scaled_by: flat`, so these are the ladder's
+# numbers verbatim on every patch in the game.
+const PLANT_TENDED_UPKEEP_DEMAND := 2.0
 
-const UNDER_CREWED_HERD_NEEDED := 4
+const PLANT_FIELD_UPKEEP_DEMAND := 4.0
 
-# What the orb's registry must hold in that state: THREE unworked-rung rows out of six staged patches
-# (the wild one, the rival's and the worked one raise nothing) plus the ONE under-crewed herd row.
-# Counted rather than searched, because a producer that alarmed on every source would satisfy every
-# positive assertion in the block without this one.
-const UNWORKED_EXPECTED_ROWS := 4
+# What the band's Agriculture pool actually paid each SHORT patch. Deliberately NOT zero: the row
+# quotes the SHORTFALL, so a supplied of nothing would make the shortfall and the demand the same
+# number and a producer quoting the wrong one of the two would read correct.
+const PLANT_TENDED_UPKEEP_SUPPLIED := 0.5
+
+const PLANT_FIELD_UPKEEP_SUPPLIED := 1.0
+
+# `ceil(demand / PER_WORKER_OUTPUT)` — what the sim publishes as `upkeepWorkersNeeded`, and the
+# producer's "does this source cost anything to hold at all" half. A `0` here is a wild source, which
+# is why the wild control carries one.
+const PLANT_TENDED_KEEPERS_WANTED := 2
+
+const PLANT_FIELD_KEEPERS_WANTED := 4
+
+# The crew standing on the WORKED patch and on the two herds. It is the TAKE crew in both cases and
+# the producer no longer reads it at all — which is the point: the worked-and-short patch and the
+# covered-but-idle one are what prove the gate moved off it.
+const UNDER_KEPT_TAKE_CREW := 2
+
+# The keepers the two herds ASK for. The covered herd's pool meets its bill with fewer hands than this
+# — that is the reported defect exactly — so this number must sit ABOVE `UNDER_KEPT_TAKE_CREW` on the
+# covered herd or its silence would prove nothing.
+const UNDER_KEPT_HERD_KEEPERS := 4
+
+# What the orb's registry must hold in that state: THREE under-kept plant rows out of six staged
+# patches (the wild one, the rival's and the COVERED one raise nothing) plus the ONE under-kept herd
+# row out of two. Counted rather than searched, because a producer that alarmed on every source would
+# satisfy every positive assertion in the block without this one.
+const UNDER_KEPT_EXPECTED_ROWS := 4
 
 # Somebody else's faction — the owner of the "not ours" control patch. Derived from the player's id so
 # the two can never be written equal, which would silently turn that negative control into a positive.
@@ -208,56 +239,131 @@ func _settle_turn_orb_resolve(answer_turn: int) -> void:
 	h._assert_turn_orb("the resolve gate never lifted in %d steps of %.2fs" % [
 		TURN_ORB_RESOLVE_MAX_STEPS, TURN_ORB_ANIM_STEP_SEC], false)
 
-## The SAME penned herd, UNDER-CREWED (`turn_orb_unworked_rung`): 2 keepers standing where the sim
-## demands 4, so the shed clock has started and `neglect_grace_remaining` is counting down.
+## The SAME penned herd, UNDER-KEPT (`turn_orb_under_kept`): its Husbandry pool did not cover this
+## herd's bill, so the shed clock has started and `neglect_grace_remaining` is counting down. The
+## shortfall comes off `HerdFx.domesticated_herd_fixture`, which stages a pen paid half its rate.
 ##
 ## **IT IS FULLY FED, ON PURPOSE.** A starving pen fires `_starving_pen_attention`'s own row off the very
 ## same herd, and the row COUNT is the negative control for the whole block — two producers on one herd
-## would make it unreadable and would let an over-eager unworked scan hide inside the total. Its tile is
+## would make it unreadable and would let an over-eager scan hide inside the total. Its tile is
 ## the world-herd list's `(68, 15)` (matching the band's hunt assignment) and deliberately not the
-## worked patch's `(66, 10)`, so the two webs' jump targets stay distinguishable.
-func _under_crewed_herd_fixture() -> Dictionary:
+## kept patch's `(66, 10)`, so the two webs' jump targets stay distinguishable.
+func _under_kept_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.domesticated_herd_fixture()
 	fixture["x"] = 68
 	fixture["y"] = 15
-	HerdFx.set_managed_herders(fixture, UNDER_CREWED_HERD_NEEDED)
+	HerdFx.set_managed_herders(fixture, UNDER_KEPT_HERD_KEEPERS)
 	fixture["has_neglect_grace"] = true
 	fixture["neglect_grace_remaining"] = NEGLECT_GRACE_HERD
 	return fixture
 
-## **THE UNWORKED-RUNG CONTROL SET** (`turn_orb_unworked_rung`) — six patches in the wire shape
+## **THE HERD THE POOL COVERS, AND IT IS THE REPORTED DEFECT ITSELF** (`turn_orb_under_kept`). Same
+## rung, same species roster, same fed pen — and its Husbandry share meets its whole bill, so
+## `upkeepShortfall` is zero and the orb must say NOTHING about it.
+##
+## **ITS HUNT PARTY IS SMALLER THAN ITS KEEPER DEMAND, WHICH IS WHAT MAKES IT A CONTROL RATHER THAN A
+## FIXTURE.** The retired test compared the take crew against `upkeepWorkersNeeded`, so this herd —
+## covered, calm, and hunted by two hands where the sim names four keepers — is exactly the shape it
+## fired on every turn. A shortfall test is silent here; the take-crew test is not.
+##
+## It stands on its own tile so the two herds' jumps stay distinguishable, and carries its own id and
+## species so a row about either one names which.
+func _kept_herd_fixture() -> Dictionary:
+	var fixture := HerdFx.domesticated_herd_fixture()
+	fixture["id"] = KEPT_HERD_ID
+	fixture["species"] = KEPT_HERD_LABEL
+	fixture["x"] = 69
+	fixture["y"] = 15
+	HerdFx.set_managed_herders(fixture, UNDER_KEPT_HERD_KEEPERS)
+	# The pool covered it: supplied MEETS demand, so the published shortfall is nothing at all.
+	fixture["upkeep_supplied"] = HerdFx.ANIMAL_PEN_UPKEEP_DEMAND
+	fixture["upkeep_shortfall"] = 0.0
+	# The rung's whole grace window, i.e. what a herd reads on a turn its keeping was met — so its
+	# silence can only come from the shortfall and never from an incidentally absent countdown.
+	fixture["has_neglect_grace"] = true
+	fixture["neglect_grace_remaining"] = NEGLECT_GRACE_FULL
+	return fixture
+
+## **THE UNDER-KEPT CONTROL SET** (`turn_orb_under_kept`) — six patches in the wire shape
 ## `forage_patches_to_array` produces, of which only THREE may raise a row. Every field here is one the
 ## producer actually reads, and each patch differs from the one above it in exactly ONE of them, so a
 ## failure names the condition that broke rather than "the fixture changed":
-##   (70,20) tended · ours · unworked · grace 2      → a row, counting down
-##   (71,20) FIELD  · ours · unworked · grace 0      → a row, the penalty biting NOW
-##   (72,20) tended · ours · unworked · NO grace     → a row with no countdown at all
-##   (73,20) WILD   · ours · unworked                → silent: nothing has been built here to lose
-##   (74,20) tended · a RIVAL's · unworked           → silent: a rival's ground is not our alarm
-##   (66,10) tended · ours · WORKED by the band      → silent: it is being kept
-## The worked control carries the FULL grace window rather than omitting the pair, so its silence can
-## only come from the crew on it — an absent countdown would have silenced it for the wrong reason.
+##   (70,20) tended · ours · short · grace 2 · WORKED  → a row, counting down
+##   (71,20) FIELD  · ours · short · grace 0           → a row, the penalty biting NOW
+##   (72,20) tended · ours · short · NO grace          → a row with no countdown at all
+##   (73,20) WILD   · ours · owes nothing              → silent: nothing has been built here to lose
+##   (74,20) tended · a RIVAL's · short                → silent: a rival's ground is not our alarm
+##   (66,10) tended · ours · COVERED · UNWORKED        → silent: the pool paid its bill
+##
+## **THE LAST TWO OF THOSE ARE THE PAIR THE FIX IS ABOUT.** The retired test asked *is anybody
+## FORAGING this patch*, so (66,10) — kept, and nobody gathering on it — alarmed every turn, while
+## (70,20) — harvested, and its keeping underpaid — was silent. The crew moved onto the short patch
+## and the kept one lost its crew for exactly that reason; the producer reads neither now.
+##
+## The covered control carries the FULL grace window rather than omitting the pair, so its silence can
+## only come from the shortfall — an absent countdown would have silenced it for the wrong reason.
 func _neglect_patches_fixture() -> Array:
 	return [
 		{"x": 70, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"upkeep_demand": PLANT_TENDED_UPKEEP_DEMAND,
+			"upkeep_supplied": PLANT_TENDED_UPKEEP_SUPPLIED,
+			"upkeep_shortfall": PLANT_TENDED_UPKEEP_DEMAND - PLANT_TENDED_UPKEEP_SUPPLIED,
+			"upkeep_workers_needed": PLANT_TENDED_KEEPERS_WANTED,
 			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_SOON},
 		{"x": 71, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": true,
 			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"upkeep_demand": PLANT_FIELD_UPKEEP_DEMAND,
+			"upkeep_supplied": PLANT_FIELD_UPKEEP_SUPPLIED,
+			"upkeep_shortfall": PLANT_FIELD_UPKEEP_DEMAND - PLANT_FIELD_UPKEEP_SUPPLIED,
+			"upkeep_workers_needed": PLANT_FIELD_KEEPERS_WANTED,
 			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_NOW},
 		{"x": 72, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"upkeep_demand": PLANT_TENDED_UPKEEP_DEMAND,
+			"upkeep_supplied": PLANT_TENDED_UPKEEP_SUPPLIED,
+			"upkeep_shortfall": PLANT_TENDED_UPKEEP_DEMAND - PLANT_TENDED_UPKEEP_SUPPLIED,
+			"upkeep_workers_needed": PLANT_TENDED_KEEPERS_WANTED,
 			"has_neglect_grace": false, "neglect_grace_remaining": 0},
+		# A wild patch stands on no rung, so it owes nothing and is asked for nobody — the `0` keeper
+		# count is the sim's own "this source costs nothing to hold", which is the producer's own gate.
 		{"x": 73, "y": 20, "ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
 			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+			"upkeep_workers_needed": 0,
 			"has_neglect_grace": false, "neglect_grace_remaining": 0},
 		{"x": 74, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 			"has_owner": true, "owner": RIVAL_FACTION_ID,
+			"upkeep_demand": PLANT_TENDED_UPKEEP_DEMAND,
+			"upkeep_supplied": PLANT_TENDED_UPKEEP_SUPPLIED,
+			"upkeep_shortfall": PLANT_TENDED_UPKEEP_DEMAND - PLANT_TENDED_UPKEEP_SUPPLIED,
+			"upkeep_workers_needed": PLANT_TENDED_KEEPERS_WANTED,
 			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_NOW},
 		{"x": 66, "y": 10, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"upkeep_demand": PLANT_TENDED_UPKEEP_DEMAND,
+			"upkeep_supplied": PLANT_TENDED_UPKEEP_DEMAND,
+			"upkeep_shortfall": 0.0,
+			"upkeep_workers_needed": PLANT_TENDED_KEEPERS_WANTED,
 			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_FULL},
 	]
+
+## The under-kept detail line the producer must compose for one source, built from the VOCABULARY and
+## the fixture's own numbers rather than from `AttentionController`'s own composer — an expectation
+## made out of the code under test can only agree with itself.
+func _expected_under_kept_detail(role: String, shortfall: float, clause: String) -> String:
+	return HudAttentionVocab.ATTENTION_UNDER_KEPT_DETAIL_FORMAT % [
+		role, DetailFormat.format_work_units(shortfall), clause]
+
+## The CONSEQUENCE half of an under-kept detail — everything after the pool's own bill, which is the
+## only place a countdown can appear. The bill itself carries digits now, so the *renders no countdown
+## at all* claim is made about this tail; it splits on the same separator the row was joined with, so
+## a reworded format cannot leave the two reading different halves.
+func _under_kept_clause(detail: String) -> String:
+	var cut := detail.rfind(HudAttentionVocab.ATTENTION_CLAUSE_SEPARATOR)
+	if cut < 0:
+		return detail
+	return detail.substr(cut + HudAttentionVocab.ATTENTION_CLAUSE_SEPARATOR.length())
 
 ## ---- THE CREW HAND-OFF INGEST (Producer 8) -----------------------------------------------------
 ## The turn the hand-off fixtures are stamped for, and one well inside the sim's retention window
@@ -605,88 +711,128 @@ func run(harness) -> void:
 
 	h._hud.turn_orb.toggle_popover()   # close, so later states render without it
 
-	# State 7d — turn orb, THE UNWORKED-RUNG + UNDER-CREWED producers (issue #442). A built rung nobody
-	# is working is the one loss the WORK BOARD structurally cannot report: that board lists
-	# ASSIGNMENTS, and an unworked patch has none, so it is ABSENT from the board rather than flagged on
-	# it. The orb is the generic "something needs you" hub, so this is where it has to live — and the
-	# URGENCY rides the row's own words, not a standing counter the player would learn to watch.
+	# State 7d — turn orb, THE UNDER-KEPT producers, both webs (issue #442; the TEST corrected against
+	# `docs/plan_standing_upkeep.md` §2.5). A source whose keeping the band's pool did not cover is a
+	# loss the WORK BOARD structurally cannot report: that board lists ASSIGNMENTS, and an under-kept
+	# source may have none, so it is ABSENT from the board rather than flagged on it. The orb is the
+	# generic "something needs you" hub — and the URGENCY rides the row's own words, not a standing
+	# counter the player would learn to watch.
 	#
 	# The fixture is built as a set of CONTROLS, because every claim here is about which sources produce
 	# a row and which do not:
-	#   (70,20) tended, owned, unworked, grace 2   → a row, counting down
-	#   (71,20) FIELD,  owned, unworked, grace 0   → a row, the penalty biting NOW
-	#   (72,20) tended, owned, unworked, NO grace  → a row with NO countdown at all (the bool's whole job)
-	#   (73,20) WILD,   owned, unworked            → NO row: nothing has been built here to lose
-	#   (74,20) tended, NOT ours                   → NO row: a rival's ground is not our alarm
-	#   (66,10) tended, owned, WORKED by the band  → NO row: it is being kept
+	#   (70,20) tended, owned, SHORT, grace 2, WORKED → a row, counting down
+	#   (71,20) FIELD,  owned, SHORT, grace 0         → a row, the penalty biting NOW
+	#   (72,20) tended, owned, SHORT, NO grace        → a row with NO countdown at all (the bool's whole job)
+	#   (73,20) WILD,   owned, owes nothing           → NO row: nothing has been built here to lose
+	#   (74,20) tended, NOT ours, SHORT               → NO row: a rival's ground is not our alarm
+	#   (66,10) tended, owned, COVERED, UNWORKED      → NO row: the pool paid its bill
+	#   (68,15) penned herd, SHORT                    → a row
+	#   (69,15) penned herd, COVERED, hunt party < its keeper demand → NO row
+	#
+	# **THE TWO PAIRS ARE THE POINT.** The retired tests compared a TAKE crew against a KEEPING demand
+	# — "is anybody foraging this patch" on the plant web, the hunt party against `upkeepWorkersNeeded`
+	# on the animal one — so the covered patch and the covered herd both alarmed while the short
+	# harvested patch stayed silent. Restore either test and one half of each pair fails.
 	h._hud.turn_orb.toggle_popover()
 	h._hud.turn_orb.set_attention([])
 	_set_forage_patches(_neglect_patches_fixture())
-	h._set_world_herds([_under_crewed_herd_fixture()])
+	h._set_world_herds([_under_kept_herd_fixture(), _kept_herd_fixture()])
 	h._hud.update_band_alerts([
 		{"faction": 0, "entity": 811, "size": 40, "turns_of_food": 99.0, "activity": "forage",
 			"current_x": 66, "current_y": 10, "idle_workers": 0,
 			"labor_assignments": [
-				# The WORKED control — the same rung on the same kind of ground, kept.
-				{"kind": "forage", "workers": 2, "target_x": 66, "target_y": 10, "floor": 0.5,
+				# The crew stands on the SHORT patch, not the covered one — the half of the plant pair
+				# a take-crew test reads backwards.
+				{"kind": "forage", "workers": UNDER_KEPT_TAKE_CREW, "target_x": 70, "target_y": 20,
+					"floor": 0.5,
 					"improvement": "", "actual_yield": 1.20, "sustainable_yield": 1.20},
-				# The UNDER-CREWED herd: 2 keepers where the sim asks 4.
-				{"kind": "hunt", "workers": UNDER_CREWED_HERD_STAFFED, "fauna_id": "game_deer_07",
+				# The UNDER-KEPT herd, and the attribution the walk needs — a herd carries no owner.
+				{"kind": "hunt", "workers": UNDER_KEPT_TAKE_CREW, "fauna_id": "game_deer_07",
 					"floor": 0.5, "improvement": "",
 					"target_x": 68, "target_y": 15, "actual_yield": 0.60, "sustainable_yield": 0.60},
+				# The COVERED herd, attributed the same way, and hunted by fewer hands than its keeper
+				# demand names — which is precisely the shape the retired test fired on.
+				{"kind": "hunt", "workers": UNDER_KEPT_TAKE_CREW, "fauna_id": KEPT_HERD_ID,
+					"floor": 0.5, "improvement": "",
+					"target_x": 69, "target_y": 15, "actual_yield": 0.55, "sustainable_yield": 0.55},
 			]},
 	])
 	h._hud.turn_orb.open_popover()
 	await h._settle()
-	await h._save("turn_orb_unworked_rung")
+	await h._save("turn_orb_under_kept")
 	var neglect_rows := _orb_rows()
 	for row in neglect_rows:
 		print("ui_preview: orb row  %s | %s" % [String(row["label"]), String(row["detail"])])
 	var lapsing_soon: Variant = _orb_row_with(neglect_rows,
-		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+		HudAttentionVocab.ATTENTION_UNDER_KEPT_LABEL_FORMAT % [
 			HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"], 70, 20])
 	var lapsing_now: Variant = _orb_row_with(neglect_rows,
-		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+		HudAttentionVocab.ATTENTION_UNDER_KEPT_LABEL_FORMAT % [
 			HudComposeVocab.IMPROVEMENT_DONE_LABELS["sow"], 71, 20])
 	var no_grace: Variant = _orb_row_with(neglect_rows,
-		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+		HudAttentionVocab.ATTENTION_UNDER_KEPT_LABEL_FORMAT % [
 			HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"], 72, 20])
-	h._assert_hud("an unworked Tended Patch raises a row naming the rung and the hex",
+	# **THE PLANT PAIR'S POSITIVE HALF.** This patch is being HARVESTED and its keeping is underpaid,
+	# which is the case the retired crew test was silent on.
+	h._assert_hud("a WORKED Tended Patch whose keeping is short raises a row naming the rung and the hex",
 		lapsing_soon != null)
-	# **THE COUNTDOWN, at N > 0.** The number is the wire's own `(grace + 1) - neglect`; the client does
-	# no subtraction, so a row quoting anything else means someone re-derived it.
-	h._assert_hud("…whose urgency is IN THE TEXT — `%s`"
-		% (HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
-			NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]),
-		lapsing_soon != null and String(lapsing_soon["detail"]) == (
-			HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
-				NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]))
+	# **THE COUNTDOWN, at N > 0, BESIDE THE POOL THE ROW SENDS THE PLAYER TO.** The number is the wire's
+	# own `(grace + 1) - neglect` and the bill is its published shortfall; the client does no arithmetic
+	# on either, so a row quoting anything else means someone re-derived it.
+	var soon_detail := _expected_under_kept_detail(HudWorkVocab.ROLE_NAME_AGRICULTURE,
+		PLANT_TENDED_UPKEEP_DEMAND - PLANT_TENDED_UPKEEP_SUPPLIED,
+		HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
+			NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX])
+	h._assert_hud("…whose detail names the Agriculture pool, its bill in WORK, and the countdown — `%s`"
+		% soon_detail,
+		lapsing_soon != null and String(lapsing_soon["detail"]) == soon_detail)
 	# **AND AT ZERO, which is NOT "nothing at risk".** `0` is the wire's "the penalty is biting NOW" —
-	# the most urgent reading there is — so it must never render as a `0`-turn countdown.
+	# the most urgent reading there is — so it must never render as a `0`-turn countdown. The FIELD's own
+	# bill rides it, so a producer quoting one rung's rate on every row fails here rather than above.
+	var now_detail := _expected_under_kept_detail(HudWorkVocab.ROLE_NAME_AGRICULTURE,
+		PLANT_FIELD_UPKEEP_DEMAND - PLANT_FIELD_UPKEEP_SUPPLIED,
+		HudAttentionVocab.ATTENTION_LAPSE_NOW)
 	h._assert_hud("a rung at grace 0 says the ground is reverting NOW, never `in 0 turns`",
-		lapsing_now != null and String(lapsing_now["detail"]) == HudAttentionVocab.ATTENTION_LAPSE_NOW)
+		lapsing_now != null and String(lapsing_now["detail"]) == now_detail)
 	# **AND THE BOOL, which is the whole reason the pair is two fields.** `has_neglect_grace == false`
-	# means nothing is at risk; rendered as a countdown it would collide with the biting-now zero and
-	# read as the loudest row on the card. Asserted by DIGITS, so no phrasing of a number can pass.
+	# means no countdown was published; rendered as one it would collide with the biting-now zero and
+	# read as the loudest row on the card. Asserted by DIGITS over the CONSEQUENCE half alone — the
+	# bill before it is a number, so a whole-line digit test would now fail on a correct row.
 	h._assert_hud("a source with NO neglect grace renders no countdown at all — not even a zero",
-		no_grace != null and not _contains_digit(String(no_grace["detail"])))
-	# THE THREE NEGATIVE CONTROLS, counted rather than searched: a producer that alarmed on everything
-	# would satisfy every positive assertion above.
-	h._assert_hud("a wild patch, a rival's ground and a WORKED rung raise nothing (%d rows, not %d)"
+		no_grace != null and not _contains_digit(_under_kept_clause(String(no_grace["detail"]))))
+	# THE THREE PLANT NEGATIVE CONTROLS, counted rather than searched: a producer that alarmed on
+	# everything would satisfy every positive assertion above. The COVERED patch is the reported defect
+	# — kept by the pool, worked by nobody — and the retired test raised a row on it every turn.
+	h._assert_hud("a wild patch, a rival's ground and a COVERED rung raise nothing (%d rows, not %d)"
 		% [neglect_rows.size(), _neglect_patches_fixture().size()],
-		neglect_rows.size() == UNWORKED_EXPECTED_ROWS)
-	# THE ANIMAL HALF — under-crewed rather than unworked, because a herd carries no owner on the wire
-	# and only the band's own assignment can attribute it.
+		neglect_rows.size() == UNDER_KEPT_EXPECTED_ROWS)
+	# THE ANIMAL HALF — attributed through the band's own assignment, because a herd carries no owner on
+	# the wire.
 	var herd_row: Variant = _orb_row_with(neglect_rows,
-		HudAttentionVocab.ATTENTION_UNDER_CREWED_LABEL_FORMAT % RED_DEER_LABEL)
-	h._assert_hud("a managed herd below its keeper count raises a row naming both counts",
-		herd_row != null and String(herd_row["detail"]) == (
-			HudAttentionVocab.ATTENTION_UNDER_CREWED_DETAIL_FORMAT % [
-				UNDER_CREWED_HERD_STAFFED, UNDER_CREWED_HERD_NEEDED,
-				HudAttentionVocab.ATTENTION_SHED_SOON_FORMAT % [
-					NEGLECT_GRACE_HERD, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]]))
+		HudAttentionVocab.ATTENTION_UNDER_KEPT_HERD_LABEL_FORMAT % RED_DEER_LABEL)
+	var herd_detail := _expected_under_kept_detail(HudWorkVocab.ROLE_NAME_HUSBANDRY,
+		HerdFx.ANIMAL_PEN_UPKEEP_DEMAND - HerdFx.ANIMAL_PEN_UPKEEP_SUPPLIED,
+		HudAttentionVocab.ATTENTION_SHED_SOON_FORMAT % [
+			NEGLECT_GRACE_HERD, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX])
+	h._assert_hud("a herd whose Husbandry pool came up short raises a row naming the pool and the bill",
+		herd_row != null and String(herd_row["detail"]) == herd_detail)
+	# **THE ANIMAL PAIR'S NEGATIVE HALF, AND IT IS THE PLAYTEST REPORT ITSELF.** This herd's pool covers
+	# it (`upkeepShortfall == 0`) while its hunting party is smaller than the keeper count the sim names
+	# — which is the ordinary state of every managed herd, and what the retired take-crew test alarmed
+	# on. The row COUNT above already forbids it; this names WHICH herd, so a failure is legible.
+	h._assert_hud("a herd the pool COVERS raises no row, however small its hunting party",
+		_orb_row_with(neglect_rows,
+			HudAttentionVocab.ATTENTION_UNDER_KEPT_HERD_LABEL_FORMAT % KEPT_HERD_LABEL) == null)
+	# **AND THE ORB ASKS THE SAME QUESTION THE CARD ASKS.** Both surfaces now call
+	# `SourceForecast.is_under_kept`, so the claim is the GATE rather than the wording: asserted over
+	# BOTH herds, since a gate that answered `true` for everything would satisfy the first half alone.
+	h._assert_hud("…and the orb's gate IS the card's gate, on both herds",
+		SourceForecast.is_under_kept(_under_kept_herd_fixture(),
+			HudComposeVocab.BARE_FORECAST_PREFIX)
+		and not SourceForecast.is_under_kept(_kept_herd_fixture(),
+			HudComposeVocab.BARE_FORECAST_PREFIX))
 	# MOST URGENT FIRST — the rows are sorted on the wire's countdown, so the ground reverting NOW sits
-	# above the one with turns left. `ATTENTION_UNWORKED_MAX_ROWS` caps the list, and a cap that kept an
+	# above the one with turns left. `ATTENTION_UNDER_KEPT_MAX_ROWS` caps the list, and a cap that kept an
 	# arbitrary three would be worse than none.
 	# BOTH ROWS PINNED PRESENT FIRST. `find()` answers -1 for a missing row, and -1 is less than every
 	# real index — so the bare comparison PASSES when the biting-now row is absent, which is the one
