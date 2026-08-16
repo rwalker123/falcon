@@ -1555,8 +1555,9 @@ static func build_blocked_reason_text(key: String, kind: String) -> String:
 ## The one turn count that takes the singular row — a build one turn from done.
 const BUILD_TURNS_SINGULAR := 1
 
-## Below this the crew's tools took nothing off the job (no build in flight, or nothing carried that
-## helps), and the gear row is not rendered at all.
+## Below this the pool's kits ADD nothing to what it banks this turn (no build in flight, or nothing
+## carried that serves this web), and the gear row is not rendered at all — a `+0 work a turn`
+## advertises a tool that did nothing.
 const BUILD_GEAR_WORK_NONE := 0.0
 
 ## **A RUNG DECLARED WITH NOBODY ON IT AND NOTHING BUILT YET, AS A ROW VALUE** —

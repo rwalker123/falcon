@@ -206,11 +206,12 @@ pub struct LaborConfigs<'w> {
 /// per-source key (a tile's coordinates, a herd's id). Two sources of equal investment therefore
 /// fund in the same order on a restored world as on the original, which is the whole reason the
 /// tie-break exists.
-/// **WHAT THE BAND'S BUILDERS TOOK OFF A JOB, RESOLVED PER FOOD WEB.**
+/// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER FOOD WEB.**
 ///
 /// One pool, one queue — but **two kits**, because a hoe and a set of hurdles are tools for
 /// different work and `EquipmentStat::BuildWork` is a per-worker *sum*. Without the split a bundle
-/// carrying both would take `8.5 + 8.5` off a plant build, and a single builders kit would have to
+/// carrying both would deliver `0.5 + 0.5` per worker on a plant build, and a single builders kit
+/// would have to
 /// serve every rung on both ladders (which is how the husbandry kit came to be offered for a
 /// Cultivate).
 ///
@@ -386,7 +387,7 @@ impl KeepingGear {
 /// **THE ONE SOURCE THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung it
 /// declared there — the verb term of [`maintenance_shares`]'s eligibility, and nothing else.
 ///
-/// # WHY THE VERB TERM IS NARROWED TO THE FUNDED HEAD
+/// # WHY THE VERB TERM IS NARROWED TO THE FUNDED HEAD, AND THEN TO A HEAD THAT CAN ACTUALLY BANK
 ///
 /// The keeping bill starts at the **first work banked** (`docs/plan_standing_upkeep.md` §2.4/§4.6a),
 /// and the *only* reason the claim side needs a verb at all is that `maintenance_shares` runs before
@@ -398,6 +399,23 @@ impl KeepingGear {
 /// on it** — and, because the default `UpkeepFundMode::Spread` funds in proportion to demand, a band
 /// with two queued-but-unfunded builds would dilute the share of the Field it actually holds. That is
 /// not the fix this seam is for; it is a new way to starve a real holding.
+///
+/// **A head whose own rung GATE refuses banks nothing either**, for as long as the block lasts, so
+/// the same dilution reaches the same real holdings through the funded entry rather than a waiting
+/// one — the state reported from play as a blocked `Tame` starving a band's `husbandry`. The head's
+/// gate is therefore resolved *before* the pool is split ([`head_rung_gate`]) and joins this test.
+/// It cuts **only a meter at zero**: a blocked head that has already banked work is answered for by
+/// its own progress (`forage::patch_build_verb` / `fauna::herd_build_verb` honour a declaration only
+/// at a zero meter), so it goes on claiming exactly as it did — which is right, because the pool
+/// still owes for the work standing on that ground.
+///
+/// **The invariant this preserves is `claim-side verb ⊆ payment-side verb`.** The payment side reads
+/// *any* queue entry's declaration and applies no gate; every term added here can only remove
+/// sources from the claim, so the two seams stay a subset and cannot disagree in the direction that
+/// caused the first-turn bug. What a further narrowing risks instead is refusing a share on a turn
+/// the build really does bank — which is why the gate is resolved fresh from this turn's ground
+/// rather than read off last turn's published `build_blocked_reason` (the decay pass clears that at
+/// the top of every turn, so at this point in the turn it is always [`BuildGate::Open`]).
 ///
 /// `None` when the queue is empty, when the head declares a **ring** (which fills no rung meter and
 /// so names no verb), or when nobody is on the `builders` row — a declaration with no hands behind it
@@ -418,10 +436,17 @@ impl SourceBankingFirstWork {
 }
 
 /// Resolve [`SourceBankingFirstWork`] for a band — the head of its queue, if that entry declares a
-/// rung and the band has builders to raise it. It mirrors the assignment loop's own `build_workers`
-/// rule (`is_queue_head && declared.is_some()`, else nobody), because it is asking the same question
-/// one stage earlier.
-fn source_banking_its_first_work(allocation: &LaborAllocation) -> SourceBankingFirstWork {
+/// rung, the band has builders to raise it, **and that rung's own gate holds**. The first two mirror
+/// the assignment loop's own `build_workers` rule (`is_queue_head && declared.is_some()`, else
+/// nobody); the third mirrors [`RungDef::build_accrual`]'s `eligible`, because both are asking the
+/// same question — *will a work unit land on this ground this turn* — one stage earlier.
+///
+/// `head_gate` is [`head_rung_gate`] at the call site, where the ledger, the land and the configs
+/// are all in hand.
+fn source_banking_its_first_work(
+    allocation: &LaborAllocation,
+    head_gate: impl FnOnce(&BuildSource, Improvement) -> BuildGate,
+) -> SourceBankingFirstWork {
     if allocation.workers_on(&LaborTarget::Builders) == NO_CREW_ON_THIS_ACTIVITY {
         return SourceBankingFirstWork { source: None };
     }
@@ -431,12 +456,247 @@ fn source_banking_its_first_work(allocation: &LaborAllocation) -> SourceBankingF
         .and_then(|entry| match entry.declared {
             BuildJob::Rung(improvement) => Some((entry.source.clone(), improvement)),
             BuildJob::ExtendPen => None,
-        });
+        })
+        .filter(|(source, improvement)| head_gate(source, *improvement).holds());
     SourceBankingFirstWork { source }
 }
 
+/// **THE `plant:tended` GATE**, stated once — the terms of the `Cultivate` arm's `eligible`, in the
+/// order their refusals are published in.
+///
+/// The four rung gates are functions rather than inline `first_refusal` lists because two callers
+/// ask each of them: the arm that acts on the verdict, and [`head_rung_gate`], which asks a stage
+/// earlier so the keeping pool does not fund a head that will bank nothing. A second inline copy of
+/// the term list is exactly how the two would come to publish different causes for one refusal.
+fn plant_tended_gate(knows_rung: bool, working_the_patch: bool, has_crop: bool) -> BuildGate {
+    BuildGate::first_refusal(&[
+        (knows_rung, BuildGate::Knowledge),
+        (working_the_patch, BuildGate::Escapement),
+        // **Nothing to tend if nothing here climbs.** A patch with no committed plant is one whose
+        // basket the tended rung's `cultivation_ceiling` refuses outright — the "not every plant
+        // climbs" ruling reaching the build meter.
+        (has_crop, BuildGate::NoCrop),
+    ])
+}
+
+/// **THE `plant:field` GATE** — [`plant_tended_gate`]'s twin one rung up. `declared_sow` is the
+/// dead-entry term (`BuildGate::Undeclared`): rung 3 is the one rung whose arm is entered on the
+/// *declaration* rather than on a meter, so a stale entry has to be able to say so.
+fn plant_field_gate(
+    declared_sow: bool,
+    knows_rung: bool,
+    land_admits: bool,
+    has_crop: bool,
+) -> BuildGate {
+    BuildGate::first_refusal(&[
+        (declared_sow, BuildGate::Undeclared),
+        (knows_rung, BuildGate::Knowledge),
+        (land_admits, BuildGate::Site),
+        // A Field may only be placed on ground that grows something sowable — the species half of
+        // "the land must take seed", beside the site half above.
+        (has_crop, BuildGate::NoCrop),
+    ])
+}
+
+/// **THE `animal:pastoral` GATE** — the `Tame` arm's `eligible`. Ownership is deliberately absent:
+/// `Herd::accrue_domestication` owns the `owner is None || owner == faction` rule, exactly as
+/// `accrue_cultivation` does on the plant side.
+fn animal_pastoral_gate(
+    knows_rung: bool,
+    can_domesticate: bool,
+    working_the_herd: bool,
+) -> BuildGate {
+    BuildGate::first_refusal(&[
+        (knows_rung, BuildGate::Knowledge),
+        (can_domesticate, BuildGate::SpeciesCeiling),
+        (working_the_herd, BuildGate::Escapement),
+    ])
+}
+
+/// **THE `animal:pen` GATE** — the `Corral` arm's `eligible`. It carries **no work predicate**, for
+/// `accrue_field`'s reason: the term replaced a rung's `Thriving` gate and rung 3 never had one on
+/// either web, because a fence goes up around a flock already drawn down to its keeper's own floor.
+fn animal_pen_gate(
+    knows_rung: bool,
+    can_pen: bool,
+    is_domesticated: bool,
+    owned_by_faction: bool,
+) -> BuildGate {
+    BuildGate::first_refusal(&[
+        (knows_rung, BuildGate::Knowledge),
+        (can_pen, BuildGate::SpeciesCeiling),
+        (is_domesticated, BuildGate::RungBelow),
+        (owned_by_faction, BuildGate::OwnedByOther),
+    ])
+}
+
+/// **DOES THE HEAD OF THIS BAND'S QUEUE ACTUALLY CLEAR ITS OWN RUNG'S GATE THIS TURN?** — asked
+/// before the keeping pool is split, so a build the ground refuses cannot claim a share of it.
+///
+/// # It composes the ARM'S OWN gate, not a second reading of it
+///
+/// Every verdict comes back through [`plant_tended_gate`] / [`plant_field_gate`] /
+/// [`animal_pastoral_gate`] / [`animal_pen_gate`], the same four functions each arm's `eligible` is
+/// read from, and every term is resolved through the seam that arm resolves it through — the rung's
+/// own `unlock_discovery_id`, [`crew_is_working_the_source`] over the escapement room,
+/// `forage::resolve_committed_species` against `forage::tile_flora_composition`,
+/// `forage::rung_site_refusal`, and the herd's own ceiling/ownership predicates.
+///
+/// **The terms are read PRE-TAKE and PRE-ACCRUAL, which is exactly where the arm reads them.**
+/// `biomass` is the same number the arm's `biomass_before` will be (a band holds at most one row per
+/// source, so nothing between here and there moves it), and the crop term asks
+/// `patch.species.is_some() || the selection resolves` because `ForagePatch::commit_species` is
+/// idempotent — the arm commits before it composes, so *"already committed, or committable"* is the
+/// same bool it will read.
+///
+/// [`BuildGate::Unworked`] where the source is not on the ground at all: a gate nobody can judge is
+/// not one that holds, and `maintenance_shares` skips such a row in any case.
+#[allow(clippy::too_many_arguments)] // one source, one rung, and every seam its gate is judged by
+fn head_rung_gate(
+    source: &BuildSource,
+    improvement: Improvement,
+    allocation: &LaborAllocation,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    faction: FactionId,
+    discovery: &DiscoveryProgressLedger,
+    knowledge_threshold: f32,
+    ladder: &LadderConfig,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    flora: &crate::flora_config::FloraConfig,
+    food_sites: &FoodSiteRegistry,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    map_seed: u64,
+    wrap_horizontal: bool,
+) -> BuildGate {
+    let Some(target) = allocation
+        .assignments
+        .iter()
+        .map(|assignment| &assignment.target)
+        .find(|target| BuildSource::of(target).is_some_and(|held| &held == source))
+    else {
+        // An entry with no row is retired by `prune_build_queue` this same turn; until then it is a
+        // declaration nobody is standing behind.
+        return BuildGate::Unworked;
+    };
+    let knows_rung = |rung: &RungDef| {
+        rung.unlock_discovery_id()
+            .is_none_or(|knowledge| knows(discovery, faction, knowledge, knowledge_threshold))
+    };
+    match (source, target) {
+        (BuildSource::Patch(tile), LaborTarget::Forage { floor, species, .. }) => {
+            let ground = tile_registry
+                .index(tile.x, tile.y)
+                .and_then(|entity| tiles.get(entity).ok());
+            let Some(ground) = ground else {
+                return BuildGate::Unworked;
+            };
+            // The tile's **realized** basket — what is growing here — the same seam the arm commits
+            // against, so a selection the arm would accept is one this gate accepts.
+            let composition = tile_flora_composition(flora, &labor.forage, ground, map_seed);
+            match improvement {
+                Improvement::Cultivate => {
+                    let Some(patch) = forage_registry.patch(*tile) else {
+                        return BuildGate::Unworked;
+                    };
+                    let rung = ladder.rung(RungKey::PlantTended);
+                    let working_the_patch = crew_is_working_the_source(forage_escapement_ceiling(
+                        *floor,
+                        patch.biomass,
+                        patch.carrying_capacity,
+                    ));
+                    let has_crop = patch.species.is_some()
+                        || resolve_committed_species(
+                            species.as_deref(),
+                            &composition,
+                            flora,
+                            RungKey::PlantTended,
+                        )
+                        .is_ok();
+                    plant_tended_gate(knows_rung(rung), working_the_patch, has_crop)
+                }
+                Improvement::Sow => {
+                    let rung = ladder.rung(RungKey::PlantField);
+                    let fresh_water = tile_is_fresh_watered(
+                        ground,
+                        tile_registry.width,
+                        tile_registry.height,
+                        wrap_horizontal,
+                        |coord| {
+                            tile_registry
+                                .index(coord.x, coord.y)
+                                .and_then(|entity| tiles.get(entity).ok())
+                                .map(|neighbor| neighbor.terrain_tags)
+                        },
+                    );
+                    let land_admits = rung_site_refusal(
+                        rung,
+                        ground,
+                        &labor.forage,
+                        food_sites.is_site(ground.position),
+                        fresh_water,
+                    )
+                    .is_none();
+                    // §10 scoping, exactly as the arm scopes it: a Sow that **upgrades** an existing
+                    // patch commits against the realized basket, one that **creates** a patch on bare
+                    // ground has no realized basket and reads the affinity roster.
+                    let basket = if forage_registry.patch(*tile).is_none() {
+                        Cow::Borrowed(flora.composition(ground.resource_terrain()))
+                    } else {
+                        Cow::Borrowed(composition.as_ref())
+                    };
+                    let has_crop = resolve_committed_species(
+                        species.as_deref(),
+                        &basket,
+                        flora,
+                        RungKey::PlantField,
+                    )
+                    .is_ok();
+                    plant_field_gate(true, knows_rung(rung), land_admits, has_crop)
+                }
+                // A rung the animal web owns can never stand on ground — a dead entry.
+                Improvement::Tame | Improvement::Corral => BuildGate::Undeclared,
+            }
+        }
+        (BuildSource::Herd(id), LaborTarget::Hunt { floor, .. }) => {
+            let Some(herd) = herds.find(id) else {
+                return BuildGate::Unworked;
+            };
+            match improvement {
+                Improvement::Tame => {
+                    let rung = ladder.rung(RungKey::AnimalPastoral);
+                    let working_the_herd =
+                        crew_is_working_the_source(fauna::hunt_escapement_ceiling(
+                            *floor,
+                            herd.biomass,
+                            herd_capacity(herd, fauna),
+                        ));
+                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), working_the_herd)
+                }
+                Improvement::Corral => {
+                    let rung = ladder.rung(RungKey::AnimalPen);
+                    animal_pen_gate(
+                        knows_rung(rung),
+                        herd.can_pen(),
+                        herd.is_domesticated(),
+                        herd.owner == Some(faction),
+                    )
+                }
+                // A rung the plant web owns can never stand on a herd — a dead entry.
+                Improvement::Cultivate | Improvement::Sow => BuildGate::Undeclared,
+            }
+        }
+        // A queue entry always names a Forage tile or a Hunt herd; a band-wide role holds neither.
+        _ => BuildGate::Unworked,
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // one source, one rung, and every seam its gate is judged by
 fn maintenance_shares(
     allocation: &LaborAllocation,
+    banking: &SourceBankingFirstWork,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
@@ -455,7 +715,6 @@ fn maintenance_shares(
     let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
     let mut plant: Vec<Claim> = Vec::new();
     let mut animal: Vec<Claim> = Vec::new();
-    let banking = source_banking_its_first_work(allocation);
     for (index, assignment) in allocation.assignments.iter().enumerate() {
         // **THE TAKE CREW IS NOT A TERM HERE, and that separation is the point** (§2.2). A row's
         // eligibility is the *ground's* answer — *does this source have a meter carrying work* —
@@ -740,8 +999,34 @@ pub fn advance_labor_allocation(
         // **THE KEEPING POOLS' OWN GEAR, ONE READING PER FOOD WEB** — derived off the roster, since
         // no picker names one (see [`KeepingGear`]).
         let keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
+        // **THE FUNDED HEAD, AND ONLY IF ITS OWN GATE HOLDS** — the claim side's verb term
+        // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
+        // stands there, so letting it claim would dilute the share of everything the band really
+        // holds under the default `Spread`.
+        let banking = source_banking_its_first_work(&allocation, |source, improvement| {
+            head_rung_gate(
+                source,
+                improvement,
+                &allocation,
+                &forage_registry,
+                &registry,
+                faction,
+                &discovery,
+                knowledge_threshold,
+                &ladder,
+                &fauna,
+                &labor,
+                &flora,
+                &food_sites,
+                &tile_registry,
+                &tiles,
+                map_seed,
+                wrap_horizontal,
+            )
+        });
         let upkeep_shares = maintenance_shares(
             &allocation,
+            &banking,
             &forage_registry,
             &registry,
             &fauna,
@@ -1078,18 +1363,12 @@ pub fn advance_labor_allocation(
                         })
                     };
                     // Stated as terms rather than a `&&` chain, so the refusing conjunct reaches
-                    // the wire as a blocked head's cause — see the Cultivate arm.
-                    let sow_gate = BuildGate::first_refusal(&[
-                        (declared == Some(Improvement::Sow), BuildGate::Undeclared),
-                        (
-                            field_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                                knows(&discovery, faction, knowledge, knowledge_threshold)
-                            }),
-                            BuildGate::Knowledge,
-                        ),
-                        (land_admits(field_rung), BuildGate::Site),
-                    ]);
-                    let sow_permitted = sow_gate.holds();
+                    // the wire as a blocked head's cause — see the Cultivate arm. The **crop** term
+                    // joins them below, once the selection has been resolved.
+                    let sow_knows_rung = field_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                        knows(&discovery, faction, knowledge, knowledge_threshold)
+                    });
+                    let sow_land_admits = land_admits(field_rung);
                     // **WHICH NAMED PLANT this ground would be committed to** (Flora Roster S1,
                     // `docs/plan_flora_roster.md` §4.3). Resolved through the *same*
                     // `resolve_committed_species` seam the `assign_labor` rejection reads, so a
@@ -1148,10 +1427,12 @@ pub fn advance_labor_allocation(
                     // A Field may only be placed on ground that grows something sowable — the
                     // species half of "the land must take seed", beside the site half above. It joins
                     // the gate rather than the bool so a blocked Sow can name it.
-                    let sow_gate = BuildGate::first_refusal(&[
-                        (sow_permitted, sow_gate),
-                        (committing.is_some(), BuildGate::NoCrop),
-                    ]);
+                    let sow_gate = plant_field_gate(
+                        declared == Some(Improvement::Sow),
+                        sow_knows_rung,
+                        sow_land_admits,
+                        committing.is_some(),
+                    );
                     let sow_permitted = sow_gate.holds();
                     // **`Sow` PLACES the source** — the one rung that needs no *patch* below it,
                     // unlike a herd you never tamed. (§2 used to read "no source below it: seed
@@ -1605,21 +1886,16 @@ pub fn advance_labor_allocation(
                         // **Written as its TERMS, not as a `&&` chain** — [`BuildGate`] carries
                         // which conjunct refused all the way to the wire, so a blocked head can say
                         // why. `eligible` is that value read as a bool, so the gate the sim acts on
-                        // and the cause it publishes are one expression.
-                        let gate = BuildGate::first_refusal(&[
-                            (
-                                tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                                    knows(&discovery, faction, knowledge, knowledge_threshold)
-                                }),
-                                BuildGate::Knowledge,
-                            ),
-                            (working_the_patch, BuildGate::Escapement),
-                            // **Nothing to tend if nothing here climbs.** A patch with no committed
-                            // plant is one whose basket the tended rung's `cultivation_ceiling`
-                            // refuses outright — the "not every plant climbs" ruling reaching the
-                            // build meter.
-                            (patch.species.is_some(), BuildGate::NoCrop),
-                        ]);
+                        // and the cause it publishes are one expression. The term list itself lives
+                        // in [`plant_tended_gate`], because [`head_rung_gate`] asks the same
+                        // question a stage earlier and two copies would publish two causes.
+                        let gate = plant_tended_gate(
+                            tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                knows(&discovery, faction, knowledge, knowledge_threshold)
+                            }),
+                            working_the_patch,
+                            patch.species.is_some(),
+                        );
                         let eligible = gate.holds();
                         // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
                         // rung's verb and the gates hold); the patch owns its meter and the
@@ -2624,16 +2900,13 @@ pub fn advance_labor_allocation(
                         // reaches the wire — see the Cultivate arm. **`Escapement` is the one the
                         // playtest sat on**: the hunters draw the flock to their floor, the unmet
                         // keeping suppresses its regrowth, and nothing on the build line reopens it.
-                        let gate = BuildGate::first_refusal(&[
-                            (
-                                pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                                    knows(&discovery, faction, knowledge, knowledge_threshold)
-                                }),
-                                BuildGate::Knowledge,
-                            ),
-                            (herd.can_domesticate(), BuildGate::SpeciesCeiling),
-                            (working_the_herd, BuildGate::Escapement),
-                        ]);
+                        let gate = animal_pastoral_gate(
+                            pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                knows(&discovery, faction, knowledge, knowledge_threshold)
+                            }),
+                            herd.can_domesticate(),
+                            working_the_herd,
+                        );
                         let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes, and it
                         // is **species-blind**: the crew banks `workers × PER_WORKER_OUTPUT ×
@@ -2744,17 +3017,14 @@ pub fn advance_labor_allocation(
                         // so this is belt and braces), the herd has climbed the rung below, and the
                         // faction owns it.
                         // Stated as terms rather than a `&&` chain — see the Cultivate arm.
-                        let gate = BuildGate::first_refusal(&[
-                            (
-                                pen_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                                    knows(&discovery, faction, knowledge, knowledge_threshold)
-                                }),
-                                BuildGate::Knowledge,
-                            ),
-                            (herd.can_pen(), BuildGate::SpeciesCeiling),
-                            (herd.is_domesticated(), BuildGate::RungBelow),
-                            (herd.owner == Some(faction), BuildGate::OwnedByOther),
-                        ]);
+                        let gate = animal_pen_gate(
+                            pen_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                knows(&discovery, faction, knowledge, knowledge_threshold)
+                            }),
+                            herd.can_pen(),
+                            herd.is_domesticated(),
+                            herd.owner == Some(faction),
+                        );
                         let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes.
                         // Penning is a flat build for every species — only *taming* varies (slice
@@ -4908,11 +5178,11 @@ mod labor_yield_tests {
             target: LaborTarget::Builders,
             // ⛔ **THE HARNESS'S BUILDERS GO OUT BARE, AND THAT IS AN ISOLATION RATHER THAN A
             // DEFAULT.** An absent kit means *derive per entry*, and the roster's answer — `tillage`
-            // on a plant build, `hurdling` on an animal one — takes `8.5` off the job **per covered
-            // worker**. A start-stocked band holds `ceil(workers × start_stock_fraction)` of each
-            // tool, so at [`WORKERS`] hands the whole pool is armed and `10 × 8.5 = 85` pays off
-            // every shipped rung outright: every pace fixture below would become a one-turn build
-            // and *"completion is a transition"* would have no before.
+            // on a plant build, `hurdling` on an animal one — adds `+0.5` work **per covered worker
+            // per turn** on top of their own hands. A start-stocked band holds
+            // `ceil(workers × start_stock_fraction)` of each tool, so at [`WORKERS`] hands the whole
+            // pool is armed and delivers `10 × 1.5 = 15` a turn against `10`: every pace fixture
+            // below would run half again as fast as the number it asserts.
             //
             // Naming `none` holds the gear axis at its identity so these fixtures measure the
             // *meter*, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
@@ -7949,8 +8219,8 @@ mod labor_yield_tests {
     const HURDLES: &str = "hurdles";
 
     /// **The PLANT web's builders kit and its tool.** Named so an animal-build fixture can assert
-    /// that neither is touched: a hoe brought to a `Tame` takes nothing off the job, so it must be
-    /// charged nothing.
+    /// that neither is touched: a hoe brought to a `Tame` adds nothing to what its builders
+    /// deliver, so it must be charged nothing.
     const TILLAGE_KIT: &str = "tillage";
     const HOES: &str = "hoes";
 
@@ -8133,12 +8403,12 @@ mod labor_yield_tests {
             geared.gear_work
         );
 
-        // (2) What it moves is the JOB — and **the partly-equipped-party rule decides how much**.
-        // `start_stocked` gives the band exactly ONE set of hurdles, so one of the ten keepers is
-        // equipped and nine are bare: the crew takes **one worker's worth** off the job, not ten.
-        // That is the whole reason the cost-side form can be coverage-weighted at all — it is a
-        // SUM, so the nine bare hands add zero, where averaging the retired multiplier over them
-        // diluted it to ×1.05 and made every extra keeper *slow the build down*.
+        // (2) What it moves is the CREW'S OUTPUT — and **the partly-equipped-party rule decides how
+        // much**. `start_stocked` gives the band exactly ONE set of hurdles, so one of the ten
+        // keepers is equipped and nine are bare: the pool delivers **one worker's worth** of gear
+        // work, not ten. That is the whole reason the per-worker form can be coverage-weighted at
+        // all — it is a SUM, so the nine bare hands add zero, where averaging the retired multiplier
+        // over them diluted it to ×1.05 and made every extra keeper *slow the build down*.
         const HURDLE_SETS_A_SPAWN_STOCKS: f32 = 1.0;
         assert!(
             (geared.gear_work - HURDLE_SETS_A_SPAWN_STOCKS * declared).abs() < 1e-4,

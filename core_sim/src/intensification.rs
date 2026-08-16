@@ -3252,8 +3252,10 @@ mod tests {
         assert_eq!(
             build_turns_remaining(-1.0, RUNG_UNSTARTED, 2.0),
             Some(BUILD_FINISHES_IN_ONE_TURN),
-            "and so does one the crew's gear paid off outright — the bar is below zero, which is an \
-             ANSWER"
+            "and so does a bar already below zero, which is an ANSWER rather than a stall. **No \
+             KIT can reach this state since §4.8** — gear is an addend on the pool's supply, not a \
+             subtraction from the job — so what it guards is a caller handing this seam a negative \
+             remainder, never an over-geared crew"
         );
         assert_eq!(
             build_turns_remaining(COST, 10.0, 0.0),

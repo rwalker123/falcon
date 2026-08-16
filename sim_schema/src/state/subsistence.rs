@@ -570,19 +570,22 @@ pub struct HerdTelemetryState {
     /// one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
-    /// **What the crew's TOOLS took off this build**, in work units — the `t` in
-    /// `effective_cost = work_cost − t`
-    /// (`docs/plan_unit_costed_work.md` §6).
+    /// **What the pool's TOOLS add to what it delivers this turn**, in work units per turn — the
+    /// `gear(w)` of the closed form under [`Self::build_work_per_worker_turn`], resolved at the crew
+    /// that worked this source (`docs/plan_standing_upkeep.md` §4.8).
     ///
-    /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
-    /// stay the **raw** job and this is quoted beside them rather than folded in — a readout says
-    /// *"your hoes: −8 work"* against a price that does not move under it. A multiplier on the crew
-    /// would cancel the cost and save the same *percentage* of turns on a garden and on a farm alike.
+    /// ⛔ **A TOOL'S HELP LANDS ON THE CREW'S OUTPUT, NOT ON THE JOB, AND THIS FIELD CHANGED UNITS
+    /// WITH IT.** It used to be the `t` in `effective_cost = work_cost − t`
+    /// (`docs/plan_unit_costed_work.md` §6) — a one-time lump struck off the target, however long the
+    /// job ran. `work_cost` is now the whole pile with tools and without, and this is a **rate** that
+    /// raises how fast the pile is worked off: a readout says *"your hoes: +1.0 work/turn"* beside a
+    /// price that does not move, where it used to say *"−17 work"* off the price itself. Netting this
+    /// out of `work_cost` double-counts the kit.
     ///
-    /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
-    /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
-    /// helps — which, since each web got its own builders kit, means a pool sent out bare or one
-    /// carrying the **other** web's tool. Appended (append-only).
+    /// **Per equipped worker, summed**: a worker holding a tool delivers its worth on top of their
+    /// own hands, a worker without one delivers only their hands. `0` = no build in flight, or the
+    /// crew carries nothing that helps — which, since each web got its own builders kit, means a pool
+    /// sent out bare or one carrying the **other** web's tool. Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
     /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
@@ -601,9 +604,15 @@ pub struct HerdTelemetryState {
     ///
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
-    /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn − meter_rot_per_turn))
+    /// turns(w) = ceil((work_cost − work_done)
+    ///                 / (w × build_work_per_worker_turn + gear(w) − meter_rot_per_turn))
     /// ```
+    ///
+    /// ⛔ **`gear(w)` IS IN THE DIVISOR, and it moved there in `docs/plan_standing_upkeep.md` §4.8.**
+    /// It used to sit in the numerator (`work_cost − work_done − gear(w)`), which granted the kit's
+    /// help as a one-time lump against the target; `build_work_per_worker` is extra work delivered
+    /// **per worker per turn** now, so it is an addend on the supply and the numerator is the job,
+    /// whole. A consumer still subtracting it under-quotes every geared pool.
     ///
     /// **`meter_rot_per_turn` IS THE DIVISOR'S SECOND TERM, and `*_upkeep_demand` IS NOT**
     /// (`docs/plan_standing_upkeep.md` §4.6a). The maintenance rate is owed to the band's **keeping
@@ -1056,19 +1065,22 @@ pub struct ForagePatchState {
     /// one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
     pub build_turns_remaining: i32,
-    /// **What the crew's TOOLS took off this build**, in work units — the `t` in
-    /// `effective_cost = work_cost − t`
-    /// (`docs/plan_unit_costed_work.md` §6).
+    /// **What the pool's TOOLS add to what it delivers this turn**, in work units per turn — the
+    /// `gear(w)` of the closed form under [`Self::build_work_per_worker_turn`], resolved at the crew
+    /// that worked this source (`docs/plan_standing_upkeep.md` §4.8).
     ///
-    /// **A tool's help lands on the JOB, not on the crew's output**, so `work_done`/`work_cost` above
-    /// stay the **raw** job and this is quoted beside them rather than folded in — a readout says
-    /// *"your hoes: −8 work"* against a price that does not move under it. A multiplier on the crew
-    /// would cancel the cost and save the same *percentage* of turns on a garden and on a farm alike.
+    /// ⛔ **A TOOL'S HELP LANDS ON THE CREW'S OUTPUT, NOT ON THE JOB, AND THIS FIELD CHANGED UNITS
+    /// WITH IT.** It used to be the `t` in `effective_cost = work_cost − t`
+    /// (`docs/plan_unit_costed_work.md` §6) — a one-time lump struck off the target, however long the
+    /// job ran. `work_cost` is now the whole pile with tools and without, and this is a **rate** that
+    /// raises how fast the pile is worked off: a readout says *"your hoes: +1.0 work/turn"* beside a
+    /// price that does not move, where it used to say *"−17 work"* off the price itself. Netting this
+    /// out of `work_cost` double-counts the kit.
     ///
-    /// **Per equipped worker, summed**: a worker holding a tool contributes its worth, a worker
-    /// without one contributes nothing. `0` = no build in flight, or the crew carries nothing that
-    /// helps — which, since each web got its own builders kit, means a pool sent out bare or one
-    /// carrying the **other** web's tool. Appended (append-only).
+    /// **Per equipped worker, summed**: a worker holding a tool delivers its worth on top of their
+    /// own hands, a worker without one delivers only their hands. `0` = no build in flight, or the
+    /// crew carries nothing that helps — which, since each web got its own builders kit, means a pool
+    /// sent out bare or one carrying the **other** web's tool. Appended (append-only).
     #[serde(default)]
     pub build_work_from_gear: f32,
     /// **The work ONE worker banks on this source per turn at the food peak**, before the floor
@@ -1087,9 +1099,15 @@ pub struct ForagePatchState {
     ///
     /// ```text
     /// gear(w)  = min(w, build_work_saturating_crew) × build_work_per_worker
-    /// turns(w) = ceil((work_cost − work_done − gear(w))
-    ///                 / (w × build_work_per_worker_turn − meter_rot_per_turn))
+    /// turns(w) = ceil((work_cost − work_done)
+    ///                 / (w × build_work_per_worker_turn + gear(w) − meter_rot_per_turn))
     /// ```
+    ///
+    /// ⛔ **`gear(w)` IS IN THE DIVISOR, and it moved there in `docs/plan_standing_upkeep.md` §4.8.**
+    /// It used to sit in the numerator (`work_cost − work_done − gear(w)`), which granted the kit's
+    /// help as a one-time lump against the target; `build_work_per_worker` is extra work delivered
+    /// **per worker per turn** now, so it is an addend on the supply and the numerator is the job,
+    /// whole. A consumer still subtracting it under-quotes every geared pool.
     ///
     /// **`meter_rot_per_turn` IS THE DIVISOR'S SECOND TERM, and `*_upkeep_demand` IS NOT**
     /// (`docs/plan_standing_upkeep.md` §4.6a). The maintenance rate is owed to the band's **keeping
@@ -1471,7 +1489,8 @@ pub struct KitOptionState {
     pub item_ids: Vec<String>,
     /// **RETIRED — it publishes [`crate::RETIRED_BUILD_RATE`] and nothing else.** It carried a
     /// *multiplier* on the crew's build output; the stat is now an **additive per-worker contribution
-    /// off the job** ([`Self::build_work_per_worker`] beside it). The slot is held at its neutral
+    /// per equipped worker per turn** ([`Self::build_work_per_worker`] beside it). The slot is held
+    /// at its neutral
     /// rather than removed because the FlatBuffers `(deprecated)` keyword drops the accessor and a
     /// client still calls it.
     ///
@@ -1485,20 +1504,25 @@ pub struct KitOptionState {
     /// [`Self::build_work_per_worker`].
     #[serde(default = "multiplier_neutral")]
     pub build_rate: f32,
-    /// **The work units ONE EQUIPPED WORKER carrying this kit takes off a build's cost**
-    /// (`docs/plan_unit_costed_work.md` §6). Neutral `0.0`; the handling gear ships `8.5`.
+    /// **The extra work ONE EQUIPPED WORKER carrying this kit delivers per turn on a build**
+    /// (`docs/plan_standing_upkeep.md` §4.8). Neutral `0.0`; **hoes are `+0.5` per worker per turn on
+    /// the plant web and hurdles `+0.5` on the animal one**.
     ///
     /// **It supersedes [`Self::build_rate`]**, which is retired and now publishes only its neutral:
-    /// that stat multiplied the *crew's output*, and a multiplier cancels the job's cost, so it saved
-    /// the same *percentage* of turns on a garden and on a farm alike. This is subtracted from the
-    /// job, so the job's own size decides what it is worth — and it is **summed over the equipped
+    /// that stat multiplied the *crew's output* and this is an addend on the same account, which is
+    /// what lets a tool state its worth in the game's own work unit. It is **summed over the equipped
     /// workers**, never averaged over the crew.
+    ///
+    /// ⛔ **THE UNITS CHANGED.** It shipped as *"work units taken **off the job**, summed over the
+    /// crew"* at `8.5` (`docs/plan_unit_costed_work.md` §6); a job's work requirement never changes
+    /// now, so `0.5` is a 50% uplift on what each builder delivers and not half a work unit off a
+    /// 50-unit job. The `8.5 -> 0.5` is an exact unit conversion, not a retune.
     #[serde(default)]
     pub build_work_per_worker: f32,
     /// **WHICH FOOD WEB [`Self::build_work_per_worker`] IS FOR** — `"plant"` or `"animal"`, and
     /// **`""`** when this kit carries no build tool at all.
     ///
-    /// **The pair is one reading.** A hoe takes work off a Cultivate and *nothing* off a `Tame`, so
+    /// **The pair is one reading.** A hoe adds work to a Cultivate and *nothing* to a `Tame`, so
     /// a picker must compare this against the branch of the build it is offering the kit for and
     /// grey the kit where they disagree — the same discipline
     /// [`Self::attack_max_body_mass`] imposes on [`Self::attack`], and for the same reason: the

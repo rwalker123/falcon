@@ -1034,8 +1034,11 @@ const BUILD_WORK_PREDICATE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_T
 const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 
 ## **THE GEAR TERM'S TWO HALVES, keyed on the dict a caller hands `build_turns_at`** — the work units
-## one equipped worker takes off a build, and how many of the band's workers this kit can actually
-## equip for one. `gear(w) = min(w, saturating crew) × per-worker worth`: coverage arms a PREFIX of
+## one equipped worker ADDS to what it delivers per turn (flint hoes, +0.5 on a plant build), and how
+## many of the band's workers this kit can actually equip for one. It is a term of the SUPPLY and
+## never a discount off the pile (`docs/plan_standing_upkeep.md` §4.8 — `build_turns_at` states the
+## form and is the one place this is evaluated).
+## `gear(w) = min(w, saturating crew) × per-worker worth`: coverage arms a PREFIX of
 ## the party, so the contribution rises with the crew until every unit is in somebody's hands and
 ## then stops, and the `min` is what makes the form exact rather than approximate.
 ##

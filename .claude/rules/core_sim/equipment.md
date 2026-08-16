@@ -33,8 +33,8 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | **`sled`** — travois, drag harness | `hunt_carry` **40** (equipped, on its **tier**) | per **biomass hauled home from a hunt** |
 | **`baskets`** | `forage_carry` **8** (equipped, on its **tier**) | per **biomass gathered** |
 | **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **landed blow** |
-| **`hurdles`** — portable fence panels, plus the halters, butchering stone and vessels that go with them | `pen_carry` **12** (unequipped), `build_work` **8.5** on branch **`animal`** (equipped, on its **tier**) | per **biomass BUTCHERED off a pen**, **and** per **unit of build progress accrued** — the one item on two quanta |
-| **`hoes`** — a bone blade hafted with fibre | `build_work` **8.5** on branch **`plant`** (equipped, on its **tier**) | per **unit of build progress accrued**, and nothing else — the first item whose **headline** quantum is the build |
+| **`hurdles`** — portable fence panels, plus the halters, butchering stone and vessels that go with them | `pen_carry` **12** (unequipped), `build_work` **+0.5 per worker per turn** on branch **`animal`** (equipped, on its **tier**) | per **biomass BUTCHERED off a pen**, **and** per **unit of build progress accrued** — the one item on two quanta |
+| **`hoes`** — a bone blade hafted with fibre | `build_work` **+0.5 per worker per turn** on branch **`plant`** (equipped, on its **tier**) | per **unit of build progress accrued**, and nothing else — the first item whose **headline** quantum is the build |
 | **`wayfinding`** — tallies, marked staves, a fire-drill | `scout_vantage_range` **1** (unequipped) | per **tile revealed for the FIRST time** |
 | **`clubs`** | `attack` **6** (equipped) | per **landed blow** |
 | **`tanning_frame`** — a BENCH TOOL, bounds `hide` | `craft_speed` **2.0**, `craft_quality_ceiling` **0.90**, `craft_material_efficiency` **0.80**, all equipped | per **item completed at the bench** |
@@ -140,29 +140,47 @@ stats parted.
 
 ### The build axis — the handling kit earns its job across the whole ladder
 
-**`EquipmentStat::BuildWork` is the WORK UNITS ONE EQUIPPED WORKER TAKES OFF A BUILD'S COST**
-(issue #515, reshaped by `docs/plan_unit_costed_work.md` §6). Neutral at **`0.0`**; the `hurdles`'
-and the `hoes`' flint tiers each declare **8.5**, on the `animal` and `plant` branches. It is subtracted from the job inside
-`LadderConfig::effective_build_cost`, **not** multiplied into `RungDef::build_accrual`.
+**`EquipmentStat::BuildWork` is the EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN** over its bare
+hands (issue #515, reshaped by `docs/plan_unit_costed_work.md` §6, and again by
+`docs/plan_standing_upkeep.md` **§4.8**). Neutral at **`0.0`**; **flint hoes are +0.5 on the `plant`
+branch and flint hurdles +0.5 on `animal`**, so an equipped worker banks `PER_WORKER_OUTPUT + 0.5 =
+1.5` where a bare one banks 1.0. It feeds `intensification::pool_work_supply`, which **both** the
+build and the upkeep read.
 
-> #### IT LANDS ON THE JOB, AND THAT IS THE LOAD-BEARING ARITHMETIC
+> #### ⛔ IT USED TO LAND ON THE JOB, AND THAT WAS RETIRED — WITH ITS MAGNITUDE
+>
+> The retired form was `effective_build_cost(cost, gear) = cost − workers × gear`, **and the stat
+> shipped at `8.5`** in those units — *work taken off the job, per worker*. **Both the model and the
+> number are gone**, and the pair is why a stale reading here is unrecoverable: someone who trusts the
+> old text reads today's `0.5` as half a unit off a 50-unit job rather than a 50% uplift on the worker.
 >
 > ```text
-> on the crew:  turns_bare = cost / (n·w),  turns_geared = cost / (n·(w + h))
->               ratio = w / (w + h)          ← THE COST CANCELS
-> on the job:   effective_cost = cost − t,   saving = t / cost
+> RETIRED:  effective_cost = cost − workers × gear      saving = t / cost
+> SHIPPED:  supply = workers × (PER_WORKER_OUTPUT + gear)     turns = ceil(cost / supply)
 > ```
 >
-> It was `BuildRate`, a **multiplier on the crew's output**, and a multiplier saves the same
-> *percentage* of turns on a garden, a field and a farm alike — **forever**. The intuition a hoe must
-> satisfy (real on a garden plot, nearly nothing on a farm) is unreachable from there. Subtracted
-> from the job, **the job's own size decides**: 8.5 per worker is a third of a 50-unit garden at the
-> reference crew and a seventeenth of a 300-unit farm, and **the tool never mentions either
-> improvement by name**.
+> **Two reasons, and neither is the degenerate case.** The subtraction granted the kit's help as a
+> **lump, once, against the target**, however long the job ran — where a tool is used every turn it is
+> held. And it has **nothing to subtract from on an UPKEEP**, which is a rate rather than a pile, so
+> gear could only ever touch builds; one supply expression now feeds both accounts. **Do NOT argue it
+> from "a tool could drive a job to zero"** — a gear value large enough to swamp a job is a config
+> problem, not a mechanism one.
 >
-> **The fade on a farm is therefore CONFIG's job** — rung 4 is born at ~300 units precisely so the
-> hand tools of the era are noise against it. It is a dial to tune, **not** a property to build into
-> the resolution rule.
+> **THE CONVERSION IS AN EXACT ROUND TRIP.** The `8.5` was itself minted from a still earlier
+> `BuildRate` **×1.5** multiplier on the crew's output, converted at a reference crew on a 50-unit job.
+> This model is a per-worker output term again, so inverting needs no reference crew and no reference
+> job: `PER_WORKER_OUTPUT + build_work = 1.5` → **`0.5`**. The tool is the same tool it always was.
+>
+> **WHAT IT GIVES UP, STATED HONESTLY:** scale-sensitivity. A multiple saves the same *percentage* of
+> turns on a garden, a field and a farm alike, so the intuition that a hoe is real on a garden plot and
+> noise on a farm is no longer reachable from the stat — it has to come from the **rungs' own costs**.
+> That was the reason the subtraction was chosen in the first place, and it is the price of the two
+> gains above. **The fade on a farm is CONFIG's job** — rung 4 is born at ~300 units precisely so the
+> hand tools of the era are noise against it. A dial to tune, **not** a property to build into the
+> resolution rule.
+>
+> **Every number here is provisional until the arc's tuning spread** (`plan_standing_upkeep.md`
+> §4.14): `0.5` is `8.5` re-expressed in the new units, not a value anybody balanced.
 
 **The defect it closes.** The husbandry kit only paid off *once a pen existed* — its `pen_carry` is
 read on a corralled herd and nowhere else — so the gear did nothing across the entire climb that
@@ -189,7 +207,7 @@ spends handling animals.
   >
   > Two builders kits cannot coexist without the model knowing which builds each serves. Without it
   > a hoe would speed a `Tame`, and a kit bundling both tools would **double-count** — `build_work`
-  > is a per-worker **sum**, so `8.5 + 8.5` off a plant build.
+  > is a per-worker **sum**, so `0.5 + 0.5` ADDED to a plant builder's own output.
   >
   > **It reuses an existing idiom rather than inventing one.** `traps` already declares
   > `{"stat": "attack", "equipped": 20.0, "max_body_mass": 1.0}` — an effect carrying a bound on
@@ -224,7 +242,9 @@ spends handling animals.
     honestly slower now, which it was not before.
 - **CALIBRATION — a fully-geared animal build is UNMOVED.** The retired `build_rate` ×1.5 on a
   50-unit `Tame` at the reference keeper crew of **2** saved 8.33 of 25 turns, i.e. it was worth
-  **≈17 units of the job** — **8.5 per worker**, which is what the tier declares. Two fully-equipped
+  **≈17 units of the job** at that crew and job — which is where the retired `8.5` came from. **§4.8
+  inverted that mint with no reference crew and no reference job at all**: the tier declares **+0.5 per
+  worker per turn**, i.e. `PER_WORKER_OUTPUT + 0.5 = 1.5`, the same ×1.5 restored. Two fully-equipped
   keepers therefore still finish in **17 turns**, exactly where the multiplier left it
   (`intensification::tests::a_fully_geared_reference_crew_tames_in_the_turns_the_retired_multiplier_gave`),
   and one equipped keeper of the two now takes **21** — honestly slower, where the uncovered
@@ -292,8 +312,8 @@ spends handling animals.
 > **THE SHIPPED OPENING MOVES HERE, deliberately.** `default_kits.builders` was `none` and *meant*
 > it, so every build in the game was bare-handed unless the player named a kit; the derivation makes
 > a start-stocked band's builders geared from turn one on both webs. A band holds
-> `ceil(workers × start_stock_fraction)` of each tool, so a pool of `n` takes `n × 8.5` off the job
-> until the units run out — which on the shipped 50- and 75-unit rungs is a large pacing move and is
+> `ceil(workers × start_stock_fraction)` of each tool, so a pool of `n` **delivers `n × 1.5` a turn
+> instead of `n × 1.0`** until the units run out — which on the shipped 50- and 75-unit rungs is a large pacing move and is
 > the point of the slice rather than a side effect.
 
 **The use quantum is `WearQuantum::BuildProgress`, charged over the accrual.** A build has no

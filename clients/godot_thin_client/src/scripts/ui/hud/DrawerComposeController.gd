@@ -3177,6 +3177,44 @@ func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, part
         })
     return _forecast_query.view(subject, key)
 
+## **THE OPTIMISTIC DECLARATION'S UNDO, ON THE ONE SURFACE `_after_pending_change()` CANNOT REACH.**
+## `Hud.drop_pending_assign` is the rollback for a verb the server refused, and the write path it
+## undoes (`_on_work_row_improvement_requested`) refreshes this sheet explicitly — so the rollback
+## must too, or a sheet open on that source goes on rendering the rung as DECLARED beside a queue row
+## that has already vanished.
+##
+## **A REFRESH ALONE IS NOT ENOUGH, AND THAT IS THE WHOLE REASON THIS IS ITS OWN METHOD.** Both
+## builders ADOPT the overlay's declaration into the composition — `if composed_improvement !=
+## _compose.<web>_improvement(): set_<web>_improvement(...)`, which is what lets a `⌃` press flip an
+## open sheet on the same frame — so by the time the drop lands, the rung the player never ticked is
+## the sheet's own composed verb and `_declared_or_composed` honours it forever. The adoption is
+## withdrawn here and the sheet then re-renders into the OFFER.
+##
+## **IT IS WITHDRAWN ONLY WHERE IT IS THIS SHEET'S SUBJECT AND THIS RUNG**, so a rung the player
+## ticked on the sheet themselves, or a sheet standing on another source, is untouched — the failed
+## command names one entry and may undo exactly that one, which is `drop_pending_assign`'s own rule
+## one layer up. A build the METERS say is running is re-adopted by the rebuild, correctly: that one
+## is a fact about the source rather than a declaration anybody can withdraw.
+##
+## `improvement` empty (an ordinary crew rollback, which declares nothing) is a plain refresh.
+func withdraw_declaration(kind: String, x: int, y: int, herd_id: String,
+        improvement: String) -> void:
+    if improvement != SourceForecast.IMPROVEMENT_NONE and is_compose_sheet_open():
+        match _compose.kind():
+            ComposeState.KIND_FORAGE:
+                var tile_info := _selection.tile_info()
+                if kind == SourceForecast.LABOR_KIND_FORAGE \
+                        and _forage_source_key(tile_info) == _compose.subject() \
+                        and int(tile_info.get("x", -1)) == x \
+                        and int(tile_info.get("y", -1)) == y \
+                        and _compose.forage_improvement() == improvement:
+                    _compose.set_forage_improvement(SourceForecast.IMPROVEMENT_NONE)
+            ComposeState.KIND_HERD:
+                if herd_id != "" and herd_id == _compose.subject() \
+                        and _compose.hunt_improvement() == improvement:
+                    _compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
+    refresh_compose_sheet()
+
 func refresh_compose_sheet() -> void:
     if not is_compose_sheet_open():
         return

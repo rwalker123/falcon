@@ -1258,31 +1258,47 @@ table BandKitTiers {
   // and a buildRate of 0 says "this crew builds nothing at all", a field-not-arrived reading that is
   // wrong in the direction that stops the game.
   buildRate:float = 1;
-  // THE WORK UNITS ONE EQUIPPED WORKER TAKES OFF A BUILD'S COST (appended,
-  // docs/plan_unit_costed_work.md section 6). Neutral `0`; the handling gear ships 8.5.
+  // THE EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN on a build (appended; the model is
+  // docs/plan_standing_upkeep.md section 4.8). Neutral `0`. HOES ARE +0.5 BUILD WORK PER WORKER PER
+  // TURN on the plant web and HURDLES ARE +0.5 on the animal web, so an equipped builder banks
+  // PER_WORKER_OUTPUT + 0.5 = 1.5 work units a turn where a bare one banks 1.0.
   //
   // IT SUPERSEDES `buildRate` ABOVE, which is retired and now always publishes its neutral `1`.
-  // That stat was a MULTIPLIER on the crew's output, and a multiplier cancels the job's cost - it
-  // saves the same percentage of turns on a garden and on a farm alike, which is the thing the
-  // work-costed arc exists to escape. This is subtracted from the job instead, so the job's own size
-  // decides how much it is worth, and it is summed over the EQUIPPED workers rather than averaged
-  // over the crew.
+  // That stat was a MULTIPLIER on the crew's output; this is an ADDEND on the same account, which is
+  // what lets a tool state its worth in the game's own work unit instead of as a percentage.
   //
-  // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
-  // rendering a build axis should read THIS field, and read it as work units rather than a factor.
+  // THIS FIELD CHANGED UNITS, AND THE OLD UNITS ARE NOT RECOVERABLE FROM THE VALUE. It used to mean
+  // "work units taken OFF the job, summed over the equipped crew" (docs/plan_unit_costed_work.md
+  // section 6), and hoes and hurdles each declared 8.5 of it. A JOB'S WORK REQUIREMENT NEVER CHANGES
+  // now: a 50-work Cultivate costs 50 work with hoes, without hoes and with any tool that ever
+  // ships, and gear decides only how fast the pile is worked off. So a reader carrying the old
+  // sentence reads this `0.5` as half a work unit off a 50-unit job, where it is a 50% uplift on
+  // what each builder delivers - two different quantities, one of them a rounding error and the
+  // other the whole point of the tool. The 8.5 -> 0.5 that came with the re-cut is an exact unit
+  // conversion rather than a retune: the 8.5 was itself minted from a still earlier x1.5
+  // `buildRate` multiplier, and PER_WORKER_OUTPUT + build_work = 1.5 inverts that mint with no
+  // reference crew and no reference job.
+  //
+  // The `buildRate` slot above is kept rather than deprecated so a client still compiles against it;
+  // a consumer rendering a build axis should read THIS field, as work-per-worker-per-turn - never as
+  // a factor, and never as units off a job.
   buildWorkPerWorker:float = 0;
   // HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD out of what this band holds (appended)
-  // - the head count at or ABOVE which extra hands take no further work off a job. `0` = the kit
-  // carries nothing live that helps, which is every row but the handling gear's today.
+  // - the head count at or ABOVE which extra hands add no further gear work. `0` = the kit
+  // carries nothing live that helps, which is every row but the two builders kits' today.
   //
   // IT IS THE OTHER HALF OF THE GEAR TERM, and it is what makes that term a CLOSED FORM the client
   // can evaluate against a crew the player is PROPOSING:
   //
   //   gear(w) = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
   //
+  // THAT TERM IS AN ADDEND ON THE POOL'S SUPPLY PER TURN, NOT A SUBTRACTION FROM THE JOB - see
+  // `buildWorkPerWorker` above for the unit change, and `buildWorkPerWorkerTurn` on the source rows
+  // for where `gear(w)` sits in the turn estimate.
+  //
   // Coverage arms a PREFIX of a party - each item reaches `live units x workersPerUnit` people - so
   // the contribution rises with the crew until every unit is in somebody's hands and then stops.
-  // An eleventh keeper with ten sets of hurdles between them takes nothing further off the job.
+  // An eleventh keeper with ten sets of hurdles between them delivers only their own bare hands.
   //
   // IT RIDES THE KIT ROW, not a source row, because both terms behind it (the units held and each
   // unit's reach) are facts about the BAND'S LEDGER. So a quote for an unstarted rung still has one,
@@ -1293,10 +1309,11 @@ table BandKitTiers {
   // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
   // carries no build tool at all.
   //
-  // THE THREE BUILD FIELDS ARE ONE READING. A hoe takes 8.5 off a Cultivate and NOTHING off a Tame;
-  // hurdles do the reverse. A sheet pricing a build must compare this against the branch of the rung
-  // the queue entry names and treat a mismatch as 0 - the same discipline attackMaxBodyMass imposes
-  // on attack, and for the same reason: the number is real, it is simply not real HERE.
+  // THE THREE BUILD FIELDS ARE ONE READING. Hoes add +0.5 per worker per turn to a Cultivate and
+  // NOTHING to a Tame; hurdles do the reverse. A sheet pricing a build must compare this against the
+  // branch of the rung the queue entry names and treat a mismatch as 0 - the same discipline
+  // attackMaxBodyMass imposes on attack, and for the same reason: the number is real, it is simply
+  // not real HERE.
   buildWorkBranch:string;
 }
 
@@ -2168,24 +2185,29 @@ table ForagePatchState {
   // yield forecast. One field for both plant rungs: at most one improvement is ever in flight on
   // one source, and at most one rung is ever next.
   buildTurnsRemaining:int = -1;
-  // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
-  // docs/plan_unit_costed_work.md section 6) - the `t` in
-  // `effective_cost = workCost - t`, and NOTHING FLOORS IT: a floor shipped briefly and was
-  // rejected, because how far a kit may shrink a job is decided by the job's own `workCost` and the
-  // tool's contribution, both of which are dials. A bar at or below zero simply completes the build
-  // on its first worked turn (`buildTurnsRemaining` reads `1` there, never `-1`).
+  // WHAT THE POOL'S TOOLS ADD TO WHAT IT DELIVERS THIS TURN, in work units per turn (appended;
+  // re-cut by docs/plan_standing_upkeep.md section 4.8) - `buildWorkPerWorker` summed over the
+  // builders the kit actually reaches, i.e. the `gear(w)` of the closed form under
+  // `buildWorkPerWorkerTurn` below, resolved at the crew that worked this source.
   //
-  // A tool's help lands on the JOB, not on the crew's output, and that is the whole shape: a
-  // multiplier on the crew cancels the cost, so it saves the same PERCENTAGE of turns on a garden
-  // and on a farm alike. Subtracted from the job, the job's own size decides - which is why
-  // `workDone`/`workCost` above stay the RAW job and this is quoted beside them rather than folded
-  // in. A readout says "your hoes: -8 work" against a price that does not move under it.
+  // A TOOL'S HELP LANDS ON THE CREW'S OUTPUT, NOT ON THE JOB, AND THIS FIELD CHANGED UNITS WITH IT.
+  // It used to be the `t` in `effective_cost = workCost - t` - a one-time lump struck off the
+  // target, however long the job ran. A JOB'S WORK REQUIREMENT NEVER CHANGES now: `workCost` is the
+  // whole pile with tools and without, and this is a RATE that raises how fast the pile is worked
+  // off. So a readout says "your hoes: +1.0 work/turn" beside a price that does not move, where it
+  // used to say "-17 work" off the price itself. Anything netting this out of `workCost` is
+  // double-counting the kit.
   //
-  // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
-  // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
-  // in flight, or the crew carries nothing that helps - which, since each web got its own builders
-  // kit, means a pool the player deliberately sent out bare or one carrying the OTHER web's tool
-  // (a hoe takes nothing off a Tame, and hurdles take nothing off a Cultivate).
+  // NOTHING FLOORS IT and nothing needs to: it can only ADD to the pool's supply now, so the
+  // paid-off-outright case the retired subtraction had (a bar driven at or below zero, completing a
+  // build on its first worked turn having banked almost nothing) is unreachable by construction.
+  //
+  // PER EQUIPPED WORKER, SUMMED: a worker holding a tool delivers its worth on top of their own
+  // hands, a worker without one delivers only their hands (the partly-equipped-party rule the
+  // carries already run on). `0` = no build in flight, or the crew carries nothing that helps -
+  // which, since each web got its own builders kit, means a pool the player deliberately sent out
+  // bare or one carrying the OTHER web's tool (hoes add nothing to a Tame, hurdles nothing to a
+  // Cultivate).
   buildWorkFromGear:float = 0;
   // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
   // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
@@ -2201,8 +2223,15 @@ table ForagePatchState {
   // what lets a compose sheet re-price the whole estimate when the player picks a DIFFERENT kit:
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
-  //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn - meterRotPerTurn))
+  //   turns(w) = ceil((workCost - workDone)
+  //                   / (w x buildWorkPerWorkerTurn + gear(w) - meterRotPerTurn))
+  //
+  // THE GEAR TERM IS IN THE DIVISOR, and it moved there in docs/plan_standing_upkeep.md section 4.8.
+  // It used to sit in the numerator (`workCost - workDone - gear(w)`), which granted the kit's help
+  // as a one-time lump against the target; `buildWorkPerWorker` is extra work delivered PER WORKER
+  // PER TURN now, so it is an addend on the supply and the numerator is the job, whole. A consumer
+  // still subtracting it under-quotes every geared pool - and disagrees with both producers, the
+  // sim's own `buildTurnsRemaining` and the client's SourceForecast.build_turns_at.
   //
   // THE ROT IS THE DIVISOR'S SECOND TERM, and it is NOT `<rung>UpkeepDemand` (see section 4.6a of
   // docs/plan_standing_upkeep.md): the band's keeping pool owes the maintenance rate for every meter
@@ -2304,8 +2333,12 @@ table ForagePatchState {
   // for every meter carrying work, at any fullness), so what eats a build is the ground going
   // backwards under it:
   //
-  //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn - meterRotPerTurn))
+  //   turns(w) = ceil((workCost - workDone)
+  //                   / (w x buildWorkPerWorkerTurn + gear(w) - meterRotPerTurn))
+  //
+  // (`gear(w)` is `min(w, buildWorkSaturatingCrew) x buildWorkPerWorker` off the band's kit row, and
+  // it sits in the DIVISOR since docs/plan_standing_upkeep.md section 4.8 - see
+  // `buildWorkPerWorkerTurn` above.)
   //
   // The rot does NOT vary with the build crew, so it is a constant with respect to the stepper - but
   // the client cannot compute it (it holds neither the grace state nor the rung's decay rate), so the
@@ -3340,23 +3373,28 @@ table HerdTelemetryState {
   // `meter_decay`, so `meterRotPerTurn` is always 0 and nothing eats an animal build - an under-kept
   // flock pays in ANIMALS instead. See `.claude/rules/core_sim/husbandry.md`.
   buildTurnsRemaining:int = -1;
-  // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units (appended,
-  // docs/plan_unit_costed_work.md section 6) - the `t` in
-  // `effective_cost = workCost - t`, and NOTHING FLOORS IT: a floor shipped briefly and was
-  // rejected, because how far a kit may shrink a job is decided by the job's own `workCost` and the
-  // tool's contribution, both of which are dials. A bar at or below zero simply completes the build
-  // on its first worked turn (`buildTurnsRemaining` reads `1` there, never `-1`).
+  // WHAT THE POOL'S TOOLS ADD TO WHAT IT DELIVERS THIS TURN, in work units per turn (appended;
+  // re-cut by docs/plan_standing_upkeep.md section 4.8) - `buildWorkPerWorker` summed over the
+  // builders the kit actually reaches, i.e. the `gear(w)` of the closed form under
+  // `buildWorkPerWorkerTurn` below, resolved at the crew that worked this herd.
   //
-  // A tool's help lands on the JOB, not on the crew's output, and that is the whole shape: a
-  // multiplier on the crew cancels the cost, so it saves the same PERCENTAGE of turns on a garden
-  // and on a farm alike. Subtracted from the job, the job's own size decides - which is why
-  // `workDone`/`workCost` above stay the RAW job and this is quoted beside them rather than folded
-  // in. A readout says "your hoes: -8 work" against a price that does not move under it.
+  // A TOOL'S HELP LANDS ON THE CREW'S OUTPUT, NOT ON THE JOB, AND THIS FIELD CHANGED UNITS WITH IT.
+  // It used to be the `t` in `effective_cost = workCost - t` - a one-time lump struck off the
+  // target, however long the job ran. A JOB'S WORK REQUIREMENT NEVER CHANGES now: `workCost` is the
+  // whole pile with tools and without, and this is a RATE that raises how fast the pile is worked
+  // off. So a readout says "your hurdles: +1.0 work/turn" beside a price that does not move, where
+  // it used to say "-17 work" off the price itself. Anything netting this out of `workCost` is
+  // double-counting the kit.
   //
-  // PER EQUIPPED WORKER, SUMMED: a worker holding a tool contributes its worth, a worker without one
-  // contributes nothing (the partly-equipped-party rule the carries already run on). `0` = no build
-  // in flight, or the crew carries nothing that helps - which is every PLANT build today, since no
-  // WHICH WEB a kit's build gear serves rides `buildWorkBranch` on the kit row beside the worth.
+  // NOTHING FLOORS IT and nothing needs to: it can only ADD to the pool's supply now, so the
+  // paid-off-outright case the retired subtraction had (a bar driven at or below zero, completing a
+  // build on its first worked turn having banked almost nothing) is unreachable by construction.
+  //
+  // PER EQUIPPED WORKER, SUMMED: a worker holding a tool delivers its worth on top of their own
+  // hands, a worker without one delivers only their hands (the partly-equipped-party rule the
+  // carries already run on). `0` = no build in flight, or the crew carries nothing that helps - a
+  // pool the player deliberately sent out bare, or one carrying the OTHER web's tool. WHICH WEB a
+  // kit's build gear serves rides `buildWorkBranch` on the kit row beside the worth.
   buildWorkFromGear:float = 0;
   // THE WORK ONE WORKER BANKS ON THIS SOURCE PER TURN, at the food peak, before the floor
   // multiplier and before any gear (appended). Today `PER_WORKER_OUTPUT` (1.0).
@@ -3372,8 +3410,15 @@ table HerdTelemetryState {
   // what lets a compose sheet re-price the whole estimate when the player picks a DIFFERENT kit:
   //
   //   gear(w)  = min(w, buildWorkSaturatingCrew) x buildWorkPerWorker
-  //   turns(w) = ceil((workCost - workDone - gear(w))
-  //                   / (w x buildWorkPerWorkerTurn - meterRotPerTurn))
+  //   turns(w) = ceil((workCost - workDone)
+  //                   / (w x buildWorkPerWorkerTurn + gear(w) - meterRotPerTurn))
+  //
+  // THE GEAR TERM IS IN THE DIVISOR, and it moved there in docs/plan_standing_upkeep.md section 4.8.
+  // It used to sit in the numerator (`workCost - workDone - gear(w)`), which granted the kit's help
+  // as a one-time lump against the target; `buildWorkPerWorker` is extra work delivered PER WORKER
+  // PER TURN now, so it is an addend on the supply and the numerator is the job, whole. A consumer
+  // still subtracting it under-quotes every geared pool - and disagrees with both producers, the
+  // sim's own `buildTurnsRemaining` and the client's SourceForecast.build_turns_at.
   //
   // THE ROT IS THE DIVISOR'S SECOND TERM, and it is NOT `<rung>UpkeepDemand` (see section 4.6a of
   // docs/plan_standing_upkeep.md): the band's keeping pool owes the maintenance rate for every meter
@@ -3838,25 +3883,37 @@ table KitOption {
   // deciding whether to offer a kit must ask what the kit can change on THIS source across EVERY
   // axis it declares, never off one hardcoded key.
   buildRate:float = 1;
-  // THE WORK UNITS ONE EQUIPPED WORKER TAKES OFF A BUILD'S COST (appended,
-  // docs/plan_unit_costed_work.md section 6). Neutral `0`; the handling gear ships 8.5.
+  // THE EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN on a build (appended; the model is
+  // docs/plan_standing_upkeep.md section 4.8). Neutral `0`. HOES ARE +0.5 BUILD WORK PER WORKER PER
+  // TURN on the plant web and HURDLES ARE +0.5 on the animal web, so an equipped builder banks
+  // PER_WORKER_OUTPUT + 0.5 = 1.5 work units a turn where a bare one banks 1.0.
   //
   // IT SUPERSEDES `buildRate` ABOVE, which is retired and now always publishes its neutral `1`.
-  // That stat was a MULTIPLIER on the crew's output, and a multiplier cancels the job's cost - it
-  // saves the same percentage of turns on a garden and on a farm alike, which is the thing the
-  // work-costed arc exists to escape. This is subtracted from the job instead, so the job's own size
-  // decides how much it is worth, and it is summed over the EQUIPPED workers rather than averaged
-  // over the crew.
+  // That stat was a MULTIPLIER on the crew's output; this is an ADDEND on the same account, which is
+  // what lets a tool state its worth in the game's own work unit instead of as a percentage.
   //
-  // The slot above is kept rather than deprecated so a client still compiles against it; a consumer
-  // rendering a build axis should read THIS field, and read it as work units rather than a factor.
+  // THIS FIELD CHANGED UNITS, AND THE OLD UNITS ARE NOT RECOVERABLE FROM THE VALUE. It used to mean
+  // "work units taken OFF the job, summed over the equipped crew" (docs/plan_unit_costed_work.md
+  // section 6), and hoes and hurdles each declared 8.5 of it. A JOB'S WORK REQUIREMENT NEVER CHANGES
+  // now: a 50-work Cultivate costs 50 work with hoes, without hoes and with any tool that ever
+  // ships, and gear decides only how fast the pile is worked off. So a reader carrying the old
+  // sentence reads this `0.5` as half a work unit off a 50-unit job, where it is a 50% uplift on
+  // what each builder delivers - two different quantities, one of them a rounding error and the
+  // other the whole point of the tool. The 8.5 -> 0.5 that came with the re-cut is an exact unit
+  // conversion rather than a retune: the 8.5 was itself minted from a still earlier x1.5
+  // `buildRate` multiplier, and PER_WORKER_OUTPUT + build_work = 1.5 inverts that mint with no
+  // reference crew and no reference job.
+  //
+  // The `buildRate` slot above is kept rather than deprecated so a client still compiles against it;
+  // a consumer rendering a build axis should read THIS field, as work-per-worker-per-turn - never as
+  // a factor, and never as units off a job.
   buildWorkPerWorker:float = 0;
   // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
   // carries no build tool at all.
   //
-  // THE PAIR IS ONE READING. A hoe speeds a Cultivate and does nothing for a Tame, so a picker must
-  // grey a builders kit whose branch disagrees with the build it is being offered for, exactly as it
-  // greys a snare against a Red Deer.
+  // THE PAIR IS ONE READING. Hoes add +0.5 per worker per turn to a Cultivate and nothing to a Tame,
+  // so a picker must grey a builders kit whose branch disagrees with the build it is being offered
+  // for, exactly as it greys a snare against a Red Deer.
   buildWorkBranch:string;
 }
 

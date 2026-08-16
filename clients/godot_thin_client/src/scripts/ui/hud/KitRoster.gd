@@ -67,17 +67,28 @@ const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
 ## its live wear (`BAND_KIT_TIERS_KEY`), never the roster's fresh vantage.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
-## **THE BUILD AXIS — the WORK UNITS one equipped worker takes off an improvement's cost.** Neutral
-## `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off the `none` kit and
-## `kit_uses` reads *"declares more than neutral"* with no special case.
+## **THE BUILD AXIS — the WORK UNITS one equipped worker DELIVERS per turn, over and above its bare
+## hands.** Neutral `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off
+## the `none` kit and `kit_uses` reads *"declares more than neutral"* with no special case. The value
+## belongs to the ITEM the kit carries: flint hoes deliver +0.5 a turn on a PLANT build and hurdles
+## the same on an ANIMAL one, which is why the branch below is read with it and never without.
+##
+## ⛔ **IT IS NOT SUBTRACTED FROM ANYTHING, AND IT WAS UNTIL `docs/plan_standing_upkeep.md` §4.8.**
+## The axis shipped as *"work units taken off an improvement's cost"* — a lump against the pile,
+## granted once however long the job ran — and a job's work requirement never changes now: the term
+## is an addend of the SUPPLY the remaining work is divided by, so it is paid every turn the tool is
+## held. The magnitudes moved with the meaning and cannot be carried across: the shipped tool
+## declared `8.5` as units off a job and declares `0.5` as work added per equipped worker per turn.
+## The client evaluates it in exactly one place, `SourceForecast.build_turns_at`.
 ##
 ## **IT SUPERSEDES THE RETIRED `build_rate` MULTIPLIER** (`docs/plan_unit_costed_work.md` §6). That
 ## stat multiplied the CREW's output, and a multiplier cancels the job's cost — it saves the same
-## PERCENTAGE of turns on a garden and on a farm alike, which is exactly the shape the work-costed
-## arc exists to escape. Subtracted from the JOB instead, the job's own size decides what the tool is
-## worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no longer
-## decodes it: a reader left on it reads "changes no build" for every kit in the game, which silently
-## drops the husbandry kit's own clause AND withholds it from a herd being tamed (see `kit_offer`).
+## PERCENTAGE of turns on a garden and on a farm alike, which is the shape the work-costed arc exists
+## to escape. Stated as a per-worker QUANTITY of work instead, the job's own size decides what the
+## tool is worth. The wire still carries `buildRate`, frozen at its neutral `1`, and this client no
+## longer decodes it: a reader left on it reads "changes no build" for every kit in the game, which
+## silently drops the husbandry kit's own clause AND withholds it from a herd being tamed (see
+## `kit_offer`).
 ##
 ## **IT IS NOT A TIER AND HAS NO HINT-LINE HOME.** The four axes above are rates a readout can quote
 ## per worker; this one prices a build the sheet is not otherwise talking about, and the surface that
@@ -86,9 +97,10 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 const KIT_BUILD_WORK_KEY := "build_work_per_worker"
 
 ## **THE BUILD AXIS'S NEUTRAL — `0.0`, and NOT the multipliers' `1.0`.** It is a quantity of work a
-## tool takes off a job, so *no tool* is *no work*; reading the multipliers' neutral here would hand
-## every bare-handed crew a free work unit per worker off every build. The sim states the same split
-## on `EquipmentStat::neutral`.
+## tool ADDS to what a worker delivers, so *no tool* is *no extra work*; reading the multipliers'
+## neutral here would hand every bare-handed crew a free work unit per worker on every build, on top
+## of the bare rate the source already publishes. The sim states the same split on
+## `EquipmentStat::neutral`.
 const BUILD_WORK_NONE := 0.0
 
 ## **HOW MANY OF THIS BAND'S WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD** — the head count at or
@@ -111,7 +123,8 @@ const KIT_BUILD_SATURATING_CREW_KEY := "build_work_saturating_crew"
 ## and a spent tool declares nothing.
 ##
 ## **THE THREE BUILD FIELDS ARE ONE READING** (`equipment.md` → "A `build_work` EFFECT MUST DECLARE
-## ITS `branch`"). A hoe takes 8.5 off a Cultivate and NOTHING off a Tame; hurdles do the reverse. So
+## ITS `branch`"). Flint hoes add +0.5 a turn to a worker raising a Cultivate and NOTHING to one
+## raising a Tame; hurdles do the reverse. So
 ## a worth read without its branch is a number that is real and simply not real HERE — the same
 ## discipline `attack_max_body_mass` imposes on `attack`, and the same failure if it is skipped: a
 ## sheet quoting the hurdles' contribution against a garden promises a build that cannot land.

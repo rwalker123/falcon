@@ -1587,6 +1587,10 @@ func run(harness) -> void:
 	await _a_declared_build_with_no_builders_says_so()
 	await _an_unstarted_rung_is_priced_at_its_own_rate()
 	await _both_live_meters_get_their_own_row()
+	# **PLACED BEFORE THE DEAD-BOX BLOCK, which re-stages the band, the compose source, the selection
+	# and the sheet from scratch** — so every piece of STATE this PNG-less probe touches is overwritten
+	# before the next capture. What it does move is one frame's GEOMETRY: see the block's own note.
+	await _a_refused_declaration_leaves_the_sheet_on_the_OFFER()
 	await _a_band_with_no_free_hands_is_offered_a_dead_box()
 
 ## **RETIRED — `compose_pool_take_full` / `compose_pool_take_freed`, the shared-pool pair**
@@ -2112,6 +2116,89 @@ func _both_live_meters_get_their_own_row() -> void:
 const BOTH_METERS_FIELD_PROGRESS := 0.12
 
 const BOTH_METERS_FIELD_TURNS := 30
+
+## **A DECLARATION THE SERVER REFUSED MUST NOT LEAVE AN OPEN SHEET SAYING DECLARED.**
+##
+## The Work board's `⌃` writes the rung to the optimistic overlay BEFORE the verb is emitted, and
+## `Hud._on_work_row_improvement_requested` follows `_after_pending_change()` with an explicit
+## `refresh_compose_sheet()` — that helper re-renders the drawer and the dock, never the FLOATING
+## sheet. The rollback (`drop_pending_assign`, the path `Main._on_hud_improvement` takes when the send
+## answers `false`) called the helper alone, so a refused declaration dropped the overlay entry and
+## the queue row while the sheet went on rendering the rung as declared: two surfaces disagreeing
+## about one source.
+##
+## **PNG-LESS, and it has to be** — a sheet showing a declared rung is an ordinary sheet, and the
+## whole defect is that the declaration no longer exists.
+##
+## **THE ROUND TRIP IS THE CLAIM, all three readings of one control.** The OFFER before, the DECLARED
+## between — which is the WRITE path's own refresh, and without it the last reading would pass on a
+## sheet that never moved at all — and the OFFER again after. `Main` is not stood up in this harness,
+## so the refusal is driven at the seam `Main` reaches by name (`hud-modules.md` → the reflective-seam
+## rule); what is NOT covered here is the transport branch that decides to call it.
+##
+## ⛔ **IT MOVES EXACTLY ONE FRAME, `compose_offer_no_hands`, AND THE CAUSE IS NOT THIS BLOCK'S
+## STATE.** `ComposeSheet` is ONE long-lived node whose card keeps its fitted rect across a close, and
+## `refit` completes over TWO deferred frames — more than the `_settle` + `_save` the next state
+## spends — so whichever state follows a TALLER sheet captures its card before the shrink lands and
+## renders it clamped to the viewport with the internal scroll on. Measured four ways: with the block
+## disabled the frame returns to its recorded hash; moving the block to the END of the chapter moves
+## `food_forage_out_of_range` instead (the next sheet along, same mechanism); closing the sheet does
+## not help (a hidden card is not re-fitted); and neither does restoring the card's rect by hand. It
+## is a pre-existing fit-timing fragility this block is the first state to stand in front of, and the
+## frame it moves still renders every claim that state asserts.
+func _a_refused_declaration_leaves_the_sheet_on_the_OFFER() -> void:
+	# A patch this band WORKS with nothing declared on it — the state a `⌃` is pressed from, and the
+	# one in which the rung is still an offer.
+	var worked := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	var band := _fully_committed_forage_band(worked, POOL_TAKE_CREW,
+		SourceForecast.BUILD_CREW_NONE)
+	(band["labor_assignments"][0] as Dictionary)["improvement"] = SourceForecast.IMPROVEMENT_NONE
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_forage_source()
+	h._hud.clear_selection()
+	h._show_tile(worked)
+	h._compose_forage(worked)
+	await h._settle()
+	h._assert_hud("precondition: with nothing declared the open sheet OFFERS the rung",
+		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CULTIVATE) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
+	# The `⌃`'s own payload, shaped as `BandPanelController._emit_ready_declaration` shapes it — the
+	# source's current crew and floor restated, and the client-local `pending_entity` the rollback is
+	# named by. Driven through the REAL handler, so the write under test is the one the board makes.
+	var declaration := {
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"improvement": SourceForecast.IMPROVEMENT_CULTIVATE,
+		"kind": SourceForecast.LABOR_KIND_FORAGE,
+		"x": int(worked["x"]),
+		"y": int(worked["y"]),
+		"herd_id": "",
+		"workers": POOL_TAKE_CREW,
+		"floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"pending_entity": int(band.get("entity", -1)),
+	}
+	h._hud._on_work_row_improvement_requested(declaration)
+	await h._settle()
+	h._assert_hud("the declaration reaches the OPEN sheet on the frame the mark is pressed",
+		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CULTIVATE) == HudWidgets.IMPROVEMENT_STATE_DECLARED)
+	# THE FAILURE PATH: exactly what `Main._on_hud_improvement` does when the send never went.
+	h._hud.drop_pending_assign(declaration)
+	await h._settle()
+	h._assert_hud("…and a send that never went puts the sheet back on the OFFER (got \"%s\")"
+			% ForageFx.improvement_state(h._hud._drawercompose._compose_sheet,
+				SourceForecast.IMPROVEMENT_CULTIVATE),
+		ForageFx.improvement_state(h._hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CULTIVATE) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
+	# The overlay is left as this block found it — the rollback is the drop, so the assertion above is
+	# also the cleanup, and this only says so where a reader would otherwise have to check.
+	h._assert_hud("…leaving the band with no pending overlay at all",
+		h._hud._band_labor.pending_assigns_for(int(band.get("entity", -1))).is_empty())
+	# The sheet is closed and the compose source reset, so the state after this one opens on a fresh
+	# composition rather than inheriting this band's.
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	await h._settle()
 
 ## **A BAND WITH NO FREE HANDS IS OFFERED A LIVE BOX, AND THAT REVERSES THIS FRAME'S OWN CLAIM**
 ## (`docs/plan_standing_upkeep.md` §2.5). The box was greyed with a reason for one slice, because

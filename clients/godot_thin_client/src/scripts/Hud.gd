@@ -1099,6 +1099,20 @@ func _after_pending_change() -> void:
 ## **`_after_pending_change()` RUNS ON THE ROLLBACK TOO** — the same re-render + MapView push the
 ## write got. Without it the card keeps the number it has just stopped believing, which is the whole
 ## defect one frame later.
+##
+## **AND THE ROLLBACK REFRESHES EVERYTHING THE WRITE REFRESHED, WHICH IS ONE SURFACE MORE THAN THAT.**
+## `_on_work_row_improvement_requested` — the declaration this same rollback undoes — follows
+## `_after_pending_change()` with an explicit compose-sheet refresh, because that helper re-renders
+## the drawer and the panel but NOT the floating sheet. Dropping the entry without the same call left
+## a sheet open on that source rendering DECLARED for a declaration the server refused, beside a queue
+## row that had already vanished: two surfaces disagreeing about one source, which is the failure this
+## arc keeps paying for.
+##
+## **IT GOES THROUGH `withdraw_declaration` RATHER THAN `refresh_compose_sheet`, and a plain refresh
+## really does leave the sheet saying DECLARED** — the sheet ADOPTS the overlay's rung into its own
+## composition on the frame the `⌃` is pressed, so the refresh alone re-renders a declaration nothing
+## is keeping. That seam withdraws the adoption for THIS source and THIS rung and then re-renders;
+## the whole reason it lives on the controller is that the compose state is the controller's.
 func drop_pending_assign(payload: Dictionary) -> void:
     var entity := int(payload.get("pending_entity", -1))
     if entity < 0:
@@ -1107,9 +1121,18 @@ func drop_pending_assign(payload: Dictionary) -> void:
             String(payload.get("kind", "")), int(payload.get("x", -1)),
             int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
         _after_pending_change()
+        _drawercompose.withdraw_declaration(String(payload.get("kind", "")),
+            int(payload.get("x", -1)), int(payload.get("y", -1)),
+            String(payload.get("herd_id", "")), String(payload.get("improvement", "")))
 
 ## The move twin. The move overlay is one slot per band, so the payload's rollback handle is the whole
 ## identity — see `HudBandLaborState.drop_pending_move`.
+##
+## **IT DOES NOT REFRESH THE COMPOSE SHEET, AND THAT IS NOT THE ASYMMETRY ABOVE.** A move is written
+## from targeting, and `TargetingController.begin_move_band` CLOSES the sheet before the player is
+## asked to click the map (§15 — a sheet floating over a targeting click is a trap), so no sheet can
+## be open on the source when the send fails. The write path refreshes nothing for the same reason, so
+## the pair still matches; adding a call here would only re-render a sheet nobody can have open.
 func drop_pending_move(payload: Dictionary) -> void:
     var entity := int(payload.get("pending_entity", -1))
     if entity < 0:

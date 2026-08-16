@@ -675,7 +675,12 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    >   business — and no price either: *"That information should be on the work tab. No need to have it
    >   here, it is useless."*
    > - **The dock grew rather than the zone starving.** The Work zone could not hold a pool header, a
-   >   queue and a board in 300px; `PANEL_HEIGHT_WIDE` is 440 and the zone box 380.
+   >   queue and a board in 300px. **`PANEL_HEIGHT_WIDE` ships at 456 and the zone box at 396** — it
+   >   went to 440 first, and was raised again inside the same slice once the work inspector's own
+   >   height was found never to have been budgeted at all. **Both budgets are now FULL**: the zone
+   >   reads 396 of 396 in height and 354 of 356 in width, so anything added to the Work tab overflows
+   >   it. Both have assertions that fail loudly rather than clipping silently; the levers — a taller
+   >   strip, a wider panel, two-abreast pool cards — are Ray's.
 
    **7a — BUILDING IS A BAND ACTIVITY, so its whole loop belongs on ONE tab.**
    **This slice is what makes 6b playable, and 6b's playtest is what decided its shape.** The pool,
@@ -750,6 +755,29 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    frees a small job); what it gains is that a tool can no longer drive a job to zero, and a hoe fades
    on a farm by being *insufficient* rather than by arithmetic. **This changes the shipped build
    model**, not only upkeep.
+
+   > **LANDED — in full, BOTH accounts, alongside §4.7.** `effective_build_cost` and the whole
+   > subtraction path are retired; `pool_work_supply(workers, gear) = workers × (PER_WORKER_OUTPUT +
+   > gear)` is the one supply expression, and a build divides its pile by it while an **upkeep compares
+   > its demand against it** — so an equipped keeper covers more of a rung's demand. `tillage` gained
+   > the `agriculture` job and `hurdling` `husbandry` so the keeping pools have something to derive.
+   >
+   > **THE CONSTANT WAS A UNIT CONVERSION AND AN EXACT ROUND TRIP, NOT A TUNING CHOICE.** `build_work`
+   > shipped at 8.5 meaning *units off the job, per worker* — and that 8.5 was itself minted from a
+   > still earlier `build_rate` **×1.5** on the crew's output. Inverting the mint needs no reference
+   > crew and no reference job: `PER_WORKER_OUTPUT + build_work = 1.5`. **Hoes are +0.5 build work per
+   > worker per turn; hurdles are +0.5** — the same tools they always were. Carrying 8.5 across would
+   > have meant a worker delivering nine and a half times a bare one. Provisional until §4.14.
+   >
+   > **The argument is the one-time lump versus the per-turn rate, and nothing else.** The subtraction
+   > granted the kit's help once against the target where a tool is used every turn it is held, and it
+   > has nothing to subtract from on an upkeep. **Do NOT argue it from "a tool could drive a job to
+   > zero"** — a gear value large enough to swamp a job is a config problem, and the sentence above
+   > that reaches for it is the arc's own flourish, not its reasoning.
+   >
+   > **KNOWN HOLE:** a keeping tool wears on the work it supplied (`WearQuantum::UpkeepWork`), added
+   > with the upkeep half — but the rate is an opening value with no conversion to invert, since the
+   > quantum never existed. §4.14 owns it.
 9. **Priority as a GENERAL per-source property.** Player-ordered, drag-and-drop, its own column — and
    deliberately not a maintenance-funding list. The auto-assigner sketch (§5) wants tile priority for
    its own reasons, and two orderings meaning almost the same thing would drift apart. Pooled

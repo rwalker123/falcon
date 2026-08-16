@@ -1537,9 +1537,9 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
 /// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
 ///
 /// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
-/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
+/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as
 /// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
 /// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.

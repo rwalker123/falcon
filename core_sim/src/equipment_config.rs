@@ -132,43 +132,52 @@ pub enum EquipmentStat {
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,
-    /// **THE WORK UNITS ONE WORKER'S TOOL TAKES OFF A BUILD** — subtracted from the job's cost, not
-    /// multiplied into the crew's output (`docs/plan_unit_costed_work.md` §6). Neutral at **`0.0`**;
-    /// the handling gear's flint tier ships `8.5`.
+    /// **THE EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN ON A BUILD** — added to the crew's own
+    /// output, never subtracted from the job (`docs/plan_standing_upkeep.md` §4.8). Neutral at
+    /// **`0.0`**; **flint hoes ship `+0.5` on the plant web and flint hurdles `+0.5` on the animal
+    /// one**, so an equipped builder banks `PER_WORKER_OUTPUT + 0.5 = 1.5` work units a turn where a
+    /// bare one banks `1.0`.
     ///
-    /// # It lands on the JOB, and that is the load-bearing arithmetic
+    /// # ⛔ IT LANDS ON THE CREW, AND THE UNITS CHANGED WHEN IT MOVED THERE
     ///
-    /// It replaced `BuildRate`, a **multiplier on the crew's output**, and the difference is the
-    /// whole reason this arc exists:
+    /// It first replaced `BuildRate` — a **multiplier** on the crew's output — as a **subtraction
+    /// from the job's cost** (`effective_cost = cost − t`, `docs/plan_unit_costed_work.md` §6),
+    /// shipping at **`8.5`** per equipped worker. §4.8 retired the subtraction and the stat is an
+    /// output term again, which is why the shipped value is `0.5` and **the two numbers are not
+    /// comparable**: `8.5` read as this stat would make one equipped worker worth nine and a half
+    /// bare ones. The conversion is exact rather than a retune —
+    /// `PER_WORKER_OUTPUT + build_work = 1.5`, the very multiplier the `8.5` was minted from.
     ///
     /// ```text
     /// on the crew:  turns_bare = cost / (n·w),  turns_geared = cost / (n·(w + h))
-    ///               ratio = w / (w + h)          ← THE COST CANCELS
-    /// on the job:   effective_cost = cost − t,   saving = t / cost
+    /// on an upkeep: covered ⟺ demand ≤ n·(w + h)   ← the same expression, one account over
     /// ```
     ///
-    /// A multiplier saves the same *percentage* of turns on a garden, a field and a farm alike,
-    /// forever — the intuition a hoe must satisfy (real on a garden, nearly nothing on a farm) is
-    /// unreachable from there. Subtracted from the job, **the job's own size decides**: 8 units is
-    /// 16% of a 50-unit garden and 2.7% of a 300-unit farm, and **the tool never mentions either
-    /// improvement by name**. The fade on a farm is therefore *config's* job — a Farm is born large
-    /// precisely so the hand tools of the era are noise against it — and not a property built into
-    /// the resolution rule.
+    /// **Two things made the subtraction untenable, and neither is the degenerate case.** It granted
+    /// the kit's help as a **lump** against the target, once, however long the job ran — where a tool
+    /// is used every turn it is held. And it has **nothing to subtract from on an upkeep**, which is
+    /// a rate rather than a pile, so gear could only ever reach builds; one supply expression
+    /// ([`crate::intensification::pool_work_supply`]) now feeds both accounts. What that gives up is
+    /// scale-sensitivity — a multiple saves the same *percentage* of turns on a garden and a farm
+    /// alike, where a lump off the cost was a larger share of a small job — and that is accepted.
+    /// **A JOB'S WORK REQUIREMENT NEVER CHANGES**: a 50-work Cultivate costs 50 work with hoes,
+    /// without hoes, and with any tool that ever ships.
     ///
     /// # PER WORKER, on the seam that already exists
     ///
-    /// **The tool is wielded**: a worker holding one contributes its worth, a worker without one
-    /// contributes nothing, so the crew's total is `Σ over the crew`. That is not a new rule — it is
-    /// `EquipmentCoverage`'s ("the partly-equipped party"), and `KitCoverage::weighted_rate × head
-    /// count` is exactly that sum. Five hoed workers and five bare answer `5 × worth`, the same shape
-    /// as five sledded hunters and five sledless hauling `5 × 40 + 5 × 12`.
+    /// **The tool is wielded**: a worker holding one delivers its worth on top of their own hands, a
+    /// worker without one delivers only their hands, so the crew's total is `Σ over the crew`. That
+    /// is not a new rule — it is `EquipmentCoverage`'s ("the partly-equipped party"), and
+    /// `KitCoverage::weighted_rate × head count` is exactly that sum. Five hoed workers and five bare
+    /// answer `5 × worth`, the same shape as five sledded hunters and five sledless hauling
+    /// `5 × 40 + 5 × 12`.
     ///
     /// **This answers the question `BuildRate` left open** — whether a build tool wants the covered
     /// reading the carries take. **Yes.** The old stat was uncovered only because averaging a
     /// *multiplier* said *bring fewer keepers and the pen goes up faster* (measured: one set of
-    /// hurdles among ten keepers resolved ×1.05 against the ×1.5 declared). A per-worker,
-    /// **cost-side** contribution is a **sum**, not an average, so an un-geared hand adds zero
-    /// instead of diluting.
+    /// hurdles among ten keepers resolved ×1.05 against the ×1.5 declared). A per-worker
+    /// contribution is a **sum**, not an average, so an un-geared hand adds zero instead of
+    /// diluting.
     ///
     /// # Everything else about it
     ///
@@ -210,9 +219,10 @@ impl EquipmentStat {
     /// to answer.
     ///
     /// **It is not the same number for all three.** `dispersion` and `exposure` are *multipliers*, so
-    /// their neutral is the identity `1.0`; [`Self::BuildWork`] is an **additive contribution** off a
-    /// job's cost, so its neutral is `0.0` — a crew carrying nothing that helps takes nothing off the
-    /// job. Reading either as the other is the mistake this method exists to make impossible.
+    /// their neutral is the identity `1.0`; [`Self::BuildWork`] is an **additive contribution to what
+    /// a worker delivers per turn**, so its neutral is `0.0` — a crew carrying nothing that helps
+    /// delivers its bare hands and nothing more. Reading either as the other is the mistake this
+    /// method exists to make impossible.
     pub fn neutral(self) -> Option<f32> {
         match self {
             EquipmentStat::Dispersion | EquipmentStat::Exposure => Some(1.0),
@@ -344,7 +354,8 @@ pub struct EquipmentEffect {
     ///
     /// **Two builders kits cannot coexist without it.** `build_work` is a **per-worker sum** over
     /// the crew, so an unqualified hoe would speed a `Tame` and a bundle carrying both a hoe and a
-    /// set of hurdles would take `8.5 + 8.5` off a plant build — twice what either tool is worth.
+    /// set of hurdles would deliver `0.5 + 0.5` per worker per turn on a plant build — twice what either
+    /// tool is worth.
     /// Outside its branch the effect contributes exactly nothing, which is the same shape a snare's
     /// `attack` takes against a Red Deer: there is no *"this tool is not for that"* branch anywhere,
     /// only a term that resolves to the neutral.
@@ -1221,8 +1232,8 @@ impl KitChoice {
     ///
     /// [`Self::best_declared`]'s two clauses hold unchanged: only declared values participate, and
     /// the maximum wins because a worker uses the better tool rather than both at once. The branch
-    /// filter is what stops a kit carrying a hoe *and* a set of hurdles from taking `8.5 + 8.5` off
-    /// a plant build — and it is a **filter**, not a second maximum, so the two tools never meet.
+    /// filter is what stops a kit carrying a hoe *and* a set of hurdles from delivering `0.5 + 0.5`
+    /// per worker on a plant build — and it is a **filter**, not a second maximum, so the two tools never meet.
     fn best_build_work(
         &self,
         wear: &crate::components::BandEquipment,
@@ -2063,15 +2074,30 @@ impl EquipmentConfig {
         kit.best_declared(EquipmentStat::Dispersion, wear, self)
     }
 
-    /// **The work units ONE WORKER carrying this kit takes off a build's cost** —
+    /// **The EXTRA WORK ONE WORKER carrying this kit delivers per turn on a build** —
     /// [`EquipmentStat::BuildWork`], [`NO_BUILD_GEAR`] for a kit carrying nothing that helps. The
     /// maximum of what the live items declare, for [`KitChoice::best_declared`]'s reason: two tools
     /// that both help do not compound, a worker simply uses the better one.
     ///
+    /// **Flint hoes are +0.5 build work per worker per turn on a plant build, and flint hurdles +0.5
+    /// on an animal one** (`equipment.json`), so an equipped builder banks
+    /// [`crate::intensification::PER_WORKER_OUTPUT`] `+ 0.5 = 1.5` work units a turn where a bare
+    /// one banks `1.0`.
+    ///
+    /// # ⛔ IT IS ADDED TO THE CREW'S OUTPUT, NEVER SUBTRACTED FROM THE JOB
+    ///
+    /// A job's work requirement never changes: a 50-work Cultivate costs 50 work with hoes and
+    /// without, and gear decides only how fast the pile is worked off
+    /// (`docs/plan_standing_upkeep.md` §4.8, which owns the reasoning and the 8.5 → 0.5 unit
+    /// conversion the re-cut carried). The retired reading subtracted this from the target once,
+    /// however long the job ran, and had nothing to subtract from on an **upkeep** — which is a rate
+    /// rather than a pile, and which the same term now feeds through
+    /// [`crate::intensification::pool_work_supply`].
+    ///
     /// **PER WORKER, so a caller sums it over the crew** — through
     /// [`KitCoverage::weighted_rate`] × head count, which is the partly-equipped party's own seam:
-    /// five geared workers and five bare take `5 × worth` off the job, not ten workers' worth and not
-    /// an average.
+    /// five geared workers and five bare deliver `5 × worth` on top of their own hands, not ten
+    /// workers' worth and not an average.
     ///
     /// **It is resolved off the CREW'S kit, not the band's ownership**, like every other stat here —
     /// so gear that could have helped a `Tame` and was left behind on another kit helps nothing, and
@@ -2383,7 +2409,7 @@ impl EquipmentConfig {
                     return Err(EquipmentConfigError::Invalid {
                         field: format!("items.{id}.build_work"),
                         constraint: format!(
-                            "take a finite, non-negative amount of work off a build (>= \
+                            "add a finite, non-negative amount of work per worker per turn (>= \
                              {NO_BUILD_GEAR})"
                         ),
                         value: value.to_string(),
@@ -2876,8 +2902,8 @@ impl EquipmentConfig {
     /// `.claude/rules/core_sim/config-loading.md`'s *"looks live but isn't"*:
     ///
     /// - **Absent on a build tool** would apply to *both* food webs silently, so a hoe would speed a
-    ///   `Tame` and a kit bundling a hoe and a set of hurdles would take `8.5 + 8.5` off a plant
-    ///   build — `build_work` is a per-worker **sum**. It is the "placement rule that places no
+    ///   `Tame` and a kit bundling a hoe and a set of hurdles would deliver `0.5 + 0.5` per worker on
+    ///   a plant build — `build_work` is a per-worker **sum**. It is the "placement rule that places no
     ///   rule" failure `RungSiteRequirement` already rejects one config over.
     /// - **Present on any other stat** would parse, validate and then be read by nothing, exactly as
     ///   a `max_body_mass` on a stat no [`Quarry`] resolves would.
@@ -3065,16 +3091,17 @@ pub struct ResolvedKitTiers {
     pub dispersion: f32,
     /// What this kit multiplies the hunt's baseline injury hazard by. `1.0` is neutral.
     pub exposure: f32,
-    /// **The work units one worker carrying this kit takes off a build's cost, ON
-    /// [`Self::build_work_branch`].** [`NO_BUILD_GEAR`] (`0.0`) is neutral — the reading of every
-    /// kit that carries no build tool.
+    /// **The extra work one worker carrying this kit delivers per turn on a build, ON
+    /// [`Self::build_work_branch`]** (`docs/plan_standing_upkeep.md` §4.8 — it is added to the
+    /// crew's output, never subtracted from the job). [`NO_BUILD_GEAR`] (`0.0`) is neutral — the
+    /// reading of every kit that carries no build tool.
     pub build_work_per_worker: f32,
     /// **WHICH FOOD WEB [`Self::build_work_per_worker`] IS FOR** — `None` when the kit carries
     /// nothing live that helps any build, in which case the worth beside it is the neutral.
     ///
     /// **The two are read as a pair, and a consumer that reads the worth alone is wrong.** A hoe
-    /// takes `8.5` off a Cultivate and nothing at all off a `Tame`, so a picker quoting the worth
-    /// against the wrong web quotes a saving the sim will never pay — the same class of defect as a
+    /// adds `+0.5` per worker per turn to a Cultivate and nothing at all to a `Tame`, so a picker
+    /// quoting the worth against the wrong web quotes an uplift the sim will never pay — the same class of defect as a
     /// kit picker asking a snare whether it can hurt a Red Deer and reading its unbounded `attack`.
     pub build_work_branch: Option<crate::intensification::RungBranch>,
 }
@@ -3661,8 +3688,8 @@ mod tests {
             "a kit carrying nothing that helps a build must be exactly neutral"
         );
         // **A SPENT ITEM STOPS CONTRIBUTING IT**, the rule every other axis follows: the cliff is
-        // flat-then-step-down, and the step down IS the neutral — `0.0` for an additive
-        // contribution off the job, where it was `1.0` for the multiplier this replaced.
+        // flat-then-step-down, and the step down IS the neutral — `0.0` for a contribution added
+        // to what a worker delivers, where it was `1.0` for the multiplier this replaced.
         let mut dry = wear.clone();
         dry.wear_item(
             &config,
@@ -3673,7 +3700,7 @@ mod tests {
         assert_eq!(
             config.build_work_per_worker(&hurdling, &dry, RungBranch::Animal),
             NO_BUILD_GEAR,
-            "hurdles that have run dry must take nothing off the job"
+            "hurdles that have run dry must add nothing to what a builder delivers"
         );
     }
 
@@ -3684,8 +3711,8 @@ mod tests {
     /// filter that was never applied passes the two positives.
     ///
     /// **The double-count arm is the one that forced the qualifier.** `build_work` is a per-worker
-    /// **sum**, so an unqualified bundle carrying both tools would take `8.5 + 8.5` off a plant
-    /// build — twice what either tool is worth, off a job the hurdles do nothing for.
+    /// **sum**, so an unqualified bundle carrying both tools would deliver `0.5 + 0.5` per worker on
+    /// a plant build — twice what either tool is worth, on a job the hurdles do nothing for.
     #[test]
     fn a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound() {
         let config = EquipmentConfig::builtin();

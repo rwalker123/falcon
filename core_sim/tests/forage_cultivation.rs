@@ -2957,6 +2957,263 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
     );
 }
 
+/// A band that **holds** a finished tended patch and has a `Cultivate` at the **head** of its build
+/// queue on bare ground — the shape a blocked head's dilution was reported on. Both patches are
+/// gathered, both draw on the one `agriculture` pool, and the whole `builders` pool stands on the
+/// queued entry.
+fn spawn_band_holding_one_patch_and_queueing_a_build(
+    app: &mut App,
+    home: bevy::prelude::Entity,
+    holding: UVec2,
+    build: UVec2,
+    keepers: u32,
+    builders: u32,
+) -> bevy::prelude::Entity {
+    const GATHERERS: u32 = 1;
+    let band = spawn_forager_at(app, home, holding, None, GATHERERS, FOOD_PEAK_FLOOR);
+    let headroom = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band was just spawned");
+        allocation
+            .assignments
+            .push(forage_row(build, FOOD_PEAK_FLOOR, GATHERERS));
+        allocation.assignments.push(LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: builders,
+            kit: Some(bare_builders()),
+        });
+        let headroom = allocation.assigned_total() + keepers;
+        allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
+        allocation.build_queue.push(core_sim::BuildQueueEntry {
+            source: core_sim::BuildSource::Patch(build),
+            declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
+        });
+        headroom
+    };
+    // **The band has to afford every row it holds**, or `normalize` trims the tail — which here is
+    // the keeping role under measurement.
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band was just spawned");
+    cohort.working = scalar_from_f32(headroom as f32);
+    band
+}
+
+/// **A BLOCKED HEAD CLAIMS NO KEEPING, AND THE BAND'S REAL HOLDING IS PAID IN FULL**
+/// (`docs/plan_standing_upkeep.md` §4.6a).
+///
+/// The claim side needs a verb term only because `maintenance_shares` runs before the accrual that
+/// banks a build's first work. Narrowed to the funded head alone, that term still admitted a head
+/// whose own rung **gate refuses** — which banks nothing on any turn, ever, while claiming the full
+/// rung demand. Under the default `Spread` the pool is divided pro rata, so a build the ground was
+/// never going to accept starved the tended ground the band actually holds.
+///
+/// **Both halves are asserted on one fixture, because either alone passes with the fix wrong.** A
+/// claim gate that answered *never* would pass the blocked arm and fail nothing else — so the same
+/// head, **unblocked**, must claim its demand exactly as before, which is the case the verb term
+/// exists for in the first place.
+///
+/// **And the WIRE half rides with it.** The capture reads a source's demand with no verb in flight
+/// (`patch_upkeep_demand(patch, NOTHING_IN_FLIGHT, …)`), which is `0` for a meter at zero — so a
+/// blocked head that had been *stamped* a positive supply published `upkeepSupplied > 0` against
+/// `upkeepDemand 0`, a row disagreeing with itself.
+#[test]
+fn a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full() {
+    /// Enough supply to cover ONE tended rung outright and not two, so *"the holding is paid in
+    /// full"* and *"the pool is diluted"* are distinguishable outcomes on the same fixture.
+    const KEEPERS: u32 = 2;
+    /// A staffed pool standing on the head — a blocked head is only reportable, and only dilutive,
+    /// when the player has actually committed builders to it.
+    const BUILDERS: u32 = 2;
+    /// The holding's own meter. Any completed cost does; it is the *demand* that matters and that
+    /// is the rung's, not the meter's.
+    const HOLDING_COST: f32 = 40.0;
+    /// **A meter at zero** — the only state the narrowing may cut, because the declaration answers
+    /// for a meter at zero and nothing else (`forage::patch_build_verb`).
+    const NOTHING_BANKED: f32 = core_sim::RUNG_UNSTARTED;
+    /// **Work already banked on the blocked head**, as a fraction of the rung's cost.
+    const PART_BUILT: f32 = 0.4;
+
+    struct Turn {
+        holding_supplied: f32,
+        holding_demand: f32,
+        build_supplied: f32,
+        build_demand: f32,
+        build_progress: f32,
+        blocked_reason: String,
+    }
+
+    let run = |knows_cultivation: bool, banked_on_the_build: f32| -> Turn {
+        let mut app = spawn_world();
+        // The **build** target is the primed tile, because `prime_thriving_patch` is the helper that
+        // guarantees a basket the tended rung can commit to — so the only thing standing between
+        // this head and an open gate is the knowledge below.
+        let (tile, build) = prime_thriving_patch(&mut app);
+        let holding = seat_second_tended_patch(&mut app, build, HOLDING_COST);
+        if banked_on_the_build > core_sim::RUNG_UNSTARTED {
+            // **Work already on the ground**, which is what makes the claim the PROGRESS term's
+            // rather than the verb's. A patch carrying progress is owned and committed in play, so
+            // the fixture states both or the arm measures a different refusal.
+            let crop = {
+                let labor = app.world.resource::<LaborConfigHandle>().get();
+                let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+                let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+                let mut query = app.world.query::<&Tile>();
+                let ground = query
+                    .iter(&app.world)
+                    .find(|ground| ground.position == build)
+                    .expect("the build tile exists")
+                    .clone();
+                let composition = tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
+                default_species_for_rung(&composition, &flora, RungKey::PlantTended)
+                    .expect("prime_thriving_patch chose ground the tended rung can commit to")
+            };
+            let cost = cultivate_cost(&app);
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(build).expect("patch");
+            patch.cultivation_cost = cost;
+            patch.cultivation_progress = cost * banked_on_the_build;
+            patch.owner = Some(FactionId(0));
+            patch.species = Some(crop);
+        }
+        if knows_cultivation {
+            grant_cultivation_knowledge(&mut app, FactionId(0));
+        }
+        spawn_band_holding_one_patch_and_queueing_a_build(
+            &mut app, tile, holding, build, KEEPERS, BUILDERS,
+        );
+        app.world.run_system_once(advance_labor_allocation);
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let registry = app.world.resource::<ForageRegistry>();
+        let read = |coord: UVec2| -> (f32, f32) {
+            let patch = registry.patch(coord).expect("patch");
+            (
+                patch.upkeep_supplied,
+                // **Read the way the CAPTURE reads it** — after the accrual, with no verb in hand.
+                core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder),
+            )
+        };
+        let (holding_supplied, holding_demand) = read(holding);
+        let (build_supplied, build_demand) = read(build);
+        Turn {
+            holding_supplied,
+            holding_demand,
+            build_supplied,
+            build_demand,
+            build_progress: registry.patch(build).expect("patch").cultivation_progress,
+            blocked_reason: registry
+                .patch(build)
+                .expect("patch")
+                .build_blocked_reason
+                .key()
+                .to_string(),
+        }
+    };
+
+    // --- (a) THE BLOCKED HEAD ------------------------------------------------------------------
+    let blocked = run(false, NOTHING_BANKED);
+    // **Liveness, and the cause**: the head really is stuck, and stuck for the reason the fixture
+    // staged. Without this the arm passes for a head that was simply never at the front.
+    assert_eq!(
+        blocked.blocked_reason, "knowledge",
+        "fixture: the head must be blocked, and by the knowledge gate — got '{}'",
+        blocked.blocked_reason
+    );
+    assert_eq!(
+        blocked.build_progress, 0.0,
+        "fixture: a blocked head banks nothing, so its meter must still be at zero (got {})",
+        blocked.build_progress
+    );
+
+    // **THE HEADLINE.** The band's real holding is supplied to its whole demand, because the
+    // blocked head asked for nothing.
+    assert!(
+        blocked.holding_demand > 0.0,
+        "fixture: the holding must owe something, or 'paid in full' is vacuous"
+    );
+    assert!(
+        (blocked.holding_supplied - blocked.holding_demand).abs() < EPSILON,
+        "a blocked head must not dilute the band's real holding: supplied {} of {}",
+        blocked.holding_supplied,
+        blocked.holding_demand
+    );
+
+    // **THE WIRE HALF** — the blocked source publishes a supply of `0` against a demand of `0`,
+    // rather than a stamped share against the capture's own zero.
+    assert_eq!(
+        blocked.build_demand, 0.0,
+        "a meter at zero owes nothing once the verb is out of the reading — that is what the \
+         capture publishes ({})",
+        blocked.build_demand
+    );
+    assert_eq!(
+        blocked.build_supplied, 0.0,
+        "…so the pool must have put nothing on it either, or the row disagrees with itself on the \
+         wire ({})",
+        blocked.build_supplied
+    );
+
+    // --- (b) THE SAME HEAD, UNBLOCKED ----------------------------------------------------------
+    let open = run(true, NOTHING_BANKED);
+    assert_eq!(
+        open.blocked_reason, "",
+        "fixture: granting the knowledge must open the gate — still blocked on '{}'",
+        open.blocked_reason
+    );
+    assert!(
+        open.build_progress > 0.0,
+        "fixture: the unblocked head must bank its first work this turn, or the verb term is never \
+         exercised"
+    );
+    // **The claim is back, and it is the rung's whole demand** — the state §4.6a's first-turn fix
+    // exists for: the accrual lands *after* the split, so the ground carries nothing when the pool
+    // is divided and the verb is the only thing that can speak for it.
+    assert!(
+        open.build_supplied > 0.0,
+        "the turn a build banks its first work, its keeping pool must supply something ({})",
+        open.build_supplied
+    );
+    assert!(
+        (open.build_supplied - open.holding_supplied).abs() < EPSILON,
+        "spread funds two equal demands equally: build {} against holding {}",
+        open.build_supplied,
+        open.holding_supplied
+    );
+    assert!(
+        open.holding_supplied < open.holding_demand - EPSILON,
+        "…and the holding is legitimately diluted by a build that IS being raised — {} of {}",
+        open.holding_supplied,
+        open.holding_demand
+    );
+
+    // --- (c) A BLOCKED HEAD THAT HAS ALREADY BANKED WORK GOES ON CLAIMING --------------------------
+    //
+    // **The narrowing may only cut a meter at ZERO.** A declaration answers for a zero meter and
+    // nothing else (`forage::patch_build_verb`), so a blocked head carrying progress is answered for
+    // by the ground itself — and the pool owes for that work whatever the gate says, which is §4.6a's
+    // *"a meter carrying work is billed at any fullness"*. A gate term that cut here would put a
+    // half-built patch back where it cannot be held at all.
+    let stalled = run(false, PART_BUILT);
+    assert_eq!(
+        stalled.blocked_reason, "knowledge",
+        "fixture: this arm must still be blocked, or it is not testing the same state ('{}')",
+        stalled.blocked_reason
+    );
+    assert!(
+        stalled.build_demand > 0.0,
+        "fixture: a meter carrying work owes the rung's rate ({})",
+        stalled.build_demand
+    );
+    assert!(
+        stalled.build_supplied > 0.0,
+        "a blocked head with work already banked must go on claiming — the pool owes for the ground,          not for the verb ({})",
+        stalled.build_supplied
+    );
+}
+
 /// **THE ALLOCATION SURVIVES A CHECKPOINT, UNDER BOTH MODES** — the fund mode is `SimState`, so a
 /// restored world splits its pool exactly as the original did.
 ///
@@ -3717,9 +3974,9 @@ fn a_fully_feral_patch_clears_its_owner_species_and_rung_together() {
 /// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
 ///
 /// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) takes `8.5` off the job per covered worker. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff the gear alone pays a whole rung
-/// off and every pacing claim below collapses to *"one turn versus one turn"*. Naming `none` holds
+/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
+/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as
 /// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
 /// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.

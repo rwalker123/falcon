@@ -1231,12 +1231,29 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
             "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
     col.add_child(stepper)
     # **THE KEEPING ROLES MOUNT NO KIT PICKER** (`docs/plan_standing_upkeep.md` §2.5, open item 3).
-    # Two facts, either of which is enough on its own: the wire names no default kit for the
-    # `agriculture` / `husbandry` jobs (there is no `defaultAgricultureKitId` twin of
-    # `defaultScoutKitId`), so the `(default)` mark would be a guess and `default_kit_id` would fall
-    # through to the HUNT default; and no shipped kit declares a maintenance contribution, so every
-    # entry the picker could offer moves no number the player can see. A picker whose selection
-    # changes nothing and whose default mark is wrong is worse than none.
+    #
+    # ⛔ **AND NOT BECAUSE A KEEPING KIT MOVES NOTHING — SINCE §4.8 IT MOVES THE KEEPING ITSELF.**
+    # `tillage` and `hurdling` carry the keeping jobs, `KeepingGear::resolve` derives the tool per
+    # web off the roster, and an equipped keeper supplies its bare output PLUS what the kit delivers
+    # against the same unmoved demand — flint hoes are +0.5 work per keeper per turn on the plant
+    # web, hurdles the same on the animal one — with `WearQuantum::UpkeepWork` billing them for it.
+    # The old note here argued from an inert axis, which stopped being true the turn those two kits
+    # took the jobs.
+    #
+    # **WHAT HOLDS IS THAT THE DERIVATION IS ALREADY THE RIGHT ANSWER AND A PICK COULD ONLY SPOIL
+    # IT.** No UI path writes a kit onto a keeping row, so `LaborAllocation::named_kit_on` is empty
+    # for every band a player can produce from here, the sim derives that web's own tool with no
+    # player action, and `KitRoster.keeping_kit_for` states the same answer on the card. A picker
+    # would store a PIN over that derivation — and the wire publishes a keeping row's kit already
+    # RESOLVED, so this client cannot tell a pin from a row nobody named and would quote a
+    # deliberately bare-handed pin one tool too generous (`KitRoster.keeping_kit_for`'s own note).
+    # Beside that, the wire names no default kit for the `agriculture` / `husbandry` jobs (there is
+    # no `defaultAgricultureKitId` twin of `defaultScoutKitId`), so the `(default)` mark would be a
+    # guess and `default_kit_id` would fall through to the HUNT default.
+    #
+    # **WHETHER THE PICKER SHOULD EXIST AT ALL IS AN OPEN DESIGN QUESTION** (§2.5's own open item),
+    # and this note does not answer it — it states what the absence rests on today, which is a
+    # read-back the wire does not offer rather than an axis that does nothing.
     if kind in KIT_PICKER_ROLES:
         var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
             _band_labor.default_kit_id(kind), band,
@@ -1279,10 +1296,12 @@ const ROLE_CARD_KIT_KEY_TEXT := ""
 
 ## The standing roles whose card offers a KIT PICKER.
 ##
-## **THE KEEPING PAIR IS ABSENT BECAUSE A PICK WOULD MOVE NOTHING.** No shipped kit declares a
-## maintenance contribution, so an `agriculture` or `husbandry` picker would change no number the
-## player can see, and the wire names no default kit for either job — so its `(default)` mark would be
-## a guess that fell through to the HUNT default.
+## **THE KEEPING PAIR IS ABSENT, AND NOT BECAUSE A PICK WOULD MOVE NOTHING.** `tillage` and
+## `hurdling` carry the keeping jobs as of `docs/plan_standing_upkeep.md` §4.8, so an equipped keeper
+## covers strictly more demand than a bare one. What the absence rests on — the per-web derivation
+## already being exact for every band reachable from this UI, a pin the wire gives no way to read
+## back, and a `(default)` mark that would fall through to the HUNT default — is stated once, on
+## `_build_role_card`.
 ##
 ## ⛔ **THE BUILDERS ARE ABSENT FOR THE OPPOSITE REASON: a pick there moves too much, permanently.**
 ## The roster carries two builders kits, one per web, and the sim derives which one a build gets from

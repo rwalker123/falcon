@@ -1083,9 +1083,33 @@ other row (§2.5).
   restricts it to `build_queue[0]` when `builders > 0`, mirroring the assignment loop's own `build_workers`
   rule. **Claim-side verb ⊆ payment-side verb**, so the two cannot disagree in the direction that caused
   the bug.
-  > **Accepted cost:** a **blocked** head bills the keeping pool while its meter never advances. It
-  > self-announces as `BUILD_QUEUE_BLOCKED` on the wire and the player has explicitly staffed builders
-  > at it.
+  > **⛔ AND THE HEAD'S OWN GATE IS PART OF THE TERM — an earlier cut accepted that a blocked head
+  > would bill the pool, and that acceptance was wrong.** The note here read *"it self-announces as
+  > `BUILD_QUEUE_BLOCKED` and the player has explicitly staffed builders at it"*, which sounds
+  > self-limiting and is not: the default fund mode is **`Spread`**, so the claim is pro-rata and a head
+  > that banks **nothing** dilutes the share of everything the band actually holds. A band working a
+  > tended patch (demand 2.0) with a blocked `Cultivate` queued on bare ground supplies that patch
+  > **1.5 of 2.0** and bleeds it once its grace expires. `Priority` was never affected — an unbanked
+  > meter's `at_risk_cost` is 0 and sorts last. Found by PR review, and it is the animal case reported
+  > from play: a blocked `Tame` at the head permanently starving `husbandry`.
+  >
+  > **The gate cannot be read off the published cause.** `advance_cultivation` / `advance_husbandry`
+  > clear `build_blocked_reason` to `Open` in **Logistics**, which runs before Population, so at
+  > `maintenance_shares` time it is always `Open`. A one-turn-lagged read was rejected too — it
+  > re-opens the first-turn bug on the turn a block clears. `head_rung_gate` resolves the head's gate
+  > **fresh, pre-loop**.
+  >
+  > **The four rung term-lists are named functions both callers use** (`plant_tended_gate`,
+  > `plant_field_gate`, `animal_pastoral_gate`, `animal_pen_gate`), so the refusal ordering and the
+  > published cause have one home. **What is still evaluated twice is the terms**, from identical
+  > inputs — collapsing that means hoisting the per-rung resolution out of the 3k-line assignment loop,
+  > which was deliberately not attempted. **If the two drift, the symptom is a head that claims while
+  > banking nothing, or banks while claiming nothing**, and the two new guards catch both.
+  >
+  > **It narrows only, so the subset invariant holds**: the payment side reads any queued entry's
+  > declaration and applies no gate; the claim side was already `build_queue[0]` and the gate is a
+  > further conjunct. **Zero-progress only** — `patch_build_verb` honours a declaration solely at a
+  > zero meter, so a blocked head with banked work derives its verb from progress and keeps claiming.
 
   So what the pool funds, what the decay pass bleeds and what keeps a holding alive cannot come to be
   three questions.
