@@ -672,6 +672,21 @@ pub struct HerdTelemetryState {
     /// and all three come from that band. Appended (append-only).
     #[serde(default = "not_in_any_build_queue")]
     pub build_queue_position: i32,
+    /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — `""` whenever this source is not a
+    /// blocked build, else a short lowercase cause key (`knowledge`, `escapement`, `no_crop`,
+    /// `species_ceiling`, `rung_below`, `owned_by_other`, `site`, `ring_idle`, `undeclared`,
+    /// `unworked`), on the free-form-string convention [`Self::ecology_phase`] already uses.
+    ///
+    /// **Read it beside [`Self::build_turns_remaining`]'s `-4`, never instead of it**: that field
+    /// says the pool is stuck, this says which conjunct of the rung's own gate refused. The sim
+    /// decides `eligible`, so the sim says why — a client re-deriving it would be a second producer
+    /// of one verdict.
+    ///
+    /// **Carried down the queue with the sentinel**, and it rides the same winner as the three
+    /// fields above. The `.fbs` comment on `buildBlockedReason` carries the whole key table.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_blocked_reason: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -755,6 +770,7 @@ impl Default for HerdTelemetryState {
             corral_upkeep_demand: 0.0,
             meter_rot_per_turn: 0.0,
             build_queue_position: crate::NOT_IN_ANY_BUILD_QUEUE,
+            build_blocked_reason: String::new(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1155,6 +1171,21 @@ pub struct ForagePatchState {
     /// and all three come from that band. Appended (append-only).
     #[serde(default = "not_in_any_build_queue")]
     pub build_queue_position: i32,
+    /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — `""` whenever this source is not a
+    /// blocked build, else a short lowercase cause key (`knowledge`, `escapement`, `no_crop`,
+    /// `species_ceiling`, `rung_below`, `owned_by_other`, `site`, `ring_idle`, `undeclared`,
+    /// `unworked`), on the free-form-string convention [`Self::ecology_phase`] already uses.
+    ///
+    /// **Read it beside [`Self::build_turns_remaining`]'s `-4`, never instead of it**: that field
+    /// says the pool is stuck, this says which conjunct of the rung's own gate refused. The sim
+    /// decides `eligible`, so the sim says why — a client re-deriving it would be a second producer
+    /// of one verdict.
+    ///
+    /// **Carried down the queue with the sentinel**, and it rides the same winner as the three
+    /// fields above. The `.fbs` comment on `buildBlockedReason` carries the whole key table.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_blocked_reason: String,
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an

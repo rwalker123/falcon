@@ -530,13 +530,15 @@ const IMPROVEMENT_DONE_UPKEEP_FORMAT := "%s %s · %s fodder/turn upkeep"
 # **THERE IS NO PHASE-KEYED PAUSE LINE, and `IMPROVEMENT_PAUSED_FORMAT` is not coming back.** It read
 # "⚠ Paused — the source is Stressed, and this only advances while Thriving. … ease off and it
 # resumes", which was true of a sim that gated every build on `EcologyPhase::Thriving`.
-# `docs/plan_harvest_floor.md` §3.2 replaced that CLIFF with a RATE — a crew pulling hard on the
-# ground it is clearing builds slowly, in proportion to its escapement floor — so the line rendered a
-# WARN "Paused" beneath a meter the same face showed advancing, and its remedy (ease workers off) was
-# backwards: the FLOOR paces the build, and easing off does not raise it. What the sheet says instead
-# is what it already said better one register up — the aside's own teaching line, whose live
-# "Building at ×1.60 — a higher floor builds faster" — and a build that genuinely accrues nothing
-# (nothing standing above the floor) states that by dropping its turn estimate entirely.
+# `docs/plan_harvest_floor.md` §3.2 removed that gate, so the line rendered a WARN "Paused" beneath a
+# meter the same face showed advancing. Nothing replaced it, and nothing should: since the build crew
+# left the tile (`docs/plan_standing_upkeep.md` §2.2) `build_supply` is the builders' own output and
+# reads neither the phase nor the floor, so there is no pace here to state. **The one thing the floor
+# still does to a build it does BACKWARDS** — a higher floor empties the escapement room sooner, and
+# an empty room closes the `eligible` gate on `plant:tended` / `animal:pastoral` — and the sheet says
+# THAT by dropping its turn estimate entirely, which is where that gate is read
+# (`SourceForecast.build_turns_at`). A note claiming the floor sets the RATE would send a player with
+# a slow build to the wrong dial; the remedy is hands, on the band's Builders role.
 
 # A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing the running
 # control can say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above

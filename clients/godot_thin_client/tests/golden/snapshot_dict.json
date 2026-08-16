@@ -430,6 +430,7 @@
   "forage_patches": [
     {
       "biomass": 69.25,
+      "build_blocked_reason": "forage_patches[0].build_blocked_reason",
       "build_queue_position": 117,
       "build_turns_remaining": 171,
       "build_work_from_gear": 76.230003,
@@ -564,6 +565,7 @@
     },
     {
       "biomass": 74.910004,
+      "build_blocked_reason": "forage_patches[1].build_blocked_reason",
       "build_queue_position": 144,
       "build_turns_remaining": 172,
       "build_work_from_gear": 25.290001,
@@ -839,6 +841,7 @@
       "attack": 84.400002,
       "biomass": 109.120003,
       "body_mass": 32.599998,
+      "build_blocked_reason": "herds[0].build_blocked_reason",
       "build_queue_position": 84,
       "build_turns_remaining": 128,
       "build_work_from_gear": 61.02,
@@ -948,6 +951,7 @@
       "attack": 61.459999,
       "biomass": 44.529999,
       "body_mass": 55.09,
+      "build_blocked_reason": "herds[1].build_blocked_reason",
       "build_queue_position": 153,
       "build_turns_remaining": 111,
       "build_work_from_gear": 23.51,

@@ -9,10 +9,14 @@ const Q := preload("res://tools/ui_preview/node_query.gd")
 
 const CREW_TARGET_ABSENT := -1
 
-## The teaching line's two halves, as the needles that tell them apart: a lesson still being earned
-## leads with the verb, and a lesson already known states only the BUILD the same multiplier paces.
+## The needle for the aside's teaching line — a lesson still being earned leads with the verb.
 const TEACHING_LESSON_NEEDLE := "Teaching"
 
+## **A NEEDLE FOR A RETIRED STRING, KEPT SO IT STAYS RETIRED.** The line once forked on whether a
+## build was in flight, on the premise that one multiplier paced the lesson and the build meter
+## alike; the build reads no floor (`docs/plan_standing_upkeep.md` §2.2), so `TEACHING_RATE_BUILD_TAIL`
+## and `TEACHING_BUILD_ONLY_FORMAT` went with the term and no HUD surface composes this any more.
+## Every use of it is a NEGATIVE — see `chapters/improvements.gd` and `chapters/herd_improve.gd`.
 const TEACHING_BUILD_NEEDLE := "Building at ×"
 
 ## Is this rung the SELECTED one? Read off the `normal` stylebox's fill, which `HudStyle.apply_button`

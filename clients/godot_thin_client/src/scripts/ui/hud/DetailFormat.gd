@@ -1373,8 +1373,12 @@ const UPKEEP_LOST_NOW_FORMAT := "short %s work — this rung is being lost NOW"
 ## interrogates. The words are `HudWorkVocab.under_kept_note_for_source`, the work board's own note,
 ## so the two surfaces cannot phrase one hazard differently.
 ##
-## **A BLOCKED QUEUE SUPPRESSES THE REMEDY HERE, because `build_blocked_lines` is already saying it**
-## on the row the countdown is about. Both would be the same instruction twice on one card.
+## **THE REMEDY IS SUPPRESSED HERE ONLY WHERE `build_blocked_lines` IS ACTUALLY SAYING IT** — a
+## blocked queue whose cause is `escapement` AND whose keeping is short, which is the one pairing that
+## row states the keeping for. It used to yield to ANY blocked queue, on the understanding that the
+## blocked row always named the keeping; that row names a CAUSE now, so on a build blocked for
+## knowledge or for a missing crop the note would have gone missing and the shortfall would have been
+## left with no remedy at all.
 ##
 ## Nothing here is derived: the shortfall is a published field (never `demand − supplied`) and the
 ## countdown is `neglectGraceRemaining` read through its own flag. Empty on a source that is being
@@ -1395,8 +1399,7 @@ static func at_risk_lines(src: Dictionary, prefix: String, kind: String) -> Arra
         lines.append("%s: %s" % [UPKEEP_RISK_ROW, UPKEEP_LOST_SOON_FORMAT % [
             format_work_units(float(state["shortfall"])), grace,
             "" if grace == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]])
-    if SourceForecast.build_turns_remaining(src, prefix) \
-            != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
+    if not build_blocked_states_keeping(src, prefix):
         lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
             HudWorkVocab.under_kept_note_for_source(kind)])
     return lines
@@ -1424,33 +1427,67 @@ static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String
             HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT % format_work_units(gear)])
     return lines
 
-## **THE REMEDY FOR A BLOCKED QUEUE, BY PAIRING RATHER THAN BY INVENTED TEXT**
-## (`docs/plan_standing_upkeep.md` §4.6b). `BUILD_TURNS_QUEUE_BLOCKED` says the band's builders are
-## standing on this entry and its own gate refuses them — and **the build surface does not know why**.
-## So this states no cause of its own: it renders ONLY where the same row already publishes an
-## `upkeepShortfall`, which is where the answer actually is, and names the keeping role that pays it.
+## **WHY THE BUILDERS ARE HELD HERE, AND WHAT WOULD FREE THEM** — the sub-row(s) beneath
+## `RUNG_BLOCKED_FORMAT`, whose headline says the pool is stuck and deliberately states no cause
+## (`docs/plan_standing_upkeep.md` §4.6b).
 ##
-## **THE ANIMAL WEB IS THE MEASURED CASE.** An unkept flock's regrowth is suppressed, the hunters draw
-## it to its escapement floor, and the `Tame`'s own gate closes over an empty room; staffing the
-## keeping restores `regrow_biomass` and logistic regrowth outruns a floor-respecting take, so the
-## herd climbs back over the gate in ~7–14 turns **with the hunters left at full strength**. Escape is
-## deliberately NOT symmetric with the pinning, which needs both the suppression and the draw — which
-## is why this copy must never hedge with *"and stop hunting"*, a second half that changes nothing.
+## **IT USED TO RENDER ONLY WHERE THE KEEPING WAS SHORT, AND THAT GATE WAS THE BUG.** The build
+## surface could not see WHY the gate refused, so it paired the block with the one fact the same row
+## already published — a shortfall — and said nothing at all when there was none. Reported from play:
+## a Tame sat at `⚠ Blocked 32%`, the player staffed the keeping the sub-row named, and the block
+## stayed with the row now silent. The real refusal was the herd standing below its escapement floor,
+## which nothing on any surface said. **The sim publishes the cause now** (`buildBlockedReason`), so
+## this states it for every key and invents nothing: the wording table is
+## `HudSelectionVocab.BUILD_BLOCKED_REASONS` and an unrecognised key — or a `-4` carrying no key —
+## takes `BUILD_BLOCKED_FALLBACK` rather than an empty line, which on a marked row would read as
+## *there is no cause*.
 ##
-## **IT IS A SUB-ROW, NOT A REPLACEMENT FOR `at_risk_lines`.** That row states what the shortfall
-## COSTS and how many turns of grace are left; this states what to do about it, and only on the one
-## state where the build is being held hostage by it. On a source that is blocked with its keeping
-## paid, nothing renders — a cause invented there would be a guess wearing a hazard's authority.
-static func build_blocked_lines(src: Dictionary, prefix: String, kind: String) -> Array[String]:
+## **`escapement` IS THE ONE CAUSE THAT MAY ALSO BE SHORT OF KEEPING, and where both hold BOTH are
+## said.** They are different facts with different levers — a floor and a standing stock against
+## `assign_labor … husbandry <n>` — and the keeping line is measured rather than assumed: staffing the
+## web's keeping role restores the source's regrowth and it climbs back over its own gate in ~7–14
+## turns with the take crew left at full strength, which is why that copy must never hedge with *"and
+## stop hunting"*. On every OTHER cause the keeping line is withheld however short the keeping is: it
+## is not why this build is blocked, and `at_risk_lines` states the shortfall on its own row anyway.
+##
+## **BOTH SURFACES THAT SHOW A BLOCKED BUILD CALL THIS** — the source's own card (the tile card and
+## the herd drawer, indented under the rung row) and the BUILD QUEUE row's tooltip, which passes an
+## empty `indent` because a tooltip has no rung row to hang beneath. One producer, so the two cannot
+## come to disagree about a refusal, which is this arc's most repeated failure.
+##
+## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
+static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
+        indent: String = MORALE_BREAKDOWN_INDENT) -> Array[String]:
     var lines: Array[String] = []
     if SourceForecast.build_turns_remaining(src, prefix) \
             != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
         return lines
-    if not SourceForecast.upkeep_is_short(SourceForecast.upkeep_state(src, prefix)):
-        return lines
-    lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
-        HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % HudWorkVocab.keeping_role_name(kind)])
+    lines.append("%s%s" % [indent,
+        build_blocked_reason_text(SourceForecast.build_blocked_reason(src, prefix))])
+    if build_blocked_states_keeping(src, prefix):
+        lines.append("%s%s" % [indent,
+            HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % HudWorkVocab.keeping_role_name(kind)])
     return lines
+
+## The sim's cause key in the manual's voice. An unknown key — and the empty one, which a `-4` should
+## never carry — answers the fallback: the client still knows the builders are held, and saying so is
+## honest where guessing at a cause or rendering nothing is not.
+static func build_blocked_reason_text(key: String) -> String:
+    return String(HudSelectionVocab.BUILD_BLOCKED_REASONS.get(
+        key, HudSelectionVocab.BUILD_BLOCKED_FALLBACK))
+
+## **DOES THE BLOCKED SUB-ROW STATE THE KEEPING?** — the one decision behind two surfaces, so
+## `at_risk_lines` can withhold its own remedy note exactly when this row is already carrying it and
+## on no other blocked source. True only for the pairing the keeping is genuinely a lever on: an
+## `escapement` refusal on a source whose keeping is short.
+static func build_blocked_states_keeping(src: Dictionary, prefix: String) -> bool:
+    if SourceForecast.build_turns_remaining(src, prefix) \
+            != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
+        return false
+    if SourceForecast.build_blocked_reason(src, prefix) \
+            != HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT:
+        return false
+    return SourceForecast.upkeep_is_short(SourceForecast.upkeep_state(src, prefix))
 
 ## The one turn count that takes the singular row — a build one turn from done.
 const BUILD_TURNS_SINGULAR := 1

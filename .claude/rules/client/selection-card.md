@@ -366,17 +366,40 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 > carries. It is not the `Stalled` row: that one is a crew of nobody meeting a `-1`, where the wasted
 > resource is the rung, and this one wastes the WHOLE POOL.
 >
-> **The measured remedy is `assign_labor <f> <b> husbandry <n>` — the keeping role — ALONE.** The gate
-> that produces this is the keeping shortfall's, so staffing the web's own keeping role clears it; the
-> copy names that role and nothing else, and deliberately does not hedge with *"and stop hunting"* or
-> any second lever the player would then have to rank. `DetailFormat.build_blocked_lines` renders the
-> indented second line and is the ONE producer of it, on both webs — `HudWorkVocab.ROLE_NAME_HUSBANDRY`
-> on a herd, `ROLE_NAME_AGRICULTURE` on a patch, so the sentence names the card the player will press.
+> **THE CAUSE IS PUBLISHED NOW, AND THE KEEPING WAS NEVER THE GATE (§4.7).** This callout used to say
+> *"the gate that produces this is the keeping shortfall's, so staffing the web's own keeping role
+> clears it"*, and then **rendered NOTHING once the keeping was paid** — on the reasoning that a `-4`
+> with a cleared shortfall *"is a block with some other cause"* and that naming a fully-staffed role
+> would be the warning-outlives-its-mechanism failure. The second half of that was right. The first
+> half was wrong, and the silence it produced was reported from play:
 >
-> **It renders NOTHING when the keeping is paid**, which is the pairing that keeps the remedy honest: a
-> `-4` whose shortfall has cleared is a block with some other cause, and pointing at a fully-staffed
-> role would be the warning-outlives-its-mechanism failure this arc keeps producing. The row's own
-> hazard mark still stands; only the remedy is withheld.
+> > A Tame sat at `⚠ Blocked 32%`. The player staffed Husbandry — the only remedy any surface named —
+> > and it stayed blocked, now with **no explanation at all**. The real cause was that the herd had
+> > fallen below its escapement floor.
+>
+> **The keeping shortfall is not a conjunct of any rung's `eligible`.** It reaches a build only
+> *indirectly*, by suppressing regrowth until the stock drops under the floor — which is a different
+> claim, one step longer, and true of one key rather than of `-4` in general.
+>
+> **`SourceForecast.build_blocked_reason` reads the sim's own `buildBlockedReason`**, a short cause key
+> published by the one site that mints the sentinel, carried down the queue so entries behind a blocked
+> head report the head's reason. **The sim decides `eligible`, so the sim says why** — the client has
+> its own `RungGates` machinery and re-deriving here would be a second producer of one verdict.
+> `HudSelectionVocab.BUILD_BLOCKED_REASONS` owns the wording for all ten keys **plus a fallback**, on
+> `SOW_REFUSAL_REASONS`' precedent: an unrecognised key states that the client cannot name the reason,
+> because a blank line under a hazard mark is what this whole repair exists to delete.
+>
+> **`DetailFormat.build_blocked_lines` is still the ONE producer**, and both surfaces that show a
+> blocked build call it — this card and the BUILD QUEUE row's tooltip, the date column having room for
+> the headline alone.
+>
+> **THE KEEPING REMEDY SURVIVES, NARROWED TO THE ONE KEY IT IS TRUE OF.** It renders where the cause is
+> `escapement` **and** the keeping is actually short — and it renders **beside** the cause, never
+> instead of it. They are two facts with two different remedies (the floor or the stock; versus
+> `assign_labor … husbandry <n>`), and letting either suppress the other is how the player was left
+> fixing the wrong one. `at_risk_lines`' own under-kept note was withholding itself against *any*
+> blocked queue and now yields only to that same predicate, so a knowledge- or crop-blocked source
+> keeps it.
 
 > #### ⛔ THE HELD ROW IS THE ONE STATE HERE THAT MUST **NOT** BE MARKED (§4.6a)
 >

@@ -305,6 +305,17 @@ fn published_position(app: &App, source: UVec2) -> i32 {
     published(app, source, |patch| patch.buildQueuePosition())
 }
 
+/// **WHY the queue is blocked here**, off the encoded row — `""` for an entry that is not blocked.
+fn published_reason(app: &App, source: UVec2) -> String {
+    published(app, source, |patch| {
+        patch.buildBlockedReason().unwrap_or_default().to_string()
+    })
+}
+
+/// The wire's *"this entry is not blocked"* — the empty [`buildBlockedReason`], named because `""`
+/// at an assertion site says nothing about what it means.
+const NOT_BLOCKED: &str = "";
+
 /// **The keeping this band owes for three tended meters in flight** — read off the shipped ladder so
 /// a retune moves the fixture with the game. Staffed wherever an arm must not be measuring rot.
 fn keeping_for(sources: usize) -> u32 {
@@ -539,6 +550,15 @@ fn a_blocked_head_publishes_minus_four_and_every_entry_behind_it_says_the_same()
             BUILD_QUEUE_BLOCKED,
             "entry {index} is behind a head that never finishes, so it publishes the same news"
         );
+        // **AND WHY.** `-4` alone renders as *"stuck"* with nothing to act on — the playtest that
+        // filed this sat on one for turns. The cause is the conjunct that actually refused, and it
+        // is **carried down the queue** with the sentinel, because the head's reason is why the
+        // entries behind it are stuck too.
+        assert_eq!(
+            published_reason(&app, *source),
+            "knowledge",
+            "entry {index} must name the conjunct that refused — the unlearned Cultivation gate"
+        );
     }
 
     // **THE REMEDY.** Reopen the gate and the queue answers with real counts again.
@@ -555,6 +575,14 @@ fn a_blocked_head_publishes_minus_four_and_every_entry_behind_it_says_the_same()
             published_turns(&app, *source) > 0,
             "entry {index} recovers to a real count once the gate opens — a test that only ever \
              sees the failure passes with the remedy broken"
+        );
+        // **The NOT-blocked half of the pair.** A producer that stamped a cause unconditionally
+        // would satisfy the positive assertion above and leave every finishing build claiming a
+        // refusal, so the empty key is asserted as hard as the populated one.
+        assert_eq!(
+            published_reason(&app, *source),
+            NOT_BLOCKED,
+            "entry {index} is building again, so it must publish no blocked cause at all"
         );
     }
 }
@@ -610,7 +638,7 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
         // be asserting against a herd that had died in the meantime.
         let before = herd_meter(&app, &herd_id);
         resolve_an_animal_turn(&mut app);
-        let (turns, _, grace_left, _) = published_herd(&app, &herd_id);
+        let (turns, _, _, grace_left, _) = published_herd(&app, &herd_id);
         if turns == BUILD_QUEUE_BLOCKED && grace_left == GRACE_SPENT {
             assert_eq!(
                 herd_meter(&app, &herd_id),
@@ -651,10 +679,18 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
 
     // **THE PAIRING, on one encoded row.** A `-4` with no shortfall beside it would give the player
     // nothing to act on.
-    let (turns, shortfall, grace_left, has_grace) = published_herd(&app, &herd_id);
+    let (turns, reason, shortfall, grace_left, has_grace) = published_herd(&app, &herd_id);
     assert_eq!(
         turns, BUILD_QUEUE_BLOCKED,
         "the head of a staffed queue whose own gate refuses it says so"
+    );
+    // **AND WHICH CONJUNCT REFUSED.** This is the whole point of the pairing: the keeping shortfall
+    // beside it is *a* true fact, and the playtest that filed this fixed exactly that and stayed
+    // blocked — because the refusal is the herd standing below its escapement floor, which only the
+    // keeping can reopen and which no surface said out loud.
+    assert_eq!(
+        reason, "escapement",
+        "the stall must name the escapement room, not merely report that the queue is stuck"
     );
     assert!(
         shortfall > 0.0,
@@ -708,6 +744,13 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
     assert!(
         recovered > 0,
         "…and it recovers to a REAL count, not another sentinel: {recovered}"
+    );
+    // **The NOT-blocked half of the pair.** A cause stamped unconditionally would satisfy the
+    // `escapement` assertion above while telling every recovered build it was still refused.
+    assert_eq!(
+        published_herd(&app, &herd_id).1,
+        NOT_BLOCKED,
+        "…and it stops naming a cause, because it is no longer blocked"
     );
     assert!(
         herd_meter(&app, &herd_id) > frozen,
@@ -924,9 +967,9 @@ fn herd_meter(app: &App, id: &str) -> f32 {
     }
 }
 
-/// **The four fields the blocked pairing is read from, off the ENCODED buffer** — the countdown, the
-/// keeping shortfall and the grace, on one row, because that is how a client sees them.
-fn published_herd(app: &App, id: &str) -> (i32, f32, u32, bool) {
+/// **The five fields the blocked pairing is read from, off the ENCODED buffer** — the countdown, its
+/// cause, the keeping shortfall and the grace, on one row, because that is how a client sees them.
+fn published_herd(app: &App, id: &str) -> (i32, String, f32, u32, bool) {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -949,6 +992,7 @@ fn published_herd(app: &App, id: &str) -> (i32, f32, u32, bool) {
         .expect("the fixture herd is on the wire — it is OWNED, which passes the fog gate");
     (
         row.buildTurnsRemaining(),
+        row.buildBlockedReason().unwrap_or_default().to_string(),
         row.upkeepShortfall(),
         row.neglectGraceRemaining(),
         row.hasNeglectGrace(),

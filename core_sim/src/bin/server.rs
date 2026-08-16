@@ -2854,7 +2854,33 @@ fn handle_assign_labor(
     // Trapping — the silent substitution the refusal above exists to prevent, arriving through the
     // absent-token door instead. `default_kits.hunt` stays the answer wherever there is no quarry
     // to score: every other role, and a Hunt row whose herd or species will not resolve.
-    let crew_kit = if workers == 0 {
+    //
+    // **A BUILDERS ROW WITH NO KIT NAMED STORES NOTHING**, which is the one row where "resolve the
+    // absent case here" is the wrong move. The builders' default is **per queue entry** — a hoe for
+    // a Cultivate, hurdles for a Tame (`docs/plan_standing_upkeep.md` §4.6b) — and that derivation
+    // is reachable only while the row carries no named kit
+    // ([`EquipmentConfig::builders_kit_for`] rule ②, keyed off `named_kit_on`). Storing
+    // `default_kits.builders` (`none`) here made rule ① fire on every row the UI ever wrote, so the
+    // pool really did build bare-handed ([`BuildersGear::resolve`] reads the same field) and the
+    // panel's *"No kit"* was an honest readout of it.
+    //
+    // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
+    // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
+    // resolved `KitChoice` for the raid path too, and widening it to an `Option` would push the
+    // absent-means-derive case into two call sites that have no derivation to defer to. Only the
+    // builders arm is touched — the other six roles' stored default is load-bearing (the wire and
+    // the turn both read the row's kit for them, and there is nothing per-entry to derive).
+    //
+    // **An explicit `kit <id>` on a builders row is still stored and still wins**, `none` included:
+    // that is how a player sends the pool out bare-handed to conserve gear, and it is validated by
+    // the same failing-closed resolution as every other role.
+    //
+    // The two are separate rules reaching the same store, so they are named separately and OR'd
+    // rather than written as two arms of one `if` — which is the same block twice, and reads as an
+    // accident.
+    let unstaffing = workers == 0;
+    let builders_default_is_per_entry = matches!(target, LaborTarget::Builders) && kit_id.is_none();
+    let crew_kit = if unstaffing || builders_default_is_per_entry {
         None
     } else {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
@@ -11899,6 +11925,122 @@ mod tests {
             !staffed(&mut app),
             "unassigning names a kit the roster no longer carries — the crew must still clear, or \
              the player is locked into an assignment by a kit that does not exist"
+        );
+    }
+
+    /// **A `builders` row the player named no kit on leaves the per-entry derivation LIVE**
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// The command boundary resolved *every* row's absent kit into a stored id, so a builders row
+    /// carried `default_kits.builders` = `none` — and `builders_kit_for`'s rule ① (*"a kit named on
+    /// the row wins"*) then beat rule ② (the head entry's web-derived kit) on every row the UI ever
+    /// wrote. The whole derivation was unreachable through the client, which deliberately emits no
+    /// `kit` token on that row precisely so it would stay reachable. It is not cosmetic:
+    /// `BuildersGear::resolve` reads the same field, so the pool built bare-handed.
+    ///
+    /// **Every previous fixture hand-built the assignment** (`tests/build_queue.rs`,
+    /// `tests/build_turns_closed_form.rs` both write `kit: Some(bare_builders())`), which is why
+    /// nothing caught it — this one drives the real `assign_labor … builders <n>` handler.
+    ///
+    /// **The explicit case is asserted with the two derived ones and is what makes them mean
+    /// something**: a fix that simply never stored anything on a builders row would satisfy the
+    /// first two and silently retire the bare-handed override the design keeps.
+    #[test]
+    fn an_unnamed_builders_kit_is_derived_from_the_head_entry_rather_than_stored() {
+        /// The roster kit the plant web's builds want (`equipment.json` → `build_work` on `hoes`).
+        const PLANT_BUILD_KIT: &str = "tillage";
+        /// …and the animal web's (`hurdles`).
+        const ANIMAL_BUILD_KIT: &str = "hurdling";
+        /// The bare-handed roster entry: `default_kits.builders`, and what an explicit `kit none`
+        /// names. Both readings must be distinguishable, which is the point of the third case.
+        const BARE_KIT: &str = "none";
+        /// Hands on the builders row — any positive count; the fork only asks `workers > 0`.
+        const BUILDERS: u32 = 2;
+
+        /// One trip through the real command path: a band whose build queue head is on `animal_head`'s
+        /// web takes an `assign_labor … builders` carrying `named`, and the kit the pool ends up
+        /// working with is read back through the one seam the turn and the wire both resolve through.
+        fn resolved_builders_kit(animal_head: bool, named: Option<&str>) -> String {
+            let mut app = build_headless_app();
+            let faction = FactionId(0);
+            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+            let patch = UVec2::new(2, 2);
+            let (worked, head) = if animal_head {
+                (
+                    LaborTarget::Hunt {
+                        fauna_id: herd_id.clone(),
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    },
+                    core_sim::BuildQueueEntry {
+                        source: BuildSource::Herd(herd_id.clone()),
+                        declared: BuildJob::Rung(Improvement::Tame),
+                    },
+                )
+            } else {
+                (
+                    LaborTarget::Forage {
+                        tile: patch,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                    },
+                    core_sim::BuildQueueEntry {
+                        source: BuildSource::Patch(patch),
+                        declared: BuildJob::Rung(Improvement::Cultivate),
+                    },
+                )
+            };
+            let band = spawn_resident_working_band(&mut app, faction, worked);
+            app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+            app.world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .build_queue
+                .push(head);
+
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(FIXTURE_BAND_ID),
+                "builders".to_string(),
+                BUILDERS,
+                None,
+                None,
+                None,
+                None,
+                None,
+                named.map(str::to_string),
+            );
+
+            let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+            let allocation = app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation");
+            assert_eq!(
+                allocation.workers_on(&LaborTarget::Builders),
+                BUILDERS,
+                "the command must actually staff the builders row, or this measures nothing"
+            );
+            allocation.builders_kit(&equipment).id().to_string()
+        }
+
+        assert_eq!(
+            resolved_builders_kit(false, None),
+            PLANT_BUILD_KIT,
+            "a builders pool on a plant-web head with no kit named must work the roster's plant \
+             build kit — storing the job default here makes §4.6b's derivation unreachable and \
+             sends the pool out bare-handed"
+        );
+        assert_eq!(
+            resolved_builders_kit(true, None),
+            ANIMAL_BUILD_KIT,
+            "…and the same row on an animal-web head must work the roster's animal build kit"
+        );
+        assert_eq!(
+            resolved_builders_kit(true, Some(BARE_KIT)),
+            BARE_KIT,
+            "an EXPLICIT `kit none` is a real selection and must still beat the derivation — that \
+             is how a player conserves gear"
         );
     }
 

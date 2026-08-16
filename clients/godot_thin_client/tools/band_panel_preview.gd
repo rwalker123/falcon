@@ -11261,6 +11261,11 @@ const QUEUE_TURNS_FOURTH := 140
 ## both the "nobody" branch and from `WORKER_STEP`.
 const QUEUE_BUILDERS := 3
 
+## The cause the HERD entry is blocked on, deliberately NOT the patches' `escapement`: a wording table
+## that answered the same sentence for every key passes any single-key check, so the blocked state
+## states TWO different causes and asserts them apart.
+const QUEUE_BLOCKED_HERD_REASON := "knowledge"
+
 ## The take crew on each queued source. Non-zero, because `_work_source_models` admits a row on its
 ## TAKE crew — which is also why every queue entry is guaranteed a model (`prune_build_queue` keeps
 ## an entry only while its source holds an assignment).
@@ -11290,13 +11295,15 @@ func _render_build_queue_states() -> void:
 	_assert_build_queue_block(3, "the three-entry queue")
 	_assert_build_queue_dates_ascend()
 	_assert_build_queue_head_readout()
+	_assert_build_queue_states_no_cause()
 
 	#   (b) THE HEAD IS BLOCKED, and every entry behind it carries the SAME sentinel — which is the
 	# sim's own behaviour (the whole pool stands on the head, so nothing behind it moves) and the
 	# half a block showing only the head would misreport.
-	_set_forage_patches(_build_queue_patches(3, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED))
+	_set_forage_patches(_build_queue_patches(3, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED,
+		HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT))
 	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1,
-		SourceForecast.BUILD_TURNS_QUEUE_BLOCKED))
+		SourceForecast.BUILD_TURNS_QUEUE_BLOCKED, QUEUE_BLOCKED_HERD_REASON))
 	_push_bands([_build_queue_band_fixture(3)])
 	await _settle()
 	await _save("band_panel_build_queue_blocked")
@@ -11304,6 +11311,7 @@ func _render_build_queue_states() -> void:
 	_assert_zone_content_fits()
 	_assert_build_queue_block(3, "the blocked queue")
 	_assert_build_queue_all_blocked()
+	_assert_build_queue_states_the_cause()
 
 	#   (c) THE PAIRED NEGATIVE — a band with a work board and NOTHING queued renders NO block at
 	# all. Without it every claim above passes on a block drawn unconditionally, and the
@@ -11397,7 +11405,8 @@ func _build_queue_forage_row(tile: Vector2i, improvement: String) -> Dictionary:
 ## The patches, carrying the two fields the block reads and nothing else — the queue POSITION and the
 ## chained countdown. `turns_override` states the same sentinel on every entry, which is the blocked
 ## state's own claim.
-func _build_queue_patches(entries: int, turns_override: int = 0) -> Array:
+func _build_queue_patches(entries: int, turns_override: int = 0,
+		blocked_reason: String = "") -> Array:
 	var tiles := [QUEUE_HEAD_PATCH, QUEUE_SECOND_PATCH, QUEUE_THIRD_PATCH]
 	# The head is entry 0, the herd entry 1, so the plant entries take 0, 2 and 3.
 	var positions := [SourceForecast.BUILD_QUEUE_HEAD, 2, 3]
@@ -11412,6 +11421,10 @@ func _build_queue_patches(entries: int, turns_override: int = 0) -> Array:
 				else SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
 			"build_turns_remaining": (turns_override if turns_override != 0 else turns[i]) \
 				if queued else SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+			# **THE CAUSE, AND ONLY A BLOCKED ENTRY CARRIES ONE** — `""` is the wire's own "this
+			# source is not a blocked build", so an unqueued or unblocked fixture states it and the
+			# no-cause negative below is a real reading rather than a missing key.
+			"build_blocked_reason": blocked_reason if queued else "",
 			# **THE BASKET IS WHAT MAKES THE CROP PICKER RENDER** (`docs/plan_standing_upkeep.md`
 			# §4.7a ③), and it is here rather than on one state's own fixture so the WIDTH it takes is
 			# inside the measured frames — a control proved only by a driven assertion is a control
@@ -11427,13 +11440,14 @@ func _build_queue_patches(entries: int, turns_override: int = 0) -> Array:
 	return out
 
 ## …and the herd the band's hunt row already names, at its own place in the queue.
-func _build_queue_herds(position: int, turns: int) -> Array:
+func _build_queue_herds(position: int, turns: int, blocked_reason: String = "") -> Array:
 	return [{
 		"id": QUEUE_HERD_ID, "species": "Red Deer",
 		"x": QUEUE_HERD_TILE.x, "y": QUEUE_HERD_TILE.y,
 		"population": 120, "ecology_phase": "stressed",
 		"build_queue_position": position,
 		"build_turns_remaining": turns,
+		"build_blocked_reason": blocked_reason,
 	}]
 
 # ---- the block's own claims -------------------------------------------------------------------
@@ -11523,6 +11537,57 @@ func _assert_build_queue_all_blocked() -> void:
 			blocked += 1
 	_assert_band_panel("a blocked HEAD blocks the whole queue — all 3 entries read \"%s\" (%s)"
 			% [needle, str(seen)], blocked == 3)
+
+## **WHY THE BUILDERS ARE HELD, ON THE QUEUE'S OWN SURFACE** (`docs/plan_standing_upkeep.md` §4.6b).
+## The date column can only say `⚠ Blocked N%`, which is the STATE; the cause is a sentence, and a
+## 28px row's one place for a sentence is its hover. **It is the SOURCE CARD's producer**
+## (`DetailFormat.build_blocked_lines`), so the two surfaces cannot come to disagree about a refusal —
+## which is what this asserts by composing the wanted text from the shipped table rather than from a
+## literal.
+##
+## **TWO DIFFERENT KEYS, BY EQUALITY, and that pairing is the claim** — a table answering the same
+## string for everything passes any single-key check, and `escapement` is the one the playtest hit.
+## The herd entry deliberately carries a different cause from the patches beside it.
+func _assert_build_queue_states_the_cause() -> void:
+	# **THE EXPECTATION IS THE TABLE, NOT THE PRODUCER** — composed through
+	# `build_blocked_reason_text` it would only assert that the lookup agrees with itself, and a
+	# lookup answering one key for every cause would satisfy both claims.
+	var wanted_plant := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
+		HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])
+	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
+	var plant_rows := 0
+	var herd_rows := 0
+	for row in _build_queue_rows():
+		var tooltip := String(row.tooltip_text)
+		if tooltip.contains(wanted_plant):
+			plant_rows += 1
+		if tooltip.contains(wanted_herd):
+			herd_rows += 1
+	_assert_band_panel("a blocked entry's hover states the ESCAPEMENT cause — \"%s\" (%d rows)"
+			% [wanted_plant, plant_rows], plant_rows > 0)
+	# …and the SECOND key, which is what stops a table that answers one sentence for every cause.
+	_assert_band_panel("…and the herd entry blocked on KNOWLEDGE states its own cause instead — \"%s\""
+			% wanted_herd, herd_rows > 0)
+	_assert_band_panel("…and the two causes are DIFFERENT sentences on different rows",
+		wanted_plant != wanted_herd and plant_rows + herd_rows == _build_queue_rows().size())
+
+## **THE PAIRED NEGATIVE, and it is the half a producer that always emitted a line would fail.** A
+## queue that is moving states no cause at all — not a fallback, not an empty indented line — so the
+## hover is exactly what it was before a cause existed.
+func _assert_build_queue_states_no_cause() -> void:
+	var causes: Array[String] = []
+	for key in HudSelectionVocab.BUILD_BLOCKED_REASONS.keys():
+		causes.append(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[key]))
+	causes.append(HudSelectionVocab.BUILD_BLOCKED_FALLBACK)
+	var offenders := 0
+	for row in _build_queue_rows():
+		var tooltip := String(row.tooltip_text)
+		for cause in causes:
+			if tooltip.contains(cause):
+				offenders += 1
+				break
+	_assert_band_panel("a queue that is MOVING states no blocked cause on any row (%d did)"
+			% offenders, offenders == 0)
 
 ## **THE PAIRED NEGATIVE.** No queue means no block AT ALL — no head, no rows, no chrome — and the
 ## board must still render, or "the block is gone" is satisfied by a zone that renders nothing.

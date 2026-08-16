@@ -240,13 +240,13 @@ pub use influencers::{
 pub use intensification::{
     activity_work, build_fraction, build_turns_estimate, build_turns_remaining,
     build_work_per_worker_turn, distribute_upkeep_pool, knows, learn_multiplier,
-    load_intensification_ladder_from_env, upkeep_shortfall, upkeep_shortfall_fraction, BuildTurns,
-    LadderConfig, LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild,
-    RungDef, RungFeeding, RungHarvest, RungKey, RungMeterDecay, RungMovement, RungSiteRequirement,
-    RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
-    FABRICATED_BUILD_COST, FULLY_SUPPLIED, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
-    NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
-    SITE_ACCEPTED, UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
+    load_intensification_ladder_from_env, upkeep_shortfall, upkeep_shortfall_fraction, BuildGate,
+    BuildTurns, LadderConfig, LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch,
+    RungBuild, RungDef, RungFeeding, RungHarvest, RungKey, RungMeterDecay, RungMovement,
+    RungSiteRequirement, RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale,
+    BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST, FULLY_SUPPLIED, NO_BUILD_GEAR,
+    NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+    RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED, UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

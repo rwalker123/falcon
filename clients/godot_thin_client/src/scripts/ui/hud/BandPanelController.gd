@@ -2088,9 +2088,17 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     var date_tooltip := value
     if not pending and DetailFormat.build_sentinel_value(turns, builders, percent) == "":
         date_tooltip = HudWorkVocab.BUILD_QUEUE_ROW_SPAN_FORMAT % [value, turns]
-    row.tooltip_text = HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face,
+    # **THE CAUSE OF A BLOCK RIDES THE HOVER, AND IT IS THE CARD'S OWN SENTENCE**
+    # (`docs/plan_standing_upkeep.md` §4.6b). The date column can only ever say `⚠ Blocked 32% — your
+    # builders are held here`, which is the state and not the reason; the reason is a sentence, and
+    # the one place a 28px row has for one is its tooltip. Empty on every entry that is not blocked,
+    # so the hover is unchanged wherever nothing is wrong.
+    var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
+    var tooltip_lines: Array = [HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face,
         HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
-            else date_tooltip]
+            else date_tooltip]]
+    tooltip_lines.append_array(blocked_lines)
+    row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
     var withdraw := Button.new()
     withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
         int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)))
@@ -2928,6 +2936,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # four other jobs, and the position is what says which.
             "build_turns": SourceForecast.build_turns_remaining(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN
+            # CARD USES** (`docs/plan_standing_upkeep.md` §4.6b). The countdown above says the pool is
+            # stuck; these say which conjunct of the rung's gate refused, and — where the cause is the
+            # escapement floor and the keeping is also short — what frees it. Composed here, beside
+            # the other three build fields, because this is where the raw wire source is in hand;
+            # the queue row spends them on its TOOLTIP, a one-line row having nowhere to put a
+            # sentence. **`DetailFormat.build_blocked_lines` is that producer for BOTH surfaces** —
+            # two copies of a refusal is how the card and the queue come to disagree — and the indent
+            # is dropped because a tooltip hangs beneath no rung row.
+            "build_blocked_lines": DetailFormat.build_blocked_lines(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
+                SourceForecast.source_kind_for_labor(kind),
+                HudWorkVocab.BUILD_QUEUE_TOOLTIP_UNINDENTED),
             # **THE KIT THIS CREW IS ALREADY WORKING UNDER** (`LaborAssignment.kitId`, always a real
             # roster id on a forage/hunt row). It rides the model for one reason: `_emit_work_assign`
             # RESTATES it, so a `+`/`−` on the board cannot silently re-kit a crew back to the job

@@ -434,6 +434,16 @@ const BLOCKED_UPKEEP_SUPPLIED := 4.1
 ## already-being-lost form.
 const BLOCKED_GRACE_TURNS := 2
 
+## A blocked build states ONE line where the keeping is not also short — the cause alone. Named
+## because the count IS the claim: a second line there is the keeping remedy rendering on a cause it
+## is not the lever for.
+const BLOCKED_CAUSE_ONLY_LINES := 1
+
+## The SECOND cause key the negatives assert by equality. Deliberately one whose remedy has nothing
+## to do with either the keeping or the floor, so a table that answered one sentence for every key
+## cannot satisfy both it and the escapement claim.
+const BLOCKED_KNOWLEDGE_REASON := "knowledge"
+
 ## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
 ## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
 ## forecast from. Naming it keeps that assertion from re-stating which fixture it is judging.
@@ -1099,6 +1109,10 @@ func run(harness) -> void:
 	BaseFx.price_plant_build(blocked, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
 	# **THE KEEPING IS SHORT, which is what the remedy sub-row is PAIRED with.** The published
 	# shortfall and its grace are the two facts already on this row; the block itself states no cause.
+	# **AND THE SIM STATES WHY** (`buildBlockedReason`). Without it the card can only render the
+	# hazard row, which is the state that shipped: the player covered the keeping the sub-row
+	# named, and the block stayed with nothing on any surface saying what was refusing it.
+	blocked["patch_build_blocked_reason"] = HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT
 	blocked["patch_upkeep_demand"] = BLOCKED_UPKEEP_DEMAND
 	blocked["patch_upkeep_supplied"] = BLOCKED_UPKEEP_SUPPLIED
 	blocked["patch_upkeep_shortfall"] = BLOCKED_UPKEEP_DEMAND - BLOCKED_UPKEEP_SUPPLIED
@@ -1120,6 +1134,12 @@ func run(harness) -> void:
 	# naming the wrong state and the wrong remedy — so that value must be absent from this frame.
 	h._assert_hud("…and NOT the STALLED hazard an unfollowed sentinel would render",
 		not blocked_row.contains(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)))
+	# **AND THE CAUSE IS BENEATH IT, which is the row that did not exist.** The sim names the
+	# conjunct that refused and the client words it; asserted by EQUALITY against the shipped
+	# table, since the whole claim is WHICH sentence renders.
+	h._assert_hud("…and the row beneath states the sim's own cause for the block",
+		blocked_row.contains(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
+			HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])))
 	# **AND THE REMEDY IS BESIDE IT, naming the KEEPING role rather than the builders.** The measured
 	# escape is `assign_labor <f> <b> husbandry <n>` alone — staffing the keeping restores the
 	# source's regrowth and it climbs back over its own gate — so the sub-row must name the web's
@@ -1131,14 +1151,49 @@ func run(harness) -> void:
 	# above an instruction rather than an unquantified nudge.
 	h._assert_hud("…over the At risk: row the shortfall itself earns",
 		blocked_row.contains(DetailFormat.UPKEEP_RISK_ROW))
-	# **THE PAIRED NEGATIVE: a BLOCKED source whose keeping is PAID states the block and no cause.**
-	# PNG-less — the two frames differ by one sub-row — and it is what stops the remedy becoming a
-	# line the card prints whenever it is stuck.
+	# **THE PAIRED NEGATIVES, all PNG-less — the frames differ by one sub-row apiece.**
+	#
+	#   (1) A BLOCKED source whose keeping is PAID states its CAUSE and NOT the keeping remedy. The
+	#   keeping is a lever on the escapement stall and is not why any other gate refuses, so a card
+	#   that named it whenever a build was stuck would send the player to staff a role that changes
+	#   nothing — which is the failure this whole row was written for, pointed the other way.
 	var blocked_paid := BaseFx.unbuilt(BaseFx.food_tile_fixture())
 	blocked_paid["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	blocked_paid["patch_build_blocked_reason"] = HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT
 	BaseFx.price_plant_build(blocked_paid, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
-	h._assert_hud("a blocked source whose keeping is PAID invents no cause for the block",
-		DetailFormat.build_blocked_lines(blocked_paid,
+	var paid_lines := DetailFormat.build_blocked_lines(blocked_paid,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("a blocked source whose keeping is PAID still states the cause (%d lines)"
+			% paid_lines.size(), paid_lines.size() == BLOCKED_CAUSE_ONLY_LINES
+		and String(paid_lines[0]).contains(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
+			HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])))
+	h._assert_hud("…and states no keeping remedy, the keeping being paid",
+		not String(paid_lines[0]).contains(HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT
+			% HudWorkVocab.ROLE_NAME_AGRICULTURE))
+	#   (2) A SECOND KEY, by EQUALITY. A table answering one sentence for every cause passes the
+	#   escapement claim above on its own, so the knowledge refusal is asserted to render ITS words
+	#   and not the escapement ones.
+	var blocked_knowledge := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	blocked_knowledge["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	blocked_knowledge["patch_build_blocked_reason"] = BLOCKED_KNOWLEDGE_REASON
+	BaseFx.price_plant_build(blocked_knowledge, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
+	var knowledge_lines := DetailFormat.build_blocked_lines(blocked_knowledge,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("a build blocked on KNOWLEDGE states the knowledge cause (%s)"
+			% str(knowledge_lines), knowledge_lines.size() == BLOCKED_CAUSE_ONLY_LINES
+		and String(knowledge_lines[0]).contains(
+			String(HudSelectionVocab.BUILD_BLOCKED_REASONS[BLOCKED_KNOWLEDGE_REASON])))
+	h._assert_hud("…and NOT the escapement one, which is a different remedy entirely",
+		not String(knowledge_lines[0]).contains(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
+			HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])))
+	#   (3) A source that is NOT blocked states NO cause at all. A producer that always emitted a
+	#   line passes every positive above, so this is the half that makes them worth anything.
+	var building := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	building["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	building["patch_build_blocked_reason"] = ""
+	BaseFx.price_plant_build(building, BaseFx.BUILD_TURNS_REMAINING)
+	h._assert_hud("a source that is NOT blocked states no cause line at all",
+		DetailFormat.build_blocked_lines(building,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX,
 			SourceForecast.SOURCE_KIND_FORAGE).is_empty())
 

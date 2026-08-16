@@ -1097,13 +1097,13 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             source, source_kind, prefix, floor, running_verb)
         # **THE ONLY NOTE A RUNNING BUILD CAN CARRY IS THE PEN'S ZERO PAYOFF, and the phase-keyed
         # PAUSE line that used to lead it is gone** (`docs/plan_harvest_floor.md` §3.2). No rung on
-        # either web stops on `EcologyPhase`: the sim replaced that cliff with a RATE, so a crew
-        # pulling hard on the ground it is clearing builds SLOWLY. The line therefore printed
-        # "⚠ Paused … this only advances while Thriving" beside a meter its own face showed advancing,
-        # and prescribed the opposite of the remedy — the FLOOR is what paces the build, which the
-        # aside states live ("Building at ×1.60 — a higher floor builds faster"). What genuinely stops
-        # a build is an empty escapement room, and the honest statement of THAT is the estimate
-        # dropping out (`SourceForecast.build_turns_at`'s work predicate), not a note about the phase.
+        # either web stops on `EcologyPhase`, and nothing paces a build in its place: `build_supply`
+        # is the builders' own output and reads neither the phase nor the floor. The line therefore
+        # printed "⚠ Paused … this only advances while Thriving" beside a meter its own face showed
+        # advancing, over a remedy (ease workers off) that moves nothing. What genuinely stops a build
+        # is an empty escapement room — a HIGHER floor closes that gate, not a lower one — and the
+        # honest statement of THAT is the estimate dropping out, where the gate is actually read
+        # (`SourceForecast.build_turns_at`'s work predicate), not a note about the phase.
         var notes: Array = []
         # **THE BLEEDING METER NEEDS NO NOTE HERE ANY MORE, because the LINE says it**
         # (`docs/plan_standing_upkeep.md` §4.6a). `BUILD_SLIDING_NOTE` filled a silence: at a builders

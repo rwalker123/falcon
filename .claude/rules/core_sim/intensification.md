@@ -1257,6 +1257,72 @@ gates `corral` + `extend_pen` (the §4.3 reshuffle; pinned by `builtin_ladder_de
 which asserts no two rungs share an unlock gate); and **both the build dials *and* the knowledge dials
 now live here**, so the two webs can only be tuned — and paced — together.
 
+### A BLOCKED BUILD PUBLISHES **WHICH CONJUNCT REFUSED** (`docs/plan_standing_upkeep.md` §4.7)
+
+`BUILD_QUEUE_BLOCKED` (`-4`) is minted in exactly one place — `publish_build_chain`'s `None` arm —
+under one predicate:
+
+```text
+Blocked ⟺ position == 0 ∧ builders > 0 ∧ (the rung's own gate refused ∨ no quote this turn)
+```
+
+The pool is standing on the head of the queue, spending its worker-turns on an entry that banks
+nothing, and **everything behind it inherits the block**. Reported from play: a Tame sat at
+`Blocked 32%` with no cause on any surface, the player fixed the only thing the UI named — the keeping
+shortfall — and it stayed blocked. The real cause was an empty escapement room.
+
+**So the sentinel now travels with a CAUSE.** `BuildGate` replaces the old `BuildQuote::gate_holds`
+bool — deliberately, because a bool beside an enum is two producers of one verdict — and its `key()`
+is published as `buildBlockedReason` on `ForagePatchState` / `HerdTelemetryState`, `""` when the entry
+is not blocked, **carried down the queue** so an entry behind a blocked head reports the head's own
+reason rather than a second guess at its own.
+
+| key | the conjunct that refused |
+|---|---|
+| `knowledge` | the rung's `unlock_discovery_id()` is not known |
+| `escapement` | `crew_is_working_the_source(biomass − floor × K)` — no room above the floor |
+| `no_crop` | no committed species (Cultivate) / no commitment (Sow) |
+| `species_ceiling` | `can_domesticate()` / `can_pen()` — one fact about the animal, two rungs |
+| `rung_below` | Corral on a herd that is not tamed |
+| `owned_by_other` | the source is another faction's |
+| `site` | the land does not admit the rung |
+| `ring_idle` | a pen-ring entry with no extension running |
+| `undeclared` | the meter's rung is not the one this entry declared — a DEAD entry |
+| `unworked` | **not a conjunct** — no quote at all, the band's row on the source having lapsed |
+
+**THE KEY SET IS READ OFF THE ARMS, NOT AUTHORED.** Each is a term of some rung's own `eligible`, and
+two of them (`site`, `undeclared`) are terms of `sow_permitted` assembled OUTSIDE `accrue_field` — a
+reader who only traced the Tame arm would have missed both. `species_ceiling` is the one deliberate
+merge: the player's response to *this beast climbs no further* does not differ by rung, and the caller
+already knows which rung it asked about.
+
+**IT IS A CAUSE, NEVER A SENTENCE.** No player-facing prose lives in Rust; the client owns wording and
+its table carries a fallback, so a key this sim adds later renders honestly rather than blankly.
+
+> **THE KEEPING SHORTFALL IS NOT ONE OF THESE, and the client rule that said it was is corrected.**
+> It is not a conjunct of any `eligible`; it reaches a build only by suppressing regrowth until the
+> stock falls under the floor, which is the `escapement` key one step later. `selection-card.md` →
+> "THE BLOCKED ROW NAMES THE REMEDY" carries the autopsy.
+
+### AN UNNAMED `builders` KIT STORES **NOTHING**, OR THE PER-ENTRY DERIVATION IS DEAD
+
+`handle_assign_labor` resolves a kit for every staffed row, and for `builders` with no `kit` token it
+stored `default_kits.builders` — `"none"`. `EquipmentConfig::builders_kit_for` applies *a named row kit
+wins* first, so that stored `none` beat the per-branch derivation §4.6b exists for, and **the pool
+built bare-handed on every job**. Not cosmetic: `BuildersGear::resolve` reads the same field.
+
+The client was already right — `BandPanelController._commanded_role_kit_id` emits no `kit` token on
+that row precisely so the derivation stays live — and the server was filling the slot in on the way
+past. The fork lives in `handle_assign_labor`'s `crew_kit` rather than in `default_kit_for_target`,
+because the question is *what does this command store*, not *which kit is the absent one*; that helper
+also serves the raid path, which has no derivation to defer to. **An explicit `kit <id>` still stores
+and still wins.**
+
+**IT SURVIVED BECAUSE EVERY FIXTURE HAND-BUILT THE ROW** (`kit: Some(bare_builders())`), so no test
+ever drove `assign_labor … builders <n>` into `builders_kit`. The test that closes it drives the real
+command path on both webs **and** asserts an explicit `kit none` is still honoured — without that third
+case, "never store anything" satisfies the pair and silently deletes the override.
+
 ### The build on the wire — the fraction stays, the WORK is appended
 
 **The meter stores absolute work units; the wire keeps publishing a `0..1` fraction, and the sim

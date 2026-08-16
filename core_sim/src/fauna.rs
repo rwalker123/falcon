@@ -453,6 +453,19 @@ pub struct Herd {
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
     pub build_queue_position: i32,
+    /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS HERD** — the plant twin's rationale in full is on
+    /// [`crate::forage::ForagePatch::build_blocked_reason`]. The conjunct of the rung's own gate that
+    /// refused ([`crate::intensification::BuildGate`]), or
+    /// [`crate::intensification::BuildGate::Open`] (wire key `""`) when this herd is not a blocked
+    /// build.
+    ///
+    /// **The animal web is where the sentinel bites hardest**: an unkept flock's suppressed regrowth
+    /// pins it at the hunters' floor, so the `Tame`'s escapement gate never reopens and nothing on
+    /// the build line can move it (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH SUPPRESSION
+    /// CLOSES A LOOP").
+    ///
+    /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
+    pub build_blocked_reason: crate::intensification::BuildGate,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
@@ -702,6 +715,7 @@ impl Herd {
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
             build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
+            build_blocked_reason: crate::intensification::BuildGate::Open,
             pen_extending: false,
             footprint_intake: 0.0,
             pen_pasture_fraction: 0.0,
@@ -3487,6 +3501,7 @@ pub fn advance_husbandry(
         herd.build_turns_remaining = None;
         herd.build_work_from_gear = NO_BUILD_GEAR;
         herd.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
+        herd.build_blocked_reason = crate::intensification::BuildGate::Open;
         // **HOW WELL THE HERD WAS KEPT LAST TURN** — the same Population→Logistics lag
         // `pen_fed_fraction` runs on. Everything downstream of the staffing is resolved into locals
         // **here, before the field is cleared**, so the whole turn judges one reading: what went

@@ -222,6 +222,20 @@ pub(crate) fn herds_to_array(
         // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
         // sooner estimate wins, and all three come from that band, so the three are read as one set.
         let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
+        // **WHY THAT QUEUE IS BLOCKED HERE** — `""` whenever this herd is not a blocked build, else a
+        // short lowercase cause key (`escapement`, `knowledge`, `rung_below`, `species_ceiling`,
+        // `owned_by_other`, `ring_idle`, `undeclared`, `unworked`; the `.fbs` comment on
+        // `buildBlockedReason` carries the whole table). It is READ BESIDE the `-4` above, never
+        // instead of it: that sentinel says the pool is stuck, this says which conjunct of the rung's
+        // own gate refused, and a `-4` with no cause beside it is the state this field exists to end —
+        // a playtest sat on a blocked Tame for turns, fixed the one cause the client happened to name
+        // (the keeping shortfall), and stayed blocked because the herd was standing below its
+        // escapement floor. **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY**: nothing here or above
+        // may re-derive it. It is a CAUSE and not a sentence — the wording is the client's, on the
+        // same free-form-string convention as `ecology_phase` / `sow_site_refusal`.
+        if let Some(build_blocked_reason) = herd.buildBlockedReason() {
+            let _ = dict.insert("build_blocked_reason", build_blocked_reason);
+        }
         // WHAT THE CREW'S TOOLS TOOK OFF THIS BUILD, in work units — the `t` in
         // `effective_cost = work_cost − t`. `0` = no build in
         // flight, or the crew carries nothing that helps. It rides BESIDE the raw job rather than
@@ -653,6 +667,14 @@ pub(crate) fn forage_patches_to_array(
         // there for why the countdown beside it is a CHAINED date and why the three build fields are
         // read as one set off one winning band.
         let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
+        // The plant twin of the herd row's blocked CAUSE — `""` when this patch is not a blocked
+        // build, else the key naming the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
+        // `site`, `owned_by_other`, `undeclared`, `unworked`). See the herd block for why it is read
+        // beside the `-4` rather than instead of it, and why the client does the wording and the sim
+        // the verdict.
+        if let Some(build_blocked_reason) = patch.buildBlockedReason() {
+            let _ = dict.insert("build_blocked_reason", build_blocked_reason);
+        }
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
         // `build_turns_remaining` rather than replacing it, why the figure is read rather than

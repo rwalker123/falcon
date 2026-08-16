@@ -402,6 +402,119 @@ pub fn build_turns_estimate(
     }
 }
 
+/// **WHICH CONJUNCT OF A RUNG'S OWN GATE REFUSED** — the cause behind a [`BuildTurns::Blocked`]
+/// head, so a stuck queue can say *why* instead of only *that* (`docs/plan_standing_upkeep.md`
+/// §4.6b).
+///
+/// **It REPLACES the `gate_holds: bool` a quote used to carry rather than sitting beside it.** One
+/// stored fact cannot disagree with itself, and a second producer of one verdict is the failure this
+/// arc keeps repeating — [`Self::holds`] is the boolean the countdown arithmetic reads, and it is
+/// derived from the same value the wire states.
+///
+/// **THE CLIENT MUST NOT RE-DERIVE THIS.** The sim decides `eligible`, so the sim says why: a
+/// blocked build with no cause is the state a playtest sat on for turns, fixing the one thing a
+/// surface happened to name while the real refusal went unmentioned.
+///
+/// **A conjunction reports its FIRST failing term**, in the order the arm writes them
+/// ([`Self::first_refusal`]) — deterministic, and the reading order of the code it describes.
+///
+/// **Each variant is a CAUSE, not a sentence.** [`Self::key`] is a short lowercase token on the
+/// free-form-string convention `species` / `ecologyPhase` / `sowSiteRefusal` already use; the client
+/// owns the wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BuildGate {
+    /// Every conjunct held. The wire key is `""` — *"this entry is not blocked"* — which is what a
+    /// finishing, holding or rotting build publishes too.
+    #[default]
+    Open,
+    /// The faction does not know the rung's `unlock_knowledge` ([`RungDef::unlock_discovery_id`]).
+    /// Every built rung on both webs carries this term.
+    Knowledge,
+    /// **Nothing stands above the crew's escapement floor**
+    /// ([`crate::systems::labor`]'s `crew_is_working_the_source`). Carried by the two rung-2 arms —
+    /// plant `Cultivate` and animal `Tame` — and never by rung 3, where bare ground stands below
+    /// every floor by construction.
+    ///
+    /// **This is the animal web's escapement stall**, whose remedy is the `husbandry` pool rather
+    /// than anything on the build line (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH
+    /// SUPPRESSION CLOSES A LOOP").
+    Escapement,
+    /// **Nothing here climbs** — the patch carries no committed plant (`Cultivate`), or the tile's
+    /// whole basket stops below the quoted rung (a projection's `resolve_committed_species`).
+    NoCrop,
+    /// The species' `husbandry_ceiling` stops below this rung — `Herd::can_domesticate` for a
+    /// `Tame`, `Herd::can_pen` for a `Corral`. One key for both, because it is one fact about the
+    /// animal and the player's response to it is the same: this beast climbs no further.
+    SpeciesCeiling,
+    /// **The rung below is not built** — a `Corral` on a herd that is not domesticated yet.
+    RungBelow,
+    /// Another faction holds the source.
+    OwnedByOther,
+    /// The ground does not admit the rung ([`RungSiteRequirement`]) — `Sow`'s fresh-water and
+    /// gathering-site rule, and the same term in a projection's gate. The other three rung arms
+    /// carry no site term: rungs 1–2 are already standing on ground a crew was allowed onto.
+    Site,
+    /// **The band's queue entry does not name the rung its meter is on** — `Sow`'s
+    /// `declared == Some(Improvement::Sow)` term. Reachable where a patch's newest meter derives a
+    /// rung the entry never declared, and the remedy is to re-queue the job the ground is actually
+    /// half-way through.
+    Undeclared,
+    /// **The extension ring is not running** (`Herd::pen_extending`) — [`BuildJob::ExtendPen`]'s
+    /// whole gate, and the one entry kind with no rung meter of its own.
+    RingIdle,
+    /// **The source produced no quote this turn** — not a conjunct of any rung's `eligible` but a
+    /// real and different state, minted by the band's chain pass. The labor loop never reached this
+    /// source (the row lapsed, the patch or herd left its registry), so there is no gate to report
+    /// on and the honest cause is that nobody worked it.
+    Unworked,
+}
+
+impl BuildGate {
+    /// **Does the rung's own gate hold?** The boolean [`build_turns_estimate`] takes, so the
+    /// arithmetic and the published cause are one value read two ways.
+    pub fn holds(self) -> bool {
+        matches!(self, BuildGate::Open)
+    }
+
+    /// Stable wire key ([`SiteRefusal::as_str`]'s convention), `""` for [`BuildGate::Open`] — the
+    /// wire's *"not blocked"*, and what every entry that is not a blocked head publishes.
+    pub fn key(self) -> &'static str {
+        match self {
+            BuildGate::Open => BUILD_GATE_OPEN,
+            BuildGate::Knowledge => "knowledge",
+            BuildGate::Escapement => "escapement",
+            BuildGate::NoCrop => "no_crop",
+            BuildGate::SpeciesCeiling => "species_ceiling",
+            BuildGate::RungBelow => "rung_below",
+            BuildGate::OwnedByOther => "owned_by_other",
+            BuildGate::Site => "site",
+            BuildGate::Undeclared => "undeclared",
+            BuildGate::RingIdle => "ring_idle",
+            BuildGate::Unworked => "unworked",
+        }
+    }
+
+    /// **The first term that refused, in the order the arm states them** — an arm's `eligible`
+    /// conjunction, written as its terms so the *cause* survives the `&&` that would otherwise
+    /// collapse it to a bit.
+    ///
+    /// The terms are evaluated eagerly by the caller rather than short-circuited, which every arm's
+    /// conjuncts already permit: each is a registry field read or a ledger lookup, none has a side
+    /// effect, and stating them as a list is what keeps the published cause and the gate the sim
+    /// acts on the same expression.
+    pub fn first_refusal(terms: &[(bool, BuildGate)]) -> BuildGate {
+        terms
+            .iter()
+            .find(|(holds, _)| !*holds)
+            .map_or(BuildGate::Open, |(_, cause)| *cause)
+    }
+}
+
+/// The wire key for **"this entry is not blocked"** — [`BuildGate::Open`]'s key, and the neutral a
+/// source carries between turns. Named for [`SITE_ACCEPTED`]'s reason: `""` at a call site says
+/// nothing about what it means.
+pub const BUILD_GATE_OPEN: &str = "";
+
 /// **THE FOUR NUMBERS A BUILD'S COUNTDOWN IS STRUCK FROM, at one crew** — the bar the meter must
 /// reach, what is banked on it, the signed supply, and whether the rung's own gate holds at all.
 ///
@@ -423,9 +536,11 @@ pub struct BuildQuote {
     pub banked: f32,
     /// `build_supply(at the full pool) − meter_rot` ([`RungDef::build_balance`]).
     pub balance: f32,
-    /// The rung's own composed gate — knowledge, site, species, ownership, escapement room. `false`
-    /// is *"there is no answer"*, and at the head of a staffed queue it is [`BuildTurns::Blocked`].
-    pub gate_holds: bool,
+    /// The rung's own composed gate — knowledge, site, species, ownership, escapement room —
+    /// **and which conjunct refused** ([`BuildGate`]). Anything but [`BuildGate::Open`] is *"there
+    /// is no answer"*, and at the head of a staffed queue it is [`BuildTurns::Blocked`] carrying
+    /// this cause.
+    pub gate: BuildGate,
 }
 
 impl BuildQuote {
@@ -435,7 +550,7 @@ impl BuildQuote {
             self.bar,
             self.banked,
             self.balance,
-            self.gate_holds,
+            self.gate.holds(),
             builders,
         )
     }
@@ -1923,10 +2038,11 @@ impl LadderConfig {
     /// pre-commit case, and the real figure for a build the player walked away from, so the quote
     /// agrees with the `workDone` / `workCost` pair published beside it.
     ///
-    /// `eligible` is the caller's composed gate, exactly as [`RungDef::build_accrual`] takes it: the
-    /// web supplies the rung's own site / ceiling / knowledge / ownership terms. **A projection must
-    /// never quote a rung the gates would refuse**, so a caller that cannot answer one of them passes
-    /// `false` and the wire says "no estimate" instead of naming a job the player cannot take.
+    /// `gate` is the caller's composed gate, exactly as [`RungDef::build_accrual`] takes its
+    /// `eligible`: the web supplies the rung's own site / ceiling / knowledge / ownership terms,
+    /// **and which of them refused** ([`BuildGate::first_refusal`]). **A projection must never quote
+    /// a rung the gates would refuse**, so a caller that cannot answer one of them passes that
+    /// term's cause and the wire says "no estimate" instead of naming a job the player cannot take.
     ///
     /// `None` — no estimate — for a rung with nothing to build, a gate that refuses, or a crew that
     /// produces nothing. A meter already past the bar — including a bar the crew's **gear** pays off
@@ -1943,7 +2059,7 @@ impl LadderConfig {
         banked: f32,
         workers: u32,
         gear_per_worker: f32,
-        eligible: bool,
+        gate: BuildGate,
         rot_this_turn: f32,
     ) -> Option<BuildTurns> {
         self.projected_build_quote(
@@ -1952,7 +2068,7 @@ impl LadderConfig {
             banked,
             workers,
             gear_per_worker,
-            eligible,
+            gate,
             rot_this_turn,
         )
         .and_then(|quote| quote.turns(workers))
@@ -1971,7 +2087,7 @@ impl LadderConfig {
         banked: f32,
         workers: u32,
         gear_per_worker: f32,
-        eligible: bool,
+        gate: BuildGate,
         rot_this_turn: f32,
     ) -> Option<BuildQuote> {
         let cost = rung.build_cost(cost_multiplier)?;
@@ -1981,7 +2097,12 @@ impl LadderConfig {
         // **source's** live bleed ([`RungDef::meter_rot`] on the meter at risk), so a quote and the
         // card beside it describe one number. On ground nobody has started there is nothing banked
         // and therefore nothing to rot, so the answer is `work_cost / crew`.
-        let balance = rung.build_balance(rung.verb_improvement(), eligible, workers, rot_this_turn);
+        let balance = rung.build_balance(
+            rung.verb_improvement(),
+            gate.holds(),
+            workers,
+            rot_this_turn,
+        );
         // **A quoted crew that cannot out-raise the rot never gets there** — the same standing fact
         // a running build states, so a projection says so rather than withholding the line. And a
         // quote for a rung with **work already banked on it** answers even at a crew of zero: the
@@ -1990,7 +2111,7 @@ impl LadderConfig {
             bar,
             banked,
             balance,
-            gate_holds: eligible,
+            gate,
         })
     }
 
@@ -2933,7 +3054,7 @@ mod tests {
                 RUNG_UNSTARTED,
                 keepers,
                 PER_WORKER,
-                true,
+                BuildGate::Open,
                 UNSCALED_UPKEEP,
             )
         };

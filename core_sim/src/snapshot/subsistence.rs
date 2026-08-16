@@ -778,6 +778,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_queue_position: herd
                     .map(|herd| herd.build_queue_position)
                     .unwrap_or(NOT_IN_ANY_BUILD_QUEUE),
+                // **And WHY the pool is stuck, when `buildTurnsRemaining` reads `-4`** — the
+                // conjunct of the rung's own gate that refused, `""` when this herd is not a blocked
+                // build. Read live off the `Herd` like every other build field, and off the same
+                // winner: the chain pass stamps the cause with the countdown it belongs to.
+                build_blocked_reason: herd
+                    .map(|herd| herd.build_blocked_reason.key().to_string())
+                    .unwrap_or_default(),
                 // **The crew-output TERM the compose sheet evaluates its estimate from** (the
                 // boundary rule in `.claude/rules/core_sim/yield-forecast.md`): what one worker banks
                 // per turn. With `*WorkCost` / `*WorkDone` here and the gear pair on the band's own
@@ -1018,6 +1025,8 @@ pub(crate) fn snapshot_forage_patches(
                 build_work_from_gear: patch.build_work_from_gear,
                 // The plant twin — see the herd row.
                 build_queue_position: patch.build_queue_position,
+                // The plant twin — see the herd row.
+                build_blocked_reason: patch.build_blocked_reason.key().to_string(),
                 // The plant twin — see the herd row for why the estimate's terms ship beside the
                 // sim's own answer.
                 build_work_per_worker_turn: build_work_per_worker_turn(),

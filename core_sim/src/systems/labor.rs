@@ -862,11 +862,19 @@ pub fn advance_labor_allocation(
                             .is_none()
                         })
                     };
-                    let sow_permitted = declared == Some(Improvement::Sow)
-                        && field_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                            knows(&discovery, faction, knowledge, knowledge_threshold)
-                        })
-                        && land_admits(field_rung);
+                    // Stated as terms rather than a `&&` chain, so the refusing conjunct reaches
+                    // the wire as a blocked head's cause — see the Cultivate arm.
+                    let sow_gate = BuildGate::first_refusal(&[
+                        (declared == Some(Improvement::Sow), BuildGate::Undeclared),
+                        (
+                            field_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                knows(&discovery, faction, knowledge, knowledge_threshold)
+                            }),
+                            BuildGate::Knowledge,
+                        ),
+                        (land_admits(field_rung), BuildGate::Site),
+                    ]);
+                    let sow_permitted = sow_gate.holds();
                     // **WHICH NAMED PLANT this ground would be committed to** (Flora Roster S1,
                     // `docs/plan_flora_roster.md` §4.3). Resolved through the *same*
                     // `resolve_committed_species` seam the `assign_labor` rejection reads, so a
@@ -923,8 +931,13 @@ pub fn advance_labor_allocation(
                             })
                             .flatten();
                     // A Field may only be placed on ground that grows something sowable — the
-                    // species half of "the land must take seed", beside the site half above.
-                    let sow_permitted = sow_permitted && committing.is_some();
+                    // species half of "the land must take seed", beside the site half above. It joins
+                    // the gate rather than the bool so a blocked Sow can name it.
+                    let sow_gate = BuildGate::first_refusal(&[
+                        (sow_permitted, sow_gate),
+                        (committing.is_some(), BuildGate::NoCrop),
+                    ]);
+                    let sow_permitted = sow_gate.holds();
                     // **`Sow` PLACES the source** — the one rung that needs no *patch* below it,
                     // unlike a herd you never tamed. (§2 used to read "no source below it: seed
                     // travels", meaning any qualifying tile; the gathering-site rule above reversed
@@ -1360,14 +1373,26 @@ pub fn advance_labor_allocation(
                         // rung's unlock knowledge (Cultivation), and the crew must actually be
                         // working the patch ([`crew_is_working_the_source`] — the term that replaced
                         // the Thriving gate).
-                        let eligible = tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                            knows(&discovery, faction, knowledge, knowledge_threshold)
-                        }) && working_the_patch
+                        //
+                        // **Written as its TERMS, not as a `&&` chain** — [`BuildGate`] carries
+                        // which conjunct refused all the way to the wire, so a blocked head can say
+                        // why. `eligible` is that value read as a bool, so the gate the sim acts on
+                        // and the cause it publishes are one expression.
+                        let gate = BuildGate::first_refusal(&[
+                            (
+                                tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                    knows(&discovery, faction, knowledge, knowledge_threshold)
+                                }),
+                                BuildGate::Knowledge,
+                            ),
+                            (working_the_patch, BuildGate::Escapement),
                             // **Nothing to tend if nothing here climbs.** A patch with no committed
                             // plant is one whose basket the tended rung's `cultivation_ceiling`
                             // refuses outright — the "not every plant climbs" ruling reaching the
                             // build meter.
-                            && patch.species.is_some();
+                            (patch.species.is_some(), BuildGate::NoCrop),
+                        ]);
+                        let eligible = gate.holds();
                         // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
                         // rung's verb and the gates hold); the patch owns its meter and the
                         // side-effects of completing it. **The crew is the BUILD's own**, and the
@@ -1438,7 +1463,7 @@ pub fn advance_labor_allocation(
                                 bar: cultivate_bar,
                                 banked: patch.cultivation_progress,
                                 balance,
-                                gate_holds: eligible,
+                                gate,
                             },
                         ));
                         charge_build_wear(
@@ -1480,7 +1505,7 @@ pub fn advance_labor_allocation(
                             patch,
                             field_rung,
                             improvement,
-                            sow_permitted,
+                            sow_gate,
                             faction,
                             &mut event_log,
                             tick.0,
@@ -1530,22 +1555,36 @@ pub fn advance_labor_allocation(
                                 Some(Improvement::Cultivate) => working_the_patch,
                                 _ => true,
                             };
-                            let eligible = next.unlock_discovery_id().is_none_or(|knowledge| {
-                                    knows(&discovery, faction, knowledge, knowledge_threshold)
-                                }) && crew_is_at_work
-                                    && land_admits(next)
-                                    && patch.owner.is_none_or(|owner| owner == faction)
-                                    // **Something in this basket has to climb**, the same
-                                    // `resolve_committed_species` seam the commit above reads — a
-                                    // patch whose whole basket stops below the rung is one the build
-                                    // meter would never move.
-                                    && resolve_committed_species(
+                            // Stated as terms, like the live arms', so a projection quote carries
+                            // its refusing conjunct too.
+                            let gate = BuildGate::first_refusal(&[
+                                (
+                                    next.unlock_discovery_id().is_none_or(|knowledge| {
+                                        knows(&discovery, faction, knowledge, knowledge_threshold)
+                                    }),
+                                    BuildGate::Knowledge,
+                                ),
+                                (crew_is_at_work, BuildGate::Escapement),
+                                (land_admits(next), BuildGate::Site),
+                                (
+                                    patch.owner.is_none_or(|owner| owner == faction),
+                                    BuildGate::OwnedByOther,
+                                ),
+                                // **Something in this basket has to climb**, the same
+                                // `resolve_committed_species` seam the commit above reads — a
+                                // patch whose whole basket stops below the rung is one the build
+                                // meter would never move.
+                                (
+                                    resolve_committed_species(
                                         species.as_deref(),
                                         &tile_composition,
                                         &flora,
                                         next_key,
                                     )
-                                    .is_ok();
+                                    .is_ok(),
+                                    BuildGate::NoCrop,
+                                ),
+                            ]);
                             // The meter the quoted rung would fill — the twin of
                             // `advance_cultivation`'s own verb dispatch over the two plant
                             // meters.
@@ -1562,7 +1601,7 @@ pub fn advance_labor_allocation(
                                 banked,
                                 builders,
                                 builders_gear.plant.work_per_worker,
-                                eligible,
+                                gate,
                                 // **The SOURCE's live bleed**, not the quoted rung's rate — a build
                                 // crew supplies nothing toward the rate, so what nets off a quote is
                                 // what the ground is losing. On a rung nobody has started there is
@@ -2133,7 +2172,13 @@ pub fn advance_labor_allocation(
                                     bar: ring_bar,
                                     banked: ring_banked,
                                     balance: ring_balance,
-                                    gate_holds: ring_in_flight,
+                                    // **The ring's whole gate is its in-flight flag**, so a
+                                    // queued ring that is not running publishes that as its cause.
+                                    gate: if ring_in_flight {
+                                        BuildGate::Open
+                                    } else {
+                                        BuildGate::RingIdle
+                                    },
                                 },
                             ));
                         }
@@ -2329,11 +2374,21 @@ pub fn advance_labor_allocation(
                         // Marked worked-as-improvement so `advance_husbandry` spares it: a herd
                         // under active taming neither goes feral nor bleeds its partial progress.
                         herd.tamed_this_turn = true;
-                        let eligible =
-                            pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                                knows(&discovery, faction, knowledge, knowledge_threshold)
-                            }) && herd.can_domesticate()
-                                && working_the_herd;
+                        // Stated as terms rather than a `&&` chain, so the refusing conjunct
+                        // reaches the wire — see the Cultivate arm. **`Escapement` is the one the
+                        // playtest sat on**: the hunters draw the flock to their floor, the unmet
+                        // keeping suppresses its regrowth, and nothing on the build line reopens it.
+                        let gate = BuildGate::first_refusal(&[
+                            (
+                                pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                    knows(&discovery, faction, knowledge, knowledge_threshold)
+                                }),
+                                BuildGate::Knowledge,
+                            ),
+                            (herd.can_domesticate(), BuildGate::SpeciesCeiling),
+                            (working_the_herd, BuildGate::Escapement),
+                        ]);
+                        let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes, and it
                         // is **species-blind**: the crew banks `workers × PER_WORKER_OUTPUT ×
                         // learn_multiplier(floor)` work units whatever animal it is gentling. What
@@ -2391,7 +2446,7 @@ pub fn advance_labor_allocation(
                                 bar: tame_bar,
                                 banked: herd.domestication_progress,
                                 balance,
-                                gate_holds: eligible,
+                                gate,
                             },
                         ));
                         charge_build_wear(
@@ -2430,11 +2485,19 @@ pub fn advance_labor_allocation(
                         // `Wild`/`Pastoral` herd never accrues, and the command path rejects it too,
                         // so this is belt and braces), the herd has climbed the rung below, and the
                         // faction owns it.
-                        let eligible = pen_rung.unlock_discovery_id().is_none_or(|knowledge| {
-                            knows(&discovery, faction, knowledge, knowledge_threshold)
-                        }) && herd.can_pen()
-                            && herd.is_domesticated()
-                            && herd.owner == Some(faction);
+                        // Stated as terms rather than a `&&` chain — see the Cultivate arm.
+                        let gate = BuildGate::first_refusal(&[
+                            (
+                                pen_rung.unlock_discovery_id().is_none_or(|knowledge| {
+                                    knows(&discovery, faction, knowledge, knowledge_threshold)
+                                }),
+                                BuildGate::Knowledge,
+                            ),
+                            (herd.can_pen(), BuildGate::SpeciesCeiling),
+                            (herd.is_domesticated(), BuildGate::RungBelow),
+                            (herd.owner == Some(faction), BuildGate::OwnedByOther),
+                        ]);
+                        let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes.
                         // Penning is a flat build for every species — only *taming* varies (slice
                         // 3c): a fence is a fence. **The crew is the CORRAL's own.**
@@ -2469,7 +2532,7 @@ pub fn advance_labor_allocation(
                                 bar: pen_bar,
                                 banked: herd.corral_progress,
                                 balance,
-                                gate_holds: eligible,
+                                gate,
                             },
                         ));
                         charge_build_wear(
@@ -2512,33 +2575,47 @@ pub fn advance_labor_allocation(
                             // another people are taming is a job this faction cannot take.
                             let (gated, banked, cost_multiplier) = match next.verb_improvement() {
                                 Some(Improvement::Corral) => (
-                                    herd.can_pen()
-                                        && herd.is_domesticated()
-                                        && herd.owner == Some(faction),
+                                    BuildGate::first_refusal(&[
+                                        (herd.can_pen(), BuildGate::SpeciesCeiling),
+                                        (herd.is_domesticated(), BuildGate::RungBelow),
+                                        (herd.owner == Some(faction), BuildGate::OwnedByOther),
+                                    ]),
                                     herd.corral_progress,
                                     // Penning is a flat job for every species — a fence is a
                                     // fence; only taming varies.
                                     RUNG_COST_UNSCALED,
                                 ),
                                 _ => (
-                                    herd.can_domesticate()
-                                        && working_the_herd
-                                        && herd.owner.is_none_or(|owner| owner == faction),
+                                    BuildGate::first_refusal(&[
+                                        (herd.can_domesticate(), BuildGate::SpeciesCeiling),
+                                        (working_the_herd, BuildGate::Escapement),
+                                        (
+                                            herd.owner.is_none_or(|owner| owner == faction),
+                                            BuildGate::OwnedByOther,
+                                        ),
+                                    ]),
                                     herd.domestication_progress,
                                     fauna.taming_cost_multiplier_for(&herd.species),
                                 ),
                             };
-                            let eligible = gated
-                                && next.unlock_discovery_id().is_none_or(|knowledge| {
-                                    knows(&discovery, faction, knowledge, knowledge_threshold)
-                                });
+                            // The knowledge term is common to both rungs and is asked **after** the
+                            // per-rung ones, which is the order the retired `&&` chain evaluated.
+                            let gate = BuildGate::first_refusal(&[
+                                (gated.holds(), gated),
+                                (
+                                    next.unlock_discovery_id().is_none_or(|knowledge| {
+                                        knows(&discovery, faction, knowledge, knowledge_threshold)
+                                    }),
+                                    BuildGate::Knowledge,
+                                ),
+                            ]);
                             ladder.projected_build_quote(
                                 next,
                                 cost_multiplier,
                                 banked,
                                 builders,
                                 builders_gear.animal.work_per_worker,
-                                eligible,
+                                gate,
                                 // The source's live bleed — always `0` on the animal web, whose
                                 // rungs declare no `meter_decay`. See the Forage arm.
                                 meter_rot,
@@ -2992,6 +3069,18 @@ fn entry_job_already_built(
 /// | no answer, **at the head, with a staffed pool** | [`BuildTurns::Blocked`], carried down | the pool is standing on a gate that refuses it |
 /// | no answer, anywhere else | `None`, carried down | a *waiting* entry may well be eligible by the time it reaches the head, so it says the honest *"no estimate"* — and we cannot date what is behind an unanswerable entry |
 ///
+/// # AND A BLOCKED HEAD SAYS **WHY**, DOWN THE WHOLE QUEUE
+///
+/// The `Blocked` sentinel states only *that* the pool is stuck, and the playtest it was filed
+/// against sat on `⚠ Blocked 32%` for turns while fixing the one thing a surface happened to name.
+/// The quote carries the refusing conjunct ([`BuildGate`]), so the head publishes its cause and
+/// **`carried` takes it down the queue with the sentinel** — everything behind a blocked head is
+/// stuck for the head's reason, which is the only reason there is to give.
+///
+/// A head that produced **no quote at all** is [`BuildGate::Unworked`]: not a rung's gate refusing,
+/// but the labor loop never reaching this source. Everything that is not a blocked entry publishes
+/// [`BuildGate::Open`], whose key is `""`.
+///
 /// # A SOURCE WITH NO ENTRY IS QUOTED AT THE BACK OF THE LINE
 ///
 /// That is where a newly queued build would actually go, so quoting it as though it went to the head
@@ -3017,34 +3106,38 @@ fn publish_build_chain(
     let mut cumulative: u32 = 0;
     // Once an entry cannot name a number, every entry below it publishes the same thing. `Some`
     // means *"decided"*; the inner `Option` is the published answer, `None` being the wire's
-    // "no estimate".
-    let mut carried: Option<Option<BuildTurns>> = None;
+    // "no estimate", and the [`BuildGate`] beside it is the cause a blocked answer carries.
+    let mut carried: Option<(Option<BuildTurns>, BuildGate)> = None;
     for (position, entry) in allocation.build_queue.iter().enumerate() {
-        let published = match carried {
+        let quote = quote_for(&entry.source);
+        let (published, reason) = match carried {
             Some(value) => value,
-            None => match quote_for(&entry.source).and_then(|quote| quote.turns(builders)) {
+            None => match quote.and_then(|quote| quote.turns(builders)) {
                 Some(BuildTurns::Turns(turns)) => {
                     cumulative = cumulative.saturating_add(turns);
-                    Some(BuildTurns::Turns(cumulative))
+                    (Some(BuildTurns::Turns(cumulative)), BuildGate::Open)
                 }
                 Some(state @ (BuildTurns::Holding | BuildTurns::Rotting)) => {
-                    carried = Some(Some(state));
-                    Some(state)
+                    carried = Some((Some(state), BuildGate::Open));
+                    (Some(state), BuildGate::Open)
                 }
                 // `build_turns_estimate` answers for one build's arithmetic and never returns this;
                 // the arm below is the only place it is minted. Carried like any other stall.
                 Some(BuildTurns::Blocked) => {
-                    carried = Some(Some(BuildTurns::Blocked));
-                    Some(BuildTurns::Blocked)
+                    let value = (Some(BuildTurns::Blocked), blocked_reason(quote));
+                    carried = Some(value);
+                    value
                 }
                 None => {
                     // **ONLY THE HEAD, WITH A STAFFED POOL, IS BLOCKED.** A waiting entry whose gate
                     // refuses may well be eligible by the time it reaches the head.
                     let value =
                         if position == BUILD_QUEUE_HEAD && builders > NO_CREW_ON_THIS_ACTIVITY {
-                            Some(BuildTurns::Blocked)
+                            (Some(BuildTurns::Blocked), blocked_reason(quote))
                         } else {
-                            None
+                            // **Not blocked, so no cause** — an entry merely waiting its turn is not
+                            // stuck and must not publish a reason it would have to explain away.
+                            (None, BuildGate::Open)
                         };
                     carried = Some(value);
                     value
@@ -3055,6 +3148,7 @@ fn publish_build_chain(
             &entry.source,
             position,
             published,
+            reason,
             builders_gear,
             forage_registry,
             herds,
@@ -3068,13 +3162,17 @@ fn publish_build_chain(
         if allocation.build_queue_position(source).is_some() {
             continue;
         }
-        let projected = match carried {
+        // **The carried cause rides with the carried sentinel here too.** A source the band works
+        // but has not queued is dated behind a blocked head like everything else, so it is stuck for
+        // the head's reason and must be able to say so.
+        let (projected, reason) = match carried {
             Some(value) => value,
             None => match quote.turns(builders) {
-                Some(BuildTurns::Turns(turns)) => {
-                    Some(BuildTurns::Turns(cumulative.saturating_add(turns)))
-                }
-                other => other,
+                Some(BuildTurns::Turns(turns)) => (
+                    Some(BuildTurns::Turns(cumulative.saturating_add(turns))),
+                    BuildGate::Open,
+                ),
+                other => (other, BuildGate::Open),
             },
         };
         match source {
@@ -3083,16 +3181,38 @@ fn publish_build_chain(
                     patch_claims.publish_projected(
                         tile,
                         &mut patch.build_turns_remaining,
+                        &mut patch.build_blocked_reason,
                         projected,
+                        reason,
                     );
                 }
             }
             BuildSource::Herd(id) => {
                 if let Some(herd) = herds.herds.iter_mut().find(|herd| &herd.id == id) {
-                    herd_claims.publish_projected(id, &mut herd.build_turns_remaining, projected);
+                    herd_claims.publish_projected(
+                        id,
+                        &mut herd.build_turns_remaining,
+                        &mut herd.build_blocked_reason,
+                        projected,
+                        reason,
+                    );
                 }
             }
         }
+    }
+}
+
+/// **WHY THE POOL IS STUCK ON THIS ENTRY** — the cause a [`BuildTurns::Blocked`] head publishes.
+///
+/// A quote whose gate refused answers with that conjunct. Everything else is
+/// [`BuildGate::Unworked`]: either the source produced no quote this turn (the labor loop never
+/// reached it), or it produced one whose gate *held* — which `build_turns_estimate` makes
+/// unreachable at a staffed head, and which would otherwise publish a block with no cause, the very
+/// silence this field exists to end.
+fn blocked_reason(quote: Option<BuildQuote>) -> BuildGate {
+    match quote {
+        Some(quote) if !quote.gate.holds() => quote.gate,
+        _ => BuildGate::Unworked,
     }
 }
 
@@ -3104,6 +3224,7 @@ fn publish_entry(
     source: &BuildSource,
     position: usize,
     turns: Option<BuildTurns>,
+    reason: BuildGate,
     builders_gear: &BuildersGear,
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
@@ -3112,6 +3233,7 @@ fn publish_entry(
 ) {
     let answer = BuildEstimate {
         turns,
+        reason,
         gear: builders_gear.for_source(source).pool_gear,
         position: position as i32,
     };
@@ -3122,6 +3244,7 @@ fn publish_entry(
                     *tile,
                     BuildEstimateSlots {
                         turns: &mut patch.build_turns_remaining,
+                        reason: &mut patch.build_blocked_reason,
                         gear: &mut patch.build_work_from_gear,
                         position: &mut patch.build_queue_position,
                     },
@@ -3135,6 +3258,7 @@ fn publish_entry(
                     id.clone(),
                     BuildEstimateSlots {
                         turns: &mut herd.build_turns_remaining,
+                        reason: &mut herd.build_blocked_reason,
                         gear: &mut herd.build_work_from_gear,
                         position: &mut herd.build_queue_position,
                     },
@@ -3331,6 +3455,10 @@ fn charge_build_wear(
 /// defect one field over.
 struct BuildEstimateSlots<'a> {
     turns: &'a mut Option<BuildTurns>,
+    /// **Why the entry is blocked**, [`BuildGate::Open`] when it is not — it rides the same winner
+    /// as the countdown beside it, because a cause taken from one band's queue beside a date from
+    /// another's would be two answers pretending to be one.
+    reason: &'a mut BuildGate,
     gear: &'a mut f32,
     position: &'a mut i32,
 }
@@ -3339,6 +3467,7 @@ struct BuildEstimateSlots<'a> {
 #[derive(Clone, Copy)]
 struct BuildEstimate {
     turns: Option<BuildTurns>,
+    reason: BuildGate,
     gear: f32,
     position: i32,
 }
@@ -3356,6 +3485,8 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
         let first_claim = self.claimed.insert(key);
         if first_claim || is_a_sooner_estimate(answer.turns, *slots.turns) {
             *slots.turns = answer.turns;
+            // **And the blocked cause with it** — same winner, for the same reason the position is.
+            *slots.reason = answer.reason;
             *slots.gear = answer.gear;
             // **The place in the line rides the same winner** — a date from one band's queue beside
             // another band's position would be two answers pretending to be one.
@@ -3364,15 +3495,19 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
     }
 
     /// Publish a **projection** — the quote for the rung this source would climb next — unless a
-    /// running build on it has already answered.
+    /// running build on it has already answered. The cause rides with the countdown, since a
+    /// projection dated behind a blocked head carries that head's sentinel.
     fn publish_projected(
         &self,
         key: &K,
         turns_slot: &mut Option<BuildTurns>,
+        reason_slot: &mut BuildGate,
         turns: Option<BuildTurns>,
+        reason: BuildGate,
     ) {
         if !self.claimed.contains(key) {
             *turns_slot = turns;
+            *reason_slot = reason;
         }
     }
 }
@@ -3448,8 +3583,9 @@ fn estimate_standing(estimate: Option<BuildTurns>) -> EstimateStanding {
 /// is a flat job — the only per-source cost multiplier on the ladder is a species'
 /// `taming_cost_multiplier`, and a plant has no species.
 ///
-/// `eligible` is the faction's **Seed Selection** gate and nothing else. A lapse just stops accrual
-/// for the turn: progress is neither lost nor silently switched.
+/// `gate` is the faction's **Seed Selection** gate and nothing else, carried as a [`BuildGate`] so
+/// a blocked head can name it. A lapse just stops accrual for the turn: progress is neither lost nor
+/// silently switched.
 ///
 /// **It deliberately does NOT carry the work predicate** ([`crew_is_working_the_source`]), which
 /// every other build gate gained with the harvest floor (`docs/plan_harvest_floor.md` §3.2). That
@@ -3473,7 +3609,7 @@ fn accrue_field(
     patch: &mut ForagePatch,
     field_rung: &RungDef,
     improvement: Option<Improvement>,
-    eligible: bool,
+    gate: BuildGate,
     faction: FactionId,
     event_log: &mut CommandEventLog,
     tick: u64,
@@ -3500,6 +3636,7 @@ fn accrue_field(
     // resolved once by the caller off the keeping just stamped — see the Cultivate arm.
     meter_rot: f32,
 ) -> bool {
+    let eligible = gate.holds();
     // The Sow crew's whole output — the keeping pool owes the rate whatever the builders do.
     let accrual = field_rung.build_accrual(improvement, eligible, workers);
     // **The signed twin** — the meter takes the accrual, the countdown takes it net of the rot, so
@@ -3523,7 +3660,7 @@ fn accrue_field(
                 bar: sow_bar,
                 banked: patch.field_progress,
                 balance,
-                gate_holds: eligible,
+                gate,
             },
         ));
         return false;
@@ -3552,7 +3689,7 @@ fn accrue_field(
             bar: sow_bar,
             banked: patch.field_progress,
             balance,
-            gate_holds: eligible,
+            gate,
         },
     ));
     charge_build_wear(

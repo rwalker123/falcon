@@ -277,6 +277,22 @@ pub struct ForagePatch {
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
     pub build_queue_position: i32,
+    /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — the conjunct of the rung's own gate
+    /// that refused ([`crate::intensification::BuildGate`]), or [`crate::intensification::BuildGate::Open`]
+    /// (wire key `""`) whenever this source is not a blocked build
+    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    ///
+    /// **It exists because [`crate::intensification::BuildTurns::Blocked`] states only THAT the
+    /// queue is stuck.** The measured playtest sat on a blocked Tame for turns, fixing the one cause
+    /// a surface happened to name while the real refusal — the herd below its escapement floor —
+    /// went unmentioned by every surface in the game. The sim decides `eligible`, so the sim says
+    /// why; a client re-deriving it would be a second producer of one verdict.
+    ///
+    /// **It rides the same winner as [`Self::build_turns_remaining`]** and is **carried down the
+    /// queue** with the sentinel: everything behind a blocked head is stuck for the head's reason.
+    ///
+    /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
+    pub build_blocked_reason: crate::intensification::BuildGate,
     /// **The named plant this patch is COMMITTED to** — a `flora_config.json` species key, or `None`
     /// for the **wild mixed basket** (`docs/plan_flora_roster.md` §4.2/§4.3). Stored as the config
     /// key rather than the display name because the key is what `FloraConfig::species` and
@@ -471,6 +487,7 @@ impl ForagePatch {
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
             build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
+            build_blocked_reason: crate::intensification::BuildGate::Open,
             species: None,
             owner: None,
             neglect_turns: NEGLECT_NONE,
@@ -2147,6 +2164,7 @@ pub fn advance_cultivation(
         patch.build_turns_remaining = None;
         patch.build_work_from_gear = NO_BUILD_GEAR;
         patch.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
+        patch.build_blocked_reason = crate::intensification::BuildGate::Open;
         // **And this turn's supply**, on the same cycle and for the same reason: it describes the
         // keepers that held the patch, so a patch whose keepers have gone must stop reporting what
         // they paid. Clearing it is also what re-arms this pass — next turn's shortfall is the whole

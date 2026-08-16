@@ -518,10 +518,11 @@ func run(harness) -> void:
 			== SourceForecast.YIELD_ROW_HEADER.to_upper())
 	# **A CREW OF ZERO IS BUILDING NOTHING, AND THE ASIDE MAY NOT SAY OTHERWISE.** `learn_multiplier`
 	# is a function of the FLOOR alone, so at the food peak it reads ×1.00 no matter who is assigned —
-	# and this frame has a composed Cultivate with NOBODY on it. The build half is gated on the same
-	# work predicate the lesson is, which is a fact about the sim rather than a display nicety: build
-	# accrual and knowledge accrual share one multiplier and one `crew_is_working_the_source` gate.
-	# Asserted on this frame because it is the only one that pairs a live build with an empty crew.
+	# and this frame has a composed Cultivate with NOBODY on it. **The aside states the LESSON's rate
+	# and no build rate at all**: the two meters stopped sharing a multiplier when the build crew left
+	# the tile (`docs/plan_standing_upkeep.md` §2.2), so a build half here would quote a rate the sim
+	# does not compute. Asserted on this frame because it is the only one that pairs a live build with
+	# an empty crew — the shape a build-rate line would have read most confidently on.
 	h._assert_hud("an unstaffed build claims no build rate — nobody is building it",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).to_lower().contains("building at"))
 

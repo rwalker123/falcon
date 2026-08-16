@@ -1129,6 +1129,11 @@ const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
 ## The row's own tooltip: the job face and its date in full, since both columns clip.
 const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
 
+## The indent a queue row's blocked-cause lines take: NONE. `DetailFormat.build_blocked_lines` hangs
+## its sentences under a rung row on the source's card and indents them to say so; a tooltip has no
+## row above them, and a leading run of spaces in one reads as a typo rather than as structure.
+const BUILD_QUEUE_TOOLTIP_UNINDENTED := ""
+
 ## **…AND ON A REAL COUNT IT CARRIES BOTH READINGS**, which is what actually kills the ambiguity
 ## (`docs/plan_standing_upkeep.md` §4.7): `Cultivate (71, 18) — turn 82 (0%) · 42 turns from now`.
 ## The column states the DATE, because a chained countdown read as a per-entry span is what the

@@ -248,6 +248,45 @@ const RUNG_BLOCKED_FORMAT := "%s Blocked %d%% — your builders are held here"
 # useless half reads as a guess.
 const RUNG_BLOCKED_REMEDY_FORMAT := "its keeping is short — staff this band's %s"
 
+# **THE CAUSE ITSELF, ONE SENTENCE PER KEY** (`ForagePatchState.buildBlockedReason` /
+# `HerdTelemetryState.buildBlockedReason`, `docs/plan_standing_upkeep.md` §4.6b). The sim decides
+# which conjunct of the rung's gate refused and ships a short lowercase key; the WORDING is the
+# client's, on `HudFloraVocab.SOW_REFUSAL_REASONS`' precedent — including its fallback, because a key
+# this client has not learned still refuses and must say the one thing we do know.
+#
+# **THIS IS THE ROW THAT DID NOT EXIST.** The remedy above rendered only where the keeping was short,
+# so a player who covered the keeping watched `⚠ Blocked 32%` sit there with NO cause at all — the
+# real refusal being the herd standing below its escapement floor, which no surface named. Every key
+# answers now, and the one the playtest hit is the first of them.
+#
+# **EACH SENTENCE NAMES A REMEDY THE PLAYER CAN ACT ON, or says plainly that there is none**
+# (`species_ceiling`), which is the gate-reason rule this client already follows: naming a
+# prerequisite without naming the lever tells a player the door is locked and not where the key is.
+const BUILD_BLOCKED_REASONS := {
+    "escapement": "nothing stands above this crew's floor, so the gate takes nothing — lower the floor here, or leave the source to grow back above it.",
+    "knowledge": "your people do not know how to raise this rung yet — the KNOWLEDGE tab says how far along they are.",
+    "no_crop": "no crop is committed to this ground — pick one on this job's row in the BUILD QUEUE, or let the sim take the patch's dominant plant.",
+    "species_ceiling": "this animal climbs no further — its kind will not take that rung, whatever your people learn.",
+    "rung_below": "it must be tamed before it can be penned.",
+    "owned_by_other": "another band holds this source — yours cannot build on it.",
+    "site": "this ground will not take that rung — build it on ground that will.",
+    "ring_idle": "no ring is being raised here — this entry extends a pen nobody is building.",
+    "undeclared": "the ground has moved on — this entry names a rung it can no longer raise. Withdraw it from the BUILD QUEUE and declare the rung the source stands on now.",
+    "unworked": "this band no longer works the source — put a crew back on it, or withdraw the entry from the BUILD QUEUE.",
+}
+
+# The key the ESCAPEMENT refusal ships under — named because it is the ONE cause that may also be
+# short of keeping, and the two are different facts with different remedies (a floor and a stock
+# against `assign_labor … husbandry <n>`). `DetailFormat` tests it by name so the pairing rule is
+# written once.
+const BUILD_BLOCKED_REASON_ESCAPEMENT := "escapement"
+
+# An unrecognized cause key — or a `-4` shipped with no key at all — still leaves the builders held,
+# so this says exactly that and guesses at nothing. It is the honest reading of a wire this client is
+# behind on, and it is never an empty line: silence on a marked row reads as *no cause exists*, which
+# is the state this whole block exists to end.
+const BUILD_BLOCKED_FALLBACK := "the sim refuses this rung for a reason this client cannot name — your builders will hold here until it changes."
+
 # `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
 # cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and
 # not to a farm: the contribution is a fixed number of units against a job whose size is not, so its

@@ -2327,6 +2327,43 @@ table ForagePatchState {
   // from one band's queue beside a position from another's would be two answers pretending to be
   // one.
   buildQueuePosition:int = -1;
+  // WHY THE QUEUE IS BLOCKED HERE (appended, docs/plan_standing_upkeep.md 4.6b) - "" whenever this
+  // source is not a blocked build, else a short lowercase cause key on the free-form-string
+  // convention `ecologyPhase` / `sowSiteRefusal` already use.
+  //
+  // READ IT BESIDE `buildTurnsRemaining`'s `-4`, never instead of it: that field says the pool is
+  // stuck, this says which conjunct of the rung's own gate refused. `-4` with no reason is the state
+  // this field exists to end - a playtest sat on a blocked Tame for turns, fixed the one cause a
+  // surface happened to name (the keeping shortfall), and stayed blocked because the real refusal
+  // was the herd standing below its escapement floor.
+  //
+  // THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY. The client must not re-derive it: it has its
+  // own gate machinery for what a verb may be offered on, and a second producer of one verdict is
+  // how the two come to disagree.
+  //
+  // IT IS A CAUSE, NOT A SENTENCE - no player-facing prose crosses the wire; the client owns the
+  // wording, exactly as it does for `sowSiteRefusal`.
+  //
+  // The keys, and the conjunct each names:
+  //   knowledge      - the faction does not know the rung's `unlock_knowledge`
+  //   escapement     - nothing stands above the crew's floor (`crew_is_working_the_source`); the
+  //                    animal web's stall, whose remedy is the `husbandry` pool and nothing on the
+  //                    build line. Pair it with this source's `upkeepShortfall` /
+  //                    `neglectGraceRemaining`
+  //   no_crop        - the patch has no committed plant, or nothing in its basket climbs this rung
+  //   species_ceiling- the species' `husbandry_ceiling` stops below this rung
+  //   rung_below     - the rung under this one is not built (a Corral on an untamed herd)
+  //   owned_by_other - another faction holds the source
+  //   site           - the ground does not admit the rung (Sow's gathering-site + fresh-water rule)
+  //   ring_idle      - an `extend_pen` entry whose ring is not running
+  //   undeclared     - the band's queue entry does not name the rung its meter is on
+  //   unworked       - the source produced no quote at all this turn: not a gate refusing, but the
+  //                    labor loop never reaching it. A real and different state
+  //
+  // IT IS CARRIED DOWN THE QUEUE with the `-4` itself: everything behind a blocked head publishes
+  // the head's own reason, because that is why they are stuck too. And it rides the SAME WINNER as
+  // the three fields above.
+  buildBlockedReason:string;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3433,6 +3470,11 @@ table HerdTelemetryState {
   // docs/plan_standing_upkeep.md 4.6b) - 0-BASED, `-1` when no band has queued it. The animal twin
   // of `ForagePatchState.buildQueuePosition`; that field carries the full rationale.
   buildQueuePosition:int = -1;
+  // WHY THE QUEUE IS BLOCKED HERE (appended) - the animal twin of
+  // `ForagePatchState.buildBlockedReason`; that field carries the full key table and the rationale.
+  // `escapement` is the key this web reaches most: an unkept flock's suppressed regrowth pins it at
+  // the hunters' floor, so a Tame's own gate never reopens and only the `husbandry` pool moves it.
+  buildBlockedReason:string;
 }
 
 table CommandEventState {

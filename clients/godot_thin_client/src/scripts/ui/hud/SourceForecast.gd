@@ -786,6 +786,14 @@ const FORECAST_BUILD_TURNS_KEY := "build_turns_remaining"
 # the countdown is a CHAINED date — everything ahead of this entry plus its own span at the full
 # builders pool — and this is what makes that number explicable.
 const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
+# **WHY THE QUEUE IS BLOCKED HERE** — `""` on any source that is not a blocked build, else the sim's
+# own short cause key for the conjunct of the rung's gate that refused
+# (`docs/plan_standing_upkeep.md` §4.6b). It is READ BESIDE `FORECAST_BUILD_TURNS_KEY`'s `-4`, never
+# instead of it: the sentinel says the builders are held here, this says why, and a `-4` with no cause
+# beside it is the state that shipped and cost a playtest several turns on a Tame nobody could explain.
+# **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY** — this client holds no gate machinery for it and
+# must not re-derive one. It rides the SAME winning band as the three fields above.
+const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -2059,10 +2067,15 @@ static func phase_zones(src: Dictionary, prefix: String) -> Array[Dictionary]:
         {"low": stressed, "high": 1.0, "phase": ECOLOGY_PHASE_THRIVING},
     ]
 
-## The learning/build multiplier this floor buys — the sim's `intensification::learn_multiplier`,
+## The LEARNING multiplier this floor buys — the sim's `intensification::learn_multiplier`,
 ## `floor / the food peak`, normalised so the peak is ×1.0. It is what the chart's gradient rail
 ## encodes, and it is a fact about **these people on this ground**, not a faction knowledge meter: a
 ## tile knows nothing.
+##
+## **IT SCALES THE KNOWLEDGE ACCRUAL AND NOTHING ELSE.** It paced the build meter too while one crew
+## both gathered and built; `build_supply` reads no floor at all now (`docs/plan_standing_upkeep.md`
+## §2.2), so a caller reaching for this to price a build is reading the wrong meter — see
+## `build_turns_at`, which takes the floor for the WORK PREDICATE alone.
 static func learn_multiplier(floor: float) -> float:
     return clamp_floor(floor) / FLOOR_FOOD_PEAK
 
@@ -3657,6 +3670,15 @@ static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
 static func build_queue_position(src: Dictionary, prefix: String) -> int:
     var position := int(src.get(prefix + FORECAST_BUILD_QUEUE_POSITION_KEY, NOT_IN_ANY_BUILD_QUEUE))
     return position if position >= BUILD_QUEUE_HEAD else NOT_IN_ANY_BUILD_QUEUE
+
+## **WHY THIS SOURCE'S BUILD IS BLOCKED** — the sim's own cause key, `""` when it is not blocked or
+## when the wire says nothing. Read it BESIDE `build_turns_remaining`'s `BUILD_TURNS_QUEUE_BLOCKED`,
+## which is what says the builders are standing here at all; this only ever says WHICH conjunct
+## refused (`docs/plan_standing_upkeep.md` §4.6b). Passed through verbatim, unrecognised keys
+## included — the wording table is the client's and answers an unknown key honestly rather than
+## dropping it, exactly as `HudFloraVocab.SOW_REFUSAL_FALLBACK` does for a site refusal.
+static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
+    return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
 
 ## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
 ## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other
