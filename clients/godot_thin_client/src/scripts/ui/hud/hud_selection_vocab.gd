@@ -240,6 +240,14 @@ const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 # is the silence this whole family exists to remove).
 const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 
+# **AND IT COVERS A CREWLESS `-1` TOO — there is deliberately no *no estimate* twin.** A crew fork was
+# built here for the 99% repair, on the reading that *Stalled* blames builders who do not exist, and
+# it was REVERTED: `RungDef::build_accrual`'s `eligible` takes no crew count, so the sim publishes
+# `-1` for a refused gate at any staffing, and `chapters/improvements.gd`'s `tile_meter_stalled` pins
+# that the card must say so. **The eroded rung the repair is about never reaches this format anyway**
+# — `DetailFormat.rung_row_value` answers on the `built` branch first, so a 90% Tended patch reads
+# `🌾 Tended 90%` and its slipping, not a countdown.
+
 # **HAZARD: THE QUEUE IS STUCK HERE** (`SourceForecast.BUILD_TURNS_QUEUE_BLOCKED`, the wire's own
 # `-4`, `docs/plan_standing_upkeep.md` §4.6b). The band's builders are staffed and standing on this
 # entry, its own gate refuses it, so nothing banks — and, the whole pool being on the head of the

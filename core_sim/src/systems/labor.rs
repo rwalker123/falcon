@@ -305,8 +305,21 @@ impl BuildersGear {
 /// action required — exactly as the builders row derives per queue entry. A picker becomes an
 /// **override** later, not a prerequisite.
 struct KeepingGear {
-    plant: f32,
-    animal: f32,
+    plant: KeepingBranchGear,
+    animal: KeepingBranchGear,
+}
+
+/// One web's keeping answer: what a keeper of that web delivers, and the kit that delivered it.
+struct KeepingBranchGear {
+    /// **The coverage-weighted per-keeper contribution** — the term
+    /// [`crate::intensification::pool_work_supply`] raises the pool by.
+    work_per_worker: f32,
+    /// **The kit the pool keeps with, narrowed to the tools that actually serve this web** — what
+    /// the [`crate::equipment_config::WearQuantum::UpkeepWork`] charge is billed against, resolved
+    /// through the same [`crate::equipment_config::EquipmentConfig::build_gear_kit`] the builders'
+    /// wear kit is. The narrowing is what stops a pool holding the *other* web's tool from spending
+    /// it on work that tool contributed nothing to — wear follows the work actually done.
+    wear_kit: crate::equipment_config::KitChoice,
 }
 
 impl KeepingGear {
@@ -325,9 +338,12 @@ impl KeepingGear {
             // prefix, so a part-equipped keeping pool gets the share it actually carries and the
             // bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
             let keepers = allocation.workers_on(&role);
-            equipment
-                .coverage(&kit, keepers as f32, band_kit)
-                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch))
+            KeepingBranchGear {
+                work_per_worker: equipment
+                    .coverage(&kit, keepers as f32, band_kit)
+                    .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch)),
+                wear_kit: equipment.build_gear_kit(&kit, band_kit, branch),
+            }
         };
         Self {
             plant: on(crate::intensification::RungBranch::Plant),
@@ -336,9 +352,13 @@ impl KeepingGear {
     }
 
     fn on(&self, branch: crate::intensification::RungBranch) -> f32 {
+        self.branch(branch).work_per_worker
+    }
+
+    fn branch(&self, branch: crate::intensification::RungBranch) -> &KeepingBranchGear {
         match branch {
-            crate::intensification::RungBranch::Plant => self.plant,
-            crate::intensification::RungBranch::Animal => self.animal,
+            crate::intensification::RungBranch::Plant => &self.plant,
+            crate::intensification::RungBranch::Animal => &self.animal,
         }
     }
 }
@@ -738,6 +758,24 @@ pub fn advance_labor_allocation(
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
             };
+            // **A RUNNING QUOTE DESCRIBES A QUEUE ENTRY** — the ring's rule (`if ring_queued`
+            // below), stated for the four rung arms too, and the fix for a patch that published
+            // `≈1 turn` for ever.
+            //
+            // The four arms are entered on the **derived** verb, which answers for any meter
+            // carrying progress — so a tended patch eroded below its cost derives `Cultivate` with
+            // **no entry and therefore no builders** (`build_workers` above is `0`), banked nothing,
+            // and still pushed a quote. `publish_build_chain`'s unqueued tail then dated it at the
+            // **full pool** and published a confident countdown for a build nobody was working: at
+            // 99% of its cost that reads `≈1 turn`, every turn, for ever.
+            //
+            // **The honest answer for an unqueued running meter is NO ESTIMATE** — no quote is
+            // pushed, the tail skips the source, and `advance_cultivation` / `advance_husbandry`
+            // leave the field at the `None` they cleared it to. The *projection* is untouched and is
+            // still dated at the back of the line: it fires only where nothing is being built
+            // (`improvement.is_none()`), which is exactly the compose-sheet question, and re-queueing
+            // the eroded meter restores a real countdown by restoring the entry.
+            let entry_declares_a_rung = declared.is_some();
             // **HAS THIS BAND DECLARED A RING HERE?** — the ring's own membership test, kept apart
             // from the head test below because a *waiting* ring must still be **quoted** (every
             // entry is dated at the full pool, §4.6b) even though it is funded at nothing.
@@ -1119,8 +1157,21 @@ pub fn advance_labor_allocation(
                     // a second crew is sowing would overwrite the sowers' supply with its own zero
                     // and revert the very meter they were filling. `advance_cultivation` zeroes it at
                     // the top of every turn, so the sum is always this turn's.
-                    patch.upkeep_supplied +=
+                    let keeping_supplied =
                         crate::forage::patch_upkeep_supply(patch, improvement, keeping_share);
+                    patch.upkeep_supplied += keeping_supplied;
+                    // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
+                    // `WearQuantum::UpkeepWork` charge, billed on what the pool **supplied** to this
+                    // patch and not on what the rung demanded, so an under-staffed pool wears only
+                    // the hours it worked and a pool with nothing at risk wears nothing.
+                    charge_keeping_wear(
+                        band_equipment.as_deref_mut(),
+                        &equipment_cfg,
+                        &keeping_gear
+                            .branch(crate::intensification::RungBranch::Plant)
+                            .wear_kit,
+                        keeping_supplied,
+                    );
                     // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
                     // `advance_cultivation` will bleed off the at-risk meter, resolved once here off
                     // the supply just stamped. That pass judges *this* supply, so the bleed is
@@ -1551,15 +1602,20 @@ pub fn advance_labor_allocation(
                         // all, which is not the same as a staffing that never gets there. What the
                         // *hands* decide is only the empty-meter case: work already banked promises
                         // as much as a crew does, so a half-built meter with nobody on it answers.
-                        build_quotes.push((
-                            BuildSource::Patch(*tile),
-                            BuildQuote {
-                                cost: cultivate_cost,
-                                banked: patch.cultivation_progress,
-                                balance,
-                                gate,
-                            },
-                        ));
+                        //
+                        // **AND ONLY FOR A SOURCE THAT CARRIES AN ENTRY** — see
+                        // `entry_declares_a_rung`.
+                        if entry_declares_a_rung {
+                            build_quotes.push((
+                                BuildSource::Patch(*tile),
+                                BuildQuote {
+                                    cost: cultivate_cost,
+                                    banked: patch.cultivation_progress,
+                                    balance,
+                                    gate,
+                                },
+                            ));
+                        }
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -1612,6 +1668,7 @@ pub fn advance_labor_allocation(
                             &equipment_cfg,
                             &builders_gear.plant.wear_kit,
                             &mut build_quotes,
+                            entry_declares_a_rung,
                             meter_rot,
                         )
                     {
@@ -1908,8 +1965,19 @@ pub fn advance_labor_allocation(
                     // **Accumulated, not assigned** — the demand is per-SOURCE, so the keepers of
                     // every band working this herd sum into one supply and the last band visited
                     // must not speak for all of them. `advance_husbandry` zeroes it once per turn.
-                    herd.upkeep_supplied +=
+                    let keeping_supplied =
                         fauna::herd_upkeep_supply(herd, improvement, keeping_share);
+                    herd.upkeep_supplied += keeping_supplied;
+                    // **The plant twin's charge** — the keeping tools are spent on the work the pool
+                    // actually supplied to this herd. See the Forage arm.
+                    charge_keeping_wear(
+                        band_equipment.as_deref_mut(),
+                        &equipment_cfg,
+                        &keeping_gear
+                            .branch(crate::intensification::RungBranch::Animal)
+                            .wear_kit,
+                        keeping_supplied,
+                    );
                     // **WHAT THE METER IS LOSING** — the plant twin's seam, and on the shipped
                     // ladder always `0`: neither animal rung declares a `meter_decay`, because an
                     // under-kept flock **sheds animals** instead. So nothing eats an animal build,
@@ -2541,15 +2609,19 @@ pub fn advance_labor_allocation(
                             accrual > 0.0 && herd.accrue_domestication(faction, accrual, tame_cost);
                         // Recorded for the band's chain pass, which dates it at its place in the
                         // queue — see the Cultivate arm.
-                        build_quotes.push((
-                            BuildSource::Herd(herd.id.clone()),
-                            BuildQuote {
-                                cost: tame_cost,
-                                banked: herd.domestication_progress,
-                                balance,
-                                gate,
-                            },
-                        ));
+                        // **Only for a source that carries an entry** — see
+                        // `entry_declares_a_rung`.
+                        if entry_declares_a_rung {
+                            build_quotes.push((
+                                BuildSource::Herd(herd.id.clone()),
+                                BuildQuote {
+                                    cost: tame_cost,
+                                    banked: herd.domestication_progress,
+                                    balance,
+                                    gate,
+                                },
+                            ));
+                        }
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -2635,15 +2707,19 @@ pub fn advance_labor_allocation(
                         let progress_before = herd.corral_progress;
                         let penned = accrual > 0.0
                             && herd.accrue_corral(faction, accrual, pen_cost, pen_tile);
-                        build_quotes.push((
-                            BuildSource::Herd(herd.id.clone()),
-                            BuildQuote {
-                                cost: pen_cost,
-                                banked: herd.corral_progress,
-                                balance,
-                                gate,
-                            },
-                        ));
+                        // **Only for a source that carries an entry** — see
+                        // `entry_declares_a_rung`.
+                        if entry_declares_a_rung {
+                            build_quotes.push((
+                                BuildSource::Herd(herd.id.clone()),
+                                BuildQuote {
+                                    cost: pen_cost,
+                                    banked: herd.corral_progress,
+                                    balance,
+                                    gate,
+                                },
+                            ));
+                        }
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -3528,6 +3604,34 @@ fn charge_build_wear(
     }
 }
 
+/// **CHARGE A KEEPER'S GEAR FOR THE WORK IT JUST SUPPLIED** — the
+/// [`crate::equipment_config::WearQuantum::UpkeepWork`] site, and the only one, sitting beside
+/// [`charge_build_wear`] for the same reason: one helper rather than one per web.
+///
+/// **`supplied` is what the source's meter was actually held with this turn** — the value
+/// `forage::patch_upkeep_supply` / `fauna::herd_upkeep_supply` returned and stamped, never the
+/// rung's demand and never the pool's head count. A share is capped at the demand
+/// ([`crate::intensification::distribute_upkeep_pool`]), so a pool larger than what the band holds
+/// spends only what it was asked for, and a pool with nothing at risk spends nothing at all.
+///
+/// **Once per source per band**, at the same seam that accumulates `upkeep_supplied` — so two bands
+/// keeping one patch each wear their own gear for their own share, exactly as they each supply it.
+fn charge_keeping_wear(
+    equipment: Option<&mut BandEquipment>,
+    config: &crate::equipment_config::EquipmentConfig,
+    kit: &crate::equipment_config::KitChoice,
+    supplied: f32,
+) {
+    if let Some(wear) = equipment {
+        wear.wear_kit(
+            config,
+            kit,
+            crate::equipment_config::WearQuantum::UpkeepWork,
+            supplied,
+        );
+    }
+}
+
 /// **WHOSE ANSWER A SOURCE PUBLISHES WHEN SEVERAL BANDS WORK IT IN ONE TURN.**
 ///
 /// `build_turns_remaining` and `build_work_from_gear` are **per-source** fields written **per
@@ -3741,6 +3845,11 @@ fn accrue_field(
     // Where the arm records this rung's four countdown terms; the band's chain pass evaluates them
     // in queue order after the loop.
     quotes: &mut Vec<(BuildSource, BuildQuote)>,
+    // **Does this patch carry a rung entry in the band's queue?** A running quote describes an
+    // ENTRY (see `entry_declares_a_rung` at the call site): a Field eroded below its cost derives
+    // `Sow` with nobody queued and nobody building, and quoting it would publish a confident
+    // countdown for a build that is not happening.
+    entry_declares_a_rung: bool,
     // **What this patch's at-risk meter is bleeding this turn** (`forage::patch_meter_rot`),
     // resolved once by the caller off the keeping just stamped — see the Cultivate arm.
     meter_rot: f32,
@@ -3762,15 +3871,17 @@ fn accrue_field(
         // other three build arms have. A stall's answer is *"no estimate"*, and it is still the
         // **queued build's** answer, so a band merely gathering this ground must not quote the next
         // rung over it.
-        quotes.push((
-            BuildSource::Patch(tile),
-            BuildQuote {
-                cost: sow_cost,
-                banked: patch.field_progress,
-                balance,
-                gate,
-            },
-        ));
+        if entry_declares_a_rung {
+            quotes.push((
+                BuildSource::Patch(tile),
+                BuildQuote {
+                    cost: sow_cost,
+                    banked: patch.field_progress,
+                    balance,
+                    gate,
+                },
+            ));
+        }
         return false;
     }
     // The TRANSITION, not the state — `ForagePatch::accrue_field` answers "did this call finish it",
@@ -3790,15 +3901,17 @@ fn accrue_field(
     );
     // Recorded against the meter the accrual just moved — the quote above was struck before it, and
     // a running build's own countdown must be the post-accrual one.
-    quotes.push((
-        BuildSource::Patch(tile),
-        BuildQuote {
-            cost: sow_cost,
-            banked: patch.field_progress,
-            balance,
-            gate,
-        },
-    ));
+    if entry_declares_a_rung {
+        quotes.push((
+            BuildSource::Patch(tile),
+            BuildQuote {
+                cost: sow_cost,
+                banked: patch.field_progress,
+                balance,
+                gate,
+            },
+        ));
+    }
     charge_build_wear(
         equipment,
         equipment_cfg,

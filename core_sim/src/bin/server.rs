@@ -2332,7 +2332,22 @@ fn validate_cultivate(
     let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) else {
         return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
     };
-    if patch.is_cultivated() {
+    // **THE REFUSAL IS THE METER'S FULLNESS, NOT THE ACHIEVED RUNG** — the same question
+    // `forage::patch_rung_already_built` and `forage::patch_build_verb` ask, so the command and the
+    // queue can never disagree about whether there is work left on this ground.
+    //
+    // **A tended patch eroded below its cost is a REPAIR, and this used to forbid it.**
+    // `is_cultivated()` compares against the *retention bar*, which sits well below the cost, so a
+    // patch at 99% answered *"already cultivated"* — while completion had already retired its queue
+    // entry, and `build_workers` aims the pool only at a head that declares. The three composed into
+    // a rung that could never be repaired: no entry, no builders, and no command that could make one
+    // (`docs/plan_standing_upkeep.md` §2.4 — *"repairing it is a fresh decision the player makes by
+    // putting it back in the queue"*). Re-queueing is the whole fix: the entry brings the builders,
+    // and the accrual's own guard is already the meter (`ForagePatch::accrue_cultivation`).
+    //
+    // **A FULL meter is still refused, and that is the pair.** This message exists for ground with
+    // genuinely nothing left to build; only the eroded case moved.
+    if patch.cultivation_meter_full() {
         return Err(format!(
             "The patch at ({}, {}) is already cultivated — forage it to tend it.",
             tile.x, tile.y
@@ -2396,7 +2411,13 @@ fn validate_corral(
     if !herd.can_pen() {
         return Err(format!("{} cannot be penned.", herd.species));
     }
-    if herd.is_corralled() {
+    // **The meter's fullness, not the fence flag** — [`validate_cultivate`]'s rule on the animal
+    // web, so this refusal asks exactly what `fauna::herd_rung_already_built` asks. The two agree on
+    // every herd the sim can reach today (`corral_at` sets the meter to its own cost, and nothing
+    // bleeds it), so this is the *shape* being made uniform rather than a behaviour change: it is
+    // what keeps a pen meter that ever learns to erode repairable by the same one-line rule the
+    // plant web already needed.
+    if herd.corral_meter_full() {
         return Err(format!("{} is already corralled.", fauna_id));
     }
     if !herd.is_domesticated() {
@@ -2485,7 +2506,11 @@ fn validate_sow(
     // A tile with no patch at all is a LEGAL target — the create-from-nothing case. Only an existing
     // patch can be in a state that refuses the seed.
     if let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) {
-        if patch.is_field() {
+        // **The meter's fullness, not the achieved rung** — [`validate_cultivate`]'s rule one rung
+        // up, and the same deadlock: `is_field()` reads the *retention bar*, so a Field eroded to
+        // 99% of its cost refused the very `sow` that would repair it, with its queue entry already
+        // retired by completion. A **full** meter is still refused.
+        if patch.field_meter_full() {
             return Err(format!(
                 "The field at ({}, {}) is already sown — forage it to work it.",
                 tile.x, tile.y
@@ -2578,7 +2603,11 @@ fn validate_species_selection(
 /// 3. **The species' `husbandry_ceiling` allows domestication** (Grazing 2d-δ) — checked *before*
 ///    ownership, because it is a property of the *animal*, not of who is hunting it (the rule the
 ///    retired `domesticate` handler established).
-/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb.
+/// 4. **Not already domesticated** — this rung is already climbed; `corral` is the next verb. This
+///    one already reads the **meter** (`Herd::is_domesticated` *is* `progress >= cost`; the
+///    pastoral rung has no separate retention bar), so it needed nothing when the plant verbs' gates
+///    were moved off the retention bar — and `fauna::herd_rung_already_built` asks the same
+///    expression, which is why a `Tame` was never caught in the repair deadlock.
 /// 5. **Not another faction's** — mirrors the plant side's "another people are cultivating it".
 ///
 /// Deliberately **not** gated on the herd being Thriving, unlike the patch: a herd's phase swings as
@@ -9358,6 +9387,234 @@ mod tests {
             &app,
             "No band is foraging"
         ));
+    }
+
+    // --- AN ACHIEVED RUNG SHORT OF ITS COST IS REPAIRABLE; A FULL ONE IS REFUSED ----------------
+    //
+    // `docs/plan_standing_upkeep.md` §2.4: *"repairing it is a fresh decision the player makes by
+    // putting it back in the queue"*. Three gates composed to make that impossible — completion
+    // retires the queue entry, no entry means no builders, and the verb's own refusal read the
+    // **retention bar** (37.5 of 50) rather than the **cost**, so a patch eroded to 99% answered
+    // *"already cultivated"* and could not be re-queued at all. The escape was to stop paying
+    // keeping, bleed 12 units, lose the rung and re-buy it.
+    //
+    // The refusal now asks the meter, which is what the accrual guard, `patch_rung_already_built`
+    // and `herd_rung_already_built` already asked. **The pair is what these tests pin**: an eroded
+    // meter accepts, a FULL meter still refuses with the message that exists for it.
+
+    /// **The rung's own cost and the bar it is held down to**, read off the shipped ladder so a
+    /// retune moves the fixture with the game rather than leaving a literal behind.
+    fn rung_cost_and_bar(app: &bevy::prelude::App, key: RungKey) -> (f32, f32) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let rung = ladder.rung(key);
+        let cost = rung
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("a rung a verb builds has a build meter");
+        (cost, rung.retention_bar(cost))
+    }
+
+    /// **The fraction of its cost an ERODED meter is left standing at** — comfortably above the
+    /// shipped `retain_fraction` of `0.75`, so the rung is unambiguously still achieved and the only
+    /// thing the command can be refusing on is the *cost*.
+    const ERODED_BUT_STILL_HELD: f32 = 0.99;
+
+    /// Put `coord`'s patch in the state a finished Cultivate decays into: **tended** (its bar is
+    /// stamped and its meter is above it) and **building** (its meter is below its cost).
+    fn erode_a_tended_patch(app: &mut bevy::prelude::App, coord: UVec2, faction: FactionId) {
+        let (cost, bar) = rung_cost_and_bar(app, RungKey::PlantTended);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry
+            .patch_mut(coord)
+            .expect("the fixture patch is there");
+        patch.cultivation_cost = cost;
+        patch.cultivation_retain_bar = bar;
+        patch.cultivation_progress = cost * ERODED_BUT_STILL_HELD;
+        patch.owner = Some(faction);
+        assert!(
+            patch.is_cultivated() && !patch.cultivation_meter_full(),
+            "the fixture must be TENDED and still BUILDING, or it tests neither half"
+        );
+    }
+
+    /// A patch worn below its cost is ground the builders may legitimately repair, so `cultivate`
+    /// takes it — and a patch whose meter is genuinely full is still refused, which is the case the
+    /// *"already cultivated"* message exists for.
+    #[test]
+    fn an_eroded_tended_patch_is_re_tendable_and_a_full_one_is_not() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        grant_cultivation(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        erode_a_tended_patch(&mut app, coord, faction);
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(
+            !cultivate_failure_detail_contains(&app, "already cultivated"),
+            "a tended patch eroded below its cost is a repair, not a finished job"
+        );
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "and re-queueing it is what puts the builders back on it — the entry IS the declaration"
+        );
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .is_cultivated(),
+            "the rung is not given up to repair it: the ground stays tended throughout"
+        );
+
+        // The other half, in its own world so the first half's (absent) failure cannot be read for
+        // this one's.
+        let mut full = build_headless_app();
+        seed_thriving_patch(&mut full, coord);
+        grant_cultivation(&mut full, faction);
+        spawn_working_band(
+            &mut full,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        {
+            let (cost, bar) = rung_cost_and_bar(&full, RungKey::PlantTended);
+            let mut registry = full.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.cultivation_cost = cost;
+            patch.cultivation_retain_bar = bar;
+            patch.cultivation_progress = cost;
+            patch.owner = Some(faction);
+        }
+
+        handle_cultivate(&mut full, faction, coord);
+
+        assert!(
+            cultivate_failure_detail_contains(&full, "already cultivated"),
+            "a FULL meter has nothing left to build and must still be refused"
+        );
+    }
+
+    /// The rung-3 twin, on the same pair: a Field worn below its cost is re-sowable, a full one is
+    /// not.
+    #[test]
+    fn an_eroded_field_is_re_sowable_and_a_full_one_is_not() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_sowable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        grant_seed_selection(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        let (cost, bar) = rung_cost_and_bar(&app, RungKey::PlantField);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.field_cost = cost;
+            patch.field_retain_bar = bar;
+            patch.field_progress = cost * ERODED_BUT_STILL_HELD;
+            patch.owner = Some(faction);
+            assert!(patch.is_field() && !patch.field_meter_full());
+        }
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            !sow_failure_detail_contains(&app, "already sown"),
+            "a Field eroded below its cost is a repair"
+        );
+        assert_eq!(band_improvement(&app, band), Some(Improvement::Sow));
+
+        let mut full = build_world_app();
+        let coord = find_sowable_tile(&full);
+        seed_thriving_patch(&mut full, coord);
+        grant_seed_selection(&mut full, faction);
+        spawn_working_band(
+            &mut full,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+        {
+            let mut registry = full.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.complete_field(faction);
+            patch.owner = Some(faction);
+        }
+
+        handle_sow(&mut full, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&full, "already sown"),
+            "a FULL Field meter is still refused"
+        );
+    }
+
+    /// **The animal web's half of the same sweep.** `tame`'s gate always read the meter
+    /// (`is_domesticated()` *is* `progress >= cost`), and `corral`'s read the **fence flag**; the
+    /// pen's meter never bleeds today, so the two answer alike — this pins that they do, and that
+    /// the refusal survives, so the shape can be made uniform without moving play.
+    #[test]
+    fn a_full_pen_and_a_tamed_herd_are_both_still_refused() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_penning(&mut app, faction);
+        // Both rungs' knowledge, because both verbs are asked below and a missing gate would refuse
+        // for the wrong reason.
+        grant_herding(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                floor: 0.5,
+            },
+        );
+        {
+            let mut herds = app.world.resource_mut::<HerdRegistry>();
+            let herd = herds
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == id)
+                .expect("the fixture herd is there");
+            assert!(herd.corral_at(coord), "the fixture herd can be penned");
+            assert!(
+                herd.is_corralled() && herd.corral_meter_full(),
+                "the fence flag and the meter agree on every herd the sim can reach"
+            );
+        }
+
+        handle_corral(&mut app, faction, coord);
+        assert!(corral_failure_detail_contains(&app, "already corralled"));
+
+        handle_tame(&mut app, faction, id);
+        assert!(tame_failure_detail_contains(&app, "already domesticated"));
     }
 
     // --- A build is never refused for the state of the ground under it -------------------------

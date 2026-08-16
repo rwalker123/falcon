@@ -1264,6 +1264,12 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> S
     if turns == SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
         return HudSelectionVocab.RUNG_BLOCKED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+    # ⛔ **AND `-1` TAKES NO CREW FORK, unlike `BUILD_TURNS_HOLDS` above.** It is the tempting symmetry
+    # and it is wrong twice over: `RungDef::build_accrual`'s `eligible` reads the STOCK against the
+    # floor and takes no crew count at all, so the sim answers `-1` on a refused gate at ANY staffing —
+    # and gating the client's own answer on a crew is a defect this client already shipped once and
+    # fixed (`chapters/improvements.gd`'s `tile_meter_stalled`, where the sheet answered the neutral
+    # *held* while the card said `⚠ Stalled`: two producers disagreeing about one meter).
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]

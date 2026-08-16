@@ -221,7 +221,7 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
         # HIGHEST RUNG FIRST. `can_sow` / `can_cultivate` are SPECIES-GLOBAL legality ("can this plant
         # ever climb this rung"), never "is it wise here" — a marginal share must not suppress a rung.
         for rung in [SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE]:
-            if rung != current and not SourceForecast.improvement_is_done(source, prefix, rung) \
+            if rung != current and rung_has_room(source, prefix, rung) \
                     and _any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
                 admitted.append(rung)
     elif kind == SourceForecast.LABOR_KIND_HUNT:
@@ -261,10 +261,25 @@ static func hunt_rungs_admitted(source: Dictionary, prefix: String,
         var admits := ceiling == SourceForecast.HUSBANDRY_CEILING_PEN \
             if rung == SourceForecast.IMPROVEMENT_CORRAL \
             else ceiling != SourceForecast.HUSBANDRY_CEILING_WILD
-        if rung != exclude and admits \
-                and not SourceForecast.improvement_is_done(source, prefix, rung):
+        if rung != exclude and admits and rung_has_room(source, prefix, rung):
             admitted.append(rung)
     return admitted
+
+## **IS THERE WORK LEFT TO PUT INTO THIS RUNG?** — the admission test both webs' rung walks share, and
+## the one place *"already built"* and *"already full"* are distinguished.
+##
+## It was a bare `not improvement_is_done(...)`, and that is the whole of why the 99% repair was
+## unreachable from the UI. The stamped flag is the rung's ACHIEVEMENT, which a plant rung keeps while
+## its meter erodes — so a Tended Patch that had slipped to 99% read as *built* and was filtered out of
+## every rung walk in the client, while the sim's own `cultivate` lock (which refuses on the METER)
+## would happily have accepted the order.
+##
+## **A FULL METER STILL ANSWERS FALSE, which is the half that must not move.** A rung standing at its
+## cost has nothing to put work into, and offering it would put a `⌃` on every finished improvement in
+## the game.
+static func rung_has_room(source: Dictionary, prefix: String, rung: String) -> bool:
+    return not SourceForecast.improvement_is_done(source, prefix, rung) \
+        or SourceForecast.rung_needs_repair(source, prefix, rung)
 
 ## **HAS THIS HERD ANY RUNG LEFT TO CLIMB?** — the question a build-speeding kit's applicability turns
 ## on, asked through the same seam the picker admits rungs with. Knowledge-blind by construction, like

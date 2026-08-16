@@ -471,6 +471,33 @@ pub enum WearQuantum {
     /// the source's owner-lock refuses outright moves the meter by zero and the charge is zero with
     /// it — `docs/plan_denial_raid.md` §1.2 intact.
     BuildProgress,
+    /// Per **unit of keeping work a band's maintenance pool actually SUPPLIED** to a source this
+    /// turn (`forage::patch_upkeep_supply` / `fauna::herd_upkeep_supply`). The keeping tools — a
+    /// keeper's hoes on the plant web, hurdles on the animal one.
+    ///
+    /// # WITHOUT IT A KEEPING TOOL RAISED A POOL'S SUPPLY FOR EVER, FREE
+    ///
+    /// `docs/plan_standing_upkeep.md` §4.8 made one supply expression feed both accounts — a build
+    /// divides its pile by it, an upkeep compares its demand against it — so the same hoe that
+    /// shortens a Cultivate also lets fewer keepers hold more ground. Only the **build** half had a
+    /// quantum, so holding was the one use of a tool that never wore it out.
+    ///
+    /// # IT IS THE SUPPLY, NOT THE DEMAND AND NOT THE HEAD COUNT
+    ///
+    /// A keeper who supplied `1.5` work wore `1.5` work's worth. **A pool with nothing to keep
+    /// wears nothing** — no source claims a share, every share is `NO_UPKEEP_DEMAND`, and the charge
+    /// is structurally zero rather than zero because a caller remembered a gate. So this is a *use*
+    /// count exactly like the seven above it and **not a clock**: keepers standing in the role with
+    /// no meter at risk pay nothing, `docs/plan_denial_raid.md` §1.2 intact. Charging the *demand*
+    /// would bill an under-staffed pool for work it could not do; charging *keepers* would bill an
+    /// idle role.
+    ///
+    /// # THE UNIT IS THE SAME WORK UNIT [`Self::BuildProgress`] COUNTS
+    ///
+    /// Which is why the shipped rate is the *same* rate: a work unit is a work unit, so a tool's
+    /// life is one number in work whether it is spent raising ground or holding it. That is the
+    /// conversion the amount is picked by — see `_comment_durability` in `equipment.json`.
+    UpkeepWork,
 }
 
 impl WearQuantum {
@@ -507,6 +534,11 @@ impl WearQuantum {
             // **Not "builds"** — the unit is a work unit and a build is many of them, so the
             // noun names the reference job the readout divides by. See the variant.
             Self::BuildProgress => "gardens' worth",
+            // **The same work unit, so the same reference job** — a hoe holds one life measured in
+            // work, and the noun says which account is spending it. No shipped item **leads** with
+            // this quantum (hoes lead with `build_progress`, hurdles with `biomass_collected`), so
+            // it is the reading the first item to headline keeping would get.
+            Self::UpkeepWork => "gardens' worth kept",
         }
     }
 
@@ -522,6 +554,7 @@ impl WearQuantum {
             Self::TileRevealed => "new tile",
             Self::ItemCrafted => "craft",
             Self::BuildProgress => "garden's worth",
+            Self::UpkeepWork => "garden's worth kept",
         }
     }
 }

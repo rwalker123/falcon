@@ -3012,6 +3012,12 @@ const ACTOR_HUNT_RUNG := "tame"
 ## Where in a popup row a press is aimed, as a fraction of the row's own height and of the popup's width.
 const ACTOR_POPUP_ROW_CENTRE := 0.5
 
+## How long the driven press waits for the picker's popup to ANNOUNCE itself (`about_to_popup`).
+## **A BOUND rather than an `await` on the signal**: a popup that never opens has to fail this
+## chapter's own assertion, naming the press that failed, instead of parking the coroutine until
+## `preview_watchdog` kills the run three minutes later with nothing to say about which press it was.
+const ACTOR_POPUP_WAIT_FRAMES := 30
+
 ## The popup reported no entry under the press at all — a failure, never a skip.
 const ACTOR_NO_ENTRY_PRESSED := -1
 
@@ -3098,24 +3104,58 @@ func _assert_actor_unassign(state: String, rung: String) -> void:
 ## `on_pick`, which rebuilds the compose controls and takes the picker row with it. The teardown is
 ## `is_instance_valid`-guarded, because an unguarded `disconnect` raises, which ABORTS the call — and an
 ## aborted GDScript call answers with its return type's default, which for an entry index is a legal 0.
+##
+## **IT SETTLES FIRST, ASSERTS ITS AIM, WAITS FOR THE POPUP AND CHECKS THE SHEET SURVIVED — and every
+## one of those four is the same failure seen from a different side.** `compose_band_switch_forage`
+## failed and passed clean three times: the press landed on the full-viewport dismiss CATCHER rather
+## than on the picker, the sheet closed, and FIVE assertions failed downstream as a cascade from one
+## bad press — reading as five independent problems. `ComposeSheet.refit` re-arms itself and
+## `_place_card` has two boundary flips that move the card by hundreds of pixels, so the picker's rect
+## is not final until the sheet has stopped moving.
 func _pick_actor_band(entry: int) -> void:
-	var sheet: Control = h._hud._drawercompose._compose_sheet
+	# THE SETTLE — this was the only geometry-sensitive path in the early chapters without one.
+	await h._settle()
+	var sheet: ComposeSheet = h._hud._drawercompose._compose_sheet
 	var picker := _band_picker_control(sheet)
 	h._assert_hud("the open sheet renders a Band: picker to drive", picker != null)
 	if picker == null:
 		return
 	var viewport: Viewport = h.get_viewport()
-	var face := InputProbe.canvas_to_window(viewport, h.get_window(),
-		picker.get_global_rect().get_center())
+	var picker_centre := picker.get_global_rect().get_center()
+	# THE AIM — a press outside the card is a press on the catcher, and the frame it is aimed from is
+	# the frame the assertion can still name.
+	var card_rect := sheet._card.get_global_rect()
+	h._assert_hud("the Band: picker's face is INSIDE the compose card before it is pressed (%s in %s)"
+			% [picker_centre, card_rect],
+		card_rect.has_point(picker_centre))
+	var face := InputProbe.canvas_to_window(viewport, h.get_window(), picker_centre)
 	InputProbe.hover(viewport, face)
+	var popup := picker.get_popup()
+	# THE POPUP — armed BEFORE the press, so a popup that opens on the press itself cannot be missed
+	# between the connect and the wait. Polled against a BOUND rather than `await`ed on the signal: a
+	# popup that never opens must fail this function's own assertion, not hand the run to the watchdog
+	# 180 seconds later.
+	var popped := [false]
+	var on_popup := func() -> void:
+		popped[0] = true
+	popup.about_to_popup.connect(on_popup)
 	# An `OptionButton` fires at ACTION_MODE_BUTTON_PRESS, so the popup is up before the release
 	# exists — the two halves have to be driven apart.
 	InputProbe.press_left(viewport, face)
 	await h.get_tree().process_frame
 	InputProbe.release_left(viewport, face)
-	await h.get_tree().process_frame
-	var popup := picker.get_popup()
-	h._assert_hud("a press on the Band: picker's face opens its popup", popup.visible)
+	var waited := 0
+	while not popped[0] and waited < ACTOR_POPUP_WAIT_FRAMES:
+		await h.get_tree().process_frame
+		waited += 1
+	if is_instance_valid(popup):
+		popup.about_to_popup.disconnect(on_popup)
+	# THE SURVIVAL — one line, and it is what turns the whole cascade into a single self-explaining
+	# failure naming the press that caused it.
+	h._assert_hud("…and the press left the compose sheet OPEN rather than dismissing it",
+		h._hud.is_compose_sheet_open())
+	h._assert_hud("a press on the Band: picker's face opens its popup (announced=%s, visible=%s)"
+			% [popped[0], popup.visible], popped[0] and popup.visible)
 	if not popup.visible:
 		return
 	_actor_entry_pressed = ACTOR_NO_ENTRY_PRESSED

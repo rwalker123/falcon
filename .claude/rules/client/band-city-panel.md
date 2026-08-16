@@ -1993,6 +1993,46 @@ drew before the pools block existed. The binding criterion was the board, at 376
 > one-column budget. Sabotage-verified against the bare constant: 4 failures naming `Zone_work` and
 > `short by 11`.
 
+### …AND 440 WAS NOT ENOUGH EITHER, BECAUSE THE INSPECTOR WAS NEVER BUDGETED
+
+Reported from play: the panel *"overflowed its bounds… only when something is selected in the work
+list."* **Two arithmetic faults compounding**, and the zone `clip_contents`, so on a bottom dock the cut
+lands at the window's own edge and reads as the panel running off the screen.
+
+- **The reservation ignored the row.** `_work_inspector_height(_model)` took the model and never read
+  it — the underscore was in the source — forking only on `_work_floor_open`. The strip draws **four
+  conditional children** that fork cannot see: the overdraw line, the `note`, the `muted_note` and the
+  `ArrivalStrip`, each with its own gap. It now reads the model, using **the builder's own tests
+  verbatim**, which is what keeps reserved and drawn one expression.
+- **The zone's declared floor never counted the strip at all**, and `build_queue_rows_max` reserved its
+  GAP but not its HEIGHT — so the queue could claim rows the zone could only afford while nothing was
+  selected. The authored three rows were being drawn on credit.
+
+**`WORK_INSPECTOR_HEIGHT` 118 → 84 and the floor picker 68 → 32.** The old pair carried ~40px of
+unexplained slack charged to the zone on every dock; removing it took the floor from 430 to **396** and
+is why the lever below is 456 rather than 490. Both are guarded by *reserved ≥ drawn* assertions now,
+the rule the pools and queue blocks already followed and this one never did.
+
+**`PANEL_HEIGHT_WIDE` 440 → 456**, a **396px** box, and the work zone reads **396 of 396 — zero spare**
+with a row selected. That is exact by intent: Ray took the minimal value (*"we don't want to make it
+much taller and text can't be cut off"*) and accepted the wide dock's queue staying at **one row plus
+`+N more`**. The alternative measured **540**, which restores the queue's three rows and flips the band
+flank to TALL, and was declined as half the screen.
+
+> **⛔ THERE IS NO ROOM LEFT. The next block added to this zone overflows it.** The height has been the
+> lever three times in one arc and is out of travel; the structural answer — the inspector replacing the
+> board rather than stacking under it, or the tab splitting — is unbuilt and is what the next addition
+> should force, not a fourth raise.
+
+**Why no harness caught it:** the worst-case zone frames were a BOTTOM dock with **nothing selected**,
+and every inspector-open frame was a TALL LEFT dock with room to spare. Two frame families, disjoint,
+and the defect lived exactly in the gap. `band_panel_pools_wide_selected` is the frame that closes it.
+
+**A latent scale defect surfaced with the raise and is fixed.** At `ui_scale` 1.35 the new budget
+crosses `MAX_WIDE_HEIGHT_FRACTION`, and a band zone BUILT before the header settles baked a 394px
+reservation into a 385px host — `zone_size()` composes its answer from live sub-measurements, so the
+order matters. `BandPanelController._sync_band_zone_scroll()` on `zones_resized` is the fix.
+
 **Two consequences of the taller strip, both accepted.** A one-column horizontal dock is now the COMPACT
 tier rather than SHORT (380 clears `BAND_ZONE_CHART_MIN_HEIGHT`'s 340), which *restores* the compact
 food-outlook chart and the role-card hints that SHORT drew away — a content gain, and the three genuinely
@@ -2755,6 +2795,40 @@ hex's AUTO-PICK choose the subject — so on a shared hex it opened whichever ba
 rather than the patch, jumping to a place but not to a thing. The land IS the patch's subject (its rung
 rows and its Sow control live on the land card), and `SUBJECT_LAND` is the established third kind on
 the `(kind, id)` contract that the panel's own land row and the map's select-then-cycle already use.
+
+### THE KEEPING WARNING ARRIVES AT DECLARE TIME, NOT A TURN LATER (§4.7)
+
+Reported from play: queue a Tame, staff the builders, advance — and *only then* does a warning appear
+saying the herd wants a Husbandry hand. **One decision arriving as two warnings a turn apart.** Ray:
+*"If we know the very next turn we will need a husbandry worker, we should warn the user at job
+creation time, not the next turn."*
+
+The lateness is structural: the keeping bill switches on when the first work is banked (that is when
+the source gets an owner), so the warning is a consequence of state that does not exist until the turn
+resolves. **But the client can project it** — a rung's standing price is published for an *unstarted*
+rung precisely so the offer face can quote it. No wire field, no sim change.
+
+- **The pool card's `⚠` fires the moment the job is queued** — the same mark, extended from *this web
+  is short* to also *a queued job will need this web and nobody is on it*. The mark and the `+` that
+  fixes it stay the same object.
+- **The trigger is UNSTAFFED, never SHORT.** A pool already carrying enough for its holdings plus this
+  job is not marked — a mark that fires on adequacy means nothing within a session.
+- **One mark, one sentence.** `is_short` and the queued line are exclusive, or a pool that is both
+  says the same thing twice. `POOL_CARD_SHORT_META` carries **the mark**, not `is_short`, or every
+  harness reading it would be blind to the whole new case.
+- **The queue row's tooltip states the job's full price**, both halves, through the same
+  `DetailFormat.build_price_clause` the `⌃` uses — so the offer and the queued entry cannot quote one
+  price in two wordings.
+- **IT IS QUOTED IN WORK, NEVER IN HANDS.** My spec drafted *"Needs 1 Husbandry hand"* and that was
+  wrong on the arc's own rule — how many hands a rate takes depends on what they carry, and gear now
+  moves that. `A job in this band's queue will need 3 work a turn from Husbandry once it starts, and
+  nobody is on this pool.`
+- **Zero pixels.** Both pieces ride tooltips and an existing mark; the zone has none to spend.
+
+**The claim that proves it is the THIRD one**: advance a turn and the mark is *unchanged*. The first
+two (marked when unstaffed, unmarked when staffed) pass on a warning that still arrives late; only
+"no second warning appears" is the defect. Sabotage-verified — removing the declare-time trigger fails
+exactly that one with `before false, after true`.
 
 ### …AND THE `⌃` IS THE CONTROL THAT DECLARES THE BUILD (§4.7a ①)
 

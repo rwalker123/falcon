@@ -690,7 +690,10 @@ fn invitation(
 /// because that table knows nothing about rungs.
 fn quantum_units_per_noun(quantum: WearQuantum, reference_build_cost: f32) -> f32 {
     match quantum {
-        WearQuantum::BuildProgress => reference_build_cost,
+        // **Both work-unit quanta divide by the same reference job**, because they count the same
+        // unit — one worker-turn at the food peak — differing only in which account spent it. See
+        // `WearQuantum::UpkeepWork`.
+        WearQuantum::BuildProgress | WearQuantum::UpkeepWork => reference_build_cost,
         WearQuantum::Strike
         | WearQuantum::BiomassHauled
         | WearQuantum::BiomassGathered

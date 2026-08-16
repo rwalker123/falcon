@@ -927,6 +927,71 @@ body minimum is unchanged to the pixel — so this is a fit that was wrong on on
 resize of the family. `_fit_pending` is already false by then, so a refit arriving during the second
 wait is not swallowed.
 
+### THE SHEET DISMISSES ON PRESS **AND** RELEASE, BOTH OUTSIDE THE CARD
+
+`ComposeSheet` mounts a full-viewport catcher at `MOUSE_FILTER_STOP` and used to close on
+`event.pressed` alone. Its geometry settles **asynchronously for at least two frames** after it
+renders: `_body.minimum_size_changed → refit → _place_card`, `refit` re-arms itself, and `_place_card`
+has two boundary flips that move the card by hundreds of pixels (the beside-the-anchor → hug-the-left
+branch, and the height clamp).
+
+**So a player pressing a control during that window lost their composition silently.** The card moved
+out from under the pointer between the frame they saw and the frame they clicked, the press hit the
+catcher, and the sheet vanished. The window reopens on *any* later re-render that changes the body's
+height — a forecast reply landing, a per-snapshot refresh.
+
+**One condition fixes it**: dismiss requires the press **and** the release, both outside the card. A
+press that lands where the card *was* is then harmless. **Deliberately no timer, no frame-count guard
+and no "recently moved" flag** — a second mechanism guarding the first is worse than the bug. Escape
+and the `✕` are different paths and are untouched.
+
+The pair that matters: a press outside then a drag ONTO the card must not dismiss, and a press on the
+card then a release outside must not dismiss. Both are asserted, and the sabotage (restoring
+press-only) fails exactly the three negatives while the positive stays green.
+
+> **This is also the `ui_preview` flake, wearing a synthetic pointer.** `compose_band_switch_forage`
+> failed and passed clean three times: the harness pressed a rect it had computed, the card had moved,
+> the press hit the catcher, the sheet closed, and **five assertions failed as a cascade from one bad
+> press** — which read as five independent problems. `_pick_actor_band` now settles first, **asserts
+> the press point is inside the card**, waits on `about_to_popup` rather than counting frames, and
+> **asserts the sheet survived the press**. That last line is what turns the cascade into one legible
+> failure naming the rect it aimed at. The pointer drive itself was NOT retired — driving the real
+> control is the whole value of that state, and this repo has been bitten by a faked signal passing
+> through a dead picker.
+
+### A RUNG ERODED BELOW ITS COST OFFERS THE `⌃` AGAIN (§4.7)
+
+A Tended patch that decayed even slightly below its cost could never be repaired. `§2.4` says it
+should be — *"repairing it is a fresh decision the player makes by putting it back in the queue"* — and
+the sim's locks are open now (`intensification.md` → "A RUNG ACHIEVED BUT SHORT IS REPAIRABLE"). The
+client's own two suppressions were the last lock: `next_rung_ready` filtered on `improvement_is_done`,
+which reads the achieved FLAG (true at 99%), and the work row forced `ready` empty whenever
+`rung_in_progress` answered, which it does at any partial meter. **The row read the rung as *done* and
+*in progress* at once, and each suppression hid the other.**
+
+`RungGates.rung_has_room` replaces the bare done test, and `_rung_is_an_unordered_repair` clears
+`building` for a repair that is undeclared and unqueued — so the existing `⌃` path is restored whole,
+with no new glyph and no new slot. **A repair is a climb**; the mark already means *this source can
+climb*.
+
+**Two guards the first cut needed, both found by the harness rather than by review:**
+
+- **`improvement_is_done` is also true when a HIGHER rung retires this one.** A Field sown from wild
+  ground carries `cultivation_progress == 0` forever, so a naive test re-offered Cultivate on every
+  finished Field. The test reads the rung's **own** flag.
+- **An absent meter reads 0 and is indistinguishable from "eroded to nothing"**, which put a spurious
+  `⌃` on an unimproved patch. It requires `progress > BUILD_METER_UNSTARTED`.
+
+**Plant-only, and the fixture says why**: on the animal web `improvement_is_done` *is* the meter test,
+so done-and-short is a contradiction there and no honest fixture can produce one.
+
+> **RETIRED BEFORE IT SHIPPED — a `build_crew == 0` fork on the `-1` face.** An eroded unqueued source
+> now publishes no estimate, and it was tempting to render that as *"No estimate"* rather than
+> `⚠ Stalled`. It is wrong: `RungDef::build_accrual`'s `eligible` reads the stock against the floor and
+> **takes no crew count**, so `-1` means *the gate refused* at any staffing. This client shipped a
+> crew-gated version of exactly that once and fixed it; the attempt is recorded at both sites so it is
+> not tried a third time.
+
 ### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
 
 Reported from play: a patch at **102** against a floor of **103**, regrowing and being harvested back

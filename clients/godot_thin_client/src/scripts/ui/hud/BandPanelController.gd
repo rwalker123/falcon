@@ -178,6 +178,10 @@ var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
 ## column change needs the zones rebuilt (the split is authored, so it cannot be re-flowed in place),
 ## exactly as a tier change does.
 var _band_zone_columns: int = 1
+## The band zone's live scrolling host, kept so `_on_zones_resized` can RE-DECLARE its reserved height
+## without rebuilding the zone. See `_sync_band_zone_scroll` for why a build-time declaration is not
+## final.
+var _band_zone_scroll: ScrollContainer = null
 ## **THE PANEL'S SUBJECT IS THE FACTION PAGE, not a band** (issue #450). The pinned first entry of the
 ## cycler, and the one bit of state that decides which of `render_band` / `render_faction` every
 ## re-entry into this panel resolves to — `refresh_snapshot`, `rerender` and `_on_zones_resized`'s
@@ -791,6 +795,9 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
 ## drawer. Same builders, same blocks, same order; only the thing that bounds them differs, because
 ## only one of the two hosts has something to bound against.
 func _build_band_zone_scroll() -> ScrollContainer:
+    # Dropped BEFORE the no-dock fork, so the flat host cannot leave the previous dock's scroll behind
+    # for `_sync_band_zone_scroll` to keep re-declaring.
+    _band_zone_scroll = null
     if _panel == null:
         return null
     var scroll := ScrollContainer.new()
@@ -800,7 +807,33 @@ func _build_band_zone_scroll() -> ScrollContainer:
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
     scroll.custom_minimum_size = Vector2(0.0, _zone_box().y)
+    _band_zone_scroll = scroll
     return scroll
+
+## Re-declare the band zone's reserved height against the box the panel is offering NOW.
+##
+## **THE BUILD-TIME DECLARATION IS NOT FINAL, and the reason is that `zone_size()` is composed out of
+## LIVE sub-measurements.** `BandCityPanel.zone_size()` subtracts `_header_height()` — the header row's
+## own combined minimum — from the card's interior, and a zone built before that row has finished
+## laying out reads a box several pixels TALLER than the host it is about to be parented into. The
+## scroll bakes that read into `custom_minimum_size`, so the zone column's minimum then exceeds its
+## CLIPPING host and the bottom of the strip, its scrollbar included, is silently cut. Measured on a
+## 1.35-scale bottom dock: **394 declared against a 385px host**, where the settled box reads 383.
+##
+## **IT BELONGS ON THE RESIZE RATHER THAN IN THE BUILDER**, because the panel emits `zones_resized`
+## once the layout it is applying is the one it means — the first moment an honest number exists. A
+## full `rerender()` would answer it too and costs three zones to correct one number.
+##
+## It cannot feed back: the column is anchored full-rect into a plain `Control` host that aggregates no
+## child minimum, so shrinking this declaration moves no rect the panel measures, and the equality
+## guard keeps an unchanged box from touching the node at all.
+func _sync_band_zone_scroll() -> void:
+    if not is_instance_valid(_band_zone_scroll):
+        return
+    var box := _zone_box().y
+    if is_equal_approx(_band_zone_scroll.custom_minimum_size.y, box):
+        return
+    _band_zone_scroll.custom_minimum_size.y = box
 
 ## The two authored columns of a widened band flank, named for what they are ABOUT rather than by
 ## index: what the band has to eat, and who the band is. See `build_band_zone` for the measurement
@@ -1436,6 +1469,10 @@ func _on_zones_resized() -> void:
             or _band_zone_columns != _band_zone_column_count():
         rerender()
         return
+    # The band zone keeps its build, but the height it RESERVED was taken against a box the panel was
+    # still settling — see `_sync_band_zone_scroll`. Correcting it is one assignment; rebuilding the
+    # zone for it would be three.
+    _sync_band_zone_scroll()
     _repage_work_zone()
 
 ## The height the band zone's TIER is chosen against: the box times the number of columns the flank
@@ -1489,13 +1526,17 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # **THE POOLS COME FIRST, ABOVE THE QUEUE THEY FUND** (`docs/plan_standing_upkeep.md` §4.7): the
     # hands, then the jobs those hands are on, then the sources. It renders on EVERY band, including
     # one whose board is empty — three steppers at 0 is a live control, not furniture.
-    var pools := _build_pools_block(band)
+    # **THE QUEUE IS DERIVED BEFORE THE POOLS BLOCK IS BUILT, and only the DERIVATION moved** — the
+    # render order is unchanged (pools, then the queue block below). The block needs the queue's
+    # entries to mark a keeping pool a queued job is about to need, which is what makes that warning
+    # arrive on the frame the job is declared rather than a turn later.
+    var queued := _build_queue_models(band, models)
+    var pools := _build_pools_block(band, queued)
     col.add_child(pools)
     # **THE QUEUE SITS ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the
     # band's own ordered list rather than a view of that board, so a block beneath them would read as
     # a filtered subset of it. It is derived from the FULL model set for the same reason — a chip must
-    # not be able to move it.
-    var queued := _build_queue_models(band, models)
+    # not be able to move it (that derivation is a few lines up now, the pools block having to read it).
     # **THE ROW CAP IS THE ZONE'S ANSWER, NOT THE CONSTANT'S** (§4.7): the pools block took ~82px out
     # of a 300px horizontal work zone, which is more than the authored ceiling can give back, while
     # the narrow shell's swapped host has 400px spare at that same ceiling. Resolved ONCE here so the
@@ -1713,7 +1754,7 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
 ## minimum so the size it draws at and the size `_work_board_capacity` subtracts are one expression.
 ## The zone clips, so a block that drew taller than it was paid for would take the difference off the
 ## bottom of the board with nothing to show for it.
-func _build_pools_block(band: Dictionary) -> VBoxContainer:
+func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var agriculture_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE)
     var husbandry_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY)
@@ -1731,13 +1772,19 @@ func _build_pools_block(band: Dictionary) -> VBoxContainer:
     # could not state even in principle.
     var plant_pool := _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_FORAGE)
     var animal_pool := _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_HUNT)
+    # **AND THE KEEPING A QUEUED JOB HAS NOT STARTED OWING YET** — the declare-time half of the same
+    # mark. `upkeep_pool_state` answers what the band is billed for TODAY, which is nothing until the
+    # first work is banked; this is the standing rate the queue's own entries will owe, summed per web
+    # off the models the block below is built from. See `HudWorkVocab.upkeep_pool_queued_line`.
+    var plant_queued := _queued_keeping_demand(queued, SourceForecast.LABOR_KIND_FORAGE)
+    var animal_queued := _queued_keeping_demand(queued, SourceForecast.LABOR_KIND_HUNT)
     var cards := _build_role_card_row()
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
         HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle,
-        plant_pool))
+        plant_pool, plant_queued))
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
         HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle,
-        animal_pool))
+        animal_pool, animal_queued))
     # **THE BUILDERS CARD WEARS NO MARK, and it is not an omission.** It funds a QUEUE, one entry at a
     # time, and an entry that is not being built is not being LOST — the queue block one down states
     # its own blocked head. There is no keeping shortfall for this pool to be short of.
@@ -1753,6 +1800,29 @@ func _build_pools_block(band: Dictionary) -> VBoxContainer:
     block.set_meta(HudWorkVocab.POOLS_BLOCK_META, fund_mode != null)
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.pools_block_height(fund_mode != null))
     return block
+
+## **THE STANDING KEEPING THIS WEB'S QUEUED JOBS WILL OWE, SUMMED** — the input to the pool card's
+## declare-time mark, and the number its hover states.
+##
+## **SUMMED rather than maxed**, because the pool pays all of them: two Tames queued on one band are
+## two standing bills the moment they start, and quoting the larger would understate the commitment
+## the card is warning about.
+##
+## **A PENDING DECLARATION COUNTS, which is the whole point.** `_build_queue_models` carries the
+## just-declared entries on its tail, and each model's `build_upkeep_demand` was priced off
+## `building_policy` — which `build_verb` answers from the declaration at a zero meter — so a job
+## queued this frame is in this sum on this frame.
+func _queued_keeping_demand(queued: Array, labor_kind: String) -> float:
+    var total := SourceForecast.NO_UPKEEP_DEMAND
+    for entry in queued:
+        if not (entry is Dictionary):
+            continue
+        var model: Dictionary = entry
+        if String(model.get("kind", "")) != labor_kind:
+            continue
+        total += maxf(float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
+            SourceForecast.NO_UPKEEP_DEMAND)
+    return total
 
 ## **ONE POOL CARD — the role card with everything but the CONTROL taken off.** Its name, its stepper,
 ## and its description on the card's own `tooltip_text`.
@@ -1778,11 +1848,25 @@ func _build_pools_block(band: Dictionary) -> VBoxContainer:
 ## is the reason a player would open the hover at all — so the hint the tooltip already carried is
 ## joined by the number, on the one control that can move it. `pool` is that web's own state (`{}` for
 ## the Builders card, which has no keeping to be short of), never the two summed.
+## **AND THE SAME MARK FIRES A TURN EARLIER, on a pool a QUEUED job is about to need.** The bill
+## `upkeep_is_short` reads switches on when the first work is banked, so queueing a Tame and staffing
+## the builders used to produce one decision as two warnings a turn apart. `queued_keeping` is the
+## standing rate this web's queue entries will owe; the mark, the slot and the tooltip seam are the
+## ones already here — this block cannot afford a row, a line or a control (see
+## `HudWorkVocab.upkeep_pool_queued_line`).
+##
+## **ONE MARK, NEVER TWO, AND THE HOVER SAYS ONE THING.** A pool that is already short and also about
+## to be needed is short — the live shortfall is the bigger news and the queued sentence would restate
+## it in the future tense — so the two lines are exclusive rather than joined.
 func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: String,
-        effective: Dictionary, idle: int, pool: Dictionary = {}) -> PanelContainer:
+        effective: Dictionary, idle: int, pool: Dictionary = {},
+        queued_keeping: float = SourceForecast.NO_UPKEEP_DEMAND) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var is_short := SourceForecast.upkeep_is_short(pool)
+    var queued_line := "" if is_short \
+        else HudWorkVocab.upkeep_pool_queued_line(role_name, queued_keeping, workers)
+    var wants_mark := is_short or queued_line != ""
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -1798,8 +1882,11 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
             DetailFormat.format_work_units(float(pool.get("shortfall",
                 SourceForecast.NO_UPKEEP_DEMAND))),
             DetailFormat.format_work_units(float(pool.get("demand",
-                SourceForecast.NO_UPKEEP_DEMAND)))] if is_short else ""])
-    card.set_meta(POOL_CARD_SHORT_META, is_short)
+                SourceForecast.NO_UPKEEP_DEMAND)))] if is_short else queued_line])
+    # **THE META IS THE MARK, NOT THE SHORTFALL, and it always was** — every harness reads it to ask
+    # *is this card marked*, which is the question the `⚠` answers. Leaving it on `is_short` while the
+    # glyph forked on a second term would have made the assertion blind to the whole declare-time case.
+    card.set_meta(POOL_CARD_SHORT_META, wants_mark)
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     card.add_child(col)
@@ -1810,8 +1897,8 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
     title.add_theme_color_override("font_color",
-        HudStyle.WARN if pending or is_short else HudStyle.INK)
-    if not is_short:
+        HudStyle.WARN if pending or wants_mark else HudStyle.INK)
+    if not wants_mark:
         col.add_child(title)
     else:
         # **THE MARK SITS BESIDE THE NAME, NOT INSIDE IT.** A row of its own is what this block cannot
@@ -2127,6 +2214,21 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     var tooltip_lines: Array = [HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face,
         HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
             else date_tooltip]]
+    # **AND THE JOB'S FULL PRICE, BOTH HALVES — the work pile and the keeping it will owe.** The row
+    # already carries the face and the date; what it never said is that finishing this job commits the
+    # band to a standing bill, which is the other half of the decision and the reason the keeping
+    # warning used to arrive a turn late. **TOOLTIP ONLY** — the row is five slots and cannot take a
+    # sixth. `DetailFormat.build_price_clause` is the same composer the `⌃`'s own hover uses, so the
+    # offer and the queued entry quote one price in one wording; `BUILD_TURNS_NO_ESTIMATE` suppresses
+    # its turn term deliberately, the date column above being the sim's own chained answer and a
+    # second estimate here two producers for one number.
+    var price := DetailFormat.build_price_clause(
+        float(model.get("build_work_cost", SourceForecast.BUILD_WORK_COST_NONE)),
+        SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+        float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.source_kind_for_labor(String(model.get("kind", ""))))
+    if price != "":
+        tooltip_lines.append(price)
     tooltip_lines.append_array(blocked_lines)
     row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
     var withdraw := Button.new()
@@ -2609,7 +2711,13 @@ func _build_work_pager(pages: int, start: int, shown_end: int, total: int) -> HB
 func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    strip.custom_minimum_size = Vector2(0.0, _work_inspector_height(model))
+    var reserved := _work_inspector_height(model)
+    strip.custom_minimum_size = Vector2(0.0, reserved)
+    # The reserved number rides the strip so a harness can compare it against what the children
+    # actually ask for. `custom_minimum_size` cannot answer that on its own — Godot folds it INTO
+    # `get_combined_minimum_size`, so a strip that reserved too little still reports the reservation
+    # back and every "does it fit" claim passes vacuously.
+    strip.set_meta(HudWorkVocab.WORK_INSPECTOR_META, reserved)
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
@@ -2677,11 +2785,36 @@ func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> vo
 
 ## The height the open inspector reserves — BOTH what `_work_board_capacity` subtracts from the board
 ## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
-func _work_inspector_height(_model: Dictionary) -> float:
-    # ONE open height now: the standing-investment line the taller variant reserved room for is gone
-    # with the axis split (see `_build_work_inspector`), so every open picker is the same four rungs.
-    return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT if _work_floor_open \
-        else HudWorkVocab.WORK_INSPECTOR_HEIGHT
+##
+## **IT READS THE MODEL, and for a long time it did not — the parameter was `_model`.** It forked on
+## one panel-state bool (`_work_floor_open`) and answered one of two totals, while
+## `_build_work_inspector` draws FOUR children conditionally on the model: the overdraw line, the
+## slipping `note`, the `muted_note` and the `ArrivalStrip`, each with its own
+## `ZONE_BLOCK_SEPARATION` gap. Each of them could draw with nothing reserved for it — and the zone
+## `clip_contents`, so the overflow was silent. Reported from play as the Band/City panel running past
+## the bottom of the screen *only when something is selected in the work list*.
+##
+## **THE TESTS BELOW ARE THE BUILDER'S OWN, verbatim.** That is the whole of what makes the reserved
+## height and the drawn height one answer; a paraphrase (`has("note")` for `note != ""`, say) reserves
+## for a child that does not draw or misses one that does, and both fail silently.
+func _work_inspector_height(model: Dictionary) -> float:
+    var height := HudWorkVocab.WORK_INSPECTOR_HEIGHT
+    if bool(model.get("warn", false)):
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+    if String(model.get("note", "")) != "":
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+    if String(model.get("muted_note", "")) != "":
+        height += HudWorkVocab.WORK_INSPECTOR_NOTE_HEIGHT
+    var schedule: PackedFloat32Array = model.get("schedule", PackedFloat32Array())
+    if ArrivalStrip.has_gap(schedule):
+        height += HudWorkVocab.WORK_INSPECTOR_ARRIVALS_HEIGHT
+    # ONE open height for the picker: the standing-investment line the taller variant reserved room
+    # for is gone with the axis split (see `_build_work_inspector`), so every open picker is the same
+    # four rungs. It is panel state rather than model state, which is why it is the one term here that
+    # does not read the dict.
+    if _work_floor_open:
+        height += HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT
+    return height
 
 ## The board row's single-slot rate string — food when the source pays food, else its FODDER rate
 ## spelled with the word (issue #449), and "" when the row carries no confirmed yield at all. One
@@ -2836,6 +2969,16 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # A rung UNDER WAY takes the slot from a rung on OFFER — they are one axis in two states, and
         # mutually exclusive by construction (`next_rung_ready` excludes the verb in flight).
         var building := RungGates.rung_in_progress(kind, rung_source, improvement)
+        # **AN ERODED RUNG NOBODY HAS ORDERED IS AN OFFER, NOT A BUILD UNDER WAY** — the client half of
+        # the 99% repair. `build_verb` answers for any meter between zero and its cost, so a Tended
+        # Patch that has slipped to 99% reads as *building* here while the offer test filtered it out
+        # as *built*: the row said both at once and offered nothing, and the only way to order the
+        # repair was to type the command. Dropping `building` on that one case restores the whole
+        # existing offer path — the `⌃` face, the button, the price tooltip — with no new glyph and no
+        # new slot.
+        if not building.is_empty() and _rung_is_an_unordered_repair(rung_source, improvement,
+                String(building.get("policy", ""))):
+            building = {}
         var ready := {} if not building.is_empty() \
             else RungGates.next_rung_ready(kind, rung_source, improvement, _player_knowledge())
         # The row's HARVEST mark is the floor's ZONE glyph — where this crew's floor sits relative to
@@ -2969,6 +3112,16 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
+            # **WHAT THAT RUNG COSTS, BOTH HALVES — the one-off pile and the standing rate.** They ride
+            # the model because this is where the raw wire source is in hand, and TWO surfaces spend
+            # them: the queue row's tooltip states the job's full price, and the POOLS block reads the
+            # rate to mark a keeping pool a queued job is about to need. Composed off `building_policy`
+            # so a pending declaration prices identically to a placed entry — which is the whole of
+            # what makes the warning arrive at DECLARE time rather than a turn later.
+            "build_work_cost": SourceForecast.build_work_cost(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
+            "build_upkeep_demand": SourceForecast.build_upkeep_demand(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
             # …and whether that rung is STALLED — unstaffed, or losing ground. Derived ONCE, above,
             # off the same two `SourceForecast` seams the map badge forks on, and carried as a flag
             # so the row builder cannot ask the question a second way (see `build_stalled`).
@@ -3028,6 +3181,28 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
 ##
 ## The dicts are the RAW wire ones (`forage_patch_lookup` / `world_herds`), so every key is spelled
 ## BARE. Do NOT reach for the `patch_`-prefixed `tile_info` spellings here.
+## **IS THIS SOURCE'S IN-FLIGHT METER A REPAIR NOBODY HAS ORDERED?** — the one case in which the work
+## row shows the `⌃` OFFER over the `%` face, and the three terms are each load-bearing:
+##
+##   * **the rung is achieved and its meter has room** (`SourceForecast.rung_needs_repair`). An
+##     ordinary part-built rung — a Cultivate at 45% that has never been finished — is a real build in
+##     flight and keeps its number and its stalled `⚠`; nothing about those rows moves.
+##   * **nothing is declared on it** — a press of the `⌃` writes the declaration into the optimistic
+##     overlay, and this reads that same effective `improvement`, so the mark leaves the slot on the
+##     frame it is pressed exactly as it does on an unbuilt rung.
+##   * **nothing is queued on it** — the confirmed half of the same fact, once the sim has placed the
+##     entry. Without it the row would keep offering a job the band is already funding, and a second
+##     press would queue it twice.
+func _rung_is_an_unordered_repair(source: Dictionary, improvement: String,
+        building_rung: String) -> bool:
+    if improvement.strip_edges() != "":
+        return false
+    if SourceForecast.build_queue_position(source,
+            HudComposeVocab.BARE_FORECAST_PREFIX) != SourceForecast.NOT_IN_ANY_BUILD_QUEUE:
+        return false
+    return SourceForecast.rung_needs_repair(source,
+        HudComposeVocab.BARE_FORECAST_PREFIX, building_rung)
+
 func _work_source_rung(kind: String, patch: Dictionary, herd: Dictionary) -> Dictionary:
     if kind == SourceForecast.LABOR_KIND_FORAGE:
         var crop := String(patch.get("committed_display_name", "")).strip_edges()

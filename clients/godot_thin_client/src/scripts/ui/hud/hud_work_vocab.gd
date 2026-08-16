@@ -522,6 +522,39 @@ static func upkeep_pool_short_format(role_name: String) -> String:
     return UPKEEP_POOL_SHORT_ANIMAL_FORMAT if role_name == ROLE_NAME_HUSBANDRY \
         else UPKEEP_POOL_SHORT_PLANT_FORMAT
 
+## **THE SAME MARK, ONE TURN EARLIER — the keeping a QUEUED job will need, on a pool nobody is on.**
+##
+## Reported from play: queue a Tame, staff the builders, advance, and only THEN does anything say the
+## herd wants a Husbandry hand — one decision arriving as two warnings a turn apart. The bill switches
+## on when the first work is banked (that is when the source acquires an owner), so the shortfall is a
+## fact about state that does not exist until the turn resolves; but the rung's STANDING PRICE is
+## published for an unstarted rung precisely so an offer face can quote it, so the client can say it
+## now. No wire field and no sim change.
+##
+## **IT IS ONE SENTENCE ON A TOOLTIP THAT ALREADY EXISTS, AND IT COSTS THE ZONE NOTHING.** The work
+## zone fits its box exactly; a row, a line or a block here would overflow it. The mark is the same
+## `UPKEEP_POOL_SHORT_MARK` in the same slot, and the number and the `+` that answers it stay the same
+## object.
+##
+## **IN WORK, NEVER IN HANDS** — `DetailFormat.build_price_clause`'s rule, for its reason: the model is
+## denominated in work units end to end, and how many hands a rate takes depends on what they carry.
+## **And it never says *rung***, a word that appears on no control the player uses.
+const UPKEEP_POOL_QUEUED_FORMAT := "A job in this band's queue will need %s work a turn from %s once it starts, and nobody is on this pool."
+
+## The declare-time line, or `""` where there is nothing to warn about — **the ONE composer, so the
+## card's mark and its hover cannot disagree about whether there is anything to say.**
+##
+## **THE TRIGGER IS *UNSTAFFED*, NOT *SHORT*.** A pool already carrying hands is left alone even if
+## this job would eventually outrun it: the sim answers that question with a real shortfall the turn
+## it becomes true, and a mark that fired on every queued job would mean nothing within one session.
+static func upkeep_pool_queued_line(role_name: String, demand: float, workers: int) -> String:
+    if workers > NO_KEEPING_HANDS or demand < SourceForecast.UPKEEP_WORK_MIN:
+        return ""
+    return UPKEEP_POOL_QUEUED_FORMAT % [DetailFormat.format_work_units(demand), role_name]
+
+## A keeping pool with nobody on it at all — the one staffing level the declare-time warning fires at.
+const NO_KEEPING_HANDS := 0
+
 ## …and the messages the command feed shows for the press. Keyed by the token so the two can never
 ## drift from what was actually sent; the fallback exists only for a mode the sim gains before this
 ## table does, and says the token verbatim rather than describing the wrong behaviour.
@@ -602,14 +635,84 @@ const WORK_CHIPS_HEIGHT := 26.0
 
 const WORK_PAGER_HEIGHT := 24.0
 
-const WORK_INSPECTOR_HEIGHT := 118.0
+## **THE INSPECTOR STRIP'S FIXED SKELETON — a BASE, never the whole height.** It covers the head row,
+## the one-line sentence every model states, the inline-link row, the two gaps between them and the
+## card's own padding. Four more children draw CONDITIONALLY on what the MODEL says, each with its own
+## `ZONE_BLOCK_SEPARATION` gap, and `BandPanelController._work_inspector_height` adds them per model.
+##
+## **IT WAS THE WHOLE ANSWER FOR A WHILE AND THAT WAS THE DEFECT.** The reservation forked on ONE
+## panel-state bool (is the picker open) and never read the model at all, so the overdraw line, the
+## slipping `note`, the `muted_note` and the `ArrivalStrip` each drew with nothing reserved for them —
+## and the zone `clip_contents`, so the difference came off the bottom of the strip silently.
+##
+## **IT WAS 118, AND THE 40px OF SLACK IN THAT NUMBER IS WHAT MADE THE FORK SURVIVE SO LONG.** A flat
+## constant covering four conditional children has to carry room for them, so the model-blind form was
+## adequate by **2px** at the worst case a model can state (186 reserved against 184 drawn) — and every
+## pixel of that cushion was charged to the ZONE, on every dock, whether or not a row was even
+## selected. With the conditional terms stated on their own the base is measured as a base:
+## `band_panel_inspector` draws **78px** of head + sentence + links + gaps + card padding.
+const WORK_INSPECTOR_EXTENT := 78.0
 
-## The inspector with its policy picker open (an extra rung row + its hint).
-const WORK_INSPECTOR_POLICY_HEIGHT := 186.0
+## The slack that base carries over its measurement. **A measurement tolerance, not padding** — the
+## same statement `BandCityPanel.BAND_ZONE_TWO_COLUMN_SLACK` makes about the flank's extent, and the
+## same unit: one `ZONE_BLOCK_SEPARATION`, the smallest quantity of vertical air this zone already
+## spends, rather than a fresh number of its own.
+const WORK_INSPECTOR_SLACK := float(ZONE_BLOCK_SEPARATION)
 
-## There is no taller variant of that any more: `WORK_INSPECTOR_STANDING_LINE_HEIGHT` reserved room
-## for a WARN line naming a rung the picker could not show, and issue #442 removed the state — a
+const WORK_INSPECTOR_HEIGHT := WORK_INSPECTOR_EXTENT + WORK_INSPECTOR_SLACK
+
+## What ONE conditional `HudWidgets.build_status_part` line costs the strip — the overdraw line, the
+## slipping `note`, the `muted_note`. The label is a bare `Label` at `ALLOC_SECTION_FONT_SIZE` with no
+## autowrap, so it is exactly ONE line whatever it says; **14px is measured at that size**, not
+## guessed, and the gap is the one the column puts above every block.
+const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
+
+const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
+
+## …and what the `ArrivalStrip` costs when the model's schedule has a gap worth drawing.
+##
+## **A TWIN of `ArrivalStrip.STRIP_HEIGHT`, deliberately not a read of it.** A `const` initializer
+## evaluates at class load, so a vocab leaf referencing a `class_name`d Control script is a load cycle
+## waiting to happen (`hud-modules.md` → `const` direction). The two cross-reference each other in
+## prose instead; change one and change the other.
+const WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT := 8.0
+
+const WORK_INSPECTOR_ARRIVALS_HEIGHT := WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT \
+    + float(ZONE_BLOCK_SEPARATION)
+
+## …and the policy picker, when the row's `Set floor` link has it open — the four rungs plus the gap
+## above them.
+##
+## **STATED AS A DELTA, where it used to be a whole alternative strip height** (`186`, i.e. a second
+## total). A second total cannot compose with the conditional lines above it: the fork that chose
+## between the two totals is exactly what made the strip's reservation model-blind.
+##
+## **MEASURED like the base, and it is HALF what the two totals implied** — `band_panel_work_policy_
+## investment` draws 110px against the base's 78, i.e. the three preset cells plus their gap. The 68 the
+## old pair implied was that 32 plus the base's own cushion, counted twice.
+##
+## There is no taller variant of the picker any more: `WORK_INSPECTOR_STANDING_LINE_HEIGHT` reserved
+## room for a WARN line naming a rung the picker could not show, and issue #442 removed the state — a
 ## `policy` is always one of the four, so every open picker draws the same height.
+const WORK_INSPECTOR_POLICY_PICKER_HEIGHT := 32.0
+
+## **THE CEILING THESE TERMS ADD UP TO, stated because it is UNMEASURED rather than because it is
+## reserved.** A model carrying every conditional child at once — the overdraw line, the `note`, the
+## `muted_note`, the `ArrivalStrip` and an open policy picker — reserves **190px** (84 + 3×20 + 14 +
+## 32) against the 104 the tallest row any fixture produces asks for. `BandCityPanel.PANEL_HEIGHT_WIDE`
+## is sized against that 104, so a row reaching this ceiling would take the work zone 86px past its
+## box on a horizontal dock.
+##
+## **NOTHING PADS FOR IT, DELIBERATELY.** No fixture produces the combination and it is not known to be
+## reachable in play — `warn` and `note` are near-exclusive on the board's own rows, and the picker is
+## panel state a player opens — so the zone is not made 86px taller for a state nobody has seen. A
+## KNOWN unmeasured worst case is the cheaper thing to carry; if one is ever observed, this is the
+## figure both of that constant's levers move by.
+## `band_panel_preview._assert_work_inspector_worst_case_fits` builds it and pins the strip's own
+## arithmetic, which is what keeps the number above honest even though no zone reserves it.
+const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
+    + 3.0 * WORK_INSPECTOR_NOTE_HEIGHT \
+    + WORK_INSPECTOR_ARRIVALS_HEIGHT + WORK_INSPECTOR_POLICY_PICKER_HEIGHT
 
 ## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
 const WORK_ZONE_GAP_COUNT := 3.0
@@ -963,6 +1066,14 @@ static func _labor_kind_of(source_kind: String) -> String:
 const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 
 ## The inspector strip (the row's second/third lines, relocated to one place).
+##
+## **THE STRIP'S STABLE HANDLE, VALUED THE HEIGHT IT RESERVED.** The block has nothing findable by
+## text — its head is the row's own label and its lines are composed per model — and the claim a
+## harness has to make about it is arithmetic rather than words: does the reservation cover what the
+## strip DREW? Carrying the reserved number on the meta is what lets that be asked without the harness
+## re-deriving it and agreeing with the builder by construction, the `POOLS_BLOCK_META` idiom.
+const WORK_INSPECTOR_META := "work_inspector"
+
 const INSPECTOR_CLOSE_GLYPH := "✕"
 
 const INSPECTOR_CLOSE_TOOLTIP := "Close detail"
@@ -1088,6 +1199,14 @@ const BUILD_QUEUE_ROWS_MIN := 1
 ## COUNT rather than a height.
 const BUILD_QUEUE_ROOM_GAP_COUNT := 6.0
 
+## **AND THE INSPECTOR'S OWN HEIGHT BESIDE THAT GAP.** The reservation below budgeted the STRIP'S GAP
+## and not the strip, so the queue claimed rows the zone could only afford while nothing was selected
+## — and selecting a row is one click, after which the board (floored at one row) has nothing left to
+## give back. It is the BASE height rather than a worst case on purpose: the conditional lines and the
+## policy picker are the board's to pay for, and a queue cap sized on the tallest strip a model could
+## ever produce would shrink the block on every dock for a state most bands never reach.
+const BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT := WORK_INSPECTOR_HEIGHT
+
 ## **HOW MANY ENTRY ROWS THIS ZONE CAN AFFORD**, clamped into `[BUILD_QUEUE_ROWS_MIN,
 ## BUILD_QUEUE_ROWS_MAX]`. It reserves everything the zone owes whatever the queue does — its head,
 ## the chips, the POOLS block, one board row, the pager, the block's own head and the gaps between
@@ -1100,6 +1219,7 @@ const BUILD_QUEUE_ROOM_GAP_COUNT := 6.0
 static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int) -> int:
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + ZONE_HEAD_HEIGHT + WORK_ROW_HEIGHT + WORK_PAGER_HEIGHT \
+        + BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT \
         + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     if entries > afforded:

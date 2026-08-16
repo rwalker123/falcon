@@ -74,16 +74,29 @@ const PANEL_WIDTH := 380.0
 ##      **376px**: a four-entry queue at the full ceiling costs 132, and the board's second row has to
 ##      clear the pager as well.
 ##
-## **440 hands the zones a 380px box**, which clears both with 4px of slack, and is deliberately still
-## short of `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420): a one-column flank's tier is the box times
-## one, so a box at or over that flips the band zone to TALL — which would restore the food-outlook
-## chart and the role-card hints on a horizontal dock, and costs another 40px of strip on top of this.
-## **The raise crosses `BAND_ZONE_CHART_MIN_HEIGHT` (340) either way**, so a one-column horizontal dock
-## renders at COMPACT rather than SHORT now and the vitals rows no longer merge there.
+## 440 handed the zones a 380px box, which cleared both with 4px of slack.
 ##
-## At a 1080-high viewport the strip is **41% of the window** against the old 33%, inside
+## **IT IS 456, AND THE WORK INSPECTOR IS WHAT RAISED IT — the same trade a third time.** The pools
+## block took the strip 360 → 440; selecting a work row opens the inspector strip, a FOURTH fixed-height
+## block in that zone, and the worst case with a row selected measured **396px of the 380px box** — the
+## panel visibly running past the bottom of the screen, reported from play as happening *only when
+## something is selected in the work list*. Everything inside the zone that could give had already
+## given (the board is floored at one row, the queue at one entry row plus its overflow, and the
+## strip's own reservation was re-measured off what it draws), so the remaining lever was this budget.
+## **456 hands the zones a 396px box**, which is the measurement exactly — see
+## `PANEL_HEIGHT_WIDE_TWO_COLUMN`'s work-zone bullet, where the terms are enumerated.
+##
+## **IT IS DELIBERATELY STILL SHORT OF `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420), and that is what
+## made 456 the minimal move rather than a round one.** A one-column flank's tier is the box times one,
+## so a box at or over 420 flips the band zone to TALL — which would restore the food-outlook chart and
+## the role-card hints on a horizontal dock, and costs another 40px of strip on top of this. 396 clears
+## 380 with 24px to spare before that flip; the NEXT raise in this zone has that much room and no more.
+## **The raise crosses `BAND_ZONE_CHART_MIN_HEIGHT` (340) either way**, so a one-column horizontal dock
+## renders at COMPACT rather than SHORT and the vitals rows do not merge there.
+##
+## At a 1080-high viewport the strip is **42% of the window** against the old 33%, inside
 ## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
-const PANEL_HEIGHT_WIDE := 440.0
+const PANEL_HEIGHT_WIDE := 456.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
 const COLLAPSED_SIZE := 46.0
@@ -255,6 +268,44 @@ const HORIZONTAL_BODY_CHROME := 60.0
 ##     **The reasoning that expired is the thing to watch, not the number**: "it pages, so it cannot
 ##     bind" holds only while every part of a zone either pages or is one row. Adding a block that does
 ##     neither ends it, and the block will look harmless because the ONE-column budget absorbs it.
+##
+##     ⛔ **AND THAT 284 IS THE FLOOR WITH NOTHING SELECTED — the WORK INSPECTOR is a fourth block
+##     that does not page, and the floor with a row selected is 396px, against the 380px box this
+##     budget used to hand out.** Reported from play: the panel runs past the bottom of the screen
+##     *only when something is selected in the work list*. `band_panel_pools_wide_selected` is that
+##     frame; it MEASURED the shortfall (`-16 spare`) rather than describing it, and it reads
+##     **396 of a 396px box, 0 spare** against the raised budget.
+##
+##     **396 is what is left after everything that CAN give has given.** The board is floored at one
+##     row (`_work_board_capacity`'s `maxi(1, …)`); the queue is floored at one entry row plus its
+##     overflow (`BUILD_QUEUE_ROWS_MIN`), and `HudWorkVocab.build_queue_rows_max` now budgets the
+##     inspector's HEIGHT rather than only its gap; and the strip's own reservation was re-measured off
+##     what it draws (`WORK_INSPECTOR_EXTENT`), which gave 34px back and is what took this figure from
+##     430 to 396. There is nothing further to trim inside the zone; the remaining lever is this budget.
+##
+##     **The queue's re-budgeting does not show in the 396 and is the same defect one block over.**
+##     That fixture queues ONE entry, so its cap never binds; the frame it binds on is
+##     `band_panel_build_queue_wide`, whose four-entry queue measured **380 of a 380px box, 0 spare,
+##     with nothing selected** (that figure is from before the raise) — i.e. the authored three entry
+##     rows were being drawn on credit against a zone that had no room left for a selection. Its cap is
+##     one entry row plus the overflow now, and it reads 340 of the 396px box.
+##
+##     **THE LEVER WAS PULLED TO THE FIRST OF TWO VALUES, and the second is still on the table.**
+##     `PANEL_HEIGHT_WIDE` is **456** — 396 + `HORIZONTAL_BODY_CHROME` — which clears the overflow
+##     exactly and is the cheap move: the box it hands the zones is 396, still under
+##     `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420), so the band flank stays COMPACT and no tier
+##     flips. **540** would additionally restore the queue's authored three entry rows — a 480px box
+##     (20 head + 110 pools + 132 queue + 26 chips + 28 board + 24 pager + 104 inspector + 36 of gaps)
+##     — and that one DOES cross 420 and flips the band zone to TALL, on top of costing another 84px of
+##     live map. It was weighed and declined: a queue that shows one entry and `+3 more` is legible,
+##     and half the screen is not what this defect earns.
+##
+##     **One term above is the STAGED worst case rather than the arithmetic one**: the selected row
+##     there carries a `note` and nothing else, so its strip reserves 104. A row stating every
+##     conditional child at once — the overdraw line, the note, the muted note, the arrival strip and
+##     an open policy picker — reserves 190, i.e. **86px more than any figure above**. No fixture
+##     reaches that combination and it is not known to be reachable in play; if it is, both levers move
+##     by that 86.
 ##
 ## **A ONE-column horizontal dock keeps `PANEL_HEIGHT_WIDE` EXACTLY**, and must: its flank still
 ## stacks 299px into the 300px box, and a flat lower budget would slice it. Top docks are one column
@@ -1864,10 +1915,11 @@ func _horizontal_panel_height() -> float:
 ## zone. That was safe while the WORK zone could absorb it — it paged, so a shorter box cost it a board
 ## row — and `docs/plan_standing_upkeep.md` §4.7 ended that: the POOLS block and the BUILD QUEUE block
 ## are FIXED-height blocks that do not page, so the work zone now has a hard floor and can BIND. It
-## does: its worst case measures **284px** and the two-column budget offers **275**, which the zone
-## would have CLIPPED silently — no overflow, no warning, just fewer board rows than the pager thinks
-## it drew. See `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the floor and for why its old "never binds by
-## construction" reasoning expired.
+## does: its worst case with NOTHING SELECTED measures **284px** and the two-column budget offers
+## **275**, which the zone would have CLIPPED silently — no overflow, no warning, just fewer board rows
+## than the pager thinks it drew. See `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the floor, for why its old
+## "never binds by construction" reasoning expired, and for the **396px** the same worst case measures
+## once a work row is SELECTED — which is what `PANEL_HEIGHT_WIDE`'s 456 was raised to hand it.
 ##
 ## **AT THE CURRENT NUMBERS THE TWO-COLUMN BRANCH IS INERT** (329 against 440) and this always answers
 ## `PANEL_HEIGHT_WIDE`. It is written as a MAX rather than deleted because the branch is a live

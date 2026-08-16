@@ -3660,6 +3660,44 @@ static func improvement_is_done(src: Dictionary, prefix: String, improvement: St
             return true
     return false
 
+## **HAS THIS SOURCE ACHIEVED THIS RUNG AND THEN LET IT SLIP?** — the two facts `build_verb`'s own
+## docstring insists stay orthogonal, asked TOGETHER for the one question that needs both: the rung is
+## stamped BUILT and its meter is short of its cost, so there is room to put work back into it.
+##
+## **IT IS THE CLIENT HALF OF THE 99% REPAIR.** The sim's `cultivate` / `sow` / `corral` locks refuse
+## on the METER's fullness rather than on the achieved rung, so an eroded-but-achieved rung is legal to
+## re-queue — and the client offered no way to do it, the offer test filtering on the stamped flag
+## (true at 99%) and the work row reading the same source as *in progress*, so a row said DONE and
+## BUILDING at once and offered nothing. This is the seam both of those now consult.
+##
+## **THE ANIMAL WEB CANNOT REACH IT TODAY, and that is a property of the ladder rather than of this
+## test.** `IMPROVEMENT_TAME`'s achievement IS its meter (`improvement_is_done` reads
+## `domestication >= DOMESTICATION_COMPLETE`), so *done* and *short* are contradictory there; and no
+## animal rung declares decay, so a corral's meter does not fall back below its flag. It is written
+## per-rung anyway because the asymmetry is the LADDER's and could move.
+##
+## ⛔ **IT READS THE RUNG'S OWN FLAG, NEVER `improvement_is_done`, and that is not a shortcut — the
+## broader test answers TRUE for the wrong reason.** `improvement_is_done` also answers *built* when a
+## HIGHER rung retires this one (`FORECAST_RETIRED_BY_HIGHER_RUNG`), and a Field sown straight from
+## wild ground carries `cultivation_progress == 0` **forever** — Sow needs no prior patch — so through
+## that door every finished Field in the game reads as a Cultivate at 0% waiting to be repaired, and
+## the client re-offers a rung the sim treats as already built. That exact defect was reported from
+## play once and is pinned by `ui_preview`'s `forage_field_from_wild`; a rung a higher one stands on
+## has nothing to repair, because the higher rung is what is holding the ground.
+## ⛔ **AND THE METER MUST CARRY WORK, not merely read below its cost.** `improvement_progress` answers
+## `0.0` for a key the wire does not state, which is indistinguishable from a meter eroded to nothing —
+## so a bare `< BUILD_METER_FULL` reads every achieved rung whose meter is UNSTATED as a repair waiting
+## to be ordered, and puts a `⌃` on it. Measured on the harness's own keeping-pool patch, which states
+## `is_cultivated` and no `cultivationProgress`. **A repair is work partly banked and short of its
+## cost**, which is what the state actually is: `BUILD_METER_UNSTARTED < progress < BUILD_METER_FULL`.
+static func rung_needs_repair(src: Dictionary, prefix: String, improvement: String) -> bool:
+    if not FORECAST_DONE_FLAG_KEYS.has(improvement):
+        return false
+    if not bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false)):
+        return false
+    var progress := improvement_progress(src, prefix, improvement)
+    return progress > BUILD_METER_UNSTARTED and progress < BUILD_METER_FULL
+
 ## How far along this improvement's build meter is, 0..1. Clamped, so a wire value that overshoots
 ## cannot render a >100% meter. See `FORECAST_BUILD_METER_KEYS` for which meter each verb fills.
 static func improvement_progress(src: Dictionary, prefix: String, improvement: String) -> float:

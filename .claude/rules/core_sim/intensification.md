@@ -1302,6 +1302,63 @@ gates `corral` + `extend_pen` (the §4.3 reshuffle; pinned by `builtin_ladder_de
 which asserts no two rungs share an unlock gate); and **both the build dials *and* the knowledge dials
 now live here**, so the two webs can only be tuned — and paced — together.
 
+### A RUNG ACHIEVED BUT SHORT IS REPAIRABLE — the gate tests the METER, not the rung (§4.7)
+
+Reported from play: a Tended patch decayed to 99% and **there was no way to get it back to 100%**.
+Four gates composed into a deadlock — completion retires the queue entry; no entry means no builders
+can be aimed at it; `cultivate` refused; and the client offered no `⌃`. With keeping paid there is no
+decay either, so the meter could not even fall out of the trap. The only escape was to *stop* paying
+keeping, bleed to the retention bar, lose the rung, and re-buy it.
+
+**§2.4 says it should be repairable** — *"repairing it is a fresh decision the player makes by putting
+it back in the queue"* — and the sim already agreed in two places whose comments were written to
+protect exactly this: the accrue guard is *"the METER, not the rung… refusing it here would make
+erosion a one-way ratchet"*, and `patch_rung_already_built` uses meter fullness *"because a meter that
+has eroded between the two is a rung the builders are legitimately repairing."* **Both were
+unreachable, because completion removed the entry before either could matter.**
+
+**The command's refusal now tests the meter, matching what the accrue path always did.** Locks 1 and 2
+then need nothing: re-queueing recreates the entry and the entry brings the builders — verified rather
+than assumed.
+
+| verb | gate before | verdict |
+|---|---|---|
+| `cultivate` | `is_cultivated()` — the **retention bar** (37.5 of 50) | **the bug** → `cultivation_meter_full()` |
+| `sow` | `is_field()` — the retention bar | **the same bug on rung 3**, found by the sweep → `field_meter_full()` |
+| `corral` | `is_corralled()` — the fence flag | wrong SHAPE, no behaviour change (flag and meter always agree); aligned anyway so a pen meter that ever learns to erode is repairable by the same rule |
+| `tame` | `is_domesticated()` | already correct — that predicate **is** `progress >= cost` |
+| `extend_pen` | `pen_extending` / `at_max` | no deadlock; the meter resets on completion and three paths clear the flag |
+
+**A FULL meter must still refuse** — that is the pair, and the case the *"already cultivated — forage
+it to tend it"* message exists for. Weakening the refusal into nothing would be the other bug.
+
+**One reporting defect rode along.** The board published `≈1 turn` **forever** for such a patch: the
+quote was pushed for the derived verb regardless of the queue, and the unqueued tail dated it at the
+**full pool** — a confident countdown for a build with no entry and no builders. A running quote is now
+pushed only for a source that carries a rung entry, so the field stays at `-1`. **`-1` here means the
+gate refused, at any staffing** — `eligible` takes no crew count — which is why the client must not
+render it as a crew problem.
+
+**The animal half is untestable and the fixture says so**: `domestication_progress` is monotone and no
+animal rung declares a `meter_decay`, so "eroded but achieved" cannot be produced there. The refusal is
+asserted on both webs; the accept only on the plant one.
+
+### A KEEPING TOOL WEARS NOW, ON THE WORK IT SUPPLIED
+
+Once gear fed the keeping pool (§4.8's upkeep half), a hoe raised what a keeper supplied **forever,
+free** — `WearQuantum` had `BuildProgress` and no upkeep quantum. `UpkeepWork` closes it.
+
+- **Charged on work SUPPLIED, not demand and not head count** — the value `patch_upkeep_supply` /
+  `herd_upkeep_supply` returns, which the distributor already caps at the demand. So an over-large pool
+  spends only what it was asked for, and a pool with nothing at risk claims no share and wears nothing.
+- **`0.16` per work unit, and there is NO conversion to invert** — unlike `build_work`'s `0.5` (an exact
+  round trip) this quantum never existed. What the model does supply is that **both quanta count the
+  same unit**, so a tool holds one life measured in work whichever account spends it: `100 / 0.16 = 625`
+  work units, identical to the build reading. Keeper-vs-builder life then matches by construction rather
+  than by a target. **Provisional; §4.14 owns the balance.**
+- **No item's headline gauge changed** — both entries are appended and `headline_wear` is the first, so
+  hoes still lead with the build quantum and hurdles with the slaughter.
+
 ### A BLOCKED BUILD PUBLISHES **WHICH CONJUNCT REFUSED** (`docs/plan_standing_upkeep.md` §4.7)
 
 `BUILD_QUEUE_BLOCKED` (`-4`) is minted in exactly one place — `publish_build_chain`'s `None` arm —
