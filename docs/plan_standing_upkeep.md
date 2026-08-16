@@ -460,6 +460,96 @@ a separate feeding-work line would scale off the same term and would never be st
 A number with no decision attached is not a lever. The same disposes of a road's quarrying and
 hauling: that work is the upkeep, not a second line beside it.
 
+### 2.8 ONE POSITION ON THE LADDER — the rung stops being a status and becomes a place
+
+**A source has ONE number: how far up its own ladder it has been worked, in cumulative work units.**
+`plant:tended` runs 0 → 50, `plant:field` 50 → 125. Everything a rung means is read off that one
+position: what the ground pays, what it costs to hold, what is offered next, and what a decay takes
+away.
+
+This replaces **two independent meters per source** (`cultivation_progress`, `field_progress`), and it
+is what makes §4.10's partial credit expressible at all — partial credit needs a single fraction to
+scale by, and the position **is** that fraction.
+
+> #### WHY, IN ONE PLAYTEST REPORT
+>
+> Ray built a Field on a Tended patch and ended up with **Field > 0% while Cultivation read 99%**, and
+> the board offered Cultivate again on ground that was already a Field. With two meters that state is
+> *representable*, so rules have to police it; with one position it **cannot be written down.** The
+> arc has produced three "two seams disagree" defects in one session — this is the same shape, one
+> level down, in the data rather than the code.
+
+#### THE FOUR RULES, AND THREE OF THEM ARE ARITHMETIC
+
+1. **A RUNG IS OFFERED ONLY WHEN THE ONE BELOW IS AT 100%.** Not "achieved", not "past its retention
+   bar" — **complete**. This is the one rule that is a *gate* rather than a consequence, and it is
+   Ray's, with the deciding argument: **the kits differ per job.** If a Sow's work implicitly finished
+   the Tended meter under it, the player would be doing Cultivate's work with Sow's tool — a plough
+   finishing the clearing that wanted a digging stick. Gating on completion keeps every unit of work
+   priced at the kit that actually did it, and it gets worse the further up the knowledge graph you go.
+2. **ONE JOB IS OFFERED AT A TIME, and which one is a pure function of the position.** The `⌃` mark
+   stops needing to choose between a repair and an upgrade: below 50 the offer is Cultivate, at exactly
+   50 it is Sow. The repair path landed in §4.7 as a special case; here it stops being one.
+3. **DECAY EATS FROM THE TOP, for free.** A Field at 10% decaying is the number falling 60 → 50; it
+   consumes the Field's progress and reaches Cultivate's range only once the Field is gone. That **is**
+   Ray's *"if Sow is > 0%, cultivation can never decrease"* — as arithmetic, not as a rule somebody has
+   to enforce.
+4. **A LOWER RUNG IS NEVER BELOW FULL WHILE A HIGHER ONE HAS PROGRESS.** A corollary of (3), stated
+   because it is the invariant the bug violated, and because it is the one a reader will look for.
+
+#### THE PAYOUT IS A DELTA ON THE RUNG BELOW
+
+**A Field at 100% pays a Tended patch's full output PLUS the Field's own extra.** At 40% it pays a
+Tended patch in full plus 40% of that extra. So **an upgrade in progress can never pay less than the
+rung under it**, which is the invariant the whole shape exists to guarantee.
+
+- **Config keeps stating ABSOLUTES** — *a Field pays 3.50, a Tended patch 1.20* — and the delta is
+  derived. The numbers stay readable, and nothing has to be restated in a second form.
+- **THIS BUYS A VALIDATE RULE NOTHING CHECKS TODAY**: each rung's payout must be **≥ the one below**,
+  or the derived delta is negative and a half-built Field pays *less* than the patch under it.
+- **The ~100 binary predicates STAY.** `is_cultivated()` / `is_field()` still answer *"has this rung
+  been achieved"*, which still gates the verbs and the knowledge. What changes is every **payout** that
+  branches on them: it becomes an interpolation on the position.
+
+#### AND THE COST SIDE MOVES WITH IT, ON THE SAME SHAPE
+
+**This is the half the arc keeps deferring, and it is the one reported from play three times in one
+session.** Today a Tame at 3% owes the same 8.27 work/turn as a finished one; a patch 1% into a
+Cultivate owes the whole rung's rate to hold a hundredth of a thing.
+
+**The upkeep demand interpolates exactly as the payout does** — at Field 50% you are holding a full
+tended patch plus half a field, so you owe Tended's upkeep in full plus half the extra a Field demands.
+At the first rung above wild the delta form and a flat percentage agree, so a Tame at 3% owes **3% of
+8.27 ≈ 0.25**, which is the reported case.
+
+> **⛔ ONE THING TO CONFIRM BEFORE BUILDING.** Ray's words were *"if at 100% it is 10 units work to
+> keep, at 50% it should be 5 units"* — a flat fraction of the rung's own demand. The delta form above
+> is what the payout's shape implies and what he agreed to a message earlier. **They are identical at
+> the first rung and differ above it**: at Field 50% with Tended demanding 2.0 and Field 6.0, the delta
+> form owes `2.0 + 0.5 × 4.0 = 4.0` and the flat form owes `3.0`. Get this answered before writing code
+> — do not pick one on the grounds that it is easier.
+
+- **Benefit and cost move TOGETHER or not at all.** §4.6a's note stands: an interim with one scaled and
+  the other flat is a worse asymmetry than the flat rate is.
+- **A queued upgrade raises the keeping bill before it pays anything back**, and keeps raising it as
+  the meter climbs. That is correct — it is what makes an upgrade a decision rather than a free
+  ratchet — and it is worth surfacing, not hiding.
+
+#### `retain_fraction` DISSOLVES
+
+Losing a rung stops being a status flip at a stamped bar and becomes **the payout fading as the
+position falls**. §6's open item said this would happen — *"a rung sliding back turns into a fading
+payout rather than a status you lose"* — so `retain_fraction`, the retention bar and the stamped-bar
+machinery retire with it. **Do not tune `retain_fraction` in an earlier slice**; it is being deleted.
+
+#### THE ANIMAL WEB IS ALREADY HALF OF THIS, AND THAT IS THE ARGUMENT
+
+`domestication_progress` is **monotone-up** and neither animal rung declares a `meter_decay` — an
+unkept flock loses **animals**, never taming progress. So the animal web cannot reach the bug at all,
+and the plant web is the odd one out. **Making plants match animals is a consistency fix, not a new
+idea.** What the animal web still needs from this section is the **cost** side: its demand is flat at
+any fullness exactly as the plant web's is.
+
 ---
 
 ## 3. What this replaces
@@ -669,10 +759,15 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > **The build queue of §4.6b IS this property's storage**, not a second ordering beside it. If the
    > queue ships with a rank of its own, they will drift — so whichever lands first owns the rank and
    > the other reads it.
-10. **Symmetric partial credit.** A rung's benefit scales with its meter in **both** directions — a
-   half-built field pays half a field, as a decayed one does. Wanted; it is what makes the model
-   coherent both ways, and it removes the last discontinuity: today a build pays nothing for its whole
-   span and then everything at once.
+10. **Symmetric partial credit — AND the one-position ladder it needs.** **The model is §2.8; this is
+   only its place in the order.** A rung's benefit and its cost both scale with how far up the ladder
+   the source has been worked, and the two independent meters per source collapse into one cumulative
+   position. It removes the last discontinuity — today a build pays nothing for its whole span and then
+   everything at once — and it makes the rung-ordering bug (`Field > 0%` while `Cultivation < 100%`)
+   unrepresentable rather than merely forbidden.
+   > **THE LADDER RESTRUCTURE AND PARTIAL CREDIT ARE ONE CHANGE, not two slices.** Partial credit needs
+   > a single fraction to scale by, and the position *is* that fraction — building them separately
+   > means building the fraction twice. Decided with Ray on the §4.7 playtest.
    > **THE COST SIDE IS PART OF THIS, and §4.6a is what put it there.** Once the keeping pool holds a
    > meter at any fullness, a patch 10% into a Cultivate is billed the whole rung's rate to hold a
    > tenth of a thing. The natural pairing is that it owes a tenth — the same fraction, applied to
