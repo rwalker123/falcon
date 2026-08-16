@@ -1138,8 +1138,7 @@ func run(harness) -> void:
 	# conjunct that refused and the client words it; asserted by EQUALITY against the shipped
 	# table, since the whole claim is WHICH sentence renders.
 	h._assert_hud("…and the row beneath states the sim's own cause for the block",
-		blocked_row.contains(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
-			HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])))
+		blocked_row.contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
 	# **AND THE REMEDY IS BESIDE IT, naming the KEEPING role rather than the builders.** The measured
 	# escape is `assign_labor <f> <b> husbandry <n>` alone — staffing the keeping restores the
 	# source's regrowth and it climbs back over its own gate — so the sub-row must name the web's
@@ -1165,8 +1164,7 @@ func run(harness) -> void:
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
 	h._assert_hud("a blocked source whose keeping is PAID still states the cause (%d lines)"
 			% paid_lines.size(), paid_lines.size() == BLOCKED_CAUSE_ONLY_LINES
-		and String(paid_lines[0]).contains(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
-			HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])))
+		and String(paid_lines[0]).contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
 	h._assert_hud("…and states no keeping remedy, the keeping being paid",
 		not String(paid_lines[0]).contains(HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT
 			% HudWorkVocab.ROLE_NAME_AGRICULTURE))
@@ -1184,8 +1182,7 @@ func run(harness) -> void:
 		and String(knowledge_lines[0]).contains(
 			String(HudSelectionVocab.BUILD_BLOCKED_REASONS[BLOCKED_KNOWLEDGE_REASON])))
 	h._assert_hud("…and NOT the escapement one, which is a different remedy entirely",
-		not String(knowledge_lines[0]).contains(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
-			HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])))
+		not String(knowledge_lines[0]).contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
 	#   (3) A source that is NOT blocked states NO cause at all. A producer that always emitted a
 	#   line passes every positive above, so this is the half that makes them worth anything.
 	var building := BaseFx.unbuilt(BaseFx.food_tile_fixture())

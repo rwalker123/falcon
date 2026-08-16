@@ -11552,8 +11552,7 @@ func _assert_build_queue_states_the_cause() -> void:
 	# **THE EXPECTATION IS THE TABLE, NOT THE PRODUCER** — composed through
 	# `build_blocked_reason_text` it would only assert that the lookup agrees with itself, and a
 	# lookup answering one key for every cause would satisfy both claims.
-	var wanted_plant := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[
-		HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT])
+	var wanted_plant := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
 	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
 	var plant_rows := 0
 	var herd_rows := 0
@@ -11579,6 +11578,9 @@ func _assert_build_queue_states_no_cause() -> void:
 	for key in HudSelectionVocab.BUILD_BLOCKED_REASONS.keys():
 		causes.append(String(HudSelectionVocab.BUILD_BLOCKED_REASONS[key]))
 	causes.append(HudSelectionVocab.BUILD_BLOCKED_FALLBACK)
+	# …and the ONE cause worded per web, which is not in the table above.
+	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD)
+	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
 	var offenders := 0
 	for row in _build_queue_rows():
 		var tooltip := String(row.tooltip_text)

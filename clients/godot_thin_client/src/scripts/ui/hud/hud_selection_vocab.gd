@@ -234,7 +234,7 @@ const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 # different line entirely, so this format states no cause — `DetailFormat.build_blocked_lines` pairs
 # it with the two facts already published on the same row (`upkeepShortfall` /
 # `neglectGraceRemaining`), which is where the answer actually is.
-const RUNG_BLOCKED_FORMAT := "%s Blocked %d%% — your builders are held here"
+const RUNG_BLOCKED_FORMAT := "%s Blocked %d%% — your builders are stuck here"
 
 # **WHAT FREES A BLOCKED QUEUE, on the web whose keeping is short** — the sub-row beneath the row
 # above, rendered ONLY where the source publishes a shortfall, so the cause is READ rather than
@@ -246,7 +246,7 @@ const RUNG_BLOCKED_FORMAT := "%s Blocked %d%% — your builders are held here"
 # the gate in ~7–14 turns **with the hunters left at full strength**. Taking them off as well is
 # indistinguishable, so this must NOT hedge with *"and stop hunting"* — a remedy with a second,
 # useless half reads as a guess.
-const RUNG_BLOCKED_REMEDY_FORMAT := "its keeping is short — staff this band's %s"
+const RUNG_BLOCKED_REMEDY_FORMAT := "You are short of hands to look after it — put someone on this band's %s."
 
 # **THE CAUSE ITSELF, ONE SENTENCE PER KEY** (`ForagePatchState.buildBlockedReason` /
 # `HerdTelemetryState.buildBlockedReason`, `docs/plan_standing_upkeep.md` §4.6b). The sim decides
@@ -259,33 +259,66 @@ const RUNG_BLOCKED_REMEDY_FORMAT := "its keeping is short — staff this band's 
 # real refusal being the herd standing below its escapement floor, which no surface named. Every key
 # answers now, and the one the playtest hit is the first of them.
 #
-# **EACH SENTENCE NAMES A REMEDY THE PLAYER CAN ACT ON, or says plainly that there is none**
+# > ### ⛔ WRITE THESE IN THE WORDS THE UI ALREADY SHOWS THE PLAYER
+# >
+# > The first draft shipped to a frame and was rejected on sight: *"That is non-sense, try to write it
+# > in english that someone could understand."* It said **floor**, **gate**, **rung**, **source**,
+# > **entry**, **the sim** and **this client** — every one of them a term from this codebase that has
+# > never appeared on screen. The player's word for the floor is the compose sheet's slider label,
+# > **LEAVE STANDING** (`leave 50% · ≈43 Wild Sheep`); their word for a rung is whatever the verb on
+# > the button says. **A sentence a player cannot parse is worse than the silence it replaced**, since
+# > it costs them the time to try.
+# >
+# > **AND IT HAS TO FIT.** The card is ~245px wide, so a sentence over ~120 characters wraps past
+# > three lines and stops being read at all. Length is a correctness property here, not a preference.
+#
+# **EACH SENTENCE NAMES SOMETHING THE PLAYER CAN DO, or says plainly that there is nothing**
 # (`species_ceiling`), which is the gate-reason rule this client already follows: naming a
 # prerequisite without naming the lever tells a player the door is locked and not where the key is.
 const BUILD_BLOCKED_REASONS := {
-    "escapement": "nothing stands above this crew's floor, so the gate takes nothing — lower the floor here, or leave the source to grow back above it.",
-    "knowledge": "your people do not know how to raise this rung yet — the KNOWLEDGE tab says how far along they are.",
-    "no_crop": "no crop is committed to this ground — pick one on this job's row in the BUILD QUEUE, or let the sim take the patch's dominant plant.",
-    "species_ceiling": "this animal climbs no further — its kind will not take that rung, whatever your people learn.",
-    "rung_below": "it must be tamed before it can be penned.",
-    "owned_by_other": "another band holds this source — yours cannot build on it.",
-    "site": "this ground will not take that rung — build it on ground that will.",
-    "ring_idle": "no ring is being raised here — this entry extends a pen nobody is building.",
-    "undeclared": "the ground has moved on — this entry names a rung it can no longer raise. Withdraw it from the BUILD QUEUE and declare the rung the source stands on now.",
-    "unworked": "this band no longer works the source — put a crew back on it, or withdraw the entry from the BUILD QUEUE.",
+    "knowledge": "Your people have not learned how to do this yet — the Know tab shows how far along they are.",
+    "no_crop": "No crop has been chosen for this patch — pick one on the job's row in the build queue.",
+    "species_ceiling": "This kind of animal will not go any further, however much your people learn.",
+    "rung_below": "It has to be tamed before it can be penned.",
+    "owned_by_other": "Another band already holds this — yours cannot build here.",
+    "site": "This ground will never support it. You will have to build somewhere else.",
+    "ring_idle": "Nobody is extending this pen.",
+    "undeclared": "This job is out of date — the land has moved on since you ordered it. Remove it from the build queue and order the next step instead.",
+    "unworked": "This band has nobody working here any more. Send a crew back, or remove the job from the build queue.",
 }
 
-# The key the ESCAPEMENT refusal ships under — named because it is the ONE cause that may also be
-# short of keeping, and the two are different facts with different remedies (a floor and a stock
-# against `assign_labor … husbandry <n>`). `DetailFormat` tests it by name so the pairing rule is
-# written once.
+# **THE ONE CAUSE THAT IS WORDED PER WEB** — the state the playtest actually hit, and the only one
+# whose sentence would be a lie in the other web's nouns: *animals* and *hunters* on one side,
+# *growing* and *gatherers* on the other, against ONE slider both webs label **Leave standing**. The
+# fork is `kind`, the same parameter `HudWorkVocab.keeping_role_name` picks Agriculture or Husbandry
+# with one line down in `DetailFormat.build_blocked_lines` — one test on one argument, not a second
+# way of asking which web this is.
+#
+# **NAME THE SLIDER, NOT THE MODEL.** "Escapement floor" is this repo's term; the player has only ever
+# seen `Leave standing`, so that is the phrase the remedy quotes — in the UI's own capitalisation and
+# in quotes, so it reads as a control rather than as prose.
+#
+# **THEY ARE TWO CLAUSES BECAUSE A THIRD DOES NOT FIT.** The first wording of this pair spelled the
+# consequence out — *"so nobody can work this herd — and taming only moves while they do"* — and
+# rendered SIX lines in the ~245px card, which is a paragraph nobody reads standing between a
+# hazard row and an `At risk:` countdown. The headline above already says the builders are stuck,
+# so the consequence was the cuttable clause and the two REMEDIES were not. Three lines is the
+# budget; measure a rewrite in `ui_preview_out/tile_meter_blocked.png` rather than in characters.
+const BUILD_BLOCKED_ESCAPEMENT_HERD := "Fewer animals here than you leave standing. Lower \"Leave standing\", or wait for the herd to grow back."
+
+const BUILD_BLOCKED_ESCAPEMENT_PLANT := "Less growing here than you leave standing. Lower \"Leave standing\", or wait for it to grow back."
+
+# The key the ESCAPEMENT refusal ships under — named because two rules test it: it is the ONE cause
+# worded per web (the pair above), and the ONE that may ALSO be short of keeping, which is a second
+# fact with a second remedy and gets its own line. `DetailFormat` tests it by name so neither rule is
+# written twice.
 const BUILD_BLOCKED_REASON_ESCAPEMENT := "escapement"
 
-# An unrecognized cause key — or a `-4` shipped with no key at all — still leaves the builders held,
+# An unrecognized cause key — or a `-4` shipped with no key at all — still leaves the builders stuck,
 # so this says exactly that and guesses at nothing. It is the honest reading of a wire this client is
 # behind on, and it is never an empty line: silence on a marked row reads as *no cause exists*, which
 # is the state this whole block exists to end.
-const BUILD_BLOCKED_FALLBACK := "the sim refuses this rung for a reason this client cannot name — your builders will hold here until it changes."
+const BUILD_BLOCKED_FALLBACK := "Something is stopping this build that this version cannot explain. Your builders will wait here until it changes."
 
 # `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
 # cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and

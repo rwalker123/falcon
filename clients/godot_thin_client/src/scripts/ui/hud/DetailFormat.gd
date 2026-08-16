@@ -1463,16 +1463,26 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
             != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
         return lines
     lines.append("%s%s" % [indent,
-        build_blocked_reason_text(SourceForecast.build_blocked_reason(src, prefix))])
+        build_blocked_reason_text(SourceForecast.build_blocked_reason(src, prefix), kind)])
     if build_blocked_states_keeping(src, prefix):
         lines.append("%s%s" % [indent,
             HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % HudWorkVocab.keeping_role_name(kind)])
     return lines
 
-## The sim's cause key in the manual's voice. An unknown key — and the empty one, which a `-4` should
-## never carry — answers the fallback: the client still knows the builders are held, and saying so is
+## The sim's cause key in the player's own words. An unknown key — and the empty one, which a `-4`
+## should never carry — answers the fallback: we still know the builders are stuck, and saying so is
 ## honest where guessing at a cause or rendering nothing is not.
-static func build_blocked_reason_text(key: String) -> String:
+##
+## **ONE CAUSE IS WORDED PER WEB, AND `kind` IS THE SAME ARGUMENT THE KEEPING LINE FORKS ON.** The
+## escapement sentence has to say *animals* and *hunters* on one web and *growing* and *gatherers* on
+## the other; every other cause reads identically on a patch and on a herd and is stated once. The
+## test is `HudWorkVocab.keeping_role_name`'s, on the same parameter, so there is no second way of
+## asking which web this source is.
+static func build_blocked_reason_text(key: String, kind: String) -> String:
+    if key == HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT:
+        return HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD \
+            if kind == SourceForecast.SOURCE_KIND_HERD \
+            else HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
     return String(HudSelectionVocab.BUILD_BLOCKED_REASONS.get(
         key, HudSelectionVocab.BUILD_BLOCKED_FALLBACK))
 
