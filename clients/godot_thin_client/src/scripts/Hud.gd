@@ -472,7 +472,8 @@ func _ready() -> void:
     # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
     # connection to its method — by the time a link can be clicked it is populated, which is the same
     # lazy binding `TargetingController`'s `rerender` nudge takes for the same reason.
-    _drawercompose.work_tab_requested.connect(func() -> void: _bandpanel.show_work_tab())
+    _drawercompose.work_tab_requested.connect(
+        func(band_entity: int) -> void: _bandpanel.show_work_tab(band_entity))
     # **NO IMPROVEMENT RELAY FROM THE COMPOSE SHEET** (`docs/plan_standing_upkeep.md` §4.7a ①). It
     # emitted `improvement_requested` off the rung checkbox's tick and `unqueue_requested` off its
     # untick; the checkbox was never the commit, so both moved to `BandPanelController` — the `⌃` on

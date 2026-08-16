@@ -614,6 +614,12 @@ const IMPROVEMENT_DECLARED_FORMAT := "%s · %s"
 # **`Work tab` IS A LINK**, rendered as a BBCode `[url]` on the one state that carries it — see
 # `WORK_TAB_LINK_META`. That is why these are BBCode-bearing strings rather than plain ones.
 #
+# **AND IT LANDS ON THE ACTING BAND'S BOARD, not merely on a Work tab.** It switched the tab alone
+# for one release, so from the FACTION page it arrived at the faction's Work ROLLUP — which has no
+# `⌃` on it at all, so the sentence delivered the player somewhere that could not do what it
+# promised. Reported from play on PR #562. The signal carries the band; see
+# `DrawerComposeController.work_tab_requested` and `BandPanelController.show_work_tab`.
+#
 # **THE UNWORKED FORM IS ONE SENTENCE TOO, and the limit it states is Ray's decision** (§4.7a ③): a
 # `⌃` lives on a WORK ROW, a band has a work row only for a source it already works, and that is the
 # sim's own rule that an improvement verb reaches only such bands. He chose to keep the rule and say

@@ -575,17 +575,44 @@ func _send_command(line: String, success_message: String,
 		command_client.call("poll")
 		err = command_client.call("send_line", line)
 	if err != OK:
-		# **A SEND THAT FAILS HERE IS A TRANSPORT FAILURE AND NOTHING ELSE**, so it says so —
-		# `send_line` only ever answers "no bridge" or "the bridge could not deliver", and a command
-		# the SIM refuses has already gone down the socket and comes back on the server's own stream.
-		# The old `Command failed (…): can't connect` read as a rules rejection; see
-		# `HudEventVocab.COMMAND_NOT_SENT_FORMAT`.
-		_append_command_log(HudEventVocab.COMMAND_NOT_SENT_FORMAT % line, true)
+		# ⛔ **A SEND THAT FAILS HERE IS *NOT* A TRANSPORT FAILURE AND NOTHING ELSE — the comment that
+		# said so is what hid a bug for a whole slice.** It read *"`send_line` only ever answers 'no
+		# bridge' or 'the bridge could not deliver'"*, and that stopped being true when PARSING moved
+		# into the bridge: `bridge/command.rs` runs `parse_command_line` before it touches the socket,
+		# so a line the CLIENT could not build is a third answer — and the one that fired. Reported
+		# from play, the Builders pool's `+` produced `assign_labor 0 1 builders 1`, the text grammar
+		# did not know the role, and the dock read *"Not connected to the server"* on a connected
+		# client. The pool had therefore never been staffable at all.
+		#
+		# **THE FORK IS THE ERROR CODE, NOT THE REASON'S WORDS.** `CommandClient` already answers
+		# `ERR_CANT_ACQUIRE_RESOURCE` for *there is no bridge* and `ERR_CANT_CONNECT` for *the bridge
+		# answered with a reason*; matching on the reason's prose would be a client re-deriving a
+		# classification the parser already made. The reason itself is passed through verbatim,
+		# because it names the token that failed.
+		if err == ERR_CANT_CONNECT:
+			_append_command_log(HudEventVocab.COMMAND_REFUSED_FORMAT % [line,
+				_last_send_error()], true)
+		else:
+			_append_command_log(HudEventVocab.COMMAND_NOT_SENT_FORMAT % line, true)
+		# **THE STATUS IS STILL DRIVEN, AND IT DOES NOT LIE HERE.** `_update_command_status` re-reads
+		# `CommandClient.status()`, which answers CONNECTED whenever a bridge exists — so a refused
+		# LINE leaves the indicator alone and only the no-bridge branch above can turn it red. That is
+		# the right behaviour and it is asserted rather than assumed: a second surface repeating the
+		# retired lie is exactly what this fix exists to prevent.
 		_update_command_status()
 		return false
 	_append_command_log(success_message, false, ack_kind)
 	_update_command_status()
 	return true
+
+## The bridge's own account of the last refused send, or a neutral stand-in where the client offers
+## none. Read straight off `CommandClient`, never cached here: the field is written on every send, and
+## a copy kept in this file could only ever be one send behind.
+func _last_send_error() -> String:
+	if command_client == null:
+		return HudEventVocab.COMMAND_REFUSED_UNKNOWN_REASON
+	var reason := String(command_client.get("last_send_error"))
+	return reason if reason != "" else HudEventVocab.COMMAND_REFUSED_UNKNOWN_REASON
 
 func send_runtime_command(line: String, success_message: String,
 		ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> bool:

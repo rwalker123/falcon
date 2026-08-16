@@ -215,6 +215,7 @@ func _ready() -> void:
 	await _drive_send_trade_expedition()
 
 	_assert_every_command_emitted()
+	_assert_every_role_is_emittable()
 	_write_emitted()
 	_finish()
 
@@ -354,15 +355,36 @@ func _drive_assign_labor_kits() -> void:
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
-	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE.** `assign_labor <faction> <band> scout <workers>` takes
-	# no tile, no herd, no floor and no species, so its tail was CLOSED and the kit token had never
-	# once been put in front of the real parser on it. The role cards mount a picker now, so the line
-	# is emittable from the UI; this is the drive that proves the server accepts it. `scout` stands
-	# for the pair — Warrior parses through the identical arm of `handle_assign_labor`, so a second
-	# emit would buy a duplicate rather than a second claim.
-	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_SCOUT, PARTY_WORKERS, -1, -1, "",
+	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
+	# `assign_labor <faction> <band> <role> <workers>` takes no tile, no herd, no floor and no
+	# species, so its tail is CLOSED but for the kit token.
+	#
+	# ⛔ **IT DROVE `scout` ALONE, AND THE COMMENT SAID WHY: *"Warrior parses through the identical
+	# arm of `handle_assign_labor`, so a second emit would buy a duplicate rather than a second
+	# claim."* THAT REASONING IS WRONG, AND IT COST A WHOLE SLICE.** The roles share an arm in the
+	# SIM, and the sim is not the only gate: `sim_runtime::command_text::parse_command_line`
+	# enumerates them SEPARATELY, in another crate, and the client's native bridge runs that parser
+	# BEFORE it sends. `builders` was missing from that enumeration from
+	# `docs/plan_standing_upkeep.md` §2.5 onward, so every Builders staffing line was refused
+	# locally — the pool has never been staffable through the UI, no build queue could ever move, and
+	# the dock blamed the network. This guard was green throughout, because the one role it did not
+	# drive was the one role that did not parse.
+	#
+	# **SO THE LIST IS THE CLAIM.** Every role `Main.format_assign_labor` can emit is driven, and a
+	# role added there without being added here fails `_assert_every_role_is_emittable` below rather
+	# than failing in play.
+	for role in ASSIGN_LABOR_ROLES:
+		_hud._emit_assign_labor(band, String(role), PARTY_WORKERS, -1, -1, "",
+			SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+			BandFx.KIT_ID_NONE)
+		await _settle()
+	# **AND THE BARE FORM OF THE ONE THAT BROKE.** `_kit_token` omits an empty selection, so this is
+	# `assign_labor <f> <b> builders 3` with nothing after the count — the exact line the Builders
+	# pool's `+` emits for a player who has never opened a kit picker, and therefore the exact line
+	# the parser refused. The tailed form above and this one are two different parses.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_BUILDERS, PARTY_WORKERS, -1, -1, "",
 		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
-		BandFx.KIT_ID_NONE)
+		KitRoster.NO_KIT_ID)
 	await _settle()
 
 ## `send_trade_expedition` (arc #527, issue #517) — the parties compose sheet's FIFTH mission, and the
@@ -545,11 +567,91 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary,
 
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
 ## reaching its emit site would otherwise turn this guard green by producing nothing to check.
+## **EVERY BAND-WIDE ROLE `Main.format_assign_labor` CAN EMIT.** Its own `match` arm is a literal
+## list, so this is a second spelling of it — and `_assert_every_role_is_emittable` is what stops the
+## two drifting: a role dropped from here is a role this guard stops parsing, which is precisely the
+## hole `builders` fell through for a slice.
+##
+## The two SOURCE kinds (`forage`, `hunt`) are not here: they carry targets and are driven by their
+## own grammars above.
+const ASSIGN_LABOR_ROLES := [
+	HudConst.LABOR_KIND_SCOUT,
+	HudConst.LABOR_KIND_WARRIOR,
+	HudConst.LABOR_KIND_AGRICULTURE,
+	HudConst.LABOR_KIND_HUSBANDRY,
+	HudConst.LABOR_KIND_BUILDERS,
+]
+
+## A role name no builder knows, for the negative below.
+const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
+
+## The three TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
+## map's quick-hunt, and hunt + forage with a `kit <id>` tail.
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 3
+
+## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits.
+const ASSIGN_LABOR_BARE_DRIVES := 1
+
+## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
+## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
+const ASSIGN_LABOR_EXPECTED := 9
+
+## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
+##
+## Two halves, and the negative is what makes the positive mean anything: every listed role must
+## produce a LINE from the real builder (so the guard is driving a command the client can actually
+## emit, not a string this file invented), and a role nobody knows must produce NOTHING (so the
+## builder is enumerating rather than accepting anything handed to it — which would make the positive
+## half vacuous).
+##
+## **IT CANNOT SEE A ROLE ADDED TO `format_assign_labor` AND NOT TO THIS LIST**, and nothing in
+## GDScript can: the builder's arm is a `match` on literals with no reflectable set behind it. What
+## it CAN do is fail the moment such a role is dropped from here, which is the direction the defect
+## travelled — `builders` was in the builder and in the sim, and only the text grammar and this guard
+## did not know it.
+func _assert_every_role_is_emittable() -> void:
+	var band := _band_fixture()
+	var missing: Array[String] = []
+	for role in ASSIGN_LABOR_ROLES:
+		var line := String(MAIN_SCRIPT.format_assign_labor({
+			"faction": HudConst.PLAYER_FACTION_ID,
+			"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+			"kind": String(role), "workers": PARTY_WORKERS,
+		}).get("line", ""))
+		if not line.begins_with("assign_labor ") or not line.ends_with(
+				" %s %d" % [String(role), PARTY_WORKERS]):
+			missing.append("%s -> \"%s\"" % [String(role), line])
+	if not missing.is_empty():
+		_fail("band-wide roles that build no assign_labor line: %s" % "; ".join(missing))
+	if String(MAIN_SCRIPT.format_assign_labor({
+			"faction": HudConst.PLAYER_FACTION_ID,
+			"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+			"kind": ASSIGN_LABOR_UNKNOWN_ROLE, "workers": PARTY_WORKERS,
+		}).get("line", "")) != "":
+		_fail("`%s` built an assign_labor line, so the role list is not a list"
+			% ASSIGN_LABOR_UNKNOWN_ROLE)
+	# **AND THE EXPECTED COUNT IS RE-DERIVED FROM THE LIST**, because `EXPECTED_KINDS` has to spell it
+	# as a literal: a role added to the sweep without bumping that number would leave the emit count
+	# short and the failure would name the COUNT rather than the role, which is a worse error message
+	# for the same mistake.
+	var want := ASSIGN_LABOR_GRAMMAR_DRIVES + ASSIGN_LABOR_ROLES.size() + ASSIGN_LABOR_BARE_DRIVES
+	if want != ASSIGN_LABOR_EXPECTED:
+		_fail("ASSIGN_LABOR_EXPECTED is %d, but the drives add up to %d — bump it with the role list"
+			% [ASSIGN_LABOR_EXPECTED, want])
+	print("command_guard: %d band-wide role(s) build a line, and an unknown one builds none"
+		% ASSIGN_LABOR_ROLES.size())
+
 const EXPECTED_KINDS := {
-	# FOUR — the map's quick-hunt (which names no kit, so the line is the untailed one) plus the three
-	# `_drive_assign_labor_kits` emits that put `kit <id>` on all three grammars: hunt, forage and a
-	# BAND-WIDE role, whose otherwise closed tail had never been parsed with the token on it.
-	"assign_labor": 4,
+	# The map's quick-hunt (which names no kit, so the line is the untailed one), the two TARGETED
+	# grammars from `_drive_assign_labor_kits` (hunt and forage, both with `kit <id>` on a tail that
+	# had never been parsed with the token), then EVERY band-wide role once with that token — and
+	# `builders` a second time BARE, which is the exact line the pool's `+` emits and the exact line
+	# the text grammar refused for a slice.
+	# **A LITERAL, because a `const` initializer cannot read another script's `Array.size()`** — the
+	# cross-class `const` hazard `hud-modules.md` records, and it is a hard parse error rather than a
+	# silent zero. `_assert_every_role_is_emittable` re-derives the sum at RUNTIME and fails if this
+	# number and the role list have come apart, so the literal cannot go stale unnoticed.
+	"assign_labor": ASSIGN_LABOR_EXPECTED,
 	"cancel_order": 1,
 	"move_band": 1,
 	"send_expedition": 1,

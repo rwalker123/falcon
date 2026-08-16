@@ -210,8 +210,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the third band-wide pool: it serves both webs and its whole output goes on the head of the band's build queue, so zero stops building altogether.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1095,7 +1095,13 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                     )
                 }
-                "scout" | "warrior" | "agriculture" | "husbandry" => {
+                // **A role passes TWO gates: this grammar and the sim's own `handle_assign_labor`.**
+                // They are separate enumerations in separate crates, and `builders` sat in the sim's
+                // one alone from `docs/plan_standing_upkeep.md` §2.5 — so the client's native bridge,
+                // which parses a line here before it sends it, refused every Builders staffing
+                // command and the pool could not be filled at all. Adding a role means adding it
+                // here too.
+                "scout" | "warrior" | "agriculture" | "husbandry" | "builders" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
@@ -2364,6 +2370,54 @@ mod tests {
                 kit_id: None,
             }
         );
+    }
+
+    /// **The builders row takes the plain band-wide shape, and an unknown role still does not.**
+    /// The sim has resolved `builders` to a `LaborTarget` since the standing-upkeep arc, but this
+    /// grammar is a second, independent gate — and while it refused the role, the client's native
+    /// bridge (which parses before it sends) dropped every Builders staffing line before it reached
+    /// the socket. The negative is what keeps this pair honest: an arm that accepted anything would
+    /// pass both positives.
+    #[test]
+    fn parse_assign_labor_builders() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 7 builders 3").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(7),
+                role: "builders".to_string(),
+                workers: 3,
+                target_x: None,
+                target_y: None,
+                fauna_id: None,
+                policy: None,
+                species: None,
+                floor: None,
+                kit_id: None,
+            }
+        );
+        // The kit is lifted out of the tail before the role's shape is read, so the builders row
+        // carries it the same way scout and warrior do.
+        assert_eq!(
+            parse_command_line("assign_labor 0 7 builders 3 kit hurdling").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(7),
+                role: "builders".to_string(),
+                workers: 3,
+                target_x: None,
+                target_y: None,
+                fauna_id: None,
+                policy: None,
+                species: None,
+                floor: None,
+                kit_id: Some("hurdling".to_string()),
+            }
+        );
+        assert!(matches!(
+            parse_command_line("assign_labor 0 7 buildings 3"),
+            Err(CommandParseError::UnexpectedToken(role)) if role == "buildings"
+        ));
     }
 
     #[test]

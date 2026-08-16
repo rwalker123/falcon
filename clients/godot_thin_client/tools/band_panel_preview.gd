@@ -2222,6 +2222,8 @@ func _ready() -> void:
 
 	await _assert_builders_card_kit_faces()
 
+	await _assert_work_tab_link_routes()
+
 	await _render_build_queue_states()
 
 	await _render_work_build_state_states()
@@ -11652,6 +11654,108 @@ func _assert_builders_card_kit_faces() -> void:
 	_hud._band_labor._pending_labor.clear()
 	_push_bands([_band_fixture()])
 	await _settle()
+
+## **THE `Work tab` LINK LANDS ON THE ACTING BAND'S BOARD, NOT MERELY ON A WORK TAB**
+## (`docs/plan_standing_upkeep.md` §4.7a ①).
+##
+## Reported from play on PR #562: with the panel on the FACTION page the link switched to the
+## FACTION's Work tab — a rollup reading `Band 1 · 6 sources`, with no `⌃` anywhere on it — so the
+## sentence delivered the player to a surface that could not do what it had just promised.
+##
+## **THREE CASES, AND THE THIRD IS WHAT MAKES THE FIRST TWO MEAN ANYTHING.** A builder that ALWAYS
+## jumps passes the faction case and the different-band case; one that NEVER jumps passes the
+## already-showing case. Only the set separates them, so the jump is COUNTED rather than inferred:
+## `alert_focus_requested` is what `_select_band_on_map` emits on its way, so a jump that happened is
+## observable and a jump that did not is too.
+##
+## **THE GUARD UNDER TEST IS *NOT ALREADY THIS BAND*, NOT *IS THE FACTION PAGE*** — which is why the
+## different-band case is here at all. The faction page is the reported symptom; a panel cycled to
+## another band is the same defect and an `is_faction_page()` test would walk past it.
+##
+## **DRIVEN THROUGH THE REAL RELAY.** The controller's own signal is emitted, so `Hud`'s connection
+## and `BandPanelController.show_work_tab` both run — the link's `[url]` → signal hop is asserted on
+## the sheet itself, in `ui_preview`, where a compose sheet exists.
+##
+## **PNG-LESS**: a Work tab showing band 1 and a Work tab showing band 2 are the same picture.
+func _assert_work_tab_link_routes() -> void:
+	var roster := _faction_roster()
+	_set_world_herds(_herd_fixtures() + _under_herded_work_herd_fixtures())
+	_push_bands(roster)
+	var acting := int((roster[0] as Dictionary).get("entity", -1))
+	var other := int((roster[1] as Dictionary).get("entity", -1))
+	if acting < 0 or other < 0 or acting == other:
+		_fail("work tab link — the roster does not stage two distinct bands")
+		return
+	# (1) THE REPORTED CASE — the FACTION page, reached through the REAL cycler like every other
+	# faction state in this file, never by poking `render_faction`.
+	_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
+	await _settle()
+	_assert_band_panel("work tab link — the panel really is on the faction page first",
+		_hud._bandpanel.is_faction_page())
+	var jumps := _count_work_tab_link_jumps(acting)
+	await _settle()
+	# The message carries the PAGE as well as the subject: on the faction page the subject dict is
+	# still whatever band was last shown, so a failure that printed only the entity would read
+	# `(subject 904, want 904)` — the right number under the wrong page, which names nothing.
+	_assert_band_panel("…and pressing the link leaves the faction page for the ACTING band (faction page %s, subject %d, want %d)"
+			% [str(_hud._bandpanel.is_faction_page()),
+				int(_hud._band_labor.panel_band().get("entity", -1)), acting],
+		not _hud._bandpanel.is_faction_page()
+			and int(_hud._band_labor.panel_band().get("entity", -1)) == acting)
+	_assert_band_panel("…and selects the WORK tab, which is the half that was already right (%s)"
+			% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…having actually jumped (%d focus emits)" % jumps, jumps > 0)
+	# (2) A DIFFERENT BAND — the general case the faction page is a special case of, and the one an
+	# `is_faction_page()` guard would miss entirely.
+	_hud._bandpanel.jump_to_band_entity(other)
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	_assert_band_panel("work tab link — the panel is showing the OTHER band before the press (%d)"
+			% int(_hud._band_labor.panel_band().get("entity", -1)),
+		int(_hud._band_labor.panel_band().get("entity", -1)) == other)
+	jumps = _count_work_tab_link_jumps(acting)
+	await _settle()
+	_assert_band_panel("…and the press moves the subject to the ACTING band (subject %d, want %d)"
+			% [int(_hud._band_labor.panel_band().get("entity", -1)), acting],
+		int(_hud._band_labor.panel_band().get("entity", -1)) == acting
+			and _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…having jumped for that too (%d focus emits)" % jumps, jumps > 0)
+	# (3) ALREADY SHOWING IT — the tab alone, and NO jump. Without this half a builder that jumps on
+	# every press passes both cases above while re-centring the map under a player who was already
+	# where they needed to be.
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	jumps = _count_work_tab_link_jumps(acting)
+	await _settle()
+	_assert_band_panel("work tab link — a panel ALREADY on that band switches the tab (%s)"
+			% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK
+			and int(_hud._band_labor.panel_band().get("entity", -1)) == acting)
+	_assert_band_panel("…and does NOT re-jump, the subject already being right (%d focus emits)"
+		% jumps, jumps == 0)
+	# (4) AN UNKNOWN BAND STILL GETS THE TAB — the fallback that stops a stale entity swallowing the
+	# whole interaction.
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	_count_work_tab_link_jumps(WORK_TAB_LINK_UNKNOWN_BAND)
+	await _settle()
+	_assert_band_panel("work tab link — an unresolvable band still switches the tab (%s)"
+		% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## Press the link for `band_entity` through the REAL relay, and answer how many map-focus emits the
+## jump made on its way — `_select_band_on_map`'s own signal, which is what tells a jump that happened
+## from one that did not.
+func _count_work_tab_link_jumps(band_entity: int) -> int:
+	var seen: Array = []
+	var sink := func(_x: int, _y: int) -> void: seen.append(true)
+	_hud._bandpanel.alert_focus_requested.connect(sink)
+	_hud._drawercompose.work_tab_requested.emit(band_entity)
+	_hud._bandpanel.alert_focus_requested.disconnect(sink)
+	return seen.size()
+
+## An entity no band in the roster carries, for the unresolvable-band fallback.
+const WORK_TAB_LINK_UNKNOWN_BAND := 99_999
 
 ## **THE JOB'S SETTINGS ARE A ROW EXPANSION** (`docs/plan_standing_upkeep.md` §4.7a ②, ③). Ray, from
 ## play: *"The CROP TO TEND shouldn't be a selection here as the user can't do the cultivate here."* —

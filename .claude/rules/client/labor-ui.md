@@ -2590,10 +2590,29 @@ retires, so no rung of that picker can be disabled.
 >
 > - **ONE LINE, AND `Work tab` IS A LIVE LINK.** It shipped for an hour as a fact line plus a smaller
 >   remedy note beneath, and Ray's verdict was that one line is all it needs and the pointer should be
->   clickable. `work_tab_requested` is a `DrawerComposeController` signal relayed by `HudLayer` to the
->   panel — **the compose sheet never reaches the dock itself**. The link switches the TAB and does not
->   focus the row: that needs a public focus seam on the board *and* the panel already showing that
->   band, neither of which the signal can assert.
+>   clickable. `work_tab_requested(band_entity)` is a `DrawerComposeController` signal relayed by
+>   `HudLayer` to the panel — **the compose sheet never reaches the dock itself**.
+> - **THE LINK CARRIES THE ACTING BAND, and shipping it without one was a defect.** It named the tab
+>   alone, so from the FACTION page it landed on the faction's Work **rollup** — a list of bands, with
+>   no `⌃` anywhere on it — delivering the player to a surface that cannot do what the sentence
+>   promised. The band it carries is the one the sheet's `Band:` picker names, which is the band whose
+>   `⌃` will queue the job and whose pool will pay for it.
+>   - **The guard is *not already this band*, never *is the faction page*.** The faction page is the
+>     reported symptom; a panel cycled to a DIFFERENT band is the same defect, and a guard written
+>     against the symptom would miss it.
+>   - **It routes through `jump_to_band_entity`**, the faction page's own drill-down path, whose note
+>     forbids a second way to make a band the subject — *"a popover row reaches a band the same way the
+>     cycler does … rather than by a second path that could drift from it."*
+>   - **The tab is set AFTER the jump.** `render_band` re-declares the zone layout and arriving from the
+>     four-zone faction page can flip the shell, so a tab set first is overwritten by the render.
+>   - **`entity`, not `band_id`** — nothing here builds a command, and every overlay reader keys on the
+>     client-local handle.
+>   - An unresolvable band still switches the tab, so a bad handle cannot swallow the interaction.
+>   - **The jump is COUNTED, not inferred** (`alert_focus_requested` emissions: 1 when it must jump, 0
+>     when the panel is already there), which is what catches *always jumps* and *never jumps* alike.
+>     Four cases: the faction page, a different band, the right band already, and an unresolvable one.
+> - **What it still does NOT do is focus the source's ROW** on that board — that needs a public focus
+>   seam the board does not have.
 > - **AVAILABLE is the one state built as a `RichTextLabel`**, and the reason is layout, not style:
 >   `build_inline_link` returns a `Button`, which is atomic — a `[Label][link][Label]` sentence cannot
 >   break inside either half and overflows the ~245px card. An inline `[url]` flows. Every other state

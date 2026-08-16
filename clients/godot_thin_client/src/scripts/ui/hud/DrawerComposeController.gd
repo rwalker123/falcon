@@ -61,11 +61,20 @@ signal extend_pen_requested(payload: Dictionary)
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). `HudLayer` relays it to `BandPanelController.show_work_tab`;
 ## this controller must not reach the dock itself, panel-to-panel coupling being the coordinator's.
 ##
-## **IT CARRIES NO PAYLOAD, and deliberately does not name the source.** Focusing this patch's ROW on
-## that tab would need a public focus seam on the board plus the panel to be showing this very band —
-## two things this signal cannot assert — so it asks for the TAB and stops there. The board's own
-## `⌃ N ready` chip is what finds the row once the player is on it.
-signal work_tab_requested()
+## **IT CARRIES THE ACTING BAND'S `entity`, and for one release it carried nothing.** Reported from
+## play: on the FACTION page the link switched to the FACTION's Work tab — a rollup, with no `⌃` on it
+## — so the sentence sent the player somewhere that could not do what it promised. The acting band is
+## the one the sheet's `Band:` picker names, which is the band whose `⌃` queues this rung and whose
+## pool pays for it; `ComposeState.NO_BAND_ENTITY` where none resolves, which the far end treats as
+## *switch the tab and jump nowhere*.
+##
+## **`entity` rather than `band_id`**: nothing here builds a command, and the panel resolves a band by
+## entity (`player_band_by_entity`) exactly as every overlay reader does.
+##
+## **WHAT IT STILL DOES NOT NAME IS THE SOURCE.** Focusing this patch's own ROW on that board needs a
+## public focus seam keyed by the source, which this signal does not have; the board's `⌃ N ready`
+## chip is what finds the row once the player is on it.
+signal work_tab_requested(band_entity: int)
 
 ## **THERE IS NO KEEPING SIGNAL HERE** (`docs/plan_standing_upkeep.md` §2.5). `maintain_requested`
 ## retired with the `maintain` command it carried: maintenance left the tile, so the keeping is
@@ -1258,7 +1267,10 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), [], false,
         SourceForecast.build_pace(offer_turns, build_crew),
-        func(_meta: String) -> void: emit_signal("work_tab_requested")))
+        # The ACTING band — the one this sheet is composing FOR, which is the band whose board carries
+        # the `⌃` this sentence points at. Resolved above by the `Band:` picker, never re-read.
+        func(_meta: String) -> void: emit_signal("work_tab_requested",
+            int(band.get("entity", ComposeState.NO_BAND_ENTITY)))))
 
 
 ## **THE DECLARATION `build_verb` SHOULD HONOUR — the overlay's if it has one, else the sheet's own.**

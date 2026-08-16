@@ -733,6 +733,34 @@ func run(harness) -> void:
 	# clause still trips it.
 	h._assert_hud("…and quotes no work cost, the price having moved to the Work tab's ⌃",
 		not stressed_face.contains(RETIRED_OFFER_PRICE_NEEDLE))
+	# **THE LINK IS LIVE, AND IT NAMES THE ACTING BAND** (`docs/plan_standing_upkeep.md` §4.7a ①).
+	# Driven through the control's REAL `meta_clicked` — the engine's own edge for a `[url]` — so this
+	# is the click the player makes and not the handler it reaches.
+	#
+	# **THE PAYLOAD IS THE CLAIM.** It carried NOTHING for a release, and the far end then switched to
+	# whatever page was up: on the FACTION page that is a rollup with no `⌃` on it, so the sentence
+	# sent the player somewhere that could not do what it promised. Reported from play on PR #562. The
+	# routing this payload feeds is asserted in `band_panel_preview`, which has a dock to route into.
+	var stressed_control := ForageFx.find_improvement_control(
+		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	var link_bands: Array = []
+	var link_sink := func(entity: int) -> void: link_bands.append(entity)
+	h._hud._drawercompose.work_tab_requested.connect(link_sink)
+	if stressed_control is RichTextLabel:
+		(stressed_control as RichTextLabel).meta_clicked.emit(HudComposeVocab.WORK_TAB_LINK_META)
+	h._hud._drawercompose.work_tab_requested.disconnect(link_sink)
+	h._assert_hud("pressing the offer's `%s` link asks for the Work tab"
+		% HudComposeVocab.WORK_TAB_LINK_TEXT, link_bands.size() == 1)
+	# **A REAL BAND, resolved the way the far end resolves it** — `player_band_by_entity` is what
+	# `jump_to_band_entity` calls, so a payload that answers `{}` there would switch the tab and land
+	# the player on the wrong board in silence.
+	h._assert_hud("…naming a band the panel can actually resolve (entity %s)" % str(link_bands),
+		link_bands.size() == 1
+			and not h._hud._band_labor.player_band_by_entity(int(link_bands[0])).is_empty())
+	# …and it is the band this SHEET is composing for, which is the band whose ⌃ queues this rung.
+	h._assert_hud("…and it is the ACTING band, whose ⌃ is the control the sentence points at",
+		link_bands.size() == 1
+			and int(link_bands[0]) == int(h._hud._band_labor.player_band().get("entity", -1)))
 
 	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
 	# State 6b-sow-locked — Seed Selection is only 12% learned AND this ordinary prairie refuses seed,

@@ -462,20 +462,54 @@ func _is_player_unit(unit: Dictionary) -> bool:
 func has_panel() -> bool:
     return _panel != null
 
-## **SHOW THE WORK TAB** — the far end of the compose sheet's `Work tab` link
+## **SHOW THE ACTING BAND'S WORK TAB** — the far end of the compose sheet's `Work tab` link
 ## (`docs/plan_standing_upkeep.md` §4.7a ①), relayed here by `HudLayer` because a compose sheet must
 ## not reach the dock itself.
 ##
-## **A NO-OP WITHOUT A PANEL, and a no-op in the WIDE shell too** — `set_active_tab` guards on the
-## zone key and returns early when the tab is already current, and the wide shell shows every zone at
-## once, so the link is harmless rather than conditional. That is why nothing here asks which shell is
-## up: the panel already owns that question and answers it once.
+## **IT ASSERTS THE BAND AS WELL AS THE TAB, and for one release it asserted only the tab.** Reported
+## from play: with the panel on the FACTION page the link switched to the faction's Work tab — a
+## rollup reading `Band 1 · 6 sources` — and not to the band's own board, where the `⌃` the sentence
+## had just promised actually lives. The link delivered the player to a surface that cannot do the
+## thing it said.
 ##
-## **IT NAMES THE TAB AND NOT THE SOURCE.** Focusing the patch's own board ROW would need this
-## controller to be showing that patch's band, which the link cannot assert — see the signal's note.
-func show_work_tab() -> void:
+## **THE BAND IS THE ACTING ONE**, i.e. whichever the sheet's `Band:` picker names — the band whose
+## `⌃` will queue the job and whose `builders` pool will pay for it. Not the selected band and not
+## whatever the panel happens to be showing.
+##
+## **`entity`, NOT `band_id`, and that is the two-handles rule read correctly.** This is entirely
+## client-side and builds no command, and `player_band_by_entity` is what every overlay reader keys
+## on; `band_id` is reserved for the durable id a COMMAND names.
+##
+## **THE JUMP GOES THROUGH `jump_to_band_entity`**, the faction page's own drill-down path, whose note
+## forbids exactly the second route this would otherwise be: *a popover row reaches a band the same
+## way the cycler does (recenter, pin, render), rather than by a second path that could drift from
+## it.* A third "make this band the subject" would be that drift.
+##
+## **THE GUARD IS *NOT ALREADY THIS BAND*, NOT *IS THE FACTION PAGE*.** The reported case is the
+## faction page, but it is the special case: a panel cycled to a DIFFERENT band is the same defect and
+## an `is_faction_page()` test would walk straight past it.
+##
+## **THE TAB IS SET AFTER THE JUMP, and the order is load-bearing.** `render_band` calls
+## `set_zone_layout(BAND_ZONE_LAYOUT)`, so arriving from the four-zone faction page re-declares the
+## zones; setting the tab first would have it overwritten by the render that follows.
+##
+## **AN UNKNOWN BAND STILL GETS THE TAB.** `jump_to_band_entity` no-ops on an entity it cannot
+## resolve, and letting that swallow the whole interaction would leave a pressed link doing nothing
+## visible at all — the tab switch is the half that is always right.
+##
+## **A NO-OP WITHOUT A PANEL, and harmless in the WIDE shell** — `set_active_tab` guards on the zone
+## key and returns early when the tab is already current, and the wide shell shows every zone at once.
+## Nothing here asks which shell is up: the panel owns that question and answers it once.
+##
+## **WHAT IT STILL DOES NOT DO IS FOCUS THE SOURCE'S ROW** on that board. The band is asserted now, so
+## the row could be — it needs a public focus seam on the board keyed by the source, which is a
+## different change from this one.
+func show_work_tab(band_entity: int) -> void:
     if _panel == null:
         return
+    if band_entity >= 0 and (_panel_is_faction \
+            or int(_band_labor.panel_band().get("entity", -1)) != band_entity):
+        jump_to_band_entity(band_entity)
     _panel.set_active_tab(BandCityPanel.ZONE_WORK)
 
 # ---- Shared section-block helpers -------------------------------------------

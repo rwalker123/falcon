@@ -889,6 +889,42 @@ SHORT tier renders three fewer rows than the TALL one.
   pulled out of the loop and unit-tested (`cargo test -p xtask`) over lines the real parser produces,
   so the regression is reachable without launching Godot.
 
+## A ROLE PASSES **TWO** GATES, AND THE GUARD DRIVES EVERY ONE OF THEM NOW
+
+**`builders` did not parse, and the pool was unstaffable for a whole slice.** Reported from live play:
+the Builders `+` did nothing and the event dock read *"Not connected to the server."* The client was
+connected. `sim_runtime::command_text`'s `assign_labor` role match enumerated
+`scout | warrior | agriculture | husbandry` and returned `UnexpectedToken` for anything else — and the
+native bridge (`bridge/command.rs` → `send_line`) **parses a line before it sends it**, so the command
+was rejected locally and never reached the socket. No build queue could progress, because nothing could
+ever stand on the pool that funds it.
+
+- **A role has to be admitted TWICE, by two files that do not know about each other**: the text grammar
+  in `sim_runtime`, and the sim's own `handle_assign_labor`. `band-city-panel.md` asserted *"the sim has
+  parsed `builders` since §2.5"* — true of the handler, false of the grammar, and the two were
+  conflated. The sim half was right the whole time.
+- **THIS GATE EXISTS TO CATCH EXACTLY THAT, AND IT PASSED**, because its band-wide-role drive was a
+  single `scout` line. An assertion that passes because the case was never asked is the failure mode
+  this repo keeps re-learning; a guard whose whole purpose is "the client's lines parse" must ask about
+  **every** line the client can build, not one representative.
+- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · agriculture · husbandry ·
+  builders — each with a non-default kit, **plus the bare `assign_labor … builders 2`**, which is the
+  exact form the pool's `+` emits for a player who never opened a kit picker. The kit-bearing form
+  alone would have missed it.
+- **`_assert_every_role_is_emittable` closes the other direction**: every listed role builds a real line
+  from `Main.format_assign_labor`, and an unknown role builds NOTHING — so the list is a list rather
+  than a builder that accepts anything.
+- **What it cannot do is stated in the code rather than left implied.** Nothing in GDScript can see a
+  role added to `format_assign_labor`'s `match` and *not* to this list — that arm is literals with no
+  reflectable set. What it does catch is the direction this defect actually travelled: a role the
+  builder and the sim both know and the text grammar does not.
+- **`EXPECTED_KINDS`' count is re-derived from the role list at runtime**, because a `const` initializer
+  cannot call `Array.size()` — attempting it is a hard parse error that hangs the guard SILENTLY, which
+  is this family's documented failure mode arriving on the fix for another one.
+
+Sabotage-verified by reverting the Rust role addition: the guard fails naming both forms and the token —
+`the server parser REJECTED 'assign_labor 0 71204 builders 2' — UnexpectedToken("builders")`.
+
 ## `command_guard`'s SHIPMENT drive asserts an AMOUNT, not a handle (arc #527, issue #517)
 
 `_drive_send_trade_expedition` is the one drive whose subject is a number. Everything else in this
