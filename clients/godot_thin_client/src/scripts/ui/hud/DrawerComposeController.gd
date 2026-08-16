@@ -259,7 +259,11 @@ func _hunt_take_rate(herd: Dictionary, floor: float, workers: int,
         holding: bool = false) -> Dictionary:
     var rates := SourceForecast.herd_axis_rates(herd, floor)
     var per_worker_rate := float(rates["per_worker"])
-    var ceiling := float(rates["hold_ceiling" if holding else "ceiling"])
+    # **THE `now` READING IS NEXT TURN'S ROOM, NOT THE STANDING ONE** — the sim regrows before it
+    # harvests (`advance_herds` / `advance_forage_regrowth` run a whole stage ahead of the labor
+    # pass), so a herd held at its floor takes its regrowth rather than nothing, and the standing room
+    # is what made this readout say `0.00` beside a work board quoting a live rate.
+    var ceiling := float(rates["hold_ceiling" if holding else "next_ceiling"])
     if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
         return {"available": false}
     return {
@@ -341,7 +345,11 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     var fpa := float(rates["per_animal"])
     var per_worker := float(rates["per_worker"])
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var ceiling := float(rates["hold_ceiling" if holding else "ceiling"])
+    # **THE `now` READING IS NEXT TURN'S ROOM, NOT THE STANDING ONE** — the sim regrows before it
+    # harvests (`advance_herds` / `advance_forage_regrowth` run a whole stage ahead of the labor
+    # pass), so a herd held at its floor takes its regrowth rather than nothing, and the standing room
+    # is what made this readout say `0.00` beside a work board quoting a live rate.
+    var ceiling := float(rates["hold_ceiling" if holding else "next_ceiling"])
     if fpa <= 0.0 or per_worker <= 0.0 or ceiling < 0.0 or workers <= 0:
         return {"available": false}
     ceiling *= output
@@ -584,7 +592,11 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # building crew could never trip the flag at all — the ⚠ would become vacuous exactly where a
     # quarter-throughput crew is least able to explain itself.
     var sustain_rates := SourceForecast.herd_axis_rates(herd, SourceForecast.FLOOR_FOOD_PEAK)
-    var sustain_ceiling := float(sustain_rates["ceiling"])
+    # **AND IT IS READ ON THE TAKE'S OWN BASIS, which is next turn's room.** The take includes the
+    # growth the sim banks a whole stage before it harvests; a bar read from the STANDING room would
+    # be short by exactly that growth, so a crew taking precisely what the source offers at the peak
+    # would trip the ⚠ for having taken it.
+    var sustain_ceiling := float(sustain_rates["next_ceiling"])
     if sustain_ceiling < 0.0:
         return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
@@ -706,8 +718,11 @@ func _hunt_material_rows(herd: Dictionary, band: Dictionary, floor: float, worke
         HudComposeVocab.BARE_FORECAST_PREFIX, floor)
     if not bool(forecast["known"]):
         return []
+    # The FORWARD room, like the food row beside it: the two accounts of one readout must describe one
+    # turn, and this sheet's headline is what the crew banks next turn.
     return SourceForecast.scaled_material_rows(
-        SourceForecast.expected_materials(float(workers), forecast),
+        SourceForecast.expected_materials(float(workers), forecast,
+            SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY),
         float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL)))
 
 ## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd, asked at the
@@ -785,11 +800,16 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     if not bool(forecast["known"]):
         return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var actual := SourceForecast.expected_yield(forecast, workers, band)
+    # **THE HEADLINE IS WHAT LANDS NEXT TURN, NOT THE ROOM STANDING NOW.** The sim regrows a whole
+    # stage before it harvests, so a patch held at its floor pays its regrowth while the standing room
+    # is empty — which is what had this readout quoting `0.00 FOOD` beside a work board quoting
+    # `+0.96 /turn` for the same tile. The presets above and the worker cap keep the ROOM: those ask
+    # what is takeable ONCE and how many hands the standing stock can use.
+    var actual := SourceForecast.expected_next_turn_yield(forecast, workers, band)
     # Fodder names no whole-animal quantum anywhere — no animal pays it — which is why these calls
     # leave the engagement arm's key defaulted and the arm drops out.
     var actual_fodder := SourceForecast.expected_yield_account(
-        forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
+        forecast, workers, band, "per_worker_fodder", "next_ceiling_fodder")
     # **WHAT THE CREW BANKS IN MATERIALS, AT THIS FLOOR** — `min(workers × per_worker, ceiling(floor))`
     # per material, the SAME clamp the food and fodder accounts take and the same one the hunt sheet
     # already applied. **This is the argument the plant web never got**: a tile 32% cotton and 26%
@@ -800,8 +820,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     # `expected_materials` reads the forecast's own two vectors, both of which the patch publishes
     # under the same prefixed keys the herd does — which is why one composition serves both webs and
     # this is a call rather than a second derivation.
+    # …and the MATERIALS through the SAME forward room, so every account on the row describes one
+    # turn: a forward food figure beside a standing material one is two turns stated on one line.
     var materials := SourceForecast.scaled_material_rows(
-        SourceForecast.expected_materials(float(workers), forecast), output)
+        SourceForecast.expected_materials(float(workers), forecast,
+            SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY), output)
     var zero_account := String(forecast["zero_account"])
     # THE STEADY-STATE TAKE, one `min` against a different ceiling — the SAME `expected_yield_account`,
     # reached by key, so the burst and the hold rate cannot be computed two ways. Composed only when
@@ -851,8 +874,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         # wrong move.** The take draws the same biomass down whether or not the crew banks the hay, so
         # the drawdown is unchanged — and on a hay-only patch this comparison is the only drawdown
         # signal there is.
-        YIELD_MODEL_OVERDRAW: (_is_overdraw(actual, float(sustain["ceiling"]) * output) \
-            or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output)) \
+        # Both sides of the comparison are read at NEXT TURN's room — see `_hunt_yield_model`'s own
+        # note: a forward take judged against a standing bar flags a crew that took exactly what the
+        # patch offered.
+        YIELD_MODEL_OVERDRAW: (_is_overdraw(actual, float(sustain["next_ceiling"]) * output) \
+            or _is_overdraw(actual_fodder, float(sustain["next_ceiling_fodder"]) * output)) \
             and SourceForecast.take_draws_down(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, workers),
         YIELD_MODEL_WASTE: "",
@@ -1141,9 +1167,13 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         # **THE CLAUSE IS QUOTED AT THE CREW, for the reason the pace below is** (§4.6a): the same
         # `BUILD_METER_HOLDS` is a crew treading water at `∞ turns` and a build parked on purpose at
         # `held`, and only the stepper's own count tells them apart.
-        if running_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
+        # **THE SENTINEL TEST IS THE CLAUSE PRODUCER'S, and this asks whether it was given words.**
+        # `DetailFormat.build_turns_clause` answers `""` for every reading with no number to state, so
+        # a value it has no face for drops the clause instead of appending a `≈-1 turns` to this face.
+        var turns_clause := DetailFormat.build_turns_clause(running_turns, build_crew)
+        if turns_clause != "":
             running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
-                running_face, DetailFormat.build_turns_clause(running_turns, build_crew)]
+                running_face, turns_clause]
         if _rung_pays_nothing_under_its_feed(deal, band):
             notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
         # **THE STATE OF THE METER IS THE FACE'S COLOUR, AND IT HAS THREE VALUES** — green while the
@@ -1768,9 +1798,23 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
 func _live_floor(live: Dictionary) -> float:
     return float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
 
+## **ARRIVING AT THE FLOOR AND ALREADY STANDING ON IT ARE THE SAME ANSWER TO THIS QUESTION.** The walk
+## only reports `reached_turn` on a DESCENT (`project_stock` requires the stock to fall below where it
+## started), so a source held at its floor answered `false` and its `after` reading was suppressed —
+## on the one source whose take IS the holding rate. That suppression and the instantaneous headline
+## were ONE defect: with the headline forward-looking the two readings simply coincide there and
+## `yield_rows` drops the arrow itself, while a source BELOW its floor states the pair honestly
+## (`0.00 → 0.96`, beside the verdict saying what it is waiting for).
+##
+## A crew that settles SHORT of the floor still answers `false`, which is the gate's own reason for
+## existing: promising it a holding rate it never attains is the failure this reading exists to fix.
 func _live_reaches(live: Dictionary) -> bool:
-    return int(live.get("reached_turn", SourceForecast.PROJECTION_REACHED_NONE)) \
-        != SourceForecast.PROJECTION_REACHED_NONE
+    if int(live.get("reached_turn", SourceForecast.PROJECTION_REACHED_NONE)) \
+            != SourceForecast.PROJECTION_REACHED_NONE:
+        return true
+    return float(live.get("stock_fraction", 1.0)) \
+        <= float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)) \
+            + SourceForecast.STOCK_FRACTION_EPSILON
 
 ## One yields model into the readout's first register. **The overdraw state moves the NUMBER, not just
 ## a suffix**: the row is the loudest thing in the box, so a take the source cannot pay forever has to

@@ -767,9 +767,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
-                // **What the keepers' tools took off the running build** — quoted beside the RAW
-                // `*WorkCost` above, never folded into it, so a readout can say "your hurdles: −17
-                // work" against a price that does not move under the crew's kit.
+                // **What the keepers' tools ADD to the running build each turn** — quoted beside
+                // the `*WorkCost` above, never folded into it, so a readout can say "your hurdles:
+                // +9 work a turn" against a price no tool can move (§4.8).
                 build_work_from_gear: herd
                     .map(|herd| herd.build_work_from_gear)
                     .unwrap_or(NO_BUILD_GEAR),
@@ -785,16 +785,30 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_blocked_reason: herd
                     .map(|herd| herd.build_blocked_reason.key().to_string())
                     .unwrap_or_default(),
-                // **The crew-output TERM the compose sheet evaluates its estimate from** (the
-                // boundary rule in `.claude/rules/core_sim/yield-forecast.md`): what one worker banks
-                // per turn. With `*WorkCost` / `*WorkDone` here and the gear pair on the band's own
-                // `kitTiers` row, `turns(workers)` is a closed form the client can evaluate against a
-                // *proposed* crew — which `buildTurnsRemaining` beside it cannot, because it is the
-                // sim's answer for the crew already there.
+                // **The BARE crew-output term of the compose sheet's closed form** (the boundary
+                // rule in `.claude/rules/core_sim/yield-forecast.md`): what one worker banks per
+                // turn carrying nothing. With `*WorkCost` / `*WorkDone` here and the gear pair on
+                // the band's own `kitTiers` row,
                 //
-                // **It is the LADDER's term, not a literal.** Published so a second term landing in
-                // `crew_work_output` reaches the client for free.
-                build_work_per_worker_turn: build_work_per_worker_turn(),
+                // ```text
+                // gear(w)  = min(w, buildWorkSaturatingCrew) × buildWorkPerWorker
+                // turns(w) = ceil((workCost − workDone)
+                //                 / (w × buildWorkPerWorkerTurn + gear(w) − meterRotPerTurn))
+                // ```
+                //
+                // is a closed form the client can evaluate against a *proposed* crew — which
+                // `buildTurnsRemaining` beside it cannot, because it is the sim's answer for the
+                // crew already there.
+                //
+                // **⛔ THE GEAR TERM MOVED FROM THE NUMERATOR TO THE DENOMINATOR** (§4.8). It used
+                // to be subtracted from the job (`workCost − workDone − gear(w)`); a kit raises what
+                // a worker delivers now, so it is an addend on the supply. **Both terms stay on
+                // `kitTiers`, and the saturation with them** — coverage arms a *prefix* of a pool,
+                // so an eleventh keeper with ten sets of hurdles between them adds only their own
+                // hands. Publishing a pre-averaged pool rate here instead would have lost exactly
+                // that, and lost it silently on the one crew a compose sheet is *for*: a proposed
+                // one, of a size the sim never resolved.
+                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
             }
         })
         .collect()
@@ -1020,16 +1034,16 @@ pub(crate) fn snapshot_forage_patches(
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
-                // The plant twin — the hoes' contribution, or `NO_BUILD_GEAR` for a pool sent
-                // out bare or carrying the animal web's hurdles.
+                // The plant twin — the hoes' delivery, or `NO_BUILD_GEAR` for a pool sent out bare
+                // or carrying the animal web's hurdles.
                 build_work_from_gear: patch.build_work_from_gear,
                 // The plant twin — see the herd row.
                 build_queue_position: patch.build_queue_position,
                 // The plant twin — see the herd row.
                 build_blocked_reason: patch.build_blocked_reason.key().to_string(),
                 // The plant twin — see the herd row for why the estimate's terms ship beside the
-                // sim's own answer.
-                build_work_per_worker_turn: build_work_per_worker_turn(),
+                // sim's own answer, and for where the gear term sits in it.
+                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
                 // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
                 // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
                 // shared helper so the wire and the take cannot disagree. `0` in a dead season, like

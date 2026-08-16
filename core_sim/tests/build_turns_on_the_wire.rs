@@ -871,20 +871,25 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     // and therefore nothing to rot. The quote used to read `-3` here — *"the meter never reaches its
     // cost"* — about a build that finishes perfectly well.
     let cost = published_patch_field(&app, source, |patch| patch.cultivationWorkCost());
-    // **LESS WHAT THE POOL'S TOOLS TAKE OFF IT.** The builders row names no kit, so the pool derives
-    // one per queue entry and the roster answers `tillage` for a patch — the hoes are the plant web's
-    // build tool. Read off the band's own kit row rather than stated as a literal, so retuning the
-    // tool moves the fixture with the game.
+    // **PLUS WHAT THE POOL'S TOOLS DELIVER, IN THE DIVISOR** (`docs/plan_standing_upkeep.md` §4.8).
+    // The builders row names no kit, so the pool derives one per queue entry and the roster answers
+    // `tillage` for a patch — the hoes are the plant web's build tool. Read off the band's own kit
+    // row rather than stated as a literal, so retuning the tool moves the fixture with the game.
+    //
+    // **The gear used to sit in the NUMERATOR** (`(cost − gear) / crew`), which let a tool shrink
+    // the job; it raises what a worker delivers now, so the published `cultivationWorkCost` above is
+    // the whole job and the kit shortens the span by supplying more of it per turn.
     let gear = published_tillage_gear(&app, A_CREW_UNDER_THE_RATE);
     assert!(
         gear > core_sim::NO_BUILD_GEAR,
-        "fixture: the derived builders kit must take real work off a plant build, or this arm is \
+        "fixture: the derived builders kit must deliver real work on a plant build, or this arm is \
          the un-geared quote wearing a gear term's clothes (gear {gear})"
     );
     assert_eq!(
         published_build_turns(&app, source),
-        ((cost - gear) / core_sim::PER_WORKER_OUTPUT).ceil() as i32,
-        "one builder is quoted `(work_cost − gear) / crew` turns — the rate is the keeping's bill"
+        (cost / (A_CREW_UNDER_THE_RATE as f32 * core_sim::PER_WORKER_OUTPUT + gear)).ceil() as i32,
+        "one builder is quoted `work_cost / (crew + its gear)` turns — the rate is the keeping's \
+         bill, and the tool is in the divisor"
     );
     assert_eq!(
         published_patch_field(&app, source, |patch| patch.meterRotPerTurn()),

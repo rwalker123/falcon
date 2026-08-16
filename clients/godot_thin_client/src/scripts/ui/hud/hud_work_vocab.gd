@@ -492,12 +492,35 @@ const UPKEEP_MODE_SPREAD_HINT := "Fund every source in proportion — everything
 
 const UPKEEP_MODE_PRIORITY_HINT := "Fund the biggest investments in full and let the marginal ones rot."
 
-## The line under the pair. It states the POOL's own arithmetic, so the mode reads as an answer to a
-## live shortfall rather than as an abstract preference; the covered form is the reassuring half and
-## renders in the same slot, which is what keeps the control from appearing only when it is too late.
-const UPKEEP_MODE_SHORT_FORMAT := "Short %s work of %s this turn."
+## RETIRED — **`UPKEEP_MODE_SHORT_FORMAT` AND `UPKEEP_MODE_COVERED_TEXT`, the line under the pair.**
+## It stated `Short 2 work of 4 this turn.` — **a SUM across both webs**, since both of its terms were
+## the plant pool's plus the animal pool's, so it could not name the web that was short even in
+## principle: a band whose Agriculture is fine and whose Husbandry is starving read one number
+## belonging to neither card. The shortfall belongs to a POOL, so it is on that pool's own card now
+## (`UPKEEP_POOL_SHORT_MARK` + `UPKEEP_POOL_SHORT_*_FORMAT`).
+##
+## The covered sentence went for a second reason of its own: it announced that nothing is wrong, using
+## a noun — *keeper* — that appears on no control in this game. The band staffs `Agriculture` and
+## `Husbandry`; a sentence naming neither cannot be acted on, and *"everything is fine"* is what an
+## unmarked card already says.
 
-const UPKEEP_MODE_COVERED_TEXT := "Your keepers cover everything this band holds."
+## **THE POOL CARD'S MARK — a bare `⚠`, no figure** (the tile card's own rule one surface over). A card
+## is a role name and a stepper; a number wedged into it would be the retired line again, in less room.
+const UPKEEP_POOL_SHORT_MARK := HudSelectionVocab.RUNG_HAZARD_GLYPH
+
+## …and the figure it stands for, on the card's own `tooltip_text`. **Per web, because the whole defect
+## of the retired line was that it could not say which** — the plant pool keeps ground and the animal
+## pool keeps animals, and those are different decisions with different remedies. Both name the
+## band's own holdings rather than "sources", which is the noun the player sees on the map.
+const UPKEEP_POOL_SHORT_PLANT_FORMAT := "Short %s of the %s work a turn this band's tended ground needs."
+
+const UPKEEP_POOL_SHORT_ANIMAL_FORMAT := "Short %s of the %s work a turn this band's tamed animals need."
+
+## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
+## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
+static func upkeep_pool_short_format(role_name: String) -> String:
+    return UPKEEP_POOL_SHORT_ANIMAL_FORMAT if role_name == ROLE_NAME_HUSBANDRY \
+        else UPKEEP_POOL_SHORT_PLANT_FORMAT
 
 ## …and the messages the command feed shows for the press. Keyed by the token so the two can never
 ## drift from what was actually sent; the fallback exists only for a mode the sim gains before this
@@ -808,6 +831,12 @@ const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
 ## WILD IS THE ABSENCE OF A MARK: rung 1 is the default every source starts on, and glyphing it would
 ## put a mark on every row in the game to say "nothing has happened here yet".
 ##
+## **THE WORD `rung` IS OURS AND NOT THE PLAYER'S.** These two tooltips read *"the top plant rung"* /
+## *"the top animal rung"*, which is exact and means nothing to anyone who has not read the ladder
+## config: it appears on no control, in no menu and in no other sentence the game shows. So they say
+## what the player can check instead — there is nothing further to do to this ground / this herd. The
+## word stays in comments and identifiers, where it is the right term.
+##
 ## The glyphs are each rung's EXISTING mark, reused (`DetailFormat.CULTIVATION_GLYPH` /
 ## `field_glyph` / `pastoral_glyph` / `CORRAL_GLYPH`) — see the block above them for why the pastoral
 ## rung has to borrow the `tame` verb's ◎.
@@ -816,13 +845,13 @@ const WORK_ROW_RUNG_TENDED_TOOLTIP := "Tended Patch — this ground has been cul
 ## …and the committed crop when the patch carries one (`committed_display_name`, e.g. "Wild Emmer").
 const WORK_ROW_RUNG_TENDED_CROP_FORMAT := "Tended Patch — %s. This ground has been cultivated."
 
-const WORK_ROW_RUNG_FIELD_TOOLTIP := "Field — this ground has been sown, the top plant rung."
+const WORK_ROW_RUNG_FIELD_TOOLTIP := "Field — this ground has been sown, and there is no improving it further."
 
-const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Field — %s sown, the top plant rung."
+const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Field — %s sown, and there is no improving this ground further."
 
 const WORK_ROW_RUNG_PASTORAL_TOOLTIP := "Pastoral herd — tamed, and it keeps to your camp."
 
-const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, the top animal rung. It eats from your larder every turn."
+const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, and there is no taming it further. It eats from your larder every turn."
 
 ## The under-contained managed-herd note (fauna neglect-escape arc): fewer keepers staffed than the
 ## herd needs, so it sheds whole animals into a nearby wild herd. Drives the row's amber stripe + the
@@ -852,12 +881,40 @@ const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — raise this band's 
 ## picker below is one function and not a branch at each call site.
 const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's Agriculture role."
 
-## …and the row tooltips carry the part a one-line note has no room for: WHY the `+` on this row does
-## not answer the ⚠, and where the hands that do come from. Tooltips rather than a second strip line
-## because `_work_inspector_height` reserves ONE open height for every row.
-const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-kept — a managed herd is held out of the band's HUSBANDRY pool, not by its hunters, so this row's + will not stop the drift. It is owed that keeping from the first work banked, so a half-tamed herd is short for the same reason a finished one is. Raise Husbandry in the POOLS block above this board, or set the band's keeping split so this herd is funded first."
+## RETIRED — **`WORK_ROW_UNDER_KEPT_TOOLTIP` AND `WORK_ROW_UNDER_HERDED_TOOLTIP`**, a four-sentence
+## hover each (*"Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its
+## gatherers, so this row's + will not stop the slide. …"*). They explained the MODEL — which pool
+## owes the keeping, why the stepper beside them is the wrong lever, that a half-built rung is billed
+## like a finished one — where the player's question is *what do I do and how long have I got*. The
+## note under the row already answers the first; the second is the countdown below, and everything
+## else was prose nobody had a reason to read twice.
 
-const WORK_ROW_UNDER_KEPT_TOOLTIP := "Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its gatherers, so this row's + will not stop the slide. It is owed that keeping from the first work banked, so a half-cultivated patch is short for the same reason a finished one is. Raise Agriculture in the POOLS block above this board, or set the band's keeping split so this patch is funded first."
+## **THE HOVER, AND IT IS ONE PRODUCER WITH A FLAG** — the note's own sentence, plus the countdown
+## **only where a caller supplies one**. Both surfaces that state an under-kept source call this:
+##
+## - the WORK BOARD passes the rung and its grace, so its row reads
+##   *"This ground is slipping — raise this band's Agriculture role. / Tended is lost in 3 turns."*
+## - the SOURCE'S CARD (the tile card's rung row, the herd drawer's) passes neither, so its row hover
+##   is the first line alone.
+##
+## **THAT ASYMMETRY IS DELIBERATE.** The board is where staffing is decided this turn, so *how long you
+## have* is actionable there; the card is where you look at the ground, and a figure you cannot act on
+## from it is noise. **One producer, never two** — a second sentence-builder for the card is exactly how
+## the two surfaces come to phrase one hazard differently, which is the failure `under_kept_note`'s own
+## picker exists to prevent one line up.
+##
+## `rung_word` is the rung's badge word (`DetailFormat.rung_badge_word`) — `""` for a rung the badge
+## table cannot name, which drops the countdown rather than counting down an unnamed thing.
+const UNDER_KEPT_NO_COUNTDOWN := -1
+
+## The countdown's three forms. `grace` is `neglectGraceRemaining` read through its own flag, so `0` on
+## an at-risk source means the penalty is biting THIS turn — opposite news from `0` on a source that is
+## not at risk, which never reaches here.
+const UNDER_KEPT_LOST_FORMAT := "%s is lost in %d turns."
+
+const UNDER_KEPT_LOST_ONE_TURN := "%s is lost next turn."
+
+const UNDER_KEPT_LOST_NOW := "%s is being lost now."
 
 ## Which of the pair this row takes, off the row's own labor kind — one picker, so the note and the
 ## tooltip can never end up describing two different webs.
@@ -865,9 +922,17 @@ static func under_kept_note(kind: String) -> String:
     return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_NOTE
 
-static func under_kept_tooltip(kind: String) -> String:
-    return WORK_ROW_UNDER_HERDED_TOOLTIP if kind == SourceForecast.LABOR_KIND_HUNT \
-        else WORK_ROW_UNDER_KEPT_TOOLTIP
+static func under_kept_tooltip(kind: String, rung_word: String = "",
+        grace: int = UNDER_KEPT_NO_COUNTDOWN) -> String:
+    var note := under_kept_note(kind)
+    if rung_word == "" or grace == UNDER_KEPT_NO_COUNTDOWN:
+        return note
+    var countdown := UNDER_KEPT_LOST_NOW % rung_word
+    if grace == 1:
+        countdown = UNDER_KEPT_LOST_ONE_TURN % rung_word
+    elif grace > 1:
+        countdown = UNDER_KEPT_LOST_FORMAT % [rung_word, grace]
+    return "%s\n%s" % [note, countdown]
 
 ## **THE SAME PAIR ASKED WITH A *SOURCE* KIND** (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`), which is
 ## what the card-side producers hold. `SOURCE_KIND_HERD` is `"herd"` and `LABOR_KIND_HUNT` is
@@ -876,6 +941,12 @@ static func under_kept_tooltip(kind: String) -> String:
 ## rather than re-spelling the pair, so the two webs' wording still has exactly one home.
 static func under_kept_note_for_source(source_kind: String) -> String:
     return under_kept_note(_labor_kind_of(source_kind))
+
+## …and the HOVER asked the same way, which is the form both source CARDS use. It supplies no
+## countdown by construction: the card states no figure at all, and the one surface that does states
+## it by passing the pair above.
+static func under_kept_tooltip_for_source(source_kind: String) -> String:
+    return under_kept_tooltip(_labor_kind_of(source_kind))
 
 ## **WHICH BAND ROLE PAYS THIS SOURCE'S KEEPING** — `Husbandry` on the animal web, `Agriculture` on
 ## the plant one. It is the role NAME the two notes above already name in prose, pulled out so the
@@ -956,7 +1027,14 @@ const POOL_CARD_HEIGHT := 56.0
 ##
 ## **IT WAS 67, AND THREE LINES** (§4.7) — a `Short of keepers` section head over the buttons over the
 ## note. The head said nothing the two words and the number beneath it did not, and this zone clips, so
-## it went and the other two share a row. Measured at 22.
+## it went and the other two shared a row at 22.
+##
+## **THE NOTE HAS SINCE GONE TOO, AND THE NUMBER DID NOT MOVE — re-measured, not assumed.** The
+## buttons were always the taller element of that row (`HudWidgets.compact` at `WORK_CHIP_FONT_SIZE` /
+## `WORK_CHIP_PADDING_V`), so with the arithmetic line retired the row draws **exactly 22.0px** of the
+## 22.0 reserved — `band_panel_preview._assert_upkeep_mode_row_fits` prints both figures beside the
+## claim, which is what makes a re-derivation a measurement rather than a guess. `pools_block_height`
+## is therefore unchanged: **110px with the fund-mode row, 82 without.**
 const UPKEEP_MODE_ROW_HEIGHT := 22.0
 
 ## **THE BLOCK'S STABLE HANDLE, valued whether its fund-mode row is present** — the harnesses assert
@@ -1035,10 +1113,10 @@ const BUILD_QUEUE_HEAD_MARKER := "▸"
 
 const BUILD_QUEUE_MARKER_WIDTH := 10.0
 
-## The date column. Fixed and CLIPPING: `HudSelectionVocab.RUNG_BLOCKED_FORMAT` is a whole sentence,
-## and letting it size the row would squeeze the job face to nothing on a left dock. The Label's
-## `text` still carries the full value (clipping is visual only) and the row tooltip repeats it, so
-## nothing is unreachable.
+## The date column. Fixed and CLIPPING: the widest values this column takes — the `∞`-carrying
+## sentinels and the `turn N (0%)` completion form — would squeeze the job face to nothing on a left
+## dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
+## only) and the row tooltip repeats it, so nothing is unreachable.
 const BUILD_QUEUE_DATE_WIDTH := 118.0
 
 ## `3 builders · Tillage kit` — the head's readout, naming the pool that funds the queue and the kit
@@ -1129,9 +1207,9 @@ const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
 ## The row's own tooltip: the job face and its date in full, since both columns clip.
 const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
 
-## The indent a queue row's blocked-cause lines take: NONE. `DetailFormat.build_blocked_lines` hangs
-## its sentences under a rung row on the source's card and indents them to say so; a tooltip has no
-## row above them, and a leading run of spaces in one reads as a typo rather than as structure.
+## The indent a queue row's blocked-cause line takes: NONE. `DetailFormat.build_blocked_lines` hangs
+## its sentence under a rung row on the source's card and indents it to say so; a tooltip has no row
+## above it, and a leading run of spaces in one reads as a typo rather than as structure.
 const BUILD_QUEUE_TOOLTIP_UNINDENTED := ""
 
 ## **…AND ON A REAL COUNT IT CARRIES BOTH READINGS**, which is what actually kills the ambiguity

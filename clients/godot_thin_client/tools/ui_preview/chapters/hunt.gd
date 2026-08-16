@@ -1640,12 +1640,27 @@ func run(harness) -> void:
 	# frame, not in review: this sheet read `leave 50% · ≈11 Red Deer` over "grows past 1075". Both now
 	# render the quantity through `stock_face`, and this is the assertion that says so — the verdict's
 	# sentence must CONTAIN what the flag flies, on the same model.
+	# **THE REFUSAL IS FORWARD-LOOKING NOW, so it is staged by the trailing `takes_next_turn`.** The
+	# headline above it states what the crew banks NEXT turn, so the sentence may only claim the crew
+	# takes nothing when next turn's growth really does not cross the floor — `false` here is a source
+	# far enough under it that it does not.
 	var at_floor := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
 		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
-		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer")
+		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true, false)
 	h._assert_hud("the at-floor verdict quotes the threshold in the SAME unit the flag flies",
 		String(at_floor.get("text", "")).contains("≈11 Red Deer")
 			and not String(at_floor.get("text", "")).contains("1075"))
+	# **AND THE PAIR THAT MAKES `takes_next_turn` MEAN SOMETHING: the same standing stock, the same
+	# empty room, and a growth that DOES cross the floor.** That source is holding at its floor and
+	# living off the regrowth — the state whose headline used to read `0.00 FOOD` under *"takes nothing
+	# until it grows past 1075"* — so it states neither the refusal nor a settling verdict, both of
+	# which would be about a source that is not there yet.
+	var holding := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
+		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
+		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true, true)
+	h._assert_hud("…while a source held AT its floor states that it is holding, not that it is empty",
+		String(holding.get("text", "")) == SourceForecast.VERDICT_HOLDS_AT_FLOOR
+			and String(holding.get("severity", "")) == SourceForecast.VERDICT_OK)
 
 	# 3x — the same wolf as an EXPEDITION target (band 27 tiles off). `delivers_food = false` on every
 	# cell says THE QUARRY IS INEDIBLE. This frame read as a DENIAL MISSION for the release in which

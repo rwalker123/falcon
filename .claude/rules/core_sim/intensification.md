@@ -237,7 +237,8 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
 `decay_fraction_per_turn` it read: shortfall is the decay.)
 
 - **`build_accrual`** returns **the WORK UNITS THE BAND'S BUILDERS PRODUCE this turn** —
-  `builders × PER_WORKER_OUTPUT`, the pool's whole head count and no floor term, and only for the
+  `builders × (PER_WORKER_OUTPUT + gear per worker)`, the pool's whole head count and no floor term,
+  and only for the
   source at the **head** of that band's queue — **only** when
   `improvement` **is** the rung's own `verb` *and* the caller's rung-specific gates hold (`eligible` —
   knows the unlock knowledge, **the crew took something**, species ceiling allows, faction owns it);
@@ -250,28 +251,61 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   work)` lives, so the wire's `buildTurnsRemaining` cannot drift from the meter it describes. `None`
   means **no estimate**, and only a **stall** earns it — a crew producing nothing has no finite
   answer, and a huge number would read as a promise.
-  > **A bar the meter is already at or past is `1`, not `None`** (`BUILD_FINISHES_IN_ONE_TURN`), and
-  > the two states that reach it are one sentence: the work is already banked, or **the crew's gear
-  > pays the job off outright** — `effective_build_cost` is unfloored, so a well-equipped crew drives
-  > the bar below zero, and §6.2 of the plan says such a bar *"completes the build on its first worked
-  > turn"*. Answering `-1` there broke the arc's own headline claim at exactly the crew size that
-  > demonstrates it: on the shipped roster six geared keepers take `6 × 8.5 = 51` off a 50-unit
-  > `Tame`, so the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added. Pinned at the seam
-  > and on the exported snapshot (`build_turns_closed_form.rs`), in both the projection and the live
-  > stamp.
+  > **A cost the meter is already at or past is `1`, not `None`** (`BUILD_FINISHES_IN_ONE_TURN`) —
+  > the work is already banked, so one more turn finishes it. **Answering `-1` there would break the
+  > arc's headline claim**, and it is pinned at the seam and on the exported snapshot
+  > (`build_turns_closed_form.rs`), in both the projection and the live stamp.
+  >
+  > **The OTHER state that used to reach this branch is gone with the subtraction**: a crew whose gear
+  > "paid the job off outright" drove the bar below zero and completed on turn one having banked
+  > almost nothing. A job is only finished by work someone did now, so the sole route to one turn is
+  > out-producing what remains.
 - **`LadderConfig::projected_build_turns` — the same question asked of a rung nobody has started.**
   It assembles exactly the four calls the in-flight stamp makes (`build_cost` →
   `build_work_from_gear` → `effective_build_cost` → `build_accrual`, then `build_turns_remaining`)
   against a stated `banked` and the caller's composed `eligible`, so a quote for an unstarted job
   cannot be arithmetic the running build would disagree with. It is what makes `buildTurnsRemaining`
   a **projection** rather than a `-1` — see "The build on the wire".
-- **`effective_build_cost` — what the CREW BROUGHT** (issue #515, `equipment.md` → "The build
-  axis"). `intensification::build_work_from_gear` sums `EquipmentConfig::build_work_per_worker` over
-  the crew through the coverage seam, and the ladder subtracts it from the job: `cost − t`, with
-  **nothing under it**. `intensification::NO_BUILD_GEAR` (**`0.0`**) for a crew carrying nothing that
-  helps — every plant build today, and every animal one whose crew left the handling gear at camp. It touches **neither** `build_accrual` **nor** the upkeep: the
-  crew's hands are worth what they are worth, and what an unkept improvement forgets is what its
-  keepers did not supply, which no tool can change.
+> #### ⛔ RETIRED — `effective_build_cost`, and with it the idea that a tool shrinks a job
+>
+> **A KIT RAISES WHAT A WORKER DELIVERS PER TURN. A JOB'S WORK REQUIREMENT NEVER CHANGES.** A 50-work
+> Cultivate costs 50 work with hoes, without hoes, and with any tool that ever ships; gear decides how
+> fast the pile is worked off and never how big it is (`docs/plan_standing_upkeep.md` §4.8).
+>
+> The retired form was `effective_build_cost(cost, gear_work) = cost − workers × gear`, with nothing
+> under it. **Two things were wrong with it, and neither is the degenerate case** — that a large enough
+> gear value finishes a job outright is a CONFIG problem and never an argument about the model:
+>
+> - **It granted the kit's help as a LUMP, once, against the target** — however long the job ran. A
+>   tool is used every turn it is held, so its help belongs on the rate.
+> - **It has nothing to subtract from on an UPKEEP**, which is a rate rather than a pile. So gear could
+>   only ever touch builds, and making a hoe matter to *keeping* a Field would have needed a second,
+>   unrelated mechanism beside it.
+>
+> **One supply expression now feeds both accounts** — `pool_work_supply(workers, gear_per_worker)` =
+> `workers × (PER_WORKER_OUTPUT + gear)`. A build divides its pile by it to get turns; an upkeep
+> compares its demand against it to see whether it is covered. What that gives up is scale-sensitivity:
+> a multiple saves the same *percentage* of turns on a garden and a farm alike, where a subtraction
+> nearly freed a small job and barely dented a large one. That is accepted.
+>
+> **THE CONSTANT WAS A UNIT CONVERSION AND AN EXACT ROUND TRIP, NOT A TUNING CHOICE.** `build_work`
+> shipped at `8.5` meaning *units off the job, per worker* — and that 8.5 was itself minted from a
+> still earlier `build_rate` **×1.5** multiplier on the crew's output. This model is a per-worker
+> output term again, so inverting the mint needs no reference crew and no reference job:
+> `PER_WORKER_OUTPUT + build_work = 1.5` → **`build_work = 0.5`**. **Hoes are +0.5 build work per
+> worker per turn; hurdles are +0.5** — the same tools they always were, and an equipped worker is
+> 1.5× a bare one. Carrying 8.5 across unchanged would have meant a worker delivering **nine and a
+> half times** a bare one, which is why the old number is meaningless in the new units. Every number
+> here is provisional until the arc's tuning spread (§4.14).
+>
+> **A NUMBER TRAVELS WITH THE ITEM THAT OWNS IT.** Write "hoes are +0.5 build work per worker per
+> turn", never "`build_work` is 0.5" — the bare value names no owner and no per-what, and that
+> ambiguity has already cost one detour.
+
+- **`gear_work_supply` — what the CREW BROUGHT, as a RATE** (issue #515, `equipment.md` → "The build
+  axis"). It sums `EquipmentConfig::build_work_per_worker` over the crew through the coverage seam and
+  is a **readout** of what the pool's kits add per turn. `intensification::NO_BUILD_GEAR` (**`0.0`**)
+  for a crew carrying nothing that helps.
   **THE GEAR TERM IS QUOTED AT THE BUILD'S OWN CREW**, and so is the coverage behind it
   (`docs/plan_standing_upkeep.md` §2.2). `build_work_per_worker` is a **rate per worker**, so the
   count it multiplies has to be the workers actually doing the job — which means
@@ -285,12 +319,23 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   outright. `the_gear_offset_scales_with_the_build_crew_and_ignores_the_take_crew` pins all three
   readings: it scales with the builders, it saturates at the units held, and it does **not** move
   when only the gathering crew does.
-  **How far a kit may shrink a job is the JOBS' and the TOOLS' own dials, not a structural floor**:
-  a rung's `work_cost` and an item's `EquipmentStat::BuildWork` decide it between them, and later
-  work is meant to be *impractical* bare-handed — which requires that the right tool be able to
-  reduce a job to a small fraction of itself. A bar at or below zero completes on the first worked
-  turn, the same no-cap outcome as putting fifty hands on it; `build_fraction` divides by the **raw**
-  stamped cost and `build_turns_remaining` by the crew's output, so neither reads the bar at all.
+  **A kit may not shrink a job at all** — how much faster it is worked off is the tools' own dial, and
+  later work being *impractical* bare-handed is expressed by the multiple, never by the pile getting
+  smaller. `build_fraction` and `build_turns_remaining` both read the raw stamped cost, because there
+  is no longer a second cost for them to disagree about.
+
+  **AND THE SAME SUPPLY REACHES KEEPING NOW.** `maintenance_shares` pools
+  `workers × (PER_WORKER_OUTPUT + gear)` for the web's keeping role, so an equipped keeper covers more
+  of a rung's demand — the demand itself is untouched, which is the build rule's mirror one account
+  over. `tillage` gained the `agriculture` job and `hurdling` the `husbandry` one so the pools have
+  something to derive; the derivation is per web, needing no player pick, exactly as the builders row's
+  is per entry. **`default_kits` for both is `none`, and a stored `none` could beat that derivation
+  the way it did on the builders row** — the same fork guards all three now.
+
+  > **KNOWN HOLE — a keeping tool never wears.** `WearQuantum` has `BuildProgress` and no upkeep
+  > quantum, so a hoe raises what a keeper supplies **forever, free**. A wear quantum for upkeep is a
+  > new charge site and would move `_comment_durability`'s tuning and the `headline_wear` readouts,
+  > so it is not in this slice.
 - **NO `learn_multiplier(floor)` TERM** — see "THE FLOOR CAME OFF THE BUILD RATE". `build_accrual`
   takes no floor at all, and neither does the upkeep: what an improvement loses is the work its
   keepers did not supply, which is a fact about a crew and a rung rather than about how hard anyone

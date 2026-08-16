@@ -355,13 +355,15 @@ const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
 # that does not carry it — and `0 work` is a clause that costs a line's width to say *no*. The row's
 # own condition and its stepped-down pen rate already carry that news.
 #
-# **IT READS IN WORK UNITS, NOT AS A MULTIPLIER** (`docs/plan_unit_costed_work.md` §6). `×1.5` said
-# the gear made the crew faster; what it actually does is take a fixed number of units off the JOB,
-# per equipped worker — which is why the same tool is worth a lot on a garden and nearly nothing on a
-# farm, and why a multiplier could never say so. A kit whose gear is spent takes nothing off and the
-# clause disappears, exactly as the neutral multiplier's did.
-const KIT_ROLE_BUILD_WORK_SUFFIX := " · %s work off a tame or a pen, per keeper"
-# The contribution reads to one place: the shipped 8.5 is a playtest dial and a second decimal would
+# **IT READS IN WORK UNITS PER TURN, NOT AS A MULTIPLIER AND NOT AS A DISCOUNT**
+# (`docs/plan_standing_upkeep.md` §4.8). It said `work off a tame or a pen` while the gear was
+# subtracted from the job; a kit raises what an equipped worker DELIVERS each turn, so the clause
+# states a rate and the job's size never moves. `×1.5` was the reading before that, and this is the
+# same fact in the units the meter is quoted in — which is what lets it sit beside a work cost.
+# A kit whose gear is spent adds nothing and the clause disappears, exactly as the neutral
+# multiplier's did.
+const KIT_ROLE_BUILD_WORK_SUFFIX := " · +%s work a turn per keeper on a tame or a pen"
+# The contribution reads to one place: the shipped 0.5 is a playtest dial and a second decimal would
 # imply a precision the number does not have.
 const KIT_BUILD_WORK_DECIMALS := 1
 # **The value that means "this gear changes no build"** — the schema's own default and what every kit
@@ -657,6 +659,15 @@ class Context extends RefCounted:
     ## sentinel) — in which case no Growth row was emitted to tint.
     var fertility: float = NAN
     var disclosures: Dictionary = {}
+    ## **THE PER-ROW HOVER, keyed by the row's own KEY** — `{"Cultivation": "This ground is
+    ## slipping — …"}`. A detail surface is ONE `RichTextLabel`, so a row cannot carry a
+    ## `tooltip_text` of its own; `[hint=…]` is the per-run equivalent and this is what fills it.
+    ##
+    ## **IT IS A CONTEXT FIELD RATHER THAN A GUESS AT THE RENDERER**, for `_value_hex`'s own reason
+    ## one field up: the producer that knows a row is in trouble is the one that wrote the row, and a
+    ## renderer sniffing the value for a hazard word would need a new guess per hazard. A key with no
+    ## entry renders exactly the BBCode it always did.
+    var row_tooltips: Dictionary = {}
 
 
 # =====================================================================================
@@ -743,6 +754,35 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
         out += "[/table]"
     return out
 
+## **THE HOVER A DETAIL BLOCK CARRIES, JOINED FROM THE ROWS THAT REGISTERED ONE** — and it is the
+## BLOCK's, not the row's, because THE ENGINE WILL NOT CARRY A PER-ROW ONE HERE.
+##
+## ⛔ **`[hint=…]` IS NOT PARSED BY THIS GODOT BUILD, AND IT FAILS LOUDLY IN THE MIDDLE OF A TABLE.**
+## It was tried first, being the documented BBCode for a per-run tooltip: the tag rendered LITERALLY,
+## and the parser did not recover — every tag after it in that cell (`[color=…]`, `[/cell]`,
+## `[/table]`) printed as text too, so the rung row read
+## `[hint=This ground is slipping…][color=#f2b13f]⚠ Blocked 96%[/color][/hint][/cell][/table]` on
+## screen. Rendered and looked at, not reasoned about. Do not re-add it without rendering it first.
+##
+## So the remedy rides `RichTextLabel.tooltip_text`, which answers for the whole block — and the block
+## is exactly ONE SOURCE (the land drawer describes one patch, the herd drawer one herd), of which at
+## most one rung is ever at risk (`SourceForecast.at_risk_rung`). The hover therefore states one
+## source's remedy on a surface about that source, which is a wider target than the row and never a
+## different subject. **A `RichTextLabel` is NOT a `Label`**, so a bare `tooltip_text` is live here
+## rather than the silent no-op `HudWidgets.set_label_tooltip` exists for.
+##
+## `""` for a block whose every rung is being kept, which is every calm card in the game — and an
+## empty `tooltip_text` shows no tooltip at all, so nothing is offered where nothing is wrong.
+static func block_tooltip(ctx: Context) -> String:
+    if ctx == null:
+        return ""
+    var lines: Array[String] = []
+    for key in ctx.row_tooltips:
+        var hover := String(ctx.row_tooltips[key])
+        if hover != "" and not lines.has(hover):
+            lines.append(hover)
+    return "\n".join(lines)
+
 ## THE KEY→TINT REGISTRY: which hex a row's VALUE renders in, keyed on the row's own label. Every
 ## detail surface in the game consults this one table, which is why the tile card's Sight /
 ## Habitability / Ecology cases live beside the band's Food / Morale / Growth ones.
@@ -780,22 +820,16 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # `ecology_value_hex` matches the phase WORD wherever it sits in the value, so folding the
         # rows in forked nothing: the styling path is still the single shared one.
         return ecology_value_hex(value)
-    elif key == "Husbandry":
+    elif key == HUSBANDRY_ROW:
         return husbandry_value_hex(value)
-    elif key == UPKEEP_RISK_ROW:
-        # **THE ONE ROW THAT ONLY EXISTS WHEN SOMETHING IS WRONG, so it is never neutral.** It fell
-        # through to INK for as long as the calm `Keeping:` bill sat above it carrying the context;
-        # that row is retired (issue #545) and this is now the whole detail behind a marked rung, so
-        # a shortfall stated in the same ink as a stock reading is the reassuring direction again.
-        return HudStyle.WARN_HEX
-    elif key == "Cultivation":
+    elif key == CULTIVATION_ROW:
         return cultivation_value_hex(value)
     elif key == HudFloraVocab.FIELD_ROW:
         # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal once
         # complete). Same shape as Cultivation's; kept its own case because a Field is a different
         # rung with its own badge word, not a Tended Patch at a higher percentage.
         return field_value_hex(value)
-    elif key == "Corral":
+    elif key == CORRAL_ROW:
         return corral_value_hex(value)
     elif key == PEN_FEED_ROW:
         # The pen's running feed cost: amber as a standing debit, red when it goes unpaid.
@@ -1102,7 +1136,13 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
     if built:
         var face := HudSelectionVocab.RUNG_BUILT_FORMAT % [built_label, percent]
         if SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
-            return "%s %s" % [face, HudSelectionVocab.RUNG_HAZARD_GLYPH]
+            # **A BARE `⚠` WAS A MARK WITH NO WORD, and the three lines that used to explain it are
+            # gone** (the `At risk:` retirement above). So the state joins the meter: `slipping` on the
+            # plant web, `drifting` on the animal one — the two webs' own consequence, in the same
+            # words the work board's note has always used, and a STATE rather than a sentence because
+            # the sentence is the row's hover.
+            return HudSelectionVocab.RUNG_UNDER_KEPT_FORMAT % [face,
+                HudSelectionVocab.RUNG_HAZARD_GLYPH, rung_under_kept_word(kind)]
         return face
     if declared_rung == improvement and progress <= BUILD_METER_EMPTY:
         return BUILD_UNSTARTED_VALUE
@@ -1115,6 +1155,43 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
     return build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
         build_crew, percent)
+
+## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
+## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
+## rung row's own key and NOTHING else: no shortfall, no countdown, because a card cannot act on either
+## (the work board takes the countdown — see that producer's flag).
+##
+## Silent on a rung whose keeping is paid, which is every rung on every calm card in the game, and
+## silent for a caller that passes no context — so a host that renders these lines without one gets
+## exactly the BBCode it always did.
+static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary, prefix: String,
+        kind: String, improvement: String) -> void:
+    if ctx == null or not SourceForecast.rung_is_under_kept(src, prefix, kind, improvement):
+        return
+    ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind)
+
+## **WHAT AN UNDER-KEPT RUNG IS DOING, IN ONE WORD, PER WEB** — the state that rides the built row's
+## `⚠`. The pair is the work board's two notes reduced to their verb (`WORK_ROW_UNDER_KEPT_NOTE` says
+## *this ground is slipping*, `WORK_ROW_UNDER_HERDED_NOTE` *animals drifting off*), so the card's word
+## and the board's sentence cannot describe two different failures.
+static func rung_under_kept_word(kind: String) -> String:
+    return HudSelectionVocab.RUNG_UNDER_KEPT_ANIMAL_WORD \
+        if kind == SourceForecast.SOURCE_KIND_HERD \
+        else HudSelectionVocab.RUNG_UNDER_KEPT_PLANT_WORD
+
+## **A RUNG'S BADGE WORD, KEYED BY ITS IMPROVEMENT** — `Tended`, `Field`, `Domesticated`, `Corralled`,
+## the four `*_built_label` words with their glyphs stripped. The countdown sentence names the rung it
+## is counting down (`Tended is lost in 3 turns.`) and a glyph in a sentence reads as a typo, so this
+## is the badges' own words rather than a fifth spelling of them. `""` for a rung with no badge —
+## `IMPROVEMENT_NONE`, and anything the ladder gains before this table does — which is the caller's cue
+## to state the remedy without a countdown rather than to count down an unnamed thing.
+static func rung_badge_word(improvement: String) -> String:
+    match improvement:
+        SourceForecast.IMPROVEMENT_CULTIVATE: return CULTIVATION_BUILT_WORD
+        SourceForecast.IMPROVEMENT_SOW: return FIELD_BADGE_LABEL
+        SourceForecast.IMPROVEMENT_TAME: return HUSBANDRY_BUILT_WORD
+        SourceForecast.IMPROVEMENT_CORRAL: return CORRAL_BUILT_WORD
+    return ""
 
 ## **THE SENTINEL FORK, ON ITS OWN — the countdown half of `rung_row_value`.** Everything above it in
 ## that function is ROUTING (which of a card's two rows may print the source's one countdown, and
@@ -1274,8 +1351,11 @@ static func build_price_clause(work_cost: float, turns: int, upkeep: float,
     if work_cost <= SourceForecast.BUILD_WORK_COST_NONE:
         return ""
     var price := HudComposeVocab.BUILD_PRICE_WORK_FORMAT % format_work_units(work_cost)
-    if turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE:
-        price = HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, build_turns_clause(turns)]
+    # **THE SENTINEL TEST IS THE CLAUSE PRODUCER'S** — this asks whether it was given words, rather
+    # than re-listing which values have none. A second list is how one of them comes to be missed.
+    var turns_clause := build_turns_clause(turns)
+    if turns_clause != "":
+        price = HudComposeVocab.BUILD_PRICE_TURNS_FORMAT % [price, turns_clause]
     if upkeep < SourceForecast.UPKEEP_WORK_MIN:
         return price
     return HudComposeVocab.BUILD_PRICE_UPKEEP_FORMAT % [price, format_work_units(upkeep),
@@ -1322,90 +1402,44 @@ static func build_turns_clause(turns: int,
         return HudComposeVocab.BUILD_TURNS_HELD
     if turns == SourceForecast.BUILD_TURNS_HOLDS or turns == SourceForecast.BUILD_TURNS_ROTS:
         return HudComposeVocab.BUILD_TURNS_NEVER_FORMAT % BUILD_TURNS_NEVER_GLYPH
+    # ⛔ **NO FINITE COUNT MEANS NO CLAUSE, AND THAT TEST IS THE PRODUCER'S NOW.** Every sentinel with
+    # a face is answered above; anything else — `BUILD_TURNS_NO_ESTIMATE`, a `0`, whatever the wire
+    # spells next — has no number to state, and this fell THROUGH to `"≈%d turns" % turns` and would
+    # have rendered `≈-1 turns` on the first caller that forgot to filter. Both callers did filter,
+    # so nothing shipped it; a format that CAN render a missing number will, on the next sentinel,
+    # which is why the guard is here rather than repeated at each call site. **Callers ask whether
+    # they were given a clause** (`build_price_clause`, `DrawerComposeController`'s running face),
+    # so there is exactly one test and a new sentinel cannot outrun it.
+    if turns <= SourceForecast.BUILD_TURNS_NONE_TO_STATE:
+        return ""
     if turns == BUILD_TURNS_SINGULAR:
         return HudComposeVocab.BUILD_TURNS_COUNT_ONE
     return HudComposeVocab.BUILD_TURNS_COUNT_FORMAT % turns
 
-## **THE TWO SUB-ROWS UNDER A RUNNING BUILD METER** — the sim's turn estimate, and what the crew's
-## tools took off the job — indented so they read as an expansion of the meter row above them rather
-## than as two more facts about the source. Both webs' hosts (the tile card's plant rungs, the herd
-## drawer's animal ones) append this, so neither can grow a shape the other lacks.
+## RETIRED — **THE `At risk:` ROW, ITS SHORTFALL AND ITS COUNTDOWN, AND THE REMEDY LINE UNDER IT.**
+## An under-kept Tended patch used to spend three lines of the card on one fact: the rung row, an
+## `At risk: short 2 work — this rung is lost in 3 turns` beneath it, and an indented
+## *"This ground is slipping — raise this band's Agriculture role."* under that. Reported from play as
+## the card SHOUTING — three lines and two figures for a state whose whole content is *this is
+## slipping, staff the role*.
 ##
-## RETIRED — **`Keeping:` AND `Keepers:` ARE GONE, AND `At risk:` IS WHAT THEY LEFT BEHIND** (issue
-## #545). The card carried `Keeping: the pool covers 1 of 2 work — worth 2 keepers` on every source
-## that owed anything, plus a `Keepers: 1 — drawn from the band's Husbandry` above it on the animal
-## web, and reported from play neither could be read: both existed to say *there is nothing to do
-## here*, and both said the same number twice. A rung's keeping only becomes a decision when it is
-## SHORT, which is exactly when `At risk:` renders — so the standing bill went and its failure stayed.
-## `UPKEEP_ROW`, `UPKEEP_VALUE_FORMAT`, the keeper/builder noun pairs, `UPKEEP_MID_BUILD_FORMAT` and
-## `UPKEEP_UNBUILT_VALUE` went with it; the mid-build sentence's job — *this build's own crew is not
-## covering the rate* — is the rung row's own `∞` now, on the row the player would act on.
+## **IT IS ONE ROW NOW, AND THE REMEDY IS THE ROW'S HOVER.** `rung_row_value` says
+## `🌾 Tended 100% ⚠ slipping` (`🐄 Domesticated 100% ⚠ drifting` on the animal web) and the row's
+## `[hint=…]` carries `HudWorkVocab.under_kept_tooltip_for_source` — the same sentence, one hover
+## away, with nothing else in it.
+##
+## **NO FIGURE SURVIVES ON THIS SURFACE, and the countdown's absence is the deliberate half.** The
+## work board carries it (`HudWorkVocab.under_kept_tooltip` takes a rung and a grace), because that is
+## where staffing is decided this turn and *how long you have* is actionable there. A card is where
+## you look at the ground, and a number you cannot act on from it is noise. **ONE producer with a
+## flag** — a second sentence-builder for the card is how the two surfaces come to phrase one hazard
+## differently.
+##
+## `UPKEEP_RISK_ROW`, `UPKEEP_LOST_SOON_FORMAT` and `UPKEEP_LOST_NOW_FORMAT` went with the row, as did
+## `at_risk_lines` itself and the WARN case the tint registry kept for its key.
 
-## The row that only appears when the keeping is UNDERPAID — its own key, so the tint registry can ink
-## it as a warning without inking the bill above it.
-const UPKEEP_RISK_ROW := "At risk"
-
-const UPKEEP_LOST_SOON_FORMAT := "short %s work — this rung is lost in %d turn%s"
-
-const UPKEEP_LOST_NOW_FORMAT := "short %s work — this rung is being lost NOW"
-
-## **THE AT-RISK ROW — the shortfall, and how long this rung has if nobody pays**
-## (`docs/plan_standing_upkeep.md` §2, §2.4). One producer for BOTH webs, because the upkeep fields
-## ship under the same names on a patch and on a herd, and a card that worded the plant web's loss
-## differently from the animal web's would be answering *"what am I about to lose?"* twice.
-##
-## **THE EDGE IS A CLIFF, WHICH IS WHY THE COUNTDOWN IS ON THE CARD AND NOT ONLY IN AN ALERT.** A
-## completed meter sits exactly at its own cost, so the FIRST bleeding turn drops it below and the rung
-## is lost — three unkept turns costs a tended patch, two costs a Field. A player who loses a 25-turn
-## investment with no warning reads it as a bug, so the warning stands wherever the improvement does.
-##
-## **IT IS THE DETAIL BEHIND THE RUNG ROW'S OWN MARK.** The row above states WHICH rung is in trouble
-## and the four-hazard fork decides the mark; this states what the trouble costs. It fires on the
-## published shortfall alone, so it covers both sides of the meter — a built rung the pool underpaid,
-## and a half-built one it underpaid just the same — without re-deciding which of those it is.
-##
-## **`kind` IS FOR THE REMEDY, NOT FOR THE NUMBER, and that is why the row itself is still one
-## producer for both webs.** The shortfall and the countdown are worded identically on a patch and on
-## a herd and must stay so; what differs is the ROLE CARD that pays, and until this the card said what
-## was being lost and never where the hands come from. **That is the sentence the map's `⚠` badge has
-## no way to carry** — it is drawn with `draw_string` into `MapView`'s canvas, so it can hold no
-## tooltip — so the source's own card is where a player interrogates the mark, and this is the row it
-## interrogates. The words are `HudWorkVocab.under_kept_note_for_source`, the work board's own note,
-## so the two surfaces cannot phrase one hazard differently.
-##
-## **THE REMEDY IS SUPPRESSED HERE ONLY WHERE `build_blocked_lines` IS ACTUALLY SAYING IT** — a
-## blocked queue whose cause is `escapement` AND whose keeping is short, which is the one pairing that
-## row states the keeping for. It used to yield to ANY blocked queue, on the understanding that the
-## blocked row always named the keeping; that row names a CAUSE now, so on a build blocked for
-## knowledge or for a missing crop the note would have gone missing and the shortfall would have been
-## left with no remedy at all.
-##
-## Nothing here is derived: the shortfall is a published field (never `demand − supplied`) and the
-## countdown is `neglectGraceRemaining` read through its own flag. Empty on a source that is being
-## paid, which is every wild patch and every held rung in the game.
-static func at_risk_lines(src: Dictionary, prefix: String, kind: String) -> Array[String]:
-    var lines: Array[String] = []
-    var state := SourceForecast.upkeep_state(src, prefix)
-    if not SourceForecast.upkeep_is_short(state):
-        return lines
-    # **THE SHORTFALL IS THE DECAY, CONTINUOUSLY** (§2.4): half the hands means it slides at half rate.
-    # The countdown beside it is the rung's remaining grace, which is what turns *it is bleeding* into
-    # *you have two turns*.
-    var grace := int(state["grace"])
-    if not bool(state.get("at_risk", false)) or grace <= 0:
-        lines.append("%s: %s" % [UPKEEP_RISK_ROW,
-            UPKEEP_LOST_NOW_FORMAT % format_work_units(float(state["shortfall"]))])
-    else:
-        lines.append("%s: %s" % [UPKEEP_RISK_ROW, UPKEEP_LOST_SOON_FORMAT % [
-            format_work_units(float(state["shortfall"])), grace,
-            "" if grace == 1 else HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]])
-    if not build_blocked_states_keeping(src, prefix):
-        lines.append("%s%s" % [MORALE_BREAKDOWN_INDENT,
-            HudWorkVocab.under_kept_note_for_source(kind)])
-    return lines
-
-## **THE ONE SUB-ROW A RUNNING BUILD STILL HANGS BENEATH ITSELF** — what the crew's tools took off the
-## job, indented so it reads as an expansion of the meter row above it.
+## **THE ONE SUB-ROW A RUNNING BUILD STILL HANGS BENEATH ITSELF** — what the crew's tools ADD to what
+## it banks each turn, indented so it reads as an expansion of the meter row above it.
 ##
 ## **THE TURN ESTIMATE LEFT THIS PRODUCER AND BECAME THE ROW ITSELF** (issue #545). It was an indented
 ## `≈11 turns at this crew` under a meter stating the same build in work units — two lines for one
@@ -1413,10 +1447,14 @@ static func at_risk_lines(src: Dictionary, prefix: String, kind: String) -> Arra
 ## off a build. The `at this crew` tail went with it: the row is the crew's answer, and the estimate
 ## and the state can no longer disagree because they are one string.
 ##
-## **THE GEAR LINE STAYED, and it renders only above zero** (a `−0 work` advertises a tool that did
-## nothing). It is the only way a player can tell a tool is worth carrying to a garden and not to a
-## farm, it is conditional rather than permanent chrome, and it was no part of the four-line block
-## that made a rung unreadable.
+## **THE GEAR LINE STAYED, and it renders only above zero** (a `+0 work` advertises a tool that did
+## nothing). It is the only way a player can tell a tool is worth carrying at all, it is conditional
+## rather than permanent chrome, and it was no part of the four-line block that made a rung unreadable.
+##
+## **WHAT IT STATES TURNED OVER WITH THE MODEL** (`docs/plan_standing_upkeep.md` §4.8):
+## `buildWorkFromGear` is *what the pool's kits add per turn*, not *units taken off the job*, so the
+## row is a rate with a `+` rather than a discount with a `−`. The line that would once have read
+## `−17 work off this job` reads `+1.0 work a turn`.
 ##
 ## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
 static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String]:
@@ -1442,18 +1480,29 @@ static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String
 ## takes `BUILD_BLOCKED_FALLBACK` rather than an empty line, which on a marked row would read as
 ## *there is no cause*.
 ##
-## **`escapement` IS THE ONE CAUSE THAT MAY ALSO BE SHORT OF KEEPING, and where both hold BOTH are
-## said.** They are different facts with different levers — a floor and a standing stock against
-## `assign_labor … husbandry <n>` — and the keeping line is measured rather than assumed: staffing the
-## web's keeping role restores the source's regrowth and it climbs back over its own gate in ~7–14
-## turns with the take crew left at full strength, which is why that copy must never hedge with *"and
-## stop hunting"*. On every OTHER cause the keeping line is withheld however short the keeping is: it
-## is not why this build is blocked, and `at_risk_lines` states the shortfall on its own row anyway.
-##
 ## **BOTH SURFACES THAT SHOW A BLOCKED BUILD CALL THIS** — the source's own card (the tile card and
 ## the herd drawer, indented under the rung row) and the BUILD QUEUE row's tooltip, which passes an
 ## empty `indent` because a tooltip has no rung row to hang beneath. One producer, so the two cannot
 ## come to disagree about a refusal, which is this arc's most repeated failure.
+##
+## > ### ⛔ THE BLOCK IS TWO LINES — THE HEADLINE AND ONE SHORT CAUSE. NOTHING ELSE RENDERS.
+## >
+## > **THREE LINES OF PROSE UNDER A HAZARD ROW IS NOT A READOUT.** It drew a headline that spelled out
+## > what *Blocked* means, then a cause, then a remedy, then — where the keeping was short — a second
+## > remedy, in a ~245px column standing between the rung row and an `At risk:` countdown. Rejected on
+## > sight: *"You don't need 'your builders are stuck here', that's what Blocked means. You also don't
+## > need the 2nd and 3rd sentence."*
+## >
+## > **THE CUT SENTENCES ARE DELETED, NOT PARKED.** A tooltip carrying them was built and put to Ray;
+## > the answer was *"delete them"*. So this row emits exactly one line, `RUNG_BLOCKED_REMEDY_FORMAT`
+## > is retired, and the causes themselves are one sentence each in
+## > `HudSelectionVocab.BUILD_BLOCKED_REASONS` — which is where a new key's wording rule lives.
+## > **Nothing here trims a string at render time**: the table says what the card shows, so this
+## > producer and the queue row's tooltip cannot come to show different halves of one refusal.
+## >
+## > **WHAT THE PLAYER STILL GETS INSTEAD OF THE REMEDY** is the rung row above: an under-kept source
+## > says `⚠ slipping` beside its meter and carries the role that pays on the row's own hover. Do NOT
+## > re-add a remedy here as one the block is missing.
 ##
 ## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
 static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
@@ -1464,20 +1513,17 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
         return lines
     lines.append("%s%s" % [indent,
         build_blocked_reason_text(SourceForecast.build_blocked_reason(src, prefix), kind)])
-    if build_blocked_states_keeping(src, prefix):
-        lines.append("%s%s" % [indent,
-            HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT % HudWorkVocab.keeping_role_name(kind)])
     return lines
 
 ## The sim's cause key in the player's own words. An unknown key — and the empty one, which a `-4`
 ## should never carry — answers the fallback: we still know the builders are stuck, and saying so is
 ## honest where guessing at a cause or rendering nothing is not.
 ##
-## **ONE CAUSE IS WORDED PER WEB, AND `kind` IS THE SAME ARGUMENT THE KEEPING LINE FORKS ON.** The
-## escapement sentence has to say *animals* and *hunters* on one web and *growing* and *gatherers* on
-## the other; every other cause reads identically on a patch and on a herd and is stated once. The
-## test is `HudWorkVocab.keeping_role_name`'s, on the same parameter, so there is no second way of
-## asking which web this source is.
+## **ONE CAUSE IS WORDED PER WEB, AND `kind` IS WHAT FORKS IT.** The escapement sentence has to say
+## *animals* on one web and *growing* on the other; every other cause reads identically on a patch and
+## on a herd and is stated once. It was the same argument the retired keeping line forked on, which is
+## why the parameter is still `kind` and not a bool: `HudWorkVocab.keeping_role_name` asks it the same
+## way, so there is no second way of asking which web this source is.
 static func build_blocked_reason_text(key: String, kind: String) -> String:
     if key == HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT:
         return HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD \
@@ -1486,18 +1532,19 @@ static func build_blocked_reason_text(key: String, kind: String) -> String:
     return String(HudSelectionVocab.BUILD_BLOCKED_REASONS.get(
         key, HudSelectionVocab.BUILD_BLOCKED_FALLBACK))
 
-## **DOES THE BLOCKED SUB-ROW STATE THE KEEPING?** — the one decision behind two surfaces, so
-## `at_risk_lines` can withhold its own remedy note exactly when this row is already carrying it and
-## on no other blocked source. True only for the pairing the keeping is genuinely a lever on: an
-## `escapement` refusal on a source whose keeping is short.
-static func build_blocked_states_keeping(src: Dictionary, prefix: String) -> bool:
-    if SourceForecast.build_turns_remaining(src, prefix) \
-            != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
-        return false
-    if SourceForecast.build_blocked_reason(src, prefix) \
-            != HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT:
-        return false
-    return SourceForecast.upkeep_is_short(SourceForecast.upkeep_state(src, prefix))
+# RETIRED — `build_blocked_states_keeping`, which answered *"is the blocked sub-row already stating
+# the keeping?"* over the `escapement`-and-actually-short pairing. It existed for ONE consumer, the
+# retired `at_risk_lines`, and for one reason: to stop that row printing the under-kept remedy while
+# the blocked row one line above was printing it too.
+#
+# **THE QUESTION STOPPED HAVING AN ANSWER when the blocked row's remedy was cut**
+# (`HudSelectionVocab`, above `BUILD_BLOCKED_REASONS`). A predicate kept past that is not a harmless
+# leftover: it went on suppressing, so on exactly that pairing the card named a shortfall and a
+# countdown with **no role that pays them** — the only statement of who pays, removed by a guard
+# against a duplicate that no longer exists.
+#
+# **DO NOT RE-ADD IT AS A CONDITION ANYWHERE.** If a future row states the keeping again, the two
+# rows are what disagree, and one of them is the one to change.
 
 ## The one turn count that takes the singular row — a build one turn from done.
 const BUILD_TURNS_SINGULAR := 1
@@ -1529,6 +1576,16 @@ const BUILD_UNSTAFFED_NEEDLE := "no builders"
 
 const BUILD_UNSTARTED_VALUE := "%s Not started — %s assigned" % [
     HudSelectionVocab.RUNG_HAZARD_GLYPH, BUILD_UNSTAFFED_NEEDLE]
+
+## **THE THREE RUNG ROWS' OWN KEYS** (the fourth, the Field's, is `HudFloraVocab.FIELD_ROW`). They were
+## bare literals at both ends — the producer that writes the row and `_value_hex`'s registry that inks
+## it — and a THIRD reader arrived with the row hovers, which are keyed by exactly this string: a
+## tooltip filed under a key no row carries attaches to nothing, silently. One spelling, three readers.
+const HUSBANDRY_ROW := "Husbandry"
+
+const CULTIVATION_ROW := "Cultivation"
+
+const CORRAL_ROW := "Corral"
 
 ## The Husbandry rung's BUILT badge — the word a fully-tamed herd wears, glyph included, handed to
 ## `rung_row_value` as the face its percentage follows. `HUSBANDRY_BUILT_NEEDLE` is the same word
@@ -2218,9 +2275,15 @@ static func food_breakdown_row(value: float, label: String) -> String:
 ## (`docs/plan_standing_upkeep.md` §4.6a). `BUILD_CREW_NONE` is the safe default and the honest one for
 ## a caller that was not told — on this web the wire cannot publish `HOLDS` with a crew on it at all,
 ## no animal rung declaring a `meter_decay`, so a staffed herd never reaches the fork.
+##
+## **`ctx` IS AN OUT-PARAMETER FOR THE ROW HOVERS AND NOTHING ELSE** — the `Context` the host is about
+## to render this list through, filled here because the producer that knows a rung is slipping is the
+## one that wrote its row (`Context.row_tooltips`). A caller with no host context passes none, and
+## every line comes back exactly as before.
 static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         unstaffed_build: String = SourceForecast.IMPROVEMENT_NONE,
-        build_crew: int = SourceForecast.BUILD_CREW_NONE) -> Array[String]:
+        build_crew: int = SourceForecast.BUILD_CREW_NONE,
+        ctx: Context = null) -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -2305,9 +2368,11 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             # animal meter never goes backwards: an abandoned Tame is parked exactly where it was
             # left, which is a decision rather than a failure and takes no mark. It rendered
             # `⚠ Stalled` while the wire answered `-1` for an unstaffed source.
-            lines.append("Husbandry: %s" % rung_row_value(herd_data, herd_prefix,
+            lines.append("%s: %s" % [HUSBANDRY_ROW, rung_row_value(herd_data, herd_prefix,
                 SourceForecast.IMPROVEMENT_TAME, SourceForecast.SOURCE_KIND_HERD,
-                husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build))
+                husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build)])
+            note_under_kept_hover(ctx, HUSBANDRY_ROW, herd_data, herd_prefix,
+                SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_TAME)
             if not tamed:
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
                 # …and, on a BLOCKED queue alone, what frees it. This is the web the measured case
@@ -2339,10 +2404,12 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
             var corral_progress := float(herd_data.get("corral_progress", 0.0))
             var fed_fraction := PenStatus.fed_fraction(herd_data)
             if bool(herd_data.get("corralled", false)):
-                lines.append("Corral: %s" % rung_row_value(herd_data, herd_prefix,
+                lines.append("%s: %s" % [CORRAL_ROW, rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
                     corral_built_label(fed_fraction), true, CORRAL_PROGRESS_COMPLETE,
-                    SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE))
+                    SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)])
+                note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
+                    SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
                 # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
                 # tile count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own
                 # grazed footprint covers vs what the keeper still hauls from the larder.
@@ -2371,10 +2438,12 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
                 # row above this cost carries no species multiplier, and the turns leading the row
                 # move only with the keeper crew, their floor and their kit.
-                lines.append("Corral: %s" % rung_row_value(herd_data, herd_prefix,
+                lines.append("%s: %s" % [CORRAL_ROW, rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
                     corral_built_label(PenStatus.FULLY_FED), false, corral_progress,
-                    build_crew, unstaffed_build))
+                    build_crew, unstaffed_build)])
+                note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
+                    SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
                 lines.append_array(build_blocked_lines(herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD))
@@ -2384,11 +2453,10 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
     # the card's own header states the hex two rows above them (`TILE (34, 24)`), so a herd stating
     # it again was the same coordinate pair twice on one card. `Next waypoint` below is a different
     # fact — where it is HEADING, which nothing else on the card says — and stays.
-    # **WHAT THIS HERD IS ABOUT TO LOSE, and how long it has** — the animal web's half of the one
-    # at-risk row both webs share, and the detail behind whichever rung row above it is marked. A herd
-    # whose keeping is being paid prints none, which is what makes the silence readable.
-    lines.append_array(at_risk_lines(herd_data, HudComposeVocab.BARE_FORECAST_PREFIX,
-        SourceForecast.SOURCE_KIND_HERD))
+    # **WHAT THIS HERD IS ABOUT TO LOSE IS ON THE RUNG ROW ITSELF NOW** — `⚠ drifting` beside the
+    # meter, with the role that pays it on that row's hover. The `At risk:` row that used to stand
+    # here, its shortfall and its countdown are retired; `HERDERS_SHED_FORMAT` above is what still
+    # states the consequence in a sentence, and it states it once.
     var next_x := int(herd_data.get("next_x", -1))
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:

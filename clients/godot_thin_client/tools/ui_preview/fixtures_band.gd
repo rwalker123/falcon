@@ -348,10 +348,17 @@ const KIT_PEN_CARRY_EQUIPPED := 40.0
 ## does not send.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
 ## What either build tool buys: the `equipment.json` `hurdles` flint tier's own value, which the
-## `hoes` mirror exactly — the work units ONE equipped worker takes off the job. The two webs' rungs
-## cost the same, so mirroring the number is what makes a greyed kit read as a WEB refusal rather
-## than as a weaker tool.
-const KIT_BUILD_WORK_HANDLING := 8.5
+## `hoes` mirror exactly — **the extra work ONE EQUIPPED WORKER DELIVERS PER TURN**, so an equipped
+## builder banks `PER_WORKER_OUTPUT + this` = 1.5 where a bare one banks 1.0. The two webs' rungs cost
+## the same, so mirroring the number is what makes a greyed kit read as a WEB refusal rather than as a
+## weaker tool.
+##
+## ⛔ **IT WAS `8.5`, AND THAT NUMBER CANNOT BE CARRIED ACROSS** (`docs/plan_standing_upkeep.md` §4.8).
+## Under the retired subtraction it meant *units taken off the job*; the shipped stat means *work added
+## per worker per turn*, and `equipment.json` re-minted it as `0.5` — the same tool, in the units the
+## new model reads. Read as the old quantity, `8.5` would say an equipped worker is worth nine and a
+## half bare ones. A fixture holding the old magnitude is asserting the retired model.
+const KIT_BUILD_WORK_HANDLING := 0.5
 
 ## **HOW MANY KEEPERS THAT GEAR CAN ARM** — the other half of the axis, and the head count the compose
 ## sheet's `min(workers, this)` saturates at. A band holding two sets of hurdles arms two keepers and

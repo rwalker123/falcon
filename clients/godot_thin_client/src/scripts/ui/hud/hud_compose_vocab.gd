@@ -259,7 +259,7 @@ const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 # feed message, so the client does not pre-gate on those (max radius is not on the wire).
 const PEN_EXTEND_LABEL := "Extend pen"
 
-const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring rides the same pen rung as the pen it widens, so it joins the band's build queue like any other job and its builders raise it when it reaches the head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
+const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring is the same job as the pen it widens, so it joins the band's build queue like any other job and its builders raise it when it reaches the head. Then the pen grazes more land and feeds itself further. Rejected at the pen-radius maximum."
 # RETIRED — **`PEN_EXTEND_CREW_LABEL`** (`Fencers`), the ring's own crew row-label. The verb took a
 # trailing worker count for one slice; `extend_pen <faction> <x> <y>` is closed at three tokens again
 # (`docs/plan_standing_upkeep.md` §2.5), so there is no crew to name.

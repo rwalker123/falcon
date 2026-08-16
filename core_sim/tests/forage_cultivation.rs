@@ -501,7 +501,12 @@ fn cultivation_config(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let tended = ladder.rung(RungKey::PlantTended);
     assert!(
-        tended.build_accrual(Some(Improvement::Cultivate), true, build_crew(app)) > 0.0,
+        tended.build_accrual(
+            Some(Improvement::Cultivate),
+            true,
+            build_crew(app),
+            core_sim::NO_BUILD_GEAR
+        ) > 0.0,
         "the build fixtures must staff a crew, or every pace assertion below compares nothing to \
          nothing"
     );
@@ -509,7 +514,12 @@ fn cultivation_config(app: &App) -> (f32, f32) {
         // The crew IS the throughput now (`docs/plan_unit_costed_work.md` §1.2), so this reads at
         // the head count the build fixtures actually staff — computing it at any other would
         // describe a build nobody here is running.
-        tended.build_accrual(Some(Improvement::Cultivate), true, build_crew(app)),
+        tended.build_accrual(
+            Some(Improvement::Cultivate),
+            true,
+            build_crew(app),
+            core_sim::NO_BUILD_GEAR,
+        ),
         unmaintained_bleed(tended),
     )
 }
@@ -1499,6 +1509,108 @@ fn a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool() {
     );
 }
 
+/// **⛔ THE UPKEEP PAIR: GEAR COVERS MORE, AND THE DEMAND NEVER MOVES.**
+///
+/// §4.8's other half — *"upkeep is just work/turn and worker productivity is work/turn"* — routes
+/// the **same** supply expression a build divides its pile by through the keeping pool: a build
+/// divides, an upkeep compares. So an equipped keeper covers more of a patch's demand than a bare
+/// one, and the rung's `upkeep.work_per_turn` is untouched by either — which is the build rule's
+/// mirror, *a job's work requirement never changes*, stated about a rate instead of a pile.
+///
+/// **Both halves, because either alone passes a broken model**: *"the demand is identical"* passes
+/// for a kit that does nothing at all, and *"the equipped pool covers more"* passes for a model that
+/// quietly discounted the demand instead of raising the keeper.
+///
+/// # ⛔ AND THE NO-OP GUARD, WHICH IS THE FAILURE MODE HERE
+///
+/// There is **no keeping-kit picker in the client** and `default_kits.agriculture` is `none`, so a
+/// pool that waited to be handed a kit would resolve bare and this whole seam would change nothing
+/// while every assertion above still passed. The bare arm therefore names `none` **explicitly** and
+/// the equipped arm names nothing at all — so what is compared is the *derivation* against a stated
+/// refusal, and a derivation that answered `none` collapses the pair to two equal numbers.
+#[test]
+fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way() {
+    /// A staffing under the shipped `plant:tended` demand at every kit, so both arms are genuinely
+    /// short and the comparison is between two live shortfalls rather than two saturated pools.
+    const A_KEEPER: u32 = 1;
+
+    /// What one arm's turn left on the patch: what its keepers put on the ground, and what the rung
+    /// billed them for.
+    struct Kept {
+        supplied: f32,
+        demand: f32,
+    }
+
+    let kept_with = |kit_id: Option<&str>| -> Kept {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        seat_tended_patch(&mut app, coord);
+        let band = spawn_forager(&mut app, tile, coord, None);
+        set_maintain_workers(&mut app, band, A_KEEPER);
+        // **A NAMED kit wins, `none` included** — that is how a player sends a pool out bare, and
+        // it is the only way to state the bare arm without asserting the derivation away.
+        if let Some(id) = kit_id {
+            let kit = core_sim::EquipmentConfig::builtin()
+                .kit(id)
+                .unwrap_or_else(|| panic!("the shipped roster carries '{id}'"));
+            app.world
+                .get_mut::<LaborAllocation>(band)
+                .expect("band exists")
+                .assignments
+                .iter_mut()
+                .find(|assignment| assignment.target == LaborTarget::Agriculture)
+                .expect("the fixture band carries an agriculture row")
+                .kit = Some(kit);
+        }
+        app.world.run_system_once(advance_labor_allocation);
+        let registry = app.world.resource::<ForageRegistry>();
+        let patch = registry.patch(coord).expect("patch");
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        Kept {
+            supplied: patch.upkeep_supplied,
+            demand: core_sim::patch_upkeep_demand(patch, &ladder),
+        }
+    };
+
+    let bare = kept_with(Some("none"));
+    let derived = kept_with(None);
+
+    // **(a) THE DEMAND IS THE SAME BILL.** Byte-identical, not merely close: nothing about a kit
+    // reaches `RungUpkeep::work_per_turn`.
+    assert_eq!(
+        bare.demand, derived.demand,
+        "a rung's standing cost is the same with the tool and without: {} against {}",
+        bare.demand, derived.demand
+    );
+    assert!(
+        bare.demand > 0.0,
+        "fixture: the rung must actually bill something, or both arms are zero"
+    );
+
+    // **(b) AND THE EQUIPPED KEEPER COVERS MORE OF IT.** Strictly — a derivation that resolved
+    // `none` would make these two equal, which is the silent no-op this arm exists to catch.
+    assert!(
+        derived.supplied > bare.supplied,
+        "the derived agriculture kit must raise what a keeper supplies — {} against a bare {}. \
+         Equal numbers mean the derivation resolved `none` and the change did nothing",
+        derived.supplied,
+        bare.supplied
+    );
+    assert!(
+        (bare.supplied - core_sim::PER_WORKER_OUTPUT * A_KEEPER as f32).abs() < 1e-5,
+        "…and a pool sent out bare supplies exactly its hands: {}",
+        bare.supplied
+    );
+    // **Both arms are still SHORT**, so what the pair measures is coverage rather than one arm
+    // saturating and hiding the difference.
+    assert!(
+        derived.supplied < derived.demand,
+        "fixture: even the equipped keeper must be short of the demand at {A_KEEPER} hand, or the \
+         comparison is between a covered pool and a covered pool"
+    );
+}
+
 /// **MEETING THE DEMAND EXACTLY COSTS THE METER NOTHING, and going short costs it the rung's own
 /// rate scaled by how short** — the property the retired binary flag could not express, and the
 /// reason the standing cost is a *rate*. Under the flag a crew of one on a source wanting two
@@ -1512,8 +1624,21 @@ fn a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool() {
 /// rate rather than as a multiple of it. The follow-on assertion is the one §4.6a changed: a meter
 /// that has dipped below its cost is **still the pool's**, where it used to flip back to its
 /// builders at the very moment the keeping started mattering.
+///
+/// # ⛔ THE PROPORTION IS IN THE SUPPLY, NOT IN THE HEAD COUNT
+///
+/// This read *"half the hands must be half the bleed"* while a keeper was worth a flat
+/// `PER_WORKER_OUTPUT`. A keeper's supply reads the pool's kit now
+/// (`docs/plan_standing_upkeep.md` §4.8), so half the **hands** is no longer half the **supply** —
+/// an equipped keeper covers more than a bare one, and one keeper against a demand of `2.0` is
+/// three-quarters covered rather than half.
+///
+/// The rule the sim actually states is unchanged and is what is asserted: the meter loses
+/// `(shortfall / demand) × the rung's own rate`. So each staffing is measured against the supply it
+/// genuinely puts on the ground, and the demand is asserted **byte-identical across every one of
+/// them** — the upkeep half of *a job's work requirement never changes*.
 #[test]
-fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
+fn a_half_staffed_keeping_bleeds_in_proportion_to_the_supply_it_is_short() {
     /// One past the shipped grace: the first turn the bleed actually bites.
     const TURNS: u32 = 3;
 
@@ -1529,22 +1654,30 @@ fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
         seated - progress_of(&app, coord)
     };
 
-    let demand_in_hands = app_free()
+    // **THE DEMAND, WHICH NO STAFFING AND NO KIT MOVES** — the upkeep mirror of the build rule.
+    let tended = app_free()
         .world
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP);
+        .upkeep_demand(UNSCALED_UPKEEP);
+    // The hands that cover the shipped demand outright at this pool's own kit, and one below it —
+    // so the pair is *fully kept* against *genuinely short* rather than two arbitrary counts.
+    let covering = (1..)
+        .find(|keepers| plant_keeper_supply(*keepers) >= tended)
+        .expect("some pool covers a 2.0 demand");
     assert!(
-        demand_in_hands >= 2 && demand_in_hands.is_multiple_of(2),
-        "fixture: the shipped demand must divide evenly, or there is no exact half to staff"
+        covering >= 2,
+        "fixture: covering the demand must take more than one hand, or there is no short arm"
     );
+    let short = covering - 1;
+
     let (_, bleed) = cultivation_config(&app_free());
     let bleeding_turns = TURNS - tended_grace(&app_free());
 
     let unkept = lost_with(NO_CREW_ON_THIS_ACTIVITY);
-    let half_kept = lost_with(demand_in_hands / 2);
-    let fully_kept = lost_with(demand_in_hands);
+    let part_kept = lost_with(short);
+    let fully_kept = lost_with(covering);
 
     assert_eq!(
         bleeding_turns, 1,
@@ -1554,14 +1687,37 @@ fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
         (unkept - bleed * bleeding_turns as f32).abs() < 1e-4,
         "an unkept patch bleeds the rung's own rate every bleeding turn, got {unkept}"
     );
+    // **THE PROPORTION**: what the meter loses is the rung's rate times the share of the demand
+    // nobody supplied, and the supply is `keepers × (bare + kit)`.
+    let short_fall = (tended - plant_keeper_supply(short)).max(0.0);
     assert!(
-        (unkept - half_kept * 2.0).abs() < 1e-4,
-        "half the hands must be half the bleed: {unkept} unkept vs {half_kept} half-kept"
+        short_fall > 0.0,
+        "fixture: the short arm must genuinely be short, or this measures two zeroes"
+    );
+    assert!(
+        (part_kept - bleed * (short_fall / tended) * bleeding_turns as f32).abs() < 1e-4,
+        "a part-staffed keeping bleeds the rung's rate scaled by how short it is: {part_kept} \
+         against a shortfall of {short_fall} on a demand of {tended}"
     );
     assert_eq!(
         fully_kept, 0.0,
-        "and meeting the demand exactly costs the meter nothing"
+        "and covering the demand costs the meter nothing"
     );
+    // **AND THE DEMAND ITSELF NEVER MOVED** — the upkeep half of *a job's work requirement never
+    // changes* (§4.8). Every arm above was billed the identical rate; what differed is only what
+    // its keepers supplied against it.
+    for keepers in [NO_CREW_ON_THIS_ACTIVITY, short, covering] {
+        assert_eq!(
+            app_free()
+                .world
+                .resource::<LadderConfigHandle>()
+                .get()
+                .rung(RungKey::PlantTended)
+                .upkeep_demand(UNSCALED_UPKEEP),
+            tended,
+            "a rung's demand is the same at {keepers} keepers as at any other staffing"
+        );
+    }
 
     // **AND A RUNG THAT HAS DIPPED BELOW ITS COST IS STILL THE POOL'S** — the state that used to
     // switch over to its builders (`docs/plan_standing_upkeep.md` §4.6a). It flipped into *building*
@@ -1573,7 +1729,7 @@ fn a_half_staffed_keeping_bleeds_at_half_the_rungs_rate() {
     grant_cultivation_knowledge(&mut app, FactionId(0));
     seat_tended_patch(&mut app, coord);
     let band = spawn_forager(&mut app, tile, coord, None);
-    set_maintain_workers(&mut app, band, demand_in_hands);
+    set_maintain_workers(&mut app, band, covering);
     // Nudge the meter under its cost, exactly as one short turn would have.
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -2296,7 +2452,12 @@ fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
         core_sim::build_turns_remaining(
             cost,
             banked,
-            rung.build_accrual(Some(Improvement::Cultivate), true, workers),
+            rung.build_accrual(
+                Some(Improvement::Cultivate),
+                true,
+                workers,
+                core_sim::NO_BUILD_GEAR,
+            ),
         )
         .expect("a staffed build quotes a finish date")
     };
@@ -2413,6 +2574,34 @@ fn seat_second_tended_patch(app: &mut App, near: UVec2, cost: f32) -> UVec2 {
 
 /// One band working **both** patches, with `keepers` on its `agriculture` role — the pool the two
 /// tended patches draw on.
+/// **WHAT ONE OF A BAND'S PLANT KEEPERS SUPPLIES PER TURN** — its bare `PER_WORKER_OUTPUT` plus
+/// whatever the derived `agriculture` kit delivers (`docs/plan_standing_upkeep.md` §4.8: one supply
+/// expression, two consumers). Read off the roster rather than stated as a literal, so retuning the
+/// hoes moves every fixture below with the game.
+///
+/// **There is no keeping-kit picker**, so the pool derives the plant tool itself
+/// ([`EquipmentConfig::keeping_kit_for_branch`]) — which is what stops the whole seam being a silent
+/// no-op against `default_kits.agriculture` of `none`. The assertion below is that no-op guard.
+fn plant_keeper_supply(keepers: u32) -> f32 {
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let per_worker = equipment
+        .keeping_kit_for_branch(core_sim::RungBranch::Plant)
+        .map(|kit| {
+            equipment.build_work_per_worker(
+                &kit,
+                &core_sim::BandEquipment::start_stocked(&equipment),
+                core_sim::RungBranch::Plant,
+            )
+        })
+        .expect("the shipped roster serves the plant web's keeping");
+    assert!(
+        per_worker > core_sim::NO_BUILD_GEAR,
+        "fixture: the derived agriculture kit must actually deliver something — a bare \
+         {per_worker} means the derivation resolved `none` and every assertion below is vacuous"
+    );
+    core_sim::pool_work_supply(keepers, per_worker)
+}
+
 fn spawn_band_keeping_two_patches(
     app: &mut App,
     home: bevy::prelude::Entity,
@@ -2492,8 +2681,10 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
     /// order and a tie-break can never be what decides this test.
     const RICH_COST: f32 = 60.0;
     const POOR_COST: f32 = 30.0;
-    /// Half of what two tended patches want (2 work each on the shipped ladder), so the pool is
-    /// genuinely short and the two modes must answer differently.
+    /// Short of what two tended patches want between them (2 work each on the shipped ladder), so
+    /// the pool cannot cover both and the two modes must answer differently. **It is short in
+    /// SUPPLY, not in head count** — a keeper's supply reads the pool's kit since §4.8, so the
+    /// fixture asserts the shortfall below rather than assuming it from the number.
     const KEEPERS: u32 = 2;
 
     let run = |mode: core_sim::UpkeepFundMode| -> (f32, f32, f32) {
@@ -2512,7 +2703,7 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
         spawn_band_keeping_two_patches(&mut app, tile, first, second, KEEPERS, mode);
         app.world.run_system_once(advance_labor_allocation);
         let (rich, poor) = supplied_on(&app, first, second);
-        (rich, poor, core_sim::activity_work(KEEPERS))
+        (rich, poor, plant_keeper_supply(KEEPERS))
     };
 
     let (rich, poor, pool) = run(core_sim::UpkeepFundMode::Spread);
@@ -2526,13 +2717,35 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
     );
 
     let (rich, poor, pool) = run(core_sim::UpkeepFundMode::Priority);
+    // **The most-invested source is funded COMPLETELY FIRST** — to its own demand, or to whatever
+    // the pool has if that is less. Asserted against the rung's demand rather than against the pool,
+    // because an equipped keeping pool can now cover the first source outright and still have hands
+    // left (§4.8), where a bare one of the same head count could not.
+    let demand = app_free()
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_demand(UNSCALED_UPKEEP);
     assert!(
-        (rich - pool).abs() < 1e-5,
-        "priority funds the most-invested source completely first: {rich} of {pool}"
+        pool < demand * 2.0,
+        "fixture: the pool must be short of BOTH sources, or the two modes cannot differ — \
+         {pool} against {demand} twice"
     );
     assert!(
-        poor.abs() < 1e-5,
-        "…and the marginal one rots — that is what the mode is for, got {poor}"
+        (rich - pool.min(demand)).abs() < 1e-5,
+        "priority funds the most-invested source completely first: {rich} of {pool}, demand \
+         {demand}"
+    );
+    assert!(
+        (poor - (pool - rich)).abs() < 1e-5,
+        "…and the marginal one gets only what is left over — that is what the mode is for, got \
+         {poor} of a {pool} pool"
+    );
+    assert!(
+        poor < demand,
+        "…which must genuinely leave it short, or the two modes are indistinguishable: {poor} \
+         against {demand}"
     );
     assert!(
         (rich + poor - pool).abs() < 1e-5,
@@ -2580,9 +2793,18 @@ fn the_maintenance_split_survives_a_checkpoint_under_both_modes() {
         // **A checkpoint keys a band by its `BandId`**, so a fixture band without one is not
         // captured at all — and the restored world would then be measured with no band on it, which
         // passes a naive equality against stale scratch.
-        app.world
-            .entity_mut(band)
-            .insert((FIXTURE_BAND_ID, core_sim::ResidentBand));
+        // **AND ITS OWN EQUIPMENT LEDGER, EXPLICITLY** — a band with no `BandEquipment` component
+        // resolves its kit through `start_stocked_for`'s absent-component fallback, while
+        // `capture_sim_state` records `unwrap_or_default()`, i.e. an EMPTY ledger, and `restore`
+        // inserts it. Live and restored would then be geared and bare respectively, which is a
+        // property of the fixture rather than of the split under test. Every production band is
+        // spawned with the component (`systems::worldgen`), so this makes the fixture the ordinary
+        // case rather than papering over one.
+        app.world.entity_mut(band).insert((
+            FIXTURE_BAND_ID,
+            core_sim::ResidentBand,
+            core_sim::BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
+        ));
 
         app.world.run_system_once(advance_labor_allocation);
         let before = supplied_on(&app, first, second);

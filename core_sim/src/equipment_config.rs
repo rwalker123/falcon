@@ -1397,8 +1397,66 @@ impl EquipmentConfig {
         &self,
         branch: crate::intensification::RungBranch,
     ) -> Option<KitChoice> {
+        self.work_kit_for(KitJob::Builders, branch)
+    }
+
+    /// **THE KEEPING ROLE THIS FOOD WEB'S UPKEEP IS STAFFED ON** — plant → `agriculture`, animal →
+    /// `husbandry`. The one place that mapping lives, so the pool's kit, its supply and the role the
+    /// player types cannot come to name three different things.
+    ///
+    /// **It is the branch tag doing the same job it already does for builds**
+    /// (`docs/plan_standing_upkeep.md` §4.8): a `build_work` effect names the web it serves, and
+    /// that is the only gate either account needs.
+    pub fn keeping_job(branch: crate::intensification::RungBranch) -> KitJob {
+        match branch {
+            crate::intensification::RungBranch::Plant => KitJob::Agriculture,
+            crate::intensification::RungBranch::Animal => KitJob::Husbandry,
+        }
+    }
+
+    /// **THE KEEPING KIT THIS FOOD WEB'S POOL WANTS** — [`Self::build_kit_for_branch`]'s twin one
+    /// account over, and the same roster lookup: the earliest entry serving this web's keeping role
+    /// whose `build_work` serves `branch` at the fresh tier.
+    ///
+    /// **It exists because upkeep reads the same supply expression a build does** (§4.8), so a
+    /// keeper holding a hoe covers more of a patch's demand than one holding nothing — and there is
+    /// no keeping-kit picker in the client, so nothing would resolve a kit for these pools if the
+    /// roster did not answer. `default_kits.agriculture` / `.husbandry` are both `none`, which would
+    /// have made the whole change a silent no-op.
+    pub fn keeping_kit_for_branch(
+        &self,
+        branch: crate::intensification::RungBranch,
+    ) -> Option<KitChoice> {
+        self.work_kit_for(Self::keeping_job(branch), branch)
+    }
+
+    /// **THE KIT A BAND'S KEEPING POOL IS ACTUALLY WORKING WITH** — [`Self::builders_kit_for`]'s
+    /// twin, on the same three rules: a kit named on the role's row wins (`none` included), else the
+    /// roster answers for this web, else the job's own default.
+    ///
+    /// It takes no `Option<branch>` where the builders' seam does, because a keeping role **is** a
+    /// web: `agriculture` keeps plants and nothing else, so there is no *"nothing is being worked"*
+    /// case for a branch to be absent in.
+    pub fn keeping_kit_for(
+        &self,
+        row_kit: Option<&KitChoice>,
+        branch: crate::intensification::RungBranch,
+    ) -> KitChoice {
+        row_kit
+            .cloned()
+            .or_else(|| self.keeping_kit_for_branch(branch))
+            .unwrap_or_else(|| self.default_kit(Self::keeping_job(branch)))
+    }
+
+    /// **The roster lookup both derivations are**: the earliest entry, in file order, offering `job`
+    /// and declaring a `build_work` that serves `branch` at the **fresh** tier.
+    fn work_kit_for(
+        &self,
+        job: KitJob,
+        branch: crate::intensification::RungBranch,
+    ) -> Option<KitChoice> {
         let fresh = crate::components::BandEquipment::start_stocked(self);
-        self.kits_for_job(KitJob::Builders)
+        self.kits_for_job(job)
             .find(|kit| self.build_work_per_worker(kit, &fresh, branch) > NO_BUILD_GEAR)
     }
 
@@ -2033,7 +2091,7 @@ impl EquipmentConfig {
     /// # Why a saturation point exists at all
     ///
     /// The gear contribution is `Σ over the crews (crew.workers × best_declared(crew's kit))`
-    /// ([`crate::intensification::build_work_from_gear`] over [`KitCoverage::weighted_rate`] × head
+    /// ([`crate::intensification::gear_work_supply`] over [`KitCoverage::weighted_rate`] × head
     /// count). Each item covers a **prefix** of the party
     /// (`min(live units × workers_per_unit, the people brought)`), so adding hands raises the total
     /// **until every unit is in somebody's hands** and then raises it no further: an eleventh worker
@@ -3775,7 +3833,7 @@ mod tests {
 
         for workers in 0..=6u32 {
             let published = workers.min(saturating) as f32 * worth;
-            let paid = crate::intensification::build_work_from_gear(
+            let paid = crate::intensification::gear_work_supply(
                 config
                     .coverage(&hurdling, workers as f32, &wear)
                     .weighted_rate(|kit| {
@@ -3785,7 +3843,7 @@ mod tests {
             );
             assert_eq!(
                 published, paid,
-                "at {workers} keepers the published pair must equal what the build is charged"
+                "at {workers} keepers the published pair must equal what the pool's kit delivers"
             );
         }
     }

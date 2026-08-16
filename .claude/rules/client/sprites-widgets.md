@@ -38,6 +38,25 @@ no-op.** Only `DEFAULT_FONT_SIZE := 18` and `base_font_size()` carry real values
 prevent** — every method returns without error, so it fails silently and looks like a layout
 bug rather than a missing system.
 
+## `[hint=…]` is unusable for prose — an apostrophe spills the rest of the label as raw markup
+
+BBCode's per-run tooltip tag looks like the per-row hover seam a detail surface wants: the tile card
+and the herd drawer are each ONE `RichTextLabel` holding every row, so there is no per-row `Control`
+to hang a `tooltip_text` on, and `RichTextLabel.get_tooltip` answers a `[hint]` under the cursor.
+
+**Godot terminates a tag with `_find_unquoted`, which treats `'` as a quote character.** A payload
+containing *"this band's Agriculture"* therefore has no closing bracket as far as the parser is
+concerned, and **the tag AND EVERY TAG AFTER IT render as literal text** — the card spills
+`[hint=…][/color][table=2][cell]…` down the column from that row to the end of the label. Measured on
+4.7: balanced `"` are fine, one `'` is fatal. That is the worst possible shape, most of this client's
+prose carrying an apostrophe, and the failure is silent, total, and nowhere near the row that caused
+it — the same species as the `Typography.gd` no-op above, one layer down.
+
+**Put the tooltip on the LABEL instead** (`tooltip_text`), which is plain text and cannot be broken by
+its own content. It answers over the whole detail block rather than over one row, so it is only honest
+where the thing it explains is a fact about the SOURCE the card is showing; nothing else may be folded
+into it, or the hover lies about which row the pointer is on.
+
 ## The checkbox indicator (`HudStyle.apply_checkbox`)
 
 **The client applies NO `Theme` resource.** `minimal_theme.tres` sits in the project folder but is an

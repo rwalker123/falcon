@@ -927,6 +927,42 @@ body minimum is unchanged to the pixel — so this is a fit that was wrong on on
 resize of the family. `_fit_pending` is already false by then, so a refit arriving during the second
 wait is not swallowed.
 
+### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
+
+Reported from play: a patch at **102** against a floor of **103**, regrowing and being harvested back
+to 102 every turn. The work board read `+0.96 /turn`. This sheet read **`PER TURN 0.00 FOOD`** and
+*"takes nothing until it grows past 103."*
+
+**Both were computed correctly and only one described what happens next.** The board quotes the sim's
+forward projection; the sheet quoted the instantaneous room `B − floor × K`, which is empty by one
+animal. Ray: *"there really is something to take each turn… It is just taking the math too literally.
+It might be better to show what will be taken the 'next' turn."*
+
+- **The caption is `NEXT TURN`** (`NEXT TURN · NOW → AFTER` on the walk) and the figure is
+  `expected_next_turn_yield` — what the crew will actually draw. At equilibrium that IS the regrowth,
+  which is why it reconciles with the board automatically rather than by a second agreement.
+- **The sim regrows BEFORE it harvests** — `advance_forage_regrowth` / `advance_herds` run a whole
+  `TurnStage` ahead of `advance_labor_allocation` — so the forward room is the honest basis, not an
+  optimistic one. Verified against the schedule, not assumed.
+- **ZERO STAYS REACHABLE AND BECOMES HONEST.** A source far enough below its floor that next turn's
+  growth will not cross it really does pay nothing, and then the sheet says so with the same *until it
+  grows past N* sentence — which is now true exactly when it is shown, instead of whenever the room
+  happened to be empty. `forage_at_floor` (`0.15 FOOD`, holding) and `forage_below_floor` (`0.00 FOOD`,
+  *until it grows past 50*) are the pair.
+- **The at-floor SUPPRESSION went with it.** The `now → after` walk was withheld on a source already at
+  its floor, which is why the sheet had nothing left to show; the forward headline is what made the
+  suppression unnecessary. They were one defect.
+- **The new verdict is `At the floor and holding it — taking only what grows back.`**
+- **Scoped to the two ceilings the headline reads.** The floor presets still quote the ROOM (`up to
+  +N/turn`, takeable once) and `max_useful_workers` still divides the ROOM — those answer *different*
+  questions, and re-pointing them moved a dozen unrelated assertions. The sustainability bar DID move
+  onto the take's basis, or a crew taking exactly what the patch offers at the peak tripped
+  `⚠ OVERDRAWS THE PATCH`.
+
+> **KNOWN GAP — the hunt web's quantisation was not re-derived.** `_hunt_delivered_and_waste` reads the
+> forward ceiling like the plant web now, but its *waste* and animal-count quantisation still work off
+> the old basis. Worth a look if a herd sheet at its floor reads oddly.
+
 ### THE VERDICT LINE IS THE POINT OF THE REDESIGN (§7.1)
 
 The four-stance picker let a player select Eradicate with one worker and never eradicate anything:

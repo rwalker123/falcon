@@ -1297,20 +1297,29 @@ const KIT_SWAP_KEEPERS := 3
 ## (`HerdFx.ANIMAL_METER_ROT`: no animal rung declares a `meter_decay`, their penalty being a shed).
 ## So three builders bank 3: with the builders row naming nothing the sheet derives the roster's
 ## ANIMAL kit and this band holds no row for it, so the crew is bare and owes ⌈50 ÷ 3⌉; with the
-## handling kit named on that row it arms two of the three at 8.5 apiece, so ⌈(50 − 17) ÷ 3⌉. **They
-## read 25 and 17 while the rung's rate was a term**, and the A/B's claim is untouched either way —
-## the two readings still differ by the gear alone.
+## handling kit named on that row it arms two of the three at 0.5 apiece, so the pool banks `3 + 1.0`
+## a turn and owes ⌈50 ÷ 4⌉.
+##
+## ⛔ **RE-DERIVED WITH THE GEAR TERM'S MOVE** (`docs/plan_standing_upkeep.md` §4.8). The geared count
+## was ⌈(50 − 17) ÷ 3⌉ = 11 while the kit was subtracted from the JOB; it divides the job by a faster
+## crew now. **The bare count is unmoved at 17, and that is the tell rather than a coincidence** — a
+## crew carrying nothing has no term in either form, so a re-derivation that moved it would be
+## describing something other than the gear.
 const KIT_SWAP_TURNS_BARE := 17
 
-const KIT_SWAP_TURNS_GEARED := 11
+const KIT_SWAP_TURNS_GEARED := 13
 
-## …and what ONE MORE keeper owes under the handling gear, ⌈(50 − 17) ÷ 4⌉ — the gear term unmoved,
-## because the fourth keeper finds no hurdles left to carry. Beside it, what a `min` dropped from the
-## head count would quote that crew instead (`4 × 8.5` off the job, so ⌈16 ÷ 4⌉): stated so the
-## negative names a number rather than merely differing.
-const KIT_SWAP_TURNS_SATURATED := 9
+## …and what ONE MORE keeper owes under the handling gear: the gear term is unmoved at `2 × 0.5` = 1.0
+## because the fourth keeper finds no hurdles left to carry, so the pool banks `4 + 1.0` and owes
+## ⌈50 ÷ 5⌉. Beside it, what a `min` dropped from the head count would quote that crew instead
+## (`4 × 0.5` = 2.0, so ⌈50 ÷ 6⌉): stated so the negative names a number rather than merely differing.
+##
+## **THE SATURATION IS WORTH LESS UNDER THE NEW MODEL AND STILL SEPARATES THE TWO ANSWERS**, which is
+## the point of restating both — a term worth 0.5 a head cannot move a count as far as one worth 8.5
+## did, so a pair that had collapsed to one number would have quietly stopped testing the `min`.
+const KIT_SWAP_TURNS_SATURATED := 10
 
-const KIT_SWAP_TURNS_UNCAPPED := 4
+const KIT_SWAP_TURNS_UNCAPPED := 9
 
 ## The herd both frames are composed on — a warren, which is the ceiling that keeps the handling kit
 ## OFFERED (a wild-ceiling herd greys it, see `_kit_offer_states`), with its Tame priced and unstarted
@@ -1338,15 +1347,39 @@ const KIT_SWAP_UNSTARTED_TAME := 0.0
 ## before: the number is on screen.
 const KIT_SWAP_UPKEEP_PER_TURN := 1.0
 
-## **THE OVER-GEARED CREW, and both halves of it are the fixture's claim.** Six keepers at the handling
-## gear's 8.5 apiece take 51 work off a 50-unit Tame — the shipped start-stock case, a band holding 26
-## `hurdles` units — so the bar is at or below zero and the job finishes on the first worked
-## turn. The crew and the gear's saturating crew are EQUAL on purpose: the `min` on the head count is
-## already pinned by the saturation claim above, and a mismatch here would leave this frame asserting
-## that term a second time instead of the answer at the boundary.
+## **THE FULLY-ARMED CREW — six keepers, every one of them carrying hurdles.** The crew and the gear's
+## saturating crew are EQUAL on purpose: the `min` on the head count is already pinned by the
+## saturation claim above, and a mismatch here would leave this state asserting that term a second
+## time instead of the arithmetic at full coverage.
+##
+## ⛔ **IT WAS THE OVER-GEARED CASE AND THERE IS NO SUCH CASE ANY MORE**
+## (`docs/plan_standing_upkeep.md` §4.8). Six keepers at the retired `8.5` took `51` off a 50-unit
+## Tame, so the bar went to zero and the job finished on the first worked turn — a *lump against the
+## pile*. A kit raises the RATE now, so no crew size makes a job vanish: these six bank
+## `6 × 1.0 + 6 × 0.5` = 9.0 a turn against 50 units of work. The ONE-TURN answer is still a live
+## branch and is asserted where it is now honest — a meter standing at its cost.
 const OVER_GEARED_KEEPERS := 6
 
 const OVER_GEARED_ARMS_CREW := OVER_GEARED_KEEPERS
+
+## What that crew owes: ⌈50 ÷ (6 × 1.0 + min(6, 6) × 0.5)⌉ = ⌈50 ÷ 9⌉. Every term is a stated fixture
+## constant, which is what makes this an assertion about the ARITHMETIC rather than about a number
+## having appeared.
+const ARMED_CREW_TURNS := 6
+
+## …and what the SAME terms answer with the gear left in the numerator — ⌈(50 − 3) ÷ 6⌉. It is close
+## enough to the right answer to pass any *is it smaller than bare* test, which is exactly why the
+## negative names it (`docs/plan_standing_upkeep.md` §4.8).
+const ARMED_CREW_TURNS_GEAR_IN_NUMERATOR := 8
+
+## The two zeros the equality rests on, named because each is a PRECONDITION rather than a default: a
+## meter with work already banked or a source bleeding work would both move the count.
+const ARMED_NOTHING_BANKED := 0.0
+const ARMED_NOTHING_ROTTING := 0.0
+
+## The noun every rendered count carries. It is what an ABSENT clause must not contain — and a clause
+## that had lost only its NUMBER would still carry it, which is the shape this needle is aimed at.
+const BUILD_TURNS_NOUN_NEEDLE := "turns"
 
 ## The band this state stands up has to field `OVER_GEARED_KEEPERS` on BOTH of the sheet's crews at
 ## once — the take and the build — since they draw on one pool.
@@ -1471,13 +1504,16 @@ func _kit_swap_turn_estimate_states() -> void:
 		KIT_SWAP_TURNS_SATURATED != KIT_SWAP_TURNS_UNCAPPED
 			and overstaffed != KIT_SWAP_TURNS_UNCAPPED)
 
-	#   (c) **THE GEAR COVERS THE WHOLE JOB — and the answer is ONE TURN, not "no estimate".** The same
+	#   (c) **A FULLY-ARMED CREW, AND THE ARITHMETIC AT FULL COVERAGE — asserted by EQUALITY.** The same
 	# warren and the same handling kit, over a band holding a PARTY'S worth of hurdles: six armed
-	# keepers take `6 × 8.5` = 51 off a 50-unit Tame, so the bar is already at or below zero and the
-	# build completes on the first worked turn (`docs/plan_unit_costed_work.md` §6.2). Quoting
-	# `BUILD_TURNS_NO_ESTIMATE` there blanked the clause at exactly the crew that demonstrates *add
-	# hands and watch it drop* — the estimate fell 25 → 13 → 4 → 2 → nothing — while the tile card beside
-	# it, reading the sim's own answer, said `≈1 turn at this crew`.
+	# keepers bank `6 × 1.0` from their hands and `min(6, 6) × 0.5` from their tools, so the pool banks
+	# 9.0 a turn against a 50-unit Tame with nothing on it and owes ⌈50 ÷ 9⌉.
+	#
+	# ⛔ **THIS FRAME USED TO CLAIM THE GEAR PAID THE JOB OFF OUTRIGHT** — `6 × 8.5` = 51 off a 50-unit
+	# Tame, one turn — and that claim retired with the subtraction (§4.8). Every term here is known, so
+	# the count is asserted as a NUMBER rather than as *smaller than the bare one*, and the two
+	# negatives beside it name the two ways the term can be put back wrong: in the NUMERATOR, and
+	# uncapped.
 	var stocked := _pen_axis_band(BandFx.hunt_preview_local_band(), false, OVER_GEARED_ARMS_CREW)
 	# **AND HANDS FOR BOTH CREWS, because the sheet's two steppers share ONE pool** — the take is
 	# capped at `pool − builders` and the build at `pool − take`
@@ -1499,32 +1535,77 @@ func _kit_swap_turn_estimate_states() -> void:
 	BandFx.staff_builders(h._hud._band_labor, OVER_GEARED_KEEPERS, HUSBANDRY_KIT_ID)
 	h._compose_herd(stocked_warren)
 	await h._settle()
-	await h._save("herd_kit_swap_over_geared")
+	await h._save("herd_kit_swap_armed_crew")
 	var over_geared_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_TAME)
 	print("ui_preview: over-geared build  face=%s  crew=%d" % [
 		over_geared_face, Readout.stepper_value(h._hud._drawercompose._compose_sheet)])
-	# The PRECONDITION: the crew the sheet actually composed is the one whose gear covers the job. A
-	# stepper clamped below it would leave every claim below describing a different, ordinary build.
-	h._assert_hud("the sheet really staffs the over-geared crew, so the bar is at or below zero",
+	# THE PRECONDITIONS, without which the count below is about some other build: the crew the sheet
+	# actually composed is the armed one, the gear it resolved is the shipped pair, and the job really
+	# is the whole 50 units with nothing banked and nothing rotting.
+	var armed_gear: Dictionary = h._hud._drawercompose._build_gear_for(
+		h._hud._band_labor.player_band(), SourceForecast.LABOR_KIND_HUNT)
+	h._assert_hud("the sheet really staffs the armed crew, at the shipped gear (%s)" % armed_gear,
 		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == OVER_GEARED_KEEPERS
-			and float(OVER_GEARED_KEEPERS) * BandFx.KIT_BUILD_WORK_HANDLING
-				>= HerdFx.ANIMAL_TAME_WORK_COST)
-	# **ON THE PRODUCER, for the reason above.** `BUILD_FINISHES_IN_ONE_TURN` and
-	# `BUILD_TURNS_NO_ESTIMATE` are the two answers this frame separates, and they are one integer
-	# apart in the sentinel space rather than one word apart on a face.
+			and is_equal_approx(float(armed_gear.get(SourceForecast.BUILD_GEAR_PER_WORKER, 0.0)),
+				BandFx.KIT_BUILD_WORK_HANDLING)
+			and int(armed_gear.get(SourceForecast.BUILD_GEAR_SATURATING_CREW, 0))
+				== OVER_GEARED_ARMS_CREW)
+	h._assert_hud("…and the job is the whole Tame, with nothing banked and nothing rotting",
+		is_equal_approx(SourceForecast.build_work_cost(stocked_warren,
+				HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME),
+			HerdFx.ANIMAL_TAME_WORK_COST)
+		and SourceForecast.build_work_done(stocked_warren, HudComposeVocab.BARE_FORECAST_PREFIX,
+			SourceForecast.IMPROVEMENT_TAME) == ARMED_NOTHING_BANKED
+		and SourceForecast.meter_rot_per_turn(stocked_warren,
+			HudComposeVocab.BARE_FORECAST_PREFIX) == ARMED_NOTHING_ROTTING)
+	# **THE EQUALITY, ON THE PRODUCER** — every term above is known, so this is the arithmetic and not
+	# the observation that a number appeared.
 	var over_geared_turns := SourceForecast.build_turns_at(stocked_warren,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME, OVER_GEARED_KEEPERS,
-		SourceForecast.FLOOR_FOOD_PEAK,
-		h._hud._drawercompose._build_gear_for(h._hud._band_labor.player_band(),
-			SourceForecast.LABOR_KIND_HUNT))
-	print("ui_preview: over-geared build turns = %d" % over_geared_turns)
-	h._assert_hud("a job the gear alone pays off quotes ONE turn — got %d" % over_geared_turns,
-		over_geared_turns == SourceForecast.BUILD_FINISHES_IN_ONE_TURN)
-	# The NEGATIVE that names the defect: withholding the answer reads as *no estimate*, which is a
-	# perfectly plausible reading and the one this frame exists to refuse.
-	h._assert_hud("…and never the `no estimate` a withheld answer would leave behind",
-		over_geared_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+		SourceForecast.FLOOR_FOOD_PEAK, armed_gear)
+	print("ui_preview: armed crew build turns = %d" % over_geared_turns)
+	h._assert_hud("a fully-armed crew owes ⌈50 ÷ (6 + 3)⌉ — got %d" % over_geared_turns,
+		over_geared_turns == ARMED_CREW_TURNS)
+	# **THE NEGATIVE THAT PINS WHICH SIDE OF THE DIVIDE THE GEAR IS ON.** Left in the NUMERATOR the
+	# same terms answer ⌈(50 − 3) ÷ 6⌉ = 8 — a plausible number, close to the right one, and wrong on
+	# every job. Stated rather than merely "not equal", so the failure names the retired model.
+	h._assert_hud("…and NOT the ⌈(50 − 3) ÷ 6⌉ a gear term left in the numerator would answer",
+		ARMED_CREW_TURNS != ARMED_CREW_TURNS_GEAR_IN_NUMERATOR
+			and over_geared_turns != ARMED_CREW_TURNS_GEAR_IN_NUMERATOR)
+	# …and never the retired *the gear pays the job off* reading, which is what this frame claimed
+	# while the kit was a lump against the pile. No crew size makes a job vanish now.
+	h._assert_hud("…nor the ONE TURN the retired subtraction quoted this very crew",
+		over_geared_turns != SourceForecast.BUILD_FINISHES_IN_ONE_TURN)
+	# **THE ONE-TURN BRANCH IS STILL LIVE, and this is where it is honest now**: a meter standing AT
+	# its cost has nothing left to work off, and the sim answers `1` there
+	# (`docs/plan_unit_costed_work.md` §6.2). Asked of the producer on the same warren with its Tame
+	# meter filled, so the pair differs by the METER and by nothing else.
+	var finished := stocked_warren.duplicate(true)
+	finished["tame_work_done"] = HerdFx.ANIMAL_TAME_WORK_COST
+	h._assert_hud("a meter already at its cost finishes on the first worked turn",
+		SourceForecast.build_turns_at(finished, HudComposeVocab.BARE_FORECAST_PREFIX,
+			SourceForecast.IMPROVEMENT_TAME, OVER_GEARED_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK,
+			armed_gear) == SourceForecast.BUILD_FINISHES_IN_ONE_TURN)
+	# **AND THE PAIRED NO-ESTIMATE CASE, ASSERTED THROUGH TO THE CLAUSE.** A rung with nothing banked
+	# and nobody on it is the DECLARED state — the sim's own `None` — and it must render NO CLAUSE at
+	# all. **This is the pair that was missing**: every assertion in this family read a count, so a
+	# clause rendering a number-less `≈ turns` for a sentinel it had no face for would have passed all
+	# of them. `build_turns_clause` answers `""` for it now, which is what the two call sites test.
+	var unstarted := stocked_warren.duplicate(true)
+	unstarted["tame_work_done"] = ARMED_NOTHING_BANKED
+	var no_estimate := SourceForecast.build_turns_at(unstarted,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME,
+		SourceForecast.BUILD_CREW_NONE, SourceForecast.FLOOR_FOOD_PEAK, armed_gear)
+	h._assert_hud("a rung with nothing banked and nobody on it has NO estimate — got %d"
+			% no_estimate, no_estimate == SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	h._assert_hud("…and the clause for it is ABSENT, never a `≈ turns` with the number missing (\"%s\")"
+			% DetailFormat.build_turns_clause(no_estimate),
+		DetailFormat.build_turns_clause(no_estimate) == ""
+			and not DetailFormat.build_price_clause(HerdFx.ANIMAL_TAME_WORK_COST, no_estimate,
+				ARMED_NOTHING_ROTTING, SourceForecast.SOURCE_KIND_HERD).contains(
+					BUILD_TURNS_NOUN_NEEDLE)
+			and DetailFormat.build_turns_clause(ARMED_CREW_TURNS).contains(BUILD_TURNS_NOUN_NEEDLE))
 	h._hud._band_labor._player_band = keepers
 	h._hud._band_labor._player_bands = [keepers]
 	h._hud._drawercompose.close_compose_sheet()

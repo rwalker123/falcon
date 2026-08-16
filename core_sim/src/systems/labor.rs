@@ -226,10 +226,16 @@ struct BuildersBranchGear {
     /// not kept here because nothing downstream may price a build from it: the wire's own copy is
     /// resolved once, at capture, through [`LaborAllocation::builders_kit`].
     wear_kit: crate::equipment_config::KitChoice,
-    /// The coverage-weighted per-worker contribution, for the projections' closed form.
+    /// **The coverage-weighted per-worker contribution** — what one of these builders' kit adds to
+    /// its own output per turn, on **any** job on this web. The term
+    /// [`crate::intensification::build_work_per_worker_turn`] takes, and therefore the term every
+    /// accrual, balance and projection on this web is struck at.
     work_per_worker: f32,
-    /// That contribution summed over the whole pool — the work units off **any** job on this web.
-    pool_gear: f32,
+    /// **That contribution summed over the whole pool** — a READOUT
+    /// ([`crate::intensification::gear_work_supply`], published as `buildWorkFromGear`), and
+    /// nothing divides by it. A kit raises what a builder delivers; it never shrinks the job
+    /// (`docs/plan_standing_upkeep.md` §4.8).
+    gear_supply: f32,
 }
 
 impl BuildersGear {
@@ -241,15 +247,15 @@ impl BuildersGear {
     ) -> Self {
         let on = |branch: crate::intensification::RungBranch| {
             let kit = equipment.builders_kit_for(row_kit.as_ref(), Some(branch));
-            // **The coverage is over the POOL**, so the offset the wire publishes and the offset the
-            // bar is struck with are one number for the whole band.
+            // **The coverage is over the POOL**, so the rate the wire publishes and the rate the
+            // accrual is struck at are one number for the whole band.
             let coverage = equipment.coverage(&kit, builders as f32, band_kit);
             let work_per_worker = coverage
                 .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
             BuildersBranchGear {
                 wear_kit: equipment.build_gear_kit(&kit, band_kit, branch),
                 work_per_worker,
-                pool_gear: build_work_from_gear(work_per_worker, builders),
+                gear_supply: gear_work_supply(work_per_worker, builders),
             }
         };
         Self {
@@ -275,12 +281,75 @@ impl BuildersGear {
     }
 }
 
+/// **WHAT ONE OF THE BAND'S KEEPERS DELIVERS PER TURN, PER WEB** — [`BuildersGear`]'s twin one
+/// account over (`docs/plan_standing_upkeep.md` §4.8).
+///
+/// # ONE SUPPLY EXPRESSION, TWO CONSUMERS
+///
+/// *"Upkeep is just work/turn and worker productivity is work/turn."* A build divides its **pile**
+/// by [`crate::intensification::pool_work_supply`] to get turns; an upkeep compares its **demand**
+/// against the same expression to see whether it is covered. So a keeping pool stopped being a head
+/// count and became `workers × (PER_WORKER_OUTPUT + what the kit delivers)` — the same shape, one
+/// account over.
+///
+/// **THE DEMANDS DO NOT MOVE.** `plant:tended` asks `2.0` work a turn with hoes and without; what
+/// changes is what a keeper *supplies* against it. That is the build rule's mirror — *the job's work
+/// requirement never changes* — stated about a rate instead of a pile.
+///
+/// # THE KIT IS DERIVED PER WEB, BECAUSE NOTHING ELSE WOULD RESOLVE ONE
+///
+/// There is **no keeping-kit picker in the client**, and `default_kits.agriculture` /
+/// `.husbandry` are both `none`, so a pool that waited to be handed a kit would resolve bare and
+/// this whole seam would be a silent no-op. `agriculture` therefore derives the plant tool and
+/// `husbandry` the animal one off the roster ([`EquipmentConfig::keeping_kit_for`]), with no player
+/// action required — exactly as the builders row derives per queue entry. A picker becomes an
+/// **override** later, not a prerequisite.
+struct KeepingGear {
+    plant: f32,
+    animal: f32,
+}
+
+impl KeepingGear {
+    fn resolve(
+        equipment: &crate::equipment_config::EquipmentConfig,
+        allocation: &LaborAllocation,
+        band_kit: &BandEquipment,
+    ) -> Self {
+        let on = |branch: crate::intensification::RungBranch| {
+            let role = match branch {
+                crate::intensification::RungBranch::Plant => LaborTarget::Agriculture,
+                crate::intensification::RungBranch::Animal => LaborTarget::Husbandry,
+            };
+            let kit = equipment.keeping_kit_for(allocation.named_kit_on(&role).as_ref(), branch);
+            // **The coverage is over the POOL**, exactly as the builders' is: the seam arms a
+            // prefix, so a part-equipped keeping pool gets the share it actually carries and the
+            // bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
+            let keepers = allocation.workers_on(&role);
+            equipment
+                .coverage(&kit, keepers as f32, band_kit)
+                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch))
+        };
+        Self {
+            plant: on(crate::intensification::RungBranch::Plant),
+            animal: on(crate::intensification::RungBranch::Animal),
+        }
+    }
+
+    fn on(&self, branch: crate::intensification::RungBranch) -> f32 {
+        match branch {
+            crate::intensification::RungBranch::Plant => self.plant,
+            crate::intensification::RungBranch::Animal => self.animal,
+        }
+    }
+}
+
 fn maintenance_shares(
     allocation: &LaborAllocation,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
+    keeping_gear: &KeepingGear,
 ) -> Vec<f32> {
     /// One source's claim on its web's pool: where to write the share back, what it asks for, and
     /// the two keys that make *most-invested first* a total order.
@@ -339,16 +408,30 @@ fn maintenance_shares(
         }
     }
     let mode = allocation.upkeep_fund_mode;
-    for (role, claims) in [
-        (LaborTarget::Agriculture, &mut plant),
-        (LaborTarget::Husbandry, &mut animal),
+    for (role, branch, claims) in [
+        (
+            LaborTarget::Agriculture,
+            crate::intensification::RungBranch::Plant,
+            &mut plant,
+        ),
+        (
+            LaborTarget::Husbandry,
+            crate::intensification::RungBranch::Animal,
+            &mut animal,
+        ),
     ] {
         claims.sort_by(|a, b| {
             b.invested
                 .total_cmp(&a.invested)
                 .then_with(|| a.tiebreak.cmp(&b.tiebreak))
         });
-        let pool = activity_work(allocation.workers_on(&role));
+        // **THE SAME SUPPLY EXPRESSION A BUILD DIVIDES ITS PILE BY** (§4.8) — an equipped keeper
+        // covers more demand than a bare one, and the rung's demand is untouched by either. See
+        // [`KeepingGear`] for why the kit is derived rather than named.
+        let pool = crate::intensification::pool_work_supply(
+            allocation.workers_on(&role),
+            keeping_gear.on(branch),
+        );
         let demands: Vec<f32> = claims.iter().map(|claim| claim.demand).collect();
         for (claim, share) in claims
             .iter()
@@ -549,8 +632,17 @@ pub fn advance_labor_allocation(
         // assignment index (`maintenance_shares`). Resolved **before** the loop because the split is
         // a property of the band's *whole* holding on a web: what one patch gets depends on what
         // every other one asked for, which nothing inside a per-assignment pass can see.
-        let upkeep_shares =
-            maintenance_shares(&allocation, &forage_registry, &registry, &fauna, &ladder);
+        // **THE KEEPING POOLS' OWN GEAR, ONE READING PER FOOD WEB** — derived off the roster, since
+        // no picker names one (see [`KeepingGear`]).
+        let keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
+        let upkeep_shares = maintenance_shares(
+            &allocation,
+            &forage_registry,
+            &registry,
+            &fauna,
+            &ladder,
+            &keeping_gear,
+        );
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
         // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
@@ -716,12 +808,12 @@ pub fn advance_labor_allocation(
                 )
             });
             // **THE BUILD TIER IS NOT ON THIS ROW ANY MORE** (`docs/plan_standing_upkeep.md` §2.5).
-            // A build's gear offset used to be resolved here, over the *source row's* kit and
+            // A build's gear rate used to be resolved here, over the *source row's* kit and
             // averaged over the build crew standing on the tile — so a `Corral` was priced off
-            // whatever the hunt row was carrying. The builders are their own role now, so the offset
+            // whatever the hunt row was carrying. The builders are their own role now, so the rate
             // is read off **their** row and their coverage, once per band
-            // (`builders_work_per_worker` / `pool_gear` above), exactly as every other role's tier
-            // is read off its own row.
+            // (`BuildersBranchGear::work_per_worker` above), exactly as every other role's tier is
+            // read off its own row.
             // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The kit swaps the
             // whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every take
             // resolves through — so a crew sent out with no spears stops being able to hurt anything
@@ -1401,7 +1493,12 @@ pub fn advance_labor_allocation(
                             // **THE CREW'S WHOLE OUTPUT** — a build crew supplies nothing toward the
                             // maintenance rate, which the band's keeping pool owes for this meter at
                             // any fullness (§4.6a), so the pace is `work_cost / crew` again.
-                            tended_rung.build_accrual(improvement, eligible, build_workers);
+                            tended_rung.build_accrual(
+                                improvement,
+                                eligible,
+                                build_workers,
+                                builders_gear.plant.work_per_worker,
+                            );
                         // **THE SIGNED TWIN, NET OF THE ROT** — what the countdown is struck from. A
                         // meter may only be *added* to and the bleed is the decay pass's, so the
                         // estimate is where the two accounts meet: builders raising a meter more
@@ -1411,21 +1508,19 @@ pub fn advance_labor_allocation(
                         // **At the FULL POOL, whatever this entry is funded at this turn** — every
                         // entry is dated at `builders`, because that is what the head will hand it
                         // when its turn comes (§4.6b).
-                        let balance =
-                            tended_rung.build_balance(improvement, eligible, builders, meter_rot);
+                        let balance = tended_rung.build_balance(
+                            improvement,
+                            eligible,
+                            builders,
+                            builders_gear.plant.work_per_worker,
+                            meter_rot,
+                        );
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
                         // is a patch: the only per-source cost multiplier on the ladder is a
                         // species' `taming_cost_multiplier`, and a plant has no species.
                         let cultivate_cost = tended_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("a rung a verb builds has a build meter");
-                        // **WHAT THE CREW'S TOOLS TAKE OFF IT** — summed over the crew, then
-                        // subtracted from the job rather than multiplied into the output, so the
-                        // saving is a share of *this* job's size (`docs/plan_unit_costed_work.md`
-                        // §6.1). The stamped cost stays the raw one; only the bar moves.
-                        // **The pool's gear, not this row's** — the builders carry their own kit.
-                        let cultivate_bar = ladder
-                            .effective_build_cost(cultivate_cost, builders_gear.plant.pool_gear);
                         // **The feed line rides the TRANSITION, not the state.** `accrue_cultivation`
                         // answers "did this call finish it", so a second band working an
                         // already-tended patch clears its verb (above) without announcing the
@@ -1444,14 +1539,13 @@ pub fn advance_labor_allocation(
                                 faction,
                                 accrual,
                                 cultivate_cost,
-                                cultivate_bar,
                                 tended_rung.retention_bar(cultivate_cost),
                             );
                         // **The countdown's four terms, recorded rather than published.** The band's
                         // chain pass evaluates them in **queue order** afterwards, because an
                         // entry's date is the sum of everything above it plus its own span (§4.6b) —
-                        // which no per-source site can see. **Against the TOOLED bar**, or the
-                        // estimate lies to a geared pool about the job it is actually finishing.
+                        // which no per-source site can see. **Against the JOB'S OWN COST** — the
+                        // pool's kit is in the `balance` beside it (§4.8), never in the bar.
                         //
                         // **A GATE THAT REFUSES IS "NO ESTIMATE"** — nothing has been promised at
                         // all, which is not the same as a staffing that never gets there. What the
@@ -1460,7 +1554,7 @@ pub fn advance_labor_allocation(
                         build_quotes.push((
                             BuildSource::Patch(*tile),
                             BuildQuote {
-                                bar: cultivate_bar,
+                                cost: cultivate_cost,
                                 banked: patch.cultivation_progress,
                                 balance,
                                 gate,
@@ -1512,7 +1606,7 @@ pub fn advance_labor_allocation(
                             *tile,
                             build_workers,
                             builders,
-                            builders_gear.plant.pool_gear,
+                            builders_gear.plant.work_per_worker,
                             &ladder,
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
@@ -2099,15 +2193,14 @@ pub fn advance_labor_allocation(
                             Some(Improvement::Corral),
                             ring_in_flight,
                             ring_workers,
+                            builders_gear.animal.work_per_worker,
                         );
                         // A ring costs what the pen it widens costs — the same rung record, so the
-                        // two can never drift — and the same keepers' tools take the same work off
-                        // it.
+                        // two can never drift — and the same keepers' tools raise both at the same
+                        // rate.
                         let ring_cost = pen_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("the pen rung has a build meter");
-                        let ring_bar =
-                            ladder.effective_build_cost(ring_cost, builders_gear.animal.pool_gear);
                         // **The countdown's signed twin, at the FULL POOL** — the Corral arm's rule,
                         // on the ring's own gate. Recorded below so `publish_build_chain` can date
                         // the ring like any other entry.
@@ -2115,6 +2208,7 @@ pub fn advance_labor_allocation(
                             Some(Improvement::Corral),
                             ring_in_flight,
                             builders,
+                            builders_gear.animal.work_per_worker,
                             meter_rot,
                         );
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
@@ -2142,7 +2236,6 @@ pub fn advance_labor_allocation(
                             && herd.accrue_pen_extension(
                                 pen_extend_accrual,
                                 ring_cost,
-                                ring_bar,
                                 husbandry.pen_radius_max,
                             );
                         // **A RING IS AN ORDINARY BUILD AND IS DATED LIKE ONE** — recorded for the
@@ -2158,7 +2251,7 @@ pub fn advance_labor_allocation(
                         // `accrue_pen_extension` resets `pen_extend_progress` to `RUNG_UNSTARTED`
                         // on the turn the ring completes, so quoting the live field there would
                         // publish the span of a whole *new* ring on the very turn the old one
-                        // finished. Reading the bar it just cleared makes the completing turn say
+                        // finished. Reading the cost it just cleared makes the completing turn say
                         // what the Corral arm's does: there is nothing left to wait for.
                         let ring_banked = if ring_finished {
                             ring_cost
@@ -2169,7 +2262,7 @@ pub fn advance_labor_allocation(
                             build_quotes.push((
                                 BuildSource::Herd(herd.id.clone()),
                                 BuildQuote {
-                                    bar: ring_bar,
+                                    cost: ring_cost,
                                     banked: ring_banked,
                                     balance: ring_balance,
                                     // **The ring's whole gate is its in-flight flag**, so a
@@ -2403,14 +2496,23 @@ pub fn advance_labor_allocation(
                         // The crew's whole output: the keeping pool owes this herd's rate at any
                         // meter fullness, so a `Tame` banks `work_cost / crew` — the animal web
                         // answers exactly as the plant web does, with no exception (§4.6a).
-                        let accrual =
-                            pastoral_rung.build_accrual(improvement, eligible, build_workers);
+                        let accrual = pastoral_rung.build_accrual(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            builders_gear.animal.work_per_worker,
+                        );
                         // **The countdown's signed twin** — the Cultivate arm's rule, net of the
                         // meter's rot, which on the animal web is always `0` (no `meter_decay`: an
                         // under-kept flock sheds animals instead). At the **full pool**, like every
                         // entry's quote.
-                        let balance =
-                            pastoral_rung.build_balance(improvement, eligible, builders, meter_rot);
+                        let balance = pastoral_rung.build_balance(
+                            improvement,
+                            eligible,
+                            builders,
+                            builders_gear.animal.work_per_worker,
+                            meter_rot,
+                        );
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
                         // the species prices it. A Steppe Runner is five times the work, not a crew
@@ -2418,12 +2520,11 @@ pub fn advance_labor_allocation(
                         let tame_cost = pastoral_rung
                             .build_cost(fauna.taming_cost_multiplier_for(&herd.species))
                             .expect("a rung a verb builds has a build meter");
-                        // **The handling gear's whole point** (issue #515): hurdles, halters and a
-                        // butchering stone are animal-handling tools, and a `Tame` is exactly the
-                        // turns a band spends handling animals. Each equipped keeper takes its worth
-                        // off the job; a keeper who left it at camp takes nothing off.
-                        let tame_bar =
-                            ladder.effective_build_cost(tame_cost, builders_gear.animal.pool_gear);
+                        // **The handling gear's whole point** (issue #515, as re-cut by §4.8):
+                        // hurdles, halters and a butchering stone are animal-handling tools, and a
+                        // `Tame` is exactly the turns a band spends handling animals. Each equipped
+                        // keeper *delivers* its worth on top of their own hands — it is in the
+                        // `accrual` and the `balance` above, and the job below is untouched by it.
                         // The TRANSITION, not the state (the Cultivate arm's rule): a second band
                         // taming the same herd clears its verb via the already-built check above
                         // without re-announcing the taming.
@@ -2436,14 +2537,14 @@ pub fn advance_labor_allocation(
                         // Its verb is never cleared either (`hunt_rung_already_built` reads
                         // `is_domesticated`), so it would bleed forever.
                         let progress_before = herd.domestication_progress;
-                        let tamed = accrual > 0.0
-                            && herd.accrue_domestication(faction, accrual, tame_cost, tame_bar);
+                        let tamed =
+                            accrual > 0.0 && herd.accrue_domestication(faction, accrual, tame_cost);
                         // Recorded for the band's chain pass, which dates it at its place in the
                         // queue — see the Cultivate arm.
                         build_quotes.push((
                             BuildSource::Herd(herd.id.clone()),
                             BuildQuote {
-                                bar: tame_bar,
+                                cost: tame_cost,
                                 banked: herd.domestication_progress,
                                 balance,
                                 gate,
@@ -2507,29 +2608,37 @@ pub fn advance_labor_allocation(
                         // `EcologyPhase::Thriving` gate, and rung 3 never had one on either web.
                         // Fencing a herd is ground work — a pen goes up around a flock already drawn
                         // down to its keeper's own floor.
-                        let accrual = pen_rung.build_accrual(improvement, eligible, build_workers);
+                        let accrual = pen_rung.build_accrual(
+                            improvement,
+                            eligible,
+                            build_workers,
+                            builders_gear.animal.work_per_worker,
+                        );
                         // **The countdown's signed twin** — the Cultivate arm's rule, at the full
                         // pool.
-                        let balance =
-                            pen_rung.build_balance(improvement, eligible, builders, meter_rot);
+                        let balance = pen_rung.build_balance(
+                            improvement,
+                            eligible,
+                            builders,
+                            builders_gear.animal.work_per_worker,
+                            meter_rot,
+                        );
                         // Penning is a flat job for every species — a fence is a fence — so the pen
                         // takes no per-species multiplier; only *taming* varies.
                         let pen_cost = pen_rung
                             .build_cost(RUNG_COST_UNSCALED)
                             .expect("a rung a verb builds has a build meter");
-                        let pen_bar =
-                            ladder.effective_build_cost(pen_cost, builders_gear.animal.pool_gear);
                         // **Charged off the pen meter's own delta** (the Tame arm's rule): the
                         // owner-lock lives in `accrue_corral`, so a keeper the herd refuses spends
                         // nothing structurally rather than by this site re-checking the gate.
                         let pen_tile = herd.position();
                         let progress_before = herd.corral_progress;
                         let penned = accrual > 0.0
-                            && herd.accrue_corral(faction, accrual, pen_cost, pen_bar, pen_tile);
+                            && herd.accrue_corral(faction, accrual, pen_cost, pen_tile);
                         build_quotes.push((
                             BuildSource::Herd(herd.id.clone()),
                             BuildQuote {
-                                bar: pen_bar,
+                                cost: pen_cost,
                                 banked: herd.corral_progress,
                                 balance,
                                 gate,
@@ -3216,7 +3325,7 @@ fn blocked_reason(quote: Option<BuildQuote>) -> BuildGate {
     }
 }
 
-/// Stamp one queued source's countdown, its place in the line and the pool's gear offset — through
+/// Stamp one queued source's countdown, its place in the line and the pool's gear delivery — through
 /// the claims seam, so a second band on the same source cannot overwrite a sooner answer with a
 /// later one ([`BuildEstimateClaims`]).
 #[allow(clippy::too_many_arguments)] // one source, its answer, and both webs' registries and claims
@@ -3234,7 +3343,7 @@ fn publish_entry(
     let answer = BuildEstimate {
         turns,
         reason,
-        gear: builders_gear.for_source(source).pool_gear,
+        gear: builders_gear.for_source(source).gear_supply,
         position: position as i32,
     };
     match source {
@@ -3621,10 +3730,10 @@ fn accrue_field(
     // entry is the one being funded: every entry in a queue is dated at the crew the head will hand
     // it when its turn comes.
     pool: u32,
-    // The work units the **pool's** gear takes off this job, already summed over the pool
-    // (`intensification::build_work_from_gear`) and subtracted from the COST, never multiplied into
-    // the accrual.
-    pool_gear: f32,
+    // **What one of the pool's builders' kit ADDS to its own output per turn**
+    // (`BuildersBranchGear::work_per_worker`). It raises the supply; it never shrinks `sow_cost`
+    // (`docs/plan_standing_upkeep.md` §4.8).
+    gear_per_worker: f32,
     ladder: &LadderConfig,
     equipment: Option<&mut BandEquipment>,
     equipment_cfg: &crate::equipment_config::EquipmentConfig,
@@ -3638,17 +3747,16 @@ fn accrue_field(
 ) -> bool {
     let eligible = gate.holds();
     // The Sow crew's whole output — the keeping pool owes the rate whatever the builders do.
-    let accrual = field_rung.build_accrual(improvement, eligible, workers);
+    let accrual = field_rung.build_accrual(improvement, eligible, workers, gear_per_worker);
     // **The signed twin** — the meter takes the accrual, the countdown takes it net of the rot, so
     // *holding against the bleed* and *losing to it* stay two answers. At the **full pool**, like
     // every entry's quote.
-    let balance = field_rung.build_balance(improvement, eligible, pool, meter_rot);
+    let balance = field_rung.build_balance(improvement, eligible, pool, gear_per_worker, meter_rot);
     // **THE JOB'S PRICE** — `RUNG_COST_UNSCALED`, because sowing is a flat job: the only per-source
     // cost multiplier on the ladder is a species' `taming_cost_multiplier`, and a plant has none.
     let sow_cost = field_rung
         .build_cost(RUNG_COST_UNSCALED)
         .expect("a rung a verb builds has a build meter");
-    let sow_bar = ladder.effective_build_cost(sow_cost, pool_gear);
     if accrual <= 0.0 {
         // **A Sow in flight claims the patch's estimate even when it is STALLED** — the shape the
         // other three build arms have. A stall's answer is *"no estimate"*, and it is still the
@@ -3657,7 +3765,7 @@ fn accrue_field(
         quotes.push((
             BuildSource::Patch(tile),
             BuildQuote {
-                bar: sow_bar,
+                cost: sow_cost,
                 banked: patch.field_progress,
                 balance,
                 gate,
@@ -3678,7 +3786,6 @@ fn accrue_field(
         faction,
         accrual,
         sow_cost,
-        sow_bar,
         ladder.rung(RungKey::PlantField).retention_bar(sow_cost),
     );
     // Recorded against the meter the accrual just moved — the quote above was struck before it, and
@@ -3686,7 +3793,7 @@ fn accrue_field(
     quotes.push((
         BuildSource::Patch(tile),
         BuildQuote {
-            bar: sow_bar,
+            cost: sow_cost,
             banked: patch.field_progress,
             balance,
             gate,
@@ -4400,6 +4507,9 @@ mod labor_yield_tests {
             rung.verb_improvement(),
             true,
             the_harness_build_crew(rung, source_measure),
+            // **The harness carries no gear**, so every figure it records is a BARE pool's — it
+            // measures the ladder's own pacing, not a kit's.
+            crate::intensification::NO_BUILD_GEAR,
         )
     }
 
@@ -7662,8 +7772,8 @@ mod labor_yield_tests {
         /// build must never charge. `wear` is a per-item ledger, so this is a different number from
         /// [`Self::gear_wear`] and not a re-reading of it.
         hoe_wear: f32,
-        /// **What the crew's tools took off the job this turn** — `Herd::build_work_from_gear`, the
-        /// `t` the effective bar subtracts. `0` for a crew carrying nothing that helps.
+        /// **What the crew's tools ADD to the pool's output this turn** —
+        /// `Herd::build_work_from_gear`. `0` for a crew carrying nothing that helps.
         gear_work: f32,
         tame_arm_ran: bool,
         still_queued: bool,
@@ -7770,17 +7880,17 @@ mod labor_yield_tests {
     /// is exactly the turns a band spends handling animals — so a crew that brought them gentles a
     /// herd sooner than one that left them at camp.
     ///
-    /// **THE TOOL TAKES WORK OFF THE JOB — it does not speed the crew up**
-    /// (`docs/plan_unit_costed_work.md` §6.1), so the two arms are compared on **turns**, and the
-    /// per-turn accrual is asserted to be *identical*. That inversion is the whole slice: a
-    /// multiplier on the crew cancels the job's cost, so it would save the same *percentage* of turns
-    /// on a garden and on a farm alike.
+    /// **THE TOOL RAISES THE CREW; THE JOB'S WORK REQUIREMENT NEVER CHANGES**
+    /// (`docs/plan_standing_upkeep.md` §4.8), so the two arms are compared on their **per-turn
+    /// accrual** and the rung's own `work_cost` is asserted to be the one bar both are struck
+    /// from. That is the inversion of what this test asserted while gear was subtracted from the
+    /// job.
     ///
-    /// **Asserted as the contribution the config declares, not as two literals**, so retuning
-    /// `build_work` moves the test with the game; and the bare arm's liveness is asserted too, or
-    /// *"the geared arm finished sooner"* would also pass for a build that only runs with gear.
+    /// **Asserted as the contribution the config declares, not as two literals**, so retuning the
+    /// hurdles' own `build_work` moves the test with the game; and the bare arm's liveness is asserted too, or
+    /// *"the geared arm banked more"* would also pass for a build that only runs with gear.
     #[test]
-    fn the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew() {
+    fn the_handling_kit_speeds_the_crew_rather_than_shrinking_the_job() {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let declared = equipment.build_work_per_worker(
             &equipment
@@ -7798,7 +7908,7 @@ mod labor_yield_tests {
         let geared = tame_one_turn_on_herd_owned_by(HURDLING_KIT, None);
         let bare = tame_one_turn_on_herd_owned_by("big_game", None);
 
-        // (1) The ACCRUAL is untouched — the crew's hands are worth what they are worth.
+        // (1) The ACCRUAL is what the gear moves — the geared pool banks strictly more per turn.
         //
         // **Compared OUTRIGHT**, with nothing added back. It used to need the maintenance rate
         // restored to each arm before the two were comparable, because the rate was netted out of
@@ -7810,10 +7920,19 @@ mod labor_yield_tests {
             "fixture: the un-geared crew must actually be taming, or the comparison is two zeroes"
         );
         assert!(
-            (geared.progress - bare.progress).abs() < 1e-4,
-            "the gear must not speed the crew up: geared={} bare={}",
+            geared.progress > bare.progress,
+            "the gear must raise the crew's own output: geared={} bare={}",
             geared.progress,
             bare.progress
+        );
+        // **And by exactly what the kit delivers over the pool** — the crew is the same size in
+        // both arms, so the whole difference is the hurdles.
+        assert!(
+            (geared.progress - bare.progress - geared.gear_work).abs() < 1e-4,
+            "the difference must be the kit's own delivery: {} - {} against {}",
+            geared.progress,
+            bare.progress,
+            geared.gear_work
         );
 
         // (2) What it moves is the JOB — and **the partly-equipped-party rule decides how much**.
@@ -7825,54 +7944,39 @@ mod labor_yield_tests {
         const HURDLE_SETS_A_SPAWN_STOCKS: f32 = 1.0;
         assert!(
             (geared.gear_work - HURDLE_SETS_A_SPAWN_STOCKS * declared).abs() < 1e-4,
-            "one set of hurdles among {WORKERS} keepers takes one worker's worth off the job: {} \
+            "one set of hurdles among {WORKERS} keepers delivers one worker's worth: {} \
              against {declared}",
             geared.gear_work
         );
         assert_eq!(
             bare.gear_work,
             crate::intensification::NO_BUILD_GEAR,
-            "a crew carrying nothing that helps takes nothing off the job"
+            "a crew carrying nothing that helps delivers nothing extra"
         );
 
-        // (3) And so the geared build FINISHES SOONER, which is the player-facing claim — asserted
-        // as **a shorter job at the same crew output**, not as a shorter end-to-end run.
+        // (3) **THE JOB IS THE SAME SIZE IN BOTH ARMS** — a `Tame` costs this species' whole
+        // `work_cost x taming_cost_multiplier` with handling gear and without (SS4.8). The bar is
+        // the rung's own, so there is nothing per-arm to compare: it is asserted as the *one*
+        // number both arms' countdowns are struck from.
         //
-        // # WHY THE TURN COUNT STOPPED BEING THE CLEAN MEASURE
+        // # WHY THE TURN COUNT IS NOT THE MEASURE HERE
         //
         // **The two kits move the pace through a second channel**: `big_game` carries spears and its
         // lone hunter kills more, which shrinks the flock and moves the escapement room the build's
         // own gate reads. An end-to-end turn comparison therefore measures the two kits' ATTACK tiers
-        // as much as their handling gear, and at a thin crew the hunting channel dominates. The claim
-        // under test is about the **job**, so it is measured on the job.
+        // as much as their handling gear. The finishes-sooner half is (1) above — a strictly larger
+        // per-turn accrual against an identical bar — and the end-to-end pair is
+        // `intensification::tests::gear_shortens_the_build_and_never_the_job`.
         let ladder = LadderConfig::builtin();
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
         let cost = pastoral
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the pastoral rung builds");
-        let geared_bar = ladder.effective_build_cost(cost, geared.gear_work);
-        let bare_bar = ladder.effective_build_cost(cost, bare.gear_work);
         assert!(
-            geared_bar < bare_bar,
-            "the gear shortens the JOB: {geared_bar} against {bare_bar}"
-        );
-        // And a shorter job is fewer turns at any given net supply, which is the player-facing
-        // sentence — stated against the seam so no second channel can confound it.
-        const A_THIN_NET: f32 = 1.0;
-        let geared_turns = crate::intensification::build_turns_remaining(
-            geared_bar,
-            crate::intensification::RUNG_UNSTARTED,
-            A_THIN_NET,
-        );
-        let bare_turns = crate::intensification::build_turns_remaining(
-            bare_bar,
-            crate::intensification::RUNG_UNSTARTED,
-            A_THIN_NET,
-        );
-        assert!(
-            geared_turns < bare_turns,
-            "the geared crew finishes the same job sooner at the same net: {geared_turns:?} vs \
-             {bare_turns:?}"
+            cost > geared.gear_work,
+            "the job is the rung's own price, not a bar the pool's kit shrank: {cost} against a \
+             kit delivering {}",
+            geared.gear_work
         );
 
         // **The other half of "the kit decides it"**: a crew that never carried the gear onto the

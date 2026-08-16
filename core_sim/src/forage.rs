@@ -251,11 +251,13 @@ pub struct ForagePatch {
     /// *"the meter is going backwards"* are not the same thing to a player who has already
     /// committed a crew.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
-    /// **What the crew's TOOLS took off this patch's running build**, in work units — the `t` in
-    /// `effective_cost = cost − t`
-    /// ([`crate::intensification::build_work_from_gear`]), published as
-    /// `ForagePatchState.buildWorkFromGear` so a readout can say *"your hoes: −8 work"* against a
-    /// price that does not move under it.
+    /// **What the crew's TOOLS ADD to this patch's running build, per turn**, in work units —
+    /// [`crate::intensification::gear_work_supply`] over the pool, published as
+    /// `ForagePatchState.buildWorkFromGear` so a readout can say *"your hoes: +9 work a turn"*
+    /// against a price that does not move under it.
+    ///
+    /// **It is an ADDEND on the pool's output, never a deduction from the job**
+    /// (`docs/plan_standing_upkeep.md` §4.8) — `work_cost` is the same pile with hoes and without.
     ///
     /// [`crate::intensification::NO_BUILD_GEAR`] when no build is in flight or the crew carries
     /// nothing that helps — a pool sent out bare, or one carrying the animal web's `hurdles`, whose
@@ -449,24 +451,21 @@ pub fn patch_rung_already_built(patch: &ForagePatch, declared: Improvement) -> b
     }
 }
 
-/// **WHERE A BUILD METER LANDS THIS TURN — and the jump on the turn it completes.**
+/// **WHERE A BUILD METER LANDS THIS TURN** — what was banked plus what the crew produced, capped at
+/// the job's own cost so a pool that out-produces the remainder finishes at exactly `1.0` rather than
+/// overshooting it (`build_fraction` clamps for display, but a stored meter above its cost would make
+/// the `*WorkDone` / `*WorkCost` pair on the wire read as more than the whole job).
 ///
-/// `banked` is the meter plus what the crew produced; `cost` is the **raw** job; `effective_cost` is
-/// the bar after the crew's tools pre-paid their share ([`LadderConfig::effective_build_cost`]).
-///
-/// **Crossing the effective bar sets the meter to the RAW cost, not to the bar.** The stored
-/// companion cost stays the raw job — that is what `is_cultivated()` and its three siblings compare
-/// against, and a completion value that moved with the crew's kit would *un*-complete a rung the
-/// moment a tool wore out. So the meter jumps by exactly the units the tool pre-paid, and the jump is
-/// honest: those units were worked, they were simply worked by the tool. It is also what keeps the
-/// published fraction at exactly `1.0` on a finished rung, and what makes the gear's wear charge
-/// (billed off the meter's own delta) come to the whole job.
-pub(crate) fn banked_or_paid_off(banked: f32, cost: f32, effective_cost: f32) -> f32 {
-    if banked >= effective_cost {
-        cost
-    } else {
-        banked
-    }
+// **RETIRED: `banked_or_paid_off(banked, cost, effective_cost)`** — *"crossing the **effective** bar
+// sets the meter to the RAW cost"*, the jump that reconciled a tooled bar with the untooled cost the
+// four completion predicates compare against.
+//
+// **A JOB'S WORK REQUIREMENT NEVER CHANGES** (`docs/plan_standing_upkeep.md` §4.8): a kit raises what
+// a builder delivers per turn, so there is one bar, it is the stamped cost, and there is nothing to
+// reconcile. The jump was honest under the old model — those units really were worked, by the tool —
+// but it existed only because the tool was allowed to pre-pay part of the pile.
+pub(crate) fn banked_up_to_cost(banked: f32, cost: f32) -> f32 {
+    banked.min(cost)
 }
 
 impl ForagePatch {
@@ -600,7 +599,6 @@ impl ForagePatch {
         faction: FactionId,
         amount: f32,
         cost: f32,
-        effective_cost: f32,
         retain_bar: f32,
     ) -> bool {
         // **The guard is the METER, not the rung** (`Self::cultivation_meter_full`). A tended patch
@@ -616,8 +614,7 @@ impl ForagePatch {
             return false;
         }
         self.cultivation_cost = cost;
-        self.cultivation_progress =
-            banked_or_paid_off(self.cultivation_progress + amount, cost, effective_cost);
+        self.cultivation_progress = banked_up_to_cost(self.cultivation_progress + amount, cost);
         // **The rung is EARNED at the full job** — the meter reaching its own cost, exactly where it
         // always completed. Only *losing* it moved down to the bar this stamps.
         if cost > RUNG_UNSTARTED && self.cultivation_progress >= cost {
@@ -641,7 +638,6 @@ impl ForagePatch {
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
-            FABRICATED_BUILD_COST,
         )
     }
 
@@ -655,7 +651,6 @@ impl ForagePatch {
         faction: FactionId,
         amount: f32,
         cost: f32,
-        effective_cost: f32,
         retain_bar: f32,
     ) -> bool {
         if self.field_meter_full() {
@@ -668,8 +663,7 @@ impl ForagePatch {
             return false;
         }
         self.field_cost = cost;
-        self.field_progress =
-            banked_or_paid_off(self.field_progress + amount, cost, effective_cost);
+        self.field_progress = banked_up_to_cost(self.field_progress + amount, cost);
         if cost > RUNG_UNSTARTED && self.field_progress >= cost {
             self.field_retain_bar = retain_bar;
         }
@@ -681,7 +675,6 @@ impl ForagePatch {
     pub fn complete_field(&mut self, faction: FactionId) -> bool {
         self.accrue_field(
             faction,
-            FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
             FABRICATED_BUILD_COST,
@@ -3636,34 +3629,16 @@ mod tests {
     fn cultivation_accrual_is_owner_locked_and_clamped() {
         let mut patch = ForagePatch::new(UVec2::new(1, 1), 120.0);
         // First accrual claims ownership for the acting faction, and stamps the job's cost.
-        patch.accrue_cultivation(
-            FactionId(0),
-            15.0,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-        );
+        patch.accrue_cultivation(FactionId(0), 15.0, CULTIVATE_COST, CULTIVATE_COST);
         assert_eq!(patch.owner, Some(FactionId(0)));
         assert!((patch.cultivation_progress - 15.0).abs() < 1e-6);
         assert_eq!(patch.cultivation_cost, CULTIVATE_COST);
         // A different faction cannot accrue on an already-owned patch.
-        patch.accrue_cultivation(
-            FactionId(1),
-            25.0,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-        );
+        patch.accrue_cultivation(FactionId(1), 25.0, CULTIVATE_COST, CULTIVATE_COST);
         assert_eq!(patch.owner, Some(FactionId(0)));
         assert!((patch.cultivation_progress - 15.0).abs() < 1e-6);
         // Owner accrues; progress clamps at the job's cost and latches cultivated.
-        patch.accrue_cultivation(
-            FactionId(0),
-            45.0,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-        );
+        patch.accrue_cultivation(FactionId(0), 45.0, CULTIVATE_COST, CULTIVATE_COST);
         assert!(patch.is_cultivated());
         assert_eq!(patch.cultivation_progress, CULTIVATE_COST);
         // A cultivated patch is a no-op for further accrual — including for its stamped cost, so a
@@ -3671,7 +3646,6 @@ mod tests {
         patch.accrue_cultivation(
             FactionId(0),
             25.0,
-            CULTIVATE_COST * 2.0,
             CULTIVATE_COST * 2.0,
             CULTIVATE_COST * 2.0,
         );
@@ -3695,13 +3669,7 @@ mod tests {
     #[test]
     fn cultivation_decay_clears_owner_at_zero_and_takes_cultivated_feral() {
         let mut patch = ForagePatch::new(UVec2::new(2, 2), 120.0);
-        patch.accrue_cultivation(
-            FactionId(0),
-            2.5,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-        );
+        patch.accrue_cultivation(FactionId(0), 2.5, CULTIVATE_COST, CULTIVATE_COST);
         patch.decay_cultivation(1.0);
         assert!((patch.cultivation_progress - 1.5).abs() < 1e-6);
         assert_eq!(patch.owner, Some(FactionId(0)), "owner held above zero");
@@ -3713,13 +3681,7 @@ mod tests {
         assert_eq!(patch.owner, None);
         // Rung 1a: a cultivated patch now DOES decay when decayed (an untended tended patch goes
         // feral) — it reverts to wild the moment progress drops below its own cost.
-        patch.accrue_cultivation(
-            FactionId(1),
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-            CULTIVATE_COST,
-        );
+        patch.accrue_cultivation(FactionId(1), CULTIVATE_COST, CULTIVATE_COST, CULTIVATE_COST);
         assert!(patch.is_cultivated());
         patch.decay_cultivation(CULTIVATE_COST * 0.5);
         assert!(
@@ -4002,7 +3964,7 @@ mod tests {
 
         // Kept every turn → the shortfall is zero, so nothing bleeds however long you wait.
         let mut kept = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
-        kept.accrue_cultivation(FactionId(0), cost, cost, cost, cost);
+        kept.accrue_cultivation(FactionId(0), cost, cost, cost);
         for _ in 0..200 {
             kept.decay_cultivation(crate::intensification::upkeep_shortfall(demand, demand));
         }
@@ -4012,7 +3974,7 @@ mod tests {
         // Nobody keeping it → the whole demand is unmet, and that is the bleed.
         let unkept_bleed = crate::intensification::upkeep_shortfall(demand, NO_UPKEEP_DEMAND);
         let mut feral = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
-        feral.accrue_cultivation(FactionId(0), cost, cost, cost, cost);
+        feral.accrue_cultivation(FactionId(0), cost, cost, cost);
         feral.decay_cultivation(unkept_bleed);
         assert!(
             !feral.is_cultivated(),

@@ -488,9 +488,38 @@ phrase the tint tests are one string — the BUILT badges' own shape.
 equality, so every other hazard sentence rendered in the muted `INK_DIM` a descriptive line gets —
 including `HERDERS_SHED_FORMAT`, the one line in the client that says animals are drifting off.
 
-### RETIRED — `Keepers:` and `Keeping:`
+### RETIRED — `Keepers:`, `Keeping:`, and finally `At risk:` itself
 
-`DetailFormat.upkeep_lines` is `at_risk_lines` now, and it emits the `At risk:` row alone:
+> #### ⛔ THE `At risk:` ROW IS GONE. THE RUNG ROW SAYS ONE WORD AND THE HOVER SAYS THE REST (§4.7)
+>
+> Ray, on the three-line block this section used to specify: *"the messaging is pretty bad in the TILE
+> panel. Again, way too wordy… get rid of the short 2 work… completely and make the tooltip be the
+> 'This ground is slipping…' text."*
+>
+> **What renders now is one row and one hover.** The rung row appends a state word —
+> `🌾 Tended 90% ⚠ slipping` (`🐄 Domesticated 100% ⚠ drifting` on the animal web) — and the block's
+> `tooltip_text` carries the remedy alone: *"This ground is slipping — raise this band's Agriculture
+> role."* **No shortfall figure and no countdown appear on this card at all.**
+>
+> `UPKEEP_RISK_ROW`, `UPKEEP_LOST_SOON_FORMAT`, `UPKEEP_LOST_NOW_FORMAT` and `at_risk_lines` are all
+> retired. Two of those formats were the last player-facing uses of the word **rung**, which the
+> player never sees anywhere else — they see Cultivate, Sow, Tame, Corral.
+>
+> - **THE COUNTDOWN SURVIVES ON THE WORK BOARD'S HOVER AND NOWHERE ELSE**, and the asymmetry is the
+>   design rather than an oversight: the board is where staffing is decided *this turn*, so *how long
+>   you have* is actionable there; on the tile card it is a number you cannot act on. **One producer
+>   with a flag, never two producers** — `under_kept_tooltip(kind, rung_word, grace)`.
+> - **THE HOVER IS THE BLOCK'S, NOT THE ROW'S, AND THAT IS FORCED.** `[hint=…]` is **not parsed by
+>   this Godot build**: it renders literally *and* breaks the parser for the remainder of the cell, so
+>   the row spilled raw markup across the card (measured — see `sprites-widgets.md`). A detail surface
+>   is one `RichTextLabel`, so the remedy rides that label. One source per block and at most one
+>   at-risk rung per source, so it is a wider target and never a different subject.
+> - **The land cache diffs the MARKUP, not the lines.** A hover that moved while the lines stood still
+>   was skipped otherwise.
+
+The rest of this section records how the row got there, and is superseded by the callout above:
+
+`DetailFormat.upkeep_lines` was `at_risk_lines`, and it emitted the `At risk:` row alone:
 
 - **`Keeping:` stated a standing bill on every source that owed anything.** A rung's keeping only
   becomes a decision when it is SHORT — which is exactly when `At risk:` renders — so the bill went and

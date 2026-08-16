@@ -1026,17 +1026,14 @@ func _build_upkeep_mode_row(band: Dictionary, plant_pool: Dictionary,
         + float(animal_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
     if demand < SourceForecast.UPKEEP_WORK_MIN:
         return null
-    var shortfall := float(plant_pool.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND)) \
-        + float(animal_pool.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND))
-    var is_short := shortfall >= SourceForecast.UPKEEP_WORK_MIN
     var block := HudWidgets.make_zone_block()
     block.set_meta(UPKEEP_MODE_BLOCK_META, true)
     var mode := _band_labor.upkeep_fund_mode(band)
-    # **THE BUTTONS AND THE ARITHMETIC SHARE ONE ROW, AND THE SECTION TITLE IS GONE** (§4.7). The row
-    # used to be three lines — a `Short of keepers` head over the pair over the note — and the head
-    # said nothing the two words beneath it and the number under those did not: it was a label over a
-    # control whose whole content is two words. Dropping it and folding the note in beside the buttons
-    # took the row from 67px to `UPKEEP_MODE_ROW_HEIGHT`, on a zone that clips and had none to spare.
+    # **THE ROW IS THE TWO BUTTONS AND NOTHING ELSE.** It was a `Short of keepers` head over the pair
+    # over an arithmetic line; the head went first (a label over a control whose whole content is two
+    # words), and the line went with the per-web marks — it SUMMED both webs, so it could not name the
+    # one that was short, and its covered form announced that nothing was wrong in a noun no control in
+    # the game uses. Each pool card carries its own shortfall now, on its own hover.
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     row.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -1044,21 +1041,6 @@ func _build_upkeep_mode_row(band: Dictionary, plant_pool: Dictionary,
         HudWorkVocab.UPKEEP_MODE_SPREAD_LABEL, HudWorkVocab.UPKEEP_MODE_SPREAD_HINT, mode))
     row.add_child(_build_upkeep_mode_button(band, HudConst.UPKEEP_FUND_MODE_PRIORITY,
         HudWorkVocab.UPKEEP_MODE_PRIORITY_LABEL, HudWorkVocab.UPKEEP_MODE_PRIORITY_HINT, mode))
-    var note := HudWidgets.alloc_hint_label(HudWorkVocab.UPKEEP_MODE_SHORT_FORMAT % [
-        DetailFormat.format_work_units(shortfall), DetailFormat.format_work_units(demand)] \
-        if is_short else HudWorkVocab.UPKEEP_MODE_COVERED_TEXT)
-    note.set_meta(UPKEEP_MODE_NOTE_META, true)
-    note.add_theme_color_override("font_color", HudStyle.WARN if is_short else HudStyle.HEALTHY)
-    # **IT MUST NOT WRAP IN THIS SLOT, AND THAT IS WHY THE HARNESS MEASURES IT.** `alloc_hint_label`
-    # autowraps, which is right for a block-wide hint and wrong beside two buttons: a second line here
-    # would make the row draw taller than `pools_block_height` reserved, and the zone clips. So the
-    # label states its one line and the preview asserts that its natural run still fits the width it
-    # is given — at the NARROW shell first, that being the tightest place this row is offered.
-    note.autowrap_mode = TextServer.AUTOWRAP_OFF
-    note.clip_text = true
-    note.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    row.add_child(note)
     block.add_child(row)
     return block
 
@@ -1079,12 +1061,17 @@ func _build_upkeep_mode_button(band: Dictionary, mode: String, label: String, hi
     button.pressed.connect(func() -> void: _emit_upkeep_mode(band, mode))
     return button
 
-## The fund-mode block, its two buttons (value = the mode each sends) and its arithmetic line, as
-## `Control` metas — the harnesses assert this control by ABSENCE as well as by presence, a band with
-## nothing to keep rendering no row at all.
+## The fund-mode block and its two buttons (value = the mode each sends) as `Control` metas — the
+## harnesses assert this control by ABSENCE as well as by presence, a band with nothing to keep
+## rendering no row at all. **`UPKEEP_MODE_NOTE_META` retired with the arithmetic line it tagged.**
 const UPKEEP_MODE_BLOCK_META := "upkeep_mode_block"
 const UPKEEP_MODE_BUTTON_META := "upkeep_mode_button"
-const UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
+
+## …and whether a POOL CARD is flying the shortfall mark. The mark is a glyph inside the title's text
+## and the figure is on a `tooltip_text`, neither of which a harness can assert without re-spelling the
+## vocabulary; this is the card's own answer to *are you short*, so the claim is made against what the
+## builder DECIDED rather than against a substring of what it drew.
+const POOL_CARD_SHORT_META := "pool_card_short"
 
 ## Emit the band's fund-mode pick. Its own signal rather than a Callable into HudLayer, for
 ## `cancel_order_requested`'s reason: this controller is its only emitter, and the band is named by
@@ -1738,20 +1725,29 @@ func _build_pools_block(band: Dictionary) -> VBoxContainer:
         HudWorkVocab.POOLS_ZONE_READOUT_FORMAT % [on_work, int(band.get("working_age", 0))]))
     # **ONE ROW OF THREE, through the role cards' own row chrome.** They are one family — the hands the
     # band standing still spends — so they read as one row rather than as a pair and an orphan.
+    # **THE TWO POOL STATES ARE RESOLVED ONCE, HERE, AND SPENT TWICE** (§4.7). The fund-mode row below
+    # already took them as SEPARATE dicts, so the per-web split needed no new plumbing: each keeping
+    # card now wears its OWN web's shortfall, which is the thing the summed line under the buttons
+    # could not state even in principle.
+    var plant_pool := _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_FORAGE)
+    var animal_pool := _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_HUNT)
     var cards := _build_role_card_row()
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
-        HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle))
+        HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle,
+        plant_pool))
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
-        HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle))
+        HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle,
+        animal_pool))
+    # **THE BUILDERS CARD WEARS NO MARK, and it is not an omission.** It funds a QUEUE, one entry at a
+    # time, and an entry that is not being built is not being LOST — the queue block one down states
+    # its own blocked head. There is no keeping shortfall for this pool to be short of.
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_BUILDERS,
         HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle))
     block.add_child(cards)
-    # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`,
-    # which is reused UNCHANGED, parent and all. Its presence is what the reserved height forks on, so
-    # the answer is recorded on the block rather than re-derived by the capacity maths.
-    var fund_mode := _build_upkeep_mode_row(band,
-        _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_FORAGE),
-        _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_HUNT))
+    # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`.
+    # Its presence is what the reserved height forks on, so the answer is recorded on the block rather
+    # than re-derived by the capacity maths.
+    var fund_mode := _build_upkeep_mode_row(band, plant_pool, animal_pool)
     if fund_mode != null:
         block.add_child(fund_mode)
     block.set_meta(HudWorkVocab.POOLS_BLOCK_META, fund_mode != null)
@@ -1776,10 +1772,17 @@ func _build_pools_block(band: Dictionary) -> VBoxContainer:
 ## own so the two cannot drift: the keeping pair names no kit at all, and `_commanded_role_kit_id`
 ## answers `NO_KIT_ID` on the builders branch deliberately — echoing the DERIVED id back would pin the
 ## pool to whichever web it happened to be building the moment the player pressed `+`.
+##
+## **AND WHERE ITS WEB IS SHORT IT WEARS A BARE `⚠`, with the figure on the tooltip** (§4.7). The mark
+## is a mark: the card is a role name over a stepper and has no room for arithmetic, and the shortfall
+## is the reason a player would open the hover at all — so the hint the tooltip already carried is
+## joined by the number, on the one control that can move it. `pool` is that web's own state (`{}` for
+## the Builders card, which has no keeping to be short of), never the two summed.
 func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: String,
-        effective: Dictionary, idle: int) -> PanelContainer:
+        effective: Dictionary, idle: int, pool: Dictionary = {}) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
+    var is_short := SourceForecast.upkeep_is_short(pool)
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -1788,15 +1791,42 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # minimum height would be wrong the next time a role name changes length.
     card.size_flags_vertical = Control.SIZE_FILL
     card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
-    card.tooltip_text = hint
+    # The shortfall joins the role's own description rather than replacing it: what the pool DOES is
+    # the answer to "how much do I need", and the figure is meaningless without it.
+    card.tooltip_text = HudFormat.join_tooltip_lines([hint,
+        HudWorkVocab.upkeep_pool_short_format(role_name) % [
+            DetailFormat.format_work_units(float(pool.get("shortfall",
+                SourceForecast.NO_UPKEEP_DEMAND))),
+            DetailFormat.format_work_units(float(pool.get("demand",
+                SourceForecast.NO_UPKEEP_DEMAND)))] if is_short else ""])
+    card.set_meta(POOL_CARD_SHORT_META, is_short)
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     card.add_child(col)
     var title := Label.new()
     title.text = role_name
     title.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
-    title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
-    col.add_child(title)
+    # A PENDING edit and a SHORT pool are different news and the pending one is the newer: it says the
+    # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
+    # the calm card.
+    title.add_theme_color_override("font_color",
+        HudStyle.WARN if pending or is_short else HudStyle.INK)
+    if not is_short:
+        col.add_child(title)
+    else:
+        # **THE MARK SITS BESIDE THE NAME, NOT INSIDE IT.** A row of its own is what this block cannot
+        # afford (the card is budgeted at `POOL_CARD_HEIGHT` and holds a name over a stepper), and
+        # welding the glyph into the title's own `text` would make the card unfindable by that title —
+        # which is how every harness, and `_role_card_under`, identifies one.
+        var name_row := HBoxContainer.new()
+        name_row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
+        name_row.add_child(title)
+        var mark := Label.new()
+        mark.text = HudWorkVocab.UPKEEP_POOL_SHORT_MARK
+        mark.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
+        mark.add_theme_color_override("font_color", HudStyle.WARN)
+        name_row.add_child(mark)
+        col.add_child(name_row)
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
     var stepper := HBoxContainer.new()
@@ -2089,10 +2119,10 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if not pending and DetailFormat.build_sentinel_value(turns, builders, percent) == "":
         date_tooltip = HudWorkVocab.BUILD_QUEUE_ROW_SPAN_FORMAT % [value, turns]
     # **THE CAUSE OF A BLOCK RIDES THE HOVER, AND IT IS THE CARD'S OWN SENTENCE**
-    # (`docs/plan_standing_upkeep.md` §4.6b). The date column can only ever say `⚠ Blocked 32% — your
-    # builders are held here`, which is the state and not the reason; the reason is a sentence, and
-    # the one place a 28px row has for one is its tooltip. Empty on every entry that is not blocked,
-    # so the hover is unchanged wherever nothing is wrong.
+    # (`docs/plan_standing_upkeep.md` §4.6b). The date column can only ever say `⚠ Blocked 32%`,
+    # which is the state and not the reason; the reason is a sentence, and the one place a 28px row
+    # has for one is its tooltip. Empty on every entry that is not blocked, so the hover is unchanged
+    # wherever nothing is wrong.
     var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
     var tooltip_lines: Array = [HudWorkVocab.BUILD_QUEUE_ROW_TOOLTIP_FORMAT % [face,
         HudFormat.status_tooltip_line(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
@@ -2874,6 +2904,28 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # rather than spelled twice.
         var under_kept := SourceForecast.is_under_kept(
             rung_source, HudComposeVocab.BARE_FORECAST_PREFIX)
+        # **AND THE COUNTDOWN RIDES THIS ROW'S HOVER — ONLY THIS ONE.** The source's own card states
+        # the same first sentence and no figure at all: this board is where staffing is decided this
+        # turn, so *how long you have* is actionable here, while a card is where you look at the
+        # ground and a number you cannot act on from it is noise. **One producer with a flag**
+        # (`HudWorkVocab.under_kept_tooltip`), never two, or the two surfaces word one hazard
+        # differently. The rung it names is `at_risk_rung`'s — the newest meter carrying work, the
+        # same routing the built row's own mark uses — because a source publishes ONE countdown and
+        # can carry two meters.
+        #
+        # **`at_risk` IS READ BEFORE `grace`, and the two zeros are opposite news** (`upkeep_state`'s
+        # own rule): `0` grace on an at-risk source means the penalty is biting THIS turn, while a
+        # source that is not at risk states a `0` meaning nothing is at stake — so the flag decides,
+        # and an unflagged source counts down from now.
+        var under_kept_hint := ""
+        if under_kept:
+            var source_kind := SourceForecast.source_kind_for_labor(kind)
+            var upkeep := SourceForecast.upkeep_state(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX)
+            under_kept_hint = HudWorkVocab.under_kept_tooltip(kind,
+                DetailFormat.rung_badge_word(SourceForecast.at_risk_rung(
+                    rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind)),
+                int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0)
         if under_kept:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -2941,7 +2993,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # stuck; these say which conjunct of the rung's gate refused, and — where the cause is the
             # escapement floor and the keeping is also short — what frees it. Composed here, beside
             # the other three build fields, because this is where the raw wire source is in hand;
-            # the queue row spends them on its TOOLTIP, a one-line row having nowhere to put a
+            # the queue row spends it on its TOOLTIP, a one-line row having nowhere to put a
             # sentence. **`DetailFormat.build_blocked_lines` is that producer for BOTH surfaces** —
             # two copies of a refusal is how the card and the queue come to disagree — and the indent
             # is dropped because a tooltip hangs beneath no rung row.
@@ -2958,7 +3010,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
-                HudWorkVocab.under_kept_tooltip(kind) if under_kept else "",
+                under_kept_hint,
                 ready_tooltip,
                 building_tooltip,
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),

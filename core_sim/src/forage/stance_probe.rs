@@ -51,6 +51,9 @@ fn full_crew(rung: &RungDef, source_measure: f32) -> u32 {
     // file stay comparable with the ones recorded against it. **The rate is no longer a tax on
     // building** (§4.6a): a build crew supplies nothing toward it, so a lone worker would bank its
     // whole `PER_WORKER_OUTPUT` on every managed rung.
+    //
+    // **THE PROBE CARRIES NO GEAR** (`NO_BUILD_GEAR` at every accrual site below), so every figure
+    // in this file is a BARE crew's — it measures the ladder's own pacing, not a kit's.
     rung.upkeep_crew_needed(source_measure)
         .saturating_add(SOLE_WORKER)
 }
@@ -66,7 +69,12 @@ const SOLE_WORKER: u32 = 1;
 /// hands that are not on it, and there is no factor left to print.
 fn builder_work_per_turn(ladder: &LadderConfig, verb: Improvement) -> f32 {
     let rung = ladder.rung_for(verb);
-    rung.build_accrual(Some(verb), true, full_crew(rung, UNSCALED_UPKEEP))
+    rung.build_accrual(
+        Some(verb),
+        true,
+        full_crew(rung, UNSCALED_UPKEEP),
+        crate::intensification::NO_BUILD_GEAR,
+    )
 }
 
 /// Turns each run is driven for. Long enough for every stance on both webs to reach its fixed point
@@ -296,8 +304,12 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // health check and no work predicate, deliberately: sown ground draws nothing.
                 _ => true,
             };
-            let accrual =
-                rung.build_accrual(improvement, eligible, full_crew(rung, UNSCALED_UPKEEP));
+            let accrual = rung.build_accrual(
+                improvement,
+                eligible,
+                full_crew(rung, UNSCALED_UPKEEP),
+                crate::intensification::NO_BUILD_GEAR,
+            );
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("a rung a verb builds has a build meter");
@@ -305,22 +317,13 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 // The completion bool is the labor arm's feed-line trigger; this probe reads the
                 // meter itself just below, so it is deliberately discarded here.
                 let _completed_this_turn = match verb {
-                    // **The probe carries no gear**, so the effective bar IS the raw cost
-                    // (`NO_BUILD_GEAR` takes nothing off) — it measures the ladder's own pacing.
                     Improvement::Cultivate => patch.accrue_cultivation(
                         PROBE_FACTION,
                         accrual,
                         cost,
-                        cost,
                         rung.retention_bar(cost),
                     ),
-                    _ => patch.accrue_field(
-                        PROBE_FACTION,
-                        accrual,
-                        cost,
-                        cost,
-                        rung.retention_bar(cost),
-                    ),
+                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost, rung.retention_bar(cost)),
                 };
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),
@@ -522,13 +525,18 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             let eligible =
                 herd.can_pen() && herd.is_domesticated() && herd.owner == Some(PROBE_FACTION);
             let pen_load = crate::fauna::herd_keeper_load(&herd, &fauna);
-            let accrual = pen.build_accrual(improvement, eligible, full_crew(pen, pen_load));
+            let accrual = pen.build_accrual(
+                improvement,
+                eligible,
+                full_crew(pen, pen_load),
+                crate::intensification::NO_BUILD_GEAR,
+            );
             let cost = pen
                 .build_cost(RUNG_COST_UNSCALED)
                 .expect("the pen rung has a build meter");
             if accrual > 0.0 {
                 let tile = herd.position();
-                if herd.accrue_corral(PROBE_FACTION, accrual, cost, cost, tile) {
+                if herd.accrue_corral(PROBE_FACTION, accrual, cost, tile) {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
                 }
@@ -590,10 +598,14 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             // read pre-take and pre-quantisation, never "an animal died".
             let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
             let tame_load = crate::fauna::herd_keeper_load(&herd, &fauna);
-            let accrual =
-                pastoral.build_accrual(improvement, eligible, full_crew(pastoral, tame_load));
+            let accrual = pastoral.build_accrual(
+                improvement,
+                eligible,
+                full_crew(pastoral, tame_load),
+                crate::intensification::NO_BUILD_GEAR,
+            );
             if accrual > 0.0 {
-                herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost, tame_cost);
+                herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost);
                 if herd.is_domesticated() {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
@@ -1171,8 +1183,18 @@ fn probe_build_and_teach_axis() {
                 verb.map_or("-", |v| v.as_str()),
                 format!("{floor:.2}K"),
                 rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(0.0),
-                rung.build_accrual(verb, true, full_crew(rung, UNSCALED_UPKEEP)),
-                rung.build_accrual(verb, false, full_crew(rung, UNSCALED_UPKEEP)),
+                rung.build_accrual(
+                    verb,
+                    true,
+                    full_crew(rung, UNSCALED_UPKEEP),
+                    crate::intensification::NO_BUILD_GEAR,
+                ),
+                rung.build_accrual(
+                    verb,
+                    false,
+                    full_crew(rung, UNSCALED_UPKEEP),
+                    crate::intensification::NO_BUILD_GEAR,
+                ),
                 rung.upkeep_demand(UNSCALED_UPKEEP),
             );
         }

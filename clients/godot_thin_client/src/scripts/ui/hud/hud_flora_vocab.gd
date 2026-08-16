@@ -293,7 +293,12 @@ const FLORA_CROP_RUNG_NOUNS := {
 
 # The fallback noun for a policy absent from the table above — the rungs that commit nothing quote no
 # payoff at all, so this is defensive rather than reachable.
-const FLORA_CROP_RUNG_NOUN_FALLBACK := "this rung"
+#
+# **IT SAYS `this ground` BECAUSE `rung` IS OURS AND NOT THE PLAYER'S.** The word is exact internally
+# and appears on no control, in no tutorial and in no other sentence a player reads; the two entries
+# above it already name what the player sees (*a tended patch*, *a sown field*), and a fallback in a
+# private vocabulary would be the one place the ladder's jargon leaked into a tooltip.
+const FLORA_CROP_RUNG_NOUN_FALLBACK := "this ground"
 
 # The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
 # the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea

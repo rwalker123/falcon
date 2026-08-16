@@ -2880,7 +2880,17 @@ fn handle_assign_labor(
     // accident.
     let unstaffing = workers == 0;
     let builders_default_is_per_entry = matches!(target, LaborTarget::Builders) && kit_id.is_none();
-    let crew_kit = if unstaffing || builders_default_is_per_entry {
+    // **AND THE TWO KEEPING ROLES ARE THE SAME RULE, ONE ACCOUNT OVER**
+    // (`docs/plan_standing_upkeep.md` §4.8). An upkeep reads the same per-worker supply a build
+    // does now, so `agriculture` derives the plant tool and `husbandry` the animal one
+    // ([`EquipmentConfig::keeping_kit_for`] rule ②) — reachable only while the row carries no named
+    // kit. `default_kits.agriculture` / `.husbandry` are both `none`, so storing the job default
+    // here would fire rule ① on every row the UI ever wrote and every keeper would work bare-handed,
+    // which is the identical defect the builders row had and is why this is written beside it rather
+    // than discovered again.
+    let keeping_default_is_per_web =
+        matches!(target, LaborTarget::Agriculture | LaborTarget::Husbandry) && kit_id.is_none();
+    let crew_kit = if unstaffing || builders_default_is_per_entry || keeping_default_is_per_web {
         None
     } else {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
@@ -11410,12 +11420,7 @@ mod tests {
             .iter_mut()
             .find(|h| h.id == id)
             .unwrap()
-            .accrue_domestication(
-                owner,
-                PART_PREPARED_WORK,
-                PART_PREPARED_JOB,
-                PART_PREPARED_JOB,
-            );
+            .accrue_domestication(owner, PART_PREPARED_WORK, PART_PREPARED_JOB);
         grant_herding(&mut app, intruder);
         spawn_working_band(
             &mut app,

@@ -68,9 +68,17 @@ var _left_dock_scroll: ScrollContainer = null
 # --- Owned state (moved off HudLayer, all drawer-only) ---
 # One drawer fit in flight at a time — see `fit_subject_drawer`.
 var _subject_fit_pending: bool = false
-# The last land-drawer BBCode line array (skips a same-lines BBCode reparse) and the last-applied
+# The last land-drawer BBCode STRING (skips a same-markup BBCode reparse) and the last-applied
 # drawer content height (skips a same-height reflow).
-var _tile_detail_lines_cache: Array = []
+#
+# **IT CACHES THE MARKUP, NOT THE LINES, AND THE DIFFERENCE IS A REAL STALENESS BUG.** A rung row's
+# HOVER rides the BBCode as `[hint=…]` and is registered from the SOURCE's shortfall, which can move
+# while every rendered line stands still: a patch mid-Sow states its Field row as a countdown and its
+# tended row as a bare badge whether or not the keeping is short, so a line diff skipped the reassign
+# and the row kept the previous render's tooltip (or none). Composing the markup costs a string build
+# per render; what the diff is protecting against is the `.text` REPARSE and the
+# `minimum_size_changed` that follows it, which is the expensive half.
+var _tile_detail_lines_cache: String = ""
 var _subject_fit_last_height: float = NAN
 
 func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
@@ -154,18 +162,26 @@ func _render_land_drawer() -> void:
     # Skip the `.text` reassignment (and its implicit BBCode reparse + `minimum_size_changed`) when
     # the terrain lines are identical to last render — the common per-snapshot restate of the same
     # hex, where only numbers on OTHER widgets moved.
-    var lines := _tile_terrain_lines(_selection.tile_info())
+    # **A CONTEXT, ON THE ONE SURFACE THAT HAS NO BAND BEHIND IT.** Every TINT this card's rows take is
+    # still a pure function of the row's own value; what the context carries here is the rung rows'
+    # HOVERS (`row_tooltips`), which is a fact about the SOURCE and needs no band.
+    var ctx := DetailFormat.Context.new()
+    var lines := _tile_terrain_lines(_selection.tile_info(), ctx)
     # HIDDEN WHEN IT HAS NO ROWS, which since the FoW copy pass is a state that actually occurs: an
     # UNEXPLORED hex produces none at all (nothing about that ground is knowable, and its one
     # sentence is the roster note below). A visible empty RichTextLabel is not free — it still takes
     # its line height and the drawer's separation, so it would read as a blank gap between the land
     # row and that note.
     _tile_detail.visible = not lines.is_empty()
-    if lines != _tile_detail_lines_cache:
-        # No context: the LAND has no band behind it, and every tint its rows take (Sight,
-        # Habitability, Ecology, Cultivation, Field) is a pure function of the row's own value.
-        _tile_detail.text = DetailFormat.detail_bbcode(lines)
-        _tile_detail_lines_cache = lines.duplicate()
+    var markup := DetailFormat.detail_bbcode(lines, ctx)
+    if markup != _tile_detail_lines_cache:
+        _tile_detail.text = markup
+        _tile_detail_lines_cache = markup
+    # **THE REMEDY IS THE BLOCK'S HOVER** — see `DetailFormat.block_tooltip` for why it cannot be the
+    # row's. Written on EVERY render rather than inside the markup diff: it is one string assignment,
+    # and the shortfall it answers to can move while every rendered line stands still (a patch mid-Sow
+    # states a countdown on the row being billed whether or not its keeping is short).
+    _tile_detail.tooltip_text = DetailFormat.block_tooltip(ctx)
     _drawercompose.build_forage_drawer_actions(_selection.tile_info())
     if _allocation_panel != null:
         _allocation_panel.visible = false
@@ -290,7 +306,12 @@ func _role_icon_px() -> int:
     return _tile_detail.get_theme_font_size("normal_font_size")
 
 
-func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
+## `ctx` is an OUT-PARAMETER for the rung rows' HOVERS and nothing else — the `Context` the drawer is
+## about to render these lines through, filled here because the producer that knows a rung is slipping
+## is the one that wrote its row. A caller with no context (the harnesses, which read the LINES) passes
+## none and gets exactly the lines it always did.
+func _tile_terrain_lines(tile_info: Dictionary,
+        ctx: DetailFormat.Context = null) -> Array[String]:
     var lines: Array[String] = []
     if tile_info.is_empty():
         lines.append("Hover or click a tile to inspect details.")
@@ -460,10 +481,15 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         # `BUILD_METER_HOLDS` cannot carry**, so the crew is what the row is given.
         var cultivate_crew := _band_labor.build_crew_forage(
             int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-        lines.append("Cultivation: %s" % DetailFormat.rung_row_value(tile_info, prefix,
-            SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
-            DetailFormat.cultivation_built_label(), cultivated, cultivation_progress,
-            cultivate_crew, unstaffed_rung))
+        lines.append("%s: %s" % [DetailFormat.CULTIVATION_ROW, DetailFormat.rung_row_value(
+            tile_info, prefix, SourceForecast.IMPROVEMENT_CULTIVATE,
+            SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.cultivation_built_label(), cultivated,
+            cultivation_progress, cultivate_crew, unstaffed_rung)])
+        # **THE REMEDY IS THE ROW'S HOVER NOW** — the `At risk:` row, its shortfall, its countdown and
+        # the indented instruction under it are all retired, and this is what replaced the four of
+        # them: `⚠ slipping` on the row, and one sentence naming the role that pays behind it.
+        DetailFormat.note_under_kept_hover(ctx, DetailFormat.CULTIVATION_ROW, tile_info, prefix,
+            SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_CULTIVATE)
         # **THE GEAR'S SAVING HANGS OFF THE RUNG ACTUALLY IN FLIGHT.** The wire field is per SOURCE
         # (at most one improvement is ever in flight on one), so it attaches to whichever meter the
         # build is on and to nothing else — on the other row it would describe a build nobody is doing,
@@ -496,17 +522,17 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
             SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.field_built_label(), is_field,
             field_progress, _band_labor.build_crew_forage(int(tile_info.get("x", -1)),
                 int(tile_info.get("y", -1))), unstaffed_rung)])
+        DetailFormat.note_under_kept_hover(ctx, HudFloraVocab.FIELD_ROW, tile_info, prefix,
+            SourceForecast.SOURCE_KIND_FORAGE, SourceForecast.IMPROVEMENT_SOW)
         if SourceForecast.build_verb(tile_info, prefix, SourceForecast.SOURCE_KIND_FORAGE,
                 unstaffed_rung) == SourceForecast.IMPROVEMENT_SOW:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
             lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
                 SourceForecast.SOURCE_KIND_FORAGE))
-    # **WHAT THIS PATCH IS ABOUT TO LOSE, and how long it has** — the detail behind whichever rung row
-    # above it is marked. It sits under both rather than beside either because the shortfall is a
-    # property of the SOURCE, and a patch whose keeping is being paid prints no row at all, which is
-    # what makes the silence readable.
-    lines.append_array(DetailFormat.at_risk_lines(tile_info, prefix,
-        SourceForecast.SOURCE_KIND_FORAGE))
+    # **AND NOTHING BENEATH THEM ABOUT THE KEEPING.** The `At risk:` row that used to close this
+    # producer — a shortfall, a countdown and an indented remedy — is retired: the state is on the rung
+    # row (`⚠ slipping`) and the remedy is that row's hover, so the card carries one row where it
+    # carried three, and no figure the player cannot act on from here.
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of
@@ -645,10 +671,15 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # **AND THE BUILD CREW BESIDE IT** (`docs/plan_standing_upkeep.md` §4.6a): the wire's
         # `BUILD_METER_HOLDS` is a crew treading water with a crew on it and a build parked on purpose
         # without one, and the producer cannot see which from the herd dict alone.
+        # **AND THE CONTEXT GOES IN, for the rung rows' hovers** — the animal twin of the tile card's
+        # `⚠ drifting` row, whose remedy is that row's own `[hint=…]` since the `At risk:` row it used
+        # to hang under is retired.
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
             _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
-            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))))
+            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))), ctx)
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
+    # …and the animal web's half of the same hover, on the drawer that describes one herd.
+    _occupant_detail.tooltip_text = DetailFormat.block_tooltip(ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())
     elif is_player_band:

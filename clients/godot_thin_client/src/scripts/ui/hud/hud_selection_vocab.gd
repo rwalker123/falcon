@@ -160,6 +160,23 @@ const RUNG_BUILT_FORMAT := "%s %d%%"
 # overgrazing sentence, all of which already led with it.
 const RUNG_HAZARD_GLYPH := "⚠"
 
+# **A BUILT RUNG WHOSE KEEPING IS SHORT: the badge, the mark, and WHAT IS HAPPENING TO IT.**
+#
+# **THE MARK USED TO STAND ALONE**, because the three lines beneath it carried the meaning — an
+# `At risk:` row with a shortfall and a countdown, and an indented remedy. All three are retired
+# (`DetailFormat`'s own note), so a bare `⚠` would be a warning with nothing in it: the state has to
+# be ON the row. It is a STATE WORD and not a sentence — the sentence is the row's hover — so the row
+# stays one line on a card that clips.
+const RUNG_UNDER_KEPT_FORMAT := "%s %s %s"
+
+# The two webs' words, which are their own consequences rather than one shared adjective: ground goes
+# back to wild, animals walk away. Both are the verb out of the work board's own note
+# (`HudWorkVocab.WORK_ROW_UNDER_KEPT_NOTE` / `WORK_ROW_UNDER_HERDED_NOTE`), so the card's word and the
+# board's sentence name one failure. Lower-case: they land mid-value, after the percentage.
+const RUNG_UNDER_KEPT_PLANT_WORD := "slipping"
+
+const RUNG_UNDER_KEPT_ANIMAL_WORD := "drifting"
+
 # **HAZARD: staffed EXACTLY AT the rung's rate** (`SourceForecast.BUILD_TURNS_HOLDS`, the wire's own
 # `-2`). The `∞` is `DetailFormat.BUILD_TURNS_NEVER_GLYPH`, shared with the larder runway and meaning
 # the opposite there, which is why the ink is what separates them. It wears no `≈`: a meter that does
@@ -229,24 +246,32 @@ const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 # queue, nothing behind it moves either.
 #
 # **IT IS NOT `RUNG_STALLED_FORMAT`, AND THE DIFFERENCE IS WHAT THE PLAYER DOES NEXT.** *Stalled* is
-# a rung nobody is being held up by; this one is holding the band's ENTIRE build programme, which is
-# why it names where the builders are rather than only what this rung is doing. The remedy is on a
-# different line entirely, so this format states no cause — `DetailFormat.build_blocked_lines` pairs
-# it with the two facts already published on the same row (`upkeepShortfall` /
-# `neglectGraceRemaining`), which is where the answer actually is.
-const RUNG_BLOCKED_FORMAT := "%s Blocked %d%% — your builders are stuck here"
-
-# **WHAT FREES A BLOCKED QUEUE, on the web whose keeping is short** — the sub-row beneath the row
-# above, rendered ONLY where the source publishes a shortfall, so the cause is READ rather than
-# invented (`docs/plan_standing_upkeep.md` §4.6b). `%s` is the band role that pays it.
+# a rung nobody is being held up by; this one is holding the band's ENTIRE build programme. It states
+# no cause — `DetailFormat.build_blocked_lines` puts that on the line beneath, which is where the
+# answer actually is.
 #
-# **THE REMEDY IS THE KEEPING ALONE, AND IT IS MEASURED RATHER THAN ASSUMED.** On the animal web the
-# blocked case is a half-tamed herd drawn to its escapement floor: staffing the keeping restores the
-# herd's regrowth and logistic growth outruns a floor-respecting take, so the flock climbs back over
-# the gate in ~7–14 turns **with the hunters left at full strength**. Taking them off as well is
-# indistinguishable, so this must NOT hedge with *"and stop hunting"* — a remedy with a second,
-# useless half reads as a guess.
-const RUNG_BLOCKED_REMEDY_FORMAT := "You are short of hands to look after it — put someone on this band's %s."
+# **IT IS THE WORD AND THE METER, AND NOTHING ELSE.** It read `— your builders are stuck here` for a
+# release, and the tail is what *Blocked* already means: a headline that spells its own word out is
+# the first line of a three-line block the player has to read before reaching the one sentence that
+# tells them anything. Length is a correctness property on a ~245px card (see `BUILD_BLOCKED_REASONS`
+# below), and the cheapest words to cut are the ones that repeat the word beside them.
+const RUNG_BLOCKED_FORMAT := "%s Blocked %d%%"
+
+# RETIRED — `RUNG_BLOCKED_REMEDY_FORMAT`, the KEEPING line: *"You are short of hands to look after it
+# — put someone on this band's %s."* It rode the blocked block as a THIRD sentence, on the one pairing
+# it was a lever for (an `escapement` refusal on a source whose keeping is also short), and Ray cut it
+# with the cause's own remedy sentence: *"You don't need 'your builders are stuck here', that's what
+# Blocked means. You also don't need the 2nd and 3rd sentence."*
+#
+# **IT IS NOT MISSING AND MUST NOT BE PUT BACK AS A "REMEDY THE BLOCK FORGOT".** The block is two
+# things now — the headline and one short cause — and everything this line said is still on the card
+# one row down, where the `At risk:` row states the shortfall, its countdown and the role that pays it.
+# A third sentence between a hazard row and that countdown is the paragraph the trim exists to end.
+#
+# **AND THE `At risk:` ROW HAD TO STOP YIELDING TO IT.** `DetailFormat.build_blocked_states_keeping`
+# suppressed that row's own under-kept note on this exact pairing, so cutting this line without
+# deleting that predicate left the pairing with a shortfall, a countdown and nobody to put on it. Both
+# are retired together; the autopsy is where the predicate was.
 
 # **THE CAUSE ITSELF, ONE SENTENCE PER KEY** (`ForagePatchState.buildBlockedReason` /
 # `HerdTelemetryState.buildBlockedReason`, `docs/plan_standing_upkeep.md` §4.6b). The sim decides
@@ -275,16 +300,38 @@ const RUNG_BLOCKED_REMEDY_FORMAT := "You are short of hands to look after it —
 # **EACH SENTENCE NAMES SOMETHING THE PLAYER CAN DO, or says plainly that there is nothing**
 # (`species_ceiling`), which is the gate-reason rule this client already follows: naming a
 # prerequisite without naming the lever tells a player the door is locked and not where the key is.
+#
+# > ### ⛔ ONE SENTENCE PER KEY MEANS ONE, AND FOUR OF THEM LOST A SECOND
+# >
+# > The block draws TWO lines — the headline and this — and that is the whole of it. Ray cut the rest on
+# > sight: *"You don't need 'your builders are stuck here', that's what Blocked means. You also don't
+# > need the 2nd and 3rd sentence."* So an entry that STATED its cause and then told the player what to
+# > do about it was two sentences where the card affords one, and the second went:
+# >
+# > - `site` — *"You will have to build somewhere else."*
+# > - `undeclared` — *"Remove it from the build queue and order the next step instead."*
+# > - `unworked` — *"Send a crew back, or remove the job from the build queue."*
+# > - `BUILD_BLOCKED_FALLBACK` — *"Your builders will wait here until it changes."*
+# >
+# > (The escapement pair below lost its own, and the keeping line went with them.)
+# >
+# > **THE ENTRIES THAT SURVIVE WHOLE FUSE THEIR LEVER INTO THE CAUSE with an em-dash** — *"…— the Know
+# > tab shows how far along they are"*, *"…— pick one on the job's row in the build queue"* — which is
+# > one sentence and is why they were not touched. **That is the shape to write a new key in**: state
+# > the refusal, and where a lever fits in the same breath, name it in the same sentence. A key whose
+# > remedy will not fit that way states the refusal alone; the block is a READOUT, and the surfaces
+# > that carry instructions are the build queue's own row and the `At risk:` row beneath this one.
+# > Length is a correctness property here — measure a rewrite in `ui_preview_out/tile_meter_blocked.png`.
 const BUILD_BLOCKED_REASONS := {
     "knowledge": "Your people have not learned how to do this yet — the Know tab shows how far along they are.",
     "no_crop": "No crop has been chosen for this patch — pick one on the job's row in the build queue.",
     "species_ceiling": "This kind of animal will not go any further, however much your people learn.",
     "rung_below": "It has to be tamed before it can be penned.",
     "owned_by_other": "Another band already holds this — yours cannot build here.",
-    "site": "This ground will never support it. You will have to build somewhere else.",
+    "site": "This ground will never support it.",
     "ring_idle": "Nobody is extending this pen.",
-    "undeclared": "This job is out of date — the land has moved on since you ordered it. Remove it from the build queue and order the next step instead.",
-    "unworked": "This band has nobody working here any more. Send a crew back, or remove the job from the build queue.",
+    "undeclared": "This job is out of date — the land has moved on since you ordered it.",
+    "unworked": "This band has nobody working here any more.",
 }
 
 # **THE ONE CAUSE THAT IS WORDED PER WEB** — the state the playtest actually hit, and the only one
@@ -295,34 +342,48 @@ const BUILD_BLOCKED_REASONS := {
 # way of asking which web this is.
 #
 # **NAME THE SLIDER, NOT THE MODEL.** "Escapement floor" is this repo's term; the player has only ever
-# seen `Leave standing`, so that is the phrase the remedy quotes — in the UI's own capitalisation and
-# in quotes, so it reads as a control rather than as prose.
+# seen `Leave standing`, so that is the phrase these quote — in the UI's own capitalisation and in
+# quotes, so it reads as a control rather than as prose.
 #
-# **THEY ARE TWO CLAUSES BECAUSE A THIRD DOES NOT FIT.** The first wording of this pair spelled the
-# consequence out — *"so nobody can work this herd — and taming only moves while they do"* — and
-# rendered SIX lines in the ~245px card, which is a paragraph nobody reads standing between a
-# hazard row and an `At risk:` countdown. The headline above already says the builders are stuck,
-# so the consequence was the cuttable clause and the two REMEDIES were not. Three lines is the
-# budget; measure a rewrite in `ui_preview_out/tile_meter_blocked.png` rather than in characters.
-const BUILD_BLOCKED_ESCAPEMENT_HERD := "Fewer animals here than you leave standing. Lower \"Leave standing\", or wait for the herd to grow back."
+# **ONE SENTENCE, AND IT HAS BEEN CUT TWICE.** The first wording spelled the consequence out — *"so
+# nobody can work this herd — and taming only moves while they do"* — and rendered SIX lines in the
+# ~245px card. Cutting that left three (headline, cause, remedy), which is still a paragraph standing
+# between a hazard row and an `At risk:` countdown, so Ray cut the remedy too: RETIRED — *"Lower
+# \"Leave standing\", or wait for the herd to grow back."* / *"…or wait for it to grow back."*
+#
+# **THE SLIDER IS STILL NAMED, WHICH IS WHY THESE READ AS INSTRUCTIONS WITHOUT CARRYING ONE.** *"than
+# you leave standing"* quotes the control the player would move; a second sentence telling them to move
+# it says the same thing twice. **ONE line is the budget** — measure a rewrite in
+# `ui_preview_out/tile_meter_blocked.png` rather than in characters.
+const BUILD_BLOCKED_ESCAPEMENT_HERD := "Fewer animals here than you leave standing."
 
-const BUILD_BLOCKED_ESCAPEMENT_PLANT := "Less growing here than you leave standing. Lower \"Leave standing\", or wait for it to grow back."
+const BUILD_BLOCKED_ESCAPEMENT_PLANT := "Less growing here than you leave standing."
 
-# The key the ESCAPEMENT refusal ships under — named because two rules test it: it is the ONE cause
-# worded per web (the pair above), and the ONE that may ALSO be short of keeping, which is a second
-# fact with a second remedy and gets its own line. `DetailFormat` tests it by name so neither rule is
-# written twice.
+# The key the ESCAPEMENT refusal ships under — named because it is the ONE cause worded per web (the
+# pair above), and `DetailFormat` tests it by name so that rule is written once. It was TWO rules until
+# the keeping line retired: this was also the one refusal that could be short of keeping as well, which
+# earned a second sentence and a suppression on the `At risk:` row. Both are gone, and this key is now
+# tested for the per-web wording alone.
 const BUILD_BLOCKED_REASON_ESCAPEMENT := "escapement"
 
 # An unrecognized cause key — or a `-4` shipped with no key at all — still leaves the builders stuck,
 # so this says exactly that and guesses at nothing. It is the honest reading of a wire this client is
 # behind on, and it is never an empty line: silence on a marked row reads as *no cause exists*, which
 # is the state this whole block exists to end.
-const BUILD_BLOCKED_FALLBACK := "Something is stopping this build that this version cannot explain. Your builders will wait here until it changes."
+# RETIRED with the block's second sentence — *"Your builders will wait here until it changes."*, which
+# restated the headline's own word.
+const BUILD_BLOCKED_FALLBACK := "Something is stopping this build that this version cannot explain."
 
-# `your gear: −8.5 work off this job` — what the crew's tools took off the COST, in the units the
-# cost is quoted in. It is the only way a player can tell a tool is worth carrying to a garden and
-# not to a farm: the contribution is a fixed number of units against a job whose size is not, so its
-# share shrinks as the job grows. Rendered only above zero — a `−0` advertises nothing. The minus is
-# U+2212 MINUS SIGN, the stepper faces' own rule.
-const BUILD_GEAR_WORK_ROW_FORMAT := "your gear: −%s work off this job"
+# `your gear: +1.0 work a turn` — what the crew's tools ADD to what it banks, in the units the meter
+# is quoted in. It is the only way a player can tell a tool is worth carrying at all: a build's pace
+# is its crew plus this, and a kit left at camp is the difference between the two.
+#
+# ⛔ **IT READ `−8.5 work off this job` AND THAT IS BACKWARDS NOW** (`docs/plan_standing_upkeep.md`
+# §4.8). `buildWorkFromGear` was *"what the tools took OFF the cost"* — a lump against the pile,
+# granted once — and it is *"what the pool's kits ADD per turn"*, an addend on the supply. The sign
+# had to turn with it: a `−` on a contribution reads as the tool costing the player work. **A job's
+# work requirement never changes**, so nothing comes off the job to be quoted here.
+#
+# Rendered only above zero — a `+0` advertises a tool that did nothing. The plus is a plain ASCII
+# `+`, matching every other per-turn rate this HUD states.
+const BUILD_GEAR_WORK_ROW_FORMAT := "your gear: +%s work a turn"

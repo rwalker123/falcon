@@ -195,6 +195,31 @@ func _lines_any_contain(lines: Array, text: String) -> bool:
 			return true
 	return false
 
+## ONE named row of a produced list — `Husbandry: 🐄 Domesticated 100% ⚠ drifting`. The state word is
+## also in the shed SENTENCE two lines down, so a whole-list `contains` for it is vacuous: the claim
+## is that the RUNG ROW carries it.
+func _line_with_key(lines: Array, key: String) -> String:
+	for line in lines:
+		if String(line).begins_with(key + ": "):
+			return String(line)
+	return ""
+
+## The RETIRED `At risk:` row, as a literal — the vocabulary no longer holds it, so a needle taken
+## from live code could only describe whatever the code now says.
+const RETIRED_AT_RISK_ROW_NEEDLE := "At risk"
+
+## …and the probe for a rung row's HOVER, which is the only way to read one back: a drawer is ONE
+## `RichTextLabel`, so the remedy rides its BBCode as `[hint=…]` rather than on any node's
+## `tooltip_text`. `""` is a herd whose keeping is paid.
+const HERD_HOVER_PROBE_ROW := "probe"
+
+func _herd_under_kept_hover(herd: Dictionary,
+		improvement: String = SourceForecast.IMPROVEMENT_TAME) -> String:
+	var ctx := DetailFormat.Context.new()
+	DetailFormat.note_under_kept_hover(ctx, HERD_HOVER_PROBE_ROW, herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_HERD, improvement)
+	return String(ctx.row_tooltips.get(HERD_HOVER_PROBE_ROW, ""))
+
 func _danger_verdict_word_present(lines: Array) -> bool:
 	for line in lines:
 		var text := String(line)
@@ -532,8 +557,13 @@ func run(harness) -> void:
 	h._assert_hud("a covered herd states its rung and nothing else — no mark, no bill, no risk row",
 		_lines_any_contain(fully_lines, DetailFormat.HUSBANDRY_BUILT_WORD)
 		and not _lines_any_contain(fully_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
-		and not _lines_any_contain(fully_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and not _lines_any_contain(fully_lines, RETIRED_AT_RISK_ROW_NEEDLE)
 		and not _lines_any_contain(fully_lines, "drawn from the band"))
+	# …and it registers NO row hover either, which is the other half of "nothing is wrong here": the
+	# remedy the `At risk:` row used to carry hangs off the rung row's own `[hint=…]` now, and a card
+	# that hung it off every rung would say the ground is slipping wherever it is not.
+	h._assert_hud("…and hangs no remedy off its Husbandry row",
+		_herd_under_kept_hover(_fully_herded_herd_fixture()) == "")
 
 	# SHORT: the herd wants 6 keepers' worth and the pool paid 4 → the ⚠ on its own Husbandry row, the
 	# `At risk:` row pricing the shortfall, and the shed line naming the band's Husbandry role and the
@@ -551,7 +581,16 @@ func run(harness) -> void:
 	h._assert_hud("an under-kept herd flags the deficit and names the Husbandry role that stops it",
 		_lines_any_contain(under_lines, "animals are drifting off")
 		and _lines_any_contain(under_lines, "Husbandry")
-		and not _lines_any_contain(under_lines, "slipping"))
+		and not _lines_any_contain(under_lines, HudSelectionVocab.RUNG_UNDER_KEPT_PLANT_WORD))
+	# **THE ANIMAL WEB SAYS IT IN ITS OWN WORDS** — `drifting`, never the plant web's `slipping`, and
+	# the remedy on the row's hover is the Husbandry note rather than the Agriculture one. The two
+	# webs' pair is asserted together, since one picker answering both is a wrong answer that looks
+	# like a right one.
+	h._assert_hud("…and the built rung reads ⚠ drifting, with the HUSBANDRY remedy on its hover",
+		_line_with_key(under_lines, DetailFormat.HUSBANDRY_ROW).contains(
+			HudSelectionVocab.RUNG_UNDER_KEPT_ANIMAL_WORD)
+		and _herd_under_kept_hover(_under_herded_herd_fixture())
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_HERD))
 	h._assert_hud("…and the standing keeper/keeping bill is gone from the drawer entirely",
 		not _lines_any_contain(under_lines, "drawn from the band")
 		and not _lines_any_contain(under_lines, "the pool covers"))
@@ -580,7 +619,7 @@ func run(harness) -> void:
 	# shortfall costs.
 	# Neither is on a herd whose build IS being paid, which is what makes the silence readable.
 	h._assert_hud("a herd mid-Tame whose build is paid states no shortfall and no keeper bill",
-		not _lines_any_contain(mid_tame_lines, DetailFormat.UPKEEP_RISK_ROW)
+		not _lines_any_contain(mid_tame_lines, RETIRED_AT_RISK_ROW_NEEDLE)
 		and not _lines_any_contain(mid_tame_lines, "the pool covers")
 		and not _lines_any_contain(mid_tame_lines, "under-herded"))
 	# …and the WARNING half of the same fork, which the row above cannot make: the identical herd with
@@ -593,9 +632,11 @@ func run(harness) -> void:
 	unpaid_tame["build_turns_remaining"] = SourceForecast.BUILD_TURNS_HOLDS
 	var unpaid_lines := DetailFormat.herd_summary_lines(
 		unpaid_tame, h._hud._band_labor.world_herds())
-	h._assert_hud("…while the same build going UNPAID is marked on its rung row AND priced at risk",
+	h._assert_hud("…while the same build going UNPAID is marked on its rung row and hangs the remedy",
 		_lines_any_contain(unpaid_lines, HudSelectionVocab.RUNG_HAZARD_GLYPH)
-		and _lines_any_contain(unpaid_lines, DetailFormat.UPKEEP_RISK_ROW)
+		and _herd_under_kept_hover(unpaid_tame)
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_HERD)
+		and not _lines_any_contain(unpaid_lines, RETIRED_AT_RISK_ROW_NEEDLE)
 		and not _lines_any_contain(unpaid_lines, "the pool covers"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
@@ -770,17 +811,21 @@ func run(harness) -> void:
 		Q.compose_commit_button(h._hud._drawercompose._compose_sheet) != null
 			and Q.compose_commit_button(h._hud._drawercompose._compose_sheet).text
 				== HudComposeVocab.ASSIGN_LOCAL_HERD_BUTTON)
-	# **WHAT THE GEAR TOOK OFF THE JOB** (`docs/plan_unit_costed_work.md` §11) — the readout that is
-	# the ONLY way a player can tell a tool is worth carrying to a garden and not to a farm: the
-	# contribution is a fixed number of work units against a job whose size is not. **The ANIMAL web is
-	# where it is judged**, no plant item declaring the stat yet (issue #539), and this herd's keepers
-	# carry the shipped handling gear.
+	# **WHAT THE GEAR ADDS PER TURN** (`docs/plan_standing_upkeep.md` §4.8) — the readout that is the
+	# ONLY way a player can tell a tool is worth carrying at all: a build's pace is its crew plus this.
+	# **The ANIMAL web is where it is judged**, no plant item declaring the stat yet (issue #539), and
+	# this herd's keepers carry the shipped handling gear.
+	#
+	# ⛔ **IT READ `−17 work off this job` AND THE MODEL TURNED OVER UNDER IT.** `buildWorkFromGear` is
+	# what the pool'''s kits ADD, not units taken off the pile, so the row states a rate with a `+` and
+	# the fixture'''s magnitude was re-minted with the stat (8.5 off a job → 0.5 delivered per worker
+	# per turn, so two keepers publish 1.0).
 	#
 	# Judged as a PAIR with the plant tile beside it, because a line rendered unconditionally would
 	# satisfy the positive alone — and the negative is the `> 0` gate's whole contract: a crew that
 	# carries nothing that helps must read no line, never `−0 work`.
 	var corral_drawer: String = h._hud.occupant_detail.text
-	h._assert_hud("a geared animal build states what its keepers took off the job",
+	h._assert_hud("a geared animal build states what its keepers ADD to it each turn",
 		corral_drawer.contains(HudSelectionVocab.BUILD_GEAR_WORK_ROW_FORMAT
 			% DetailFormat.format_work_units(HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR)))
 	# **THE TURN COUNT IS THE ROW ITSELF NOW** (issue #545), not an indented line under a meter

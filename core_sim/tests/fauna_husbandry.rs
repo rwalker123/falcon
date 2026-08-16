@@ -2696,9 +2696,34 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
     seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE);
     app.world.run_system_once(advance_labor_allocation);
 
+    // **ONE KEEPER'S SUPPLY IS THE SAME EXPRESSION A BUILDER'S IS** (`docs/plan_standing_upkeep.md`
+    // §4.8) — its bare `PER_WORKER_OUTPUT` plus whatever the band's derived `husbandry` kit
+    // delivers. Read off the roster rather than stated as a literal, so retuning the hurdles moves
+    // the fixture with the game.
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let one_keeper = core_sim::pool_work_supply(
+        1,
+        equipment
+            .keeping_kit_for_branch(core_sim::RungBranch::Animal)
+            .map(|kit| {
+                equipment.build_work_per_worker(
+                    &kit,
+                    &core_sim::BandEquipment::start_stocked(&equipment),
+                    core_sim::RungBranch::Animal,
+                )
+            })
+            .expect("the shipped roster serves the animal web's keeping"),
+    );
+    // **THE NO-OP GUARD.** A derivation that answered `none` would leave every keeper bare and this
+    // whole seam would change nothing while every other assertion still passed.
+    assert!(
+        one_keeper > core_sim::PER_WORKER_OUTPUT,
+        "fixture: a start-stocked band's derived keeping kit must actually deliver something — a \
+         bare {one_keeper} means the derivation resolved `none`"
+    );
     assert_eq!(
         herd_of(&app, &id).upkeep_supplied,
-        2.0 * core_sim::PER_WORKER_OUTPUT,
+        2.0 * one_keeper,
         "both bands' keepers are on the herd, so both are counted"
     );
 }

@@ -429,10 +429,13 @@ pub struct Herd {
     /// [`crate::intensification::BuildTurns::Rotting`] its [`sim_schema::BUILD_METER_ROTS`] — see
     /// `ForagePatch::build_turns_remaining` for why the three are separate answers.
     pub build_turns_remaining: Option<crate::intensification::BuildTurns>,
-    /// **What the keepers' TOOLS took off this herd's running build**, in work units — the `t` in
-    /// `effective_cost = cost − t`
-    /// ([`crate::intensification::build_work_from_gear`]), published as
+    /// **What the keepers' TOOLS ADD to this herd's running build, per turn**, in work units —
+    /// [`crate::intensification::gear_work_supply`] over the pool, published as
     /// `HerdTelemetryState.buildWorkFromGear`.
+    ///
+    /// **It is an ADDEND on the pool's output, never a deduction from the job**
+    /// (`docs/plan_standing_upkeep.md` §4.8) — a `Tame` costs its species' whole
+    /// `work_cost × taming_cost_multiplier` with handling gear and without.
     ///
     /// [`crate::intensification::NO_BUILD_GEAR`] when no build is in flight or the crew left the
     /// handling gear at camp. Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle,
@@ -793,13 +796,7 @@ impl Herd {
     /// **Returns `true` only when THIS call finished the rung**, matching [`Herd::accrue_corral`] and
     /// `ForagePatch::accrue_cultivation`: `handle_tame` sets the verb on every band hunting the herd,
     /// so a post-hoc `is_domesticated()` test would push one "Tamed the …" feed line per band.
-    pub fn accrue_domestication(
-        &mut self,
-        faction: FactionId,
-        amount: f32,
-        cost: f32,
-        effective_cost: f32,
-    ) -> bool {
+    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32, cost: f32) -> bool {
         if self.is_domesticated() || !self.can_domesticate() {
             return false;
         }
@@ -810,11 +807,8 @@ impl Herd {
             return false;
         }
         self.domestication_cost = cost;
-        self.domestication_progress = crate::forage::banked_or_paid_off(
-            self.domestication_progress + amount,
-            cost,
-            effective_cost,
-        );
+        self.domestication_progress =
+            crate::forage::banked_up_to_cost(self.domestication_progress + amount, cost);
         self.is_domesticated()
     }
 
@@ -823,12 +817,7 @@ impl Herd {
     /// cannot fabricate a domesticated `wild` herd. It replaces the `accrue_domestication(f,
     /// RUNG_COMPLETE)` spelling, which stopped meaning anything the moment a job had a size.
     pub fn tame_outright(&mut self, faction: FactionId) -> bool {
-        self.accrue_domestication(
-            faction,
-            FABRICATED_BUILD_COST,
-            FABRICATED_BUILD_COST,
-            FABRICATED_BUILD_COST,
-        )
+        self.accrue_domestication(faction, FABRICATED_BUILD_COST, FABRICATED_BUILD_COST)
     }
 
     // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
@@ -916,7 +905,6 @@ impl Herd {
         faction: FactionId,
         amount: f32,
         cost: f32,
-        effective_cost: f32,
         tile: UVec2,
     ) -> bool {
         if self.is_corralled() || self.owner != Some(faction) {
@@ -924,7 +912,7 @@ impl Herd {
         }
         self.corral_cost = cost;
         self.corral_progress =
-            crate::forage::banked_or_paid_off(self.corral_progress + amount, cost, effective_cost);
+            crate::forage::banked_up_to_cost(self.corral_progress + amount, cost);
         if self.corral_progress >= cost {
             // The ceiling is already gated upstream (the `Corral` policy accrual + the commands), so
             // this can only refuse on a bug — and then the pen is genuinely not built, so say so.
@@ -953,22 +941,13 @@ impl Herd {
     /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
     /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
     /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
-    pub(crate) fn accrue_pen_extension(
-        &mut self,
-        amount: f32,
-        cost: f32,
-        effective_cost: f32,
-        radius_max: u32,
-    ) -> bool {
+    pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
         if !self.pen_extending {
             return false;
         }
         self.pen_extend_cost = cost;
-        self.pen_extend_progress = crate::forage::banked_or_paid_off(
-            self.pen_extend_progress + amount,
-            cost,
-            effective_cost,
-        );
+        self.pen_extend_progress =
+            crate::forage::banked_up_to_cost(self.pen_extend_progress + amount, cost);
         if self.pen_extend_progress >= cost {
             self.pen_radius = (self.pen_radius + 1).min(radius_max);
             self.pen_extend_progress = RUNG_UNSTARTED;

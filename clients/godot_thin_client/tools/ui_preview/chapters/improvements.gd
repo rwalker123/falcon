@@ -430,6 +430,11 @@ func _blocked_value() -> String:
 const BLOCKED_UPKEEP_DEMAND := 6.1
 const BLOCKED_UPKEEP_SUPPLIED := 4.1
 
+## …and what that keeping is worth in hands — `upkeepWorkersNeeded`, the demand term
+## `SourceForecast.is_under_kept` reads beside the shortfall. A rung declaring no upkeep can be short
+## of nothing, so a fixture stating one without the other is a source that cannot exist.
+const BLOCKED_UPKEEP_KEEPERS := 2
+
 ## …and the turns of grace left on it, so the `At risk:` row states a countdown rather than the
 ## already-being-lost form.
 const BLOCKED_GRACE_TURNS := 2
@@ -444,11 +449,73 @@ const BLOCKED_CAUSE_ONLY_LINES := 1
 ## cannot satisfy both it and the escapement claim.
 const BLOCKED_KNOWLEDGE_REASON := "knowledge"
 
+## The two sentences Ray cut out of the blocked block — the plant cause's own remedy tail and the
+## KEEPING line (`HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT`, which took the web's role name).
+## LITERALS, because the vocabulary no longer holds either: a needle recomposed from live code can
+## only describe whatever the code still says, which is the one thing an absence claim must not do.
+## They are the distinctive halves rather than the whole sentences, so a partial restoration is caught
+## as squarely as a whole one.
+const RETIRED_ESCAPEMENT_REMEDY_NEEDLE := "or wait for it to grow back"
+const RETIRED_KEEPING_REMEDY_NEEDLE := "put someone on this band's"
+
+## **ONCE, on a card carrying both a block and a shortfall.** The blocked pairing's claim is a COUNT
+## rather than a presence: zero is the hole the retired suppression left, and two is that suppression's
+## own reason for existing — one instruction printed twice.
+const BLOCKED_STATED_ONCE := 1
+
+## **THE THREE STRINGS THE `At risk:` ROW TOOK WITH IT.** LITERALS, for `RETIRED_*_NEEDLE`'s own
+## reason one block up: the vocabulary no longer holds them, so a needle recomposed from live code
+## could only describe whatever the code now says. They are what a restored row would print.
+const RETIRED_AT_RISK_ROW_NEEDLE := "At risk"
+const RETIRED_LOST_SOON_NEEDLE := "this rung is lost in"
+const RETIRED_LOST_NOW_NEEDLE := "is being lost NOW"
+
+## The countdown's own verb, which is the WORK BOARD's alone. The card's hover states the remedy and
+## no figure at all, so this needle is asserted ABSENT there and PRESENT on the board's own producer —
+## the difference between the two surfaces IS the claim, and a single-surface check cannot make it.
+const RETIRED_COUNTDOWN_VERB_NEEDLE := "is lost in"
+
+## …and the count a hover claim is judged against: the card's visible text states the remedy ZERO
+## times, the whole of it having moved onto the row's `[hint=…]`.
+const BLOCKED_HOVER_ABSENT := 0
+
+## A rung standing exactly at its cost — the healthy built meter the "no mark, no hover" half of the
+## pair is asked about.
+const BUILT_METER_FULL := 1.0
+
+
+## A meter that is losing NOTHING — the floor the slipped patch's rot has to stand above for its face
+## to be the never-finishing one rather than a count.
+const SLIPPED_NOTHING_ROTTING := 0.0
+
+## The estimate's own mark (`HudComposeVocab.BUILD_TURNS_COUNT_FORMAT`'s lead). A LITERAL, because the
+## claim is that this character is ABSENT from a face that states no count — composing it from the
+## format would make the needle move with whatever the format becomes.
+const BUILD_ESTIMATE_MARK_NEEDLE := "≈"
+
 ## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
 ## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
 ## forecast from. Naming it keeps that assertion from re-stating which fixture it is judging.
 func _seeded_food_tile() -> Dictionary:
 	return BaseFx.food_tile_fixture()
+
+
+## **WHAT HOVER ONE RUNG ROW WOULD CARRY** — `DetailFormat.note_under_kept_hover` asked through a
+## throwaway context, which is the only way to read a per-row tooltip back: a detail surface is ONE
+## `RichTextLabel`, so the hover lives in the BBCode as `[hint=…]` rather than on a node with a
+## `tooltip_text` a harness could query. `""` is the answer for a rung whose keeping is paid, and it
+## is the half every positive here is worthless without.
+##
+## The probe key is arbitrary and deliberately not a real row's, so the claim is about WHETHER a hover
+## was registered rather than about which string the producer filed it under.
+const HOVER_PROBE_ROW := "probe"
+
+func _under_kept_hover(src: Dictionary,
+		improvement: String = SourceForecast.IMPROVEMENT_CULTIVATE) -> String:
+	var ctx := DetailFormat.Context.new()
+	DetailFormat.note_under_kept_hover(ctx, HOVER_PROBE_ROW, src,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE, improvement)
+	return String(ctx.row_tooltips.get(HOVER_PROBE_ROW, ""))
 
 ## **THE REFERENCE PATCH WITH ITS KEEPING SHORT, so its half-built Cultivate is BLEEDING**
 ## (`docs/plan_standing_upkeep.md` §2.4) — the turn-estimate A/B's own tile, and the only shape on the
@@ -1116,6 +1183,11 @@ func run(harness) -> void:
 	blocked["patch_upkeep_demand"] = BLOCKED_UPKEEP_DEMAND
 	blocked["patch_upkeep_supplied"] = BLOCKED_UPKEEP_SUPPLIED
 	blocked["patch_upkeep_shortfall"] = BLOCKED_UPKEEP_DEMAND - BLOCKED_UPKEEP_SUPPLIED
+	# **AND THE KEEPER COUNT, because a source that owes NOBODY is not under-kept.** The rung's mark and
+	# its hover are both `SourceForecast.rung_is_under_kept`, whose demand term is `upkeepWorkersNeeded`
+	# — published on both sides of completion by any source that costs something to hold, so a fixture
+	# stating a shortfall and no count is a source no live sim can produce.
+	blocked["patch_upkeep_workers_needed"] = BLOCKED_UPKEEP_KEEPERS
 	blocked["patch_has_neglect_grace"] = true
 	blocked["patch_neglect_grace_remaining"] = BLOCKED_GRACE_TURNS
 	h._hud._band_labor._player_band = BandFx.cultivating_forage_band_fixture(
@@ -1134,22 +1206,92 @@ func run(harness) -> void:
 	# naming the wrong state and the wrong remedy — so that value must be absent from this frame.
 	h._assert_hud("…and NOT the STALLED hazard an unfollowed sentinel would render",
 		not blocked_row.contains(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)))
-	# **AND THE CAUSE IS BENEATH IT, which is the row that did not exist.** The sim names the
-	# conjunct that refused and the client words it; asserted by EQUALITY against the shipped
-	# table, since the whole claim is WHICH sentence renders.
-	h._assert_hud("…and the row beneath states the sim's own cause for the block",
-		blocked_row.contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
-	# **AND THE REMEDY IS BESIDE IT, naming the KEEPING role rather than the builders.** The measured
-	# escape is `assign_labor <f> <b> husbandry <n>` alone — staffing the keeping restores the
-	# source's regrowth and it climbs back over its own gate — so the sub-row must name the web's
-	# keeping role and must NOT hedge with a second half about the take crew.
-	h._assert_hud("…and the row beneath names the keeping role that frees it",
-		blocked_row.contains(HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT
-			% HudWorkVocab.ROLE_NAME_AGRICULTURE))
-	# …and the `At risk:` row still states what the shortfall COSTS, which is what makes the remedy
-	# above an instruction rather than an unquantified nudge.
-	h._assert_hud("…over the At risk: row the shortfall itself earns",
-		blocked_row.contains(DetailFormat.UPKEEP_RISK_ROW))
+	# **AND THE CAUSE IS BENEATH IT — ONE SENTENCE, AND THE BLOCK IS THOSE TWO LINES.** The sim names
+	# the conjunct that refused and the client words it; asserted by EQUALITY against the shipped table,
+	# since the whole claim is WHICH sentence renders.
+	var blocked_lines := DetailFormat.build_blocked_lines(blocked,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("…and the row beneath states the sim's own cause, in ONE line (%s)"
+			% str(blocked_lines), blocked_lines.size() == BLOCKED_CAUSE_ONLY_LINES
+		and String(blocked_lines[0]) == DetailFormat.MORALE_BREAKDOWN_INDENT
+			+ HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
+	# **AND THE SENTENCES RAY CUT ARE NOWHERE ON THE CARD, which is the claim this trim IS.** The
+	# needles are the RETIRED strings spelled out as chapter constants — the vocabulary no longer holds
+	# them, so an expectation composed from live code could only describe whatever the code now says.
+	# Read off the rendered label rather than off the producer: a card is what the player was shown,
+	# and the `At risk:` row beneath states a role of its own that this must not be satisfied by.
+	var blocked_visible: String = h._hud.tile_detail.get_parsed_text()
+	h._assert_hud("…and the card PRINTS that one sentence",
+		blocked_visible.contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
+	h._assert_hud("…and prints NEITHER the cause's retired remedy nor the retired keeping line",
+		not blocked_visible.contains(RETIRED_ESCAPEMENT_REMEDY_NEEDLE)
+		and not blocked_visible.contains(RETIRED_KEEPING_REMEDY_NEEDLE))
+	# **AND THE `At risk:` ROW IS GONE FROM UNDER IT, WITH EVERY FIGURE IT CARRIED.** The card said the
+	# same thing three ways — the rung row, a shortfall with a countdown, and an indented instruction —
+	# and none of the numbers were actionable from a card. The needles are the RETIRED strings spelled
+	# out as chapter constants, so a restored row fails here whatever else it says.
+	h._assert_hud("…and NOT the retired At risk: row, its shortfall or its countdown",
+		not blocked_row.contains(RETIRED_AT_RISK_ROW_NEEDLE)
+		and not blocked_row.contains(RETIRED_LOST_SOON_NEEDLE)
+		and not blocked_row.contains(RETIRED_LOST_NOW_NEEDLE))
+	# **THE REMEDY IS THE CARD'S HOVER NOW** — the BLOCK's, not the row's, `[hint=…]` being unparsed by
+	# this Godot build (`DetailFormat.block_tooltip` carries what it rendered instead). Asserted on the
+	# label's own `tooltip_text` by EQUALITY, since half the claim is that the hover carries the remedy
+	# AND NOTHING ELSE.
+	var slipping_hover: String = HudWorkVocab.under_kept_note_for_source(
+		SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("…and the remedy rides the card's hover instead (\"%s\")"
+			% h._hud.tile_detail.tooltip_text,
+		h._hud.tile_detail.tooltip_text == slipping_hover)
+	# > ### ⛔ THE PAIRING THIS FRAME EXISTS FOR — a block AND a shortfall, one instruction between them
+	# >
+	# > `escapement` on a source whose keeping is ALSO short is the shape that broke: the `At risk:` row
+	# > used to withhold its own remedy here on the grounds that the blocked block was already naming the
+	# > keeping, and cutting that sentence turned the courtesy into a HOLE — a shortfall, a countdown, and
+	# > nobody named to put on it. So the claim is the PAIR, counted: the cause once, the remedy once.
+	# > Counting rather than testing presence is what catches the other half — a remedy restored to the
+	# > block as well would print the same instruction twice on one card, which is what the suppression
+	# > was written for in the first place.
+	var under_kept: String = HudWorkVocab.under_kept_note_for_source(
+		SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("…and the remedy naming who pays is on the HOVER and on no visible line (%d)"
+			% blocked_visible.count(under_kept),
+		h._hud.tile_detail.tooltip_text.contains(under_kept)
+		and blocked_visible.count(under_kept) == BLOCKED_HOVER_ABSENT)
+	h._assert_hud("…beside the cause, ONCE each — never one instruction twice on one card (%d)"
+			% blocked_visible.count(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT),
+		blocked_visible.count(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
+			== BLOCKED_STATED_ONCE)
+	# …and the PNG-less companion: a source short of keeping and blocked on a cause the keeping was
+	# never a lever for. **It was already right** — the suppression only ever fired on `escapement` — so
+	# it is here to say the deletion took the special case away and left this case alone. Asked of the
+	# producer, the two states differing by one published key that no picture shows.
+	var short_knowledge := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	short_knowledge["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	short_knowledge["patch_build_blocked_reason"] = BLOCKED_KNOWLEDGE_REASON
+	BaseFx.price_plant_build(short_knowledge, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
+	short_knowledge["patch_upkeep_demand"] = BLOCKED_UPKEEP_DEMAND
+	short_knowledge["patch_upkeep_supplied"] = BLOCKED_UPKEEP_SUPPLIED
+	short_knowledge["patch_upkeep_shortfall"] = BLOCKED_UPKEEP_DEMAND - BLOCKED_UPKEEP_SUPPLIED
+	short_knowledge["patch_upkeep_workers_needed"] = BLOCKED_UPKEEP_KEEPERS
+	short_knowledge["patch_has_neglect_grace"] = true
+	short_knowledge["patch_neglect_grace_remaining"] = BLOCKED_GRACE_TURNS
+	var short_knowledge_hover := _under_kept_hover(short_knowledge)
+	h._assert_hud("a source blocked on KNOWLEDGE while short still names who pays (%s)"
+			% short_knowledge_hover, short_knowledge_hover == under_kept)
+	# …and the escapement source beside it answers the SAME, which is the deletion itself: one
+	# producer, no fork, and the two causes no longer read differently about who pays.
+	h._assert_hud("…and the ESCAPEMENT source short of keeping answers exactly the same (%s)"
+			% _under_kept_hover(blocked), _under_kept_hover(blocked) == short_knowledge_hover)
+	# **AND THE HOVER CARRIES NO COUNTDOWN, which is the asymmetry with the work board stated as a
+	# claim** — that board takes the same first sentence plus `Tended is lost in 3 turns.`, because
+	# staffing is decided there and *how long you have* is actionable there. A single-surface check
+	# passes on a producer that puts the countdown everywhere, so the difference IS the assertion.
+	h._assert_hud("…and states no countdown on the CARD, unlike the work board's own hover",
+		not short_knowledge_hover.contains(RETIRED_COUNTDOWN_VERB_NEEDLE)
+		and HudWorkVocab.under_kept_tooltip(SourceForecast.LABOR_KIND_FORAGE,
+			DetailFormat.CULTIVATION_BUILT_WORD, BLOCKED_GRACE_TURNS).contains(
+				RETIRED_COUNTDOWN_VERB_NEEDLE))
 	# **THE PAIRED NEGATIVES, all PNG-less — the frames differ by one sub-row apiece.**
 	#
 	#   (1) A BLOCKED source whose keeping is PAID states its CAUSE and NOT the keeping remedy. The
@@ -1165,9 +1307,10 @@ func run(harness) -> void:
 	h._assert_hud("a blocked source whose keeping is PAID still states the cause (%d lines)"
 			% paid_lines.size(), paid_lines.size() == BLOCKED_CAUSE_ONLY_LINES
 		and String(paid_lines[0]).contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
-	h._assert_hud("…and states no keeping remedy, the keeping being paid",
-		not String(paid_lines[0]).contains(HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT
-			% HudWorkVocab.ROLE_NAME_AGRICULTURE))
+	# …and the LINE COUNT is what says the keeping is not named — the pairing that used to add a second
+	# line is retired, so a producer that grew one back fails here whatever it says.
+	h._assert_hud("…and states nothing beside it, the keeping remedy being retired",
+		not String(paid_lines[0]).contains(RETIRED_KEEPING_REMEDY_NEEDLE))
 	#   (2) A SECOND KEY, by EQUALITY. A table answering one sentence for every cause passes the
 	#   escapement claim above on its own, so the knowledge refusal is asserted to render ITS words
 	#   and not the escapement ones.
@@ -1177,10 +1320,10 @@ func run(harness) -> void:
 	BaseFx.price_plant_build(blocked_knowledge, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
 	var knowledge_lines := DetailFormat.build_blocked_lines(blocked_knowledge,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
-	h._assert_hud("a build blocked on KNOWLEDGE states the knowledge cause (%s)"
+	h._assert_hud("a build blocked on KNOWLEDGE states the knowledge cause, in ONE line (%s)"
 			% str(knowledge_lines), knowledge_lines.size() == BLOCKED_CAUSE_ONLY_LINES
-		and String(knowledge_lines[0]).contains(
-			String(HudSelectionVocab.BUILD_BLOCKED_REASONS[BLOCKED_KNOWLEDGE_REASON])))
+		and String(knowledge_lines[0]) == DetailFormat.MORALE_BREAKDOWN_INDENT
+			+ String(HudSelectionVocab.BUILD_BLOCKED_REASONS[BLOCKED_KNOWLEDGE_REASON]))
 	h._assert_hud("…and NOT the escapement one, which is a different remedy entirely",
 		not String(knowledge_lines[0]).contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
 	#   (3) A source that is NOT blocked states NO cause at all. A producer that always emitted a
@@ -1651,6 +1794,26 @@ func _a_rung_that_slipped_is_building_again() -> void:
 			int(slipped["y"])) == SourceForecast.IMPROVEMENT_NONE)
 	var slipped_control = ForageFx.find_improvement_control(
 		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	# **WHAT THAT FACE'S TURN CLAUSE SAYS, AND IT HAD NO ASSERTION AT ALL** — which is how a wrong
+	# estimate reached a rendered frame and was read off the picture as a format that had lost its
+	# argument. Nobody is building this meter and its keeping is short, so it is LOSING GROUND: the
+	# honest reading is `BUILD_TURNS_ROTS`, whose face is the `∞` — **not** a count, and not a blank.
+	#
+	# ⛔ **`∞` AND `≈` ARE ONE PIXEL APART AT THIS FONT SIZE**, which is why the needles are asserted
+	# both ways round: the `∞` present, and the estimate's own `≈` absent. Read off the picture, the
+	# two are indistinguishable; read off the string, they are different claims about the build.
+	print("ui_preview: slipped face  |%s|" % [
+		(slipped_control as Label).text if slipped_control is Label else "<not a label>"])
+	h._assert_hud("the slipped meter has NOBODY on it and is losing ground, so it never finishes",
+		h._hud._band_labor.build_crew_forage(int(slipped["x"]), int(slipped["y"]))
+				== SourceForecast.BUILD_CREW_NONE
+			and SourceForecast.meter_rot_per_turn(slipped,
+				HudComposeVocab.FORAGE_FORECAST_PREFIX) > SLIPPED_NOTHING_ROTTING)
+	h._assert_hud("…so its face states the ∞, and NOT an estimate that has lost its number (\"%s\")"
+			% [(slipped_control as Label).text if slipped_control is Label else ""],
+		slipped_control is Label
+			and (slipped_control as Label).text.contains(DetailFormat.BUILD_TURNS_NEVER_GLYPH)
+			and not (slipped_control as Label).text.contains(BUILD_ESTIMATE_MARK_NEEDLE))
 	h._assert_hud("a rung that slipped reads as BUILDING again, derived from its own meter",
 		slipped_control != null
 			and String(slipped_control.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
@@ -1667,18 +1830,34 @@ func _a_rung_that_slipped_is_building_again() -> void:
 	# **THE LAND CARD STATES WHAT IS AT STAKE AND NOT WHAT IS OWED** (issue #545). The standing
 	# `Keeping:` bill is retired — it read as noise on every source that owed anything — so what
 	# survives is the row that only exists when the rate is going UNPAID, which is this patch.
-	var slipped_risk := "\n".join(DetailFormat.at_risk_lines(slipped,
-		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE))
-	h._assert_hud("…and the land card states what the shortfall costs, never the pooled bill",
-		slipped_risk.contains(DetailFormat.UPKEEP_RISK_ROW)
-			and not slipped_risk.contains(UPKEEP_POOL_NEEDLE))
+	# **AND SINCE THE `At risk:` ROW WENT, WHAT IS AT STAKE IS THE ROW'S OWN STATE WORD.** A built rung
+	# whose keeping is short reads `🌾 Tended 100% ⚠ slipping` — the mark plus what is happening to it,
+	# because a bare `⚠` over three deleted lines would be a warning with nothing in it.
+	var slipped_card: String = h._hud.tile_detail.text
+	h._assert_hud("…and the land card states the rung's own state beside its meter, not a bill",
+		slipped_card.contains(HudSelectionVocab.RUNG_UNDER_KEPT_PLANT_WORD)
+			and not slipped_card.contains(UPKEEP_POOL_NEEDLE)
+			and not slipped_card.contains(RETIRED_AT_RISK_ROW_NEEDLE))
 	# **…AND IT NAMES THE ROLE THAT PAYS, which is the sentence the map's `⚠` cannot carry** (§4.6b).
 	# That badge is drawn with `draw_string` into `MapView`'s own canvas, so it can hold no tooltip;
 	# the card is where a player interrogates it, and the words are the work board's own note, so the
 	# two surfaces cannot phrase one hazard differently.
-	h._assert_hud("…and names the ROLE that pays it, in the work board's own words",
-		slipped_risk.contains(HudWorkVocab.under_kept_note_for_source(
-			SourceForecast.SOURCE_KIND_FORAGE)))
+	h._assert_hud("…and names the ROLE that pays it on the card's hover, in the board's words (\"%s\")"
+			% h._hud.tile_detail.tooltip_text,
+		h._hud.tile_detail.tooltip_text
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_FORAGE))
+	# **AND A HEALTHY SOURCE STATES NO HOVER AT ALL** — the pair, without which every claim above
+	# passes on a card that hangs the remedy off every rung it draws.
+	var kept := slipped.duplicate(true)
+	kept["patch_upkeep_supplied"] = kept["patch_upkeep_demand"]
+	kept["patch_upkeep_shortfall"] = 0.0
+	h._assert_hud("…while a patch whose keeping is PAID registers no hover and no state word",
+		_under_kept_hover(kept) == ""
+			and not DetailFormat.rung_row_value(kept, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+				SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
+				DetailFormat.cultivation_built_label(), true, BUILT_METER_FULL,
+				SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE).contains(
+					HudSelectionVocab.RUNG_UNDER_KEPT_PLANT_WORD))
 
 ## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a
 ## second account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
@@ -1881,11 +2060,17 @@ func _both_live_meters_get_their_own_row() -> void:
 	h._assert_hud("…and the tended row renders its badge with no mark, the ground under it being fine",
 		short_card.contains(_rung_value_markup("%s %d%%" % [DetailFormat.cultivation_built_label(),
 			HudConst.PROGRESS_PERCENT_SCALE], HudStyle.SIGNAL_HEX)))
-	# **AND THE SHORTFALL IS NOT SILENT FOR IT** — the routing withholds a mark from one ROW, never the
-	# fact. The source-level `At risk:` row states what the shortfall costs and how long is left, which
-	# is the half a per-rung mark was never carrying.
-	h._assert_hud("…while the card still states what the shortfall costs, on its own At risk: row",
-		short_card.contains(DetailFormat.UPKEEP_RISK_ROW))
+	# **AND THE SHORTFALL IS NOT SILENT FOR IT** — the routing withholds the mark from one ROW, never
+	# the fact: the FIELD's row carries the state word and the hover naming who pays, on the same card
+	# whose tended row is deliberately bare.
+	# The ROUTING again, one surface on: the hover hangs off the FIELD's row and off no other, so the
+	# player interrogating the mark is told about the meter that is actually being lost.
+	h._assert_hud("…while the FIELD's row carries the remedy on its hover, and the tended row does not",
+		_under_kept_hover(short_kept_both, SourceForecast.IMPROVEMENT_SOW)
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_FORAGE)
+		and _under_kept_hover(short_kept_both, SourceForecast.IMPROVEMENT_CULTIVATE) == ""
+		and h._hud.tile_detail.tooltip_text
+			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_FORAGE))
 
 	# **AND THE SAME ROUTING ON THE UNBUILT ARM — the reviewer's own walk, as a rendered card.** A
 	# Cultivate ABANDONED at 60% with a `Sow` declared over it: `build_verb` honours the Sow, so the

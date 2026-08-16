@@ -531,7 +531,12 @@ fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(Some(Improvement::Sow), true, sow_crew(app)),
+        field.build_accrual(
+            Some(Improvement::Sow),
+            true,
+            sow_crew(app),
+            core_sim::NO_BUILD_GEAR,
+        ),
         // **The feral bleed is the rung's own ROT RATE**, not the demand it goes short by: the two
         // are separate dials (`docs/plan_standing_upkeep.md` §2.4). Numerically the same as the
         // retired `decay_fraction_per_turn × work_cost`, which is why the paces below hold.

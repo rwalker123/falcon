@@ -405,6 +405,10 @@ fn set_builders_kit(app: &mut App, band: bevy::prelude::Entity, kit_id: Option<&
         .kit = kit;
 }
 
+/// **A POOL CARRYING NOTHING THAT HELPS** — `intensification::NO_BUILD_GEAR` in the client's own
+/// units, so the bare arm of a pair is a stated fact rather than an unexplained `0.0`.
+const NO_GEAR_PER_WORKER: f32 = 0.0;
+
 /// **THE CLIENT'S GEAR TERM, transcribed** — `min(workers, buildWorkSaturatingCrew) ×
 /// buildWorkPerWorker`, both terms off the band's own `kitTiers` row and neither off any source.
 fn client_gear_term(
@@ -438,23 +442,31 @@ fn client_turns_estimate(
     // it holds neither the grace state nor the rung's decay rate.
     meter_rot_per_turn: f32,
 ) -> Option<u32> {
+    // **⛔ THE GEAR TERM IS IN THE DENOMINATOR NOW** (`docs/plan_standing_upkeep.md` §4.8). It used
+    // to be subtracted from the job (`workCost − workDone − gear(w)`), which granted the kit's help
+    // as a one-time lump against the target; a kit raises what a worker *delivers per turn*, so it
+    // is an addend on the supply and the numerator is the job, whole.
+    //
+    // **The saturation survives the move, and that is why the pair stayed on `kitTiers` rather than
+    // being folded into a published pool rate.** Coverage arms a *prefix*, so an eleventh keeper
+    // with ten sets of hurdles between them adds only their own hands — a pre-averaged rate would
+    // lose that silently on the one crew a compose sheet is for: a proposed one, of a size the sim
+    // never resolved.
     let gear = client_gear_term(build_work_per_worker, build_work_saturating_crew, builders);
     // **NO FLOOR TERM.** The build reads the assignment's escapement floor no longer
     // (`docs/plan_standing_upkeep.md` §2.2): a build is staffed in its own right, so the builders
     // are not pulling on the source and there is nothing of theirs for a floor to describe. The
     // client's form loses the factor with the sim's.
     let work_per_turn =
-        (builders as f32 * build_work_per_worker_turn - meter_rot_per_turn).max(0.0);
+        (builders as f32 * build_work_per_worker_turn + gear - meter_rot_per_turn).max(0.0);
     if work_per_turn <= 0.0 {
         return None;
     }
-    let remaining = work_cost - work_done - gear;
+    let remaining = work_cost - work_done;
     if remaining <= 0.0 {
-        // **A bar the gear alone already pays off is ONE turn, not "no estimate"** — the sim's own
-        // `build_turns_remaining` answers `1` there (`docs/plan_unit_costed_work.md` §6.2: a bar at
-        // or below zero completes the build on its first worked turn), so a client form that
-        // withheld the line would blank the readout at exactly the crew size that demonstrates the
-        // arc's claim.
+        // **A job already worked off is ONE turn, not "no estimate"** — the sim's own
+        // `build_turns_remaining` answers `1` there, so a client form that withheld the line would
+        // blank the readout on a build that is finished.
         return Some(CLIENT_BUILD_FINISHES_IN_ONE_TURN);
     }
     Some((remaining / work_per_turn).ceil() as u32)
@@ -617,9 +629,10 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
 ///
 /// `buildWorkPerWorker` is a **rate per worker**, so the count it multiplies has to be the workers
 /// actually doing the job. Reading the take crew instead was reachable the moment the two came
-/// apart, and — since `LadderConfig::effective_build_cost` is deliberately unfloored — it let a
-/// **single** builder standing beside a large gathering party take that whole party's tools off the
-/// job, in the worst case paying a rung off outright on its first turn.
+/// apart: it let a **single** builder standing beside a large gathering party build at that whole
+/// party's rate. (Under the retired `LadderConfig::effective_build_cost` — which took the same
+/// product off the *job* and was unfloored — the same mistake paid a rung off outright on its first
+/// turn; the seam it is read at is unchanged either way, which is what this arm pins.)
 ///
 /// ⛔ **THE POOL CARRIES ITS OWN KIT NOW, and this is the test that catches the wiring if it does
 /// not.** The offset used to ride the *source row's* kit, because the builders stood on the tile; it
@@ -947,17 +960,18 @@ fn client_floor_food_peak() -> f32 {
     })
 }
 
-/// **AN OVER-GEARED CREW IS QUOTED ONE TURN ON THE WIRE, NEVER `-1`.**
+/// **THE WIRE PUBLISHES THE WHOLE JOB, AND A GEARED POOL THAT FINISHES IT SOONER.**
 ///
-/// `LadderConfig::effective_build_cost` is deliberately unfloored (`cost − t`, the build floor was
-/// tried and rejected), so a crew holding enough handling gear drives the bar to or below zero. That
-/// is a **finished** job, not an unanswerable one: `docs/plan_unit_costed_work.md` §6.2 says such a
-/// bar "completes the build on its first worked turn".
+/// **⛔ IT ASSERTED THE DEFECT §4.8 CORRECTED, AND IS RE-AIMED RATHER THAN DELETED.** It read: *"six
+/// keepers each holding a set of handling gear take `6 × 8.5 = 51` units off a 50-unit `Tame`"*, so
+/// the fixture existed to pin a build finishing on its first worked turn **by arithmetic** — which
+/// made the crew axis meaningless past that pool size. A kit raises what a worker delivers per turn
+/// now, and the job is the same pile with the gear and without.
 ///
-/// **It is reachable on the shipped roster at a crew a band can staff** — six keepers each holding a
-/// set of handling gear take `6 × 8.5 = 51` units off a 50-unit `Tame` — and publishing
-/// `NO_BUILD_TURNS_ESTIMATE` there broke the arc's own headline claim at exactly the crew size that
-/// demonstrates it: the estimate fell 25 → 13 → 4 → 2 → *nothing* as hands were added.
+/// So the same fixture, on the same wire, pins **the pair** instead: the published `tameWorkCost` is
+/// the rung's whole price with the pool fully equipped, **and** that pool still finishes strictly
+/// sooner than a bare one of the same size. Either alone passes a broken model — the first for a kit
+/// that does nothing, the second for the subtraction this replaced.
 ///
 /// Asserted **off the exported snapshot** in both states the field has: the **projection** a crew
 /// that is deciding reads (the compose sheet's case, and the one the player meets), and the **live**
@@ -965,7 +979,7 @@ fn client_floor_food_peak() -> f32 {
 /// sheet withholding the line while the card states it is the disagreement this file exists to
 /// forbid.
 #[test]
-fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
+fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() {
     for improvement in [None, Some(Improvement::Tame)] {
         let (mut app, id, pos) = world_with_a_herd_of(UNSCALED_TAMEABLE_SPECIES);
         let keepers = spawn_keepers_of(
@@ -1002,42 +1016,63 @@ fn a_crew_whose_gear_pays_the_tame_off_is_quoted_one_turn_on_the_wire() {
             .find(|row| row.kit_id == BUILDERS_KIT)
             .expect("the band publishes a tier row per roster kit");
 
-        // **The fixture is only about anything if the gear genuinely over-pays the job**, which is
-        // the whole regime under test — a crew short of that is the ordinary multi-turn case the
-        // test above already covers.
+        // **THE JOB IS THE WHOLE JOB, WHATEVER THE POOL CARRIES** — the invariant this arm was
+        // re-aimed onto (§4.8). The published `tameWorkCost` is the rung's own price times the
+        // species' multiplier, and no term of the crew's kit appears in it.
         let gear = client_gear_term(
             tiers.build_work_per_worker,
             tiers.build_work_saturating_crew,
             KEEPERS,
         );
         assert!(
-            gear >= herd.tame_work_cost,
-            "fixture: {KEEPERS} keepers' gear ({gear}) must cover the whole {} of the Tame, or the \
-             bar never reaches zero",
+            gear > 0.0,
+            "fixture: {KEEPERS} keepers must actually be carrying handling gear, or both halves of \
+             the claim are vacuous"
+        );
+        assert!(
+            herd.tame_work_cost > gear,
+            "the published job must be the rung's whole price, not a bar the pool's kit shrank: {} \
+             against a kit delivering {gear} a turn",
             herd.tame_work_cost
         );
 
-        assert_eq!(
-            herd.build_turns_remaining, 1,
-            "a Tame the crew's gear pays off outright finishes on its first worked turn — \
-             improvement {improvement:?}, cost {} done {} gear {gear}",
-            herd.tame_work_cost, herd.tame_work_done
+        // **AND THE GEAR STILL DOES SOMETHING** — the same pool carrying nothing takes strictly
+        // longer over the identical job. Struck through the client's own form, so the pair is
+        // asserted on the expression the compose sheet evaluates.
+        let geared_turns = client_turns_estimate(
+            herd.tame_work_cost,
+            herd.tame_work_done,
+            tiers.build_work_per_worker,
+            tiers.build_work_saturating_crew,
+            herd.build_work_per_worker_turn,
+            KEEPERS,
+            herd.meter_rot_per_turn,
+        )
+        .expect("a staffed crew has an estimate");
+        let bare_turns = client_turns_estimate(
+            herd.tame_work_cost,
+            herd.tame_work_done,
+            NO_GEAR_PER_WORKER,
+            tiers.build_work_saturating_crew,
+            herd.build_work_per_worker_turn,
+            KEEPERS,
+            herd.meter_rot_per_turn,
+        )
+        .expect("a staffed bare crew has an estimate");
+        assert!(
+            geared_turns < bare_turns,
+            "the equipped pool must finish the same job sooner: {geared_turns} against \
+             {bare_turns} — improvement {improvement:?}, cost {} done {}",
+            herd.tame_work_cost,
+            herd.tame_work_done
         );
 
-        // And the client's transcribed form must say the same thing, or the compose sheet blanks a
-        // line the tile card is rendering.
+        // And the client's transcribed form must reproduce the sim's own answer, or the compose
+        // sheet and the tile card disagree.
         assert_eq!(
-            client_turns_estimate(
-                herd.tame_work_cost,
-                herd.tame_work_done,
-                tiers.build_work_per_worker,
-                tiers.build_work_saturating_crew,
-                herd.build_work_per_worker_turn,
-                KEEPERS,
-                herd.meter_rot_per_turn,
-            ),
+            Some(geared_turns),
             u32::try_from(herd.build_turns_remaining).ok(),
-            "the client's form must reproduce the sim's answer in the over-geared regime too"
+            "the client's form must reproduce the sim's answer with the gear in the divisor too"
         );
     }
 }

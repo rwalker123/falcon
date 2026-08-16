@@ -3179,34 +3179,112 @@ func _assert_pools_block(where: String, want_fund_mode: bool) -> void:
 			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
 	if want_fund_mode:
 		_assert_upkeep_mode_row_fits(where, block)
+	else:
+		# **THE PAIRED NEGATIVE FOR THE SHORTFALL MARK, on the one band that can carry it.** A band with
+		# nothing to keep is short of nothing, so all three cards must be bare — and without this the
+		# marked pair two states along passes on a builder that marks every keeping card there is.
+		_assert_pool_card_marks(where, [], [HudWorkVocab.ROLE_NAME_AGRICULTURE,
+			HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.ROLE_NAME_BUILDERS])
 
-## GUARD: **the fund-mode row is ONE line, and its arithmetic is not clipped by the buttons beside it**
-## (§4.7). The row dropped its `Short of keepers` title and folded the shortfall line in beside the two
-## buttons, which is 16px of a zone that had none to spare — and the whole reason the control is
-## offered is that number, so a clipped one is worse than the line it saved. The note states one line
-## (`AUTOWRAP_OFF`), so a wrap cannot silently make the row taller than `pools_block_height` reserved;
-## what CAN happen is an ellipsis, which this measures against the label's own natural run.
+## GUARD: **the fund-mode row is the TWO BUTTONS and nothing else, and it draws inside the height
+## reserved for it** (§4.7). It carried an arithmetic line beside them until the per-web marks landed;
+## that line SUMMED both webs, so it could not name the one that was short, and its covered form
+## announced that nothing was wrong in a noun no control in the game uses. Both are deleted, so what
+## is measured is the buttons — the row's only remaining content — and `UPKEEP_MODE_ROW_HEIGHT` was
+## re-derived for them.
+##
+## **THE MEASUREMENT IS THE POINT.** The work zone `clip_contents`, so a row drawing taller than
+## `pools_block_height` reserved takes the difference off the bottom of the board with nothing on
+## screen to show for it — which is why the reserved height is not merely re-guessed at when its
+## content changes.
 func _assert_upkeep_mode_row_fits(where: String, block: Control) -> void:
-	var note := _find_meta_control(block, BandPanelController.UPKEEP_MODE_NOTE_META) as Label
-	if note == null:
-		_fail("%s — no fund-mode note to measure" % where)
-		return
-	var natural := _label_text_width(note)
-	_assert_band_panel("%s: …and its shortfall line is NOT clipped beside the buttons (\"%s\" wants %.0f of %.0fpx)"
-			% [where, note.text, natural, note.size.x],
-		natural <= note.size.x + ZONE_BOUNDS_TOLERANCE)
 	var buttons := _collect_meta_controls(block, BandPanelController.UPKEEP_MODE_BUTTON_META)
+	if buttons.size() != UPKEEP_MODE_BUTTON_COUNT:
+		_fail("%s — the fund-mode row carries %d buttons, not %d"
+			% [where, buttons.size(), UPKEEP_MODE_BUTTON_COUNT])
+		return
+	# …and the retired note is ABSENT, which the height claim below cannot see: a row that still drew
+	# it would simply be taller, and a re-derived constant would quietly make room for it again.
+	_assert_band_panel("%s: …and the fund-mode row states no arithmetic line beside them" % where,
+		_find_meta_control(block, RETIRED_UPKEEP_MODE_NOTE_META) == null)
 	var row_top: float = INF
 	var row_bottom := 0.0
-	for control in ([note] as Array[Control]) + buttons:
+	for control in buttons:
 		row_top = minf(row_top, control.global_position.y)
 		row_bottom = maxf(row_bottom, control.global_position.y + control.size.y)
-	_assert_band_panel("%s: …and the buttons and that line share ONE row (%.0fpx tall)"
-			% [where, row_bottom - row_top],
+	# The measured height is PRINTED to one decimal beside the claim, because the reserved constant is
+	# re-derived from it: a row that fits comfortably and one that fits by a rounding are the same
+	# green line otherwise.
+	_assert_band_panel("%s: …and the two buttons draw inside the row's reserved height (%.1f of %.1fpx)"
+			% [where, row_bottom - row_top, HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT],
 		row_bottom - row_top <= HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT + ZONE_BOUNDS_TOLERANCE)
+
+## The fund-mode row's whole content: `Spread` and `Priority`.
+const UPKEEP_MODE_BUTTON_COUNT := 2
+
+## The RETIRED note's meta, as a literal — `BandPanelController` no longer declares it, and an absence
+## claim composed from live code could only describe whatever the code still tags.
+const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
 
 ## How many cards the POOLS block carries — Agriculture, Husbandry, Builders.
 const POOL_CARD_COUNT := 3
+
+## GUARD: **which POOL CARDS fly the shortfall mark, asserted as a PAIR of lists.** A mark on every
+## card and a mark on none are the same picture at a glance, so the claim is which cards carry it AND
+## which do not — and the figure behind it is on that card's own `tooltip_text`, per web, which is the
+## whole reason the summed line under the buttons was retired.
+##
+## The card's own `POOL_CARD_SHORT_META` is what is read, never the glyph: the mark is a Label beside
+## the title and the figure is a hover, neither of which a harness can assert without re-spelling the
+## vocabulary the builder used. This is the builder's own answer to *are you short*.
+func _assert_pool_card_marks(where: String, short_roles: Array, calm_roles: Array) -> void:
+	for role_variant in short_roles:
+		var role := String(role_variant)
+		var card := _find_pool_card(role)
+		if card == null:
+			_fail("%s — no %s pool card to read" % [where, role])
+			continue
+		_assert_band_panel("%s: the %s card flies the shortfall mark" % [where, role],
+			bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
+		# …and the FIGURE is on that card's hover, in ITS OWN WEB'S words — the plant card must not
+		# describe the animal one, which is exactly what one summed line could not avoid doing. Both
+		# halves: its own web's tail AND not the other's, since a card quoting both webs' sentences
+		# would satisfy a lone positive.
+		_assert_band_panel("%s: …and quotes its own web's shortfall on its hover (%s)"
+				% [where, card.tooltip_text],
+			card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
+			and card.tooltip_text.contains(_pool_short_tail(role))
+			and not card.tooltip_text.contains(_pool_short_tail(_other_keeping_role(role))))
+	for role_variant in calm_roles:
+		var role := String(role_variant)
+		var card := _find_pool_card(role)
+		if card == null:
+			_fail("%s — no %s pool card to read" % [where, role])
+			continue
+		_assert_band_panel("%s: …while the %s card wears no mark and quotes no figure (%s)"
+				% [where, role, card.tooltip_text],
+			not bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false))
+			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE))
+
+## **THE SHORTFALL SENTENCE'S OWN MIDDLE, AND THE TAIL THAT NAMES ITS WEB.** The lead was `"Short "`
+## for one run and it was VACUOUS in both directions: the Agriculture card's ordinary role HINT reads
+## *"Keeps every tended patch and Field this band works. Short of the sum, they rot."*, so a calm card
+## failed the negative and a short one passed the positive on the hint alone. This phrase appears in
+## the shortfall sentences and in no hint.
+const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn this band's"
+
+## …and the two webs' tails, which is what makes the per-web claim a claim: the whole point of moving
+## the figure onto the cards is that a summed line could not say WHICH web was short.
+const POOL_SHORT_TAIL_PLANT := "tended ground needs."
+const POOL_SHORT_TAIL_ANIMAL := "tamed animals need."
+
+func _pool_short_tail(role: String) -> String:
+	return POOL_SHORT_TAIL_ANIMAL if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
+		else POOL_SHORT_TAIL_PLANT
+
+func _other_keeping_role(role: String) -> String:
+	return HudWorkVocab.ROLE_NAME_AGRICULTURE if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
+		else HudWorkVocab.ROLE_NAME_HUSBANDRY
 
 ## GUARD: **the three pool cards draw LEVEL, and none of them clips its role name.**
 ##
@@ -3351,12 +3429,14 @@ func _assert_upkeep_mode_control(expected_mode: String) -> void:
 		offered == [HudConst.UPKEEP_FUND_MODE_PRIORITY, HudConst.UPKEEP_FUND_MODE_SPREAD])
 	_assert_band_panel("band_panel_upkeep_mode_%s: exactly the band's own mode is lit (%s)"
 		% [expected_mode, lit], lit == [expected_mode])
-	var note := _find_meta_control(block, BandPanelController.UPKEEP_MODE_NOTE_META)
-	var note_text := (note as Label).text if note is Label else ""
-	_assert_band_panel("band_panel_upkeep_mode_%s: the note quotes the pool's shortfall (\"%s\")"
-		% [expected_mode, note_text],
-		note_text.begins_with(HudWorkVocab.UPKEEP_MODE_SHORT_FORMAT.split("%s")[0])
-		and note_text != HudWorkVocab.UPKEEP_MODE_COVERED_TEXT)
+	# **THE ARITHMETIC IS ON THE POOL CARDS NOW, PER WEB, and the pairing is the claim.** The summed
+	# line this replaces could not name the web that was short — both its terms were the plant pool's
+	# plus the animal pool's — so a band whose Agriculture is fine and whose Husbandry is starving read
+	# one number belonging to neither card. This band is short on BOTH webs, so both keeping cards fly
+	# the mark and quote their own figure, while the BUILDERS card beside them stays bare: a mark on
+	# every card says nothing, and that pool has no keeping to be short of.
+	_assert_pool_card_marks(expected_mode, [HudWorkVocab.ROLE_NAME_AGRICULTURE,
+		HudWorkVocab.ROLE_NAME_HUSBANDRY], [HudWorkVocab.ROLE_NAME_BUILDERS])
 	if others.is_empty():
 		_fail("band_panel_upkeep_mode_%s — no unlit mode to press" % expected_mode)
 		return
@@ -3490,13 +3570,32 @@ func _assert_keeper_warning(state_name: String, expect_warned: bool) -> void:
 		var note := String(model.get("note", ""))
 		if warned != expect_warned:
 			failures.append("under_herded is %s, expected %s" % [warned, expect_warned])
+		# **THE ROW'S HOVER IS THE ONE SURFACE THAT CARRIES THE COUNTDOWN, and the asymmetry IS the
+		# claim.** The source's own card states the same first sentence and no figure at all — this
+		# board is where staffing is decided this turn, so *how long you have* is actionable here.
+		# Asserting one surface passes on a producer that puts the countdown everywhere, so the
+		# CARD's answer for the same herd is asserted beside it.
+		var tooltip := String(model.get("tooltip", ""))
+		var card_hover := HudWorkVocab.under_kept_tooltip_for_source(
+			SourceForecast.SOURCE_KIND_HERD)
 		if expect_warned:
 			if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
 				failures.append("expected the ⚠ mark, got marks %s" % [marks])
 			if note != HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
 				failures.append("expected the Husbandry note, got %s" % [note])
-		elif note == HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
-			failures.append("the Husbandry note survived a herd the pool covers")
+			if not tooltip.contains(note):
+				failures.append("the row hover states no remedy: %s" % [tooltip])
+			if not tooltip.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+				failures.append("the row hover states no countdown: %s" % [tooltip])
+			if card_hover.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+				failures.append("the CARD's hover states a countdown too: %s" % [card_hover])
+			if not card_hover.contains(note):
+				failures.append("the CARD's hover states no remedy: %s" % [card_hover])
+		else:
+			if note == HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT):
+				failures.append("the Husbandry note survived a herd the pool covers")
+			if tooltip.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+				failures.append("a covered herd's row hover counts down: %s" % [tooltip])
 	if not found:
 		_fail("%s — no Hunt work row for %s" % [state_name, UNDER_HERDED_WORK_HERD_ID])
 		return
@@ -7981,7 +8080,18 @@ func _under_herded_work_herd_fixtures(pool_share: int = KEEPER_POOL_UNFUNDED) ->
 	}
 	_set_managed_herders(penned, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	_set_keeper_demand(penned, UNDER_HERDED_WORK_HERDERS_NEEDED, pool_share)
+	# **AND THE GRACE, because the row's hover COUNTS DOWN.** `hasNeglectGrace` is read before
+	# `neglectGraceRemaining` and the two zeros are opposite news — an unflagged source states *being
+	# lost now*, which is the wrong half of the fork to leave a keeping frame staging. A herd whose
+	# keeping just lapsed has turns in hand, and the countdown is the whole reason the board's hover
+	# says more than the source's card does.
+	penned["has_neglect_grace"] = true
+	penned["neglect_grace_remaining"] = UNDER_HERDED_WORK_GRACE_TURNS
 	return [penned]
+
+## The turns of grace the under-kept herd has left — enough that the hover reads the COUNTDOWN form
+## rather than the already-being-lost one.
+const UNDER_HERDED_WORK_GRACE_TURNS := 3
 
 ## "The pool paid this herd nothing this turn" — the default for the under-herded fixtures, and the
 ## state the board's ⚠ is about.
@@ -8088,6 +8198,12 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 		print(("band_panel_preview: assert OK — both cap twins gate at the take-useful %d, "
 			+ "below the keeper crew of %d the keeping row now answers for")
 			% [HERDER_FLOOR_TAKE_USEFUL, HERDER_FLOOR_HERDERS_NEEDED])
+
+## The countdown's own verb, as a LITERAL — the sentence it opens (`Domesticated is lost in 3 turns.`)
+## is the WORK BOARD's alone, so this needle is asserted PRESENT on the row's hover and ABSENT on the
+## source card's. Spelled here rather than composed from `HudWorkVocab`, which would assert only that
+## the producer agrees with itself about a string it also chose.
+const UNDER_KEPT_COUNTDOWN_NEEDLE := "is lost in"
 
 ## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
 ## `under_herded` model flag the row + inspector tint from.
