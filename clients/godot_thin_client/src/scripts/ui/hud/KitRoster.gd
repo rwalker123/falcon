@@ -280,16 +280,16 @@ const JOB_BUILDERS := "builders"
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
 ## work appear: a hunt or forage crew's carry axis is a property of the SOURCE (`carry_axis_for`)
 ## rather than of the job alone, and the two questions must not collapse into one table.
+##
+## **THE BUILDERS ARE ABSENT AGAIN, AND THIS TABLE FOLLOWS ITS READERS.** `KIT_BUILD_WORK_KEY` had an
+## entry here for exactly as long as the Builders card carried a read-only gear line
+## (`docs/plan_standing_upkeep.md` §2.5); §4.7 retired that line — the BUILD QUEUE head states the
+## pool's kit adjacent to the jobs it prices — so nothing resolves a build-axis hint any more, and a
+## row here with no reader is a lever that looks live. A builders kit picker landing on a queue row
+## (§7's ②) puts it back, with that row as its caller.
 const ROLE_AXES := {
 	JOB_SCOUT: KIT_SCOUT_VANTAGE_KEY,
 	JOB_WARRIOR: KIT_ATTACK_KEY,
-	# **AND THE BUILD AXIS, which the builders role card gave a home**
-	# (`docs/plan_standing_upkeep.md` §2.5). `KIT_BUILD_WORK_KEY`'s own note said it had no hint-line
-	# home; that was true while no card was priced on it, and the moment the pool became a role card
-	# the omission stopped being a decision and became a WRONG READOUT — `build_kit_row` falls through
-	# to the compose sheets' `tier_hint` for a job this table does not name, so a Builders card read
-	# `attack 1.0 · carry 12.0 per hunter`, a hunter's haul quoted on a builder's row.
-	JOB_BUILDERS: KIT_BUILD_WORK_KEY,
 }
 
 ## Is this a BAND-WIDE role — one standing slot, no source, priced on `ROLE_AXES`? The one test, so a
@@ -1224,25 +1224,6 @@ static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 				DetailFormat.kit_item_label(item_id), DetailFormat.kit_condition_face(band, item_id)])
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
-## **A ROLE CARD'S READ-ONLY GEAR LINE — the kit's NAME and then what it buys**, e.g.
-## `Tillage kit · 8.5 work off a build, per builder · Hoes 100`.
-##
-## **IT CARRIES THE NAME BECAUSE THERE IS NO PICKER LEFT TO CARRY IT.** `role_hint` alone states the
-## effect and the condition of the gear; the kit those are true OF was the picker's own face, so a
-## card that drops the control and keeps only the hint stops naming the tool its pool is holding.
-## Joined with `KIT_HINT_SEPARATOR`, so the name reads as the first clause of one line rather than as
-## a second row competing with the description beneath it.
-##
-## **A KIT WITH NOTHING TO SAY IS ITS NAME ALONE.** The bare entry takes nothing off a build and
-## carries no item, so `role_hint` is empty and this reads `No kit` — the same face the build queue's
-## own header states for that band, both being `BandPanelController._role_kit_id`'s one answer.
-static func role_gear_line(kits: Array, kit_id: String, band: Dictionary, job: String) -> String:
-	var display := display_name_for_id(kits, kit_id)
-	var hint := role_hint(kits, kit_by_id(kits, kit_id), band, job)
-	if hint == "":
-		return display
-	return HudComposeVocab.KIT_HINT_SEPARATOR.join([display, hint])
-
 ## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
 ## whole number**, so each takes the rounding the Gear popover already gives it — the vantage its own
 ## (the sim reveals in whole tiles), the attack the popover's shared whole-number face — and neither
@@ -1255,14 +1236,6 @@ static func _role_effect_phrase(job: String, tier: float) -> String:
 		JOB_WARRIOR:
 			return DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
 				tier, DetailFormat.KIT_CONDITION_DECIMALS)
-		JOB_BUILDERS:
-			# **A NEUTRAL CONTRIBUTION STATES NOTHING**, the "absent terms render no line" convention:
-			# `none` — which is the builders' own default — takes nothing off a build, and `0 work off a
-			# build` costs a line to say so. The condition clauses beside it still render, so a kit that
-			# grants no build work but is wearing out still says which items it is spending.
-			if tier <= BUILD_WORK_NONE:
-				return ""
-			return DetailFormat.KIT_ROLE_BUILDERS_BUILD_FORMAT % DetailFormat.format_work_units(tier)
 	return ""
 
 ## One item's condition clause, appended only where there is something true to say: the band has to

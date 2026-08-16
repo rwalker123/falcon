@@ -153,12 +153,12 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_running_animal")
 	var tame_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "tame")
-	# **A RUNNING BUILD IS A STATE LABEL, as Cultivate is** (`docs/plan_standing_upkeep.md` §2.4). It
-	# was a checked, live `CheckBox` whose uncheck sent `abandon_improvement`; the verb is derived from
-	# the meter now, so there is no stored intent to clear and the control's TYPE says which of the
-	# four states it is in — a checkbox is the OFFER and nothing else.
-	h._assert_hud("a running Tame renders a STATE label, as Cultivate does",
-		tame_box is Label and not (tame_box is CheckBox)
+	# **A RUNNING BUILD IS A STATE, as Cultivate is** (`docs/plan_standing_upkeep.md` §2.4). It was a
+	# checked, live `CheckBox` whose uncheck sent `abandon_improvement`; the verb is derived from the
+	# meter now, so there is no stored intent to clear. **Asserted by STATE, not by type** — every
+	# state of this control is a `Label` since §4.7a ①, so the type says nothing on its own.
+	h._assert_hud("a running Tame renders the RUNNING state, as Cultivate does",
+		tame_box is Label
 			and String(tame_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
 				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
 	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The payoff is off
@@ -226,14 +226,16 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_done_animal")
 	var pastoral_label = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "tame")
-	h._assert_hud("a finished Tame is a static LABEL, not a checkbox",
-		pastoral_label is Label and not (pastoral_label is CheckBox))
+	h._assert_hud("a finished Tame renders the DONE state",
+		pastoral_label is Label and String(pastoral_label.get_meta(
+			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_DONE)
 	h._assert_hud("…and carries NO upkeep — a pastoral herd still grazes (the asymmetry, held)",
 		pastoral_label != null
 		and not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME).contains(UPKEEP_NEEDLE))
-	h._assert_hud("…with the next rung, Corral, offered beneath it",
-		ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "corral") is CheckBox)
+	h._assert_hud("…with the next rung, Corral, OFFERED beneath it",
+		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "corral"))
+			== HudWidgets.IMPROVEMENT_STATE_OFFERED)
 
 	# State 442-corral-done — the OTHER half of that asymmetry: a PENNED herd's 🐄 label DOES carry the
 	# pen's per-turn fodder upkeep, because a penned herd cannot graze and someone feeds it every turn.
@@ -246,8 +248,9 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("improvement_done_penned")
 	var penned_label = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "corral")
-	h._assert_hud("a finished Corral is a static LABEL",
-		penned_label is Label and not (penned_label is CheckBox))
+	h._assert_hud("a finished Corral renders the DONE state",
+		penned_label is Label and String(penned_label.get_meta(
+			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_DONE)
 	h._assert_hud("…and DOES carry the pen's upkeep — the one asymmetry between the two webs",
 		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_CORRAL).contains(UPKEEP_NEEDLE))

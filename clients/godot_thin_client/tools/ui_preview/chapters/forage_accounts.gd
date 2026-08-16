@@ -855,7 +855,8 @@ func run(harness) -> void:
 	# standing on — which the face's own words are what separate, both states being Labels now.
 	var stale_control = ForageFx.find_improvement_control(stale_sheet, "cultivate")
 	h._assert_hud("the finished rung reads as a DONE label, so no build in flight can explain a dip",
-		stale_control is Label and not (stale_control is CheckBox)
+		String(ForageFx.improvement_state(stale_sheet, "cultivate"))
+				== HudWidgets.IMPROVEMENT_STATE_DONE
 			and ForageFx.improvement_face(stale_sheet, "cultivate").contains(
 				String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
 	h._hud._band_labor._player_band = prior_player_band
@@ -1019,8 +1020,9 @@ func run(harness) -> void:
 	h._assert_hud("…so a completed Field retires Cultivate, as the sim's own rung test does",
 		SourceForecast.improvement_is_done(wild_sown, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 			SourceForecast.IMPROVEMENT_CULTIVATE))
-	h._assert_hud("…and the sheet offers no Cultivate box on it",
-		not (ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate") is CheckBox))
+	h._assert_hud("…and the sheet offers no Cultivate on it",
+		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "cultivate"))
+			!= HudWidgets.IMPROVEMENT_STATE_OFFERED)
 	# **THE PAIR THAT STOPS THIS BECOMING "CULTIVATE IS NEVER OFFERED".** A retire test that answered
 	# true unconditionally would satisfy every line above; a wild patch with the knowledge in hand must
 	# still offer the rung.

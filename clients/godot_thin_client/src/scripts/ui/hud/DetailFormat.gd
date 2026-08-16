@@ -375,16 +375,6 @@ const KIT_BUILD_WORK_NEUTRAL := 0.0
 const KIT_ROLE_SCOUT_VANTAGE_FORMAT := "%s-tile sight per vantage"
 const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 
-## **THE BUILDERS ROLE CARD'S OWN GEAR LINE** (`docs/plan_standing_upkeep.md` §2.5) — what the selected
-## kit takes off a build, per builder. It is `KIT_ROLE_BUILD_WORK_SUFFIX`'s figure stated as a line
-## rather than as a clause on the handling gear's popover row, because on this card the build axis is
-## the WHOLE of what the kit buys: a builders kit carries its tool and nothing else — `hurdling` the
-## hurdles, `tillage` the hoes — so this line is the only number the card's picker moves.
-##
-## It takes the WORK-UNIT decimals rather than the carries' — a contribution is a quantity of work
-## against a job priced in work, and `format_work_units` is where that rule lives.
-const KIT_ROLE_BUILDERS_BUILD_FORMAT := "%s work off a build, per builder"
-
 # The bare-handed tag on a dry kit's breakdown row — the state worth saying plainly, since there is no
 # replenishment path and the role stays there.
 const KIT_BARE_HANDS_SUFFIX := " — bare hands"
@@ -1146,6 +1136,40 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
 ## `percent` is the meter's own fullness, supplied by the caller because the two callers read it from
 ## different places — a rung row from its own meter, a queue row from the entry's.
 static func build_countdown_value(turns: int, build_crew: int, percent: int) -> String:
+    var sentinel := build_sentinel_value(turns, build_crew, percent)
+    if sentinel != "":
+        return sentinel
+    if turns == BUILD_TURNS_SINGULAR:
+        return HudSelectionVocab.RUNG_TURNS_ONE_FORMAT % percent
+    return HudSelectionVocab.RUNG_TURNS_FORMAT % [turns, percent]
+
+## **THE SAME VALUE AS A COMPLETION DATE — the turn this entry is estimated to LAND on**
+## (`docs/plan_standing_upkeep.md` §4.7). `turn 82 (0%)` rather than `≈42 turns (0%)`.
+##
+## **IT IS THE BUILD QUEUE BLOCK'S ALONE, AND THAT IS THE WHOLE DISTINCTION.** The queue is a
+## SCHEDULE whose order is the player's own input — its counts are CHAINED, so `≈42` / `≈61` / `≈98`
+## down a list read as three independent spans when they are cumulative, which is what made them
+## ambiguous in play. A rung row and a compose sheet answer *what does this cost me*, which is a
+## DURATION and has no chain to be misread, so both keep `build_countdown_value`.
+##
+## **NO SINGULAR FORK.** `turn 41 (0%)` is correct at one turn out, so `BUILD_TURNS_SINGULAR` — which
+## exists to keep `≈1 turns` off a countdown — has nothing to do here.
+##
+## `current_turn` is `HudBandLaborState.current_turn()`, threaded in because this layer holds no
+## snapshot.
+static func build_completion_value(turns: int, build_crew: int, percent: int,
+        current_turn: int) -> String:
+    var sentinel := build_sentinel_value(turns, build_crew, percent)
+    if sentinel != "":
+        return sentinel
+    return HudSelectionVocab.RUNG_COMPLETES_FORMAT % [current_turn + turns, percent]
+
+## **THE SENTINEL BRANCHES ON THEIR OWN, so the two faces above cannot fork twice.** It answers `""`
+## for a real positive count — the one case the two callers word differently — and every sentinel the
+## wire can put on `buildTurnsRemaining` otherwise. **A second fork is how this client has twice been
+## left behind by a newly-spelled sentinel** (`-3` split out of `-2`, then `-4` added beside them), so
+## a caller that wants a new rendering of a COUNT writes it in terms of this rather than beside it.
+static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> String:
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
         if build_crew <= SourceForecast.BUILD_CREW_NONE:
             return HudSelectionVocab.RUNG_HELD_FORMAT % percent
@@ -1166,9 +1190,7 @@ static func build_countdown_value(turns: int, build_crew: int, percent: int) -> 
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
-    if turns == BUILD_TURNS_SINGULAR:
-        return HudSelectionVocab.RUNG_TURNS_ONE_FORMAT % percent
-    return HudSelectionVocab.RUNG_TURNS_FORMAT % [turns, percent]
+    return ""
 
 ## A meter with nothing banked on it at all — the boundary between *declared* and *under way*, and the
 ## one value at which a rung row states a sentence rather than a number.

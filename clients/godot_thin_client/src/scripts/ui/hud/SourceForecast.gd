@@ -200,7 +200,15 @@ const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
 # nothing HERE and should move elsewhere. A source can be overstaffed while perfectly sustainable (and
 # overdrawn while fully used), so this reads as its own WARN-tinted note on the row rather than
 # borrowing the ⚠. `workers_needed == 0` (rehydrated save) means "unknown" ⇒ no note, never a wrong one.
-const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
+# **IT NAMES THE CONSEQUENCE, NOT THE ACTIVITY** (`docs/plan_standing_upkeep.md` §4.7a). It read
+# `· only %d of %d working`, and *working* was read as *working ON WHAT* — a player with three
+# foragers on a patch at its floor took it for a build claim and reported the row as nonsense
+# (*"the Terrain tile says 2 of 3 workers, that doesn't make sense on a forage, I've never tried
+# cultivating this tile"*). **The arithmetic was correct and is untouched**: `workers_needed_for_take`
+# inverts the TAKE by the throughput the take actually ran at, so on a patch drawn down to its
+# escapement floor two gatherers carry the whole regrowth and the third brings nothing home. Nothing
+# on either side of it reads a build crew (`systems::labor`: *"both about the TAKE activity alone"*).
+const OVERSTAFF_NOTE_FORMAT := " · only %d of %d bring anything home"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped by the stock standing above its escapement floor; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
@@ -1018,8 +1026,8 @@ const FORECAST_DONE_FLAG_KEYS := {
 ## because `Sow` skips rung 2. A Field sown from wild ground carries `cultivation_progress == 0`
 ## FOREVER (the sim: *"`Sow` needs no prior patch, so a Field may stand on ground that was never
 ## tended"*), so `is_cultivated` is honestly false on a finished Field. Reading the bare flag made a
-## completed Field offer `Cultivate this patch` — a live checkbox for a build the sim treats as
-## already built. Reported from play.
+## completed Field offer `Cultivate this patch` — an offer for a build the sim treats as already
+## built. Reported from play.
 ##
 ## **The sim already answers this correctly and this mirrors it**: `forage_rung_already_built` matches
 ## `Improvement::Cultivate => patch.is_managed()`, whose own docstring says *"a Field is above rung

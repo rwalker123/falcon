@@ -1421,6 +1421,14 @@ func _kit_swap_turn_estimate_states() -> void:
 	await h._save("herd_kit_swap_bare_build")
 	var bare_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_TAME)
+	# **CAPTURED HERE, NOT WITH ITS ASSERTION.** The estimate is a function of the band's LIVE
+	# `builders` row, and the geared frame below re-staffs it — so a reading taken beside the claim
+	# would be the geared answer under the bare name, and the two counts would agree for a reason that
+	# has nothing to do with the kit. (Measured: it read 11 against 11.)
+	var bare_turns := SourceForecast.build_turns_at(warren, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_TAME, KIT_SWAP_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK,
+		h._hud._drawercompose._build_gear_for(h._hud._band_labor.player_band(),
+			SourceForecast.LABOR_KIND_HUNT))
 
 	#   (b) THE HANDLING KIT — the SAME herd, the SAME crew, the SAME floor, the SAME hunt kit under
 	# the stepper. Only the BUILDERS row moved, which is the row a build's gear comes off.
@@ -1430,16 +1438,26 @@ func _kit_swap_turn_estimate_states() -> void:
 	await h._save("herd_kit_swap_geared_build")
 	var geared_face := ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_TAME)
-	print("ui_preview: kit swap  bare=%s  geared=%s" % [bare_face, geared_face])
+	var geared_turns := SourceForecast.build_turns_at(warren, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_TAME, KIT_SWAP_KEEPERS, SourceForecast.FLOOR_FOOD_PEAK,
+		h._hud._drawercompose._build_gear_for(h._hud._band_labor.player_band(),
+			SourceForecast.LABOR_KIND_HUNT))
+	print("ui_preview: kit swap  bare=%s (%d turns)  geared=%s (%d turns)" % [
+		bare_face, bare_turns, geared_face, geared_turns])
 
-	h._assert_hud("a crew whose kit helps no build is quoted the whole job — \"%s\"" % bare_face,
-		bare_face.ends_with(_kit_swap_price_clause(KIT_SWAP_TURNS_BARE)))
-	h._assert_hud("…and the handling gear takes work off it, at the SAME crew — \"%s\"" % geared_face,
-		geared_face.ends_with(_kit_swap_price_clause(KIT_SWAP_TURNS_GEARED)))
+	# **THE ESTIMATE IS OFF THE FACE, so the claims are made on the PRODUCER** (§4.7a ①). Ray took the
+	# price and the turn count off the compose sheet — *"That information should be on the work tab.
+	# No need to have it here, it is useless."* — and the arithmetic did not move with the rendering,
+	# so `build_turns_at` is asked directly at the two kits' own resolved gear. The two FRAMES stay:
+	# they are what shows the sheet is otherwise identical under both kits.
+	h._assert_hud("a crew whose kit helps no build is quoted the whole job — %d turns" % bare_turns,
+		bare_turns == KIT_SWAP_TURNS_BARE)
+	h._assert_hud("…and the handling gear takes work off it, at the SAME crew — %d turns" % geared_turns,
+		geared_turns == KIT_SWAP_TURNS_GEARED)
 	# The negative that names the defect: a gear term read off the SOURCE rather than off the kit row
 	# answers one number for both kits, which is what the two claims above spell as two counts.
 	h._assert_hud("…so the estimate cannot read the same under both kits",
-		KIT_SWAP_TURNS_BARE != KIT_SWAP_TURNS_GEARED and bare_face != geared_face)
+		KIT_SWAP_TURNS_BARE != KIT_SWAP_TURNS_GEARED and bare_turns != geared_turns)
 	# **THE `min` IS ON THE HEAD COUNT, and it is asked of the PRODUCER** — a crew above the gear's own
 	# saturating crew cannot be staged on a frame without putting the claim at the mercy of the
 	# stepper's cap. A fourth keeper carries no hurdles, so the gear term does not grow with them.
@@ -1492,13 +1510,21 @@ func _kit_swap_turn_estimate_states() -> void:
 		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == OVER_GEARED_KEEPERS
 			and float(OVER_GEARED_KEEPERS) * BandFx.KIT_BUILD_WORK_HANDLING
 				>= HerdFx.ANIMAL_TAME_WORK_COST)
-	h._assert_hud("a job the gear alone pays off quotes ONE turn — \"%s\"" % over_geared_face,
-		over_geared_face.ends_with(_kit_swap_price_clause_one()))
-	# The NEGATIVE that names the defect: withholding the clause renders the bare price, which is a
-	# perfectly plausible face and the one this frame exists to refuse.
-	h._assert_hud("…and never the bare price a withheld estimate would leave behind",
-		not over_geared_face.ends_with(HudComposeVocab.BUILD_PRICE_WORK_FORMAT
-			% DetailFormat.format_work_units(HerdFx.ANIMAL_TAME_WORK_COST)))
+	# **ON THE PRODUCER, for the reason above.** `BUILD_FINISHES_IN_ONE_TURN` and
+	# `BUILD_TURNS_NO_ESTIMATE` are the two answers this frame separates, and they are one integer
+	# apart in the sentinel space rather than one word apart on a face.
+	var over_geared_turns := SourceForecast.build_turns_at(stocked_warren,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME, OVER_GEARED_KEEPERS,
+		SourceForecast.FLOOR_FOOD_PEAK,
+		h._hud._drawercompose._build_gear_for(h._hud._band_labor.player_band(),
+			SourceForecast.LABOR_KIND_HUNT))
+	print("ui_preview: over-geared build turns = %d" % over_geared_turns)
+	h._assert_hud("a job the gear alone pays off quotes ONE turn — got %d" % over_geared_turns,
+		over_geared_turns == SourceForecast.BUILD_FINISHES_IN_ONE_TURN)
+	# The NEGATIVE that names the defect: withholding the answer reads as *no estimate*, which is a
+	# perfectly plausible reading and the one this frame exists to refuse.
+	h._assert_hud("…and never the `no estimate` a withheld answer would leave behind",
+		over_geared_turns != SourceForecast.BUILD_TURNS_NO_ESTIMATE)
 	h._hud._band_labor._player_band = keepers
 	h._hud._band_labor._player_bands = [keepers]
 	h._hud._drawercompose.close_compose_sheet()

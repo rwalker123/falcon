@@ -2566,6 +2566,56 @@ retires, so no rung of that picker can be disabled.
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
 
+> #### ⛔ THERE IS NO CHECKBOX ANY MORE — THE SHEET JUDGES A RUNG, THE WORK TAB DECLARES IT (§4.7a ①)
+>
+> Every state above is a `Label` now (the OFFERED one a `RichTextLabel`, see below). The passages in
+> this file that describe a tick, an untick, `on_toggle` or a `disabled_reason` are kept for the
+> reasoning they carry and are **read against this**.
+>
+> **The trap it removes**: the `🌱 Cultivate this patch` checkbox was not the action — the only thing
+> that committed it was a button reading **`Forage`** — so ticking it and closing the sheet did nothing
+> at all. Reported from play as *"I just click cultivate and not the Forage button — that seems
+> completely unnatural."* The committing act is the Work board's `⌃` mark (`band-city-panel.md` → "…AND
+> THE `⌃` IS THE CONTROL THAT DECLARES THE BUILD"); the sheet keeps the FORECAST, which is what a 28px
+> work row cannot hold.
+>
+> **The four faces, and none of them reads as an offer to act except by naming the control elsewhere:**
+>
+> | state | line |
+> |---|---|
+> | AVAILABLE | `🌱 Cultivate this patch from the Work tab.` |
+> | QUEUED | `🌱 Cultivate this patch · ◷ Queued` + `⚠ Not started — nobody is on this band's Builders role.` |
+> | RUNNING | `🌱 Cultivating 30 / 50 work (60%) — ≈7 turns` |
+> | DONE | `🌾 Tended Patch`, with `▦ Sow a field here from the Work tab.` beneath |
+>
+> - **ONE LINE, AND `Work tab` IS A LIVE LINK.** It shipped for an hour as a fact line plus a smaller
+>   remedy note beneath, and Ray's verdict was that one line is all it needs and the pointer should be
+>   clickable. `work_tab_requested` is a `DrawerComposeController` signal relayed by `HudLayer` to the
+>   panel — **the compose sheet never reaches the dock itself**. The link switches the TAB and does not
+>   focus the row: that needs a public focus seam on the board *and* the panel already showing that
+>   band, neither of which the signal can assert.
+> - **AVAILABLE is the one state built as a `RichTextLabel`**, and the reason is layout, not style:
+>   `build_inline_link` returns a `Button`, which is atomic — a `[Label][link][Label]` sentence cannot
+>   break inside either half and overflows the ~245px card. An inline `[url]` flows. Every other state
+>   stays a `Label`.
+> - **THE PRICE IS NOT ON THIS SHEET.** `50 work · 2 work a turn to hold` moved to the `⌃` mark's
+>   tooltip — Ray: *"That information should be on the work tab. No need to have it here, it is
+>   useless."* `_improvement_offer_face` and `IMPROVEMENT_OFFER_PRICED_FORMAT` are retired;
+>   `DetailFormat.build_price_clause` survives with its one caller moved, **keeping `from Agriculture`**,
+>   which is a closed defect (it read as a demand on the crew under the stepper) and must not be
+>   re-opened by stripping it there.
+> - **THE CROP PICKER LEFT ENTIRELY**, `extra_rows` with it — Ray: *"the CROP TO TEND shouldn't be a
+>   selection here as the user can't do the cultivate here."* It is a setting of a job, and the job's
+>   settings are the queue row's expansion (`band-city-panel.md` → "A ROW EXPANDS INTO THE JOB'S
+>   SETTINGS"). It still commits through the **same** `assign_labor` builder — the crop was never a
+>   queue-entry field, only a `species` token on the forage row — so nothing moved on the wire.
+> - **THE LIMIT IS STATED RATHER THAN RELAXED, and that was a decision.** A source the band does not work
+>   has no work row, so the `⌃` cannot reach it; the alternative was relaxing the sim's rule, which is a
+>   different membership test for the queue *plus* a per-entry band id on the wire, and buys one saved
+>   click on ground you are about to staff anyway. So the unworked sheet says
+>   `🌱 Send gatherers here first, then Cultivate this patch from the Work tab.` **The two sentences are
+>   a PAIR and are asserted as one** — a builder that always prints one passes any single check.
+
 **ONLY ONE improvement is ever offered — the source's next rung.** `RungGates.next_rung_offered` is
 that answer and shares its ordering with `next_rung_ready` through the private `_next_rung`: highest
 ungated rung first (so sowable wild ground, where both plant rungs clear, offers **Sow**), falling

@@ -434,6 +434,27 @@ func pending_assigns_for(entity: int) -> Dictionary:
 	var a: Variant = (e as Dictionary).get("assign", {})
 	return a if a is Dictionary else {}
 
+## **THE DECLARATION THE OVERLAY IS CARRYING FOR ONE SOURCE** — `IMPROVEMENT_NONE` when this band has
+## no un-acknowledged edit on it (`docs/plan_standing_upkeep.md` §4.7a ①).
+##
+## It exists so an OPEN compose sheet can see a `⌃` pressed on the Work board a moment ago: the sheet
+## derives its rung through `SourceForecast.build_verb`, whose `declared` argument is honoured at a
+## zero meter, and without this the sheet would go on OFFERING a rung the band has just queued.
+##
+## **IT READS THE OVERLAY ALONE, NEVER THE CONFIRMED ASSIGNMENT.** `improvement_for_forage` / `_hunt`
+## answer that other question and the compose sheet already seeds from them; folding the two here
+## would make the composition un-clearable — a sheet that deliberately composes *no build* over a
+## source the wire says is building one is a state the harnesses stage directly.
+##
+## The key shape is `pending_key`'s, so this cannot drift from what `record_pending_assign` wrote.
+func pending_improvement_for(band: Dictionary, kind: String, x: int, y: int,
+		herd_id: String) -> String:
+	var entry: Variant = pending_assigns_for(int(band.get("entity", -1))).get(
+		pending_key(kind, x, y, herd_id), null)
+	if not (entry is Dictionary):
+		return SourceForecast.IMPROVEMENT_NONE
+	return String((entry as Dictionary).get("improvement", SourceForecast.IMPROVEMENT_NONE))
+
 ## `improvement` is what the source will be building once the edit lands — the composed improvement on
 ## a sheet that just ticked one on, else whatever it was already building. It is recorded because
 ## `assign_labor` deliberately does NOT touch that axis (issue #442), so an optimistic overlay that

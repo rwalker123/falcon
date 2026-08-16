@@ -1923,10 +1923,95 @@ Measuring only the deepest column passed the 130/263 flank at 88% — the short 
 it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
 split) need two claims.
 
-## THE KEEPING BLOCK — two more role cards, and the one decision that governs both pools
+## THE POOLS BLOCK — all three work pools, on the tab that spends them (§4.7)
+
+> #### ⛔ THIS SECTION SUPERSEDES THE KEEPING BLOCK BELOW, WHICH WAS ON THE **BAND** TAB
+>
+> The passages under it are kept because they still record *why* each control reads the way it does —
+> why the keeping pair mounts no kit picker, why the builders card's picker was a defect rather than a
+> rendering bug, why the fund mode is the one decision the roles cannot express. Where one says the
+> block lives in the band zone, read it against this.
+
+`docs/plan_standing_upkeep.md` §4.7. **The pool was on one tab and its consequences on another**, which
+is why its shortfall line went unnoticed in playtest entirely: the Agriculture / Husbandry / Builders
+cards sat in the band zone while the sources they pay for, and the queue they fund, were a tab away. The
+whole block moves to the **WORK** zone, directly under the zone head and above the BUILD QUEUE, so the
+tab reads top to bottom as the building loop — *what you have to spend · what it is spending on · where
+new jobs are declared*.
+
+- **The head counts all THREE roles** (`POOLS_ZONE_READOUT_FORMAT`, `N of M on work`) where the retired
+  `KEEPING_ZONE_READOUT_FORMAT` deliberately counted two. That is not a widened definition of keeping —
+  it is a different question, asked by a block that now holds all three pools.
+- **THE CARDS ARE COMPACT, and the prose became a tooltip.** `_build_pool_card` is a name and a stepper
+  and nothing else; the three role hints survive verbatim as each card's `tooltip_text`. The band tab's
+  cards could afford a description because that zone SCROLLS; this one CLIPS, and a description read
+  once cannot cost height on a surface operated every turn.
+- **The Builders card's read-only gear line did NOT come along**, and its fact was not lost: the BUILD
+  QUEUE head one block below already states `3 builders · Tillage kit` through `_role_kit_id`, the same
+  resolution. Two surfaces for one fact, and the survivor is the one adjacent to the jobs it prices.
+  `KitRoster.role_gear_line`, its builders `ROLE_AXES` entry and `KIT_ROLE_BUILDERS_BUILD_FORMAT` are
+  retired with it.
+- **The fund-mode row is ONE line now** — `[Spread][Priority]  Short 5 work of 7 this turn.` — and the
+  `SHORT OF KEEPERS` title is deleted. A label over a control whose whole content is two words and a
+  number says nothing the control does not. Measured: **67px → 22px**, which took the block from 155 to
+  110 and paid for most of the strip growth below. Everything else about the row is unchanged, including
+  that it renders only where a web demands work this turn.
+- **Its height is reserved through ONE function**, `HudWorkVocab.pools_block_height(has_fund_mode)`,
+  called both as the block's `custom_minimum_size` and by `_work_board_capacity`'s chrome term — the
+  BUILD QUEUE block's own rule, for the same reason: this zone `clip_contents`.
+- **IT ALWAYS RENDERS, unlike the queue block.** An empty queue is furniture explaining an absence; three
+  steppers at zero are the controls that fix it.
+
+### THE STRIP GREW, AND THE TWO-COLUMN BUDGET WAS A SILENT CLIP
+
+The Work zone could not hold a pool header, a queue and a board in a 300px box: the worst case —
+fund-mode row plus a queued build — measured **331 of 300**, and the only lever inside the zone (the
+queue's row cap) could not close it, the pools block being larger than the queue had to give back. Ray's
+call was to grow the dock. `BandCityPanel.PANEL_HEIGHT_WIDE` is **440** (was 360), a **380px** zone box
+and **41%** of a 1080-high viewport, well inside the `MAX_WIDE_HEIGHT_FRACTION` clamp. Chosen against two
+measured criteria, not rounded: the worst case fits with `build_queue_rows_max` at its full ceiling of 3
+(284 of 380), and the 1920 bottom dock's board still pages **2 rows** at four sources, which is what it
+drew before the pools block existed. The binding criterion was the board, at 376px.
+
+> **⛔ A ONE-COLUMN MEASUREMENT DOES NOT ANSWER FOR THE TWO-COLUMN PATH.** `_body_budget()` picks
+> `PANEL_HEIGHT_WIDE_TWO_COLUMN` whenever the band flank earns two columns, which handed every zone a
+> **275px** box — *smaller than the 300 they had before the raise* — so the same worst case clipped by
+> 9–11px on a wide monitor, silently, in the zone that `clip_contents`. It now returns
+> `maxf(PANEL_HEIGHT_WIDE_TWO_COLUMN, PANEL_HEIGHT_WIDE)`.
+>
+> **The reasoning that let it through is the lesson.** That constant's own derivation surveyed each zone
+> and concluded of the work zone: *"pages itself … so a shorter box costs it a board row rather than
+> overflowing. It never binds by construction."* True while the zone was head + chips + board + pager —
+> every one of which pages or is a single row. **The POOLS and BUILD QUEUE blocks are fixed-height and
+> do not page**, so the zone has a hard floor now and binds like any other. A claim about what cannot
+> happen expires when the thing it surveyed changes shape.
+>
+> At the current numbers the two-column branch is **inert** (329 against 440); the `maxf` is kept anyway
+> because `BAND_ZONE_TWO_COLUMN_EXTENT` is a live re-measured derivation, so the max is what stops it
+> coming back as a regression instead of a saving. `band_panel_pools_wide_two_column` is the frame, and
+> the claim is asserted BOTH ways — the zone fits, and the two-column strip is never shorter than the
+> one-column budget. Sabotage-verified against the bare constant: 4 failures naming `Zone_work` and
+> `short by 11`.
+
+**Two consequences of the taller strip, both accepted.** A one-column horizontal dock is now the COMPACT
+tier rather than SHORT (380 clears `BAND_ZONE_CHART_MIN_HEIGHT`'s 340), which *restores* the compact
+food-outlook chart and the role-card hints that SHORT drew away — a content gain, and the three genuinely
+SHORT-tier assertions moved to a pinned `SHORT_TIER_PROBE_HEIGHT` where the clamp reproduces a 300px box,
+a state a ~660px-high window still reaches. And the FACTION page is now the emptiest thing in the strip
+(174 / 155 / 226 / 54 of 380): it is a read-only rollup with short content, so the height is dead space
+there.
+
+**The band flank's split was re-measured across all four candidates with the keeping block gone**, and
+`vitals + PEOPLE + outlook | WORKFORCE` wins chartless (68%) and charted (88%) alike.
+`BAND_FLANK_BALANCE_FLOOR` **stays at 0.65** — 68% is the chartless flank's arithmetic ceiling, best rival
+32%, so nothing clears 0.75 and the floor may not rise. `BAND_FLANK_FILL_FLOOR` went **0.60 → 0.50**, and
+the ROOM is what moved, not the content: the same 430px of blocks now sits in 760px rather than 550. It
+still fails a flank that lost a block (23% / 49%), which is what keeps it a real assertion.
+
+## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
 `docs/plan_standing_upkeep.md` §2.5. Maintenance is a band-level standing role now, so the band zone
-carries a `KEEPING` block under WORKFORCE's own: two cards in the SAME family as Scout and Warrior —
+carried a `KEEPING` block under WORKFORCE's own: two cards in the SAME family as Scout and Warrior —
 **Agriculture** (the plant web) and **Husbandry** (the animal one) — plus a two-way fund-mode pick.
 They are staffed by the same `assign_labor <faction> <band> <kind> <workers>` those two use, through
 the same `_build_role_card`; nothing about the keeping is a parallel surface.
@@ -2195,8 +2280,76 @@ BUILD QUEUE                          3 builders · Tillage kit
 - **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
   identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
   surfaces and there is no second command builder.
-- **DRAG-TO-REORDER IS SLICE 7's.** `build_order` on the command line covers it meanwhile, which is
-  what the overflow row's tooltip says.
+- **DRAG-TO-REORDER IS STILL OPEN.** `build_order` on the command line covers it meanwhile, which is
+  what the overflow row's tooltip says. §4.7 landed the tab's structure; the reorder gesture and the
+  per-entry KIT picker are the slice's remaining half.
+
+### THE DATE IS A COMPLETION TURN, NOT A CHAINED COUNTDOWN (§4.7)
+
+The block used to print `≈42 turns` / `≈61 turns` / `≈98 turns` down the list. Reported from play: those
+read as *each job's own span* when they are cumulative — the second entry's 61 already contains the
+first's 42 — so the list looked like three independent estimates that happened to rise. It states the
+turn each entry is estimated to **complete on** instead: `turn 82 (0%)` · `turn 101 (0%)`. A schedule
+answers *when*, and an absolute turn cannot be misread as a duration.
+
+- **ONE SENTINEL FORK SERVES BOTH SPELLINGS.** `DetailFormat.build_sentinel_value` holds the whole of
+  the `-1` / `-2` / `-3` / `-4` answer and returns `""` for a real count; `build_countdown_value` and
+  `build_completion_value` are each three lines written in terms of it. **A second fork here is exactly
+  how this client has twice been left behind by a newly-spelled sentinel**, which is the reason the
+  countdown half was extracted in the first place — adding a spelling must not re-open it.
+- **ONLY THE QUEUE TAKES THE ABSOLUTE FORM, and that is deliberate.** The queue is a *schedule* whose
+  order is the player's own input; a rung row and the compose sheet answer *what does this cost me*,
+  which is a duration. Same number, two questions, and neither is a second producer of the other.
+- **No singular case.** `turn 41 (0%)` is correct at one turn, so `BUILD_TURNS_SINGULAR` has no twin
+  here.
+- **The row tooltip carries BOTH readings** — `turn 82 (0%) · 42 turns from now` — which is what
+  actually removes the ambiguity rather than trading one half of it for the other.
+- Asserted by EQUALITY against a fixture whose current turn AND `buildTurnsRemaining` are both known, so
+  the claim is the ADDITION and not that a number rendered; the dates are asserted STRICTLY ASCENDING,
+  and a SENTINEL row rides the same frame — a builder that rendered every value as a turn number would
+  pass any all-positive fixture. Sabotage-verified by dropping `current_turn +`: exactly one assertion
+  fails, naming `["turn 42 (0%)", …] (want ["turn 82 (0%)", …])`.
+
+### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF STAYS FIVE SLOTS (§4.7a ③)
+
+The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't
+do the cultivate here"* — and its first home was a sixth column on this row. **At the narrow shell's
+354px that made the row unreadable**: `▸ 🌱 Cultiv…  [Sim pic ⌄]  turn 82 (0%)  ✕`, with both the job
+face and the crop name ellipsised into fragments that look like words. The LEFT dock is the shipped
+default edge, and a tooltip is not a fix for a list the player SCANS.
+
+So the settings live in a **row expansion** — the WORK board's own inspector pattern, one strip beneath
+the clicked row, one open at a time. The entry row goes back to marker · mark · face · date · `✕`.
+
+- **ONE PREDICATE DECIDES BOTH THE INVITATION AND THE CONTENTS** (`_queue_crop_choices`), so a row can
+  never offer a click that opens an empty strip. An animal entry has no crop, is not expandable, and
+  connects no `gui_input` at all — taming has no crop to commit.
+- **THE STRIP IS WHAT MAKES §4.7a ② POSSIBLE**, and the comment says so: the per-entry kit picker lands
+  beside the crop here. A row that could not hold five columns was never going to hold six.
+- **The height is open-only** and rides the same one expression
+  (`build_queue_block_height(entries, rows_max, settings_open)`) that `_work_board_capacity` charges. An
+  open strip does not overflow the zone — the BOARD absorbs it and pages one row shorter, the identical
+  trade the work inspector already makes.
+- **The face's width is asserted as a MEASUREMENT, not a look** — its laid-out width against the font's
+  own width for its string — because that is the one thing that moves when a control takes width off the
+  row's single expanding child.
+- **The pair is the claim**, and it silently skipped once: the fixture carried no animal entry, so the
+  positive half passed alone. A missing animal row now `_fail`s outright rather than skipping, and the
+  needle matches `HudFormat.policy_face` (the compose sheet's *"Tame this herd"* label appears nowhere on
+  a queue row, whose face reads `◎ Tame Red Deer`).
+
+### THE HEAD'S KIT DERIVES FROM A **PENDING** ENTRY TOO (§4.7)
+
+The head readout resolved its kit from `head_build_branch`, which needs the entry the **wire** placed at
+position 0 — so a build declared this turn derived nothing and the header read **`3 builders · No kit`**.
+Reported from play. That fall-through was right when an empty queue was the only underivable case;
+declaring from the Work board's `⌃` makes a **pending-only queue the common state**, so it was wrong far
+more often than right. `_role_build_branch` falls through to the pending head, read off the block's own
+ordered list rather than a second walk. `bare_kit_id` survives for the genuinely empty queue, which is
+still the honest answer to *nothing is chosen and nothing can be derived*.
+`_assert_builders_card_kit_faces` distinguishes **four** states now — plant head, animal head,
+pending-only head, and an empty queue asserted as **no block at all** — because a resolver stuck on one
+of them satisfies any three.
 
 ### A JUST-DECLARED BUILD IS IN THE QUEUE THE MOMENT IT IS DECLARED
 
@@ -2603,8 +2756,50 @@ rather than the patch, jumping to a place but not to a thing. The land IS the pa
 rows and its Sow control live on the land card), and `SUBJECT_LAND` is the established third kind on
 the `(kind, id)` contract that the panel's own land row and the map's select-then-cycle already use.
 
+### …AND THE `⌃` IS THE CONTROL THAT DECLARES THE BUILD (§4.7a ①)
+
+The mark was a `Label`. It is a **`Button` in the OFFERED branch only**, and pressing it appends the job
+to the band's build queue — one click, on the tab that owns the pool that will pay for it.
+
+**What it replaced was a trap.** The only way to order a build was the tile compose sheet's
+`🌱 Cultivate this patch` checkbox, which is not the commit: the only thing that commits it is a button
+reading **`Forage`**, so ticking the box and closing the sheet did nothing at all. Reported from play,
+repeatedly.
+
+- **THE SIM'S ORDERING CONSTRAINT IS SATISFIED BY CONSTRUCTION.** `cultivate` / `sow` / `tame` / `corral`
+  reach only bands **already working the source** (`queue_build_on_working_bands`), and a work row exists
+  precisely because this band works it. That is why the press sends the verb ALONE and no `assign_labor`
+  ahead of it.
+- **The two building states stay `Label`s.** There is nothing to declare on a rung in flight, and the `⚠`
+  on a stalled build is a warning rather than an offer. `MOUSE_FILTER_STOP` on the button so the press
+  does not also bubble to the row's own click and open the inspector.
+- **The payload is `DrawerComposeController`'s, key for key**, relayed by `HudLayer` to the same
+  `improvement_requested` — the arrangement `unqueue_requested` already had with two emitters, so
+  `Main.format_improvement` serves both and there is no second command builder.
+- **The declaration is written to the pending overlay BEFORE the emit**, so the queue's pending row and
+  the row's own `▦0%` land on the frame the mark was pressed. It is `record_pending_assign`'s existing
+  `improvement` argument — **never a second overlay** — and `Main` rolls it back through
+  `drop_pending_assign` when the send fails. Ordering matters and is not stylistic: see `hud-modules.md`
+  → "AN OPTIMISTIC WRITE NEEDS A ROLLBACK", whose rule the `assign_labor` twin had silently drifted from.
+- **The `⌃` LEAVES THE SLOT the instant it is pressed** — the overlay's declaration makes
+  `RungGates.rung_in_progress` answer, so the building state takes the slot. Proven rather than assumed:
+  after three presses the board holds zero `⌃` buttons and three pending queue rows, and clearing the
+  overlay restores all three.
+- **The tooltip carries the job's PRICE** — `75 work · 4 work a turn from Agriculture to hold` — and no
+  turn count. The queue row's date is the sim's own chained answer and a second estimate here would be
+  two producers for one number. The price is on this tab because Ray moved it off the compose sheet:
+  *"That information should be on the work tab. No need to have it here, it is useless."*
+
+**The press is asserted on BOTH webs**, driven through the real handler with the line read back off
+`Main.format_improvement` — either web alone passes on a builder that gets the grammar backwards.
+Sabotage-verified three ways: the wrong verb fails the command claim naming it; dropping the overlay
+write fails *"all 3 declarations are in the build queue on the same frame (found 0)"* while the command
+claim correctly stays green; dropping the unworked-ground fork fails exactly one of the compose sheet's
+two remedy frames.
+
 Frames: `band_panel_rung_ready` (a tended patch offers Sow, a tamed pen-ceiling Aurochs offers Corral,
-a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point) and `band_panel_rung_ready_filter`.
+a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point), `band_panel_rung_ready_filter` and
+`band_panel_ready_declare`.
 
 ## DENIAL is a third MISSION on the parties footer, not a floor on the hunt form
 

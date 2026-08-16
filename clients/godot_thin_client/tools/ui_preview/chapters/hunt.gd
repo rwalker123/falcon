@@ -1761,7 +1761,9 @@ func run(harness) -> void:
 	await h._save("herd_investment_corral_offer")
 	var corral_offer = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "corral")
 	h._assert_hud("Corral's OFFERED payoff names BOTH products too, food leading",
-		corral_offer is CheckBox
+		corral_offer != null
+		and String(corral_offer.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_OFFERED
 		and Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.ends_with(BOAR_CORRAL_PAYOFF_FACE))
 	h._assert_hud("…as the block's ONLY row, an offered rung stating its payoff and nothing else",

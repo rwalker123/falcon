@@ -342,12 +342,16 @@ static func find_crop_row_by_species(root: Node, species: String) -> Button:
 			return found
 	return null
 
-## The improvement control's FACE text, whichever of its three node shapes it is in — the handle the
-## meter assertions read. "" when the control is absent.
+## The improvement control's FACE text — the handle the meter assertions read. "" when the control is
+## absent. **Every state is a `Label` since `docs/plan_standing_upkeep.md` §4.7a ①**; the `CheckBox`
+## branch this used to carry went with the two states that were boxes.
 static func improvement_face(root: Node, improvement: String) -> String:
 	var control := find_improvement_control(root, improvement)
-	if control is CheckBox:
-		return (control as CheckBox).text
+	# **THE OFFERED STATE IS A `RichTextLabel`, and its `text` is BBCODE** — its `Work tab` is a live
+	# `[url]` (`docs/plan_standing_upkeep.md` §4.7a ①), so the raw property carries markup no player
+	# ever sees. `get_parsed_text` is what is on screen, which is what every claim here is about.
+	if control is RichTextLabel:
+		return (control as RichTextLabel).get_parsed_text()
 	if control is Label:
 		return (control as Label).text
 	return ""
@@ -366,9 +370,8 @@ static func improvement_face(root: Node, improvement: String) -> String:
 ## Where a frame means one specific ink, it compares `improvement_face_color` directly — that is the
 ## reader for *which* of the three, and this one is for *is this face a stop at all*.
 ##
-## Read as the RESOLVED font colour off whichever node the state uses (`Label` for running, done and
-## gated; `CheckBox` for the offer), because `get_theme_color` answers the stock default where no
-## override is set — an "an override exists" test would pass on the very bug this looks for, which
+## Read as the RESOLVED font colour off the state's `Label` (every state is one since §4.7a ①),
+## because `get_theme_color` answers the stock default where no override is set — an "an override exists" test would pass on the very bug this looks for, which
 ## IS a missing override.
 static func improvement_face_stops(root: Node, improvement: String) -> bool:
 	var ink := improvement_face_color(root, improvement)
@@ -385,7 +388,24 @@ static func improvement_face_color(root: Node, improvement: String) -> Color:
 	var control := find_improvement_control(root, improvement)
 	if control == null:
 		return Color()
+	# A `RichTextLabel` reads `default_color`; `font_color` is a `Label`'s slot and is ignored there,
+	# so asking for the wrong one answers the stock theme colour and passes any claim by accident.
+	if control is RichTextLabel:
+		return control.get_theme_color("default_color")
 	return control.get_theme_color("font_color")
+
+## **WHICH OF THE FIVE STATES THE CONTROL IS IN** — `IMPROVEMENT_STATE_META`, or `""` where the rung
+## has no control at all (`docs/plan_standing_upkeep.md` §4.7a ①).
+##
+## **IT REPLACED THE TYPE TEST, and the SET is what a caller must assert.** Every state is a `Label`
+## now, so `is CheckBox` / `is Label` separates nothing: a builder that rendered every state the same
+## way passes any single positive type check, and only comparing the whole set of states against the
+## fixtures that produce them can see that.
+static func improvement_state(root: Node, improvement: String) -> String:
+	var control := find_improvement_control(root, improvement)
+	if control == null:
+		return ""
+	return String(control.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
 
 static func find_improvement_control(root: Node, improvement: String) -> Control:
 	if root == null:

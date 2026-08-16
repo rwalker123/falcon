@@ -136,6 +136,15 @@ const RUNG_TURNS_FORMAT := "≈%d turns (%d%%)"
 # …and its singular, so a build one turn out does not read `≈1 turns (99%)`.
 const RUNG_TURNS_ONE_FORMAT := "≈1 turn (%d%%)"
 
+# **THE SAME ESTIMATE AS A DATE — the turn this queue entry is expected to complete on**
+# (`docs/plan_standing_upkeep.md` §4.7). The BUILD QUEUE block's alone: its counts are CHAINED down
+# the list, so `≈42` / `≈61` / `≈98` read as three independent spans when they are cumulative.
+#
+# **It wears no `≈` and needs no singular.** The hedge belongs to the SPAN — a count that moves with
+# the crew — and a stated turn number is the estimate already committed to a date; `turn 41 (0%)` is
+# correct at one turn out, which is exactly the case `RUNG_TURNS_ONE_FORMAT` exists for on a span.
+const RUNG_COMPLETES_FORMAT := "turn %d (%d%%)"
+
 # **A BUILT RUNG: its badge, then how full its meter still is.** `100%` is the healthy reading and
 # anything less is erosion already under way.
 const RUNG_BUILT_FORMAT := "%s %d%%"

@@ -564,6 +564,29 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    >
    > The queue sits **above** the sources because it is the one list whose *order is an input*.
 
+   > **LANDED — the tab's STRUCTURE, plus ① and ③'s crop half.** The POOLS block (Agriculture ·
+   > Husbandry · Builders, with the spread/priority mode) moved off the Band tab to the top of the WORK
+   > zone; the queue states a **completion turn** rather than a chained countdown; the `⌃` mark is the
+   > control that declares; the compose sheet keeps the forecast and stops being the commit; the crop
+   > moved to the queue row's settings expansion. **What remains of §4.7 is ② (the per-entry kit
+   > override, which needs a field on `BuildQueueEntry`, a command and a wire field), drag-to-reorder,
+   > and the optimistic unqueue.** The rationale is in `.claude/rules/client/band-city-panel.md` →
+   > "THE POOLS BLOCK" and `labor-ui.md` → "THERE IS NO CHECKBOX ANY MORE".
+   >
+   > **Four decisions taken on the 7 playtest, each closing a question this section left open:**
+   >
+   > - **The unworked-ground limit is STATED, not relaxed** — the alternative needed a different queue
+   >   membership rule *and* a per-entry band id on the wire, to buy one saved click on ground the player
+   >   is about to staff anyway. The sheet says *"Send gatherers here first, then Cultivate this patch
+   >   from the Work tab."*
+   > - **The queue's dates are ABSOLUTE turns.** The chained `≈42` / `≈61` / `≈98` read as each job's own
+   >   span when they are cumulative.
+   > - **The compose sheet quotes NO queue position and NO date** — the schedule is the Work tab's
+   >   business — and no price either: *"That information should be on the work tab. No need to have it
+   >   here, it is useless."*
+   > - **The dock grew rather than the zone starving.** The Work zone could not hold a pool header, a
+   >   queue and a board in 300px; `PANEL_HEIGHT_WIDE` is 440 and the zone box 380.
+
    **7a — BUILDING IS A BAND ACTIVITY, so its whole loop belongs on ONE tab.**
    **This slice is what makes 6b playable, and 6b's playtest is what decided its shape.** The pool,
    the queue and the funding rule are all band-level since §4.6b — a build is *a job on the band's

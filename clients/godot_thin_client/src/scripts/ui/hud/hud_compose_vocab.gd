@@ -158,10 +158,11 @@ const CREW_ROW_NOTE_SEPARATION := 5
 # (`BUILD_PRICE_UPKEEP_FORMAT`), beside the build's one-off one, which is what it always was.
 
 # RETIRED — **`BUILD_NO_HANDS_REASON`**, the reason a dead improvement box carried
-# (`docs/plan_standing_upkeep.md` §2.5). Ticking a rung used to declare a build WITH a crew, and the
+# (`docs/plan_standing_upkeep.md` §2.5). Declaring a rung used to declare a build WITH a crew, and the
 # sim refused a count the band could not staff — so an empty build pool greyed the offer out. A verb
-# names no crew now: ticking APPENDS a queue entry, which is legal and free whether or not anybody is
-# on the `builders` role. What says nobody is on it is the rung row's own *not started* warning.
+# names no crew now: declaring APPENDS a queue entry, which is legal and free whether or not anybody
+# is on the `builders` role. What says nobody is on it is the DECLARED state's *not started* warning.
+# (The offer stopped being a control at all in §4.7a — the `⌃` on the Work board declares.)
 
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
@@ -190,8 +191,8 @@ const CREW_TARGET_FACE_SEPARATION := 5
 #      what the finished rung will pay. It renders only where there is a rung to state, which is why
 #      it is a register rather than a fourth permanent row. **A SECOND, `WITHOUT THE BUILD` BASELINE
 #      ROW WAS TRIED AND RETIRED**: the dip multiplies the CREW, so a crew big enough to saturate the
-#      source pays none of it and the baseline printed the headline straight back — and unticking the
-#      box states it live anyway, one click away in the register the player is already reading.
+#      source pays none of it and the baseline printed the headline straight back — and a sheet with
+#      no rung composed states it live anyway, in the register the player is already reading.
 #      `Readout.improvement_deal_rows(...) == 1` and `deal_repeats_a_yields_number` pin that removal;
 #      the long form is in `labor-ui.md` → "THE PAYOFF LIVES IN THE READOUT".
 #   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
@@ -265,7 +266,7 @@ const PEN_EXTEND_TOOLTIP := "Queue another ring around the pen. A ring rides the
 
 const PEN_FENCING_LABEL := "Fencing %d%%"
 
-# WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement checkbox's tooltip, one entry per
+# WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement control's tooltip, one entry per
 # rung, BOTH webs in one table.
 #
 # These four were rows of `FORAGE_POLICY_HINTS` / `LOCAL_HUNT_POLICY_HINTS` while the build verbs were
@@ -333,12 +334,15 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 # surface consulted to ask "is this policy really a build?" — and it is GONE: the wire answers that
 # now, with a field of its own. Nothing below is a set-membership test.
 #
-# THE CONTROL HAS THREE STATES and each gets one line, in this order of precedence:
-#   1. OFFERED  — an unchecked checkbox naming the next rung and its terms.
-#   2. RUNNING  — checked, with the build meter; a WARN pause line when the source has left Thriving.
-#   3. DONE     — a static state label, with the NEXT rung's checkbox beneath it if there is one.
+# THE CONTROL'S STATES each get one line, in this order of precedence — and **every one of them is a
+# `Label`** since §4.7a ①, this sheet having no commit left to offer:
+#   1. OFFERED  — the next rung and its terms, plus the remedy naming the control that takes it.
+#   2. DECLARED — the same face plus `◷ Queued`, over the *not started* warning.
+#   3. RUNNING  — the build meter and its pace.
+#   4. DONE     — the state the finished rung leaves the source in, with the NEXT rung beneath it.
+#   (GATED replaces 1 wherever a prerequisite is unmet: the reason IS the line.)
 
-# What checking the box COMMITS TO, per improvement — the verb phrased against its own subject, so
+# What the rung COMMITS TO, per improvement — the verb phrased against its own subject, so
 # "Cultivate" reads as an act on this patch rather than as a rung name floating in a list.
 const IMPROVEMENT_OFFER_LABELS := {
     "cultivate": "Cultivate this patch",
@@ -367,7 +371,7 @@ const IMPROVEMENT_DONE_LABELS := {
     "corral": "Penned",
 }
 
-# `<glyph> <verb phrase>` — the offered checkbox's face, and the ONLY one it has. **THE PAYOFF IS NOT
+# `<glyph> <verb phrase>` — the offered face, and the ONLY one it has. **THE PAYOFF IS NOT
 # ON IT**: the face's `· then <payoff>` sat directly above a PER TURN box quoting a DIFFERENT number
 # for the same source, and a player reading the two together had no way to know which question each
 # was answering. The payoff is now a labelled row inside that box (`IMPROVEMENT_PAYOFF_ROW_LABELS`),
@@ -452,10 +456,18 @@ const BUILD_PRICE_TURNS_FORMAT := "%s, %s"
 # legitimate. Same avoidance, same reason, as the crew note's refusal to say `while building`.
 const BUILD_PRICE_UPKEEP_FORMAT := "%s · %s work a turn from %s to hold"
 
-# `🌱 Cultivate this patch — 50 work, ≈25 turns` — the offered checkbox's face with its price. It
-# takes an em-dash rather than the running face's, because the two halves are a NAME and its PRICE
-# rather than a name and a live meter.
-const IMPROVEMENT_OFFER_PRICED_FORMAT := "%s — %s"
+# RETIRED — **`IMPROVEMENT_OFFER_PRICED_FORMAT`** (`%s — %s`), the offered face joined to its price:
+# `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn from Agriculture to hold`
+# (`docs/plan_standing_upkeep.md` §4.7a ①).
+#
+# **The price left this sheet** — Ray, from play: *"That information should be on the work tab. No
+# need to have it here, it is useless."* — so the pile and the standing rate ride the `⌃` mark's own
+# tooltip and the turn count rides the BUILD QUEUE row's date. `DetailFormat.build_price_clause` still
+# composes the pair; only this JOIN had nothing left to join.
+#
+# It is retired rather than left standing because a caller-less format const reads as live code, and
+# the shape is one line to write again if the `⌃`'s hover ever wants the price on the same line as
+# its sentence rather than beneath it.
 
 ## A GATED rung's whole line: the rung's glyph, then the unmet prerequisite in the gate's own words.
 ## The rung is NOT named here and that is the point — naming it ("Cultivate this patch") reads as an
@@ -463,7 +475,7 @@ const IMPROVEMENT_OFFER_PRICED_FORMAT := "%s — %s"
 ## improvement axis visible and identifiable without making a promise.
 const IMPROVEMENT_GATED_FORMAT := "%s %s"
 
-# `<glyph> <participle> 18 / 50 work (42%)` — the running checkbox's face, and the ONLY one it has.
+# `<glyph> <participle> 18 / 50 work (42%)` — the running face, and the ONLY one it has.
 # The meter comes from `DetailFormat.build_meter_value`, i.e. the same composer the tile card's and
 # the herd drawer's rows use, over the same `SourceForecast.improvement_progress` the map badge and
 # the work board read — so no two surfaces can quote different meters or word them differently. The
@@ -567,6 +579,61 @@ const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would ea
 # a control the player cannot find — the warning-outliving-its-mechanism failure this arc keeps
 # producing. The lever is the band's Builders role card, and the line says so.
 const BUILD_UNSTARTED_NOTE := "⚠ Not started — nobody is on this band's Builders role."
+
+# **THE DECLARED STATE'S OWN WORD** (`docs/plan_standing_upkeep.md` §4.7a ①). Its face is the OFFER's
+# rung name, one composer for both states, so without this clause a queued rung and an unqueued one
+# would read identically — which is exactly the distinction the retired checkbox's TICK used to carry.
+#
+# **IT RIDES THE FACE RATHER THAN THE NOTE SLOT, and the note slot is why.** Both notes DECLARED can
+# carry (`BUILD_UNSTARTED_NOTE`, `IMPROVEMENT_DEAL_DEPLETED_NOTE`) are warnings, so that state passes
+# `warn_notes` and the whole array renders amber. A job waiting its turn is not a warning, and a
+# neutral fact in the warning register is how a player learns to stop reading the register.
+#
+# **IT STATES NO QUEUE POSITION AND NO DATE, and that is a decision rather than an omission.** The
+# compose sheet says what the ground IS and what it would PAY; WHERE the job sits in the band's list
+# and WHEN it lands are the Work tab's, which is the surface that can reorder it.
+const BUILD_QUEUED_CLAUSE := "◷ Queued"
+
+# `<rung> · ◷ Queued`. The `·` is the compose sheet's own separator between two facts about one rung.
+const IMPROVEMENT_DECLARED_FORMAT := "%s · %s"
+
+# **THE OFFERED LINE IS A POINTER, AND IT IS ONE LINE** (`docs/plan_standing_upkeep.md` §4.7a ①, ③).
+#
+# It shipped for a day as a FACT line (`🌱 Cultivate this patch — 50 work · 2 work a turn from
+# Agriculture to hold`) with a REMEDY note beneath it (`Queue it from the Work tab's ⌃.`). Reported
+# from play, twice over: the fact line **reads as an imperative** — as the button it used to be — and
+# the remedy under it is a second sentence saying the first one is not a control. One line says both.
+#
+# **AND THE PRICE IS NOT ON IT.** Ray, on the same pass: *"That information should be on the work tab.
+# No need to have it here, it is useless."* The pile and the standing rate are what a job COSTS, and
+# the surface that queues, funds and orders jobs is the one where a cost is actionable — so they ride
+# the `⌃` mark's own tooltip (`HudWorkVocab.WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT`) and the turn count
+# rides the BUILD QUEUE row's date. **The rung's PAYOFF stays here**, in the `PER TURN` readout's
+# `ONCE TENDED` row: what it pays is the "should I?" this sheet exists to answer, and is not a cost.
+#
+# **`Work tab` IS A LINK**, rendered as a BBCode `[url]` on the one state that carries it — see
+# `WORK_TAB_LINK_META`. That is why these are BBCode-bearing strings rather than plain ones.
+#
+# **THE UNWORKED FORM IS ONE SENTENCE TOO, and the limit it states is Ray's decision** (§4.7a ③): a
+# `⌃` lives on a WORK ROW, a band has a work row only for a source it already works, and that is the
+# sim's own rule that an improvement verb reaches only such bands. He chose to keep the rule and say
+# so where the player meets it, rather than relax it.
+#
+# **THREE FLAT CONSTS rather than a keyed table**, `BUILD_UNSTARTED_NOTE`'s own reasoning: a table
+# keyed on `SourceForecast.LABOR_KIND_*` would put a live cross-class reference in a `const`
+# initializer, and a vocabulary module is kept a cycle-free LEAF.
+const BUILD_OFFER_WORKED_FORMAT := "%s from the %s."
+
+const BUILD_OFFER_UNWORKED_PLANT_FORMAT := "Send gatherers here first, then %s from the %s."
+
+const BUILD_OFFER_UNWORKED_ANIMAL_FORMAT := "Send hunters here first, then %s from the %s."
+
+# The link's own words, and the `[url]` meta `DrawerComposeController` emits and its `meta_clicked`
+# handler parses. A distinct string from the tab's own label so the two cannot be confused by a reader
+# — this is the SENTENCE's word for the tab, and it happens to match.
+const WORK_TAB_LINK_TEXT := "Work tab"
+
+const WORK_TAB_LINK_META := "work_tab"
 
 # RETIRED — **`BUILD_SLIDING_NOTE`**, `⚠ No builders — this rung is sliding back. Set the builders
 # below to hold it.` (`docs/plan_standing_upkeep.md` §4.6a).

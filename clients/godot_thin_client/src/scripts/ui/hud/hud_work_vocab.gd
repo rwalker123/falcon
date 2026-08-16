@@ -156,12 +156,17 @@ const ZONE_HEADER_PEOPLE := "People"
 
 const ZONE_HEADER_WORKFORCE := "Workforce"
 
-## The KEEPING block's head (`docs/plan_standing_upkeep.md` §2.5) — the two standing roles that hold
-## what the band has built, and how their pools split when short. Its readout is the hands on the two
-## roles together, the WORKFORCE head's `n idle of m` shape one scope down.
-const ZONE_HEADER_KEEPING := "Keeping"
+## The POOLS block's head (`docs/plan_standing_upkeep.md` §4.7) — the three band-level pools that
+## staff what this tab is about, moved here from the Band tab because the pool was on one tab and its
+## consequences (the sources it pays for, the queue it funds) on another.
+##
+## **ITS READOUT COUNTS ALL THREE ROLES, which is a different question from the retired
+## `%d on keeping`.** That head deliberately excluded the builders — a build is a job rather than a
+## standing charge — and it could, because the block held the keeping pair alone. This block holds all
+## three cards, so a head naming two of them would be a key that does not add up to what is under it.
+const ZONE_HEADER_POOLS := "Pools"
 
-const KEEPING_ZONE_READOUT_FORMAT := "%d on keeping"
+const POOLS_ZONE_READOUT_FORMAT := "%d of %d on work"
 
 const ZONE_HEADER_WORK := "Work"
 
@@ -469,11 +474,14 @@ const ROLE_NAME_BUILDERS := "Builders"
 const BUILDERS_ROLE_HINT := "Raises whatever this band has queued, one job at a time, head of the queue first."
 
 ## **THE FUND-MODE CONTROL** — how this band splits a keeping pool it cannot stretch, `spread` or
-## `priority` (`upkeep_mode <faction> <band> …`). It renders under the two keeping cards and ONLY
+## `priority` (`upkeep_mode <faction> <band> …`). It renders under the three pool cards and ONLY
 ## where the band holds something on either web: the choice is meaningless with nothing to fund, and
 ## a control offered there would read as a setting the player had failed to make.
-const UPKEEP_MODE_TITLE := "Short of keepers"
-
+##
+## **IT HAD A `Short of keepers` SECTION TITLE AND IT IS RETIRED** (§4.7). The head said nothing the
+## two buttons under it and the arithmetic line under those did not already say — a label over a
+## control whose whole content is two words — and it cost a line on a zone that clips. The buttons and
+## the line share ONE row now; `UPKEEP_MODE_TITLE` went with the head.
 const UPKEEP_MODE_SPREAD_LABEL := "Spread"
 
 const UPKEEP_MODE_PRIORITY_LABEL := "Priority"
@@ -510,11 +518,6 @@ const ROLE_CARD_NAME_FONT_SIZE := 12
 ## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
 ## hint wraps to.
 const ROLE_CARD_HINT_HEIGHT := 28.0
-
-## The Builders card's READ-ONLY gear line, as meta — the stable handle for the preview harnesses.
-## It is not `KitRoster.KIT_HINT_META`: that one marks the hint a kit PICKER mounts, and telling the
-## two apart is the whole of the claim that this card states its kit without offering a choice.
-const ROLE_CARD_GEAR_META := "role_card_gear"
 
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
@@ -687,8 +690,28 @@ const WORK_CHIP_READY_FORMAT := "⌃ %d ready"
 ## so the glyph alone would read as *done* rather than *available*.
 const WORK_ROW_READY_FORMAT := "⌃%s"
 
-## Spelled out in the row tooltip, where there is room for words.
-const WORK_ROW_READY_TOOLTIP_FORMAT := "Ready to %s — open this row to start."
+## **THE `⌃` IS THE CONTROL THAT QUEUES THE JOB** (`docs/plan_standing_upkeep.md` §4.7a ①), so its
+## hover says the rung's word AND what the click does. Spelled out here, where there is room for
+## words; the mark itself is two glyphs.
+##
+## **IT REPLACED `WORK_ROW_READY_TOOLTIP_FORMAT`, whose remedy was `open this row to start`** — that
+## pointed at the inspector strip, which never carried a way to start anything (the declaration was
+## the TILE sheet's checkbox, three surfaces away). The sentence outlived its mechanism twice over
+## and goes with the mark's promotion to a button.
+##
+## **ONE CONST FOR THE BUTTON AND FOR THE ROW LINE.** The row's own tooltip states the same offer
+## when the pointer is anywhere else on the row, and two spellings of one sentence is how the two
+## come to describe different controls.
+##
+## **AND THE RUNG'S PRICE RIDES BENEATH IT** — `50 work · 2 work a turn from Agriculture to hold`,
+## composed by `DetailFormat.build_price_clause`, on its own line under this sentence. Ray took the
+## price off the compose sheet (*"That information should be on the work tab. No need to have it here,
+## it is useless."*); this is the Work tab, and a cost is actionable on the surface that queues, funds
+## and orders jobs. **It costs the height-capped zone nothing**, being a hover on a control that is
+## already there. The TURN COUNT is deliberately not in it: the BUILD QUEUE row's date is the sim's
+## own chained answer and the one a reorder is judged against, so quoting a second estimate here would
+## be two producers for one number.
+const WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT := "Ready to %s — click ⌃ to queue it for this band's builders."
 
 ## A rung UNDER WAY: the verb glyph and how far in. No chevron — `⌃` offers, this reports.
 const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
@@ -811,9 +834,9 @@ const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, the top animal
 ## **THIS SOURCE'S KEEPING CAME UP SHORT — one note, keyed by WEB** (`docs/plan_standing_upkeep.md`
 ## §4.6a). Maintenance left the tile: a managed source is held out of the band's `agriculture` or
 ## `husbandry` POOL, and what the row reports is that this source's SHARE of that pool did not cover
-## it. So each note names the one control that can move the number — the role card in this panel's
-## WORKFORCE zone — and pointing at a per-source keeper stepper would send the player looking for a
-## control that no longer exists.
+## it. So each note names the one control that can move the number — the pool card in the POOLS block
+## directly above this board since §4.7 — and pointing at a per-source keeper stepper would send the
+## player looking for a control that no longer exists.
 ##
 ## **IT WAS TWO NOTES AND THE SECOND ONE LIED.** `WORK_ROW_UNBUILT_NOTE` said *"Nobody is building
 ## this — staff its BUILDERS"* for a source whose meter was still going up, on the premise that an
@@ -832,9 +855,9 @@ const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's
 ## …and the row tooltips carry the part a one-line note has no room for: WHY the `+` on this row does
 ## not answer the ⚠, and where the hands that do come from. Tooltips rather than a second strip line
 ## because `_work_inspector_height` reserves ONE open height for every row.
-const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-kept — a managed herd is held out of the band's HUSBANDRY pool, not by its hunters, so this row's + will not stop the drift. It is owed that keeping from the first work banked, so a half-tamed herd is short for the same reason a finished one is. Raise Husbandry in the WORKFORCE zone, or set the band's keeping split so this herd is funded first."
+const WORK_ROW_UNDER_HERDED_TOOLTIP := "Under-kept — a managed herd is held out of the band's HUSBANDRY pool, not by its hunters, so this row's + will not stop the drift. It is owed that keeping from the first work banked, so a half-tamed herd is short for the same reason a finished one is. Raise Husbandry in the POOLS block above this board, or set the band's keeping split so this herd is funded first."
 
-const WORK_ROW_UNDER_KEPT_TOOLTIP := "Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its gatherers, so this row's + will not stop the slide. It is owed that keeping from the first work banked, so a half-cultivated patch is short for the same reason a finished one is. Raise Agriculture in the WORKFORCE zone, or set the band's keeping split so this patch is funded first."
+const WORK_ROW_UNDER_KEPT_TOOLTIP := "Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its gatherers, so this row's + will not stop the slide. It is owed that keeping from the first work banked, so a half-cultivated patch is short for the same reason a finished one is. Raise Agriculture in the POOLS block above this board, or set the band's keeping split so this patch is funded first."
 
 ## Which of the pair this row takes, off the row's own labor kind — one picker, so the note and the
 ## tooltip can never end up describing two different webs.
@@ -908,6 +931,48 @@ const PAGER_FORMAT := "Page %d / %d"
 
 const PAGER_RANGE_FORMAT := "%d–%d of %d"
 
+# ---- The POOLS block (`docs/plan_standing_upkeep.md` §4.7) ----------------------------------------
+#
+# The band's three standing pools — Agriculture, Husbandry and Builders — at the top of the WORK zone,
+# between `_build_work_head` and the BUILD QUEUE. They were the Band tab's KEEPING block until this
+# slice; what moved them is that the pool was on one tab and everything it pays for on another.
+#
+# **THE BLOCK ALWAYS RENDERS, including for a band with an empty board.** Three steppers at 0 is a
+# live control rather than furniture explaining an absence — which is the opposite of the queue block
+# one down, where nothing queued genuinely means nothing to show.
+
+## The POOL CARD is the role card with everything but the CONTROL taken off: the role name and the
+## stepper, no kit picker (none of the three has one — the keeping pair mounts none by rule and the
+## Builders card's was deleted in §4.6b) and no prose. Each card's hint becomes its `tooltip_text`:
+## the words survive, they stop costing vertical space on a zone that clips.
+##
+## Measured on the drawn card — the stylebox's 6px top and bottom padding, the name at
+## `ROLE_CARD_NAME_FONT_SIZE`, one `ROLE_CARD_SEPARATION` and the compact stepper's own button height.
+const POOL_CARD_HEIGHT := 56.0
+
+## …and the fund-mode row's own drawn height: ONE row, the two buttons and the shortfall/covered line
+## side by side. Reserved only where that row renders — `_build_upkeep_mode_row` returns nothing on a
+## band with nothing to keep.
+##
+## **IT WAS 67, AND THREE LINES** (§4.7) — a `Short of keepers` section head over the buttons over the
+## note. The head said nothing the two words and the number beneath it did not, and this zone clips, so
+## it went and the other two share a row. Measured at 22.
+const UPKEEP_MODE_ROW_HEIGHT := 22.0
+
+## **THE BLOCK'S STABLE HANDLE, valued whether its fund-mode row is present** — the harnesses assert
+## the reserved height against the drawn one and need the same `has_fund_mode` the builder used.
+const POOLS_BLOCK_META := "pools_block"
+
+## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, exactly as
+## `build_queue_block_height` is. The work zone `clip_contents`, so a block that drew without being
+## paid for in `_work_board_capacity`'s chrome term would silently slice board rows off the bottom of
+## the zone; reserving and drawing from one expression is what makes the two unable to disagree.
+static func pools_block_height(has_fund_mode: bool) -> float:
+    var height := ZONE_HEAD_HEIGHT + float(ZONE_BLOCK_SEPARATION) + POOL_CARD_HEIGHT
+    if has_fund_mode:
+        height += float(ZONE_BLOCK_SEPARATION) + UPKEEP_MODE_ROW_HEIGHT
+    return height
+
 # ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
 #
 # The band's ordered build queue, above the filter chips in the WORK zone. **Above them deliberately:**
@@ -921,11 +986,47 @@ const PAGER_RANGE_FORMAT := "%d–%d of %d"
 ## The block's own head, uppercased by `HudWidgets.alloc_section_label` like every other zone head.
 const ZONE_HEADER_BUILD_QUEUE := "Build queue"
 
-## **ENTRIES DRAWN BEFORE THE OVERFLOW ROW TAKES OVER.** Three, because the block is paid for out of
-## the WORK zone's own clipped box: at four entries plus the overflow row it costs 132px of a ~300px
-## horizontal dock, which still leaves the board rows to page through. A deeper cap buys a longer
-## list at the price of the board it sits above.
+## **ENTRIES DRAWN BEFORE THE OVERFLOW ROW TAKES OVER — a CEILING, and the BOX is the other term**
+## (`docs/plan_standing_upkeep.md` §4.7). Three is what a zone with room shows; what a zone without
+## room shows is `build_queue_rows_max`'s answer, which is never above this.
+##
+## **IT STOPPED BEING A LONE CONSTANT WHEN THE POOLS BLOCK LANDED, AND THE NUMBERS SAY WHY.** The
+## block is paid for out of the WORK zone's own clipped box, and that box is **300px on a horizontal
+## dock** against **761–1013px in the narrow shell's swapped host**. Measured on the 1920 bottom dock
+## with the pools block above it, a four-entry queue at this ceiling wants **342px of the 300px box**;
+## lowering the ceiling to 2 leaves **314**, and only 1 fits — while the tall LEFT dock has ~450px
+## spare at 3 and would be paying for a horizontal dock's shortage. One number cannot answer both, so
+## the ceiling stays authored and the RESOLUTION reads the room.
 const BUILD_QUEUE_ROWS_MAX := 3
+
+## …and the floor. A block that drew NO entry row would be a head over an overflow line, which says
+## less than the `+N more` row alone; "no queue means no block" is the empty-queue rule and is a
+## different statement from "this zone is too short for the list".
+const BUILD_QUEUE_ROWS_MIN := 1
+
+## The gaps the queue's own room has to clear before it may claim a row: head→pools, pools→queue,
+## queue→chips, chips→board, board→pager, and the inspector gap `_work_board_capacity` reserves
+## unconditionally. Named rather than spelled, since it is the one term of the reservation that is a
+## COUNT rather than a height.
+const BUILD_QUEUE_ROOM_GAP_COUNT := 6.0
+
+## **HOW MANY ENTRY ROWS THIS ZONE CAN AFFORD**, clamped into `[BUILD_QUEUE_ROWS_MIN,
+## BUILD_QUEUE_ROWS_MAX]`. It reserves everything the zone owes whatever the queue does — its head,
+## the chips, the POOLS block, one board row, the pager, the block's own head and the gaps between
+## them — and divides what is left by the row height.
+##
+## **THE OVERFLOW ROW IS TAKEN OFF THE ANSWER, NOT ADDED TO THE COST.** `build_queue_block_height`
+## draws a `+N more` row BESIDE the capped entries rather than in place of one, so a zone that affords
+## two rows and is handed four entries shows ONE entry and the overflow — the drawn count is the same
+## either way, and computing it here is what stops the reservation and the render disagreeing.
+static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int) -> int:
+    var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
+        + ZONE_HEAD_HEIGHT + WORK_ROW_HEIGHT + WORK_PAGER_HEIGHT \
+        + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
+    var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
+    if entries > afforded:
+        afforded -= 1
+    return clampi(afforded, BUILD_QUEUE_ROWS_MIN, BUILD_QUEUE_ROWS_MAX)
 
 ## The HEAD marker — the one entry the whole builders pool is standing on. Its slot is reserved on
 ## EVERY row (`BUILD_QUEUE_MARKER_WIDTH`) so the job faces line up down the block; a conditionally
@@ -951,7 +1052,10 @@ const BUILD_QUEUE_BUILDERS_FORMAT := "%d builders · %s"
 ## names the remedy rather than merely stating the zero, and it takes the WARN ink.
 const BUILD_QUEUE_NO_BUILDERS_NOTE := "⚠ No builders — staff the Builders role"
 
-const BUILD_QUEUE_BUILDERS_TOOLTIP := "The band's builders pool funds the HEAD of this queue until its meter fills, then the next. Staff it on the Builders card in the WORKFORCE zone."
+## …and the head's tooltip. **It names where the pool is staffed, so it moved with the card** (§4.7):
+## the Builders card is in the POOLS block directly above this head now, not in the band tab's
+## WORKFORCE zone, and a remedy pointing at a control that is no longer there is worse than none.
+const BUILD_QUEUE_BUILDERS_TOOLTIP := "The band's builders pool funds the HEAD of this queue until its meter fills, then the next. Staff it on the Builders card just above."
 
 ## A queued PLANT entry's face — the declared verb (glyph and word, `HudFormat.policy_face`) plus the
 ## tile it stands on. The verb's vocabulary is the board row's in-progress axis's own, so a rung under
@@ -976,8 +1080,62 @@ const BUILD_QUEUE_UNQUEUE_WIDTH := 22.0
 
 const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already banked is kept, and the source keeps its crew."
 
+## **THE JOB'S SETTINGS ARE A ROW EXPANSION, NOT COLUMNS ON THE ROW**
+## (`docs/plan_standing_upkeep.md` §4.7a ②, ③). Ray, from play: *"The CROP TO TEND shouldn't be a
+## selection here as the user can't do the cultivate here."* — so the crop left the compose sheet for
+## the entry it belongs to. It then shipped for a pass as a picker IN the row, and the tall LEFT dock
+## (the SHIPPED DEFAULT edge) rendered `▸ 🌱 Cultiv…  [Sim pic ⌄]  turn 82 (0%)  ✕`: two of the five
+## columns ellipsised into fragments, one of them a truncated crop name that reads as a word.
+##
+## **THE ROW HAD THREE COLUMNS WHEN CLIPPING-PLUS-TOOLTIP WAS DECIDED FOR IT, AND A LIST IS SCANNED.**
+## A tooltip answers a question a player already has; it cannot repair a list they are reading down.
+## So the row goes back to marker · mark · face · date · `✕`, and the settings open BENEATH it — the
+## WORK BOARD's own inspector pattern (`_build_work_inspector`), one open at a time, clicked to
+## toggle.
+##
+## **AND IT IS WHAT MAKES THE KIT PICKER POSSIBLE.** §4.7a ② gives every queue entry its own builders
+## kit — the override the sim resolves per entry and the Builders card could not express — and that
+## control lands in THIS strip beside the crop. On the row it would have been a sixth column.
+##
+## **PLANT ENTRIES ONLY.** `tame` and `corral` commit no species, so an animal entry has nothing to
+## configure YET: it does not expand, and its row does not offer to. One predicate
+## (`_queue_crop_choices`) answers both the row's clickability and the strip's existence, so a row
+## cannot invite a click that opens nothing.
+const BUILD_QUEUE_CROP_WIDTH := 168.0
+
+## The open strip's height — ONE row of controls, and the number BOTH the strip draws at and
+## `build_queue_block_height` reserves. The zone `clip_contents`, so a strip that drew taller than it
+## was paid for would take the difference off the bottom of the board with nothing to show for it.
+const BUILD_QUEUE_SETTINGS_HEIGHT := 30.0
+
+## The strip's key label — the word the retired compose-sheet picker's own header carried, so a player
+## who learned it there reads it here.
+const BUILD_QUEUE_SETTINGS_CROP_KEY := "CROP"
+
+## `""` on the wire is a REAL instruction — *pick the tile's dominant legal plant for me* — so the
+## picker states it as an entry rather than as an empty face. It leads the list, being the state a
+## patch starts in.
+const BUILD_QUEUE_CROP_DEFAULT_LABEL := "Sim picks"
+
+const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Leave it to the sim and it takes the patch's dominant legal plant."
+
+## The expandable row's own hover, appended to the face/date pair — a row that opens has to say so,
+## the board row's `WORK_ROW_OPEN_HINT` being the pattern.
+const BUILD_QUEUE_ROW_OPEN_HINT := "Click to set this job's crop."
+
+## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
+const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
+
 ## The row's own tooltip: the job face and its date in full, since both columns clip.
 const BUILD_QUEUE_ROW_TOOLTIP_FORMAT := "%s — %s"
+
+## **…AND ON A REAL COUNT IT CARRIES BOTH READINGS**, which is what actually kills the ambiguity
+## (`docs/plan_standing_upkeep.md` §4.7): `Cultivate (71, 18) — turn 82 (0%) · 42 turns from now`.
+## The column states the DATE, because a chained countdown read as a per-entry span is what the
+## playtest tripped over; the span is still the number a player reasons with when deciding whether to
+## reorder, so the hover states it rather than making them subtract. A SENTINEL keeps its single face
+## — there is no span to state — and so does a pending row, whose date slot is a status glyph.
+const BUILD_QUEUE_ROW_SPAN_FORMAT := "%s · %d turns from now"
 
 # ---- A DECLARATION THE WIRE HAS NOT PLACED YET ---------------------------------------------------
 #
@@ -1035,17 +1193,32 @@ const BUILD_QUEUE_DATE_META := "build_queue_date"
 
 const BUILD_QUEUE_UNQUEUE_META := "build_queue_unqueue"
 
+## The open SETTINGS strip, valued the entry KEY it belongs to — so an assertion can say *this* row's
+## strip is the one that opened rather than *a* strip exists somewhere in the block.
+const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
+
 ## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers.** The work zone
 ## `clip_contents`, so a block that drew without being paid for in `_work_board_capacity`'s chrome
 ## term would silently slice board rows off the bottom of the zone. Reserving and drawing from one
 ## expression is what makes the two unable to disagree.
 ##
 ## `0` for an empty queue, which is the no-block-at-all rule stated in arithmetic.
-static func build_queue_block_height(entries: int) -> float:
+##
+## `rows_max` is `build_queue_rows_max`'s answer for the zone being drawn into, so both callers hand
+## over the SAME number rather than each reading the ceiling.
+##
+## **`settings_open` IS THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED** (§4.7a ②, ③). The strip is
+## open-only and one-at-a-time, so it adds its height exactly when it draws — the work board's own
+## inspector term (`_work_board_capacity`'s `inspector_h`) in this block's arithmetic. It is a BOOL
+## rather than a height so the number lives in one place; a caller passing a float could pass a
+## different one from the strip's own.
+static func build_queue_block_height(entries: int, rows_max: int,
+        settings_open: bool = false) -> float:
     if entries <= 0:
         return 0.0
-    var rows := mini(entries, BUILD_QUEUE_ROWS_MAX)
-    if entries > BUILD_QUEUE_ROWS_MAX:
+    var rows := mini(entries, rows_max)
+    if entries > rows_max:
         rows += 1
-    return ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT
+    var height := ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT
+    return height + BUILD_QUEUE_SETTINGS_HEIGHT if settings_open else height
 

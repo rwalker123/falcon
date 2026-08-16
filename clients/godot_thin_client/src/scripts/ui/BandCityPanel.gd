@@ -61,7 +61,29 @@ const PANEL_WIDTH := 380.0
 ## **IT IS THE ONE-COLUMN BUDGET SINCE THE FLANK LEARNED TO WIDEN.** A two-column flank needs far less
 ## stacking room than a one-column one, so `_horizontal_panel_height()` picks
 ## `PANEL_HEIGHT_WIDE_TWO_COLUMN` there instead — declared below, beside the column cap it keys off.
-const PANEL_HEIGHT_WIDE := 360.0
+##
+## **IT WAS 360, AND §4.7's POOLS BLOCK IS WHAT RAISED IT.** That block costs the WORK zone 82px (110
+## with its fund-mode row), which is more than any cap on the BUILD QUEUE could give back: at 360 the
+## zone's own worst case — a band short of keepers AND with a build queued — wanted 331px of the 300px
+## box it was handed, and a four-entry queue could draw ONE row. The number is MEASURED against two
+## criteria on the 1920 bottom dock, not rounded to taste:
+##
+##   1. the worst case fits with `HudWorkVocab.build_queue_rows_max` resolving to the authored ceiling
+##      of 3 — it needs a **348px** box;
+##   2. the board still pages at least the **2 rows** it drew before the slice — the binding one, at
+##      **376px**: a four-entry queue at the full ceiling costs 132, and the board's second row has to
+##      clear the pager as well.
+##
+## **440 hands the zones a 380px box**, which clears both with 4px of slack, and is deliberately still
+## short of `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` (420): a one-column flank's tier is the box times
+## one, so a box at or over that flips the band zone to TALL — which would restore the food-outlook
+## chart and the role-card hints on a horizontal dock, and costs another 40px of strip on top of this.
+## **The raise crosses `BAND_ZONE_CHART_MIN_HEIGHT` (340) either way**, so a one-column horizontal dock
+## renders at COMPACT rather than SHORT now and the vitals rows no longer merge there.
+##
+## At a 1080-high viewport the strip is **41% of the window** against the old 33%, inside
+## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
+const PANEL_HEIGHT_WIDE := 440.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
 const COLLAPSED_SIZE := 46.0
@@ -217,8 +239,22 @@ const HORIZONTAL_BODY_CHROME := 60.0
 ##   * **band flank** — `BAND_ZONE_TWO_COLUMN_EXTENT`, the binding one.
 ##   * **parties zone** — its fixed chrome only now: the head, the pinned Scout/Hunt/Deny row and
 ##     `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`. Measured well under the flank, so it cannot bind.
-##   * **work zone** — pages itself against `work_zone_size()`, so a shorter box costs it a board row
-##     rather than overflowing. It never binds by construction.
+##   * **work zone** — ⛔ **IT BINDS NOW, AND THIS BULLET USED TO SAY IT COULD NOT.** The old reading
+##     was *"pages itself against `work_zone_size()`, so a shorter box costs it a board row rather than
+##     overflowing — it never binds by construction"*, and that was TRUE while the zone was head +
+##     chips + board + pager: every part of it either paged or was one row, so a shorter box only ever
+##     meant fewer rows. `docs/plan_standing_upkeep.md` §4.7 put two FIXED-height blocks in it — the
+##     POOLS block (82px, 110 with its fund-mode row) and the BUILD QUEUE block — and neither pages.
+##     The zone therefore has a HARD FLOOR: its head, the pools block, the queue's head and one entry
+##     row and the overflow row, the chips, one board row, the pager and the gaps between them.
+##     **Measured at 284px** on the worst case a band can reach (short of keepers AND something
+##     queued), against the 275px this budget offered — so it was clipping, silently, on exactly the
+##     wide monitors the two-column flank exists for. `_body_budget()` takes the MAX of the two budgets
+##     for that reason, and `band_panel_pools_wide_two_column` is the frame that fails if it stops.
+##
+##     **The reasoning that expired is the thing to watch, not the number**: "it pages, so it cannot
+##     bind" holds only while every part of a zone either pages or is one row. Adding a block that does
+##     neither ends it, and the block will look harmless because the ONE-column budget absorbs it.
 ##
 ## **A ONE-column horizontal dock keeps `PANEL_HEIGHT_WIDE` EXACTLY**, and must: its flank still
 ## stacks 299px into the 300px box, and a flat lower budget would slice it. Top docks are one column
@@ -1821,15 +1857,34 @@ func _horizontal_panel_height() -> float:
 		_viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
 
 ## The body budget for the CURRENT flank layout: a two-column flank stacks its blocks side by side and
-## needs a shorter box than the one-column stack does, so it takes `PANEL_HEIGHT_WIDE_TWO_COLUMN`.
+## needs a shorter box than the one-column stack does, so it may take `PANEL_HEIGHT_WIDE_TWO_COLUMN`.
 ##
-## **BOTH BRANCHES ARE GEOMETRIC.** `band_zone_columns()` reads the span, the dock edge, the rail and
-## the lateral bounds and nothing else, so this is a second chrome term and not a fit-to-content: see
-## `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the derivation and for the parked-chrome floor underneath it.
+## ⛔ **BUT NEVER LESS THAN THE ONE-COLUMN BUDGET, and that MAX is the whole of this function's job.**
+## The two-column saving is a claim about the BAND FLANK alone, and it hands its shorter box to EVERY
+## zone. That was safe while the WORK zone could absorb it — it paged, so a shorter box cost it a board
+## row — and `docs/plan_standing_upkeep.md` §4.7 ended that: the POOLS block and the BUILD QUEUE block
+## are FIXED-height blocks that do not page, so the work zone now has a hard floor and can BIND. It
+## does: its worst case measures **284px** and the two-column budget offers **275**, which the zone
+## would have CLIPPED silently — no overflow, no warning, just fewer board rows than the pager thinks
+## it drew. See `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the floor and for why its old "never binds by
+## construction" reasoning expired.
+##
+## **AT THE CURRENT NUMBERS THE TWO-COLUMN BRANCH IS INERT** (329 against 440) and this always answers
+## `PANEL_HEIGHT_WIDE`. It is written as a MAX rather than deleted because the branch is a live
+## derivation whose terms move — `BAND_ZONE_TWO_COLUMN_EXTENT` is re-measured whenever the flank's
+## blocks change — and the max is what makes it unable to come back as a REGRESSION rather than as a
+## saving. **Do not "simplify" it to the constant**: that would delete the guard along with the branch.
+##
+## **BOTH TERMS ARE GEOMETRIC, so the flicker invariant is untouched.** `band_zone_columns()` reads the
+## span, the dock edge, the rail and the lateral bounds and nothing else, and `PANEL_HEIGHT_WIDE` is a
+## constant — a max over two content-independent numbers is content-independent, so the strip's height
+## still cannot become a function of what the band holds.
 ##
 ## A vertical dock and the narrow shell both answer ONE column by construction, so neither is touched.
 func _body_budget() -> float:
-	return PANEL_HEIGHT_WIDE_TWO_COLUMN if band_zone_columns() > 1 else PANEL_HEIGHT_WIDE
+	if band_zone_columns() > 1:
+		return maxf(PANEL_HEIGHT_WIDE_TWO_COLUMN, PANEL_HEIGHT_WIDE)
+	return PANEL_HEIGHT_WIDE
 
 ## How many columns of its DECLARED width a zone lays its blocks out across, capped by the
 ## `ZONE_SPEC_MAX_COLUMNS` its subject declared (see that const for why the cap is the subject's).

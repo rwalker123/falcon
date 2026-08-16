@@ -38,6 +38,12 @@ const SOW_LOCKED_SEED_SELECTION := 0.12
 ## nowhere. A LITERAL because the vocabulary const that spelled it is deleted, and because a needle
 ## built out of the code under test can only ever agree with it; the stem alone, so a reworded return
 ## of the same rule is caught too.
+## The RETIRED offer price's own needle — the separator plus the unit `DetailFormat.build_price_clause`
+## joins its pile with (`docs/plan_standing_upkeep.md` §4.7a ①). Spelled as a LITERAL so a re-worded
+## clause still trips it, and matched on the pair rather than on `work` alone, which appears in the
+## `⌃` tooltip's own price and in half the vocabulary besides.
+const RETIRED_OFFER_PRICE_NEEDLE := " work"
+
 const RETIRED_PHASE_GATE_NEEDLE := "ease workers off and let it regrow"
 
 ## The two plants `ForageFx.fodder_basket_tile_fixture` holds, named because the crop picker's ART
@@ -317,8 +323,11 @@ func run(harness) -> void:
 	# The visible symptom of getting this wrong, and why it is asserted separately: dropping the reason
 	# WITHOUT suppressing the control leaves an unchecked, live box over a live crop list — the sheet
 	# inviting a commitment the sim rejects, which is strictly worse than the line that was cut.
-	h._assert_hud("…and no crop list beneath it, the sheet offering nothing it cannot commit",
-		ForageFx.find_crop_row(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE) == null)
+	# **NO CROP LIST — which since §4.7a ③ is true of EVERY state**, so this claim has stopped
+	# separating a suppressed control from a rendered one. It is kept as the sheet-wide negative it now
+	# is: nothing anywhere on this sheet offers a crop.
+	h._assert_hud("…and no crop list anywhere, the crop being the queue row's setting now",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE))
 	# **THIS IS WHAT MAKES THE REMOVAL A PROGRESSION.** The rung is not merely hidden: the aside names
 	# the very craft whose absence suppressed the control, live, in the same frame. Read BY META — the
 	# aside's siblings move with the floor too, so a whole-aside search says nothing about this line.
@@ -387,13 +396,12 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_CULTIVATE) != null
 		and ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_SOW) == null)
-	# **THE HEADER IS THE RUNG'S, and this is the CULTIVATE half of the pair.** Cultivate only weeds
-	# the favored share upward and leaves the rest of the basket standing, so "commit" overstates what
-	# the rung does — the word is true of Sow alone, and `forage_crop_picker_sow` is where it is
-	# asserted. Either frame alone would pass a header hard-wired to the string it happens to expect.
-	h._assert_hud("the Cultivate picker asks which crop to TEND, not which to commit to",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			HudFloraVocab.FLORA_CROP_TEND_HEADER.to_upper()))
+	# **RETIRED — the CULTIVATE half of the picker's header pair** (`docs/plan_standing_upkeep.md`
+	# §4.7a ③). It pinned that this rung asked which crop to TEND while Sow asked which to COMMIT to —
+	# a real distinction (Cultivate weeds the favoured share upward and leaves the rest standing) —
+	# and it was a claim about a control that is no longer on this sheet. The header words survive in
+	# `HudFloraVocab` unread; whether the queue row's picker earns a per-rung question is a design
+	# call, not a repair, and it would be made in a 84px face rather than a section header.
 
 	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE PAYOFF. The payoff term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
@@ -593,31 +601,18 @@ func run(harness) -> void:
 	h._compose_forage(_four_species_committed_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_committed")
-	# `alloc_section_label` upper-cases its text, so the header is matched in the case it RENDERS in.
-	h._assert_hud("a committed patch's picker is a locked readout under the committed-crop header",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-				HudFloraVocab.FLORA_CROP_COMMITTED_HEADER.to_upper())
-			and Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-				HudFloraVocab.FLORA_CROP_COMMITTED_HINT))
-	# THE BUG THIS STATE NOW GUARDS: the readout lists the WHOLE basket, in the tile card's own order.
-	# Asserting the committed name alone passed while the other two plants were being suppressed.
-	var committed_rows: Array[Button] = []
-	for basket_crop in ["Wild Emmer", "Flax Fields", "Hay Grass", "Wild Grapevine"]:
-		committed_rows.append(ForageFx.find_crop_row(h._hud._drawercompose._compose_sheet, basket_crop))
-	h._assert_hud("…listing every plant in the basket, not just the committed one",
-		not committed_rows.has(null))
-	var committed_all_locked := true
-	for row in committed_rows:
-		committed_all_locked = committed_all_locked and row != null and row.disabled
-	h._assert_hud("…with every row locked (the commitment is one-way until it lapses)", committed_all_locked)
-	# `Readout.rung_is_selected` reads the `normal` stylebox's fill, which `apply_button` writes from the
-	# VARIANT — the one mark of selection that survives the disabled treatment, which is the whole
-	# reason `selected_when_disabled` is passed here. Written for policy rungs, true of any
-	# `apply_button`-styled button, and the only reading that can tell marked-and-locked from locked.
-	h._assert_hud("…and the committed crop marked as the standing choice",
-		committed_rows[0] != null and Readout.rung_is_selected(committed_rows[0]))
-	h._assert_hud("…while the rest of the basket is not",
-		committed_rows[1] != null and not Readout.rung_is_selected(committed_rows[1]))
+	# **RETIRED with the picker it headed** (§4.7a ③) — the committed-crop header and the
+	# `Already committed …` hint beneath it. What a committed patch is committed TO is still stated on
+	# the LAND CARD's own basket, which is a readout rather than a control and is untouched.
+	# **RETIRED — the four claims about the committed READOUT's rows** (`docs/plan_standing_upkeep.md`
+	# §4.7a ③). They pinned that a committed patch listed its WHOLE basket rather than the committed
+	# crop alone, that every row was locked, and that the committed one alone wore the marked-and-
+	# locked treatment — `HudStyle.apply_button`'s `selected_when_disabled`, whose LAST caller they
+	# were. The picker is off this sheet; the crop is the BUILD QUEUE row's setting, and an
+	# `OptionButton` marks its own selection natively.
+	#
+	# **The header and the hint above still render and are still asserted**, which is what keeps this
+	# state a claim about a committed patch rather than a frame with nothing left in it.
 	# ---- BOTH SURFACES MUST FIT THE 4-ROW BLOCK -------------------------------------------------
 	# Printed as well as asserted: when one of these fails, the numbers say WHICH ceiling bit (the
 	# sheet's own cap, the viewport, or the dock's remaining room), which a bare false cannot.
@@ -698,8 +693,9 @@ func run(harness) -> void:
 	h._assert_hud("the patch really is not Thriving, so the retired gate would have fired",
 		String(TileFx.stressed_tile_fixture()["patch_ecology_phase"])
 			!= HudFloraVocab.ECOLOGY_PHASE_THRIVING)
-	h._assert_hud("…yet Cultivate is OFFERED — a live checkbox, not a refusal",
-		stressed_box is CheckBox and not (stressed_box as CheckBox).disabled)
+	h._assert_hud("…yet Cultivate is OFFERED, not refused",
+		stressed_box != null and String(stressed_box.get_meta(
+			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_OFFERED)
 	# **THE ABSENCE IS ASKED OF THE WHOLE SHEET, not of the control**, because the gated form put its
 	# lead reason in the control's own text while a second-and-later one lands on the note slot beneath
 	# — a sheet-wide search is the only one covering both places it could come back. The needle is the
@@ -707,10 +703,36 @@ func run(harness) -> void:
 	# recomposed from a live format could only ever describe whatever the code still says.
 	h._assert_hud("…and no ecology refusal is stated anywhere on the sheet",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PHASE_GATE_NEEDLE))
-	# An OFFER carries its crop list — committing is what a gated rung refuses — so the picker is what
-	# separates a real offer from a gated control that merely lost its words.
-	h._assert_hud("…and the crop list renders with it, committing no longer being refused",
-		ForageFx.find_crop_row(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE) != null)
+	# **NO CROP LIST — ON ANY STATE** (`docs/plan_standing_upkeep.md` §4.7a ③). It rode the improvement
+	# control until Ray took it off this sheet: *"The CROP TO TEND shouldn't be a selection here as the
+	# user can't do the cultivate here."* The crop is still COMMITTED by this sheet's own
+	# `assign_labor` `species` token — the control moved, the token did not — and the picker now lives
+	# on the job's BUILD QUEUE row. Asked of the whole sheet, since the list had no meta of its own.
+	h._assert_hud("…and NO crop list anywhere on the sheet, the crop being the queue row's setting",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE))
+	# **THE WORKED HALF OF THE OFFER PAIR** (§4.7a ①, ③). This band composes a crew on this patch, so
+	# it will have a work row for it and the `⌃` is one press away — the one-line pointer. Its twin is
+	# `compose_offer_no_hands` in `chapters/improvements.gd`, where the band can staff nobody and the
+	# line leads with sending gatherers. **Both halves are asserted with the OTHER's absence**, because
+	# a builder that always printed one sentence passes either positive alone.
+	#
+	# Read off the FACE rather than off a note: it is ONE line now, and the `Work tab` inside it is a
+	# `[url]`, so `improvement_face` reads the parsed text a player actually sees.
+	var stressed_face := ForageFx.improvement_face(
+		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._assert_hud("the sheet composes a crew here, which is what makes this the worked half",
+		h._hud._compose.forage_count() > 0)
+	h._assert_hud("…so the offer is ONE line pointing at the Work tab (got \"%s\")" % stressed_face,
+		stressed_face == HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
+			FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE),
+			HudComposeVocab.BUILD_OFFER_WORKED_FORMAT % [
+				String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS[SourceForecast.IMPROVEMENT_CULTIVATE]),
+				HudComposeVocab.WORK_TAB_LINK_TEXT]])
+	# …and NO PRICE on it. Ray: *"That information should be on the work tab. No need to have it here,
+	# it is useless."* The needle is the price clause's own separator plus its unit, so a re-worded
+	# clause still trips it.
+	h._assert_hud("…and quotes no work cost, the price having moved to the Work tab's ⌃",
+		not stressed_face.contains(RETIRED_OFFER_PRICE_NEEDLE))
 
 	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
 	# State 6b-sow-locked — Seed Selection is only 12% learned AND this ordinary prairie refuses seed,
@@ -750,7 +772,8 @@ func run(harness) -> void:
 	# is the whole point of showing a gated improvement rather than hiding it.
 	var sow_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "sow")
 	h._assert_hud("a SOURCE-gated improvement is SHOWN, never hidden — the rung stays discoverable",
-		sow_box != null and not (sow_box is CheckBox))
+		sow_box != null and String(sow_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+			== HudWidgets.IMPROVEMENT_STATE_GATED)
 	var sow_knowledge_reason := HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
 		HudFormat.progress_percent(SOW_LOCKED_SEED_SELECTION),
 		FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]
@@ -767,7 +790,8 @@ func run(harness) -> void:
 			String(HudFloraVocab.SOW_REFUSAL_REASONS[SOW_LOCKED_REFUSAL_KEY])))
 	# …and the rung BELOW it reads as the state it left behind, not as a second greyed option.
 	h._assert_hud("…above a DONE label for the rung already built",
-		ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate") is Label)
+		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "cultivate"))
+			== HudWidgets.IMPROVEMENT_STATE_DONE)
 
 	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
 	# policy is now available — but only on rich, well-watered ground.").
@@ -852,14 +876,13 @@ func run(harness) -> void:
 	h._compose_forage(_sowable_long_basket_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_picker_sow")
-	# **THE SOW HALF OF THE HEADER PAIR.** A Field has no volunteers — the rung forces the favored
-	# species to 100% of the stand — so committing is exactly what this picker does, and the word that
-	# is wrong one rung down is right here. Both halves, or a single hard-wired string passes one.
-	h._assert_hud("the Sow picker asks which crop to COMMIT to, the word its own rung earns",
-		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			HudFloraVocab.FLORA_CROP_PICKER_HEADER.to_upper()))
-	h._assert_hud("…and not the Cultivate rung's tending question",
+	# **RETIRED — the SOW half of the header pair** (§4.7a ③); see the Cultivate half above. What
+	# survives here as a POSITIVE is the sheet-wide negative: no crop control of any kind renders on
+	# this sheet, on the rung whose picker was the most elaborate.
+	h._assert_hud("no crop control renders on the Sow sheet either — the crop is the queue row's",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			HudFloraVocab.FLORA_CROP_PICKER_HEADER.to_upper())
+		and not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			HudFloraVocab.FLORA_CROP_TEND_HEADER.to_upper()))
 
 	# State F3 fodder crop — a basket with a HAY crop under Sow. Hay Grass pays fodder, not provisions,
@@ -887,19 +910,16 @@ func run(harness) -> void:
 	# `hay_grass` (which permanently does not). Reached by SPECIES KEY, never by face: the face
 	# carries live numbers, and a row's label is a different axis from the id its art is composed
 	# from.
-	var art_row := ForageFx.find_crop_row_by_species(
-		h._hud._drawercompose._compose_sheet, PICKER_ART_SPECIES)
-	var bare_row := ForageFx.find_crop_row_by_species(
-		h._hud._drawercompose._compose_sheet, PICKER_NO_ART_SPECIES)
-	# Asserted against the family's OWN answer as well as non-null, so a row wearing some other
-	# texture fails too — while the non-null half is what catches `texture_for` going silent, which a
-	# bare equality would pass (`null == null`).
-	h._assert_hud("a crop-picker row wears its SPECIES' own art (`%s`)" % PICKER_ART_SPECIES,
-		art_row != null and art_row.icon != null
-			and art_row.icon == FloraSprites.texture_for(PICKER_ART_SPECIES))
-	h._assert_hud("…while the row for the species with no art carries NO icon (`%s`)"
-			% PICKER_NO_ART_SPECIES,
-		bare_row != null and bare_row.icon == null)
+	# **RETIRED — the crop-picker ART pair** (`docs/plan_standing_upkeep.md` §4.7a ③). It was the ONLY
+	# call site of `FloraSprites.texture_for`, pinning that a picker row wore its own species' art and
+	# that a species shipping none wore no icon — a pair, since the positive passes on a picker that
+	# ices every row and the negative on one that resolves nothing.
+	#
+	# **The picker is off this sheet and its replacement carries no art at all**: the queue row's
+	# `OptionButton` deliberately has no per-entry icon (`HudWidgets.build_option_picker`'s own rule —
+	# neither caller has per-entry art, and one glyph repeated down a list is noise). So there is no
+	# surface left for the claim to be made on, and `FloraSprites.texture_for` has no caller — a fact
+	# recorded rather than acted on, the flora sprite family being the land card's to own.
 
 	# State F4 cash crop — a basket with a CASH crop under Sow. Flax pays a MATERIAL, not provisions or
 	# fodder, so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the
