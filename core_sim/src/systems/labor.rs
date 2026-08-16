@@ -112,6 +112,16 @@ fn credit_managed_rung_lesson(
 /// the player has to watch age out; and the turn, so a holding whose meter finally rots away is
 /// retired without the player having to touch it.
 ///
+/// # ⛔ IT IS NOT THE KEEPING POOL'S ELIGIBILITY TEST — that is `*_keeping_meter`
+///
+/// It reads through `forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`, which are
+/// progress-only, and **every** caller pairs it with *"…or the source carries a queue entry"* — so a
+/// build declared on bare ground keeps its row on the declaration alone. [`maintenance_shares`] used
+/// to borrow it as its claim gate, where the entry term is not available in that shape, and the
+/// missing half was exactly the turn a build banked its first work. What the pool funds is
+/// `forage::patch_keeping_meter` / `fauna::herd_keeping_meter`, resolved with the verb, because that
+/// is what the payment side resolves.
+///
 /// A band-wide role is never a holding — it *is* its head count — and answers `false`.
 pub fn source_has_a_meter_at_risk(
     target: &LaborTarget,
@@ -166,10 +176,20 @@ pub struct LaborConfigs<'w> {
 ///
 /// # EVERY METER CARRYING WORK DRAWS FROM IT, AT ANY FULLNESS
 ///
-/// A source claims a share exactly where it **has a meter at risk** — work banked on the ground that
-/// the decay pass would bleed ([`source_has_a_meter_at_risk`], the one seam that answers it, through
-/// `forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`). A source mid-Cultivate contributes
-/// its demand and takes its share exactly as a finished one does.
+/// A source claims a share exactly where a meter **answers for its keeping** —
+/// `forage::patch_keeping_meter` / `fauna::herd_keeping_meter`, the same resolver the stamp
+/// (`patch_upkeep_supply` / `herd_upkeep_supply`) and the demand read. A source mid-Cultivate
+/// contributes its demand and takes its share exactly as a finished one does.
+///
+/// **It used to be `source_has_a_meter_at_risk`, and that was a SECOND definition** — a
+/// progress-only test, where the payment side resolves progress-or-verb. This pass runs before the
+/// assignment loop's build accrual, so on the turn a build banked its **first** work the two
+/// disagreed: the source was skipped for having nothing on its meter, `shares[idx]` came back `0`,
+/// and the stamp paid that zero into a meter the capture then read as owed the whole rate. Reported
+/// from play as *"short 2 of the 2 work a turn this band's tended ground needs"* on a band 6% into a
+/// Cultivate with `agriculture` staffed. `source_has_a_meter_at_risk` still answers the **row
+/// survival** question, which is a different one (a queue entry keeps a row alive on its own, at
+/// every call site).
 ///
 /// **The meter's FULLNESS used to be the test** — a meter still being raised was owed its builders,
 /// so it put nothing into the pool — and deleting it is what §4.6a of
@@ -363,6 +383,58 @@ impl KeepingGear {
     }
 }
 
+/// **THE ONE SOURCE THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung it
+/// declared there — the verb term of [`maintenance_shares`]'s eligibility, and nothing else.
+///
+/// # WHY THE VERB TERM IS NARROWED TO THE FUNDED HEAD
+///
+/// The keeping bill starts at the **first work banked** (`docs/plan_standing_upkeep.md` §2.4/§4.6a),
+/// and the *only* reason the claim side needs a verb at all is that `maintenance_shares` runs before
+/// the accrual that banks it: on that one turn the ground does not yet carry the work the pool is
+/// about to owe for. **All hands go on the head** (§2.5), so at most one of a band's sources can bank
+/// its first work in a turn, and every entry behind the head banks nothing however long it waits.
+///
+/// Honouring a *waiting* entry's declaration would therefore bill the pool for ground with **nothing
+/// on it** — and, because the default `UpkeepFundMode::Spread` funds in proportion to demand, a band
+/// with two queued-but-unfunded builds would dilute the share of the Field it actually holds. That is
+/// not the fix this seam is for; it is a new way to starve a real holding.
+///
+/// `None` when the queue is empty, when the head declares a **ring** (which fills no rung meter and
+/// so names no verb), or when nobody is on the `builders` row — a declaration with no hands behind it
+/// puts nothing on the ground either.
+struct SourceBankingFirstWork {
+    source: Option<(BuildSource, Improvement)>,
+}
+
+impl SourceBankingFirstWork {
+    /// The rung declared **on this target**, or `None` for every other source the band works. The
+    /// per-web `*_build_verb` seams then answer whether that declaration is live: a meter already
+    /// carrying progress declares for itself and needs nothing from here.
+    fn declared_on(&self, target: &LaborTarget) -> Option<Improvement> {
+        let (banking, verb) = self.source.as_ref()?;
+        let source = BuildSource::of(target)?;
+        (&source == banking).then_some(*verb)
+    }
+}
+
+/// Resolve [`SourceBankingFirstWork`] for a band — the head of its queue, if that entry declares a
+/// rung and the band has builders to raise it. It mirrors the assignment loop's own `build_workers`
+/// rule (`is_queue_head && declared.is_some()`, else nobody), because it is asking the same question
+/// one stage earlier.
+fn source_banking_its_first_work(allocation: &LaborAllocation) -> SourceBankingFirstWork {
+    if allocation.workers_on(&LaborTarget::Builders) == NO_CREW_ON_THIS_ACTIVITY {
+        return SourceBankingFirstWork { source: None };
+    }
+    let source = allocation
+        .build_queue
+        .first()
+        .and_then(|entry| match entry.declared {
+            BuildJob::Rung(improvement) => Some((entry.source.clone(), improvement)),
+            BuildJob::ExtendPen => None,
+        });
+    SourceBankingFirstWork { source }
+}
+
 fn maintenance_shares(
     allocation: &LaborAllocation,
     forage_registry: &ForageRegistry,
@@ -383,6 +455,7 @@ fn maintenance_shares(
     let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
     let mut plant: Vec<Claim> = Vec::new();
     let mut animal: Vec<Claim> = Vec::new();
+    let banking = source_banking_its_first_work(allocation);
     for (index, assignment) in allocation.assignments.iter().enumerate() {
         // **THE TAKE CREW IS NOT A TERM HERE, and that separation is the point** (§2.2). A row's
         // eligibility is the *ground's* answer — *does this source have a meter carrying work* —
@@ -391,20 +464,28 @@ fn maintenance_shares(
         // the Field it had just finished: no demand, no share, and a full-rate bleed with idle
         // keepers in the role.
         //
-        // **It is the same seam the row's own survival is decided by** (`source_has_a_meter_at_risk`),
-        // deliberately: what the pool funds, what the decay pass bleeds and what keeps a band's
-        // holding alive are one question, and a second spelling of it could only drift.
-        if !source_has_a_meter_at_risk(&assignment.target, forage_registry, herds, ladder) {
-            continue;
-        }
+        // **AND THE ELIGIBILITY IS THE PAYMENT SIDE'S OWN RESOLVER** —
+        // `forage::patch_keeping_meter` / `fauna::herd_keeping_meter`, the one definition of *"a
+        // meter needing keeping"*, which the stamp below the loop and every demand reading also go
+        // through. It used to be `source_has_a_meter_at_risk`, a **progress-only** test, and this
+        // pass runs *before* the turn's build accrual — so on the turn a build banked its first
+        // work the claim side said *nothing here* while the payment side, resolving progress-or-
+        // verb, knew perfectly well the pool owed for it. The share came back `0`, the stamp paid
+        // that zero, and the capture — reading the source after the accrual — published the whole
+        // demand as a shortfall on a **staffed** keeping role.
+        let declared = banking.declared_on(&assignment.target);
         match &assignment.target {
             LaborTarget::Forage { tile, .. } => {
                 let Some(patch) = forage_registry.patch(*tile) else {
                     continue;
                 };
+                let verb = crate::forage::patch_build_verb(patch, declared);
+                if crate::forage::patch_keeping_meter(patch, verb).is_none() {
+                    continue;
+                }
                 plant.push(Claim {
                     index,
-                    demand: crate::forage::patch_upkeep_demand(patch, ladder),
+                    demand: crate::forage::patch_upkeep_demand(patch, verb, ladder),
                     invested: crate::forage::patch_at_risk_cost(patch),
                     tiebreak: format!("{:010}:{:010}", tile.x, tile.y),
                 });
@@ -413,9 +494,13 @@ fn maintenance_shares(
                 let Some(herd) = herds.find(fauna_id) else {
                     continue;
                 };
+                let verb = fauna::herd_build_verb(herd, declared);
+                if fauna::herd_keeping_meter(herd, verb).is_none() {
+                    continue;
+                }
                 animal.push(Claim {
                     index,
-                    demand: fauna::herd_upkeep_demand(herd, fauna, ladder),
+                    demand: fauna::herd_upkeep_demand(herd, verb, fauna, ladder),
                     invested: fauna::herd_at_risk_cost(herd),
                     tiebreak: herd.id.clone(),
                 });

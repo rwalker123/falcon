@@ -245,9 +245,9 @@ pub use intensification::{
     LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
     RungKey, RungMeterDecay, RungMovement, RungSiteRequirement, RungUpkeep, SiteRefusal,
     UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST,
-    FULLY_SUPPLIED, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
-    PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED, UNSCALED_UPKEEP,
-    WHOLLY_UNSUPPLIED,
+    FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY,
+    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

@@ -29,8 +29,8 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         LadderConfig, LadderConfigHandle, RungDef, RungKey, RungMovement, FABRICATED_BUILD_COST,
-        NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_UPKEEP_DECAY,
-        NO_UPKEEP_DEMAND, RUNG_UNSTARTED,
+        NEGLECT_NONE, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE,
+        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -3742,20 +3742,14 @@ fn shed_uncontained_animals(
 ///
 /// **One seam, two readers**, the twin of `forage::patch_unwinding_rung`: `advance_husbandry` gates
 /// the shed on this rung's grace and the snapshot publishes *that* rung's countdown.
+///
+/// **It is [`herd_keeping_meter`] asked with no verb in flight** ([`NOTHING_IN_FLIGHT`]) rather than
+/// a second copy of the same ownership-and-progress reading — the plant twin's rule, for the plant
+/// twin's reason: the eligibility gate carried a hand-written progress-only copy of this question
+/// and fell a turn behind the payment side on the turn a build banked its first work. Its callers
+/// all run after that accrual, so the progress-only reading is the honest one for them.
 pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'a RungDef> {
-    (herd.is_corralled() || herd.owner.is_some()).then(|| {
-        // **The NEWEST meter with progress on it**, the twin of `forage::patch_unwinding_rung`: a
-        // pen half-raised is already the thing at risk, so it owes its own rung's grace rather than
-        // the pastoral rung's. (`is_corralled()` alone would hand a herd mid-`Corral` the shorter
-        // forgiveness of the rung underneath, which is backwards — the fence is what buys time.)
-        ladder.rung(
-            if herd.is_corralled() || herd.corral_progress > RUNG_UNSTARTED {
-                RungKey::AnimalPen
-            } else {
-                RungKey::AnimalPastoral
-            },
-        )
-    })
+    herd_keeping_meter(herd, NOTHING_IN_FLIGHT).map(|key| ladder.rung(key))
 }
 
 /// **WHICH RUNG THIS HERD IS BUILDING** — the animal twin of `forage::patch_build_verb`, with the
@@ -3918,20 +3912,30 @@ pub fn herd_upkeep_supply(
     improvement: Option<crate::components::Improvement>,
     keeping_share: f32,
 ) -> f32 {
-    match herd_meter_answering_for(herd, improvement) {
+    match herd_keeping_meter(herd, improvement) {
         Some(_) => keeping_share,
         None => NO_UPKEEP_DEMAND,
     }
 }
 
 /// **WHICH METER THIS TURN'S KEEPING ANSWERS FOR** — the newest of the meter with progress on it and
-/// the meter this crew's verb is filling, the animal twin of `forage::patch_meter_answering_for`.
+/// the meter this crew's verb is filling, the animal twin of `forage::patch_keeping_meter`.
 ///
 /// **The verb names the meter**, exactly as it does on the plant web and for the same reason: the
 /// supply is stamped in Population and read by the *next* Logistics pass, so it has to describe the
 /// meter that pass will judge. A `Corral` starting on a herd with no pen progress answers for
 /// `animal:pen` from its very first turn.
-fn herd_meter_answering_for(
+///
+/// # ⛔ THE CLAIM, THE DEMAND AND THE PAYMENT ALL READ THIS ONE FUNCTION
+///
+/// `crate::systems::labor::maintenance_shares` decides whether this herd claims a share of the
+/// band's `husbandry` pool here, [`herd_upkeep_demand`] says how much here, and
+/// [`herd_upkeep_supply`] pays it here. The animal web carried the plant web's exact defect: a
+/// `Tame` sets `owner` on its **first accrual**, which happens *after* the shares are split, so on
+/// the turn a Tame banked its first work `herd_keeping_rung` still read the herd as wild, the herd
+/// claimed nothing, and the capture — reading it after the accrual, owned — published the whole
+/// demand as a shortfall against a staffed `husbandry` role.
+pub fn herd_keeping_meter(
     herd: &Herd,
     improvement: Option<crate::components::Improvement>,
 ) -> Option<RungKey> {
@@ -3986,9 +3990,22 @@ pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -
 /// nobody's to keep.
 ///
 /// **THE one definition**, reached by the shed, the labor arm's stamp and the snapshot alike.
-pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
-    herd_keeping_rung(herd, ladder).map_or(NO_UPKEEP_DEMAND, |rung| {
-        rung.upkeep_demand(herd_keeper_load(herd, fauna))
+///
+/// **IT TAKES THE VERB, for [`crate::forage::patch_upkeep_demand`]'s reason**: the claim side and
+/// the payment side must answer for the same meter ([`herd_keeping_meter`]), or a herd draws
+/// nothing from the pool and is then billed the whole rate against it. Callers that cannot see the
+/// band's queue pass [`NOTHING_IN_FLIGHT`] and get the ownership-and-progress reading, which is
+/// correct for them — they all run after the turn's accrual has recorded the owner.
+pub fn herd_upkeep_demand(
+    herd: &Herd,
+    improvement: Option<crate::components::Improvement>,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+) -> f32 {
+    herd_keeping_meter(herd, improvement).map_or(NO_UPKEEP_DEMAND, |key| {
+        ladder
+            .rung(key)
+            .upkeep_demand(herd_keeper_load(herd, fauna))
     })
 }
 
@@ -4000,7 +4017,7 @@ pub fn herd_upkeep_demand(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfi
 /// that are shedding.
 pub fn herd_upkeep_shortfall(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     crate::intensification::upkeep_shortfall(
-        herd_upkeep_demand(herd, fauna, ladder),
+        herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, fauna, ladder),
         herd.upkeep_supplied,
     )
 }
@@ -4012,7 +4029,7 @@ pub fn herd_upkeep_shortfall(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderCo
 /// published ratio and the shed can never disagree about the same turn's staffing. A herd that owes
 /// nothing — wild, or empty — is trivially [`FULLY_HERDED`].
 pub fn herd_herded_fraction(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
-    let demand = herd_upkeep_demand(herd, fauna, ladder);
+    let demand = herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, fauna, ladder);
     if demand <= NO_UPKEEP_DEMAND {
         return FULLY_HERDED;
     }
@@ -4064,7 +4081,7 @@ fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) 
     // the supplier is a **build crew** rather than the keeping pool (a herd mid-`Tame` is owed the
     // same rate, from different hands).
     let fraction = crate::intensification::upkeep_shortfall_fraction(
-        herd_upkeep_demand(herd, fauna, ladder),
+        herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, fauna, ladder),
         herd.upkeep_supplied,
     );
     let head_count = herd.biomass / body_mass;

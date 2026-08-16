@@ -3407,12 +3407,12 @@ func _assert_pool_card_marks(where: String, short_roles: Array, calm_roles: Arra
 ## *"Keeps every tended patch and Field this band works. Short of the sum, they rot."*, so a calm card
 ## failed the negative and a short one passed the positive on the hint alone. This phrase appears in
 ## the shortfall sentences and in no hint.
-const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn this band's"
+const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn; this band's"
 
 ## …and the two webs' tails, which is what makes the per-web claim a claim: the whole point of moving
 ## the figure onto the cards is that a summed line could not say WHICH web was short.
-const POOL_SHORT_TAIL_PLANT := "tended ground needs."
-const POOL_SHORT_TAIL_ANIMAL := "tamed animals need."
+const POOL_SHORT_TAIL_PLANT := "tended ground and queued jobs need"
+const POOL_SHORT_TAIL_ANIMAL := "tamed animals and queued jobs need"
 
 func _pool_short_tail(role: String) -> String:
 	return POOL_SHORT_TAIL_ANIMAL if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
@@ -12780,9 +12780,21 @@ const KEEPING_DECLARE_TURNS := 24
 const KEEPING_DECLARE_BAND_ENTITY := 963
 const KEEPING_DECLARE_BAND_ID := "Band 31"
 const KEEPING_DECLARE_HERD_TILE := Vector2i(70, 17)
-## The staffing the two halves of the pair differ by, and NOTHING else differs between them.
+## The staffing the three states of the sequence differ by, and NOTHING else differs between them.
+##
+## **ONE KEEPER IS THE WHOLE CLAIM.** A bare keeper supplies `KEEPING_DECLARE_PER_WORKER_TURN` — one
+## work unit a turn — against a job that will owe THREE, so a mark that cleared there would be telling
+## the player they were set up on a pool covering a third of the bill. That is the reported defect: the
+## mark cleared on the first hand and came back the next turn.
 const KEEPING_DECLARE_KEEPERS_NONE := 0
-const KEEPING_DECLARE_KEEPERS_STAFFED := 2
+const KEEPING_DECLARE_KEEPERS_ONE := 1
+## …and the staffing that genuinely covers it, which is what makes the mark mean something when it
+## clears. `KEEPING_DECLARE_UPKEEP` work a turn at one work unit per bare keeper.
+const KEEPING_DECLARE_KEEPERS_COVER := 3
+## The BARE work one keeper supplies, which every live source publishes as `buildWorkPerWorkerTurn`
+## (`intensification::PER_WORKER_OUTPUT`). Stated on the fixture rather than assumed by the client, for
+## the reason the wire publishes it at all: the sim writes worker output as a sum of terms.
+const KEEPING_DECLARE_PER_WORKER_TURN := 1.0
 ## What the sim publishes once the job has banked its first work and the bill has switched on — the
 ## `next turn` half of the transition claim.
 const KEEPING_DECLARE_LIVE_SHORTFALL := KEEPING_DECLARE_UPKEEP
@@ -12822,16 +12834,26 @@ func _render_repair_and_declare_states() -> void:
 	_set_world_herds(_keeping_declare_herd_fixture())
 	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_NONE)])
 	await _settle()
-	_assert_declare_time_keeping("a queued Tame with nobody on Husbandry", true)
+	_assert_declare_time_keeping("a queued Tame with nobody on Husbandry", true,
+		KEEPING_DECLARE_KEEPERS_NONE)
 	_assert_queue_row_states_the_price("a queued Tame with nobody on Husbandry")
 
-	# …the paired NEGATIVE, differing in the STAFFING and in nothing else. The trigger is *unstaffed*
-	# rather than *short*: a pool already carrying hands is left alone, because the sim answers the
-	# will-it-be-enough question with a real shortfall the turn it becomes true, and a mark that fired
-	# on every queued job would mean nothing within one session.
-	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_STAFFED)])
+	# **…AND ONE KEEPER DOES NOT CLEAR IT, which is the whole of the reported defect.** The trigger is
+	# COVERAGE, never *unstaffed*: a bare keeper supplies one work unit against a job that will owe
+	# three, so a mark that cleared here would tell the player they were set up and come back the next
+	# turn. The sentence moves with the staffing — same shape, new numbers — rather than switching to a
+	# second warning.
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_ONE)])
 	await _settle()
-	_assert_declare_time_keeping("the same queue with Husbandry staffed", false)
+	_assert_declare_time_keeping("the same queue with ONE keeper on Husbandry", true,
+		KEEPING_DECLARE_KEEPERS_ONE)
+
+	# …the paired NEGATIVE, differing in the STAFFING and in nothing else: a pool that COVERS what it
+	# is asked for wears no mark, which is what makes the mark mean something when it is there.
+	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_COVER)])
+	await _settle()
+	_assert_declare_time_keeping("the same queue with Husbandry covering it", false,
+		KEEPING_DECLARE_KEEPERS_COVER)
 
 	# ---- (3) THE TRANSITION, which is the claim the whole change exists to make ------------------
 	# **NOTHING NEW APPEARS NEXT TURN.** Advance the turn and publish the bill the sim switches on once
@@ -12841,6 +12863,11 @@ func _render_repair_and_declare_states() -> void:
 	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_NONE)])
 	await _settle()
 	var marked_before := _pool_card_is_marked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	# …and what the card ASKS FOR must not double when the bill switches on. A queue entry keeps its
+	# position while its meter climbs, so the queued rate and the live one are the same job's — a card
+	# that counted both would read `6 work` the turn after a 3-work job started, with nothing about the
+	# band having changed.
+	var asked_before := _pool_coverage_asked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
 	_hud._band_labor.set_turn(_hud._band_labor.current_turn() + 1)
 	_set_world_herds(_keeping_declare_herd_fixture(KEEPING_DECLARE_LIVE_SHORTFALL))
 	_push_bands([_keeping_declare_band_fixture(KEEPING_DECLARE_KEEPERS_NONE)])
@@ -12854,6 +12881,14 @@ func _render_repair_and_declare_states() -> void:
 		now_short)
 	_assert_band_panel("…and the Husbandry mark is UNCHANGED across it — no second warning appears (before %s, after %s)"
 			% [marked_before, marked_after], marked_before and marked_after)
+	var asked_after := _pool_coverage_asked(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	_assert_band_panel("…and it asks for the SAME work across it — one job, billed once (%.2f → %.2f)"
+			% [asked_before, asked_after],
+		is_equal_approx(asked_before, KEEPING_DECLARE_UPKEEP)
+			and is_equal_approx(asked_after, KEEPING_DECLARE_UPKEEP))
+
+	# ---- (4) THE SOURCE THE SIM BILLS AND THE CARD USED TO SKIP ---------------------------------
+	await _assert_kept_source_without_gatherers()
 
 	# Put the world back for whatever runs after this block.
 	_set_world_herds(_herd_fixtures())
@@ -12965,6 +13000,11 @@ func _keeping_declare_herd_fixture(shortfall: float = 0.0) -> Array:
 		"tame_work_cost": KEEPING_DECLARE_WORK_COST,
 		"tame_work_done": 0.0,
 		"tame_upkeep_demand": KEEPING_DECLARE_UPKEEP,
+		# **THE BARE WORK ONE HAND SUPPLIES, which every live source publishes** — what the pool card
+		# prices this band's keepers at. Stated rather than left absent: without it the projection has
+		# no rate and every staffing reads as supplying nothing, which is a fixture answering the
+		# question the assertion is asking.
+		"build_work_per_worker_turn": KEEPING_DECLARE_PER_WORKER_TURN,
 		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
 		"build_turns_remaining": KEEPING_DECLARE_TURNS,
 		"upkeep_demand": shortfall,
@@ -12993,6 +13033,104 @@ func _keeping_declare_band_fixture(keepers: int) -> Dictionary:
 	]
 	return band
 
+## The kept patch of the take-crew block below, and the band that holds it. **A Tended patch, billed
+## and short**, which is exactly what a band that finished a Cultivate and moved its foragers on is
+## left holding.
+const KEEPING_KEPT_PATCH_TILE := Vector2i(66, 24)
+const KEEPING_KEPT_UPKEEP := 2.0
+const KEEPING_KEPT_SHORTFALL := 1.5
+const KEEPING_KEPT_BAND_ENTITY := 964
+const KEEPING_KEPT_BAND_ID := "Band 32"
+## The ONE thing the pair differs by: whether anybody is still gathering the ground the band keeps.
+const KEEPING_KEPT_GATHERERS := 2
+const KEEPING_KEPT_NO_GATHERERS := 0
+
+## GUARD: **a source with a live keeping bill and NO take crew is in the pool's totals**, PNG-LESS —
+## the card understating its own demand renders as a perfectly ordinary card, and the figures are on a
+## hover.
+##
+## `systems::labor::maintenance_shares` deliberately EXCLUDES the take crew from eligibility
+## (`core_sim/tests/forage_cultivation.rs`: *"a patch with no gatherers is still kept by the band's
+## pool"*), so a band that finished a Cultivate and moved its foragers to a richer stand is billed for
+## that ground and the client skipped it — understating both the demand and the shortfall, silently, on
+## the one state the sim has a regression test for.
+##
+## **THE PAIR IS THE CLAIM.** The same band, the same patch, the same bill, differing only in whether
+## anybody is gathering: a client that had stopped summing anything reads zero in BOTH halves, and one
+## that reads the gatherers' half correctly says nothing about the half that was dropped.
+func _assert_kept_source_without_gatherers() -> void:
+	_set_world_herds([])
+	_set_forage_patches([_kept_patch_fixture()])
+	_push_bands([_kept_band_fixture(KEEPING_KEPT_GATHERERS)])
+	await _settle()
+	var staffed: Dictionary = _hud._band_labor.upkeep_pool_state(_hud._band_labor.panel_band(),
+		SourceForecast.LABOR_KIND_FORAGE)
+	_assert_band_panel("a kept patch WITH gatherers is in the Agriculture pool's totals (demand %.2f, short %.2f)"
+			% [float(staffed.get("demand", 0.0)), float(staffed.get("shortfall", 0.0))],
+		is_equal_approx(float(staffed.get("demand", 0.0)), KEEPING_KEPT_UPKEEP)
+			and is_equal_approx(float(staffed.get("shortfall", 0.0)), KEEPING_KEPT_SHORTFALL))
+	_push_bands([_kept_band_fixture(KEEPING_KEPT_NO_GATHERERS)])
+	await _settle()
+	var kept: Dictionary = _hud._band_labor.upkeep_pool_state(_hud._band_labor.panel_band(),
+		SourceForecast.LABOR_KIND_FORAGE)
+	_assert_band_panel("…and the SAME patch with its foragers gone still is (demand %.2f, short %.2f)"
+			% [float(kept.get("demand", 0.0)), float(kept.get("shortfall", 0.0))],
+		is_equal_approx(float(kept.get("demand", 0.0)), KEEPING_KEPT_UPKEEP)
+			and is_equal_approx(float(kept.get("shortfall", 0.0)), KEEPING_KEPT_SHORTFALL))
+	# …and the card says so, which is what the totals are FOR: an unstaffed keeping pool against a live
+	# bill does not cover it, so the Agriculture card flies the mark on ground nobody is gathering.
+	_assert_band_panel("…and the Agriculture card marks the ground it is still keeping",
+		_pool_card_is_marked(HudWorkVocab.ROLE_NAME_AGRICULTURE))
+
+## The kept patch itself — the BARE forecast keys, which is how a raw wire patch spells them
+## (`forage_patch_lookup`, never the `patch_`-prefixed `tile_info` cross-ref).
+func _kept_patch_fixture() -> Dictionary:
+	return {
+		"x": KEEPING_KEPT_PATCH_TILE.x, "y": KEEPING_KEPT_PATCH_TILE.y,
+		"ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+		"cultivation_progress": 1.0,
+		"upkeep_demand": KEEPING_KEPT_UPKEEP,
+		"upkeep_supplied": KEEPING_KEPT_UPKEEP - KEEPING_KEPT_SHORTFALL,
+		"upkeep_shortfall": KEEPING_KEPT_SHORTFALL,
+		"build_work_per_worker_turn": KEEPING_DECLARE_PER_WORKER_TURN,
+		"build_queue_position": SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+	}
+
+## The band holding it. **The row SURVIVES at zero workers, which is the sim's own behaviour** — the
+## take crew is not the row's licence to exist, the ground's at-risk meter is — so the fixture keeps
+## the assignment and drops only its hands.
+func _kept_band_fixture(gatherers: int) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = KEEPING_KEPT_BAND_ENTITY
+	band["id"] = KEEPING_KEPT_BAND_ID
+	band["labor_assignments"] = [
+		{"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": gatherers,
+			"workers_needed": KEEPING_KEPT_GATHERERS, "floor": 0.5,
+			"target_x": KEEPING_KEPT_PATCH_TILE.x, "target_y": KEEPING_KEPT_PATCH_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_NONE,
+			"actual_yield": 0.44, "sustainable_yield": 0.44},
+		{"kind": HudConst.LABOR_KIND_AGRICULTURE, "workers": 0,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+	]
+	return band
+
+## **WHAT THIS WEB'S POOL IS BEING ASKED FOR, off the panel's OWN producer.** Driven through
+## `_pool_coverage` with the same arguments the block hands it, because the number is what the claim is
+## about and no card renders it on its own — the hover states it, and a hover is a string that reads
+## plausibly at any figure.
+func _pool_coverage_asked(role_name: String) -> float:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var animal := role_name == HudWorkVocab.ROLE_NAME_HUSBANDRY
+	var source_kind := SourceForecast.LABOR_KIND_HUNT if animal else SourceForecast.LABOR_KIND_FORAGE
+	var role_kind := HudConst.LABOR_KIND_HUSBANDRY if animal else HudConst.LABOR_KIND_AGRICULTURE
+	var queued: Array = _hud._bandpanel._build_queue_models(band,
+		_hud._bandpanel._work_source_models(band, 0))
+	var cover: Dictionary = _hud._bandpanel._pool_coverage(band, source_kind, role_kind,
+		int(_hud._band_labor.effective_role_workers(band, role_kind).get("workers", 0)),
+		_hud._band_labor.upkeep_pool_state(band, source_kind), queued)
+	return float(cover.get(HudWorkVocab.POOL_COVERAGE_ASKED_KEY, 0.0))
+
 ## Is this pool card flying the mark? The card's own answer, never the glyph — `_assert_pool_card_marks`'
 ## rule, for its reason.
 func _pool_card_is_marked(role_name: String) -> bool:
@@ -13000,11 +13138,18 @@ func _pool_card_is_marked(role_name: String) -> bool:
 	return card != null \
 		and bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false))
 
-## GUARD: **the pool a queued job will need is marked the moment the job is queued**, with the number
-## and the pool named on the card's existing hover — and the OTHER web's card left alone, which is what
-## stops "mark everything" passing. The Builders card is deliberately no part of this: a job needs
-## builders by definition, and the queue block one row down already says whether anybody is on the role.
-func _assert_declare_time_keeping(where: String, want_mark: bool) -> void:
+## GUARD: **the pool a queued job will need is marked while it does not COVER that job, and the hover
+## states what it supplies against what it is asked for** — with the OTHER web's card left alone, which
+## is what stops "mark everything" passing. The Builders card is deliberately no part of this: a job
+## needs builders by definition, and the queue block one row down already says whether anybody is on the
+## role.
+##
+## **`keepers` IS WHY THE SENTENCE IS ASSERTED BY EQUALITY, at figures composed from the fixture's own
+## numbers.** The mark alone cannot tell the fix from the defect: an *unstaffed* trigger and a coverage
+## one both mark an empty pool and both leave a covered one bare, and they differ ONLY at the one keeper
+## in between. What separates them everywhere is the SENTENCE — the supply figure moves with the
+## staffing under coverage and there is no supply figure at all under the retired trigger.
+func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) -> void:
 	var card := _find_pool_card(HudWorkVocab.ROLE_NAME_HUSBANDRY)
 	if card == null:
 		_fail("%s — no Husbandry pool card to read" % where)
@@ -13018,11 +13163,19 @@ func _assert_declare_time_keeping(where: String, want_mark: bool) -> void:
 	_assert_band_panel("%s: the Husbandry card %s the mark"
 			% [where, "flies" if want_mark else "does NOT fly"],
 		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_mark)
-	var wanted := HudWorkVocab.UPKEEP_POOL_QUEUED_FORMAT % [
-		DetailFormat.format_work_units(KEEPING_DECLARE_UPKEEP), HudWorkVocab.ROLE_NAME_HUSBANDRY]
-	_assert_band_panel("%s: …and its hover %s the job's keeping, by equality (%s)"
+	# The pool carries no keeping gear on this roster, so its supply is the bare rate every source
+	# publishes times the hands on it — composed here rather than asked of the code under test.
+	var wanted := HudWorkVocab.upkeep_pool_coverage_format(HudWorkVocab.ROLE_NAME_HUSBANDRY) % [
+		DetailFormat.format_work_units(float(keepers) * KEEPING_DECLARE_PER_WORKER_TURN),
+		DetailFormat.format_work_units(KEEPING_DECLARE_UPKEEP)]
+	_assert_band_panel("%s: …and its hover %s what the pool supplies against what it is asked for, by equality (%s)"
 			% [where, "states" if want_mark else "does not state", card.tooltip_text],
 		card.tooltip_text.contains(wanted) == want_mark)
+	# …and where it is calm it states NO coverage sentence at all, at any figures — without which
+	# "does not state THIS sentence" passes on a card quoting some other pair of numbers.
+	_assert_band_panel("%s: …and a covered card quotes no coverage figures at all (%s)"
+			% [where, card.tooltip_text],
+		card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE) == want_mark)
 	# THE OTHER WEB IS UNTOUCHED. A queued ANIMAL job says nothing about the plant pool, and a warning
 	# that marked both would send the player to the wrong card.
 	var plant := _find_pool_card(HudWorkVocab.ROLE_NAME_AGRICULTURE)

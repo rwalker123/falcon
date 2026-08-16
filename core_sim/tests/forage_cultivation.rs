@@ -458,7 +458,8 @@ fn keep_patch_for_a_turn(app: &mut App, coord: UVec2) {
     let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch");
-    patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
+    patch.upkeep_supplied =
+        core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder);
 }
 
 /// Turns with no active band: only the Logistics-stage systems run.
@@ -1569,7 +1570,7 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         Kept {
             supplied: patch.upkeep_supplied,
-            demand: core_sim::patch_upkeep_demand(patch, &ladder),
+            demand: core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder),
         }
     };
 
@@ -1608,6 +1609,209 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
         derived.supplied < derived.demand,
         "fixture: even the equipped keeper must be short of the demand at {A_KEEPER} hand, or the \
          comparison is between a covered pool and a covered pool"
+    );
+}
+
+/// **ON THE TURN A CULTIVATE BANKS ITS FIRST WORK, ITS KEEPING IS ALREADY BEING PAID.**
+///
+/// Reported from play: a band 6% into a Cultivate with `agriculture` staffed at 1, and the pool card
+/// reading *"Short 2 of the 2 work a turn this band's tended ground needs"* — the whole demand
+/// unmet, on a staffed role, with nothing the player could do about it.
+///
+/// # It was a WITHIN-TURN ORDERING FAULT between two spellings of one question
+///
+/// `systems::labor::maintenance_shares` splits the band's keeping pool **before** the assignment
+/// loop accrues any build, and it gated a source's claim on a **progress-only** test. On the turn a
+/// build banks its first work the ground still carries nothing at claim time, so the patch was
+/// skipped, its share came back `0`, and the stamp paid that zero through `patch_upkeep_supply` —
+/// whose own resolver is **progress-or-verb** and therefore knew perfectly well the pool owed for
+/// that meter. Capture then read the patch *after* the accrual: demand `2.0`, supplied `0.0`,
+/// shortfall the lot.
+///
+/// Both seams read `forage::patch_keeping_meter` now, so there is no second definition left to fall
+/// a turn behind.
+///
+/// # THE PAIR IS THE TEST — either half alone is satisfied by a broken gate
+///
+/// 1. a build's first turn supplies **the same work the same keeper puts on a finished rung**, and
+///    is short only the honest remainder;
+/// 2. **bare ground with no build declared claims nothing** — the gate must not have become
+///    *"always"*, which is what a claim on ground carrying no work and starting none would be.
+///
+/// Restoring the progress-only test fails (1) naming `0` supplied where it wanted the keeper's whole
+/// contribution, and leaves (2) passing.
+#[test]
+fn a_builds_first_turn_draws_the_keeping_pool_and_bare_ground_draws_nothing() {
+    /// Under the shipped `plant:tended` demand at any kit, so the arm is genuinely short and the
+    /// assertion is about a live remainder rather than a saturated pool.
+    const ONE_KEEPER: u32 = 1;
+
+    /// What one turn left on the patch.
+    struct Kept {
+        supplied: f32,
+        demand: f32,
+        progress: f32,
+    }
+
+    let read = |app: &App, coord: UVec2| -> Kept {
+        let registry = app.world.resource::<ForageRegistry>();
+        let patch = registry.patch(coord).expect("patch");
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        Kept {
+            supplied: patch.upkeep_supplied,
+            // Read the way the capture reads it — **after** the accrual, with no verb in hand — so
+            // this is the number the pool card was quoting.
+            demand: core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder),
+            progress: patch.cultivation_progress,
+        }
+    };
+
+    // (a) **A CULTIVATE ON ITS VERY FIRST TURN.** Nothing is banked when the shares are split; the
+    // build's own accrual lands later in the same system.
+    let building = {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+        set_maintain_workers(&mut app, band, ONE_KEEPER);
+        assert_eq!(
+            progress_of(&app, coord),
+            0.0,
+            "fixture: the meter must be untouched before the turn, or the progress term carries \
+             the claim and the verb term is never exercised"
+        );
+        app.world.run_system_once(advance_labor_allocation);
+        read(&app, coord)
+    };
+
+    // (b) **THE SAME KEEPER ON A FINISHED RUNG** — the reference the build arm is measured against,
+    // so neither number is a literal that a retune could strand.
+    let holding = {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        seat_tended_patch(&mut app, coord);
+        let band = spawn_forager(&mut app, tile, coord, None);
+        set_maintain_workers(&mut app, band, ONE_KEEPER);
+        app.world.run_system_once(advance_labor_allocation);
+        read(&app, coord)
+    };
+
+    // (c) **BARE GROUND, NOTHING DECLARED** — the other half of the pair.
+    let wild = {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        let band = spawn_forager(&mut app, tile, coord, None);
+        set_maintain_workers(&mut app, band, ONE_KEEPER);
+        app.world.run_system_once(advance_labor_allocation);
+        read(&app, coord)
+    };
+
+    // **Liveness first**: the build really did bank work this turn, so the claim was made on a meter
+    // that was empty when the pool was split. Without this the arm passes for a build that never ran.
+    assert!(
+        building.progress > 0.0,
+        "fixture: the Cultivate must bank work on this very turn, or nothing about the ordering is \
+         under test"
+    );
+
+    // **(1) THE HEADLINE.** Non-zero, and exactly what the same keeper supplies to a finished rung —
+    // §4.6a's *"a meter carrying work is billed at any fullness, to the same hands"* from the paying
+    // side.
+    assert!(
+        building.supplied > 0.0,
+        "the turn a Cultivate banks its first work, its keeping pool must supply something — got \
+         {} against a demand of {}",
+        building.supplied,
+        building.demand
+    );
+    assert_eq!(
+        building.supplied, holding.supplied,
+        "a keeper supplies the same work to a meter being raised as to a finished one: {} against \
+         {}",
+        building.supplied, holding.supplied
+    );
+    assert_eq!(
+        building.demand, holding.demand,
+        "and is billed the same rate for it: {} against {}",
+        building.demand, holding.demand
+    );
+
+    // **The shortfall is the honest remainder, never the whole demand** — the number on the pool
+    // card. One keeper against `plant:tended` covers most of it and is short the rest.
+    let shortfall = building.demand - building.supplied;
+    assert!(
+        shortfall > 0.0 && shortfall < building.demand,
+        "the shortfall is what one keeper could not cover, not the whole bill: short {shortfall} \
+         of {} (supplied {})",
+        building.demand,
+        building.supplied
+    );
+
+    // **(2) THE PAIR.** Nothing on the meter and no build declared: nothing is owed, so nothing can
+    // be claimed or supplied. A gate that answered *"always"* fails here and passes everything above.
+    assert_eq!(
+        wild.demand, 0.0,
+        "a wild patch owes nothing, so there is nothing for a pool to claim against ({})",
+        wild.demand
+    );
+    assert_eq!(
+        wild.supplied, 0.0,
+        "…and a keeping pool must therefore put nothing on it ({})",
+        wild.supplied
+    );
+}
+
+/// **AND A BUILD WHOSE KEEPING IS COVERED FROM TURN ONE NEVER ACCRUES NEGLECT AT ALL.**
+///
+/// The decay pass reads **last** turn's `upkeep_supplied` and clears it (Logistics runs before
+/// Population), so there is a documented one-turn lag between a keeper working and that work being
+/// judged. Making the claim side answer on turn one interacts with that lag, and the correct outcome
+/// is the *absence* of an effect: a patch whose pool covers its demand every turn never counts a
+/// single neglected turn, from the first work banked onward.
+///
+/// The liveness half is the same build with the role empty, which must count them — otherwise
+/// *"never neglected"* is being asserted of a fixture that cannot accrue neglect in the first place.
+#[test]
+fn a_kept_builds_first_turns_accrue_no_neglect_and_an_unkept_ones_do() {
+    /// Well past the tended rung's grace, so the unkept arm is visibly counting by the end.
+    const TURNS: u32 = 6;
+
+    let neglect_after = |keepers: u32| -> u16 {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+        set_maintain_workers(&mut app, band, keepers);
+        for _ in 0..TURNS {
+            run_turns_with_forage(&mut app, 1);
+            if keepers >= tended_keeping_crew() {
+                assert_eq!(
+                    neglect_turns_of(&app, coord),
+                    0,
+                    "a covered build must never count a neglected turn — not even the first, \
+                     where the decay pass's one-turn lag reads a supply that was stamped before \
+                     any work was banked"
+                );
+            }
+        }
+        assert!(
+            progress_of(&app, coord) > 0.0,
+            "fixture: the build must actually be running, or neither arm means anything"
+        );
+        neglect_turns_of(&app, coord)
+    };
+
+    assert_eq!(
+        neglect_after(tended_keeping_crew()),
+        0,
+        "a build whose keeping covers its demand carries no neglect at all"
+    );
+    assert!(
+        neglect_after(NO_CREW_ON_THIS_ACTIVITY) > 0,
+        "…while the same build with an empty role counts its unkept turns, or the arm above is \
+         reporting a patch that cannot accrue neglect"
     );
 }
 
@@ -2980,8 +3184,11 @@ fn a_half_built_patch_with_no_builders_is_held_exactly_by_a_staffed_keeping() {
         .patch(coord)
         .expect("patch");
     assert!(
-        core_sim::patch_upkeep_demand(patch, &core_sim::LadderConfig::builtin())
-            > core_sim::NO_UPKEEP_DEMAND,
+        core_sim::patch_upkeep_demand(
+            patch,
+            core_sim::NOTHING_IN_FLIGHT,
+            &core_sim::LadderConfig::builtin(),
+        ) > core_sim::NO_UPKEEP_DEMAND,
         "a meter carrying work is BILLED, at any fullness — the pool has something to cover"
     );
     assert_eq!(
@@ -3232,8 +3439,11 @@ fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
         "…while remaining TENDED — the retention bar is a separate axis and is nowhere near"
     );
     assert!(
-        core_sim::patch_upkeep_demand(&patch, &core_sim::LadderConfig::builtin())
-            > core_sim::NO_UPKEEP_DEMAND,
+        core_sim::patch_upkeep_demand(
+            &patch,
+            core_sim::NOTHING_IN_FLIGHT,
+            &core_sim::LadderConfig::builtin(),
+        ) > core_sim::NO_UPKEEP_DEMAND,
         "…and it is still BILLED, so the keeping pool has something to hold — a dip does not move \
          who pays the rate (the holding itself is pinned by \
          `a_half_staffed_keeping_bleeds_at_half_the_rungs_rate`)"

@@ -3942,6 +3942,41 @@ static func is_under_kept(src: Dictionary, prefix: String) -> bool:
 ## so there was one state wearing two names, and the `build_is_in_flight` split that kept them mutually
 ## exclusive went with them.
 
+## **WHAT A POOL OF `workers` SUPPLIES IN ONE TURN, in work units** — the client's copy of
+## `intensification::pool_work_supply`, and the ONE expression both halves of the work model divide
+## by: a build divides its pile by it (`build_turns_at`), and a KEEPING pool covers its bill out of it
+## (the pool card's coverage mark). Two spellings of it is how the two surfaces come to disagree about
+## what one hand is worth, which is the same two-producers failure the closed form already guards.
+##
+## **THE GEAR TERM SATURATES IN THE CREW.** Coverage arms a PREFIX of the pool, so ten sets of hoes
+## among twenty keepers raise ten of them and the other ten still bring their hands — hence the `min`
+## on the head count, which is what makes the form exact rather than approximate.
+##
+## `per_worker_turn` is the BARE rate the SOURCE publishes (`build_work_per_worker_turn`), never a
+## constant held here: the sim writes worker output as a sum of terms, and a client assuming today's
+## `1.0` would quote a number the sim disagrees with the moment a second term lands.
+static func pool_work_supply(workers: int, per_worker_turn: float,
+        kit_gear: Dictionary) -> float:
+    var crew := maxi(workers, BUILD_CREW_NONE)
+    var equipped := mini(crew, maxi(int(kit_gear.get(
+        BUILD_GEAR_SATURATING_CREW, BUILD_CREW_NONE)), BUILD_CREW_NONE))
+    return float(crew) * maxf(per_worker_turn, BUILD_WORK_NONE) \
+        + float(equipped) * gear_per_worker(kit_gear)
+
+## The kit's own addend, per EQUIPPED worker per turn — floored, so a malformed row cannot make a
+## worker worse than bare-handed. Its own reader because two call sites ask it: the supply above, and
+## `build_turns_at`'s *is this job priced at all* guard, which must see the bare rate and the tool
+## separately (a supply the kit alone pays is a real answer).
+static func gear_per_worker(kit_gear: Dictionary) -> float:
+    return maxf(float(kit_gear.get(BUILD_GEAR_PER_WORKER, BUILD_WORK_NONE)), BUILD_WORK_NONE)
+
+## **THE BARE WORK ONE WORKER BANKS ON THIS SOURCE IN A TURN**, off the wire's own
+## `buildWorkPerWorkerTurn`. `BUILD_WORK_NONE` where the source states none — a measured nothing that
+## every caller then guards, never a licence to substitute a constant.
+static func build_work_per_worker_turn(src: Dictionary, prefix: String) -> float:
+    return maxf(float(src.get(prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)),
+        BUILD_WORK_NONE)
+
 ## **HOW MANY TURNS THIS RUNG WOULD TAKE AT A CREW AND A FLOOR THE PLAYER IS PROPOSING** — the ONE
 ## home of the client's turn estimate, and the reason the compose sheet's number moves when the
 ## stepper does.
@@ -4080,11 +4115,12 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     if BUILD_WORK_PREDICATE_IMPROVEMENTS.has(improvement) \
             and escapement_room(src, prefix, floor) <= BUILD_NO_ESCAPEMENT_ROOM:
         return BUILD_TURNS_NO_ESTIMATE
-    var per_worker_turn := maxf(float(src.get(
-        prefix + FORECAST_BUILD_PER_WORKER_TURN_KEY, BUILD_WORK_NONE)), BUILD_WORK_NONE)
+    var per_worker_turn := build_work_per_worker_turn(src, prefix)
     # **THE GEAR TERM SATURATES IN THE CREW, and the `min` is on the HEAD COUNT.** Coverage arms a
     # prefix of the pool, so an eleventh builder with ten sets of hurdles between them adds only their
-    # own hands — without the `min` this would keep crediting gear the band does not hold.
+    # own hands — without the `min` this would keep crediting gear the band does not hold. The whole
+    # sum is `pool_work_supply`'s, so the pace a build divides by and the supply a keeping pool covers
+    # its bill out of are ONE expression rather than two spellings of it.
     #
     # ⛔ **IT IS AN ADDEND ON THE SUPPLY, NOT A LUMP OFF THE JOB** (`docs/plan_standing_upkeep.md`
     # §4.8, transcribed from `core_sim/tests/build_turns_closed_form.rs::client_turns_estimate`). It
@@ -4093,11 +4129,8 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     # DELIVERS per turn and the numerator is the job, whole. **`buildWorkPerWorkerTurn` stays the BARE
     # rate on the wire** rather than arriving pre-averaged, which is what preserves this saturating
     # prefix for a crew the sim has never resolved — the one crew a compose sheet exists for.
-    var equipped := mini(workers, maxi(int(kit_gear.get(
-        BUILD_GEAR_SATURATING_CREW, BUILD_CREW_NONE)), BUILD_CREW_NONE))
-    var gear := float(equipped) * maxf(float(kit_gear.get(
-        BUILD_GEAR_PER_WORKER, BUILD_WORK_NONE)), BUILD_WORK_NONE)
-    if per_worker_turn <= BUILD_WORK_NONE and gear <= BUILD_WORK_NONE:
+    var supply := pool_work_supply(workers, per_worker_turn, kit_gear)
+    if per_worker_turn <= BUILD_WORK_NONE and gear_per_worker(kit_gear) <= BUILD_WORK_NONE:
         # Nothing prices this job at all — no bare rate and no tool — so there is no rate to divide by
         # and no crew size that would change it: an absent question rather than a crew that falls
         # short. **The gear half of the test arrived with the term's move**: a supply the kit alone
@@ -4120,7 +4153,7 @@ static func build_turns_at(src: Dictionary, prefix: String, improvement: String,
     # **IT IS CONSTANT WITH RESPECT TO THE STEPPER**, which is why the sim can publish it and the
     # client can still price a crew the sim has never seen: dragging the builders moves the progress
     # and never the rot.
-    var work_per_turn := float(workers) * per_worker_turn + gear - meter_rot_per_turn(src, prefix)
+    var work_per_turn := supply - meter_rot_per_turn(src, prefix)
     # **AND THE NON-FINISHING ANSWER FORKS ON THE SIGN, exactly where the sim forks it**
     # (`intensification::build_turns_estimate`, split on `BUILD_BALANCE_HOLDS`). A sheet that answered
     # `HOLDS` for both would quote an amber `∞` for the crew the tile card renders in red — the two

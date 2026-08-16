@@ -667,7 +667,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `advance_husbandry` sheds through and the grace below counts down against, so a row
                 // cannot bill one rung's demand while the sim judges another's.
                 upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
-                    crate::fauna::herd_upkeep_demand(herd, fauna, ladder)
+                    crate::fauna::herd_upkeep_demand(
+                        herd,
+                        crate::intensification::NOTHING_IN_FLIGHT,
+                        fauna,
+                        ladder,
+                    )
                 }),
                 upkeep_supplied: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_supplied),
                 // **Derived, so the three always describe one turn and one rung** — a stored
@@ -1063,7 +1068,11 @@ pub(crate) fn snapshot_forage_patches(
                 // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
                 // the grace below counts down against, so a row cannot bill one rung's demand while
                 // the sim bleeds another's.
-                upkeep_demand: crate::forage::patch_upkeep_demand(patch, ladder),
+                upkeep_demand: crate::forage::patch_upkeep_demand(
+                    patch,
+                    crate::intensification::NOTHING_IN_FLIGHT,
+                    ladder,
+                ),
                 upkeep_supplied: patch.upkeep_supplied,
                 // **Derived, so the three always describe one turn and one rung.** A stored
                 // shortfall would be stamped only on patches some band is assigned to, and would

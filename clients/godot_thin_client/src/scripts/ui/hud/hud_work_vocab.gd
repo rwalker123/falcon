@@ -508,52 +508,61 @@ const UPKEEP_MODE_PRIORITY_HINT := "Fund the biggest investments in full and let
 ## is a role name and a stepper; a number wedged into it would be the retired line again, in less room.
 const UPKEEP_POOL_SHORT_MARK := HudSelectionVocab.RUNG_HAZARD_GLYPH
 
-## …and the figure it stands for, on the card's own `tooltip_text`. **Per web, because the whole defect
-## of the retired line was that it could not say which** — the plant pool keeps ground and the animal
-## pool keeps animals, and those are different decisions with different remedies. Both name the
-## band's own holdings rather than "sources", which is the noun the player sees on the map.
-const UPKEEP_POOL_SHORT_PLANT_FORMAT := "Short %s of the %s work a turn this band's tended ground needs."
-
-const UPKEEP_POOL_SHORT_ANIMAL_FORMAT := "Short %s of the %s work a turn this band's tamed animals need."
-
-## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
-## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
-static func upkeep_pool_short_format(role_name: String) -> String:
-    return UPKEEP_POOL_SHORT_ANIMAL_FORMAT if role_name == ROLE_NAME_HUSBANDRY \
-        else UPKEEP_POOL_SHORT_PLANT_FORMAT
-
-## **THE SAME MARK, ONE TURN EARLIER — the keeping a QUEUED job will need, on a pool nobody is on.**
+## …and the figure it stands for, on the card's own `tooltip_text` — **ONE SENTENCE, whose numbers are
+## what the pool SUPPLIES against what it is ASKED FOR.**
 ##
-## Reported from play: queue a Tame, staff the builders, advance, and only THEN does anything say the
-## herd wants a Husbandry hand — one decision arriving as two warnings a turn apart. The bill switches
-## on when the first work is banked (that is when the source acquires an owner), so the shortfall is a
-## fact about state that does not exist until the turn resolves; but the rung's STANDING PRICE is
-## published for an unstarted rung precisely so an offer face can quote it, so the client can say it
-## now. No wire field and no sim change.
+## **THERE WERE TWO SENTENCES AND THEY WERE ONE STATEMENT ALL ALONG.** A live shortfall said *"Short 2
+## of 2"* and the declare-time warning said *"a queued job will need 3 work a turn, and nobody is on
+## this pool"* — different words, different subjects, the same glyph in the same slot — which read as
+## one warning misbehaving rather than as two facts. Both are now this shape at different numbers.
 ##
-## **IT IS ONE SENTENCE ON A TOOLTIP THAT ALREADY EXISTS, AND IT COSTS THE ZONE NOTHING.** The work
-## zone fits its box exactly; a row, a line or a block here would overflow it. The mark is the same
-## `UPKEEP_POOL_SHORT_MARK` in the same slot, and the number and the `+` that answers it stay the same
-## object.
+## **Per web, because the whole defect of the retired summed line was that it could not say which** —
+## the plant pool keeps ground and the animal pool keeps animals, and those are different decisions
+## with different remedies. Both name the band's own holdings rather than "sources", which is the noun
+## the player sees on the map, and both name the QUEUE beside them because a job not yet started is
+## exactly what the demand figure includes before the sim bills anything for it.
 ##
 ## **IN WORK, NEVER IN HANDS** — `DetailFormat.build_price_clause`'s rule, for its reason: the model is
 ## denominated in work units end to end, and how many hands a rate takes depends on what they carry.
 ## **And it never says *rung***, a word that appears on no control the player uses.
-const UPKEEP_POOL_QUEUED_FORMAT := "A job in this band's queue will need %s work a turn from %s once it starts, and nobody is on this pool."
+const UPKEEP_POOL_COVERAGE_PLANT_FORMAT := "This pool supplies %s work a turn; this band's tended ground and queued jobs need %s."
 
-## The declare-time line, or `""` where there is nothing to warn about — **the ONE composer, so the
-## card's mark and its hover cannot disagree about whether there is anything to say.**
+const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; this band's tamed animals and queued jobs need %s."
+
+## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
+## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
+static func upkeep_pool_coverage_format(role_name: String) -> String:
+    return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT if role_name == ROLE_NAME_HUSBANDRY \
+        else UPKEEP_POOL_COVERAGE_PLANT_FORMAT
+
+## **THE POOL CARD'S ONE LINE, or `""` where the pool covers what it is asked for** — the ONE composer,
+## so the card's mark and its hover cannot disagree about whether there is anything to say.
 ##
-## **THE TRIGGER IS *UNSTAFFED*, NOT *SHORT*.** A pool already carrying hands is left alone even if
-## this job would eventually outrun it: the sim answers that question with a real shortfall the turn
-## it becomes true, and a mark that fired on every queued job would mean nothing within one session.
-static func upkeep_pool_queued_line(role_name: String, demand: float, workers: int) -> String:
-    if workers > NO_KEEPING_HANDS or demand < SourceForecast.UPKEEP_WORK_MIN:
+## **THE TRIGGER IS COVERAGE, AND IT WAS *UNSTAFFED* FOR ONE SLICE.** Reported from play: a Cultivate
+## queued at a demand of 2.0 work a turn marked the card, ONE keeper cleared the mark, and the next
+## turn brought it back — because *adequate* had been spelled *has at least one body on it*. A keeper
+## supplies 1.0 bare (1.5 with the derived tillage kit), so one was never enough and the mark should
+## never have cleared. **Adequate means the pool COVERS the demand**: adding one hand to a 2.0 bill
+## does not clear it, adding enough does, and that is what makes the mark mean something.
+static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> String:
+    var asked := maxf(float(cover.get(POOL_COVERAGE_ASKED_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.NO_UPKEEP_DEMAND)
+    var supply := maxf(float(cover.get(POOL_COVERAGE_SUPPLY_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.NO_UPKEEP_DEMAND)
+    # Nothing to hold, or held with room to spare. The second test is the coverage one and uses the
+    # same floor every work rate on this panel is stated at, so a pool short by less than the readout
+    # can print is not marked for a difference nobody could see.
+    if asked < SourceForecast.UPKEEP_WORK_MIN \
+            or asked - supply < SourceForecast.UPKEEP_WORK_MIN:
         return ""
-    return UPKEEP_POOL_QUEUED_FORMAT % [DetailFormat.format_work_units(demand), role_name]
+    return upkeep_pool_coverage_format(role_name) % [
+        DetailFormat.format_work_units(supply), DetailFormat.format_work_units(asked)]
 
-## A keeping pool with nobody on it at all — the one staffing level the declare-time warning fires at.
-const NO_KEEPING_HANDS := 0
+## The two keys of the coverage dict the pool card composes and this line reads. **Named**, because
+## producer and reader are different scripts and a typo in a `get` there is a silent zero — which on
+## the supply side would mark every card in the game and on the demand side would mark none.
+const POOL_COVERAGE_SUPPLY_KEY := "supply"
+const POOL_COVERAGE_ASKED_KEY := "asked"
 
 ## …and the messages the command feed shows for the press. Keyed by the token so the two can never
 ## drift from what was actually sent; the fallback exists only for a mode the sim gains before this

@@ -403,7 +403,12 @@ const NOT_HERDED_FIXTURE: f32 = 0.0;
 fn keeping_demand(app: &App, id: &str) -> f32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    core_sim::herd_upkeep_demand(&herd_of(app, id), &fauna, &ladder)
+    core_sim::herd_upkeep_demand(
+        &herd_of(app, id),
+        core_sim::NOTHING_IN_FLIGHT,
+        &fauna,
+        &ladder,
+    )
 }
 
 /// **Seat the herd's keeping at `fraction` of what it owes** — the fixture's stand-in for
@@ -2659,7 +2664,9 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     // And the maintain activity's published count follows the same rate.
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    assert!(core_sim::herd_upkeep_demand(&herd, &fauna, &ladder) > 0.0);
+    assert!(
+        core_sim::herd_upkeep_demand(&herd, core_sim::NOTHING_IN_FLIGHT, &fauna, &ladder) > 0.0
+    );
     // **AND NOTHING EATS AN ANIMAL BUILD** — neither animal rung declares a `meter_decay`, so a
     // wholly unkept herd's meter rot is `0` and the shed is what its shortfall costs.
     let unkept = herd_of(&app, &id);
@@ -2667,6 +2674,110 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
         core_sim::herd_meter_rot(&unkept, &fauna, &ladder),
         0.0,
         "the animal web pays a shortfall in animals, never in meter"
+    );
+}
+
+/// **ON THE TURN A `Tame` BANKS ITS FIRST WORK, THE HUSBANDRY POOL IS ALREADY PAYING FOR IT** — the
+/// animal twin of `forage_cultivation::a_builds_first_turn_draws_the_keeping_pool_and_bare_ground_draws_nothing`,
+/// and the same defect.
+///
+/// # The animal web had the identical hole, for its own reason
+///
+/// `Herd::accrue_domestication` records `owner` on the **first accrual**, which happens inside the
+/// assignment loop — *after* `systems::labor::maintenance_shares` has already split the band's
+/// keeping pool. The claim gate read `herd_keeping_rung`, which answers `None` for a herd nobody
+/// owns yet, so on that one turn a wild herd being tamed claimed nothing, drew a share of `0`, and
+/// the stamp paid that zero through `herd_upkeep_supply` — whose own resolver knows a `Tame` names
+/// `animal:pastoral` from its first turn. Capture then read the herd *owned*, and published the
+/// whole demand as a shortfall on a staffed `husbandry` role.
+///
+/// Both seams read `fauna::herd_keeping_meter` now.
+///
+/// **The pair is the test**: a wild herd nobody is taming must still claim nothing, or the gate has
+/// become *"always"* and would bill a band for every animal it hunts.
+#[test]
+fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
+    /// What one turn left on the herd.
+    struct Kept {
+        supplied: f32,
+        demand: f32,
+        progress: f32,
+    }
+
+    let read = |app: &App, id: &str| -> Kept {
+        let herd = herd_of(app, id);
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        Kept {
+            supplied: herd.upkeep_supplied,
+            // Read as the capture reads it — after the accrual, with no verb in hand.
+            demand: core_sim::herd_upkeep_demand(
+                &herd,
+                core_sim::NOTHING_IN_FLIGHT,
+                &fauna,
+                &ladder,
+            ),
+            progress: herd.domestication_progress,
+        }
+    };
+
+    // (a) **A `Tame` on its very first turn.** The herd is wild and unowned when the shares split.
+    let taming = {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        assert!(
+            herd_of(&app, &id).owner.is_none(),
+            "fixture: the herd must be unowned before the turn, or the ownership term carries the \
+             claim and the verb term is never exercised"
+        );
+        grant_herding(&mut app);
+        spawn_builder(&mut app, &id, Improvement::Tame);
+        // **A whole turn in stage order**, because the fixture seats the herd exactly *at* the food
+        // peak: the escapement room a build's `eligible` reads is `0` there until Logistics regrows
+        // it, so a bare labor pass would measure a Tame that never started.
+        run_turns_with_hunt(&mut app, 1);
+        read(&app, &id)
+    };
+
+    // (b) **The same band hunting the same wild herd with nothing declared** — the other half.
+    let hunting = {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        let keepers = keeper_crew(&app, &id);
+        spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        run_turns_with_hunt(&mut app, 1);
+        read(&app, &id)
+    };
+
+    assert!(
+        taming.progress > 0.0,
+        "fixture: the Tame must bank work on this very turn, or nothing about the ordering is \
+         under test"
+    );
+    assert!(
+        taming.supplied > 0.0,
+        "the turn a Tame banks its first work, the husbandry pool must supply something — got {} \
+         against a demand of {}",
+        taming.supplied,
+        taming.demand
+    );
+    assert!(
+        taming.demand > 0.0,
+        "fixture: the herd must actually owe a keeping once it is owned, or the arm above is \
+         asserting against nothing"
+    );
+
+    // **The pair.** A wild herd is nobody's to keep and nothing is being started on it, so the pool
+    // must put nothing on it — a gate that answered *"always"* fails exactly here.
+    assert_eq!(
+        hunting.demand, 0.0,
+        "a wild herd owes no keeping ({})",
+        hunting.demand
+    );
+    assert_eq!(
+        hunting.supplied, 0.0,
+        "…so a keeping pool must put nothing on it ({})",
+        hunting.supplied
     );
 }
 

@@ -78,8 +78,9 @@ use crate::{
     food::FoodModuleTag,
     intensification::{
         upkeep_shortfall, LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal,
-        FABRICATED_BUILD_COST, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
-        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_UNSTARTED, UNSCALED_UPKEEP,
+        FABRICATED_BUILD_COST, NEGLECT_NONE, NOTHING_IN_FLIGHT, NO_BUILD_GEAR,
+        NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_UNSTARTED,
+        UNSCALED_UPKEEP,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
@@ -1893,17 +1894,17 @@ pub fn advance_forage_regrowth(
 /// returns, the labor arm stamps its shortfall, and `snapshot_forage_patches` publishes *that* rung's
 /// demand and remaining grace. Deriving the at-risk rung twice is how the wire comes to count down a
 /// grace on a rung the sim is not touching.
+///
+/// **It is [`patch_keeping_meter`] asked with no verb in flight** ([`NOTHING_IN_FLIGHT`]), rather
+/// than a second copy of the same two comparisons. Every caller here is outside the labor arm and
+/// genuinely cannot see the band's queue, so the progress-only reading is the honest one — and
+/// stating it as *"the keeping meter, absent a verb"* is what stops the two spellings drifting the
+/// way they did while the eligibility gate carried one of them by hand.
 pub fn patch_unwinding_rung<'a>(
     patch: &ForagePatch,
     ladder: &'a LadderConfig,
 ) -> Option<&'a RungDef> {
-    if patch.field_progress > RUNG_UNSTARTED {
-        Some(ladder.rung(RungKey::PlantField))
-    } else if patch.cultivation_progress > RUNG_UNSTARTED {
-        Some(ladder.rung(RungKey::PlantTended))
-    } else {
-        None
-    }
+    patch_keeping_meter(patch, NOTHING_IN_FLIGHT).map(|key| ladder.rung(key))
 }
 
 /// **Turns of SHORTFALL this patch can still absorb before its feral bleed starts** — the wire's
@@ -1931,9 +1932,21 @@ pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig)
 /// **THE one definition**, reached by the decay pass, the labor arm's stamp and the snapshot alike —
 /// so the demand the sim bleeds against, the demand the player is billed for and the demand the wire
 /// shows can never be three different rungs' answers.
-pub fn patch_upkeep_demand(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
-    patch_unwinding_rung(patch, ladder)
-        .map_or(NO_UPKEEP_DEMAND, |rung| rung.upkeep_demand(UNSCALED_UPKEEP))
+///
+/// **IT TAKES THE VERB, BECAUSE THE CLAIM AND THE PAYMENT MUST ANSWER FOR THE SAME METER**
+/// ([`patch_keeping_meter`]). The band's keeping pool claims where a meter answers for it and pays
+/// what it claimed, so a demand resolved on a *narrower* reading than the supply is a source that
+/// draws nothing and is then billed the whole rate. Callers outside the labor arm cannot see the
+/// band's queue and pass [`NOTHING_IN_FLIGHT`], which is the honest reading for them: they all run
+/// after the turn's accrual has landed, so the meter they care about already carries work.
+pub fn patch_upkeep_demand(
+    patch: &ForagePatch,
+    improvement: Option<Improvement>,
+    ladder: &LadderConfig,
+) -> f32 {
+    patch_keeping_meter(patch, improvement).map_or(NO_UPKEEP_DEMAND, |key| {
+        ladder.rung(key).upkeep_demand(UNSCALED_UPKEEP)
+    })
 }
 
 // **RETIRED: `patch_is_maintaining`** — *"is this patch building or maintaining"*, the meter's own
@@ -1986,7 +1999,7 @@ pub fn patch_upkeep_supply(
     improvement: Option<Improvement>,
     keeping_share: f32,
 ) -> f32 {
-    match patch_meter_answering_for(patch, improvement) {
+    match patch_keeping_meter(patch, improvement) {
         Some(_) => keeping_share,
         None => NO_UPKEEP_DEMAND,
     }
@@ -1994,6 +2007,20 @@ pub fn patch_upkeep_supply(
 
 /// **WHICH METER THIS TURN'S KEEPING ANSWERS FOR** — the **newest** of two readings: the meter with
 /// progress on it, and the meter this crew's verb is filling.
+///
+/// # ⛔ THIS IS THE ONE DEFINITION OF *"A METER NEEDING KEEPING"*, AND ALL THREE SEAMS READ IT
+///
+/// `crate::systems::labor::maintenance_shares` decides **whether this source claims a share** here,
+/// [`patch_upkeep_demand`] says **how much** here, and [`patch_upkeep_supply`] pays it here — one
+/// function, three callers, one answer. A second spelling of the question is not a duplication risk
+/// in the abstract: the claim side used to carry a **progress-only** copy
+/// ([`patch_unwinding_rung`]) and the payment side this one, and because `maintenance_shares` runs
+/// *before* the turn's build accrual, the two disagreed on exactly the turn a build banked its first
+/// work. The patch was skipped for having nothing on its meter, its share came back `0`, the stamp
+/// paid that zero through a resolver that knew perfectly well the pool owed for it, and the capture
+/// — reading the patch *after* the accrual — published `supplied 0` against the full demand on a
+/// **staffed** `agriculture` role. `patch_unwinding_rung` is now this function asked with
+/// [`NOTHING_IN_FLIGHT`], so there is no second copy left to fall behind.
 ///
 /// **The verb half is what survives the one-turn carry.** The supply is stamped in Population and
 /// read by the *next* Logistics pass, so it has to describe the meter that pass will judge — not the
@@ -2007,7 +2034,7 @@ pub fn patch_upkeep_supply(
 /// is the answer for either — but the resolution stays, because *which* meter this describes is what
 /// the carry is about, and because `None` (nothing built, nothing being built) is a real third
 /// answer that must not be paid.
-fn patch_meter_answering_for(
+pub fn patch_keeping_meter(
     patch: &ForagePatch,
     improvement: Option<Improvement>,
 ) -> Option<RungKey> {
@@ -2068,7 +2095,10 @@ pub fn patch_meter_rot(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
 /// exactly the patches that are bleeding — a wire row saying *"demand 0.75, supplied 0, shortfall 0"*
 /// while the sim reverts the ground underneath it.
 pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
-    upkeep_shortfall(patch_upkeep_demand(patch, ladder), patch.upkeep_supplied)
+    upkeep_shortfall(
+        patch_upkeep_demand(patch, NOTHING_IN_FLIGHT, ladder),
+        patch.upkeep_supplied,
+    )
 }
 
 /// **The MAINTAIN activity's own `workers_needed`** — whole keepers to meet
@@ -2107,7 +2137,11 @@ pub fn advance_cultivation(
         // band is working, so a patch nobody works would otherwise report a tidy `0` unmet — the
         // exact state that must bleed. What the crew supplied is the one thing stored, because it is
         // the one thing a crew authors.
-        let demand = patch_upkeep_demand(patch, &ladder);
+        //
+        // **This pass cannot see a band's build queue and does not need to** ([`NOTHING_IN_FLIGHT`]):
+        // it runs a whole stage after the accrual that banked the turn's work, so any meter a verb
+        // is filling already carries progress and answers on the progress term alone.
+        let demand = patch_upkeep_demand(patch, NOTHING_IN_FLIGHT, &ladder);
         let shortfall = upkeep_shortfall(demand, patch.upkeep_supplied);
         // **HOW SHORT, as a fraction of what was asked** — what the decay actually rides
         // (`crate::intensification::upkeep_shortfall_fraction`). The absolute shortfall still gates
@@ -3887,7 +3921,10 @@ mod tests {
 
         // --- A wild patch: nothing built, nothing owed, nobody wanted. -------------------------
         let wild = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
-        assert_eq!(patch_upkeep_demand(&wild, &ladder), NO_UPKEEP_DEMAND);
+        assert_eq!(
+            patch_upkeep_demand(&wild, NOTHING_IN_FLIGHT, &ladder),
+            NO_UPKEEP_DEMAND
+        );
         assert_eq!(
             patch_upkeep_supply(&wild, None, A_KEEPERS_TURN),
             NO_UPKEEP_DEMAND,
@@ -3928,7 +3965,10 @@ mod tests {
 
         let short_at = |keeping_share: f32| -> f32 {
             let supplied = patch_upkeep_supply(&patch, Some(Improvement::Cultivate), keeping_share);
-            crate::intensification::upkeep_shortfall(patch_upkeep_demand(&patch, &ladder), supplied)
+            crate::intensification::upkeep_shortfall(
+                patch_upkeep_demand(&patch, NOTHING_IN_FLIGHT, &ladder),
+                supplied,
+            )
         };
 
         assert_eq!(

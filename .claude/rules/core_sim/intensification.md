@@ -1054,9 +1054,41 @@ other row (§2.5).
   the completion hand-off that was its only caller.)
 - **The band's demand is the SUM** over everything it holds on that web, and **every meter carrying
   work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
-  exactly where it has a meter at risk — which is `systems::source_has_a_meter_at_risk`, the **one
-  seam** the row's own survival is decided by, so what the pool funds, what the decay pass bleeds and
-  what keeps a holding alive cannot come to be three questions.
+  through **`forage::patch_keeping_meter(patch, improvement)`** / **`fauna::herd_keeping_meter`** — one
+  function, three callers each: the claim gate, `*_upkeep_demand` and `*_upkeep_supply`.
+
+  > **⛔ IT USED TO BE `source_has_a_meter_at_risk`, AND THAT WAS A SECOND DEFINITION THAT DRIFTED.**
+  > That seam is **progress-only**; the payment side (`patch_upkeep_supply` → `patch_keeping_meter`) is
+  > **progress-OR-verb**. Reported from play: a band 6% into a Cultivate with Agriculture staffed read
+  > `Short 2 of the 2 work` — i.e. **supplied 0.0 on a staffed role**.
+  >
+  > **A within-turn ordering fault.** `maintenance_shares` runs *before* the assignment loop banks the
+  > meter, so on the turn a build banks its FIRST work the patch still reads `progress == 0`, is skipped,
+  > and gets a share of zero — which the payment side then dutifully pays, having correctly worked out
+  > that the pool owes for this meter from turn one. Capture reads the post-accrual patch: demand 2.0,
+  > supplied 0.0.
+  >
+  > **The animal web had it too, with a different cause**: `owner` is recorded on the first accrual,
+  > which happens after the shares are split, so a herd mid-Tame read as wild and claimed nothing.
+  >
+  > **`patch_unwinding_rung` / `herd_keeping_rung` are now that function asked with NO VERB**
+  > (`NOTHING_IN_FLIGHT`), not a parallel spelling — so the decay pass, the snapshot and the wire
+  > countdowns are byte-identical while the claim side gained the verb term. `source_has_a_meter_at_risk`
+  > survives as the **row-survival** seam alone, and its doc says so.
+
+  **THE VERB TERM IS NARROWED TO THE FUNDED HEAD, and that is deliberate.** Taking it straight from the
+  queue entry — the literal "same input as the payment side" — makes *every waiting entry* claim its full
+  demand, and `Spread` funds proportionally, so two queued-but-unfunded builds would dilute the share of
+  the Field the band actually holds. That is a new way to starve a real holding. `source_banking_its_first_work`
+  restricts it to `build_queue[0]` when `builders > 0`, mirroring the assignment loop's own `build_workers`
+  rule. **Claim-side verb ⊆ payment-side verb**, so the two cannot disagree in the direction that caused
+  the bug.
+  > **Accepted cost:** a **blocked** head bills the keeping pool while its meter never advances. It
+  > self-announces as `BUILD_QUEUE_BLOCKED` on the wire and the player has explicitly staffed builders
+  > at it.
+
+  So what the pool funds, what the decay pass bleeds and what keeps a holding alive cannot come to be
+  three questions.
   - **HOLDS, not harvests.** A row's eligibility is the *ground's* answer and never its take crew.
     `maintenance_shares` used to skip rows at `workers == 0`, which made a finished improvement's
     keeping depend on somebody still gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above.

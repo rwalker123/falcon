@@ -290,7 +290,11 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     `hasNeglectGrace` / `neglectGraceRemaining` — the **countdown**,
     not the counter (`0` = reverting now; a worked patch reads `grace + 1`, the honest *"walk away and
     you have this long"*), published through the *same* `patch_unwinding_rung` seam the pass bleeds
-    through so the wire cannot count down against a rung the sim is not touching. `hasNeglectGrace =
+    through so the wire cannot count down against a rung the sim is not touching. **That seam is
+    `patch_keeping_meter` asked with no verb now** (`NOTHING_IN_FLIGHT`) — one function, so the claim
+    gate, the demand and the supply cannot drift the way they did when a build's first turn drew a
+    share of zero on a staffed role (`intensification.md` → "The band's demand is the SUM"). The
+    decay pass and the wire are byte-identical across that change. `hasNeglectGrace =
     false` = a wild patch with nothing at risk, which is most of them — read the bool first, as with
     `owner`/`hasOwner`.
   - **Stage-ordering** is unchanged: Logistics runs *before* Population, so the `upkeep_supplied`

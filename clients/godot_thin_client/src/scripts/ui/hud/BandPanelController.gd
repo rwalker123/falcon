@@ -1772,19 +1772,22 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # could not state even in principle.
     var plant_pool := _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_FORAGE)
     var animal_pool := _band_labor.upkeep_pool_state(band, SourceForecast.LABOR_KIND_HUNT)
-    # **AND THE KEEPING A QUEUED JOB HAS NOT STARTED OWING YET** — the declare-time half of the same
-    # mark. `upkeep_pool_state` answers what the band is billed for TODAY, which is nothing until the
-    # first work is banked; this is the standing rate the queue's own entries will owe, summed per web
-    # off the models the block below is built from. See `HudWorkVocab.upkeep_pool_queued_line`.
-    var plant_queued := _queued_keeping_demand(queued, SourceForecast.LABOR_KIND_FORAGE)
-    var animal_queued := _queued_keeping_demand(queued, SourceForecast.LABOR_KIND_HUNT)
+    # **AND WHAT EACH POOL SUPPLIES AGAINST WHAT IT IS ASKED FOR** — the ONE test the mark forks on,
+    # live shortfall and queued job alike. `upkeep_pool_state` answers what the band is BILLED for
+    # today, which is nothing until the first work is banked; the queue's own entries carry the
+    # standing rate they will owe the moment they start, and the pool's own hands are what either is
+    # measured against. See `HudWorkVocab.upkeep_pool_coverage_line`.
+    var plant_cover := _pool_coverage(band, SourceForecast.LABOR_KIND_FORAGE,
+        HudConst.LABOR_KIND_AGRICULTURE, int(agriculture_eff.get("workers", 0)), plant_pool, queued)
+    var animal_cover := _pool_coverage(band, SourceForecast.LABOR_KIND_HUNT,
+        HudConst.LABOR_KIND_HUSBANDRY, int(husbandry_eff.get("workers", 0)), animal_pool, queued)
     var cards := _build_role_card_row()
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
         HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle,
-        plant_pool, plant_queued))
+        plant_cover))
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
         HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle,
-        animal_pool, animal_queued))
+        animal_cover))
     # **THE BUILDERS CARD WEARS NO MARK, and it is not an omission.** It funds a QUEUE, one entry at a
     # time, and an entry that is not being built is not being LOST — the queue block one down states
     # its own blocked head. There is no keeping shortfall for this pool to be short of.
@@ -1801,8 +1804,46 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.pools_block_height(fund_mode != null))
     return block
 
-## **THE STANDING KEEPING THIS WEB'S QUEUED JOBS WILL OWE, SUMMED** — the input to the pool card's
-## declare-time mark, and the number its hover states.
+## **WHAT ONE KEEPING POOL SUPPLIES AGAINST WHAT IT IS ASKED FOR** — `{supply, asked}` in work units,
+## the ONE input the pool card's mark and its hover both fork on.
+##
+## **`asked` IS THE LIVE BILL PLUS THE QUEUED ONE.** The sim bills a source from the first work banked,
+## so a job queued this frame is owed nothing yet and is owed its rung's standing rate the moment it
+## starts — and a pool the player is staffing NOW is being staffed for both. Summing them is what lets
+## one sentence carry the declare-time case and the live one at different numbers.
+##
+## **`supply` IS PROJECTED FROM THE POOL'S OWN HANDS, never read off `upkeep_supplied`.** That field
+## is each source's stamped SHARE, which is capped by its demand — so a pool with hands to spare
+## reports exactly its demand and would read as covering nothing more, marking every card the moment
+## anything was queued. `SourceForecast.pool_work_supply` is the sim's own expression
+## (`intensification::pool_work_supply`), at the bare rate the sources publish plus this web's derived
+## keeping gear.
+##
+## **THE WORKERS ARE THE PENDING-AWARE COUNT**, the rule every readout on this panel follows: a player
+## who has just staffed the role must not be told the pool is empty until the turn resolves.
+func _pool_coverage(band: Dictionary, source_kind: String, role_kind: String, workers: int,
+        pool: Dictionary, queued: Array) -> Dictionary:
+    var queued_load := _queued_keeping_load(queued, source_kind)
+    var asked := maxf(float(pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.NO_UPKEEP_DEMAND) \
+        + float(queued_load.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
+    # The BARE per-worker rate, off whichever of the two source sets stated one. They publish the same
+    # constant, so the `max` is only ever choosing between an answer and a silence — a pool with
+    # something to pay for always read at least one source to price it against.
+    var per_worker := maxf(
+        float(pool.get(HudBandLaborState.POOL_PER_WORKER_TURN_KEY, SourceForecast.BUILD_WORK_NONE)),
+        float(queued_load.get(HudBandLaborState.POOL_PER_WORKER_TURN_KEY,
+            SourceForecast.BUILD_WORK_NONE)))
+    var kit_gear := KitRoster.build_gear(band, KitRoster.keeping_kit_for(_band_labor.kits(),
+        role_kind), KitRoster.build_branch_for_kind(source_kind))
+    return {
+        HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: SourceForecast.pool_work_supply(workers, per_worker,
+            kit_gear),
+        HudWorkVocab.POOL_COVERAGE_ASKED_KEY: asked,
+    }
+
+## **THE STANDING KEEPING THIS WEB'S QUEUED JOBS WILL OWE** — `{demand, per_worker_turn}`, summed and
+## read off the same models.
 ##
 ## **SUMMED rather than maxed**, because the pool pays all of them: two Tames queued on one band are
 ## two standing bills the moment they start, and quoting the larger would understate the commitment
@@ -1812,17 +1853,31 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
 ## just-declared entries on its tail, and each model's `build_upkeep_demand` was priced off
 ## `building_policy` — which `build_verb` answers from the declaration at a zero meter — so a job
 ## queued this frame is in this sum on this frame.
-func _queued_keeping_demand(queued: Array, labor_kind: String) -> float:
+##
+## The per-worker rate rides out beside the demand for `upkeep_pool_state`'s reason: a pool whose only
+## bill is a queued job has no BILLED source to price its hands against, and the queued job's own
+## source states the same constant.
+func _queued_keeping_load(queued: Array, labor_kind: String) -> Dictionary:
     var total := SourceForecast.NO_UPKEEP_DEMAND
+    var per_worker := SourceForecast.BUILD_WORK_NONE
     for entry in queued:
         if not (entry is Dictionary):
             continue
         var model: Dictionary = entry
         if String(model.get("kind", "")) != labor_kind:
             continue
+        # **A SOURCE THE SIM IS ALREADY BILLING CONTRIBUTES ITS RATE THROUGH `upkeep_pool_state`, NOT
+        # HERE.** A queue entry keeps its position while its meter climbs, so counting both would ask
+        # the pool for one job's keeping twice the turn after the work starts — the pool's own demand
+        # doubling with nothing about the band having changed.
+        if float(model.get("live_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)) \
+                >= SourceForecast.UPKEEP_WORK_MIN:
+            continue
         total += maxf(float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
             SourceForecast.NO_UPKEEP_DEMAND)
-    return total
+        per_worker = maxf(per_worker, float(model.get("build_work_per_worker_turn",
+            SourceForecast.BUILD_WORK_NONE)))
+    return {"demand": total, HudBandLaborState.POOL_PER_WORKER_TURN_KEY: per_worker}
 
 ## **ONE POOL CARD — the role card with everything but the CONTROL taken off.** Its name, its stepper,
 ## and its description on the card's own `tooltip_text`.
@@ -1843,30 +1898,23 @@ func _queued_keeping_demand(queued: Array, labor_kind: String) -> float:
 ## answers `NO_KIT_ID` on the builders branch deliberately — echoing the DERIVED id back would pin the
 ## pool to whichever web it happened to be building the moment the player pressed `+`.
 ##
-## **AND WHERE ITS WEB IS SHORT IT WEARS A BARE `⚠`, with the figure on the tooltip** (§4.7). The mark
-## is a mark: the card is a role name over a stepper and has no room for arithmetic, and the shortfall
-## is the reason a player would open the hover at all — so the hint the tooltip already carried is
-## joined by the number, on the one control that can move it. `pool` is that web's own state (`{}` for
-## the Builders card, which has no keeping to be short of), never the two summed.
-## **AND THE SAME MARK FIRES A TURN EARLIER, on a pool a QUEUED job is about to need.** The bill
-## `upkeep_is_short` reads switches on when the first work is banked, so queueing a Tame and staffing
-## the builders used to produce one decision as two warnings a turn apart. `queued_keeping` is the
-## standing rate this web's queue entries will owe; the mark, the slot and the tooltip seam are the
-## ones already here — this block cannot afford a row, a line or a control (see
-## `HudWorkVocab.upkeep_pool_queued_line`).
+## **AND WHERE ITS WEB DOES NOT COVER WHAT IT IS ASKED FOR IT WEARS A BARE `⚠`, with the figures on
+## the tooltip** (§4.7). The mark is a mark: the card is a role name over a stepper and has no room for
+## arithmetic, and the shortfall is the reason a player would open the hover at all. `cover` is that
+## web's own `{supply, asked}` (`{}` for the Builders card, which keeps nothing), never the two webs
+## summed.
 ##
-## **ONE MARK, NEVER TWO, AND THE HOVER SAYS ONE THING.** A pool that is already short and also about
-## to be needed is short — the live shortfall is the bigger news and the queued sentence would restate
-## it in the future tense — so the two lines are exclusive rather than joined.
+## **ONE TEST, ONE MARK, ONE SENTENCE.** The live bill and a job the queue has not started owing yet
+## were two triggers wearing one glyph — *"short 2 of 2"* beside *"nobody is on this pool"* — which
+## read as one warning misbehaving. `_pool_coverage` folds both into what the pool SUPPLIES against
+## what it is ASKED FOR, so there is one thing to say and `HudWorkVocab.upkeep_pool_coverage_line` is
+## the one composer that says it.
 func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: String,
-        effective: Dictionary, idle: int, pool: Dictionary = {},
-        queued_keeping: float = SourceForecast.NO_UPKEEP_DEMAND) -> PanelContainer:
+        effective: Dictionary, idle: int, cover: Dictionary = {}) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
-    var is_short := SourceForecast.upkeep_is_short(pool)
-    var queued_line := "" if is_short \
-        else HudWorkVocab.upkeep_pool_queued_line(role_name, queued_keeping, workers)
-    var wants_mark := is_short or queued_line != ""
+    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
+    var wants_mark := coverage_line != ""
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -1875,17 +1923,12 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # minimum height would be wrong the next time a role name changes length.
     card.size_flags_vertical = Control.SIZE_FILL
     card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
-    # The shortfall joins the role's own description rather than replacing it: what the pool DOES is
-    # the answer to "how much do I need", and the figure is meaningless without it.
-    card.tooltip_text = HudFormat.join_tooltip_lines([hint,
-        HudWorkVocab.upkeep_pool_short_format(role_name) % [
-            DetailFormat.format_work_units(float(pool.get("shortfall",
-                SourceForecast.NO_UPKEEP_DEMAND))),
-            DetailFormat.format_work_units(float(pool.get("demand",
-                SourceForecast.NO_UPKEEP_DEMAND)))] if is_short else queued_line])
-    # **THE META IS THE MARK, NOT THE SHORTFALL, and it always was** — every harness reads it to ask
-    # *is this card marked*, which is the question the `⚠` answers. Leaving it on `is_short` while the
-    # glyph forked on a second term would have made the assertion blind to the whole declare-time case.
+    # The coverage sentence joins the role's own description rather than replacing it: what the pool
+    # DOES is the answer to "how much do I need", and the figures are meaningless without it.
+    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line])
+    # **THE META IS THE MARK, and the mark is now the coverage answer** — every harness reads it to ask
+    # *is this card marked*, which is the question the `⚠` answers, and the composer that decides the
+    # sentence is the same one that decides the glyph.
     card.set_meta(POOL_CARD_SHORT_META, wants_mark)
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
@@ -3122,6 +3165,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
             "build_upkeep_demand": SourceForecast.build_upkeep_demand(rung_source,
                 HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
+            # …and the BARE per-worker work rate that source publishes, which is what the POOLS block
+            # prices a keeping pool's own hands at when the queue is the only thing asking for them.
+            # Read here because this is where the raw wire source is in hand, exactly as the two
+            # prices above are.
+            "build_work_per_worker_turn": SourceForecast.build_work_per_worker_turn(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **AND WHAT THE SIM IS ALREADY BILLING THIS SOURCE**, which is what stops the POOLS block
+            # counting one job twice: a queue entry keeps its position while its meter climbs, so the
+            # moment the first work is banked the source's own `upkeepDemand` states the very rate the
+            # queued entry is still quoting.
+            "live_upkeep_demand": float(SourceForecast.upkeep_state(rung_source,
+                HudComposeVocab.BARE_FORECAST_PREFIX).get("demand", SourceForecast.NO_UPKEEP_DEMAND)),
             # …and whether that rung is STALLED — unstaffed, or losing ground. Derived ONCE, above,
             # off the same two `SourceForecast` seams the map badge forks on, and carried as a flag
             # so the row builder cannot ask the question a second way (see `build_stalled`).

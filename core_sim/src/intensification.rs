@@ -669,6 +669,17 @@ pub const SOLE_BUILDER: u32 = 1;
 /// an upkeep.
 pub const NO_UPKEEP_DEMAND: f32 = 0.0;
 
+/// **NO VERB IS FILLING A METER ON THIS SOURCE RIGHT NOW** — what the keeping seams
+/// (`forage::patch_keeping_meter` / `fauna::herd_keeping_meter`) are handed by every caller that
+/// asks the question **outside** the labor arm: the decay pass, the snapshot, the wire's countdowns.
+///
+/// Named rather than written `None` at those sites because the answer turns on it. With a verb the
+/// seams resolve *progress OR the meter that verb is filling*; without one they resolve progress
+/// alone — which is the honest reading **after** the turn's accrual has landed, and the wrong one
+/// before it. A bare `None` reads as "there is no improvement here" when what it says is "this
+/// caller cannot see the band's queue".
+pub const NOTHING_IN_FLIGHT: Option<crate::components::Improvement> = None;
+
 /// **A shortfall that costs the meter nothing** — what [`RungDef::upkeep_decay`] answers for a rung
 /// with no upkeep, and for one still inside its grace. Named for the same reason
 /// [`NO_NEGLECT_GRACE`] is: a bare `0.0` at a decay site reads as *"the meter is fine"* when the
