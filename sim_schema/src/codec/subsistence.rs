@@ -390,6 +390,32 @@ fn create_herds<'a>(
         // **Always written, `""` included** — the empty string is *"this herd is not a blocked
         // build"*, which is a statement, and an absent field would make a reader guess.
         let build_blocked_reason = builder.create_string(herd.build_blocked_reason.as_str());
+        // **THE DESTINATION AND THE LEGS** — always written for the string (`""` is *"not queued"*,
+        // a statement), and the legs **absent when empty** on this table's repeated-field convention:
+        // *"this source has nothing left to climb"* and *"this source is not queued"* both read as no
+        // list, which is what the destination string beside it disambiguates.
+        let build_destination_rung = builder.create_string(herd.build_destination_rung.as_str());
+        let build_legs = if herd.build_legs.is_empty() {
+            None
+        } else {
+            let rows: Vec<_> = herd
+                .build_legs
+                .iter()
+                .map(|leg| {
+                    let rung = builder.create_string(leg.rung.as_str());
+                    fb::BuildLegState::create(
+                        builder,
+                        &fb::BuildLegStateArgs {
+                            rung: Some(rung),
+                            workRemaining: leg.work_remaining,
+                            turnsRemaining: leg.turns_remaining,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&rows))
+        };
+
         // **An EMPTY curve is absent, not a vector of zeros** — the convention every repeated field
         // on this table follows, and the one that lets a client tell "this source published no
         // curve" from "this source does not grow", which are different facts.
@@ -522,6 +548,8 @@ fn create_herds<'a>(
                 buildQueuePosition: herd.build_queue_position,
                 // …and WHY it is stuck, when it is. `""` = not blocked.
                 buildBlockedReason: Some(build_blocked_reason),
+                buildDestinationRung: Some(build_destination_rung),
+                buildLegs: build_legs,
             },
         );
         entries.push(entry);
@@ -542,6 +570,32 @@ fn create_forage_patches<'a>(
         let sow_site_refusal = builder.create_string(patch.sow_site_refusal.as_str());
         // Always written, `""` included — see the herd twin.
         let build_blocked_reason = builder.create_string(patch.build_blocked_reason.as_str());
+        // **THE DESTINATION AND THE LEGS** — always written for the string (`""` is *"not queued"*,
+        // a statement), and the legs **absent when empty** on this table's repeated-field convention:
+        // *"this source has nothing left to climb"* and *"this source is not queued"* both read as no
+        // list, which is what the destination string beside it disambiguates.
+        let build_destination_rung = builder.create_string(patch.build_destination_rung.as_str());
+        let build_legs = if patch.build_legs.is_empty() {
+            None
+        } else {
+            let rows: Vec<_> = patch
+                .build_legs
+                .iter()
+                .map(|leg| {
+                    let rung = builder.create_string(leg.rung.as_str());
+                    fb::BuildLegState::create(
+                        builder,
+                        &fb::BuildLegStateArgs {
+                            rung: Some(rung),
+                            workRemaining: leg.work_remaining,
+                            turnsRemaining: leg.turns_remaining,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&rows))
+        };
+
         let composition = create_flora_shares(builder, &patch.composition);
         // The committed crop (S1) — both empty when the patch is the wild mixed basket.
         let committed_species = builder.create_string(patch.committed_species.as_str());
@@ -625,6 +679,8 @@ fn create_forage_patches<'a>(
                 // The plant twin — see the herd row above.
                 buildQueuePosition: patch.build_queue_position,
                 buildBlockedReason: Some(build_blocked_reason),
+                buildDestinationRung: Some(build_destination_rung),
+                buildLegs: build_legs,
             },
         );
         entries.push(entry);

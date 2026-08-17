@@ -1175,8 +1175,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         let patch = registry
             .patch_mut(source)
             .expect("the site carries a patch");
-        patch.cultivation_cost = cost;
-        patch.cultivation_progress = cost * HALF_BUILT;
+        patch.set_ladder_position(cost * HALF_BUILT, &core_sim::LadderConfig::builtin());
         patch.owner = Some(FactionId(0));
         patch.species = Some(crop);
         patch.biomass = patch.carrying_capacity * STOCKED;

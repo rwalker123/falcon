@@ -205,7 +205,7 @@ fn seat_tended_patch(app: &mut App, coord: UVec2, species: &str) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
         patch.species = Some(species.to_string());
-        patch.complete_cultivation(PATCH_OWNER);
+        patch.complete_cultivation(PATCH_OWNER, &core_sim::LadderConfig::builtin());
         patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
     }
     grow_one_turn(app);
@@ -228,7 +228,7 @@ fn seat_wild_patch(app: &mut App, coord: UVec2) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
         patch.species = None;
-        patch.cultivation_progress = 0.0;
+        patch.set_ladder_position(0.0, &core_sim::LadderConfig::builtin());
         patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
     }
     grow_one_turn(app);

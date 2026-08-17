@@ -352,7 +352,7 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   confirmed to **fail** against the old implementation before the fix.
 - **Rung 1 is untouched and tested from both sides** (`core_sim/tests/flora_commitment.rs`,
   `forage_cultivation::cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched`).
-- **S1 changed no rung payoff dial** — it left `tended_regrowth_gain` and `field_provisions_per_biomass`
+- **S1 changed no rung payoff dial** — it left `tended_regrowth_gain` and rung 3's own payoff
   untouched so any balance movement was attributable to the roster alone. **S2 then retired the tended
   regrowth boost** (`tended_regrowth_gain` 2.0 → **1.0**, neutral): with competitor-removal now explicit
   as concentration, a growth boost double-counts it, so tending pays through concentration + conversion
@@ -526,7 +526,8 @@ a restoration.
   **split out of `field_harvest_biomass`** for exactly the reason `tended_msy_take` was extracted —
   it is the `production` term of the payout's own `min(production, collection)`, so a Field staffed
   past its collection cap quotes and pays the identical number, and there is no second copy of
-  `biomass × field_provisions_per_biomass` to drift.
+  the rung-3 harvest to drift. (Rung 3's flat managed rate is retired — `cultivation.md` → "What a
+  Field buys" — so what must not drift there is now the production gains.)
 - **EMPTY MEANS "NO ROW", NEVER "ZERO"**, and this is the field's contract rather than a nicety: a
   client renders one row per entry, so an empty quote is *no row* while a `0`-valued entry would read
   as a cash crop that pays badly. Empty is what a plant paying no material reports **and** what a
@@ -595,7 +596,9 @@ now feeds every account at rung 2:
   `forage::patch_material_yields` at rungs 1 and 2 alike — which is what closes #427 now that the
   trade scalar is retired: a tended grapevine patch banks **grapes**, not nothing.
   (`tended_take_trade_goods` is deleted with the axis it converted.)
-- **TAKE-driven, not a managed rate — the deliberate difference from the Field arm.** A Field is never
+- **TAKE-driven — and since the Field's managed rate retired, so is EVERY plant rung**
+  (`cultivation.md` → "What a Field buys"). What follows describes the arm as it was written against
+  a Field that was never
   drawn down, so its harvest collapses the policy axis and is quoted as a rate on the standing crop. A
   tended patch *is* drawn down, so its non-food accounts ride the same take its food account does:
   `Deplete` on a tended cash crop banks more material than `Sustain` because it takes more, and the

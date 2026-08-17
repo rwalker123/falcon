@@ -11,13 +11,106 @@ paths:
 
 # Cultivation and the `Sow` verb — the plant twin of the pen
 
+## ⛔ THE PLANT WEB IS ONE POSITION — read this before any `cultivation_progress` reference below
+
+**A patch has ONE number: `ForagePatch::ladder_position`, how far up the plant branch it has been
+worked, in cumulative work units** (`docs/plan_standing_upkeep.md` §2.8). `plant:tended` runs `0 → 50`
+and `plant:field` `50 → 125`, each rung's span being its own `build.work_cost`.
+`cultivation_progress`, `field_progress` and their four stamped companions (`*_cost`,
+`*_retain_bar`) are **gone**; prose below that names them is describing the retired shape, and the
+seam it points at is `forage::patch_rung_work_done` — the position clamped into a rung's own span,
+which is what the wire's two per-rung meters are still published from.
+
+- **`ForagePatch::standing` is derived and re-stamped on every write**, and
+  `ForagePatch::set_ladder_position(position, ladder)` is the **only** mutator — it writes both fields
+  together, so the pair cannot drift. The position itself is private.
+- **`is_cultivated()` / `is_field()` keep their signatures and their ~hundred call sites**; they read
+  `standing.held`. A Field implies a tended patch **by construction** — the Field's range begins where
+  the tended rung's ends — so the reported *"Field above 0% while Cultivation reads 99%"* is
+  unrepresentable rather than forbidden.
+- **Every rate on a patch interpolates on that position**: a Field 40% raised converts at a whole
+  tended patch's rate plus 40% of the Field's extra, and owes its keeping on the same shape. **The
+  BASKET does not** — `patch_composition` resolves at `standing.held`, because a half-weeded basket is
+  not a blend of two baskets.
+- **A QUEUE ENTRY NAMES A DESTINATION, so `sow` on untended ground costs the WHOLE BRANCH — 125 work
+  units, not 75.** It lays two legs (`plant:tended`, then `plant:field`), passes through Cultivated on
+  the way — announced on Cultivate's own channel — and holds the head of the queue until it arrives.
+  The same order on ground that is already tended is **one** leg owing 75, and on a patch 30 units
+  into its Cultivate it owes **20** on that leg: a previous improvement is a receipt, not a discount.
+  See `intensification.md` → "A QUEUE ENTRY NAMES A **DESTINATION**, NOT A RUNG", which owns the seam,
+  the published legs and the per-web kit rule.
+
+`intensification.md` → "ONE POSITION ON THE LADDER" is the authority for the primitives; this file
+covers what the plant web does with them.
+
+## ⛔ WHAT A FIELD BUYS — production, never draw
+
+**A Field changed how you HARVEST, when its job is to change how much the tile GROWS.** Rung 3 used to
+pay a flat `biomass × field_provisions_per_biomass` on a standing crop that was never drawn down —
+no escapement floor, no overdraw, `sustainable == actual` by construction. Three things followed:
+
+1. **The harvest floor did nothing at rung 3** — the one pressure lever the player holds was inert on
+   the rung the whole ladder climbs toward.
+2. **The payout could not interpolate.** A managed rate and an MSY draw-down are different *kinds* of
+   harvest, not two values of one rate, so `tended ↔ Field` stayed a cliff while every other rung
+   quantity had gone continuous.
+3. **A Field could not be over-farmed**, so rung 3 was a strictly-better thing rather than a
+   commitment with a failure mode.
+
+> ### PRODUCTION AND DRAW ARE SEPARATE CONCERNS. A RUNG MAY CHANGE PRODUCTION; **NO RUNG CHANGES THE
+> DRAW.**
+
+**Every plant rung is foraged through one `forage_take` path** — floor-live, worker-capped, drawn
+down. **A Field can be over-farmed and the ⚠ fires on it**: strip it every turn and it fails.
+
+**What rung 3 buys instead is two production gains**, both interpolating on the ladder position
+exactly as the upkeep does:
+
+| gain | where it lands | why |
+|---|---|---|
+| `field_capacity_gain` | the one `carrying_capacity` write in `advance_forage_regrowth` | a sown field is planted densely with the competitors pulled out, so it **holds** more standing crop |
+| `field_regrowth_gain` | `patch_ecology`, the seam that already existed for this | you sowed it and you replant it, so it **comes back** faster |
+
+**This is the animal web's shape, which is the argument for it** — a herd already gets a regrowth
+multiplier and a density multiplier on the land's capacity at pastoral and again at pen. Plants were
+the odd web out.
+
+- **A rung may RAISE `K` and may never LOWER it** (#433). The capacity write applies the gain to the
+  *tile's* capacity, so it stays idempotent and a lapsed Field hands the capacity straight back; a
+  gain below `1.0` is a **config rejection**, because the retired concentration term shrank capacity
+  and threw the remainder away, which made a commitment cost production.
+- **The two gains MULTIPLY** through `r × K / 4`, and **the product is what was held**: they were
+  chosen so the measured Field yield on the reference basket lands where the retired managed rate put
+  it. **The split between them is provisional** and a feel dial. `tests/field_reference_basket.rs`
+  pins the product and will fail if either moves alone.
+- **Measured, on the reference basket** (`AlluvialPlain`, `K = 195`, tile `(0,0)` under seed
+  `0xF10A_5EED_C011_0010`, committed to `wild_emmer`): wild **0.703** → tended **1.328** → Field
+  **6.240** before, and **0.703 → 1.328 → 6.241** after. A re-expression, not a rebalance.
+- **A per-rung QUOTE re-bases the land onto the rung it is asked about** (`rung_msy_take`), because
+  `fieldYield` is published for every patch including a tended one. It is a *ratio*, so a patch
+  already standing on that rung re-bases by exactly `1.0` — which is what keeps the live reading and
+  the quote one number. `composition_for_rung`'s rule, applied to the land instead of the basket.
+- **A Field now needs HANDS.** It holds far more standing crop, so one gatherer brings home a
+  gatherer's load off any rung and realizing rung 3 genuinely takes a crew. That is a real new cost
+  and it is intended.
+- **Composition and conversion did not move.** A Field's basket is still 100% its crop and rung 3
+  keeps whatever conversion gain it had. Those are what the tile is *made of* and how well it
+  *converts* — separate from how much it grows.
+
+**Retired with the model**: `field_provisions`, `field_fodder`, `field_harvest_production`,
+`field_harvest_biomass`, `field_fodder_per_biomass`, `patch_species_quality`,
+`managed_per_worker_yield`, `managed_per_worker_fodder`, `MANAGED_HARVEST_SEASON`,
+`settled_biomass_fraction`, the plant side of `SourceYieldForecast::managed`, and the
+`cultivation.field_provisions_per_biomass` dial they all read. **The animal web's `managed` is
+untouched** — the pen is its own slice.
+
 ## Cultivation (Intensification Phase 1a)
 
 The **plant analog of animal husbandry** (`docs/plan_intensification.md` §3), evolved past the
 mechanical husbandry transpose into **Rung 1a — the worker-tended, place-local tended patch**, and now
-into an **explicit policy with an investment cost**. A patch carries `cultivation_progress` (in **work
-units**, complete at its stored `cultivation_cost`) + `owner: Option<FactionId>` on `ForagePatch`,
-mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the whole `ForageRegistry`
+into an **explicit policy with an investment cost**. A patch carries `ladder_position` (in **work units**, with the tended rung
+complete at the top of its span) + `owner: Option<FactionId>` on `ForagePatch` — where a `Herd` still
+carries the retired two-meter shape (`domestication_progress`/`corral_progress`/`owner`); the checkpoint clones the whole `ForageRegistry`
 (`SimState::forage`), so both rewind with a rollback. A completed patch is a **tended patch**:
 **worker-tended + place-local + higher-output + feral-if-abandoned**. *Sim-only — the client readout is a follow-up.*
 
@@ -252,29 +345,29 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
     `forage::tests::the_plant_rot_rates_are_exactly_what_the_retired_decay_fraction_bled`. **A meter
     that reaches zero forgets its stored cost too**, so the ground reads as unstarted rather than as a
     wild patch quoting a price nobody is paying.
-  - **A COMPLETED RUNG IS NOT LOST ON THE FIRST BLEEDING TURN, and that was the reported bug.** A
-    finished meter sits *exactly* at its own cost, so under a `progress >= cost` predicate the first
-    `0.5` took it below and `is_cultivated()` flipped — three unkept turns cost the tended rung, two a
-    Field, and a Cultivate could be out of *tended* before its keepers were assigned. **The rung's
-    achieved state and the meter's fullness are two facts now**: `is_cultivated()` / `is_field()`
-    compare against a **stamped retention bar** (`ForagePatch::cultivation_retain_bar` /
-    `field_retain_bar`, `RungDef::retention_bar` at `retain_fraction` **0.75** on both rungs), written
-    the turn the rung completes and cleared the turn the meter falls below it. Measured on the shipped
-    ladder: a tended patch survives **28** wholly unmaintained turns and a Field **27**, and
-    re-earning the rung then costs only the `12.5` / `18.75` work that rotted. **Losing it still puts
-    the meter back on its builders**: it is incomplete again, so you must re-`Cultivate`, not
-    re-staff. `intensification.md` → "A RUNG IS NOT LOST THE INSTANT ITS METER DIPS" owns the seam.
-  - **The unwind is NEWEST-FIRST — exactly one meter per turn**, resolved through
-    **`forage::patch_unwinding_rung`**: the Field while it has any progress at all, then the tended
-    ground under it. **`cultivation_progress` cannot move while `field_progress > RUNG_UNSTARTED`.**
-    > **The state this makes unreachable.** Bleeding both meters together knocked a *completed*
-    > tended patch to `0.99` during a gap in the Sow work; once the crew returned, the running `Sow`
-    > marked the patch worked every turn, so rung 2 could neither decay further nor re-accrue (only
-    > `Cultivate` accrues it, and at most one improvement is ever in flight). The patch was stranded
-    > one hundredth below a rung it had already paid for, **permanently**.
-  - **A lost rung is ANNOUNCED**, on the edge where a completed rung crosses back below **the cost
-    stored on that source** (`RUNG_COMPLETE` is retired — the meter is in absolute work units and the
-    completion bar is per-source) — `ForagePatch::decay_cultivation`/`decay_field` return that transition, the exact
+  - **A COMPLETED RUNG *IS* LOST ON THE FIRST BLEEDING TURN AGAIN, AND THAT IS NOW A ROUNDING.** A
+    finished meter sits *exactly* at its own cost, so a `progress >= cost` predicate made the first
+    `0.5` flip `is_cultivated()` — the reported bug, patched for one slice by a **stamped retention
+    bar** at `retain_fraction` `0.75`. **The one-position ladder deletes that bar because it removes
+    the cliff it was patching** (`docs/plan_standing_upkeep.md` §2.8): the payout and the keeping both
+    interpolate on the position **at both rung boundaries**, so a patch at `49.99` of a 50-unit rung
+    pays and owes 99.98% of a tended patch and losing the rung costs a fraction of a percent. It held
+    at `wild ↔ tended` only until the Field's own model was fixed — see "What a Field buys" below.
+    `intensification.md` → "`retain_fraction` AND THE RETENTION BAR ARE DELETED" owns the seam and the
+    guard.
+  - **THE UNWIND IS ARITHMETIC NOW, not a rule the pass honours.** There is one meter —
+    `ForagePatch::ladder_position`, cumulative work units up the branch — and the Field's range sits
+    **above** the tended rung's, so a decay eats the Field first and reaches the ground beneath only
+    once the Field is wholly gone. *"Cultivation cannot move while the Field has progress"* is a
+    property of the number rather than an ordering `advance_cultivation` has to get right, and the
+    state below is unrepresentable rather than merely forbidden.
+    > **The state this makes unreachable.** Bleeding two independent meters together knocked a
+    > *completed* tended patch to `0.99` during a gap in the Sow work; once the crew returned, the
+    > running `Sow` marked the patch worked every turn, so rung 2 could neither decay further nor
+    > re-accrue. The patch was stranded one hundredth below a rung it had already paid for,
+    > **permanently**. A single position cannot express it.
+  - **A lost rung is ANNOUNCED**, on the edge where the position falls out of a rung's span —
+    `ForagePatch::decay_ladder` returns **which rung this call took the patch out of**, the exact
     mirror of the accrue helpers' "did this call finish it", and `forage::announce_rung_lost` pushes
     the verb's **own** feed kind (`Cultivate`/`Sow`, detail `status=feral reason=untended action=…`).
     Once, not every turn of the bleed that follows: the 25-turn payoff has already been destroyed. The
@@ -373,8 +466,9 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
   food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn — a
   whole number a player staffs exactly, out of the band's `agriculture` pool —
-  `upkeep.meter_decay` **`{ per_turn 0.5, retain_fraction 0.75 }`**, what an *unkept* patch loses and
-  how far its meter may erode before the rung is revoked (28 wholly unmaintained turns),
+  `upkeep.meter_decay` **`{ per_turn 0.5 }`**, what an *unkept* patch loses per turn (its
+  `retain_fraction` companion is **deleted** — see "A COMPLETED RUNG *IS* LOST ON THE FIRST BLEEDING
+  TURN AGAIN"),
   `upkeep.scaled_by` **`flat`** (a patch is one tile — there is no head count on the plant web for a
   rate to ride), **`upkeep.grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
   turns after the crew stops; **`crew_needed` and `yield_fraction_while_building` are both retired**
@@ -399,7 +493,7 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   ladder's `learn_rate` 1.0 over a `lesson_costs` entry of 20, which is the same number) and
   `knowledge_completion_threshold` (1.0 = the ledger's completion value). The early-claim `claim_threshold` is **removed**. The build dials'
   invariants (`0 < work_cost`, `0 < upkeep.work_per_turn` and `0 < upkeep.meter_decay.per_turn`
-  with `upkeep.meter_decay.retain_fraction` within `0..=1` **when present**
+  **when present**
   — `null` is how a rung says its meter does not bleed, and a parked `0` is rejected because it would
   mean the same thing while reading like a live dial — `grace_turns < work_cost / reference_output` (a
   grace that outlasts its own build makes walking away free)) are now **enforced on every load path**
@@ -409,11 +503,12 @@ mirroring a `Herd`'s `domestication_progress`/`owner`; the checkpoint clones the
   `0 < completion_threshold <= 1`), which moved to the ladder with those dials in slice 4. **The levers homed here are now validated on every load path**
   (slice 7 — the old "asserted over the *builtin* only, so a `LABOR_CONFIG_PATH` override that breaks it
   is accepted silently" gap is **closed**): `LaborConfig::validate()` enforces the **plant ladder's
-  monotonicity** — `field_provisions_per_biomass > tended_regrowth_gain × regrowth_rate/4 ×
-  provisions_per_biomass × tended_conversion_gain` (tended < field, the payoff twin of
-  `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1`). **It is evaluated at tending's SATURATED
-  best case** — weeding pushed to 100% of the favored crop — because there the tended basket is the
-  crop alone and the crop's own rate cancels from both sides, which is what keeps the check
+  monotonicity** — `field_regrowth_gain × field_capacity_gain > tended_regrowth_gain` (tended <
+  field, the payoff twin of `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1`). **Both rungs
+  are drawn down through the same MSY skim**, so every other term — the basket, the conversion, the
+  tile's `K`, the shared `r/4` curve — is common to both sides and cancels, and the check is
+  scale-free in the biome *and* free of which species it is asked about. The retired form compared a
+  flat `field_provisions_per_biomass` at tending's saturated best case, which is what kept the check
   scale-free in `K` *and* independent of which species it is asked about. The `tended_regrowth_gain` check is now a **coherence floor only** — `>= 1.0`,
   not `> 1.0` — since S2 retired the "wild < tended" guarantee to the roster (`flora_roster.rs`); it
   forbids only the incoherent case of tending growing a stand *slower* than wild.
@@ -598,12 +693,13 @@ herd has one appetite).
   **relation, not a pair of literals** — the whole build is a trickle beside the Field it buys
   (`while_building_per_turn < BUILD_TRICKLE_FRACTION × field_yield`) — because since #433 the Field's
   payout scales with the committed crop's own rate, so any literal would be true of one crop only.
-- **The payout — rung 3 out-yields rung 2, or the rung is pointless.** A completed Field pays its
-  workers `biomass × cultivation.field_provisions_per_biomass` (**0.02**, `labor_config.json`), the
-  tended patch's *shape* at **2×** its rate, place-local and without drawing biomass down.
-  `sustainable == actual` (no ⚠). **But the collection cap still binds** (slice 7): rung 3 collapses the
-  *policy* axis, never the worker cap — you always carry the harvest home — so the actual take is
-  `min(production, workers × per-worker throughput)`, `workers_needed` is derived, and the crop the crew
+- **The payout — rung 3 out-yields rung 2, or the rung is pointless.** A completed Field is gathered
+  through the **ordinary drawn-down path** and out-yields the tended rung by holding more standing
+  crop and growing it back faster (`field_capacity_gain` × `field_regrowth_gain`, `labor_config.json`
+  — see "What a Field buys"). **`sustainable != actual` is reachable and the ⚠ fires**: a Field can be
+  over-farmed. **The collection cap binds harder than it used to**, because there is more to carry:
+  the actual take is
+  `min(what the floor offers, workers × per-worker throughput)`, `workers_needed` is derived, and the crop the crew
   could not carry is reported as `wasted`. **Measured production/turn on the reference basket** (see
   "Cultivation" → the callout; `AlluvialPlain`, K 195), committed to `wild_emmer`: wild Sustain
   **0.703** → tended **1.328** → Field **6.240**, needing **2 / 2 / 10** gatherers. The rung-2 crew is
@@ -638,9 +734,10 @@ herd has one appetite).
 - **`cultivated_count` counts Fields** (`ForagePatch::is_managed`), so the sedentarization
   domestication signal cannot read rung 3 as *less* domesticated than rung 2 (a bare-ground Field
   carries no cultivation meter at all).
-- **Persistence** — `field_progress` is its own meter beside `cultivation_progress` (mirroring
-  `Herd::corral_progress` beside `domestication_progress`), and rides the checkpoint's whole-registry
-  clone, so a rollback rewinds a half-sown Field.
+- **Persistence** — a half-sown Field is a `ladder_position` inside the Field's span, and it rides the
+  checkpoint's whole-registry clone like every other patch field, so a rollback rewinds it. **The
+  derived `standing` rides with it**, which is safe for the reason it is stamped at all: it is written
+  only by `set_ladder_position`, so a restored pair is the pair that was captured.
 - **On the wire (slice 6a — append-only, slots 36–44):** `ForagePatchState` carries
   `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
   never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,

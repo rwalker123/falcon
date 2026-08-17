@@ -55,9 +55,8 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
-        field_provisions, forage_forecast, patch_composition, rung_site_refusal,
-        tile_is_fresh_watered, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
-        NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        forage_forecast, patch_composition, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
+        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -2166,7 +2165,10 @@ mod tests {
         let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
         // A tended (cultivated) patch owned by faction 3.
         let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
-        tended.complete_cultivation(FactionId(0));
+        tended.complete_cultivation(
+            FactionId(0),
+            &crate::intensification::LadderConfig::builtin(),
+        );
         tended.owner = Some(FactionId(3));
         registry.patches.insert(wild.tile, wild);
         registry.patches.insert(tended.tile, tended);

@@ -1403,6 +1403,61 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	await _assert_ready_mark_declares()
 
+	# **THE DESTINATION TRACK** (`docs/plan_standing_upkeep.md` §2.8) — the `⌃`'s ladder card, rendered
+	# in the tall LEFT dock, the SHIPPED default edge. Two states and the PAIR is the claim: at rest
+	# the track states what the branch HOLDS (a banked rung, the rung the patch stands on, and a
+	# locked one still visible with its reason), and mid-climb it states where the entry is HEADED (the
+	# rung on the way and the target), with both figures read off the wire's own legs.
+	#
+	# **THE ZONE ASSERTIONS RUN WITH THE CARD UP, and that is the overlay claim.** The work zone reads
+	# 396 of 396 with a row selected; a track drawn as a block would fail here rather than clip.
+	_hud.update_intensification([_track_half_knowledge_row()])
+	_hud.update_food_modules([{"x": TRACK_PATCH.x, "y": TRACK_PATCH.y,
+		"module": "savanna_grassland", "kind": "gather"}])
+	_set_forage_patches(_track_wild_patch_fixtures())
+	_set_world_herds([])
+	_push_bands([_track_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _assert_rung_track_at_rest()
+	await _save("band_panel_rung_track")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+	# …the SAME ground one rung up, on a faction that knows both crafts: the BANKED rung, which is the
+	# one state a track cannot show on wild ground.
+	_hud.update_intensification([_standing_knowledge_row()])
+	_set_forage_patches(_track_tended_patch_fixtures())
+	_push_bands([_track_band_fixture()])
+	await _settle()
+	await _assert_rung_track_banked()
+	await _save("band_panel_rung_track_banked")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+	# …and the SAME ground mid-climb, with a TWO-LEG entry queued to `plant:field`: the destination
+	# picker opened from the RUNNING build slot, and the queue row opened into its own legs.
+	_hud.update_intensification([_standing_knowledge_row()])
+	_set_forage_patches(_track_climbing_patch_fixtures())
+	_push_bands([_track_band_fixture()])
+	await _settle()
+	await _assert_rung_track_climbing()
+	await _save("band_panel_rung_track_climbing")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	# The card is dismissed before the legs are read: the queue row's expansion is charged to the
+	# BOARD, and a state measured with both open would measure the two together.
+	_hud._bandpanel._rung_track.hide()
+	await _settle()
+	await _assert_queue_row_legs()
+	await _save("band_panel_queue_legs")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_hud._bandpanel._queue_open_key = ""
+	_set_forage_patches([])
+	await _settle()
+
 	_hud.update_intensification([])
 
 	# THE FORAGE JUMP NAMES THE LAND (issue #412, a pre-existing defect the marks made reachable-looking).
@@ -8035,6 +8090,251 @@ func _assert_ready_marks() -> void:
 			and String(m["ready_policy"]) == "").size() == 1)
 
 # =====================================================================================
+#  THE DESTINATION TRACK (`docs/plan_standing_upkeep.md` §2.8)
+# =====================================================================================
+#
+# **THE `⌃` OPENS A LADDER TRACK AND THE PICK IS THE DECLARATION.** A queue entry names a DESTINATION
+# rung now and climbs every rung between where the source stands and there, so the one-rung mark could
+# not say what the player was buying: `sow` on untended ground is TWO legs and costs the whole branch.
+#
+# **THE CARD IS A `PopupPanel`, WHICH IS WHY IT COSTS THE ZONE NOTHING.** The work zone reads 396 of
+# 396 in height and 354 of 356 in width with a row selected, and both budgets ASSERT rather than clip
+# — so the states below run `_assert_zone_content_fits` with the card UP, which is the claim that the
+# overlay really is an overlay.
+
+## The track board's tile, away from every other block's so a leaked patch cannot answer for it.
+const TRACK_PATCH := Vector2i(66, 25)
+
+## The rung spans this board is priced at — the plant branch's two, distinct so a face quoting the
+## wrong one is visible in the assertion rather than merely different.
+const TRACK_TENDED_WORK_COST := 50.0
+
+const TRACK_FIELD_WORK_COST := 75.0
+
+## …and the CLIMBING board's position: thirty work into the Cultivate leg, so that leg owes 20 and the
+## Field leg owes its whole 75. **A previous improvement is a RECEIPT, NOT A DISCOUNT** — the thirty
+## already banked is what the track must never ask the player to buy again, and a fixture that banked
+## nothing could not tell the two readings apart.
+const TRACK_TENDED_WORK_DONE := 30.0
+
+const TRACK_TENDED_LEG_REMAINING := TRACK_TENDED_WORK_COST - TRACK_TENDED_WORK_DONE
+
+## The two legs' CHAINED dates, the wire's own — the second is the entry's whole `buildTurnsRemaining`,
+## which is what "chained behind the legs above it" means in arithmetic.
+const TRACK_TENDED_LEG_TURNS := 5
+
+const TRACK_FIELD_LEG_TURNS := 24
+
+## **WILD ground, on a faction that knows Cultivation and NOT Seed Selection** — the state a LOCKED
+## rung has to be seen in. It offers a `⌃` (Cultivate is ready), so the track is reachable, and the
+## rung above that is refused: a locked rung HIDDEN would read as a two-rung ladder rather than as one
+## this faction cannot yet climb, which is the whole reason the track shows what the branch holds.
+func _track_wild_patch_fixtures() -> Array:
+	return [_track_patch_row(false, 0.0)]
+
+## **THE SAME GROUND ONE RUNG UP, on a faction that knows both crafts** — where a BANKED rung is
+## visible at all. `Wild` sits beneath where the patch stands and must contribute NO figure to the
+## card: a previous improvement is a RECEIPT, NOT A DISCOUNT.
+func _track_tended_patch_fixtures() -> Array:
+	return [_track_patch_row(true, TRACK_TENDED_WORK_COST)]
+
+## The one patch row both boards are cut from, so the two states differ in the patch's POSITION and in
+## the faction's knowledge and in nothing else.
+func _track_patch_row(is_cultivated: bool, cultivation_work_done: float) -> Dictionary:
+	return {
+		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": is_cultivated, "is_field": false, "sow_site_refusal": "",
+		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": cultivation_work_done,
+		"field_work_cost": TRACK_FIELD_WORK_COST,
+		"field_work_done": 0.0,
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}
+
+## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:field`.** It is the shape the
+## whole arc is about: one position, one queue row, and a destination two rungs above where the patch
+## stands. `build_legs` is the WIRE's — the client re-derives neither the owing nor the dates — and
+## the first leg is the one in flight, the list being published first-incomplete first.
+func _track_climbing_patch_fixtures() -> Array:
+	return [{
+		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false, "sow_site_refusal": "",
+		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": TRACK_TENDED_WORK_DONE,
+		"cultivation_progress": TRACK_TENDED_WORK_DONE / TRACK_TENDED_WORK_COST,
+		"field_work_cost": TRACK_FIELD_WORK_COST,
+		"field_work_done": 0.0,
+		"build_queue_position": 0,
+		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_legs": [
+			{"rung": SourceForecast.RUNG_KEY_TENDED,
+				"work_remaining": TRACK_TENDED_LEG_REMAINING,
+				"turns_remaining": TRACK_TENDED_LEG_TURNS},
+			{"rung": SourceForecast.RUNG_KEY_FIELD,
+				"work_remaining": TRACK_FIELD_WORK_COST,
+				"turns_remaining": TRACK_FIELD_LEG_TURNS},
+		],
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+
+## The faction that knows how to TEND and not how to SOW — the one dial the locked half of the track
+## turns on, so the two states below differ in knowledge and in the patch's own position and in
+## nothing else.
+func _track_half_knowledge_row() -> Dictionary:
+	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.45, "herding": 1.0, "penning": 1.0}
+
+## A band working that one patch, so it carries a WORK ROW — the precondition the whole `⌃` rests on —
+## with builders on the pool, so a declared climb reads as RUNNING rather than as stalled.
+func _track_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 947
+	band["id"] = "Band 17"
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": TRACK_PATCH.x, "target_y": TRACK_PATCH.y,
+			"actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "builders", "workers": 3},
+	]
+	return band
+
+## **THE TRACK ON WILD GROUND — where you are, what is open, and what is LOCKED.** Driven through the
+## REAL `⌃`, and every claim is read off the card's own metas rather than its text: every face here is
+## composed at render time, so a text match would only confirm the string the assertion had assumed.
+func _assert_rung_track_at_rest() -> void:
+	if not await _open_rung_track_from_mark("the wild patch"):
+		return
+	var states := _rung_track_states()
+	_assert_band_panel("track — the card draws the WHOLE plant branch, locked rung included (%s)"
+		% str(states.keys()), states.size() == SourceForecast.RUNG_BRANCH_PLANT.size())
+	# **THE SET IS THE CLAIM.** A card that marked everything `open` passes any single one of these.
+	_assert_band_panel("track — the wild floor reads as where the patch IS (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_NONE, "")) == RungLadder.STATE_STANDING)
+	_assert_band_panel("track — …the Tended rung as one it may be taken to (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == RungLadder.STATE_OPEN)
+	_assert_band_panel("track — …and the Field rung LOCKED rather than hidden (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_LOCKED)
+	# **THE SHAPE IS THE STATEMENT** — a button is a CHOICE and an unmet prerequisite is a FACT, so a
+	# locked rung carries no control at all rather than a greyed one offering an act the sim refuses.
+	_assert_band_panel("track — the open rung is pressable and the locked one is not",
+		_rung_track_row(SourceForecast.IMPROVEMENT_CULTIVATE) != null
+			and _rung_track_row(SourceForecast.IMPROVEMENT_SOW) == null)
+	# **AND THE LOCKED ROW SAYS WHY**, in the same gate reason every other surface states.
+	_assert_band_panel("track — …and the lock states the KNOWLEDGE that is missing",
+		_has_label_containing(_hud,
+			HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT.split(" %d")[0]))
+
+## **THE BANKED RUNG — the receipt-not-discount property, rendered.** The patch stands on Tended, so
+## the rung beneath it is bought and paid for: it states its STATE and no figure at all, and the fifty
+## work it once cost appears nowhere on the card.
+func _assert_rung_track_banked() -> void:
+	if not await _open_rung_track_from_mark("the tended patch"):
+		return
+	var states := _rung_track_states()
+	var faces := _rung_track_faces()
+	_assert_band_panel("track — the wild floor reads as BANKED beneath where the patch stands (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_NONE, "")) == RungLadder.STATE_BANKED)
+	_assert_band_panel("track — …the Tended rung as where it IS (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == RungLadder.STATE_STANDING)
+	_assert_band_panel("track — …and the Field rung OPEN, both crafts being known (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_OPEN)
+	# **A RUNG AT OR BELOW WHERE THE SOURCE STANDS QUOTES NO FIGURE.** The claim is over every rendered
+	# face, Buttons included — the selectable rows are Buttons, so a label-only scan would testify
+	# about neither the banked row's silence nor the open row's price.
+	var priced: Array = faces.values().filter(func(face): return String(face).contains(" work"))
+	_assert_band_panel("track — exactly ONE row quotes a price, and it is the one above the patch (%s)"
+		% str(faces), priced.size() == 1
+		and String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")).contains(" work"))
+	_assert_band_panel("track — …so a banked rung quotes no work, a previous improvement being a receipt",
+		not str(faces.values()).contains("%d work" % int(TRACK_TENDED_WORK_COST)))
+
+## Press the one `⌃` on the board and settle, answering whether a track came up. `false` (with its own
+## FAIL) when the board offers none, so a state that has lost its mark says so rather than leaving the
+## claims below it passing on an empty card.
+func _open_rung_track_from_mark(what: String) -> bool:
+	var marks := _ready_mark_buttons()
+	if marks.is_empty():
+		_fail("track — %s offers no ⌃ to open a track from" % what)
+		return false
+	(marks.values()[0] as Button).pressed.emit()
+	await _settle()
+	if _rung_track_states().is_empty():
+		_fail("track — the ⌃ on %s opened no track" % what)
+		return false
+	return true
+
+## **THE TRACK MID-CLIMB — the chosen path, its target, and the two figures the wire owns.** Opened
+## from the RUNNING build slot, which is the other half of the control: *how far are we taking this?*
+## is asked most often mid-climb, and until the track existed the only answer was to withdraw the
+## entry and declare again.
+func _assert_rung_track_climbing() -> void:
+	var running: Button = null
+	for slot in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_KIND_META, []):
+		if String(slot.get_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META)) \
+				== HudWorkVocab.WORK_ROW_BUILD_KIND_BUILDING and slot is Button:
+			running = slot as Button
+	if running == null:
+		_fail("track — the climbing row's build slot is not a pressable RUNNING face")
+		return
+	running.pressed.emit()
+	await _settle()
+	var states := _rung_track_states()
+	_assert_band_panel("track — the queued destination reads as THE TARGET (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_TARGET)
+	_assert_band_panel("track — …and the rung between reads as ON THE WAY (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == RungLadder.STATE_PATH)
+	# **THE LEG'S OWING IS THE WIRE'S, FROM WHERE THE PATCH STANDS.** Thirty work is banked on the
+	# Cultivate leg, so it owes twenty — and a card quoting the rung's whole fifty would be asking the
+	# player to buy work they have already bought. Both figures are composed through the SHIPPED
+	# format, so the claim pins the numbers rather than the wording.
+	var faces := _rung_track_faces()
+	var in_flight := HudWorkVocab.RUNG_TRACK_COST_FORMAT % [
+		DetailFormat.format_work_units(TRACK_TENDED_LEG_REMAINING),
+		DetailFormat.build_turns_clause(TRACK_TENDED_LEG_TURNS)]
+	_assert_band_panel("track — the in-flight leg quotes what is LEFT of it, not the rung's span — \"%s\" (got \"%s\")"
+		% [in_flight, String(faces.get(SourceForecast.IMPROVEMENT_CULTIVATE, ""))],
+		String(faces.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == in_flight)
+	var target := HudWorkVocab.RUNG_TRACK_COST_FORMAT % [
+		DetailFormat.format_work_units(TRACK_FIELD_WORK_COST),
+		DetailFormat.build_turns_clause(TRACK_FIELD_LEG_TURNS)]
+	_assert_band_panel("track — …and the target quotes its own chained date — \"%s\" (got \"%s\")"
+		% [target, String(faces.get(SourceForecast.IMPROVEMENT_SOW, ""))],
+		String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")) == target)
+
+## **A MULTI-LEG ENTRY IS ONE QUEUE ROW WITH ITS LEGS INSIDE.** Splitting it would offer two `✕`s for
+## one withdrawal and two places to drag for one reorder, so the entry stays one unit and the row
+## opens into its climb.
+func _assert_queue_row_legs() -> void:
+	var rows := _build_queue_rows()
+	_assert_band_panel("legs — a two-leg entry is ONE queue row (%d)" % rows.size(), rows.size() == 1)
+	if rows.is_empty():
+		return
+	_click_control(rows[0])
+	await _settle()
+	var legs := _collect_meta_controls(_panel, HudWorkVocab.BUILD_QUEUE_LEG_META, [])
+	_assert_band_panel("legs — …that opens into BOTH of its legs (%d)" % legs.size(), legs.size() == 2)
+	if legs.size() == 2:
+		# The list is published first-incomplete first, so the FIRST line is the leg in flight — and it
+		# wears the queue head's own marker rather than a second vocabulary for the same idea.
+		_assert_band_panel("legs — …in climb order, the in-flight leg first (%s then %s)"
+			% [String(legs[0].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META)),
+				String(legs[1].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META))],
+			String(legs[0].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META))
+				== SourceForecast.IMPROVEMENT_CULTIVATE
+			and String(legs[1].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META))
+				== SourceForecast.IMPROVEMENT_SOW)
+
+# =====================================================================================
 #  THE `⌃` DECLARES (`docs/plan_standing_upkeep.md` §4.7a ①)
 # =====================================================================================
 
@@ -8129,7 +8429,11 @@ func _declare_band_fixture() -> Dictionary:
 func _ready_mark_buttons() -> Dictionary:
 	var out: Dictionary = {}
 	for control in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_STATE_META, []):
-		if not (control is Button):
+		# **THE SLOT'S OWN KIND, NEVER ITS NODE TYPE.** A running build's face is a `Button` too now —
+		# it opens the same destination track — so `is Button` counts a climb as an offer, which is a
+		# wrong answer that no assertion in this block would have flagged.
+		if String(control.get_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META,
+				HudWorkVocab.WORK_ROW_BUILD_KIND_NONE)) != HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER:
 			continue
 		var line := control.get_parent()
 		if line == null:
@@ -8138,6 +8442,52 @@ func _ready_mark_buttons() -> Dictionary:
 			if child is Label and (child as Label).size_flags_horizontal == Control.SIZE_EXPAND_FILL:
 				out[(child as Label).text] = control
 				break
+	return out
+
+## **THE OPEN DESTINATION TRACK'S ROW FOR ONE RUNG** — the `Button` a press would send, or `null`.
+## Searched from `_hud` rather than from `_panel`: the track is a `PopupPanel` parented into the HUD
+## CanvasLayer, which is the whole reason it costs the work zone nothing.
+func _rung_track_row(improvement: String) -> Button:
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META)) != improvement:
+			continue
+		for child in control.get_children():
+			if child is Button:
+				return child as Button
+	return null
+
+## The FURTHEST rung the open track offers — the last selectable row, the branch being drawn in climb
+## order. `null` when no track is up or nothing on it may be picked.
+func _rung_track_top_row() -> Button:
+	var top: Button = null
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		for child in control.get_children():
+			if child is Button:
+				top = child as Button
+	return top
+
+## Every rung row's RENDERED face, as `improvement -> text` — read off whichever control the row
+## carries, because the shape is the statement: a selectable rung is a `Button` and every other kind
+## is a `Label`, so a scan for one of the two testifies about half the card.
+func _rung_track_faces() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		var key := String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META))
+		for child in control.get_children():
+			if child is Button:
+				out[key] = (child as Button).text
+			elif child is Label and (child as Label).horizontal_alignment \
+					== HORIZONTAL_ALIGNMENT_RIGHT:
+				out[key] = (child as Label).text
+	return out
+
+## Every rung row the open track carries, as `improvement -> state`. `{}` when no track is up, which
+## is what makes the card's ABSENCE assertable.
+func _rung_track_states() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		out[String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META))] = \
+			String(control.get_meta(HudWorkVocab.RUNG_TRACK_STATE_META))
 	return out
 
 ## **THE `⌃` PRESS, DRIVEN THROUGH THE REAL HANDLER, ON BOTH WEBS AND BOTH GRAMMARS**
@@ -8193,15 +8543,47 @@ func _assert_ready_mark_declares() -> void:
 		_assert_band_panel("declare — …and no turn count, the queue row's date being the sim's own",
 			not plant_mark.tooltip_text.contains(
 				HudComposeVocab.BUILD_TURNS_COUNT_FORMAT.split("%")[0]))
+	# **THE PRESS OPENS A TRACK; THE PICK IS THE DECLARATION** (`docs/plan_standing_upkeep.md` §2.8).
+	# The `⌃` used to queue the source's next rung outright, and an entry names a DESTINATION now — so
+	# the chain the player walks is two acts, and this walks both: press the mark, then press the
+	# TARGET row of the card that came up. The wanted destination is stated per row so the claim is
+	# still about the LINE the sim receives rather than about whichever rung the track happened to
+	# offer first.
+	# **THE MARKS ARE RE-COLLECTED PER ROW, and holding the first pass's nodes is a silent abort.** A
+	# declaration writes the optimistic overlay and re-renders the whole board, so every OTHER row's
+	# button is freed the moment the first pick lands — and `as Button` on a freed object raises
+	# *"Trying to cast a freed object"*, which ends this function mid-way with no `FAIL` line and an
+	# exit status of 0. The labels survive a re-render; the nodes do not.
 	var lines: Array[String] = []
 	for label in marks.keys():
+		# **AND THE BAND IS RE-PUSHED BEFORE EACH ROW, for the reason spelled out below**: the press
+		# runs `Hud._after_pending_change`, which re-renders the SELECTION card too — and this harness
+		# stages that card's occupant as a SEPARATE band, so the board that comes back after a settle
+		# is the other band's and carries none of these rows. A live client cannot reach that, both
+		# dicts coming from one snapshot.
+		_push_bands([_declare_band_fixture()])
+		await _settle()
+		var mark := _ready_mark_buttons().get(label, null) as Button
+		if mark == null:
+			_fail("declare — the ⌃ on `%s` is gone before it was pressed" % label)
+			continue
+		mark.pressed.emit()
+		await _settle()
+		# **THE FURTHEST DESTINATION THE TRACK OFFERS**, which is what makes the claim below a claim
+		# about the TRACK and not merely about the press: each of these three sources has exactly one
+		# reachable rung above where it stands, so the line the sim receives pins which rung the card
+		# put at the top of its selectable set.
+		var row := _rung_track_top_row()
+		if row == null:
+			_fail("declare — the ⌃ on `%s` opened no selectable track row" % label)
+			continue
 		var seen: Array = []
 		var sink := func(payload: Dictionary) -> void: seen.append(payload)
 		_hud.improvement_requested.connect(sink)
-		(marks[label] as Button).pressed.emit()
+		row.pressed.emit()
 		_hud.improvement_requested.disconnect(sink)
 		if seen.is_empty():
-			_fail("declare — pressing the ⌃ on `%s` emitted nothing" % label)
+			_fail("declare — picking a destination on `%s`'s track emitted nothing" % label)
 			continue
 		lines.append(String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", "")))
 	lines.sort()
@@ -12258,7 +12640,11 @@ func _assert_queue_row_settings() -> void:
 	else:
 		_click_control(animal_row)
 		await _settle()
-		_assert_band_panel("an ANIMAL entry does not expand — there is nothing to configure on a Tame",
+		# **AND THE CLAIM IS ABOUT THE CROP, not about the web.** §2.8 gave the strip a LEG LIST too,
+		# so an entry with published legs expands on either web — this fixture's herd publishes none,
+		# which is the state a Tame that has never been to the wire is in, and what the row must not do
+		# there is invite a click that opens an empty strip.
+		_assert_band_panel("an ANIMAL entry with no published legs does not expand — a Tame commits no species",
 			_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
 	_click_control(plant_row)
 	await _settle()
@@ -12318,8 +12704,21 @@ func _assert_queue_row_settings() -> void:
 	# builder that appended one beside the old.
 	_assert_band_panel("…and never the crop it moved off",
 		not line.contains(QUEUE_CROP_COMMITTED_SPECIES))
-	# Close it, so the states after this one are not rendered with a strip open.
-	_click_control(plant_row)
+	# **CLOSE IT ON A ROW RE-FOUND AFTER THE PICK, not on the one captured before it.** The pick runs
+	# `Hud._emit_assign_labor`, which re-renders the zone and frees every row this function is holding
+	# — and `_click_control` on a freed object raises, which ends this assertion block with no `FAIL`
+	# line and leaves the strip open over every state that follows.
+	var closer: Control = null
+	for row in _build_queue_rows():
+		var face := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_FACE_META)
+		if face != null and not String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)).contains(
+				HudFormat.policy_face(SourceForecast.IMPROVEMENT_TAME)):
+			closer = row
+			break
+	if closer == null:
+		_fail("declare — the PLANT queue row is gone, so its settings strip cannot be closed")
+		return
+	_click_control(closer)
 	await _settle()
 
 ## **THE OPEN STRIP IS PAID FOR, AND THE WIDE DOCK IS WHERE THAT MATTERS** — with the strip CLOSED
@@ -12594,7 +12993,11 @@ func _work_row_build_faces() -> Dictionary:
 				continue
 			out[(child as Label).text] = {
 				"face": String(control.get_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META)),
-				"color": (control as Label).get_theme_color("font_color"),
+				# **READ OFF THE `Control`, NOT A `Label`.** A running build's slot is a `Button` since
+				# the destination track landed (it opens the same track), and a `Label` cast on one
+				# yields `null` — which is a crash rather than a wrong colour, and takes every claim in
+				# this block with it. `get_theme_color` answers the override either way.
+				"color": control.get_theme_color("font_color"),
 			}
 			break
 	return out

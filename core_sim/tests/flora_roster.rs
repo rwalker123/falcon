@@ -72,7 +72,7 @@ fn tended_and_wild_rate(
     // The rung is FINISHED here — a bare `1.0` no longer completes anything now that a job has a
     // size (`docs/plan_unit_costed_work.md`), so this runs the real accrual. The faction cannot
     // matter: a rate is a pure function of ground and config.
-    tended.complete_cultivation(core_sim::FactionId(0));
+    tended.complete_cultivation(core_sim::FactionId(0), &core_sim::LadderConfig::builtin());
     tended.species = Some(species.to_string());
     let wild = core_sim::ForagePatch::new(coord, capacity);
     (

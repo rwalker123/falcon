@@ -609,7 +609,7 @@ const IMPROVEMENT_DECLARED_FORMAT := "%s · %s"
 # **AND THE PRICE IS NOT ON IT.** Ray, on the same pass: *"That information should be on the work tab.
 # No need to have it here, it is useless."* The pile and the standing rate are what a job COSTS, and
 # the surface that queues, funds and orders jobs is the one where a cost is actionable — so they ride
-# the `⌃` mark's own tooltip (`HudWorkVocab.WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT`) and the turn count
+# the `⌃` mark's own tooltip (`HudWorkVocab.WORK_ROW_READY_TRACK_TOOLTIP`) and the turn count
 # rides the BUILD QUEUE row's date. **The rung's PAYOFF stays here**, in the `PER TURN` readout's
 # `ONCE TENDED` row: what it pays is the "should I?" this sheet exists to answer, and is not a cost.
 #

@@ -60,6 +60,28 @@ const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: your people kno
 # is the exact hidden rule the arc exists to kill.
 const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Tame it to finish"
 
+# **THE TWO REFUSALS THAT NAME NO REMEDY, because there is not one** — the destination picker's, and
+# its alone. Every other reason here says what is missing AND how to fix it; these say the ladder
+# stops here for this animal or this ground, and inventing a remedy for them would promise a door
+# that does not exist.
+#
+# **THEY EXIST BECAUSE THE PICKER SHOWS A BARRED RUNG RATHER THAN HIDING IT**
+# (`docs/plan_standing_upkeep.md` §2.8). `RungGates.hunt_rungs_admitted` withholds an
+# above-ceiling rung OUTRIGHT — correctly, for a MARK, which promises the verb is available — but a
+# track exists to say what the branch HOLDS, and a rung silently missing from it reads as a ladder
+# with two steps rather than as one this species cannot climb.
+const GATE_REASON_SPECIES_NEVER_TAMED := "This animal will never be tamed — no craft and no work changes that."
+
+const GATE_REASON_SPECIES_NEVER_PENNED := "This animal will never be penned — no craft and no work changes that."
+
+const GATE_REASON_CROP_CANNOT_CLIMB_FORMAT := "Nothing growing here can be taken to a %s."
+
+# …and the one a DESTINATION earns from a rung BELOW it. A climb lays every leg between where the
+# source stands and where it was sent, so a barred rung on the way bars everything above it — and the
+# honest thing to state is the rung that actually refused rather than a second refusal invented for
+# the destination.
+const GATE_REASON_PATH_BLOCKED_FORMAT := "%s must be raised first: %s"
+
 # **THE PATCH-ECOLOGY GATE REASON IS GONE** ("Patch is Stressed — ease workers off and let it regrow
 # to Thriving"), with `GATE_PHASE_UNKNOWN_LABEL`, the "not Thriving" phrase it fell back to on a
 # redacted tile. No rung on either web gates on a source's health: a crew drawing the ground down

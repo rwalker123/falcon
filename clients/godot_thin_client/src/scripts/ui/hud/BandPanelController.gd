@@ -150,6 +150,18 @@ var _party_open_key: String = ""
 ## setting today (the crop); the key is dropped on any render where its entry has left the queue or
 ## has nothing to show, exactly as `_work_open_key` is dropped for a source that leaves the board.
 var _queue_open_key: String = ""
+## The DESTINATION PICKER's card (`docs/plan_standing_upkeep.md` §2.8), built lazily on the first
+## press of a work row's build slot and reused thereafter.
+##
+## **IT IS A WINDOW AND SO IS NOT ZONE STATE.** Every other member in this block survives a snapshot
+## because it decides what the zone RENDERS; this one holds a node that renders over the zone and
+## changes no layout at all — which is the whole reason the track is a popover, the work zone having
+## no pixels left to give it.
+var _rung_track: PopupPanel = null
+## …and the card's inner `MarginContainer`, held so a re-open clears the TRACK rather than the chrome
+## that hosts it. `queue_free` is deferred, so freeing the margin renders correctly once and opens onto
+## an empty card ever after — which is a defect a frame cannot show and a second open can.
+var _rung_track_body: MarginContainer = null
 ## **THE KIT PICKED ON A BAND-WIDE ROLE CARD**, keyed `"<band entity>:<role>"` → roster id.
 ##
 ## **THE ROLE CARDS HAD NOWHERE TO KEEP PER-ROW STATE, and this is what was added rather than found.**
@@ -1537,6 +1549,12 @@ func _repage_work_zone() -> void:
     _fill_work_zone(_work_zone_host, _work_zone_band)
 
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
+    # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8). The
+    # card is anchored to a row this pass is about to free, and its every figure is a function of the
+    # source's position, the faction's knowledge and the queue — so a card left up over the rebuilt
+    # board would be pointing at nothing and quoting last turn. It is a momentary picker, not a panel:
+    # re-opening it is one press of the mark that is about to be redrawn.
+    _dismiss_rung_track()
     var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
     col.add_child(_build_work_head(band, models,
@@ -1585,10 +1603,10 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # **THE SETTINGS STRIP IS CHARGED TO THE BOARD, exactly as the work inspector is.** It is asked
     # of the SAME resolver the block builds from, so the height reserved here and the height drawn
     # there are one decision; asking twice is idempotent (it only prunes a stale key).
+    var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
     var capacity := _work_board_capacity(filtered.size(), inspected, queued.size(),
         queue_rows_max, bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)),
-        _queue_settings_open_index(band, queued,
-            mini(queued.size(), queue_rows_max)) >= 0)
+        int(queue_settings["legs"]), bool(queue_settings["crop"]))
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1619,11 +1637,12 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## `HudWorkVocab.pools_block_height` is both the block's own `custom_minimum_size` and this term, plus
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
 func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, queue_rows_max: int,
-        pools_fund_mode: bool, queue_settings_open: bool = false) -> Dictionary:
+        pools_fund_mode: bool, queue_settings_legs: int = 0,
+        queue_settings_crop: bool = false) -> Dictionary:
     var box := _zone_box()
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
-        queue_settings_open)
+        queue_settings_legs, queue_settings_crop)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
@@ -2067,12 +2086,13 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     block.add_theme_constant_override("separation", 0)
     var drawn := mini(queued.size(), rows_max)
     # **THE STRIP IS PAID FOR ONLY WHERE IT DRAWS**, and the test is the same one the row's own click
-    # target and the strip's contents use — `_queue_settings_open_index`, resolved ONCE here and spent
+    # target and the strip's contents use — `_queue_settings_state`, resolved ONCE here and spent
     # three times below, so the block cannot reserve a height for a strip it then declines to build.
     # An entry scrolled past the row cap cannot be open either: it has no row to hang beneath.
-    var open_index := _queue_settings_open_index(band, queued, drawn)
+    var settings := _queue_settings_state(band, queued, drawn)
+    var open_index := int(settings["index"])
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
-        queued.size(), rows_max, open_index >= 0))
+        queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"])))
     # **THE BUILDERS COUNT IS PENDING-AWARE**, the rule every compose sheet on this panel follows: a
     # player who has just staffed the role must not read a header telling them nobody is on it.
     var builders := int(_band_labor.effective_role_workers(
@@ -2094,25 +2114,46 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
     return block
 
-## **WHICH DRAWN ENTRY HAS ITS SETTINGS STRIP OPEN — `-1` for none.** The block's one answer to that
-## question, so the height it reserves, the row it draws beneath and the strip it builds are the same
-## decision made once.
+## **WHICH DRAWN ENTRY HAS ITS SETTINGS STRIP OPEN, AND WHAT THAT STRIP HOLDS** — `{index, legs,
+## crop}`, `index == -1` for none. The block's one answer to that question, so the height it reserves,
+## the row it draws beneath, the strip it builds and the board's own capacity are the same decision
+## made once.
+##
+## **IT ANSWERS THE STRIP'S CONTENT RATHER THAN ITS HEIGHT** (§2.8). The strip lists the entry's LEGS
+## as well as its crop, so its height varies — and `HudWorkVocab.build_queue_settings_height` stays the
+## one arithmetic both the reservation and the render read.
 ##
 ## **IT ALSO PRUNES THE KEY**, the way `_work_open_key` is pruned for a source that leaves the board:
-## an entry that finished, was withdrawn, scrolled past the row cap or lost its basket takes its
-## expansion with it rather than leaving a strip pinned to nothing.
-func _queue_settings_open_index(band: Dictionary, queued: Array, drawn: int) -> int:
+## an entry that finished, was withdrawn or scrolled past the row cap takes its expansion with it
+## rather than leaving a strip pinned to nothing.
+func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dictionary:
+    var closed := {"index": -1, "legs": 0, "crop": false}
     if _queue_open_key == "":
-        return -1
+        return closed
     for index in range(drawn):
         var entry: Dictionary = queued[index] as Dictionary
         if String(entry.get("key", "")) != _queue_open_key:
             continue
-        if _queue_crop_choices(band, entry).is_empty():
+        var state := _queue_settings_content(band, entry)
+        if int(state["legs"]) <= 0 and not bool(state["crop"]):
             break
-        return index
+        state["index"] = index
+        return state
     _queue_open_key = ""
-    return -1
+    return closed
+
+## **WHAT ONE ENTRY'S STRIP WOULD HOLD** — `{legs, crop}`, and `{0, false}` for an entry with nothing
+## to show. ONE predicate decides the row's clickability, the strip's existence and its height, so a
+## row can never invite a click that opens an empty strip.
+##
+## **A ONE-LEG ENTRY STILL LISTS ITS LEG.** The list is what says how far this job goes, and an entry
+## that showed nothing until it was two legs long would make the single-leg case the odd one out —
+## which is the common case on the animal web, whose entries are always one leg.
+func _queue_settings_content(band: Dictionary, model: Dictionary) -> Dictionary:
+    return {
+        "legs": (model.get("build_legs", []) as Array).size(),
+        "crop": not _queue_crop_choices(band, model).is_empty(),
+    }
 
 ## Open this entry's settings, or close them if they are already open — the queue's twin of
 ## `_toggle_work_inspector`, and one at a time for the same reason: the strip costs the block height
@@ -2129,14 +2170,32 @@ func _toggle_queue_settings(key: String) -> void:
 ## It wears the work inspector's own stylebox and its own reserved height, so the two expansions in
 ## this zone read as one idea.
 func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var content := _queue_settings_content(band, model)
     var strip := PanelContainer.new()
     strip.set_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META, String(model.get("key", "")))
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT)
+    strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
+        int(content["legs"]), bool(content["crop"])))
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 0)
+    strip.add_child(column)
+    # **THE ENTRY'S CLIMB, ONE LINE PER LEG** (`docs/plan_standing_upkeep.md` §2.8). A `sow` declared
+    # on untended ground is TWO legs and is still ONE queue row: splitting it would offer two `✕`s for
+    # one withdrawal and two places to drag for one reorder, so the entry stays one unit and its legs
+    # are what the row opens into. The wire lists them first-incomplete first, so the FIRST is the leg
+    # in flight and nothing here decides which.
+    var legs: Array = model.get("build_legs", []) as Array
+    if not legs.is_empty():
+        column.add_child(_build_queue_legs_head())
+        for index in range(legs.size()):
+            column.add_child(_build_queue_leg_line(legs[index] as Dictionary,
+                index == SourceForecast.BUILD_QUEUE_HEAD))
+    if not bool(content["crop"]):
+        return strip
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    strip.add_child(line)
+    column.add_child(line)
     var key := Label.new()
     key.text = HudWorkVocab.BUILD_QUEUE_SETTINGS_CROP_KEY
     key.add_theme_color_override("font_color", HudStyle.INK_FAINT)
@@ -2147,6 +2206,60 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     if picker != null:
         line.add_child(picker)
     return strip
+
+## The leg list's own key, in the CROP key's register — so the two halves of the strip read as one
+## expansion rather than as two panels that happened to open together.
+func _build_queue_legs_head() -> Label:
+    var head := Label.new()
+    head.text = HudWorkVocab.BUILD_QUEUE_LEGS_KEY
+    head.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_LEG_HEIGHT)
+    head.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    head.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
+    head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return head
+
+## One leg: the rung it raises, what it still owes FROM WHERE THE SOURCE STANDS, and its own chained
+## date — all three the wire's, none of them re-derived here.
+##
+## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot: a
+## conditionally-omitted marker would shift the legs behind it sideways, which is the block's standing
+## rule one level in. It also takes the cyan a rung under construction wears on the board, so *which
+## one is happening now* is answerable without reading the marker column.
+##
+## **A LEG THE WIRE DATES WITH A SENTINEL STATES ITS WORK AND NO TURN.** A leg cannot be dated when
+## the entry carrying it cannot, and a fabricated number here would be worse than the silence.
+func _build_queue_leg_line(leg: Dictionary, in_flight: bool) -> HBoxContainer:
+    var line := HBoxContainer.new()
+    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_LEG_HEIGHT)
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    var marker := Label.new()
+    marker.text = HudWorkVocab.BUILD_QUEUE_LEG_MARKER if in_flight else ""
+    marker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    marker.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    marker.add_theme_font_size_override("font_size", HudWorkVocab.BUILD_QUEUE_LEG_FONT_SIZE)
+    marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(marker)
+    var improvement := String(leg.get("improvement", ""))
+    var name := HudWorkVocab.RUNG_TRACK_NAME_FORMAT % [
+        FoodIcons.for_policy(improvement), DetailFormat.rung_badge_word(improvement)]
+    var work := DetailFormat.format_work_units(
+        float(leg.get(SourceForecast.BUILD_LEG_WORK_KEY, 0.0)))
+    var turns := DetailFormat.build_turns_clause(
+        int(leg.get(SourceForecast.BUILD_LEG_TURNS_KEY, SourceForecast.BUILD_TURNS_NO_ESTIMATE)))
+    var face := HudWorkVocab.BUILD_QUEUE_LEG_UNDATED_FORMAT % [name, work] if turns == "" \
+        else HudWorkVocab.BUILD_QUEUE_LEG_FORMAT % [name, work, turns]
+    var label := Label.new()
+    label.set_meta(HudWorkVocab.BUILD_QUEUE_LEG_META, improvement)
+    label.text = face
+    label.clip_text = true
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_color_override("font_color",
+        HudStyle.SIGNAL_DEEP if in_flight else HudStyle.INK_DIM)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.BUILD_QUEUE_LEG_FONT_SIZE)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(label)
+    return line
 
 ## The block's head — `BUILD QUEUE` and, on the right, who is funding it and with what.
 ##
@@ -2188,10 +2301,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # the crop into fragments, and a tooltip cannot repair a list a player is reading DOWN. The
     # expansion is the work board's own inspector pattern, one open at a time.
     #
-    # **ONE PREDICATE DECIDES BOTH the invitation and the contents** (`_queue_crop_choices`), so a row
-    # can never offer a click that opens an empty strip — which is what an animal entry would be, a
-    # Tame committing no species.
-    var expandable := not _queue_crop_choices(band, model).is_empty()
+    # **ONE PREDICATE DECIDES BOTH the invitation and the contents** (`_queue_settings_content`), so a
+    # row can never offer a click that opens an empty strip. It was the crop alone, and an animal entry
+    # — a Tame committing no species — was therefore never expandable; §2.8's LEGS are the second
+    # thing an entry always has, so both webs open now and the strip's content is what differs.
+    var content := _queue_settings_content(band, model)
+    var expandable := int(content["legs"]) > 0 or bool(content["crop"])
     var open := expandable and String(model.get("key", "")) == _queue_open_key
     row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
     if expandable:
@@ -2348,7 +2463,14 @@ func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
 ## in-progress axis states in its own tooltip and the map badge draws. A second table of verb names
 ## here is how one rung comes to be called two things on one screen.
 func _build_queue_job_face(model: Dictionary) -> String:
-    var verb := String(model.get("improvement", "")).strip_edges().to_lower()
+    # **THE FACE NAMES WHERE THE ENTRY IS GOING, NOT THE LEG IT IS ON** (`docs/plan_standing_upkeep.md`
+    # §2.8). An entry climbs every rung between where the source stands and its destination, so a row
+    # headed `Cultivate` on a `sow` the player ordered would rename their job to its first leg — and
+    # then rename it again when that leg finished. The legs are stated INSIDE the row, where the
+    # distinction belongs. A single-leg entry's destination IS its rung, so this reads unchanged there.
+    var verb := String(model.get("build_destination", "")).strip_edges().to_lower()
+    if verb == SourceForecast.IMPROVEMENT_NONE:
+        verb = String(model.get("improvement", "")).strip_edges().to_lower()
     if verb == SourceForecast.IMPROVEMENT_NONE:
         # A queued entry always carries a declaration, but the meter answers for itself if one is
         # ever missing — `building_policy` is `RungGates.rung_in_progress`'s already-resolved rung.
@@ -2450,14 +2572,20 @@ func _build_queue_crop_picker(band: Dictionary, model: Dictionary) -> OptionButt
 ## what the compose sheet's two-command commit existed to guarantee, and exactly why the declaration
 ## could move here at all. The crew, the floor, the kit and the crop on the wire are all untouched.
 ##
-## **THE RUNG IS THE MODEL'S `ready_policy`, NEVER RE-RESOLVED.** It is `RungGates.next_rung_ready`'s
-## already-resolved answer — the same one the mark the player just clicked was drawn from — so the
-## glyph on screen and the verb on the wire cannot name different rungs.
+## **THE RUNG IS THE DESTINATION THE PLAYER PICKED, AND THE VERB IS ALREADY ITS NAME**
+## (`docs/plan_standing_upkeep.md` §2.8). The four verbs always were destinations — `cultivate` means
+## *take it to Cultivated*, `sow` means *take it to Field* — and with one position per source that
+## reading is literal: the queued entry lays every rung between where the source stands and where it
+## was sent. **So a destination picker needed no new command and no new token**: it emits the verb
+## naming the chosen rung, and the sim works out the legs.
+##
+## `rung` is `RungLadder.track`'s already-resolved answer for the row the player pressed — the same
+## row the figures they read were drawn from — so the track on screen and the verb on the wire cannot
+## name different rungs.
 ##
 ## `workers` / `floor` / `pending_entity` ride the payload for the relay's optimistic write; see the
 ## signal's own note for why they are not command tokens.
-func _emit_ready_declaration(band: Dictionary, model: Dictionary) -> void:
-    var rung := String(model.get("ready_policy", ""))
+func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) -> void:
     if rung == SourceForecast.IMPROVEMENT_NONE:
         return
     var herd_id := String(model.get("herd_id", ""))
@@ -2482,6 +2610,89 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary) -> void:
         "floor": float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
         "pending_entity": int(band.get("entity", -1)),
     })
+
+## **THE DESTINATION PICKER — the `⌃`'s ladder track, floated ABOVE the zone and never inside it**
+## (`docs/plan_standing_upkeep.md` §2.8).
+##
+## **A `PopupPanel` BECAUSE IT IS A WINDOW.** The work zone is FULL — 396 of 396 in height and 354 of
+## 356 in width with a row selected, and both budgets ASSERT rather than clip — so a track drawn as a
+## block would fail the harness at best and slice the board at worst. A Window cannot change any
+## zone's height, which is exactly why the detail breakdowns are popovers and the destructive confirms
+## are `ConfirmationDialog`s. It costs the zone nothing at all.
+##
+## **THE CARD IS REBUILT PER OPEN, NEVER PATCHED.** The track is a function of the source's position,
+## the faction's knowledge and whatever entry is queued, all three of which move per snapshot — and a
+## card that survived a render would go on offering a rung the source has since climbed. The panel
+## node is reused because a Window is expensive; its CONTENT is not.
+##
+## `anchor` is the control that was pressed, captured for the popup's rect BEFORE anything re-renders.
+func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> void:
+    var kind := String(model.get("kind", ""))
+    var source := _rung_track_source(model)
+    var rows := RungLadder.track(kind, source, HudComposeVocab.BARE_FORECAST_PREFIX,
+        String(model.get("improvement", "")), _player_knowledge())
+    if not RungLadder.has_track(rows):
+        return
+    var track := _ensure_rung_track()
+    # **THE CARD'S MARGIN IS THE CHROME AND IS NEVER FREED — its CHILDREN are.** Clearing the Window's
+    # own children instead frees the margin the very line below reaches for, and `queue_free` is
+    # deferred, so the first open renders correctly and every later one opens onto an empty card. That
+    # is the exact shape this shipped in for one run of the harness.
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    # **THE PRESS CLOSES THE CARD BEFORE IT EMITS.** The declaration writes the optimistic overlay and
+    # re-renders the whole zone, which frees the very row this card is anchored to; a card left up
+    # over the rebuilt board would be showing the track it had just made stale.
+    margin.add_child(RungLadder.build_track(rows, func(rung: String) -> void:
+        _dismiss_rung_track()
+        _emit_ready_declaration(band, model, rung)))
+    track.popup(_rung_track_anchor_rect(anchor))
+
+## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.
+func _dismiss_rung_track() -> void:
+    if _rung_track != null and is_instance_valid(_rung_track) and _rung_track.visible:
+        _rung_track.hide()
+
+## The RAW wire source the track reads — the patch off the lookup, or the herd's LIVE dict. Herds
+## migrate, so a track must never read the assignment's launch-time target; it is the same resolution
+## `_work_source_models` makes for the rung mark, restated here because the model carries the mark's
+## ANSWER rather than the dict it came from.
+func _rung_track_source(model: Dictionary) -> Dictionary:
+    if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+        return _band_labor.find_world_herd(String(model.get("herd_id", "")))
+    return _band_labor.forage_patch_lookup().get(
+        Vector2i(int(model.get("x", -1)), int(model.get("y", -1))), {})
+
+## Where the card sits: a zero-height rect just under the pressed mark, in SCREEN space (what
+## `Popup.popup` wants). `get_screen_transform` folds in the window position and the canvas stretch,
+## both of which this HUD has — the `DisclosureController` popover's own anchoring.
+func _rung_track_anchor_rect(anchor: Control) -> Rect2i:
+    # **AND IT MUST BE IN THE TREE, not merely alive.** A press can arrive on a control the render
+    # that answered the previous one has already detached, and `get_screen_transform` on a detached
+    # `CanvasItem` is an engine ERROR plus an identity transform — a card at the top-left corner of
+    # the screen with nothing to say it came from this row.
+    if anchor == null or not is_instance_valid(anchor) or not anchor.is_inside_tree():
+        return Rect2i()
+    var xform := anchor.get_screen_transform()
+    var below := xform * Vector2(0.0, anchor.size.y + HudWorkVocab.RUNG_TRACK_GAP)
+    return Rect2i(Vector2i(below), Vector2i.ZERO)
+
+## The track's Window, built once and reused. Styled through `HudStyle` like every other card here.
+func _ensure_rung_track() -> PopupPanel:
+    if _rung_track != null and is_instance_valid(_rung_track):
+        return _rung_track
+    var card := PopupPanel.new()
+    card.name = HudWorkVocab.RUNG_TRACK_META
+    card.set_meta(HudWorkVocab.RUNG_TRACK_META, true)
+    card.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+    var margin := MarginContainer.new()
+    for side in DisclosureController.POPOVER_MARGIN_SIDES:
+        margin.add_theme_constant_override("margin_%s" % side, HudWorkVocab.RUNG_TRACK_PADDING)
+    card.add_child(margin)
+    _host.add_child(card)
+    _rung_track = card
+    _rung_track_body = margin
+    return card
 
 func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
     emit_signal("unqueue_requested", {
@@ -2664,17 +2875,24 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         ready_color = HudStyle.SIGNAL_DEEP
     elif ready_glyph != "":
         ready_face = HudWorkVocab.WORK_ROW_READY_FORMAT % ready_glyph
-    # **THE OFFER IS A BUTTON, AND THE TWO BUILDING STATES ARE NOT**
-    # (`docs/plan_standing_upkeep.md` §4.7a ①). Pressing `⌃` queues the rung for this band's builders,
-    # which is the whole of the declaration act: the compose sheet keeps the forecast and no longer
-    # commits, and the sim's *"an improvement command reaches only bands already working the source"*
-    # rule is satisfied by construction here — a row EXISTS because this band works this source.
+    # **THE SLOT OPENS THE DESTINATION TRACK, AND A STALLED BUILD DOES NOT**
+    # (`docs/plan_standing_upkeep.md` §2.8, §4.7a ①). Pressing `⌃` used to queue the source's next
+    # rung outright; a queue entry names a DESTINATION now and climbs every rung on the way, so the
+    # press opens a small ladder track and the PICK is the declaration. The sim's *"an improvement
+    # command reaches only bands already working the source"* rule is still satisfied by construction
+    # — a row EXISTS because this band works this source.
     #
-    # **THE BUILDING STATES STAY `Label`s, and the shape is the statement.** There is nothing left to
-    # declare on a rung already in flight, and the `⚠` a stalled build wears is a WARNING rather than
-    # an offer; a button under it would invite a click with no order behind it.
+    # **A RUNNING BUILD OPENS THE SAME TRACK, which is what gives the chosen path a live home.** *How
+    # far are we taking this?* is asked most often mid-climb, and until the track existed the only
+    # answer was to withdraw the entry and declare again. The work already banked is kept either way
+    # — it is a position on the branch, not a purchase of one rung.
+    #
+    # **A STALLED BUILD STAYS A `Label`, and the shape is the statement.** The `⚠` is a WARNING rather
+    # than an offer, and a button under it would invite a click that changes nothing about why the
+    # meter is stuck.
     var ready: Control
-    var offers_rung := ready_face != "" and building_glyph == ""
+    var stalled := building_glyph != "" and bool(model.get("build_stalled", false))
+    var offers_rung := ready_face != "" and not stalled
     if offers_rung:
         var queue_btn := Button.new()
         queue_btn.text = ready_face
@@ -2687,7 +2905,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         # AFTER `apply_button`, which writes its own `font_color`: the mark keeps the SIGNAL ink it
         # wore as a Label, and the hover brightening `apply_button` set stays as the affordance.
         queue_btn.add_theme_color_override("font_color", ready_color)
-        queue_btn.pressed.connect(func() -> void: _emit_ready_declaration(band, model))
+        queue_btn.pressed.connect(func() -> void: _open_rung_track(band, model, queue_btn))
         ready = queue_btn
     else:
         var ready_label := Label.new()
@@ -2699,6 +2917,16 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # searched for their text would only confirm the string it had already assumed. It rides whichever
     # node the slot holds, so a harness reading the slot does not have to know which kind it is.
     ready.set_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META, ready_face)
+    # …and WHICH of the three states drew it, because the node TYPE no longer says: a running build's
+    # face is a `Button` too now, so `is Button` reads a climb as an offer.
+    var build_kind := HudWorkVocab.WORK_ROW_BUILD_KIND_NONE
+    if stalled:
+        build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_STALLED
+    elif building_glyph != "":
+        build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_BUILDING
+    elif ready_glyph != "":
+        build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER
+    ready.set_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META, build_kind)
     ready.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_READY_WIDTH, 0.0)
     # STOP on the button, so the press does not ALSO bubble to the row's `gui_input` and open the
     # inspector under the sheet the click just declared from; IGNORE on a Label, which is the slot's
@@ -3077,17 +3305,23 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
                     HudFormat.policy_face(String(building.get("policy", ""))),
                     HudFormat.progress_percent(float(building.get("progress", 0.0)))]
-        # **THE `⌃`'s HOVER, RESOLVED ONCE FOR BOTH THE MARK AND THE ROW** (§4.7a ①). The sentence
-        # says what the click does; the line beneath is the rung's PRICE — its `<rung>WorkCost` pile
-        # and its `<rung>UpkeepDemand` rate — which left the compose sheet on Ray's call that a cost
-        # belongs on the surface that queues and funds jobs. **No turn count**: the BUILD QUEUE row's
-        # date is the sim's chained answer, and a second estimate here would be two producers for one
-        # number. `build_price_clause` is the same composer the sheet used, so the wording is unmoved.
+        # **THE BUILD SLOT'S HOVER, RESOLVED ONCE FOR BOTH THE MARK AND THE ROW** (§4.7a ①, §2.8).
+        # The sentence says what the press does — it OPENS A TRACK now rather than queueing outright,
+        # so a hover still promising a one-click declaration would describe a control that no longer
+        # exists. The line beneath is the NEXT rung's PRICE — its `<rung>WorkCost` pile and its
+        # `<rung>UpkeepDemand` rate — which left the compose sheet on Ray's call that a cost belongs on
+        # the surface that queues and funds jobs. **No turn count**: the BUILD QUEUE row's date is the
+        # sim's chained answer, and a second estimate here would be two producers for one number.
+        #
+        # **A RUNNING BUILD'S SLOT OPENS THE SAME TRACK AND SAYS SO INSTEAD.** It quotes no price: the
+        # price it would state is the rung already being raised, which the face beside it is metering.
         var ready_tooltip := ""
+        if not building.is_empty() and not build_stalled:
+            ready_tooltip = HudWorkVocab.WORK_ROW_BUILDING_TRACK_TOOLTIP
         if not ready.is_empty():
             var ready_rung := String(ready.get("policy", ""))
             ready_tooltip = HudFormat.join_tooltip_lines([
-                HudWorkVocab.WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT % HudFormat.policy_face(ready_rung),
+                HudWorkVocab.WORK_ROW_READY_TRACK_TOOLTIP,
                 DetailFormat.build_price_clause(
                     SourceForecast.build_work_cost(rung_source,
                         HudComposeVocab.BARE_FORECAST_PREFIX, ready_rung),
@@ -3223,6 +3457,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # queue, so on its own it cannot tell forty turns of work from eight turns queued behind
             # four other jobs, and the position is what says which.
             "build_turns": SourceForecast.build_turns_remaining(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, AND WHAT IS LEFT OF THE CLIMB**
+            # (`docs/plan_standing_upkeep.md` §2.8). An entry names a DESTINATION and lays every rung
+            # between where the source stands and there, so it is ONE queue row with its legs INSIDE
+            # — the block reads both off the model here, beside the position and the countdown they
+            # belong with. `""` / `[]` on a source no band has queued.
+            "build_destination": SourceForecast.build_destination_rung(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            "build_legs": SourceForecast.build_legs(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN
             # CARD USES** (`docs/plan_standing_upkeep.md` §4.6b). The countdown above says the pool is

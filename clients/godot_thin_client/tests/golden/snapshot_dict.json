@@ -431,6 +431,19 @@
     {
       "biomass": 69.25,
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
+      "build_destination_rung": "forage_patches[0].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "forage_patches[0].build_legs[0].rung",
+          "turns_remaining": 138,
+          "work_remaining": 64.900002
+        },
+        {
+          "rung": "forage_patches[0].build_legs[1].rung",
+          "turns_remaining": 169,
+          "work_remaining": 65.230003
+        }
+      ],
       "build_queue_position": 117,
       "build_turns_remaining": 171,
       "build_work_from_gear": 76.230003,
@@ -566,6 +579,19 @@
     {
       "biomass": 74.910004,
       "build_blocked_reason": "forage_patches[1].build_blocked_reason",
+      "build_destination_rung": "forage_patches[1].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "forage_patches[1].build_legs[0].rung",
+          "turns_remaining": 165,
+          "work_remaining": 31.52
+        },
+        {
+          "rung": "forage_patches[1].build_legs[1].rung",
+          "turns_remaining": 198,
+          "work_remaining": 90.489998
+        }
+      ],
       "build_queue_position": 144,
       "build_turns_remaining": 172,
       "build_work_from_gear": 25.290001,
@@ -842,6 +868,19 @@
       "biomass": 109.120003,
       "body_mass": 32.599998,
       "build_blocked_reason": "herds[0].build_blocked_reason",
+      "build_destination_rung": "herds[0].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "herds[0].build_legs[0].rung",
+          "turns_remaining": 137,
+          "work_remaining": 112.230003
+        },
+        {
+          "rung": "herds[0].build_legs[1].rung",
+          "turns_remaining": 10,
+          "work_remaining": 29.16
+        }
+      ],
       "build_queue_position": 84,
       "build_turns_remaining": 128,
       "build_work_from_gear": 61.02,
@@ -952,6 +991,19 @@
       "biomass": 44.529999,
       "body_mass": 55.09,
       "build_blocked_reason": "herds[1].build_blocked_reason",
+      "build_destination_rung": "herds[1].build_destination_rung",
+      "build_legs": [
+        {
+          "rung": "herds[1].build_legs[0].rung",
+          "turns_remaining": 46,
+          "work_remaining": 95.139999
+        },
+        {
+          "rung": "herds[1].build_legs[1].rung",
+          "turns_remaining": 125,
+          "work_remaining": 21.709999
+        }
+      ],
       "build_queue_position": 153,
       "build_turns_remaining": 111,
       "build_work_from_gear": 23.51,

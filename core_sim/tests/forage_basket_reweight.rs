@@ -95,9 +95,9 @@ fn patch_on_rung(species: Option<&str>, field: bool) -> ForagePatch {
     patch.species = species.map(str::to_string);
     if species.is_some() {
         if field {
-            patch.complete_field(FIXTURE_OWNER);
+            patch.complete_field(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
         } else {
-            patch.complete_cultivation(FIXTURE_OWNER);
+            patch.complete_cultivation(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
         }
     }
     patch
@@ -134,8 +134,19 @@ fn the_tiles_capacity_is_the_same_at_every_rung() {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).expect("patch exists");
             patch.species = field.map(|_| crop.clone());
-            patch.cultivation_progress = f32::from(field == Some(false));
-            patch.field_progress = f32::from(field == Some(true));
+            // One position states the rung: the top of the tended rung's span for a tended
+            // patch, the top of the Field's for a Field, and zero for a wild stand.
+            let ladder = core_sim::LadderConfig::builtin();
+            let rung = match field {
+                Some(true) => Some(core_sim::RungKey::PlantField),
+                Some(false) => Some(core_sim::RungKey::PlantTended),
+                None => None,
+            };
+            let position = rung.map_or(core_sim::RUNG_UNSTARTED, |key| {
+                let (base, width) = core_sim::plant_rung_span(key, &ladder);
+                base + width
+            });
+            patch.set_ladder_position(position, &ladder);
             // Deliberately wrong, so the assertion below can only pass if the system rewrote it.
             patch.carrying_capacity = expected * 0.25;
         }
@@ -146,9 +157,22 @@ fn the_tiles_capacity_is_the_same_at_every_rung() {
             .patch(coord)
             .expect("patch exists")
             .carrying_capacity;
+        // **A RUNG MAY RAISE `K` AND MAY NEVER LOWER IT** (#433). Rungs 1-2 carry the tile's own
+        // capacity verbatim; rung 3 raises it, because a sown field is planted densely with the
+        // competitors pulled out — the one thing that must never happen is the retired concentration
+        // term's *shrink*, which made a commitment cost production.
+        let gain = match rung {
+            "field" => labor().forage.cultivation.field_capacity_gain,
+            _ => 1.0,
+        };
         assert!(
-            (carried - expected).abs() <= EPSILON * expected.max(1.0),
-            "a {rung} patch must carry the tile's own K: {carried} vs {expected}"
+            (carried - expected * gain).abs() <= EPSILON * (expected * gain).max(1.0),
+            "a {rung} patch carries the tile's K times its rung's own capacity gain ({gain}): \
+             {carried} vs {expected}"
+        );
+        assert!(
+            carried >= expected - EPSILON * expected.max(1.0),
+            "…and NO rung may leave it below the tile's own: {carried} vs {expected}"
         );
     }
 }
@@ -663,7 +687,7 @@ fn the_published_composition_is_the_patchs_effective_basket() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
-        patch.complete_field(FIXTURE_OWNER);
+        patch.complete_field(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
     }
     let field = published(&mut app);
     assert_eq!(field.len(), 1, "a Field publishes one plant: {field:?}");
@@ -714,13 +738,21 @@ fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
     // picker's full-standing-crop payoff are answered at the same biomass) — one patch on rung 2,
     // one on rung 3. A **Field** quote must not be able to tell them apart.
     let seat = |app: &mut App, field: bool| {
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).expect("patch exists");
+            patch.species = Some(crop.clone());
+            patch.complete_cultivation(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
+            if field {
+                patch.complete_field(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
+            }
+        }
+        // **The sim's own capacity write, because a rung may RAISE `K`** — rung 3 does, so a fixture
+        // that seated the rung by hand and left the stored capacity behind would be comparing a Field
+        // standing on rung-2 land.
+        app.world.run_system_once(advance_forage_regrowth);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
-        patch.species = Some(crop.clone());
-        patch.complete_cultivation(FIXTURE_OWNER);
-        if field {
-            patch.complete_field(FIXTURE_OWNER);
-        }
         patch.biomass = patch.carrying_capacity;
     };
 
@@ -794,9 +826,9 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
     let mut wild = ForagePatch::new(UVec2::ZERO, 1.0);
     wild.species = Some("wild_emmer".to_string());
     let mut tended = wild.clone();
-    tended.complete_cultivation(FIXTURE_OWNER);
+    tended.complete_cultivation(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
     let mut field = wild.clone();
-    field.complete_field(FIXTURE_OWNER);
+    field.complete_field(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
 
     for (name, patch) in [("building", &wild), ("tended", &tended), ("field", &field)] {
         let planted = core_sim::composition_for_rung(
@@ -1098,7 +1130,7 @@ fn seat_patch(app: &mut App, coord: UVec2, crop: Option<&str>) {
     let patch = registry.patch_mut(coord).expect("patch exists");
     patch.species = crop.map(str::to_string);
     if crop.is_some() {
-        patch.complete_cultivation(FIXTURE_OWNER);
+        patch.complete_cultivation(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
     }
     patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
 }

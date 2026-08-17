@@ -213,14 +213,15 @@ pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_material_payoff,
     commit_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
     forage_per_worker_biomass, forage_provisions, forage_source_yield_preview, patch_build_verb,
-    patch_composition, patch_material_yields, patch_meter_rot, patch_provisions_per_biomass,
-    patch_rung_already_built, patch_species_quality, patch_upkeep_demand, patch_upkeep_shortfall,
-    patch_upkeep_workers_needed, project_arrivals_forage, project_realized_forage,
-    resolve_committed_species, rung_payoff, rung_site_refusal, spawn_initial_forage,
-    species_is_legal_here, tended_take_fodder, tile_flora_composition, tile_forage_capacity,
-    tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry, SpeciesRefusal,
-    CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
-    WHOLE_BASKET,
+    patch_claims_keeping, patch_composition, patch_keeping_basis, patch_material_yields,
+    patch_meter_rot, patch_provisions_per_biomass, patch_rung_already_built, patch_rung_work_done,
+    patch_species_quality, patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall,
+    patch_upkeep_workers_needed, plant_rung_span, project_arrivals_forage, project_realized_forage,
+    resolve_committed_species, rung_material_yields, rung_payoff, rung_site_refusal,
+    spawn_initial_forage, species_is_legal_here, tended_take_fodder, tile_flora_composition,
+    tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
+    SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
+    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -239,15 +240,15 @@ pub use influencers::{
 };
 pub use intensification::{
     activity_work, build_fraction, build_turns_estimate, build_turns_remaining,
-    build_work_per_worker_turn, distribute_upkeep_pool, gear_work_supply, knows, learn_multiplier,
-    load_intensification_ladder_from_env, pool_work_supply, upkeep_shortfall,
+    build_work_per_worker_turn, distribute_upkeep_pool, gear_work_supply, interpolate, knows,
+    learn_multiplier, load_intensification_ladder_from_env, pool_work_supply, upkeep_shortfall,
     upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig, LadderConfigHandle,
     LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMeterDecay, RungMovement, RungSiteRequirement, RungUpkeep, SiteRefusal,
-    UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST,
-    FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY,
-    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
-    UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
+    RungKey, RungMeterDecay, RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding,
+    RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
+    FABRICATED_BUILD_COST, FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR,
+    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+    RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED, UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

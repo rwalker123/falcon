@@ -2832,8 +2832,11 @@ exactly that one with `before false, after true`.
 
 ### …AND THE `⌃` IS THE CONTROL THAT DECLARES THE BUILD (§4.7a ①)
 
-The mark was a `Label`. It is a **`Button` in the OFFERED branch only**, and pressing it appends the job
-to the band's build queue — one click, on the tab that owns the pool that will pay for it.
+The mark was a `Label`. It is a **`Button`** now, and pressing it opens the DESTINATION TRACK — the
+declaration is the pick on that card. **§2.8 superseded the one-click form this section describes**: a
+queue entry names a destination and lays every rung on the way, so the section above ("…AND THE `⌃`
+OPENS A LADDER TRACK") is what the control does today, and everything below is the reasoning it
+inherited.
 
 **What it replaced was a trap.** The only way to order a build was the tile compose sheet's
 `🌱 Cultivate this patch` checkbox, which is not the commit: the only thing that commits it is a button
@@ -2874,6 +2877,108 @@ two remedy frames.
 Frames: `band_panel_rung_ready` (a tended patch offers Sow, a tamed pen-ceiling Aurochs offers Corral,
 a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point), `band_panel_rung_ready_filter` and
 `band_panel_ready_declare`.
+
+### …AND THE `⌃` OPENS A LADDER TRACK, BECAUSE AN ENTRY NAMES A DESTINATION (§2.8)
+
+The sim stores **one position per source** in cumulative work units — `plant:tended` runs `0 → 50` and
+`plant:field` `50 → 125` — and a queue entry names a **destination rung** rather than a single rung.
+An entry climbs every rung between where the source stands and that destination and stays at the head
+until it ARRIVES, so `sow` declared on untended ground is a TWO-LEG climb that costs the whole branch.
+
+**A one-rung mark cannot state that.** Pressing `⌃` used to queue the source's next rung outright, so
+the control's whole vocabulary was *this rung, now* on a model whose unit of decision is *how far are
+we taking this*. It opens a small **ladder track** instead, and the PICK is the declaration.
+
+```
+TAKE IT TO…
+  Wild                                banked
+  🌱 Tended Patch                where you are
+  ▦ Field                     75 work · ≈24 turns
+```
+
+- **THE CARD IS A `PopupPanel`, AND THAT IS A CORRECTNESS DECISION.** The work zone reads **396 of
+  396** in height and **354 of 356** in width with a row selected, and both budgets ASSERT rather than
+  clip — so a track drawn as a block would fail the harness at best and slice the board at worst. A
+  Window cannot change any zone's height, which is exactly why the detail breakdowns are popovers and
+  the destructive confirms are `ConfirmationDialog`s. It costs the zone nothing at all, and the two
+  rendered states run `_assert_zone_content_fits` with the card UP, which is that claim asserted.
+- **THE CARD IS REBUILT PER OPEN, NEVER PATCHED** — the track is a function of the source's position,
+  the faction's knowledge and whatever entry is queued, and all three move per snapshot. The Window is
+  reused because a Window is expensive; its content is not. **Its inner `MarginContainer` is the chrome
+  and is never freed** — clearing the Window's own children frees the very margin the next line reaches
+  for, and `queue_free` is deferred, so that renders correctly ONCE and opens onto an empty card ever
+  after. That is a defect no frame can show and a second open catches immediately.
+- **A RUNNING BUILD'S FACE OPENS THE SAME TRACK, and that is what gives the chosen path a live home.**
+  *How far are we taking this?* is asked most often mid-climb, and until the track existed the only
+  answer was to withdraw the entry and declare again; the work banked is kept either way, being a
+  position on the branch rather than a purchase of one rung. **A STALLED build stays a `Label`** — the
+  `⚠` is a warning rather than an offer, and a button under it would invite a click that changes
+  nothing about why the meter is stuck.
+- **SO THE SLOT'S NODE TYPE STOPPED ANSWERING *is this an offer*.** `HudWorkVocab.WORK_ROW_BUILD_KIND_META`
+  is on the slot beside the face it drew (`offer` / `building` / `stalled`), because `control is Button`
+  now counts a climb as an offer — a wrong answer that no assertion in the block would have flagged.
+- **THE COMMAND DID NOT MOVE.** The four verbs always WERE destinations, so picking a rung emits the
+  verb that names it and the sim works out the legs: no new token, no new grammar, and
+  `_emit_ready_declaration` takes the picked rung instead of reading the model's `ready_policy`.
+- **THE `⌃` STILL MEANS *ready*, so a source whose only rung above it is locked shows no mark.** That
+  is deliberate: the mark promises the verb is AVAILABLE, and putting a chevron on every wild source in
+  the game to advertise a locked rung is the failure `RungGates.next_rung_ready` exists to prevent. A
+  locked rung is seen from a track opened on a source that has SOMETHING ready — which is the state a
+  player is in whenever the ladder matters.
+- **THE HOVER SAYS WHAT THE PRESS DOES.** `WORK_ROW_READY_TRACK_TOOLTIP` replaced
+  `WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT`'s promise of a one-click queue; the PRICE line beneath it is
+  unchanged and is still `DetailFormat.build_price_clause`'s.
+
+**WHAT A BANKED RUNG SAYS IS THE POINT OF THE READOUT.** It states its STATE and no figure at all —
+the fifty work it once cost appears nowhere on the card — because a previous improvement is a
+**RECEIPT, NOT A DISCOUNT**: the player is never asked to buy work already bought, and is never
+offered it back either. The in-flight leg quotes what is LEFT of it from where the source stands
+(twenty of fifty, not fifty), which is the wire's own `workRemaining`.
+
+**AND A DESTINATION IS BARRED BY ANYTHING BELOW IT.** A climb lays every leg, so a locked rung bars
+everything above it and those rungs state the blocking rung's own reason rather than a second refusal
+invented for them. Offering a destination whose path is refused is a job that queues and then blocks —
+which is the state §4.6b's whole `Blocked` vocabulary exists to explain after the fact.
+
+### A MULTI-LEG ENTRY IS ONE QUEUE ROW, WITH ITS LEGS INSIDE
+
+The row names its **destination** (`▸ ▦ Sow (66, 25)`), not the leg it happens to be on: a row headed
+`Cultivate` on a `sow` the player ordered would rename their job to its first leg, and rename it again
+when that leg finished. The legs are the row's EXPANSION:
+
+```
+▸ ▦ Sow (66, 25)              turn 64 (60%)   ✕
+  CLIMB
+   ▸ 🌱 Tended · 20 work · ≈5 turns
+     ▦ Field · 75 work · ≈24 turns
+  CROP  [Sim picks ⌄]
+```
+
+- **ONE UNIT, deliberately.** Splitting a two-leg climb into two queue rows would offer two `✕`s for
+  one withdrawal and two places to drag for one reorder.
+- **THE LEG IN FLIGHT IS THE FIRST ONE, and nothing here decides that** — the wire lists them
+  first-incomplete first. It wears the queue head's own `▸` and the cyan a rung under construction
+  wears on the board, and every other leg reserves the marker's slot, the block's standing rule one
+  level in.
+- **A LEG THE WIRE DATES WITH A SENTINEL STATES ITS WORK AND NO TURN.** A leg cannot be dated when the
+  entry carrying it cannot, and a fabricated number is worse than the silence.
+- **THE STRIP'S HEIGHT IS ITS CONTENT, AND THE ARITHMETIC STAYS IN ONE PLACE.**
+  `build_queue_block_height` took a lone BOOL precisely so the number lived once; a strip that also
+  lists legs has a height that varies, so what a caller states is now the CONTENT (`settings_legs`,
+  `settings_crop`) and `HudWorkVocab.build_queue_settings_height` is the one arithmetic both the
+  reservation and the render read. **The leg list's own `CLIMB` key costs a line** — forgetting it is
+  how a strip draws taller than it was paid for, which this zone answers by clipping the board.
+- **BOTH WEBS EXPAND NOW.** The row used to be clickable only where there was a CROP to configure, so
+  an animal entry never opened; every entry has legs, so the predicate is *legs or crop* and what
+  differs is the strip's content. A row still never invites a click that opens an empty strip.
+
+**Frames:** `band_panel_rung_track` (wild ground, Cultivation known and Seed Selection not — the
+LOCKED rung, visible with its reason, beside the open one) · `band_panel_rung_track_banked` (the same
+ground one rung up on a faction that knows both crafts — the BANKED rung, and the claim that exactly
+ONE row on the card quotes a price) · `band_panel_rung_track_climbing` (a two-leg entry queued to
+`plant:field`, opened from the RUNNING slot — the path, the target, and both wire figures by
+EQUALITY) · `band_panel_queue_legs` (the queue row opened into its climb). The four are judged as a
+SET: a card that marked every rung `open` passes any one of the state claims alone.
 
 ## DENIAL is a third MISSION on the parties footer, not a floor on the hunt form
 

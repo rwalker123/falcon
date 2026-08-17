@@ -67,8 +67,8 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             .values_mut()
             .next()
             .expect("worldgen seeds forage patches");
-        patch.complete_cultivation(faction);
-        patch.complete_field(faction);
+        patch.complete_cultivation(faction, &core_sim::LadderConfig::builtin());
+        patch.complete_field(faction, &core_sim::LadderConfig::builtin());
         patch.owner = Some(faction);
         patch.biomass = patch.carrying_capacity;
         patch.tile
@@ -81,8 +81,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         let ladder = core_sim::LadderConfig::builtin();
         let mut forage = app.world.resource_mut::<ForageRegistry>();
         let patch = forage.patch_mut(field_tile).expect("the Field persists");
-        patch.upkeep_supplied =
-            core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder);
+        patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
     }
 
     // --- Set up a completed, worked corral (pen) on a real herd. --------------------------------
@@ -192,9 +191,13 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     assert!(
         patch.is_managed(),
         "the worked Field was destroyed by the restore: is_managed() = false \
-         (cultivation_progress = {}, field_progress = {})",
-        patch.cultivation_progress,
-        patch.field_progress
+         (ladder position = {}, Field work done = {})",
+        patch.ladder_position(),
+        core_sim::patch_rung_work_done(
+            &patch,
+            core_sim::RungKey::PlantField,
+            &core_sim::LadderConfig::builtin(),
+        )
     );
     assert_eq!(
         herd.corralled_at,

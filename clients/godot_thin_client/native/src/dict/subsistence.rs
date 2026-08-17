@@ -19,6 +19,36 @@ fn regrowth_samples_packed(samples: Option<flatbuffers::Vector<'_, f32>>) -> Pac
     packed
 }
 
+/// One queue entry's remaining CLIMB, as the `{rung, work_remaining, turns_remaining}` rows GDScript
+/// walks. **A source that is not queued publishes an EMPTY vector, and that is a real answer** — an
+/// absent leg list means "nothing is headed anywhere here", which is what the destination picker
+/// renders as *no chosen path* rather than as a climb with no legs left.
+///
+/// ⛔ **NOTHING HERE IS DERIVED.** `workRemaining` is the leg's owing FROM WHERE THE SOURCE STANDS
+/// (a patch 30 units into a Cultivate owes 20, not 50 — a previous improvement is a receipt, not a
+/// discount) and `turnsRemaining` is CHAINED behind the legs above it against a build queue the
+/// client cannot see. A client that reconstructed either would be a second producer of a verdict
+/// that already has one, which is the failure the whole `buildTurnsRemaining` family exists to stop.
+/// The negatives are the same four the countdown carries and are passed through VERBATIM.
+fn build_legs_to_array(
+    legs: Option<Vector<'_, ForwardsUOffset<fb::BuildLegState<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    let Some(legs) = legs else {
+        return array;
+    };
+    for leg in legs {
+        let mut dict = VarDictionary::new();
+        // `<branch>:<id>` — `plant:tended`, `animal:pen`. Branch-qualified because `wild` names a
+        // rung on each web, and it is the spelling the sim's own validation messages use.
+        let _ = dict.insert("rung", leg.rung().unwrap_or_default());
+        let _ = dict.insert("work_remaining", leg.workRemaining());
+        let _ = dict.insert("turns_remaining", leg.turnsRemaining() as i64);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 pub(crate) fn sedentarization_to_array(
     states: Vector<'_, ForwardsUOffset<fb::SedentarizationState<'_>>>,
 ) -> VarArray {
@@ -236,6 +266,20 @@ pub(crate) fn herds_to_array(
         if let Some(build_blocked_reason) = herd.buildBlockedReason() {
             let _ = dict.insert("build_blocked_reason", build_blocked_reason);
         }
+        // **WHERE THE PLAYER SENT THIS HERD, AND WHAT IS LEFT OF THE CLIMB**
+        // (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a
+        // single rung — the four verbs always were destinations — so the entry stays at the head
+        // until the source reaches this rung's top, and `build_legs` is what it still owes on the way
+        // there. `""` / `[]` when no band has queued this herd.
+        //
+        // **THE ANIMAL WEB STILL CARRIES PER-RUNG METERS**, so an entry here is always ONE leg. The
+        // field ships on both tables anyway, and the client walks a list either way, so the day this
+        // web moves onto one position costs neither side a change.
+        let _ = dict.insert(
+            "build_destination_rung",
+            herd.buildDestinationRung().unwrap_or_default(),
+        );
+        let _ = dict.insert("build_legs", &build_legs_to_array(herd.buildLegs()));
         // **WHAT THE POOL'S KITS ADD TO THIS BUILD EACH TURN**, in work units — the builders'
         // head count times what one equipped builder's kit delivers
         // (`intensification::gear_work_supply`). `0` = no build in flight, or the crew carries
@@ -698,6 +742,16 @@ pub(crate) fn forage_patches_to_array(
         if let Some(build_blocked_reason) = patch.buildBlockedReason() {
             let _ = dict.insert("build_blocked_reason", build_blocked_reason);
         }
+        // The plant twin of the herd row's DESTINATION and its remaining LEGS — and the web the
+        // distinction is real on: this patch carries ONE position in cumulative work units
+        // (`plant:tended` runs 0→50, `plant:field` 50→125), so a `sow` declared on untended ground is
+        // a TWO-leg climb that holds the head of the queue through its Cultivate leg. See the herd
+        // block for why neither field may be re-derived.
+        let _ = dict.insert(
+            "build_destination_rung",
+            patch.buildDestinationRung().unwrap_or_default(),
+        );
+        let _ = dict.insert("build_legs", &build_legs_to_array(patch.buildLegs()));
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside
         // `build_turns_remaining` rather than replacing it, why the figure is read rather than

@@ -11,6 +11,7 @@ use sim_runtime::{
 use crate::{
     generations::GenerationId,
     grid_utils::{HEX_CORNER_COUNT, HEX_DIRECTION_COUNT},
+    intensification::RungKey,
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
@@ -2903,7 +2904,38 @@ pub enum BuildJob {
     ExtendPen,
 }
 
-/// One declared build: which source, and what the player said they were raising there.
+impl BuildJob {
+    /// **WHERE THE PLAYER SAID THE LAND SHOULD END UP** — the rung this entry climbs *to*, which is
+    /// not the same thing as the rung it is raising this turn.
+    ///
+    /// # A QUEUE ENTRY NAMES A DESTINATION, NOT A RUNG
+    ///
+    /// The four verbs always were destinations — `cultivate` means *take it to Cultivated*, `sow`
+    /// means *take it to Field* — and with one position per source (`docs/plan_standing_upkeep.md`
+    /// §2.8) that reading becomes literal: an entry lays **every leg between where the source stands
+    /// and here**, in order, and stays at the head until it arrives. So `sow` on untended ground is
+    /// two legs and costs the whole branch, where it used to skip the tended rung.
+    ///
+    /// # ⛔ IT IS DERIVED, NOT STORED, AND THAT IS DELIBERATE
+    ///
+    /// A destination stored beside `declared` would be a **second authority for one fact**: the map
+    /// from verb to rung is total and exhaustive ([`crate::intensification::RungKey::built_by`]), so
+    /// the two could only ever agree or drift, and this arc has already shipped three defects of
+    /// exactly that shape. If a future order ever names a rung its verb does not determine — *"take
+    /// it to rung 4"* with one verb serving several — this becomes a field, and the one call site
+    /// that reads it is here.
+    pub fn destination(self) -> RungKey {
+        match self {
+            BuildJob::Rung(improvement) => RungKey::built_by(improvement),
+            // A ring is fencing work on a pen that already stands, so its destination is the rung it
+            // widens: there is no leg to climb, only more of the one the source is already on.
+            BuildJob::ExtendPen => RungKey::AnimalPen,
+        }
+    }
+}
+
+/// One declared build: which source, and **where the player said the land should end up**
+/// ([`BuildJob::destination`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,

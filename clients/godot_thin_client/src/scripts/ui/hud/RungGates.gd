@@ -222,7 +222,7 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
         # ever climb this rung"), never "is it wise here" — a marginal share must not suppress a rung.
         for rung in [SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE]:
             if rung != current and rung_has_room(source, prefix, rung) \
-                    and _any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
+                    and any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
                 admitted.append(rung)
     elif kind == SourceForecast.LABOR_KIND_HUNT:
         gates = hunt_gates(source, knowledge)
@@ -346,7 +346,12 @@ static func rung_in_progress(kind: String, source: Dictionary, improvement: Stri
 ## An ABSENT composition answers **false**, which is the honest reading: the flags ride every
 ## `ForagePatchState`, so a patch without them is one the client cannot vouch for, and the mark exists
 ## to promise the verb is available.
-static func _any_crop_allows(patch: Dictionary, prefix: String, flag: String) -> bool:
+##
+## **PUBLIC because the DESTINATION TRACK asks it too** (`RungLadder._outright_bar`). A mark WITHHOLDS
+## an inadmissible rung; a track SHOWS it and says why, so both surfaces have to reach the same
+## legality flag — and a second reading of `composition` is how the picker comes to offer a Sow the
+## board has already called impossible.
+static func any_crop_allows(patch: Dictionary, prefix: String, flag: String) -> bool:
     var composition: Variant = patch.get(prefix + "composition", [])
     if not (composition is Array):
         return false

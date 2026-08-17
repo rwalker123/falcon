@@ -266,14 +266,9 @@ fn world_with_a_patch_knowing(
         let patch = registry
             .patch_mut(source)
             .expect("the site carries a patch");
-        // **An unstarted patch carries NO STAMPED COST either** — the cost is stamped with the first
-        // accrual, and one notion of empty is what `reconcile_owner` clears back to.
-        patch.cultivation_cost = if banked > NOTHING_BANKED {
-            cost
-        } else {
-            NOTHING_BANKED
-        };
-        patch.cultivation_progress = cost * banked;
+        // **There is no stamped cost left to set** — a rung's boundaries come from live config
+        // now, and "unstarted" is simply a position of zero.
+        patch.set_ladder_position(cost * banked, &core_sim::LadderConfig::builtin());
         // ...and an unstarted patch is unowned, for the same reason: the owner lands with the work.
         patch.owner = (banked > NOTHING_BANKED).then_some(FactionId(0));
         // **Stock standing above the floor**, or `crew_is_working_the_source` is false and the arm
@@ -897,15 +892,24 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
         "…and nothing is banked here, so there is nothing to rot"
     );
 
-    // **MID-BUILD, THE TWO ARE ONE NUMBER.** Same rung on both sides, so a drift between the seams
-    // would show up here.
+    // **MID-BUILD THE TWO ARE STILL TWO NUMBERS, AND THAT IS THE ARC** (`docs/plan_standing_upkeep.md`
+    // §2.8). The quote is what a *finished* rung costs to hold; the bill INTERPOLATES on how far up
+    // the rung this source has actually been worked, so a half-built meter owes about half. They
+    // used to coincide, which is precisely the defect: a patch 1% into a Cultivate was billed the
+    // whole rung's rate to hold a hundredth of a thing.
     let (mut app, source) = world_with_a_patch(A_CREW_UNDER_THE_RATE, HALF_BUILT);
     core_sim::run_turn(&mut app);
     recapture_snapshot_in_place(&mut app.world);
-    assert_eq!(
-        published_patch_field(&app, source, |patch| patch.upkeepDemand()),
-        published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand()),
-        "a source mid-build is BILLED exactly what the rung it is raising is QUOTED at"
+    let billed = published_patch_field(&app, source, |patch| patch.upkeepDemand());
+    let quoted = published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand());
+    assert!(
+        quoted > 0.0,
+        "fixture: the tended rung costs something to hold, or the comparison is vacuous"
+    );
+    assert!(
+        billed > core_sim::NO_UPKEEP_DEMAND && billed < quoted,
+        "a source part-way up a rung is billed part of that rung's rate: billed {billed} against a \
+         quote of {quoted}"
     );
 }
 
@@ -931,7 +935,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
     // One turn on an **unstarted** patch carrying a queue entry, with the keeping staffed.
     // `NOTHING_BANKED` is the state the whole defect lives in: with progress on the meter the claim
     // comes from the ground rather than from the verb, and must keep coming.
-    let run = |knows_cultivation: bool| -> (f32, f32, String, i32) {
+    let run = |knows_cultivation: bool| -> (f32, f32, f32, String, i32) {
         let (mut app, source) =
             world_with_a_patch_knowing(BUILDERS, NOTHING_BANKED, knows_cultivation, A_GATHERER);
         // **The declaration.** `world_with_a_patch_knowing` queues nothing on an unstarted meter —
@@ -960,6 +964,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
         (
             published_patch_field(&app, source, |patch| patch.upkeepSupplied()),
             published_patch_field(&app, source, |patch| patch.upkeepDemand()),
+            published_patch_field(&app, source, |patch| patch.cultivationWorkDone()),
             published_patch_field(&app, source, |patch| {
                 patch.buildBlockedReason().unwrap_or_default().to_string()
             }),
@@ -967,7 +972,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
         )
     };
 
-    let (supplied, demand, reason, turns) = run(!THE_GATE_IS_OPEN);
+    let (supplied, demand, banked, reason, turns) = run(!THE_GATE_IS_OPEN);
     assert_eq!(
         turns, BUILD_QUEUE_BLOCKED,
         "fixture: the head must be blocked with a pool standing on it, got {turns}"
@@ -984,8 +989,12 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
         supplied, 0.0,
         "…so the pool must publish nothing against it, or the row disagrees with itself ({supplied})"
     );
+    assert_eq!(
+        banked, 0.0,
+        "fixture: a blocked head banks nothing, which is what makes its demand honestly zero"
+    );
 
-    let (supplied, demand, reason, turns) = run(THE_GATE_IS_OPEN);
+    let (supplied, demand, banked, reason, turns) = run(THE_GATE_IS_OPEN);
     assert_eq!(
         reason, "",
         "fixture: granting the knowledge must open the gate, still blocked on '{reason}'"
@@ -995,12 +1004,18 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
         "fixture: …and the pool must actually be raising it now"
     );
     assert!(
-        demand > 0.0,
-        "the build banked its first work, so the capture now reads a real demand ({demand})"
+        banked > 0.0,
+        "the build banked its first work, or this arm is the blocked one again ({banked})"
     );
-    assert!(
-        supplied > 0.0,
-        "…and the keeping pool answered for it on that very turn — the case the claim side's verb \
-         term exists for ({supplied})"
+    // **THE SUPPLY MATCHES THE BILL, and on this turn the bill is still nothing.** The claim side's
+    // verb term is what makes the source *claim* on the turn it banks its first work — without it
+    // the row would publish a shortfall on a staffed role — but what it claims is the demand at the
+    // position it stood on when the share was split, which is zero. So the row reads
+    // `demand == supplied` rather than `supplied > 0`, and the invariant that matters is that it
+    // does not read SHORT.
+    assert_eq!(
+        supplied, demand,
+        "…and the keeping pool answered for exactly the bill it was handed — a staffed role must \
+         never publish a shortfall it could not have covered ({supplied} against {demand})"
     );
 }

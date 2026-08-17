@@ -930,7 +930,6 @@ fn a_gather_reports_a_point_and_pays_it() {
             &labor.forage,
             &flora,
             equipped_gather_rate(),
-            equipped_gather_rate(),
             seasonal,
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,

@@ -458,8 +458,7 @@ fn keep_patch_for_a_turn(app: &mut App, coord: UVec2) {
     let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch");
-    patch.upkeep_supplied =
-        core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder);
+    patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
 }
 
 /// Turns with no active band: only the Logistics-stage systems run.
@@ -474,7 +473,7 @@ fn progress_of(app: &App, coord: UVec2) -> f32 {
     app.world
         .resource::<ForageRegistry>()
         .patch(coord)
-        .map(|p| p.cultivation_progress)
+        .map(|p| p.ladder_position())
         .unwrap_or(0.0)
 }
 
@@ -632,11 +631,18 @@ fn unmaintained_turns_before_the_rung_is_lost(app: &App) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let rung = ladder.rung(RungKey::PlantTended);
     let cost = cultivate_cost(app);
-    let erodable = cost - rung.retention_bar(cost);
+    // **THE WHOLE SPAN IS ERODABLE.** The retention bar is deleted with the cliff it patched
+    // (`docs/plan_standing_upkeep.md` §2.8) — a rung is achieved at the top of its span and lost the
+    // instant the position dips — so what a bleed must eat before the rung goes is the rung's own
+    // cost, and it goes on the FIRST bleeding turn past the grace.
+    let erodable = cost;
     let bleed = unmaintained_bleed(rung);
-    // The rung is lost the turn the meter falls **below** the bar, so eroding exactly the erodable
-    // amount still holds it — hence `floor + 1` rather than `ceil`.
-    rung.upkeep_grace_turns() + (erodable / bleed).floor() as u32 + 1
+    // The rung is lost the turn the position falls **below** the top of its span, which is the
+    // first bleeding turn past the grace — the `erodable / bleed` term is now inert (the position
+    // sits exactly at the top, so any bleed at all takes it below) and is kept only so a future
+    // rung whose loss point moves back down has somewhere to say so.
+    let _ = erodable / bleed;
+    rung.upkeep_grace_turns() + 1
 }
 
 /// One turn of the pipeline under `improvement` on a fresh identical world; returns the provisions
@@ -857,11 +863,26 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         composition.as_ref(),
         "and it is still the mixed basket it started as"
     );
-    let wild = core_sim::ForagePatch::new(coord, patch.carrying_capacity);
-    assert_eq!(
-        core_sim::patch_provisions_per_biomass(&patch, &composition, &flora, &labor.forage),
-        core_sim::patch_provisions_per_biomass(&wild, &composition, &flora, &labor.forage),
-        "and it still converts at the wild basket average"
+    // **THE BASKET STEPS, THE RATE SLIDES** (`docs/plan_standing_upkeep.md` §2.8). The crew has
+    // displaced nothing, so the basket is still the mixed stand; the *rate* has already started to
+    // climb, because the payoff of a build begins on turn one instead of arriving all at once. It is
+    // strictly between the two rungs, never either of them.
+    let wild_patch = core_sim::ForagePatch::new(coord, patch.carrying_capacity);
+    let wild_rate =
+        core_sim::patch_provisions_per_biomass(&wild_patch, &composition, &flora, &labor.forage);
+    let mut finished = wild_patch.clone();
+    finished.species = patch.species.clone();
+    finished.complete_cultivation(FactionId(0), &core_sim::LadderConfig::builtin());
+    let tended_rate =
+        core_sim::patch_provisions_per_biomass(&finished, &composition, &flora, &labor.forage);
+    let rate = core_sim::patch_provisions_per_biomass(&patch, &composition, &flora, &labor.forage);
+    assert!(
+        tended_rate > wild_rate,
+        "fixture: tending must pay more, or there is no step to be part-way up"
+    );
+    assert!(
+        rate > wild_rate && rate < tended_rate,
+        "a build one turn in converts between the two rungs: {wild_rate} < {rate} < {tended_rate}"
     );
 }
 
@@ -897,7 +918,7 @@ fn cultivate_completes_then_pays_the_tended_yield() {
         assert!(
             patch.is_cultivated(),
             "sustained Cultivate work completes the patch: progress {}",
-            patch.cultivation_progress
+            patch.ladder_position()
         );
         assert_eq!(patch.owner, Some(FactionId(0)), "the preparer owns it");
         assert_eq!(registry.cultivated_count(FactionId(0)), 1);
@@ -1000,7 +1021,7 @@ fn tended_patch_pays_its_tending_band_place_local_and_draws_down() {
     let biomass_before = {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.complete_cultivation(FactionId(0));
+        patch.complete_cultivation(FactionId(0), &core_sim::LadderConfig::builtin());
         patch.owner = Some(FactionId(0));
         patch.biomass
     };
@@ -1054,7 +1075,7 @@ fn untended_cultivated_patch_goes_feral() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.complete_cultivation(FactionId(0));
+        patch.complete_cultivation(FactionId(0), &core_sim::LadderConfig::builtin());
         patch.owner = Some(FactionId(0));
     }
 
@@ -1086,7 +1107,7 @@ fn untended_cultivated_patch_goes_feral() {
     let patch_registry = app.world.resource::<ForageRegistry>();
     let patch = patch_registry.patch(coord).unwrap();
     assert_eq!(
-        patch.cultivation_progress,
+        patch.ladder_position(),
         core_sim::RUNG_UNSTARTED,
         "feral patch fully reverts"
     );
@@ -1256,17 +1277,9 @@ fn seat_tended_patch(app: &mut App, coord: UVec2) {
     // and *held* down to this bar, so a fixture that fills the meter by hand and leaves the bar at
     // `RUNG_UNSTARTED` seats a patch that is not tended at all
     // (`docs/plan_standing_upkeep.md` §2.4).
-    let retain_bar = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantTended)
-        .retention_bar(cost);
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch");
-    patch.cultivation_progress = cost;
-    patch.cultivation_cost = cost;
-    patch.cultivation_retain_bar = retain_bar;
+    patch.set_ladder_position(cost, &core_sim::LadderConfig::builtin());
     patch.owner = Some(FactionId(0));
     patch.neglect_turns = 0;
 }
@@ -1570,7 +1583,10 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         Kept {
             supplied: patch.upkeep_supplied,
-            demand: core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder),
+            // **THE BILL THE KEEPERS WERE HANDED**, not the live cost — the demand
+            // interpolates on the position, and the turn's own accrual has already raised it by the
+            // time this reads (`ForagePatch::upkeep_demanded`).
+            demand: core_sim::patch_keeping_basis(patch, &ladder),
         }
     };
 
@@ -1661,8 +1677,11 @@ fn a_builds_first_turn_draws_the_keeping_pool_and_bare_ground_draws_nothing() {
             supplied: patch.upkeep_supplied,
             // Read the way the capture reads it — **after** the accrual, with no verb in hand — so
             // this is the number the pool card was quoting.
-            demand: core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder),
-            progress: patch.cultivation_progress,
+            // **THE BILL THE KEEPERS WERE HANDED**, not the live cost — the demand
+            // interpolates on the position, and the turn's own accrual has already raised it by the
+            // time this reads (`ForagePatch::upkeep_demanded`).
+            demand: core_sim::patch_keeping_basis(patch, &ladder),
+            progress: patch.ladder_position(),
         }
     };
 
@@ -1719,31 +1738,41 @@ fn a_builds_first_turn_draws_the_keeping_pool_and_bare_ground_draws_nothing() {
     // **(1) THE HEADLINE.** Non-zero, and exactly what the same keeper supplies to a finished rung —
     // §4.6a's *"a meter carrying work is billed at any fullness, to the same hands"* from the paying
     // side.
+    // **THE SUPPLY MATCHES THE BILL.** The bill INTERPOLATES now, so on the turn a Cultivate banks
+    // its first work the ground stood at zero when the pool was split and was billed nothing — the
+    // claim is what stops the row publishing a shortfall on a staffed role, and what it claims is
+    // the demand at that moment. `supplied == demand` is the invariant; `supplied > 0` was a
+    // statement about the retired flat rate.
     assert!(
-        building.supplied > 0.0,
-        "the turn a Cultivate banks its first work, its keeping pool must supply something — got \
-         {} against a demand of {}",
+        building.supplied >= building.demand,
+        "the turn a Cultivate banks its first work, its keeping pool must cover the bill it was \
+         handed — got {} against a demand of {}",
         building.supplied,
         building.demand
     );
-    assert_eq!(
-        building.supplied, holding.supplied,
-        "a keeper supplies the same work to a meter being raised as to a finished one: {} against \
-         {}",
-        building.supplied, holding.supplied
+    // **THE SAME POOL, AT THE RATE EACH POSITION OWES** (`docs/plan_standing_upkeep.md` §2.8). The
+    // supplier is the same on both sides of completion — which is §4.6a and is what this test is
+    // for — but the *bill* interpolates, so a meter one turn into its rung is billed a fraction of
+    // what a finished one is. It used to be the identical number, and that identity is exactly the
+    // defect §2.8 names: a patch 1% into a Cultivate owed the whole rung's rate.
+    assert!(
+        building.demand < holding.demand,
+        "a meter being raised is billed LESS than the finished rung above it: {} against {}",
+        building.demand,
+        holding.demand
     );
-    assert_eq!(
-        building.demand, holding.demand,
-        "and is billed the same rate for it: {} against {}",
-        building.demand, holding.demand
+    assert!(
+        holding.supplied > 0.0,
+        "a finished rung is held by the pool, or the comparison below is vacuous"
     );
 
-    // **The shortfall is the honest remainder, never the whole demand** — the number on the pool
-    // card. One keeper against `plant:tended` covers most of it and is short the rest.
-    let shortfall = building.demand - building.supplied;
+    // **The shortfall is the honest remainder, never more than the bill.** With the demand
+    // interpolated and this pool ample for it, a turn-one build is covered outright — the number on
+    // the pool card is `0`, not the whole rung's rate.
+    let shortfall = (building.demand - building.supplied).max(0.0);
     assert!(
-        shortfall > 0.0 && shortfall < building.demand,
-        "the shortfall is what one keeper could not cover, not the whole bill: short {shortfall} \
+        shortfall < building.demand.max(f32::EPSILON),
+        "the shortfall is what the pool could not cover, never the whole bill: short {shortfall} \
          of {} (supplied {})",
         building.demand,
         building.supplied
@@ -1938,7 +1967,7 @@ fn a_half_staffed_keeping_bleeds_in_proportion_to_the_supply_it_is_short() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
-        patch.cultivation_progress -= bleed;
+        patch.decay_ladder(bleed, &core_sim::LadderConfig::builtin());
     }
     let dipped = progress_of(&app, coord);
     assert!(
@@ -1952,12 +1981,13 @@ fn a_half_staffed_keeping_bleeds_in_proportion_to_the_supply_it_is_short() {
         progress_of(&app, coord)
     );
     assert!(
-        app.world
+        !app.world
             .resource::<ForageRegistry>()
             .patch(coord)
             .expect("patch")
             .is_cultivated(),
-        "…and it is still TENDED while it is held: the retention bar is a separate axis"
+        "…and it is honestly no longer TENDED (§2.8, the bar is deleted); what the pool bought is \
+         that the meter stopped falling, which is the claim under test"
     );
 }
 
@@ -2037,8 +2067,7 @@ fn an_abandoned_part_build_is_owed_the_keeping_pool_and_bleeds_the_rungs_rate() 
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
-        patch.cultivation_progress = cost / 2.0;
-        patch.cultivation_cost = cost;
+        patch.set_ladder_position(cost / 2.0, &core_sim::LadderConfig::builtin());
         patch.owner = Some(FactionId(0));
     }
     let patch = app
@@ -2048,21 +2077,30 @@ fn an_abandoned_part_build_is_owed_the_keeping_pool_and_bleeds_the_rungs_rate() 
         .expect("patch")
         .clone();
     assert!(
-        patch.cultivation_progress < patch.cultivation_cost,
+        !patch.is_cultivated(),
         "fixture: the meter is half-filled, so the rung is NOT finished"
     );
-    // **THE SAME RATE AND THE SAME SUPPLIER EITHER WAY** — the keeping pool owes a meter carrying
-    // work from the first work banked (`docs/plan_standing_upkeep.md` §4.6a), so the published
-    // `workers_needed` is the same count on both sides of completion and means the same thing.
+    // **THE SAME SUPPLIER EITHER WAY, AT THE RATE THE POSITION OWES** — the keeping pool owes a
+    // meter carrying work from the first work banked (`docs/plan_standing_upkeep.md` §4.6a), and
+    // since §2.8 what it owes interpolates, so a half-built meter asks for half the hands rather
+    // than the rung's full count.
     assert_eq!(
         core_sim::patch_upkeep_workers_needed(&patch, &ladder),
-        demand.ceil() as u32,
-        "hands to meet the demand, whoever is supplying it"
+        core_sim::patch_upkeep_demand(&patch, &ladder).ceil() as u32,
+        "hands to meet the demand the position actually owes, whoever is supplying it"
     );
     // Nobody is building it and nobody is keeping it, so the whole rate goes unmet.
     assert!(
-        (core_sim::patch_upkeep_shortfall(&patch, &ladder) - demand).abs() < 1e-6,
-        "an abandoned part-build is short by the whole rate"
+        (core_sim::patch_upkeep_shortfall(&patch, &ladder)
+            - core_sim::patch_upkeep_demand(&patch, &ladder))
+        .abs()
+            < 1e-6,
+        "an abandoned part-build is short by the whole of what it owes — which since §2.8 is the \
+         INTERPOLATED bill, not the finished rung's rate"
+    );
+    assert!(
+        core_sim::patch_upkeep_demand(&patch, &ladder) < demand,
+        "…and that bill really is below the rung's own rate, or nothing about §2.8 is under test"
     );
 
     // And through the system: it bleeds the rung's own ROT RATE once the grace is spent — not the
@@ -2246,10 +2284,11 @@ fn losing_a_tended_patch_pushes_one_feed_line() {
     seat_tended_patch(&mut app, coord);
     let grace = tended_grace(&app);
     let survives = unmaintained_turns_before_the_rung_is_lost(&app);
-    assert!(
-        survives > grace + 1,
-        "fixture: the rung must outlast its own first bleeding turn, or this test cannot tell the \
-         new edge from the old one"
+    assert_eq!(
+        survives,
+        grace + 1,
+        "fixture: with the retention bar deleted (§2.8) the rung goes on its first bleeding turn \
+         past the grace — which is the edge the feed line must ride, exactly once"
     );
 
     run_turns_untended(&mut app, survives - 1);
@@ -2584,7 +2623,7 @@ fn the_published_neglect_countdown_hits_zero_on_the_turn_the_meter_moves() {
         .patches
         .iter()
         .find(|(_, patch)| {
-            patch.owner.is_none() && patch.cultivation_progress == core_sim::RUNG_UNSTARTED
+            patch.owner.is_none() && patch.ladder_position() == core_sim::RUNG_UNSTARTED
         })
         .expect("most patches are wild")
         .0;
@@ -2665,8 +2704,8 @@ fn a_running_build_outranks_a_bystanders_projection_on_the_same_patch() {
         )
         .expect("a staffed build quotes a finish date")
     };
-    let builders_answer = quote(crew, patch.cultivation_progress);
-    let bystanders_answer = quote(one_bystander, patch.cultivation_progress);
+    let builders_answer = quote(crew, patch.ladder_position());
+    let bystanders_answer = quote(one_bystander, patch.ladder_position());
     assert!(
         bystanders_answer > builders_answer,
         "fixture: the two crews must disagree, or last-writer-wins is invisible \
@@ -2760,17 +2799,9 @@ fn seat_second_tended_patch(app: &mut App, near: UVec2, cost: f32) -> UVec2 {
             .expect("a second seeded patch inside the band's work range")
     };
     declare_gathering_site(app, coord);
-    let retain_bar = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantTended)
-        .retention_bar(cost);
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch");
-    patch.cultivation_progress = cost;
-    patch.cultivation_cost = cost;
-    patch.cultivation_retain_bar = retain_bar;
+    patch.set_ladder_position(cost, &core_sim::LadderConfig::builtin());
     patch.owner = Some(FactionId(0));
     patch.neglect_turns = 0;
     coord
@@ -2891,55 +2922,69 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
     /// fixture asserts the shortfall below rather than assuming it from the number.
     const KEEPERS: u32 = 2;
 
-    let run = |mode: core_sim::UpkeepFundMode| -> (f32, f32, f32) {
+    let run = |mode: core_sim::UpkeepFundMode| -> (f32, f32, f32, f32, f32) {
         let mut app = spawn_world();
         let (tile, first) = prime_thriving_patch(&mut app);
         seat_tended_patch(&mut app, first);
         {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(first).expect("patch");
-            let bar = patch.cultivation_retain_bar / patch.cultivation_cost;
-            patch.cultivation_progress = RICH_COST;
-            patch.cultivation_cost = RICH_COST;
-            patch.cultivation_retain_bar = RICH_COST * bar;
+            patch.set_ladder_position(RICH_COST, &core_sim::LadderConfig::builtin());
         }
         let second = seat_second_tended_patch(&mut app, first, POOR_COST);
         spawn_band_keeping_two_patches(&mut app, tile, first, second, KEEPERS, mode);
         app.world.run_system_once(advance_labor_allocation);
         let (rich, poor) = supplied_on(&app, first, second);
-        (rich, poor, plant_keeper_supply(KEEPERS))
+        // The two BILLS, which since §2.8 differ because the two positions do.
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let registry = app.world.resource::<ForageRegistry>();
+        let billed =
+            |coord| core_sim::patch_keeping_basis(registry.patch(coord).expect("patch"), &ladder);
+        (
+            rich,
+            poor,
+            plant_keeper_supply(KEEPERS),
+            billed(first),
+            billed(second),
+        )
     };
 
-    let (rich, poor, pool) = run(core_sim::UpkeepFundMode::Spread);
+    let (rich, poor, pool, rich_bill, poor_bill) = run(core_sim::UpkeepFundMode::Spread);
+    // **SPREAD IS PROPORTIONAL TO DEMAND, and since §2.8 two patches at different POSITIONS have
+    // different demands.** The two used to be billed the same flat rate whatever they had cost, so
+    // *"equally"* was the readable statement; now the richer meter owes more and is funded more. The
+    // property is **proportionality to the bill** — read off the bills rather than off the positions,
+    // because the rich one has climbed past the tended rung's top and its bill is interpolating on
+    // the Field above it.
     assert!(
-        (rich - poor).abs() < 1e-5,
-        "spread funds two equal demands equally, whatever they cost: {rich} vs {poor}"
+        rich_bill > poor_bill,
+        "fixture: the richer position must owe more, or spread has nothing to be proportional to"
+    );
+    assert!(
+        (rich / poor - rich_bill / poor_bill).abs() < 1e-3,
+        "spread funds in proportion to what each owes: {rich} vs {poor} against bills {rich_bill} \
+         and {poor_bill}"
     );
     assert!(
         (rich + poor - pool).abs() < 1e-5,
         "and it spends the whole pool — a pool has no leftover: {rich} + {poor} against {pool}"
     );
 
-    let (rich, poor, pool) = run(core_sim::UpkeepFundMode::Priority);
-    // **The most-invested source is funded COMPLETELY FIRST** — to its own demand, or to whatever
-    // the pool has if that is less. Asserted against the rung's demand rather than against the pool,
-    // because an equipped keeping pool can now cover the first source outright and still have hands
-    // left (§4.8), where a bare one of the same head count could not.
-    let demand = app_free()
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantTended)
-        .upkeep_demand(UNSCALED_UPKEEP);
+    let (rich, poor, pool, rich_bill, poor_bill) = run(core_sim::UpkeepFundMode::Priority);
+    // **The most-invested source is funded COMPLETELY FIRST** — to **its own bill**, or to whatever
+    // the pool has if that is less. Since §2.8 that bill is the source's own interpolated demand
+    // rather than the rung's flat rate, which is why it is read back from the run rather than off
+    // the ladder: the rich patch has climbed past the tended rung's top and owes a share of the
+    // Field above it.
     assert!(
-        pool < demand * 2.0,
+        pool < rich_bill + poor_bill,
         "fixture: the pool must be short of BOTH sources, or the two modes cannot differ — \
-         {pool} against {demand} twice"
+         {pool} against {rich_bill} + {poor_bill}"
     );
     assert!(
-        (rich - pool.min(demand)).abs() < 1e-5,
-        "priority funds the most-invested source completely first: {rich} of {pool}, demand \
-         {demand}"
+        (rich - pool.min(rich_bill)).abs() < 1e-5,
+        "priority funds the most-invested source completely first: {rich} of {pool}, bill \
+         {rich_bill}"
     );
     assert!(
         (poor - (pool - rich)).abs() < 1e-5,
@@ -2947,9 +2992,9 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
          {poor} of a {pool} pool"
     );
     assert!(
-        poor < demand,
-        "…which must genuinely leave it short, or the two modes are indistinguishable: {poor} \
-         against {demand}"
+        poor < poor_bill,
+        "…which must genuinely leave it short of its own bill, or the two modes are \
+         indistinguishable: {poor} against {poor_bill}"
     );
     assert!(
         (rich + poor - pool).abs() < 1e-5,
@@ -3074,8 +3119,10 @@ fn a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full() 
             let cost = cultivate_cost(&app);
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(build).expect("patch");
-            patch.cultivation_cost = cost;
-            patch.cultivation_progress = cost * banked_on_the_build;
+            patch.set_ladder_position(
+                cost * banked_on_the_build,
+                &core_sim::LadderConfig::builtin(),
+            );
             patch.owner = Some(FactionId(0));
             patch.species = Some(crop);
         }
@@ -3092,8 +3139,10 @@ fn a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full() 
             let patch = registry.patch(coord).expect("patch");
             (
                 patch.upkeep_supplied,
-                // **Read the way the CAPTURE reads it** — after the accrual, with no verb in hand.
-                core_sim::patch_upkeep_demand(patch, core_sim::NOTHING_IN_FLIGHT, &ladder),
+                // **Read the way the CAPTURE reads it** — the BILL the keeping answered, which is
+                // what the published trio is struck from (`forage::patch_keeping_basis`). The live
+                // demand beside it has already been raised by this turn's own accrual.
+                core_sim::patch_keeping_basis(patch, &ladder),
             )
         };
         let (holding_supplied, holding_demand) = read(holding);
@@ -3103,7 +3152,7 @@ fn a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full() 
             holding_demand,
             build_supplied,
             build_demand,
-            build_progress: registry.patch(build).expect("patch").cultivation_progress,
+            build_progress: registry.patch(build).expect("patch").ladder_position(),
             blocked_reason: registry
                 .patch(build)
                 .expect("patch")
@@ -3172,19 +3221,32 @@ fn a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full() 
     // exists for: the accrual lands *after* the split, so the ground carries nothing when the pool
     // is divided and the verb is the only thing that can speak for it.
     assert!(
-        open.build_supplied > 0.0,
-        "the turn a build banks its first work, its keeping pool must supply something ({})",
-        open.build_supplied
+        open.build_supplied >= open.build_demand,
+        "the turn a build banks its first work, its keeping pool must cover the bill it was handed \
+         — the demand interpolates, so on turn one that bill is honestly small ({} against {})",
+        open.build_supplied,
+        open.build_demand
     );
+    // **SPREAD IS PROPORTIONAL TO DEMAND**, and since §2.8 a build on its first turn owes almost
+    // nothing while the finished holding beside it owes its rung's whole rate — so the two are
+    // funded proportionally, not equally. What this arm is really about is that the build **claims
+    // at all**, which the assertion above states.
     assert!(
-        (open.build_supplied - open.holding_supplied).abs() < EPSILON,
-        "spread funds two equal demands equally: build {} against holding {}",
+        open.build_supplied <= open.holding_supplied,
+        "the build owes less than the finished holding, so it draws less: build {} against holding \
+         {}",
         open.build_supplied,
         open.holding_supplied
     );
+    // **AND THE HOLDING IS NOT STARVED BY IT** — which is the direction that matters. The build's
+    // first-turn bill is nearly nothing (§2.8: it stood at zero when the pool was split), so the
+    // finished holding beside it is funded in full. Dilution is real and grows with the build's
+    // meter; what must never happen is a *blocked* or *unstarted* entry taking the holding's share,
+    // and that is what the (a) arm above pins.
     assert!(
-        open.holding_supplied < open.holding_demand - EPSILON,
-        "…and the holding is legitimately diluted by a build that IS being raised — {} of {}",
+        open.holding_supplied >= open.holding_demand - EPSILON,
+        "…and the finished holding is still covered, because a build one turn in owes almost \
+         nothing — {} of {}",
         open.holding_supplied,
         open.holding_demand
     );
@@ -3244,10 +3306,7 @@ fn the_maintenance_split_survives_a_checkpoint_under_both_modes() {
         {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(first).expect("patch");
-            let bar = patch.cultivation_retain_bar / patch.cultivation_cost;
-            patch.cultivation_progress = RICH_COST;
-            patch.cultivation_cost = RICH_COST;
-            patch.cultivation_retain_bar = RICH_COST * bar;
+            patch.set_ladder_position(RICH_COST, &core_sim::LadderConfig::builtin());
         }
         let second = seat_second_tended_patch(&mut app, first, POOR_COST);
         let band = spawn_band_keeping_two_patches(&mut app, tile, first, second, KEEPERS, mode);
@@ -3321,57 +3380,75 @@ fn the_maintenance_split_survives_a_checkpoint_under_both_modes() {
     }
 }
 
-/// **THE REPORTED BUG, DIRECTLY: a completed rung is not lost the instant its meter dips.**
+/// **THE REPORTED BUG, AND WHAT REPLACED THE PATCH FOR IT.**
 ///
 /// A completed meter sits **exactly** at its own cost, so a `progress >= cost` predicate made the
 /// first bleed of any size revoke the rung — finish a Cultivate and the patch could be out of
-/// *tended* before its keepers were assigned. No grace and no rate could fix it, because the loss
-/// was a **threshold test rather than a rate** (`docs/plan_standing_upkeep.md` §2.4).
+/// *tended* before its keepers were assigned. The fix was a **retention bar**: a stamped point below
+/// the cost that the rung was held down to.
 ///
-/// The rung is *earned* at `progress >= cost` and *held* down to a stated fraction of that cost, so
-/// a wholly unmaintained patch now keeps its rung for most of a season while the meter erodes.
-/// **Both the survival and the eventual loss are asserted**, because "it never reverts" is the other
-/// way to break this and would pass a survival-only test.
+/// **The bar is deleted, because the one-position ladder removes the CLIFF it was patching**
+/// (`docs/plan_standing_upkeep.md` §2.8/§4.10). The rung really is lost on the first bleeding turn
+/// past its grace again — and that is now a **rounding** rather than a cliff, because everything the
+/// rung is worth interpolates on the position: a patch a hair below the tended rung's top owes a
+/// hair under a whole tended patch's keeping and pays a hair under its rate, where the original
+/// predicate dropped both to a wild stand's outright.
+///
+/// So this asserts the pair that makes the deletion safe: the rung goes the moment the position
+/// dips, and what crossing that boundary costs is a fraction of a percent.
 #[test]
-fn a_completed_tended_patch_survives_many_unmaintained_turns_before_it_is_lost() {
+fn losing_the_tended_rung_to_a_dip_costs_almost_nothing_because_the_rung_interpolates() {
     let mut app = spawn_world();
     let (_tile, coord) = prime_thriving_patch(&mut app);
     seat_tended_patch(&mut app, coord);
 
-    let survives = unmaintained_turns_before_the_rung_is_lost(&app);
-    let grace = tended_grace(&app);
-    assert!(
-        survives > grace + 1,
-        "the whole point: the rung must outlast its own FIRST bleeding turn, which is all the old \
-         predicate gave it ({survives} turns against a grace of {grace})"
-    );
-
-    run_turns_untended(&mut app, survives - 1);
-    let patch = app
-        .world
-        .resource::<ForageRegistry>()
-        .patch(coord)
-        .expect("patch")
-        .clone();
-    assert!(
-        patch.is_cultivated(),
-        "a tended patch stays tended while its meter erodes — {} of {}",
-        patch.cultivation_progress,
-        patch.cultivation_cost
-    );
-    assert!(
-        patch.cultivation_progress < patch.cultivation_cost,
-        "…and the meter really is eroding, or this test is asserting nothing"
-    );
-
-    run_turns_untended(&mut app, 1);
-    assert!(
-        !app.world
+    let demand_at = |app: &App| -> f32 {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let registry = app.world.resource::<ForageRegistry>();
+        core_sim::patch_upkeep_demand(registry.patch(coord).expect("patch"), &ladder)
+    };
+    let is_tended = |app: &App| -> bool {
+        app.world
             .resource::<ForageRegistry>()
             .patch(coord)
             .expect("patch")
-            .is_cultivated(),
-        "and it IS lost, at the retention bar — the rung is held, not immortal"
+            .is_cultivated()
+    };
+
+    let survives = unmaintained_turns_before_the_rung_is_lost(&app);
+    let grace = tended_grace(&app);
+    assert_eq!(
+        survives,
+        grace + 1,
+        "with no bar left, the rung goes on the first bleeding turn past its own grace"
+    );
+
+    run_turns_untended(&mut app, survives - 1);
+    assert!(
+        is_tended(&app),
+        "fixture: still tended on the turn before the first bleed lands"
+    );
+    let held = demand_at(&app);
+
+    run_turns_untended(&mut app, 1);
+    assert!(
+        !is_tended(&app),
+        "and the rung IS lost the moment the position dips — there is no bar holding it"
+    );
+    let dipped = demand_at(&app);
+
+    /// How much of the rung's worth crossing the boundary may cost. One turn's bleed is a fraction
+    /// of a work unit against a 50-unit rung, so the fall is a fraction of a percent; the bound is
+    /// loose enough to survive a rot retune and tight enough that a re-introduced cliff — which
+    /// drops the rung's worth to the wild rung's `0` — fails it outright.
+    const A_ROUNDING_OF_THE_RUNG: f32 = 0.05;
+    assert!(
+        held > core_sim::NO_UPKEEP_DEMAND,
+        "liveness: a held tended patch really does owe something, or the comparison is vacuous"
+    );
+    assert!(
+        dipped >= held * (1.0 - A_ROUNDING_OF_THE_RUNG),
+        "crossing the rung boundary must be a rounding, not a cliff: {held} -> {dipped}"
     );
 }
 
@@ -3402,8 +3479,7 @@ fn a_half_built_patch_with_no_builders_is_held_exactly_by_a_staffed_keeping() {
         {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).expect("patch");
-            patch.cultivation_progress = cost / 2.0;
-            patch.cultivation_cost = cost;
+            patch.set_ladder_position(cost / 2.0, &core_sim::LadderConfig::builtin());
             patch.owner = Some(FactionId(0));
         }
         let started = progress_of(&app, coord);
@@ -3428,8 +3504,7 @@ fn a_half_built_patch_with_no_builders_is_held_exactly_by_a_staffed_keeping() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
-        patch.cultivation_progress = cost / 2.0;
-        patch.cultivation_cost = cost;
+        patch.set_ladder_position(cost / 2.0, &core_sim::LadderConfig::builtin());
         patch.owner = Some(FactionId(0));
     }
     let band = spawn_forager_of(&mut app, tile, coord, None, FORAGE_WORKERS);
@@ -3441,11 +3516,8 @@ fn a_half_built_patch_with_no_builders_is_held_exactly_by_a_staffed_keeping() {
         .patch(coord)
         .expect("patch");
     assert!(
-        core_sim::patch_upkeep_demand(
-            patch,
-            core_sim::NOTHING_IN_FLIGHT,
-            &core_sim::LadderConfig::builtin(),
-        ) > core_sim::NO_UPKEEP_DEMAND,
+        core_sim::patch_upkeep_demand(patch, &core_sim::LadderConfig::builtin())
+            > core_sim::NO_UPKEEP_DEMAND,
         "a meter carrying work is BILLED, at any fullness — the pool has something to cover"
     );
     assert_eq!(
@@ -3489,7 +3561,7 @@ fn an_eroded_rung_is_still_funded_by_the_keeping_pool() {
         registry
             .patch_mut(coord)
             .expect("patch")
-            .cultivation_progress -= bleed;
+            .decay_ladder(bleed, &core_sim::LadderConfig::builtin());
     }
     let eroded = progress_of(&app, coord);
     assert!(
@@ -3504,12 +3576,14 @@ fn an_eroded_rung_is_still_funded_by_the_keeping_pool() {
         progress_of(&app, coord)
     );
     assert!(
-        app.world
+        !app.world
             .resource::<ForageRegistry>()
             .patch(coord)
             .expect("patch")
             .is_cultivated(),
-        "…and it never stopped being tended: the retention bar is a separate axis"
+        "…and it is honestly no longer TENDED — the retention bar is deleted, so a position below \
+         the rung's top is not that rung (`docs/plan_standing_upkeep.md` §2.8). What made that a \
+         cliff is gone too: the payout and the keeping both interpolate on the position"
     );
 
     // **And the pool really is what is holding it** — unstaff the role and the same meter slides.
@@ -3545,8 +3619,7 @@ fn every_staffed_build_crew_climbs_when_the_keeping_is_met() {
         {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).expect("patch");
-            patch.cultivation_progress = cost / 2.0;
-            patch.cultivation_cost = cost;
+            patch.set_ladder_position(cost / 2.0, &core_sim::LadderConfig::builtin());
             patch.owner = Some(FactionId(0));
         }
         let started = progress_of(&app, coord);
@@ -3666,7 +3739,7 @@ fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
             .expect("patch")
             .clone();
         assert!(
-            patch.cultivation_progress >= patch.cultivation_cost,
+            patch.is_cultivated(),
             "fixture: a freshly completed rung sits exactly at its own cost"
         );
     }
@@ -3678,7 +3751,7 @@ fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
         registry
             .patch_mut(coord)
             .expect("patch")
-            .cultivation_progress -= bleed;
+            .decay_ladder(bleed, &core_sim::LadderConfig::builtin());
     }
 
     let patch = app
@@ -3688,19 +3761,17 @@ fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
         .expect("patch")
         .clone();
     assert!(
-        patch.cultivation_progress < patch.cultivation_cost,
+        !patch.is_cultivated(),
         "…and one bleed later there is room on the meter: that shortfall is a repair job"
     );
     assert!(
-        patch.is_cultivated(),
-        "…while remaining TENDED — the retention bar is a separate axis and is nowhere near"
+        !patch.is_cultivated(),
+        "…and it is honestly no longer TENDED (§2.8, the bar is deleted) — which is what makes it \
+         a repair job rather than a rung nobody can put a builder on"
     );
     assert!(
-        core_sim::patch_upkeep_demand(
-            &patch,
-            core_sim::NOTHING_IN_FLIGHT,
-            &core_sim::LadderConfig::builtin(),
-        ) > core_sim::NO_UPKEEP_DEMAND,
+        core_sim::patch_upkeep_demand(&patch, &core_sim::LadderConfig::builtin())
+            > core_sim::NO_UPKEEP_DEMAND,
         "…and it is still BILLED, so the keeping pool has something to hold — a dip does not move \
          who pays the rate (the holding itself is pinned by \
          `a_half_staffed_keeping_bleeds_at_half_the_rungs_rate`)"
@@ -3791,12 +3862,13 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
         "fixture: the rung must actually slip: {full} -> {eroded}"
     );
     assert!(
-        app.world
+        !app.world
             .resource::<ForageRegistry>()
             .patch(coord)
             .expect("patch")
             .is_cultivated(),
-        "…while staying tended, which is the state a repair is FOR"
+        "…and it is honestly no longer TENDED — the retention bar is deleted (§2.8), so the state a \
+         repair is FOR is simply a position below the rung's top"
     );
 
     // **(1) THE ERODED RUNG STILL DERIVES ITS OWN VERB** — the meter below its cost names the rung
@@ -3896,6 +3968,12 @@ fn a_meter_at_zero_needs_the_player_to_declare_again() {
         Some(Improvement::Cultivate),
         "the player declares, and the sim honours it: a zero meter has no answer of its own"
     );
+    // **A DECLARATION MAY NAME A RUNG ABOVE THE ONE IN FLIGHT** (`docs/plan_standing_upkeep.md`
+    // §2.8). With one position there is no way to put work on the Field without the tended rung
+    // beneath it being whole, so a `sow` on wild ground is a **125-unit** job that climbs the tended
+    // range on the way — but the verb stays the player's, because `Sow` is the create-from-nothing
+    // rung and deriving `Cultivate` here would dead-end it: Cultivate's gate wants a standing crop
+    // and bare ground has none.
     assert_eq!(
         core_sim::patch_build_verb(&wild, Some(Improvement::Sow)),
         Some(Improvement::Sow),
@@ -3949,16 +4027,16 @@ fn a_fully_feral_patch_clears_its_owner_species_and_rung_together() {
         .expect("patch")
         .clone();
     assert_eq!(
-        patch.cultivation_progress,
+        patch.ladder_position(),
         core_sim::RUNG_UNSTARTED,
         "fixture: the meter must have bled all the way out"
     );
     assert_eq!(patch.owner, None, "ownership lapses with the last progress");
     assert_eq!(patch.species, None, "and so does the committed crop");
     assert_eq!(
-        patch.cultivation_cost,
+        patch.ladder_position(),
         core_sim::RUNG_UNSTARTED,
-        "and the stamped job with it — a wild patch quotes no price"
+        "and the position with it — there is no stamped job left to forget"
     );
     assert!(
         !patch.is_cultivated(),

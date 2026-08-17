@@ -2397,6 +2397,50 @@ table ForagePatchState {
   // the head's own reason, because that is why they are stuck too. And it rides the SAME WINNER as
   // the three fields above.
   buildBlockedReason:string;
+
+  // WHERE THE PLAYER SENT THIS LAND (appended) - the queued entry's DESTINATION rung, as
+  // `<branch>:<id>`, or "" when no band has queued this source. See [BuildLegState] for why an entry
+  // names a destination rather than a rung.
+  //
+  // READ IT BESIDE `buildLegs`: this says where the climb ends, those say what is left of it. The
+  // entry leaves the queue when the source reaches this rung's top - NOT when an intermediate rung
+  // fills - so a two-leg `sow` holds the head of the queue through its Cultivate leg.
+  buildDestinationRung:string;
+
+  // THE LEGS STILL TO LAY (appended), in climb order, first-incomplete first. Empty when the source
+  // is not queued, or has already arrived. The FIRST entry is the leg in flight.
+  buildLegs:[BuildLegState];
+}
+
+// ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
+// owes on that rung FROM WHERE THE SOURCE STANDS NOW.
+//
+// A QUEUE ENTRY NAMES A DESTINATION, NOT A RUNG (docs/plan_standing_upkeep.md section 2.8). The four
+// verbs always were destinations - `cultivate` means take it to Cultivated, `sow` means take it to
+// Field - and with one position per source that reading became literal: the entry lays every leg
+// between where the source stands and where it was sent, in order, and stays at the head until it
+// arrives. So `sow` on untended ground is TWO legs and costs the whole branch.
+//
+// THE CLIENT MUST NOT RE-DERIVE THESE. The rung spans are the sim's config, the source's position is
+// the sim's state, and the turns below are chained against a build queue the client cannot see. A
+// client that reconstructed them would be a second producer of a verdict that already has one.
+table BuildLegState {
+  // The rung this leg raises, as `<branch>:<id>` - `plant:tended`, `plant:field`. Branch-qualified
+  // because `wild` names a rung on each web; the same spelling the sim's validation messages use.
+  rung:string;
+
+  // Work units still owed ON THIS LEG, from the source's current position - NOT the rung's full
+  // span. A patch already 30 units into a Cultivate owes 20 here, not 50: a previous improvement is
+  // a RECEIPT, NOT A DISCOUNT, so the player is never asked to buy work already paid for.
+  workRemaining:float;
+
+  // Turns until THIS LEG is done, CHAINED exactly as `buildTurnsRemaining` is: everything above this
+  // leg plus its own span, at the band's full builders pool. So the last leg's number equals the
+  // entry's own `buildTurnsRemaining`.
+  //
+  // The same negative vocabulary as `buildTurnsRemaining` - -1 no estimate, -2 holding, -3 rotting,
+  // -4 blocked - because a leg cannot be dated when the entry carrying it cannot.
+  turnsRemaining:int = -1;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3520,6 +3564,17 @@ table HerdTelemetryState {
   // `escapement` is the key this web reaches most: an unkept flock's suppressed regrowth pins it at
   // the hunters' floor, so a Tame's own gate never reopens and only the `husbandry` pool moves it.
   buildBlockedReason:string;
+
+  // WHERE THE PLAYER SENT THIS HERD (appended) - the animal twin of
+  // `ForagePatchState.buildDestinationRung`; that field carries the rationale.
+  buildDestinationRung:string;
+
+  // THE LEGS STILL TO LAY (appended) - the animal twin of `ForagePatchState.buildLegs`.
+  //
+  // THE ANIMAL WEB STILL CARRIES PER-RUNG METERS, so an entry here is always ONE leg: the rung its
+  // verb names, owing that meter's own remainder. It becomes a real climb when this web moves onto
+  // one position, and the field is here now so that move costs the wire nothing.
+  buildLegs:[BuildLegState];
 }
 
 table CommandEventState {

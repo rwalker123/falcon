@@ -1970,13 +1970,6 @@ fn seed_source_yield(
                 &tile_composition,
                 &labor.forage,
                 &flora,
-                // A rung-3 Field's collection cap is quoted at the EQUIPPED reference rate, not at
-                // this crew's basket tier — the same seam `advance_labor_allocation` reads, so the
-                // seed and the resolved row agree (`equipment.md` → "What is NOT wired yet").
-                equipment_cfg.equipped_reference(
-                    core_sim::EquipmentStat::ForageCarry,
-                    labor.forage.per_worker_biomass_capacity,
-                ),
                 per_worker_biomass,
                 seasonal,
                 output_mult,
@@ -2337,17 +2330,18 @@ fn validate_cultivate(
     // queue can never disagree about whether there is work left on this ground.
     //
     // **A tended patch eroded below its cost is a REPAIR, and this used to forbid it.**
-    // `is_cultivated()` compares against the *retention bar*, which sits well below the cost, so a
-    // patch at 99% answered *"already cultivated"* — while completion had already retired its queue
-    // entry, and `build_workers` aims the pool only at a head that declares. The three composed into
-    // a rung that could never be repaired: no entry, no builders, and no command that could make one
-    // (`docs/plan_standing_upkeep.md` §2.4 — *"repairing it is a fresh decision the player makes by
-    // putting it back in the queue"*). Re-queueing is the whole fix: the entry brings the builders,
-    // and the accrual's own guard is already the meter (`ForagePatch::accrue_cultivation`).
+    // `is_cultivated()` used to compare against the *retention bar*, which sat well below the cost,
+    // so a patch at 99% answered *"already cultivated"* — while completion had already retired its
+    // queue entry, and `build_workers` aims the pool only at a head that declares. The three
+    // composed into a rung that could never be repaired: no entry, no builders, and no command that
+    // could make one (`docs/plan_standing_upkeep.md` §2.4).
     //
-    // **A FULL meter is still refused, and that is the pair.** This message exists for ground with
-    // genuinely nothing left to build; only the eroded case moved.
-    if patch.cultivation_meter_full() {
+    // **THE GAP IS GONE RATHER THAN BRIDGED** (§2.8): the retention bar is deleted, so *achieved*
+    // and *its meter is full* are one fact and there is no band between them for a patch to be
+    // stranded in. The predicate is `is_cultivated()` again — which now means exactly what the
+    // retired `cultivation_meter_full()` meant — and a rung that dips is simply not achieved, so
+    // re-queueing it is an ordinary build rather than a repair the command had to be taught to allow.
+    if patch.is_cultivated() {
         return Err(format!(
             "The patch at ({}, {}) is already cultivated — forage it to tend it.",
             tile.x, tile.y
@@ -2506,11 +2500,11 @@ fn validate_sow(
     // A tile with no patch at all is a LEGAL target — the create-from-nothing case. Only an existing
     // patch can be in a state that refuses the seed.
     if let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) {
-        // **The meter's fullness, not the achieved rung** — [`validate_cultivate`]'s rule one rung
-        // up, and the same deadlock: `is_field()` reads the *retention bar*, so a Field eroded to
-        // 99% of its cost refused the very `sow` that would repair it, with its queue entry already
-        // retired by completion. A **full** meter is still refused.
-        if patch.field_meter_full() {
+        // [`validate_cultivate`]'s rule one rung up, and the same history: `is_field()` used to read
+        // a *retention bar* below the cost, so a Field eroded to 99% refused the very `sow` that
+        // would repair it. The bar is deleted (§2.8), so the achieved rung and a full meter are one
+        // fact and this asks it once.
+        if patch.is_field() {
             return Err(format!(
                 "The field at ({}, {}) is already sown — forage it to work it.",
                 tile.x, tile.y
@@ -9402,37 +9396,38 @@ mod tests {
     // and `herd_rung_already_built` already asked. **The pair is what these tests pin**: an eroded
     // meter accepts, a FULL meter still refuses with the message that exists for it.
 
-    /// **The rung's own cost and the bar it is held down to**, read off the shipped ladder so a
-    /// retune moves the fixture with the game rather than leaving a literal behind.
-    fn rung_cost_and_bar(app: &bevy::prelude::App, key: RungKey) -> (f32, f32) {
+    /// **Where a rung's span ends**, read off the shipped ladder so a retune moves the fixture with
+    /// the game rather than leaving a literal behind. The retention bar that used to ride beside it
+    /// is deleted (`docs/plan_standing_upkeep.md` §2.8) — a rung is achieved exactly here.
+    fn rung_top(app: &bevy::prelude::App, key: RungKey) -> f32 {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let rung = ladder.rung(key);
-        let cost = rung
-            .build_cost(core_sim::RUNG_COST_UNSCALED)
-            .expect("a rung a verb builds has a build meter");
-        (cost, rung.retention_bar(cost))
+        let (base, width) = core_sim::plant_rung_span(key, &ladder);
+        base + width
     }
 
-    /// **The fraction of its cost an ERODED meter is left standing at** — comfortably above the
-    /// shipped `retain_fraction` of `0.75`, so the rung is unambiguously still achieved and the only
-    /// thing the command can be refusing on is the *cost*.
+    /// **The fraction of its span an ERODED position is left standing at** — a hair below the top,
+    /// so the only thing distinguishing it from a finished rung is that one bleed.
     const ERODED_BUT_STILL_HELD: f32 = 0.99;
 
-    /// Put `coord`'s patch in the state a finished Cultivate decays into: **tended** (its bar is
-    /// stamped and its meter is above it) and **building** (its meter is below its cost).
+    /// Put `coord`'s patch in the state a finished Cultivate decays into: **below the top of the
+    /// tended rung**, and therefore no longer tended.
+    ///
+    /// **The old fixture claimed a third state — tended AND building — and it no longer exists.**
+    /// That gap was the retention bar's, and deleting the bar collapses *achieved* and *its meter is
+    /// full* back into one fact. What the §4.7 fix bought survives: `cultivate` is accepted here,
+    /// because the position is below the rung's top and there is genuinely work to do.
     fn erode_a_tended_patch(app: &mut bevy::prelude::App, coord: UVec2, faction: FactionId) {
-        let (cost, bar) = rung_cost_and_bar(app, RungKey::PlantTended);
+        let top = rung_top(app, RungKey::PlantTended);
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry
             .patch_mut(coord)
             .expect("the fixture patch is there");
-        patch.cultivation_cost = cost;
-        patch.cultivation_retain_bar = bar;
-        patch.cultivation_progress = cost * ERODED_BUT_STILL_HELD;
+        patch.set_ladder_position(top * ERODED_BUT_STILL_HELD, &ladder);
         patch.owner = Some(faction);
         assert!(
-            patch.is_cultivated() && !patch.cultivation_meter_full(),
-            "the fixture must be TENDED and still BUILDING, or it tests neither half"
+            !patch.is_cultivated(),
+            "the fixture must be BELOW the rung's top, or the command has nothing to accept"
         );
     }
 
@@ -9468,13 +9463,19 @@ mod tests {
             Some(Improvement::Cultivate),
             "and re-queueing it is what puts the builders back on it — the entry IS the declaration"
         );
+        // **The old pair here — "and the ground stays TENDED throughout" — is GONE with the
+        // retention bar** (`docs/plan_standing_upkeep.md` §2.8). A position below the rung's top is
+        // not that rung, so a patch being repaired is honestly untended while the repair runs. What
+        // made that a *cliff* is gone too: the payout and the keeping both interpolate, so a patch a
+        // hair below the top is worth a hair under a whole tended patch rather than dropping to a
+        // wild stand's rate.
         assert!(
-            app.world
+            !app.world
                 .resource::<ForageRegistry>()
                 .patch(coord)
                 .unwrap()
                 .is_cultivated(),
-            "the rung is not given up to repair it: the ground stays tended throughout"
+            "a patch below the rung's top is not that rung — which is what makes it repairable"
         );
 
         // The other half, in its own world so the first half's (absent) failure cannot be read for
@@ -9492,12 +9493,11 @@ mod tests {
             },
         );
         {
-            let (cost, bar) = rung_cost_and_bar(&full, RungKey::PlantTended);
+            let top = rung_top(&full, RungKey::PlantTended);
+            let ladder = full.world.resource::<LadderConfigHandle>().get();
             let mut registry = full.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_cost = cost;
-            patch.cultivation_retain_bar = bar;
-            patch.cultivation_progress = cost;
+            patch.set_ladder_position(top, &ladder);
             patch.owner = Some(faction);
         }
 
@@ -9527,15 +9527,17 @@ mod tests {
                 species: None,
             },
         );
-        let (cost, bar) = rung_cost_and_bar(&app, RungKey::PlantField);
+        let top = rung_top(&app, RungKey::PlantField);
         {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.field_cost = cost;
-            patch.field_retain_bar = bar;
-            patch.field_progress = cost * ERODED_BUT_STILL_HELD;
+            patch.set_ladder_position(top * ERODED_BUT_STILL_HELD, &ladder);
             patch.owner = Some(faction);
-            assert!(patch.is_field() && !patch.field_meter_full());
+            assert!(
+                !patch.is_field(),
+                "below the Field's top is no longer a Field"
+            );
         }
 
         handle_sow(&mut app, faction, coord);
@@ -9562,7 +9564,7 @@ mod tests {
         {
             let mut registry = full.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.complete_field(faction);
+            patch.complete_field(faction, &core_sim::LadderConfig::builtin());
             patch.owner = Some(faction);
         }
 
@@ -9632,23 +9634,26 @@ mod tests {
     /// longer Thriving — exactly the state a patch reaches when another band overdraws it
     /// mid-cultivation, and the state the retired phase gate used to refuse.
     fn seed_paused_build(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry
             .patch_mut(coord)
             .expect("the fixture seeded a patch");
-        patch.cultivation_progress = PART_PREPARED_WORK;
-        patch.cultivation_cost = PART_PREPARED_JOB;
+        patch.set_ladder_position(PART_PREPARED_WORK, &ladder);
         patch.owner = owner;
         patch.ecology_phase = EcologyPhase::Stressed;
     }
 
-    /// **A paused build's banked work, and the job it is part of** — half of a nominal one-worker
-    /// job, so the pair reads unambiguously as mid-build (`RUNG_UNSTARTED < work < job`) without
-    /// pretending to the ladder's shipped price, which these command-gate tests are not about. Both
-    /// halves are needed: a completion predicate reads `progress >= cost`, so progress alone says
-    /// nothing.
+    /// **A paused build's banked work** — half of a nominal one-worker job, so a position at it
+    /// reads unambiguously as mid-build without pretending to the ladder's shipped price, which
+    /// these command-gate tests are not about.
+    ///
+    /// **The PLANT web needs no `PART_PREPARED_JOB` beside it any more** — its rung boundaries come
+    /// from live config, so a plant fixture states only where the source stands and whether that is
+    /// mid-rung is the *ladder's* answer. [`PART_PREPARED_JOB`] survives for the **animal** web,
+    /// whose two meters still carry their own stamped costs.
     const PART_PREPARED_WORK: f32 = FABRICATED_BUILD_COST / 2.0;
-    /// See [`PART_PREPARED_WORK`].
+    /// See [`PART_PREPARED_WORK`] — the animal web's stamped companion cost.
     const PART_PREPARED_JOB: f32 = FABRICATED_BUILD_COST;
 
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
@@ -9766,10 +9771,10 @@ mod tests {
         let mut thriving = build_headless_app();
         seed_thriving_patch(&mut thriving, coord);
         {
+            let ladder = thriving.world.resource::<LadderConfigHandle>().get();
             let mut registry = thriving.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_progress = PART_PREPARED_WORK;
-            patch.cultivation_cost = PART_PREPARED_JOB;
+            patch.set_ladder_position(PART_PREPARED_WORK, &ladder);
             patch.owner = Some(rival);
         }
         grant_cultivation(&mut thriving, faction);
@@ -11068,7 +11073,7 @@ mod tests {
             // gate, not about how a Field gets built.
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.complete_field(FactionId(0));
+            patch.complete_field(FactionId(0), &core_sim::LadderConfig::builtin());
             patch.owner = Some(faction);
         }
         grant_seed_selection(&mut app, faction);
@@ -11095,10 +11100,10 @@ mod tests {
         let coord = find_sowable_tile(&app);
         seed_thriving_patch(&mut app, coord);
         {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_progress = PART_PREPARED_WORK;
-            patch.cultivation_cost = PART_PREPARED_JOB;
+            patch.set_ladder_position(PART_PREPARED_WORK, &ladder);
             patch.owner = Some(FactionId(1));
         }
         grant_seed_selection(&mut app, faction);
@@ -11258,6 +11263,9 @@ mod tests {
     /// actually stands on. `fieldYield` is the payoff the client shows against `ceilingSow`'s dip.
     #[test]
     fn the_wire_carries_both_plant_meters_and_the_sow_forecast_pair() {
+        /// How far up the Field's own span the fixture seats the position — the fraction the wire's
+        /// `fieldProgress` must then read back.
+        const HALF_SOWN: f32 = 0.5;
         let mut app = build_world_app();
         let coord = find_sowable_tile(&app);
         {
@@ -11268,10 +11276,15 @@ mod tests {
             // **Above Sustain's escapement floor** — at `K/2` exactly a Sustain row is
             // honestly `+0.00`, and a dip on nothing is nothing.
             patch.biomass = patch.carrying_capacity * STOCKED_PATCH_FRACTION;
-            patch.complete_cultivation(FactionId(0));
-            // A Sow underway on top of it, so the row publishes a live rung-3 build fraction.
-            patch.field_progress = PART_PREPARED_WORK;
-            patch.field_cost = PART_PREPARED_JOB;
+            // A Sow half-way up on top of it, so the row publishes a live rung-3 build fraction
+            // beside a completed rung-2 one — which is the two-meter READOUT still riding one
+            // position (`docs/plan_standing_upkeep.md` §2.8).
+            let ladder = core_sim::LadderConfig::builtin();
+            let (field_base, field_width) =
+                core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+            // Half-way up the Field's own span, on top of a completed tended rung.
+            patch.owner = Some(FactionId(0));
+            patch.set_ladder_position(field_base + field_width * HALF_SOWN, &ladder);
         }
         recapture_snapshot_in_place(&mut app.world);
         let snapshot = app
@@ -11289,7 +11302,6 @@ mod tests {
         // BOTH plant meters ship, independently — the two-meter split the client needs. **Each is
         // still a 0..1 FRACTION**, divided at capture against that patch's own job, even though the
         // meter behind it now stores absolute work units.
-        const HALF_SOWN: f32 = PART_PREPARED_WORK / PART_PREPARED_JOB;
         assert!((patch.cultivation_progress - 1.0).abs() < 1e-6);
         assert!(patch.is_cultivated);
         assert!((patch.field_progress - HALF_SOWN).abs() < 1e-6);
@@ -11303,7 +11315,10 @@ mod tests {
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
         assert!((patch.cultivation_work_cost - cultivate_cost).abs() < 1e-6);
-        assert!((patch.field_work_done - PART_PREPARED_WORK).abs() < 1e-6);
+        assert!(
+            (patch.field_work_done - patch.field_work_cost * HALF_SOWN).abs() < 1e-3,
+            "the Field's work-done readout is the position clamped into the Field's own span"
+        );
         assert!(
             patch.field_work_cost > 0.0,
             "a rung nobody has started still quotes its price"
@@ -11332,20 +11347,33 @@ mod tests {
         // (`docs/plan_standing_upkeep.md` §2.4). Nobody is building it and nobody is keeping it, so
         // the whole of that is unmet and the shortfall is the bleed `advance_cultivation` will
         // apply.
-        let field_demand = core_sim::LadderConfig::builtin()
+        // **AND IT INTERPOLATES**, so a half-sown Field owes a whole tended patch plus half of what
+        // a Field adds — not the Field's own rate, which is what it owed while the demand stepped at
+        // the rung boundary (`docs/plan_standing_upkeep.md` §2.8). The cost moves with the benefit or
+        // not at all.
+        let ladder = core_sim::LadderConfig::builtin();
+        let tended_demand = ladder
+            .rung(RungKey::PlantTended)
+            .upkeep_demand(core_sim::UNSCALED_UPKEEP);
+        let field_demand = ladder
             .rung(RungKey::PlantField)
             .upkeep_demand(core_sim::UNSCALED_UPKEEP);
         assert!(
-            field_demand > 0.0,
-            "the field rung costs work to hold, or this block asserts three zeroes"
+            field_demand > tended_demand && tended_demand > 0.0,
+            "the ladder's demands climb, or this block asserts nothing about interpolation"
         );
-        assert!((patch.upkeep_demand - field_demand).abs() < 1e-6);
+        let expected = tended_demand + HALF_SOWN * (field_demand - tended_demand);
+        assert!(
+            (patch.upkeep_demand - expected).abs() < 1e-3,
+            "a half-sown Field owes {expected}, not {}",
+            patch.upkeep_demand
+        );
         assert_eq!(
             patch.upkeep_supplied, 0.0,
             "no band is keeping this fixture patch"
         );
         assert!(
-            (patch.upkeep_shortfall - field_demand).abs() < 1e-6,
+            (patch.upkeep_shortfall - expected).abs() < 1e-3,
             "…so the whole demand went unmet — a row reading `0` short beside `0` supplied would \
              say nothing is wrong on a patch the sim is reverting"
         );
@@ -11356,8 +11384,8 @@ mod tests {
         // build crew — a build crew supplies none of the rate.
         assert_eq!(
             patch.upkeep_workers_needed,
-            field_demand.ceil() as u32,
-            "hands to meet the rate, whoever is supplying it"
+            expected.ceil() as u32,
+            "hands to meet the rate the position actually owes, whoever is supplying it"
         );
         // **Deliberately not compared against `tended_yield`.** Since the harvest floor a stance row
         // is constant escapement — a *stock* — while `tendedYield`/`fieldYield` are long-run rates;
@@ -12819,7 +12847,6 @@ mod tests {
             &composition,
             &labor.forage,
             &flora,
-            equipped_gather_reference(),
             // The band under test is freshly spawned, so its baskets are whole — the seed path
             // resolves the same equipped tier.
             equipped_gather_reference(),

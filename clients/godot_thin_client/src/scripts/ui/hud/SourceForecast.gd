@@ -782,11 +782,13 @@ const FORECAST_BUILD_WORK_COST_KEYS := {
 # a threshold would name a mechanism that no longer exists. What can still eat a build is the ROT,
 # which is `FORECAST_METER_ROT_KEY` and is a fact about the source rather than about the rung.
 #
-# **`upkeep_demand` IS STILL NOT THIS NUMBER.** That field is what the source is BILLED right now,
-# resolved through the rung actually at risk, so it reads `0` on a source with no progress — the
-# right answer for *what is this source losing* and the wrong one for *what would this rung cost to
-# hold*. The rung is picked with the same key table the cost is, so price, meter and rate can never
-# name three different rungs.
+# **`upkeep_demand` IS STILL NOT THIS NUMBER, and since §2.8 it is one step further away.** That
+# field is the BILL THE KEEPERS WERE HANDED this turn (`forage::patch_keeping_basis`), which is what
+# makes `demand − supplied == shortfall` hold exactly — the right answer for *where is my pooled
+# shortfall landing* and the wrong one for *what would this rung cost to hold*. On the plant web it
+# is now INTERPOLATED up the branch as the one position climbs, so it is not even the rung's own
+# rate; this pair is, at every fullness and on a rung nobody has started. The rung is picked with the
+# same key table the cost is, so price, meter and rate can never name three different rungs.
 const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
     IMPROVEMENT_CULTIVATE: "cultivation_upkeep_demand",
     IMPROVEMENT_SOW: "field_upkeep_demand",
@@ -814,6 +816,54 @@ const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
 # **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY** — this client holds no gate machinery for it and
 # must not re-derive one. It rides the SAME winning band as the three fields above.
 const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
+# **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, AND WHAT IS LEFT OF THE CLIMB**
+# (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a single
+# rung — the four verbs always were destinations, and with ONE POSITION PER SOURCE that reading
+# became literal: the entry lays every rung between where the source stands and where it was sent,
+# in order, and stays at the head until it ARRIVES. So a `sow` declared on untended ground is two
+# legs and costs the whole branch.
+#
+# **BOTH ARE READ AND NEITHER IS RE-DERIVED.** A leg's `work_remaining` is its owing FROM WHERE THE
+# SOURCE STANDS (a patch 30 units into a Cultivate owes 20 on that leg, not 50 — a previous
+# improvement is a RECEIPT, NOT A DISCOUNT) and its `turns_remaining` is CHAINED behind the legs
+# above it against a build queue this client cannot see. Reconstructing either would be a second
+# producer of a verdict that already has one, which is the failure the whole `buildTurnsRemaining`
+# family exists to prevent.
+const FORECAST_BUILD_DESTINATION_KEY := "build_destination_rung"
+const FORECAST_BUILD_LEGS_KEY := "build_legs"
+# The three keys of one published leg. **Named**, because the producer is the Rust decoder and the
+# readers are two GDScript surfaces: a typo in a `get` here is a silent zero, which on the work side
+# would price a whole branch as free.
+const BUILD_LEG_RUNG_KEY := "rung"
+const BUILD_LEG_WORK_KEY := "work_remaining"
+const BUILD_LEG_TURNS_KEY := "turns_remaining"
+# **THE WIRE'S RUNG SPELLING, AND THE VERB THAT NAMES EACH RUNG AS A DESTINATION.** The sim spells a
+# rung `<branch>:<id>` — branch-qualified because `wild` names a rung on BOTH webs — and this client
+# spells the same thing as an improvement verb, because that is what a command carries. This is the
+# ONE place the two vocabularies meet.
+#
+# **`wild` HAS NO VERB, AND ITS ABSENCE IS THE ANSWER.** You do not build the rung every source
+# starts on, so it maps to `IMPROVEMENT_NONE` and a destination picker renders it as the floor of the
+# branch rather than as something to take the land to.
+const RUNG_KEY_WILD_PLANT := "plant:wild"
+const RUNG_KEY_TENDED := "plant:tended"
+const RUNG_KEY_FIELD := "plant:field"
+const RUNG_KEY_WILD_ANIMAL := "animal:wild"
+const RUNG_KEY_PASTORAL := "animal:pastoral"
+const RUNG_KEY_PEN := "animal:pen"
+const RUNG_KEY_IMPROVEMENTS := {
+    RUNG_KEY_WILD_PLANT: IMPROVEMENT_NONE,
+    RUNG_KEY_TENDED: IMPROVEMENT_CULTIVATE,
+    RUNG_KEY_FIELD: IMPROVEMENT_SOW,
+    RUNG_KEY_WILD_ANIMAL: IMPROVEMENT_NONE,
+    RUNG_KEY_PASTORAL: IMPROVEMENT_TAME,
+    RUNG_KEY_PEN: IMPROVEMENT_CORRAL,
+}
+# …and the branch each web climbs, BOTTOM RUNG FIRST. It is an ORDER as well as a membership list:
+# every consumer walks it to say where a source stands and what is above it, so a branch listed out
+# of climb order would mark the wrong rung as *banked*.
+const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
+const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -3830,6 +3880,55 @@ static func build_queue_position(src: Dictionary, prefix: String) -> int:
 static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
     return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
 
+## **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE** — the destination rung as an IMPROVEMENT VERB,
+## `IMPROVEMENT_NONE` when no band has queued it. It is the wire's `<branch>:<id>` read through the
+## one crossing table (`RUNG_KEY_IMPROVEMENTS`), so nothing else in the client has to know how the sim
+## spells a rung.
+##
+## Read it BESIDE `build_legs`: this says where the climb ENDS, those say what is LEFT of it. The
+## entry retires when the source reaches this rung's top and not when an intermediate rung fills, so
+## a two-leg `sow` holds the head of the queue through its Cultivate leg.
+static func build_destination_rung(src: Dictionary, prefix: String) -> String:
+    var key := String(src.get(prefix + FORECAST_BUILD_DESTINATION_KEY, "")).strip_edges()
+    return String(RUNG_KEY_IMPROVEMENTS.get(key, IMPROVEMENT_NONE))
+
+## **THE LEGS THE QUEUED ENTRY STILL HAS TO LAY**, in climb order, first-incomplete first — the FIRST
+## row is the leg in flight. `[]` when the source is not queued, or has already arrived, and that
+## emptiness is a real answer rather than an absence to fill in.
+##
+## Each row is normalised to `{rung, improvement, work_remaining, turns_remaining}` — the wire's rung
+## key crossed to a verb beside it, so a caller matching legs against a branch and a caller naming the
+## verb read one row. **NOTHING IS RECOMPUTED**: the work is the leg's owing from where the source
+## stands now, and the turns are chained behind the legs above it. A row the wire cannot name a rung
+## for is DROPPED rather than carried as a nameless leg, which would render as a step to nowhere.
+static func build_legs(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var raw: Variant = src.get(prefix + FORECAST_BUILD_LEGS_KEY, [])
+    if not (raw is Array):
+        return rows
+    for entry in (raw as Array):
+        if not (entry is Dictionary):
+            continue
+        var leg: Dictionary = entry
+        var key := String(leg.get(BUILD_LEG_RUNG_KEY, "")).strip_edges()
+        if not RUNG_KEY_IMPROVEMENTS.has(key):
+            continue
+        rows.append({
+            BUILD_LEG_RUNG_KEY: key,
+            "improvement": String(RUNG_KEY_IMPROVEMENTS[key]),
+            BUILD_LEG_WORK_KEY: maxf(float(leg.get(BUILD_LEG_WORK_KEY, 0.0)), 0.0),
+            # The four negatives are the countdown's own and are passed through VERBATIM — a leg
+            # cannot be dated when the entry carrying it cannot, and flattening one into another is
+            # how this client twice lost a sentinel the wire had already spelled.
+            BUILD_LEG_TURNS_KEY: int(leg.get(BUILD_LEG_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE)),
+        })
+    return rows
+
+## The BRANCH a source climbs, bottom rung first — `RUNG_BRANCH_PLANT` for a patch, `RUNG_BRANCH_ANIMAL`
+## for a herd. One picker, so the two webs' tracks cannot be walked in two different orders.
+static func rung_branch_for_kind(source_kind: String) -> Array:
+    return RUNG_BRANCH_ANIMAL if source_kind == SOURCE_KIND_HERD else RUNG_BRANCH_PLANT
+
 ## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
 ## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other
 ## people's work.
@@ -3858,6 +3957,20 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
 ## exists to make legible. `supplied` is this source's SHARE of its band's keeping pool (§2.5), not a
 ## crew on the tile. `crew` is what the RATE is worth in hands — the keeping pool's share once the rung
 ## stands, the minimum viable BUILD crew while it is still going up, one arithmetic either way.
+##
+## ⛔ **`demand` IS THE BILL THE KEEPERS WERE HANDED, NOT THE LIVE COST OF HOLDING THE RUNG** (§2.8).
+## It was the second thing until the plant web went to ONE POSITION: the keeping rate INTERPOLATES up
+## the branch now, so a build banks work between the turn the supply is stamped and the turn it is
+## judged, and a lagged supply against a moving bill is permanently short. The sim publishes
+## `forage::patch_keeping_basis` — the demand the pass actually answered — which is what makes
+## `demand − supplied == shortfall` hold exactly, and is why the trio may be read as one statement.
+##
+## **SO NOTHING MAY QUOTE IT AS *what would this rung cost to hold*.** That question is the per-rung
+## `<rung>UpkeepDemand` pair (`build_upkeep_demand`), which is the ladder's own rate and answers for a
+## rung nobody has started. This one answers *where is my pooled shortfall landing*, and every
+## surviving reader words it that way: the pool card's coverage line, the fund-mode row's presence and
+## `_queued_keeping_load`'s already-billed test. The one surface that ever said *"holding this costs
+## N"* per source — the `Keeping:` row — was retired in issue #545.
 ##
 ## `at_risk` is the pair's gate — `has_neglect_grace` — and it means *there is something here that can
 ## be lost*. It has to be read before `grace`, exactly as `has_owner` is before `owner`: `0` grace on

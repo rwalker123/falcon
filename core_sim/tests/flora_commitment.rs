@@ -65,7 +65,7 @@ fn tended_patch(terrain: TerrainType, species: Option<&str>, capacity: f32) -> F
     // The rung is FINISHED here — the quotes below are about a committed patch's basket, not about
     // the build that reaches it. A meter set to a bare `1.0` no longer completes anything now that a
     // job has a size (`docs/plan_unit_costed_work.md`), so this runs the real accrual.
-    patch.complete_cultivation(QUOTE_OWNER);
+    patch.complete_cultivation(QUOTE_OWNER, &core_sim::LadderConfig::builtin());
     patch.species = species.map(str::to_string);
     patch
 }
@@ -122,28 +122,59 @@ fn an_uncommitted_patch_reads_the_tiles_whole_basket_and_its_average_rate() {
     }
 }
 
-/// **A patch still being prepared has not displaced anything yet**, so it reads exactly like the wild
-/// stand it still is. Both halves of the commitment switch on together when the rung completes —
-/// there is no state where one applies and the other does not.
+/// **THE BASKET STEPS AND THE RATE SLIDES** — the two halves of a commitment no longer switch on
+/// together, and that is `docs/plan_standing_upkeep.md` §2.8 paying out.
+///
+/// A patch still being cleared has displaced nothing, so its **basket** is the mixed stand it
+/// started as: a half-weeded basket is not a blend of two baskets, so the composition resolves at
+/// the rung actually *achieved*. Its **rate**, though, interpolates on the position — the payoff of
+/// a build starts on turn one instead of arriving all at once at the end, which is the whole point
+/// of the arc. A hair up the rung is a hair above wild.
 #[test]
-fn a_commitment_takes_effect_only_when_the_improvement_completes() {
+fn a_build_in_flight_keeps_its_wild_basket_while_its_rate_has_already_started_to_climb() {
     let labor = labor();
     let flora = FloraConfig::builtin();
     let terrain = TerrainType::AlluvialPlain;
     let capacity = labor.forage.capacity_for(terrain);
+    let ladder = core_sim::LadderConfig::builtin();
+
+    /// A single work unit banked — a hair up a fifty-unit rung, so a rate that had **stepped** to
+    /// the tended value would overshoot the bound below by a factor of the conversion gain.
+    const ONE_WORK_UNIT: f32 = 1.0;
 
     let composition = flora.composition(terrain);
     let mut building = tended_patch(terrain, Some("wild_emmer"), capacity);
-    building.cultivation_progress = 0.5;
+    building.set_ladder_position(ONE_WORK_UNIT, &ladder);
     assert_eq!(
         core_sim::patch_composition(&building, composition, &labor.forage).as_ref(),
         composition,
         "a patch still being cleared is still the mixed stand it started as"
     );
-    assert_eq!(
-        core_sim::patch_provisions_per_biomass(&building, composition, &flora, &labor.forage),
-        wild_basket_rate(&flora, &labor, composition),
-        "and it converts at the wild basket's rate, with no conversion gain"
+
+    let wild = wild_basket_rate(&flora, &labor, composition);
+    let rate =
+        core_sim::patch_provisions_per_biomass(&building, composition, &flora, &labor.forage);
+    let (_, tended_span) = core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
+    let mut finished = tended_patch(terrain, Some("wild_emmer"), capacity);
+    finished.complete_cultivation(core_sim::FactionId(0), &ladder);
+    let tended =
+        core_sim::patch_provisions_per_biomass(&finished, composition, &flora, &labor.forage);
+    assert!(
+        tended > wild,
+        "fixture: tending must pay more than wild, or there is no step to be part-way up"
+    );
+
+    // The rate is wild plus its share of the step — asserted as the delta form rather than as a
+    // literal, so a retune of `tended_conversion_gain` moves the fixture with the game.
+    let share = ONE_WORK_UNIT / tended_span;
+    let expected = wild + share * (tended - wild);
+    assert!(
+        (rate - expected).abs() <= EPSILON,
+        "a build one work unit in pays wild plus {share} of the step: {rate} against {expected}"
+    );
+    assert!(
+        rate > wild && rate < tended,
+        "…which is strictly between the two rungs, never either of them: {wild} < {rate} < {tended}"
     );
 }
 
@@ -162,7 +193,20 @@ fn a_reweighted_basket_still_sums_to_the_whole_basket() {
         for share in composition {
             for field in [false, true] {
                 let mut patch = tended_patch(terrain, Some(&share.species), capacity);
-                patch.field_progress = if field { 1.0 } else { 0.0 };
+                // A quote fixture standing at (or below) the Field rung: the position is the
+                // whole ladder now, so "is this a Field" is where the position sits.
+                patch.set_ladder_position(
+                    if field {
+                        let (base, width) = core_sim::plant_rung_span(
+                            core_sim::RungKey::PlantField,
+                            &core_sim::LadderConfig::builtin(),
+                        );
+                        base + width
+                    } else {
+                        core_sim::RUNG_UNSTARTED
+                    },
+                    &core_sim::LadderConfig::builtin(),
+                );
                 let effective = core_sim::patch_composition(&patch, composition, &labor.forage);
                 let total: f32 = effective.iter().map(|entry| entry.share).sum();
                 assert!(

@@ -1201,6 +1201,22 @@ pub struct HusbandryConfig {
     /// The penned rung's growth multiplier: `min(husbandry_regrowth_cap, wild_r × pen_gain)` — the top
     /// of the ladder (`> pastoral_gain`). Retires the flat `pen.ecology.regrowth_rate`.
     pub pen_gain: f32,
+    /// **THE PEN'S HANDLING GAIN — the engagement bound at rung 3, and it is a NUMBER rather than
+    /// the absence of one.**
+    ///
+    /// A wild or pastoral take is bounded by how many animals the crew can actually reach and
+    /// engage in a turn ([`SpeciesDef::engage_rate`]). A penned herd used to pass `f32::INFINITY`
+    /// there, on the reading that a fenced animal is not stalked — and an infinite bound is what let
+    /// the pen's take escape every check the wild path applies.
+    ///
+    /// **A keeper genuinely handles far more animals per turn than a hunter**, because they are
+    /// standing still rather than running away — so this is a **multiplier on the species' own
+    /// engage rate**, which keeps the bound per-species where it belongs (a penned aurochs is still
+    /// heavier work than a penned rabbit) while stating the whole of what penning buys in one dial.
+    ///
+    /// Validated finite and `>= 1.0`: penning may make an animal easier to handle and may never make
+    /// it harder.
+    pub pen_engage_gain: f32,
     /// The stable-band ceiling on any managed `r`: `pastoral`/`pen` growth is capped here so a fast
     /// breeder (rabbit wild 0.35 × pen_gain 3.0 = 1.05) is held to a logistic rate that does not
     /// overshoot/oscillate. `0.75` keeps the discrete logistic monotone.
@@ -1252,6 +1268,7 @@ impl Default for HusbandryConfig {
             pen: PenConfig::default(),
             pastoral_gain: DEFAULT_PASTORAL_GAIN,
             pen_gain: DEFAULT_PEN_GAIN,
+            pen_engage_gain: DEFAULT_PEN_ENGAGE_GAIN,
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
             herders_hysteresis_fraction: DEFAULT_HERDERS_HYSTERESIS_FRACTION,
@@ -1317,6 +1334,15 @@ impl Default for PenConfig {
 /// tamed rabbit (0.35 → 0.525) and a tamed mammoth (0.04 → 0.06) become different economies. Retires
 /// the flat `0.25`. A **playtest lever** — measure and tune (`docs/plan_grazing_2d.md` §3).
 const DEFAULT_PASTORAL_GAIN: f32 = 1.5;
+
+/// **HOW MUCH EASIER A PENNED ANIMAL IS TO HANDLE than the same animal on the range** — the
+/// multiplier on its own `engage_rate` (see [`HusbandryConfig::pen_engage_gain`]).
+///
+/// **Shipped high enough that the bound almost never binds on a shipped species**, which is the
+/// honest reading of a pen: the constraint on a keeper is carrying the meat home, not catching the
+/// animal. It is a **number** rather than the `f32::INFINITY` it replaced, so a heavy-bodied species
+/// on a rich pen can still be handling-bound — and the check exists to be reached.
+const DEFAULT_PEN_ENGAGE_GAIN: f32 = 20.0;
 
 /// **The pen growth multiplier (Grazing 2d §3).** The ladder's top: a penned herd grows `pen_gain ×`
 /// its wild rate (capped). Resulting pen `r`: rabbit `0.75` (capped, booms) · deer `0.30` · mammoth
@@ -1802,6 +1828,19 @@ impl FaunaConfig {
             "husbandry.husbandry_regrowth_cap",
             self.husbandry.husbandry_regrowth_cap,
         )?;
+        // **The pen's HANDLING gain may never make an animal harder to handle.** It is the engagement
+        // bound at rung 3 (`fauna::herd_engage_rate`), a multiplier on the species' own rate, so a
+        // value below the identity would mean fencing an animal made it *worse* to work — and it is
+        // bounded rather than merely positive because that direction is incoherent, not unbalanced.
+        if !self.husbandry.pen_engage_gain.is_finite() || self.husbandry.pen_engage_gain < 1.0 {
+            return Err(FaunaConfigError::Invalid {
+                field: "husbandry.pen_engage_gain",
+                constraint: "be finite and at least 1.0 — penning may make an animal easier to \
+                             handle and may never make it harder"
+                    .to_string(),
+                value: self.husbandry.pen_engage_gain.to_string(),
+            });
+        }
         // `pen_radius_max` at `0` would forbid every `ExtendPen` (2d-β) — the command could never grow a
         // pen past its single tile, silently disabling the mechanic.
         if self.husbandry.pen_radius_max < 1 {

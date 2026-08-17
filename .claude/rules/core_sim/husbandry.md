@@ -111,9 +111,37 @@ invariant.
   the expedition ceiling/bound/simulation — **every** consumer resolves through them. **No call site may
   re-derive an ecology or a capacity**: a second copy of this mapping is exactly how a forecast starts
   promising a number the take won't pay (see "Pre-commit Yield Forecast").
-- **The managed harvest draws the herd down**, and that is what makes it sustainable: it converges the
-  herd on `K/2` and holds it there, paying `r·K/4` forever. Both husbandry rungs take it through the one
-  shared helper **`fauna::managed_yield_biomass`**.
+- **⛔ EVERY RUNG IS DRAWN DOWN THROUGH ONE PATH — the "managed harvest" is retired.** A penned herd
+  used to switch to a flat production with **no escapement floor, no engagement bound, no overdraw**
+  and `sustainable == actual`. **Production and draw are separate concerns: a rung may change
+  production; NO RUNG CHANGES THE DRAW.** A pen is hunted through the ordinary path — floor-live,
+  worker-capped, engagement-bounded, drawn down — so **a pen can be over-hunted and the ⚠ fires on
+  it**, exactly as the plant web's Field can (`cultivation.md` → "What a Field buys").
+  > **The re-expression was EXACT, and here is why.** `pen_yield_biomass` was
+  > `managed_yield_biomass`, whose whole body was `(biomass − capacity × MSY_BIOMASS_FRACTION)` — the
+  > escapement ceiling with the floor **nailed** to Sustain and the ecology argument unused. The pen
+  > was already taking an escapement ceiling; it simply refused to read the player's dial. So routing
+  > it through `hunt_escapement_ceiling(floor, herd.biomass, herd_capacity(..))` changes **nothing** at
+  > Sustain and everything at every other floor. Measured on the pinned `Rabbit Warren`
+  > (`fauna_husbandry.rs` → `the_re_expressed_pen_lands_where_the_managed_rate_did`): wild **0.3510** →
+  > pastoral **0.6966** → pen **0.9990**, before and after, to four figures. **No gain was retuned.**
+- **THE ENGAGEMENT BOUND EXISTS AT EVERY RUNG.** A pen passed `f32::INFINITY`, and an infinite bound
+  is not *"a penned animal is not stalked"* — it is **no bound**, and it is what let the pen's take
+  escape every check the wild path applies. `fauna::herd_engage_rate` is the one seam: the species'
+  own `engage_rate`, times `husbandry.pen_engage_gain` for a corralled herd, because a keeper genuinely
+  handles far more animals per turn than a hunter — a **number**, not the absence of one.
+- **EVERYTHING PENNING BUYS STEPS AT THE FENCE**, and that is the deliberate difference from the
+  plant web. The pen's regrowth gain, its density multiplier on `K`, its escape fraction and its
+  handling gain all read `is_corralled()` — a **stored fact set at completion** — so `animal:pen`
+  keeps `partial_credit: on_completion`. **Half a fence is not half a pen**: the animals are still
+  roaming and nothing about them has changed. A half-sown Field genuinely has half a crop in the
+  ground, which is why `plant:field` is `continuous`; the two are different facts, not an
+  inconsistency.
+- **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). `herd_keeping_meter` billed the
+  **pen** rung's upkeep from the first fencing work banked, while every benefit above waited for the
+  fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and it
+  was in the shipped game. The bill is the **pastoral** rate until `is_corralled()`, then the pen's:
+  cost and benefit move together or not at all.
 - **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
   passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
   worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under
@@ -133,12 +161,17 @@ invariant.
   to zero in ~12 turns and can never recover. Escapement never takes a herd below `K/2`, so a depleted
   managed herd **rebuilds** (yielding less, or nothing, while it does) and then pays `r·K/4` forever —
   stable from *both* sides, same yield at capacity and at the operating point.
-- A managed harvest therefore **never overdraws**: its yield telemetry reads `actual == sustainable`
-  (no ⚠). Its `workers_needed` is **derived like every other rung's** (slice 7): the pen collapses the
-  *policy* axis, never the **collection** cap — the keeper still carries the meat home, so the take is
-  `min(pen MSY, hunters × hunt.per_worker_biomass_capacity)` and the surplus it offered beyond that is
-  reported as `wasted`. The retired `TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one keeper could collect
-  a pen of any size.
+- **A pen CAN overdraw**, and that is the point: `actual != sustainable` is reachable at rung 3 and
+  the ⚠ fires on it. Its `workers_needed` is derived like every other rung's (slice 7) — the keeper
+  still carries the meat home, so the take is `min(what the floor offers, hunters ×
+  hunt.per_worker_biomass_capacity, what the crew can handle)` and the surplus beyond that is reported
+  as `wasted`. The retired `TENDED_SOURCE_WORKERS_NEEDED = 1` claimed one keeper could collect a pen
+  of any size. **The `policy` axis no longer collapses either** — that was the managed harvest's own
+  claim, and it went with it.
+- **What the fence still switches, and it is not payout**: where the animals live (`corralled_at`),
+  the larder feeding and `pen_fed_fraction`, and the frozen capacity on a barren footprint. Those are
+  facts about the pen, not rates, and they are untouched — including the ledger identity
+  `larder_delta == foodIncome − foodConsumption − penFeedUpkeep`.
 
 Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
 `collapse_rate`, `stressed_fraction`, `extinction_floor`), `immigration`, and `husbandry`

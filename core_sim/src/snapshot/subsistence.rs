@@ -6,12 +6,12 @@ use crate::fauna::{
     reseeding_logistic_regrowth, NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
 };
 use crate::forage::{
-    field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
+    forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR,
-    NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
     UNSCALED_UPKEEP,
 };
 use sim_schema::{
@@ -68,6 +68,31 @@ pub(crate) fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
         Some(EcologyPhase::Stressed) => GRAZE_PHASE_STRESSED,
         Some(EcologyPhase::Collapsing) => GRAZE_PHASE_COLLAPSING,
     }
+}
+
+/// **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, in the wire's spelling** — the destination rung as
+/// `<branch>:<id>`, or `""` for a source no band has queued.
+fn published_destination_rung(destination: Option<crate::intensification::RungKey>) -> String {
+    destination.map_or_else(String::new, |rung| rung.wire_key())
+}
+
+/// **THE LEGS THE ENTRY STILL HAS TO LAY**, each with the chained date the publish pass struck.
+///
+/// **The client must not re-derive these.** The rung spans are the sim's config, the source's
+/// position is the sim's state, and the dates are chained against a build queue the client cannot
+/// see — so a client reconstructing them would be a second producer of a verdict that has one.
+fn published_build_legs(
+    legs: &[crate::intensification::PublishedBuildLeg],
+) -> Vec<sim_runtime::BuildLegState> {
+    legs.iter()
+        .map(|published| sim_runtime::BuildLegState {
+            rung: published.leg.rung.wire_key(),
+            work_remaining: published.leg.work_remaining,
+            turns_remaining: published
+                .turns
+                .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
+        })
+        .collect()
 }
 
 pub(crate) fn snapshot_sedentarization(
@@ -769,6 +794,11 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // last three are the ones the player can act on, and they are three answers because
                 // holding wastes a turn, rotting destroys bought work, and a block is fixed by
                 // staffing the KEEPING rather than by adding builders.
+                build_destination_rung: published_destination_rung(
+                    herd.and_then(|herd| herd.build_destination),
+                ),
+                build_legs: herd
+                    .map_or_else(Vec::new, |herd| published_build_legs(&herd.build_legs)),
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -877,12 +907,24 @@ pub(crate) fn snapshot_forage_patches(
             // The patch's own ecology — the seam `refresh_ecology_phase` classified the published
             // `ecology_phase` word with, so the bands and the word describe the same source.
             let ecology = patch_ecology(patch, forage);
+            // **THE LADDER'S price for each plant rung, resolved once and used by both halves of the
+            // pair.** The fraction and the work pair must divide by the same number or the wire
+            // states one meter twice, from two denominators. `RUNG_COST_UNSCALED` on both: the only
+            // per-source cost multiplier on the ladder is a species' taming cost, and a plant has no
+            // species.
+            let cultivation_work_cost = ladder
+                .rung(RungKey::PlantTended)
+                .build_cost(RUNG_COST_UNSCALED)
+                .unwrap_or(NO_RUNG_WIDTH);
+            let field_work_cost = ladder
+                .rung(RungKey::PlantField)
+                .build_cost(RUNG_COST_UNSCALED)
+                .unwrap_or(NO_RUNG_WIDTH);
             let forecast = forage_forecast(
                 patch,
                 tile_composition,
                 forage,
                 flora,
-                equipped_gather_rate,
                 // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
                 // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
                 // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
@@ -894,12 +936,15 @@ pub(crate) fn snapshot_forage_patches(
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
-                // **The wire keeps the 0..1 fraction; the meter is in work units** — divided here
-                // against the patch's OWN stamped cost, so a tended patch reads exactly `1.0`
-                // beside an `is_cultivated` that is already true.
+                // **The wire keeps the 0..1 fraction; the source keeps ONE position** — the
+                // per-rung meter is that position clamped into the rung's own span
+                // (`forage::patch_rung_work_done`), divided by the rung's live cost. So a patch that
+                // holds the tended rung reads exactly `1.0` beside an `is_cultivated` that is
+                // already true, and a Field at 40% still reads its Cultivate as complete — which is
+                // the rung-ordering bug made unrepresentable rather than merely forbidden.
                 cultivation_progress: build_fraction(
-                    patch.cultivation_progress,
-                    patch.cultivation_cost,
+                    crate::forage::patch_rung_work_done(patch, RungKey::PlantTended, ladder),
+                    cultivation_work_cost,
                 ),
                 is_cultivated: patch.is_cultivated(),
                 owner: patch.owner.map(|faction| faction.0),
@@ -916,14 +961,21 @@ pub(crate) fn snapshot_forage_patches(
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
                 // client's "then Y" is the number the sim will hand over.
-                field_progress: build_fraction(patch.field_progress, patch.field_cost),
+                field_progress: build_fraction(
+                    crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
+                    field_work_cost,
+                ),
                 is_field: patch.is_field(),
-                field_yield: field_provisions(
+                // **Through `rung_payoff` at rung 3** — the same seam the sim pays every plant rung
+                // with, asked about the Field by name. It used to call a rung-3-only managed rate;
+                // that model is retired, so the quote and the payout are one expression again.
+                field_yield: crate::forage::rung_payoff(
                     patch,
                     tile_composition,
                     forage,
                     flora,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    RungKey::PlantField,
                 ),
                 // **Why this ground will not take seed** — resolved by the caller through the *same*
                 // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so
@@ -986,16 +1038,18 @@ pub(crate) fn snapshot_forage_patches(
                 // has to quote the price before the player commits, and the patch's *stamped* cost is
                 // `0` until someone starts. `RUNG_COST_UNSCALED` on both: the only per-source cost
                 // multiplier on the ladder is a species' taming cost, and a plant has no species.
-                cultivation_work_done: patch.cultivation_progress,
-                cultivation_work_cost: ladder
-                    .rung(RungKey::PlantTended)
-                    .build_cost(RUNG_COST_UNSCALED)
-                    .unwrap_or(0.0),
-                field_work_done: patch.field_progress,
-                field_work_cost: ladder
-                    .rung(RungKey::PlantField)
-                    .build_cost(RUNG_COST_UNSCALED)
-                    .unwrap_or(0.0),
+                cultivation_work_done: crate::forage::patch_rung_work_done(
+                    patch,
+                    RungKey::PlantTended,
+                    ladder,
+                ),
+                cultivation_work_cost,
+                field_work_done: crate::forage::patch_rung_work_done(
+                    patch,
+                    RungKey::PlantField,
+                    ladder,
+                ),
+                field_work_cost,
                 // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
                 // `upkeep_demand` below resolves through the **at-risk** rung
                 // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
@@ -1036,6 +1090,8 @@ pub(crate) fn snapshot_forage_patches(
                 // last three are the ones the player can act on, and they are three answers because
                 // holding wastes a turn, rotting destroys bought work, and a block is fixed by
                 // staffing the KEEPING rather than by adding builders.
+                build_destination_rung: published_destination_rung(patch.build_destination),
+                build_legs: published_build_legs(&patch.build_legs),
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -1068,11 +1124,13 @@ pub(crate) fn snapshot_forage_patches(
                 // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
                 // the grace below counts down against, so a row cannot bill one rung's demand while
                 // the sim bleeds another's.
-                upkeep_demand: crate::forage::patch_upkeep_demand(
-                    patch,
-                    crate::intensification::NOTHING_IN_FLIGHT,
-                    ladder,
-                ),
+                // **THE BILL, so the trio beside it is internally consistent**:
+                // `demand − supplied == shortfall` is what the client's under-kept readout is built
+                // on, and the supply answers the demand the keepers were *handed*
+                // (`forage::patch_keeping_basis`), not the one the turn's own build work has since
+                // raised. The *live* cost of holding the rung a player is composing against is the
+                // `<rung>UpkeepDemand` quote pair above, which is what that pair exists for.
+                upkeep_demand: crate::forage::patch_keeping_basis(patch, ladder),
                 upkeep_supplied: patch.upkeep_supplied,
                 // **Derived, so the three always describe one turn and one rung.** A stored
                 // shortfall would be stamped only on patches some band is assigned to, and would
@@ -1099,12 +1157,13 @@ pub(crate) fn snapshot_forage_patches(
                     flora,
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
-                field_fodder: field_fodder(
+                field_fodder: crate::forage::rung_fodder_payoff(
                     patch,
                     tile_composition,
                     forage,
                     flora,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    RungKey::PlantField,
                 ),
                 // **What is growing here — as this PATCH has it** (#433). The tile names the
                 // plants (§2, per-tile realization §10) and the patch's rung then says how much of

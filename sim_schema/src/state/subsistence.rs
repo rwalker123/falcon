@@ -696,6 +696,17 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_blocked_reason: String,
+    /// **WHERE THE PLAYER SENT THIS SOURCE** — the queued entry's destination rung, as
+    /// `<branch>:<id>`, or empty when no band has queued it. The entry retires when the source
+    /// reaches this rung's **top**, not when an intermediate rung fills.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_destination_rung: String,
+    /// **THE LEGS STILL TO LAY** ([`BuildLegState`]), in climb order, first-incomplete first. Empty
+    /// when the source is not queued or has already arrived; the first entry is the leg in flight.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_legs: Vec<BuildLegState>,
 }
 
 impl Default for HerdTelemetryState {
@@ -780,6 +791,8 @@ impl Default for HerdTelemetryState {
             meter_rot_per_turn: 0.0,
             build_queue_position: crate::NOT_IN_ANY_BUILD_QUEUE,
             build_blocked_reason: String::new(),
+            build_destination_rung: String::new(),
+            build_legs: Vec::new(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1204,6 +1217,50 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_blocked_reason: String,
+    /// **WHERE THE PLAYER SENT THIS SOURCE** — the queued entry's destination rung, as
+    /// `<branch>:<id>`, or empty when no band has queued it. The entry retires when the source
+    /// reaches this rung's **top**, not when an intermediate rung fills.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_destination_rung: String,
+    /// **THE LEGS STILL TO LAY** ([`BuildLegState`]), in climb order, first-incomplete first. Empty
+    /// when the source is not queued or has already arrived; the first entry is the leg in flight.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_legs: Vec<BuildLegState>,
+}
+
+/// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from
+/// where the source stands now** (`docs/plan_standing_upkeep.md` §2.8).
+///
+/// A queue entry names a **destination**, not a rung, so it lays every leg between the source's
+/// position and where the player sent it. `sow` on untended ground is two legs and costs the whole
+/// branch.
+///
+/// **The client must not re-derive these**: the rung spans are the sim's config, the position is the
+/// sim's state, and [`Self::turns_remaining`] is chained against a queue the client cannot see.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildLegState {
+    /// The rung, as `<branch>:<id>` — `plant:tended`, `plant:field`.
+    pub rung: String,
+    /// Work still owed **on this leg**, from the source's current position — never the rung's full
+    /// span. A patch 30 units into a Cultivate owes `20` here: a previous improvement is a receipt,
+    /// not a discount.
+    pub work_remaining: f32,
+    /// Turns until this leg is done, **chained** exactly as `build_turns_remaining` is, so the last
+    /// leg's number equals the entry's own. Carries the same negative vocabulary.
+    #[serde(default = "no_build_turns_estimate")]
+    pub turns_remaining: i32,
+}
+
+impl Default for BuildLegState {
+    fn default() -> Self {
+        Self {
+            rung: String::new(),
+            work_remaining: 0.0,
+            turns_remaining: crate::NO_BUILD_TURNS_ESTIMATE,
+        }
+    }
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an

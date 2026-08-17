@@ -1062,6 +1062,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // …and the two investment rungs' material payoffs.
         herd.corral_material = rows();
         herd.pastoral_material = rows();
+        // The animal twin of `ForagePatchState.build_legs` — one leg on this web today, and seeded
+        // for the same reason: a repeated field the fixture leaves empty is a field the decode guard
+        // cannot exercise.
+        herd.build_legs = rows();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
@@ -1125,6 +1129,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
         patch.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+        // **THE LEGS OF A QUEUE ENTRY'S CLIMB** — a repeated field, seeded for the same reason the
+        // curve above is. A `sow` on untended ground is a two-leg climb, which is what the fixture
+        // stands for here.
+        patch.build_legs = rows();
     }
     s.intensification_knowledge = rows();
 
