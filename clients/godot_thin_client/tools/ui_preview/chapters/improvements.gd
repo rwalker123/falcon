@@ -984,11 +984,14 @@ func run(harness) -> void:
 	# own note read "Your people know Cultivation 0%" — the card refusing the act and inviting the
 	# player to configure it in the same breath. The gate NOTE stays (it answers "why not?"); the
 	# CONFIGURATION goes. Found in play, not by the harness, which is why the assertion exists now.
-	# **NO CROP ANYWHERE, which since §4.7a ③ is true of every state** — the crop is the BUILD QUEUE
-	# row's setting now, so this has stopped separating a gated control from an offered one and is
-	# kept as the sheet-wide negative it has become.
-	h._assert_hud("…and offers no crop anywhere, the crop being the queue row's setting",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE))
+	# **NO CROP CHOICE — and the needle moved when the SELECTIVE GATHER put the basket's plants back
+	# on this sheet.** A chip per named plant is a TAKE control on a plain gather and only becomes a
+	# crop picker where a rung is in flight, which this state does not stage — so what is asserted is
+	# the absence of the row's SINGLE-PICK key, not the absence of a plant name (which the chips now
+	# legitimately render). See `ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE`.
+	h._assert_hud("…and offers no crop CHOICE, this sheet composing a plain gather",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE))
 
 	h._hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,

@@ -1023,6 +1023,10 @@ fn seed_snapshot() -> WorldSnapshot {
             // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same
             // reason `arrival_schedule` is: an empty one is a field the decode guard cannot see.
             assignment.material_yield = rows();
+            // **WHICH PLANTS THE CREW CARRIES HOME** (the selective gather) — a `[string]`, seeded
+            // for the same reason: a repeated field the fixture leaves empty is a field the decode
+            // guard cannot exercise.
+            assignment.take_species = vec!["wild_emmer".to_string(), "flax".to_string()];
         }
         // **A trade party's shipment** (arc #527) — a repeated field on the cohort, seeded for the
         // same reason the assignment's material account above is: an empty one is a field the decode
@@ -1118,6 +1122,20 @@ fn seed_snapshot() -> WorldSnapshot {
             share.sow_material_payoff = rows();
             share.cultivate_material_payoff = rows();
         }
+        // **How much of each plant is standing** (the selective gather) — index-aligned with the
+        // basket above, so it is seeded to the SAME length rather than to `ROWS`: a fixture whose
+        // two vectors disagreed would encode a shape the capture cannot produce.
+        patch.composition_standing_biomass = vec![0.0; composition.len()];
+        // …and the two per-species conversion rates, index-aligned with the same basket for the same
+        // reason (the selective gather's pre-commit sheet composes all three together).
+        patch.composition_provisions_per_biomass = vec![0.0; composition.len()];
+        patch.composition_fodder_per_biomass = vec![0.0; composition.len()];
+        // …and the per-species MATERIAL rows, one entry per basket entry with real rows inside, so
+        // the guard exercises the nested vector rather than a column of empty tables.
+        patch.composition_material_per_biomass = composition
+            .iter()
+            .map(|_| sim_schema::SpeciesMaterialRates { rows: rows() })
+            .collect();
         // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
         // handed over as one — the encoded bytes are identical either way.
         patch.composition = composition.into();

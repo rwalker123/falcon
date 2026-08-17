@@ -33,6 +33,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, patch_provisions_per_biomass, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world, tended_take_fodder,
@@ -292,6 +293,7 @@ fn spawn_forager_with_workers(
                         tile: patch,
                         floor,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers,
                     kit: None,
@@ -537,6 +539,7 @@ fn a_tended_hay_patch_credits_fodder_from_its_take() {
         &flora,
         &labor().forage,
         NEUTRAL_MULTIPLIER,
+        &TakeSelection::EVERYTHING,
     );
     assert!(quoted > 0.0, "hay's vector pays a real fodder rate");
 

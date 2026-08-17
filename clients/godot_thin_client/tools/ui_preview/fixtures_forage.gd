@@ -278,10 +278,17 @@ static func telling_fixture_events() -> Array:
 ## by `HudWidgets.IMPROVEMENT_DEAL_META`. Assert the pair, never the half.
 const IMPROVEMENT_PAYOFF_NEEDLE := "· then "
 
-## A crop `BaseFx.food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
-## gated offer. Naming a real crop matters: a needle no basket contains would make the assertion pass
-## whether the list rendered or not.
-const GATED_CROP_NEEDLE := "Wild Grain"
+## **THE SHEET NAMES THE BASKET'S PLANTS AGAIN, so a PLANT NAME cannot be the needle any more.** This
+## was `"Wild Grain"` — a crop `BaseFx.food_tile_fixture`'s basket really carries — asserted absent
+## from the whole compose sheet to prove the retired crop LIST was gone (`docs/plan_standing_upkeep.md`
+## §4.7a ③). The selective gather puts a chip per named plant back on that sheet, so every one of those
+## states now names Wild Grain legitimately and the old needle fails on all three.
+##
+## **WHAT THE THREE STATES STILL CLAIM IS TRUE AND WORTH ASSERTING**: a sheet composing a plain gather
+## offers no CROP CHOICE. The chip row is a TAKE selection there — its key reads `Carry home` — and it
+## only becomes a crop picker where a rung is actually in flight, which none of those states stages.
+## So the needle is the row's SINGLE-PICK key, which is exactly the thing that must not appear.
+const GATHER_SHEET_CROP_KEY_NEEDLE := HudFloraVocab.TAKE_ROW_LABEL_SINGLE
 
 ## The crew the two zero-crew submits are composed at. Named because 0 is the WHOLE subject of those
 ## frames — it is the sim's unassign on a worked source and a no-op on an unworked one — and a bare 0

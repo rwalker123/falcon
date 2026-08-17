@@ -67,7 +67,7 @@ use std::{borrow::Cow, collections::HashMap};
 use bevy::prelude::*;
 
 use crate::{
-    components::{Improvement, SourceYield, Tile},
+    components::{Improvement, SourceYield, TakeSelection, Tile},
     fauna::{
         classify_ecology_phase, escapement_ceiling, forecast_source_yield,
         reseeding_logistic_regrowth, sustainable_yield, EcologyPhase, SourceYieldForecast,
@@ -1257,6 +1257,62 @@ fn planted(favored: &str) -> Vec<FloraShare> {
 /// favoring a dominant plant pays and favoring a marginal one barely moves. It multiplies the whole
 /// vector — food, fodder and trade alike — so this stays commodity-generic with no `role` branch.
 ///
+/// **THE SELECTIVE-GATHER SEAM — the basket a crew that named some plants actually works.**
+///
+/// Filters a resolved basket down to the crew's [`TakeSelection`] and **renormalizes the survivors**,
+/// so a selection's members carry their shares *within the selection*. That is the whole of the
+/// narrowing rule: how much is standing is the selected species' summed share of the tile
+/// ([`selected_biomass_share`]); what a unit of that take converts to is this basket's own average.
+///
+/// **Applied AFTER the rung's own reweight, never before it.** Weeding and planting
+/// ([`composition_for_rung`]) are properties of the ground and are computed on the whole basket that
+/// is standing there; a crew choosing what to carry home cannot change what grew. Narrowing first
+/// would hand [`weeded`] a basket that does not sum to the [`WHOLE_BASKET`].
+///
+/// Borrowed on the whole-basket arm, which is every assignment that names nothing — the default, and
+/// the reason the neutrality bar costs nothing to hold.
+///
+/// An **empty** result is reachable and honest: a crew still asking for cotton on ground that has
+/// since been sown to emmer finds none of it standing, takes nothing, and is told so by a `0` take.
+fn narrowed<'a>(composition: &'a [FloraShare], take: &TakeSelection) -> Cow<'a, [FloraShare]> {
+    if take.is_everything() {
+        return Cow::Borrowed(composition);
+    }
+    let total = selected_biomass_share(composition, take);
+    if total <= NO_SHARE {
+        return Cow::Owned(Vec::new());
+    }
+    Cow::Owned(
+        composition
+            .iter()
+            .filter(|entry| take.takes(&entry.species))
+            .map(|entry| FloraShare {
+                species: entry.species.clone(),
+                share: entry.share / total,
+            })
+            .collect(),
+    )
+}
+
+/// **HOW MUCH OF THIS STAND THE CREW IS HERE FOR** — the selected species' summed share of the
+/// basket, and therefore the fraction of the escapement ceiling and of the standing crop they may
+/// take (`max(0, B − floor·K) × this`).
+///
+/// [`WHOLE_BASKET`] for a crew that named nothing, which is what makes naming nothing byte-identical
+/// to the take before selective gathering existed. Clamped to the whole basket because a share table
+/// sums to `1` by construction and f32 addition is not exact.
+pub fn selected_biomass_share(composition: &[FloraShare], take: &TakeSelection) -> f32 {
+    if take.is_everything() {
+        return WHOLE_BASKET;
+    }
+    composition
+        .iter()
+        .filter(|entry| take.takes(&entry.species))
+        .map(|entry| entry.share)
+        .sum::<f32>()
+        .clamp(NO_SHARE, WHOLE_BASKET)
+}
+
 /// Keyed on the **rung being asked about**, exactly as [`composition_for_rung`] is, so the gain and
 /// the basket it multiplies can never come from two different rungs.
 fn favored_conversion_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
@@ -1269,17 +1325,24 @@ fn favored_conversion_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
 /// **What one unit of this patch's biomass would convert at STANDING ON `rung`** — the basket that
 /// rung would make of the tile, priced through that rung's own conversion gain. The single seam every
 /// per-rung rate below is one line of, so no consumer can pair one rung's basket with another's gain.
+///
+/// **`take` narrows the basket to what the crew carries home** ([`narrowed`]) — the whole basket for
+/// every quote and for every crew that named nothing, which is why the selective gather changes no
+/// number it was not asked to.
+#[allow(clippy::too_many_arguments)] // the patch, the basket, both configs, the rung, the selection and the accessor
 fn rung_rate(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     rung: RungKey,
+    take: &TakeSelection,
     rate_of: impl Fn(&crate::flora_config::FloraDef) -> f32,
     fallback: f32,
 ) -> f32 {
+    let standing = composition_for_rung(patch, tile_composition, forage, rung);
     basket_rate(
-        &composition_for_rung(patch, tile_composition, forage, rung),
+        &narrowed(&standing, take),
         patch.species.as_deref(),
         favored_conversion_gain(rung, forage),
         flora,
@@ -1345,6 +1408,26 @@ pub fn patch_material_yields(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
+    patch_material_yields_taking(
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        &TakeSelection::EVERYTHING,
+    )
+}
+
+/// [`patch_material_yields`] for a crew that named **which plants it carries home** — the material
+/// account of the selective gather, decomposed over the selected subset exactly as the whole basket
+/// is over all of it. Commodity-generic: the same [`narrowed`] basket routes food, fodder and every
+/// material row, with no `role` branch anywhere.
+pub fn patch_material_yields_taking(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take: &TakeSelection,
+) -> Vec<crate::materials_config::MaterialYieldDef> {
     // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES.** A row's `per_biomass` is a rate and
     // lerps like every other rate on this patch, but the *rows themselves* come from a basket, and a
     // half-weeded basket is not a blend of two baskets — see [`patch_composition`].
@@ -1355,7 +1438,103 @@ pub fn patch_material_yields(
         forage,
         patch.standing().held,
         patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage)),
+        take,
     )
+}
+
+/// **WHAT ONE UNIT OF EACH NAMED PLANT'S BIOMASS CONVERTS AT, ON THIS PATCH RIGHT NOW** — the
+/// per-species scalar twin of [`patch_material_yields`], and the seam the selective gather's
+/// pre-commit sheet is composed from.
+///
+/// One row per entry of [`patch_composition`], **in that basket's own order**, so a caller can pair
+/// them by index with the shares it is already holding. Each row is the species' own
+/// `provisions_per_biomass` / `fodder_per_biomass` with the favored crop's conversion gain applied
+/// to *its* term only — the identical treatment [`basket_rate`] gives it, at the identical
+/// interpolated gain, which is what makes the identity below exact rather than approximate:
+///
+/// ```text
+/// Σ shareᵢ × provisionsᵢ  ==  patch_provisions_per_biomass(patch, …)
+/// ```
+///
+/// **It is NOT scaled by share, and that is what makes it composable.** A sheet narrowing to a
+/// subset `S` needs `Σ_S share × rate ÷ Σ_S share` — the rate *within* the selection — so a
+/// share-scaled row would have to be un-scaled before it could be used and would silently be wrong
+/// wherever it wasn't. The share is already on the wire beside it.
+///
+/// **A plant the roster no longer knows reads `0` in both accounts**, exactly as [`basket_rate`]
+/// skips it: an unnamed plant contributes nothing to either side of the identity. (The one case the
+/// identity does not cover is a basket in which *nothing* is named, where the whole-basket seam falls
+/// back to `forage.provisions_per_biomass` — there are no rows to compose there either.)
+pub fn patch_species_rates(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> Vec<SpeciesRate> {
+    // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES** — `patch_material_yields`' rule, and for
+    // its reason: a rate lerps across the rung being raised, a *basket* cannot be blended.
+    let composition = patch_composition(patch, tile_composition, forage);
+    let favored_gain = patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage));
+    composition
+        .iter()
+        .map(|entry| {
+            let gain = if patch.species.as_deref() == Some(entry.species.as_str()) {
+                favored_gain
+            } else {
+                NO_CONVERSION_GAIN
+            };
+            let def = flora.species.get(&entry.species);
+            SpeciesRate {
+                species: entry.species.clone(),
+                provisions_per_biomass: def.map_or(NO_UNCOMMITTED_YIELD_RATE, |def| {
+                    def.yield_.provisions_per_biomass
+                }) * gain,
+                fodder_per_biomass: def.map_or(NO_UNCOMMITTED_YIELD_RATE, |def| {
+                    def.yield_.fodder_per_biomass
+                }) * gain,
+                // **The MATERIAL account of the same plant** — its own rows at its own gain, merged
+                // by material id **within this species** (a `BTreeMap`, so the order is the id's own
+                // and stable). Merging stops at the species boundary on purpose: two plants' rows
+                // are never added together here, because a characteristic reading belongs to the
+                // batch a take creates and averaging two species' would invent a plant that is not
+                // growing there. Empty for a plant that pays no material — *no row*, never a zero.
+                materials: def.map(|def| material_rates_of(&def.yield_.materials, gain)),
+            }
+        })
+        .collect()
+}
+
+/// One plant's own conversion rates on a patch — see [`patch_species_rates`]. A named record rather
+/// than a pair of parallel `Vec`s at the seam, because *which* account a bare `f32` is cannot be read
+/// off a call site; the **wire** splits them into index-aligned vectors, which is a different
+/// trade (see `ForagePatchState`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpeciesRate {
+    /// The `flora_config.json` key — carried so a caller can assert its pairing rather than trust it.
+    pub species: String,
+    /// Food per unit of this plant's biomass, favored-crop gain included.
+    pub provisions_per_biomass: f32,
+    /// The fodder twin, `0` for a plant whose vector pays no hay — commodity-generic, no `role`
+    /// branch, exactly as the basket-averaged seams are.
+    pub fodder_per_biomass: f32,
+    /// **What one unit of this plant's biomass is MADE OF** — its own material rows, one per material
+    /// id, at the same gain the two scalars above carry and (like them) **not scaled by share**.
+    ///
+    /// **`None` is not the same as an empty list.** `None` means the roster does not name this plant
+    /// at all — it contributes to no account and there is nothing to say; an empty `Some` is a plant
+    /// that genuinely pays no material, which is *"no row"* and is how a grain says so. A `0`-valued
+    /// row would read as a crop that pays badly.
+    pub materials: Option<Vec<MaterialPayoff>>,
+}
+
+/// One plant's material rows, merged by id and ordered by it — [`material_yield_totals`]'s merge at
+/// the **per-biomass** basis rather than over a take, so the result is a *rate* a sheet can compose
+/// against any biomass it likes. Split out so the seam above states one thing per line.
+fn material_rates_of(
+    rows: &[crate::materials_config::MaterialYieldDef],
+    gain: f32,
+) -> Vec<MaterialPayoff> {
+    crate::materials_config::material_yield_totals(rows, crate::fauna::ONE_UNIT_OF_BIOMASS, gain)
 }
 
 /// **THE MATERIAL ROWS A PATCH WOULD PAY STANDING ON `rung`** — [`patch_material_yields`] asked
@@ -1379,12 +1558,14 @@ pub fn rung_material_yields(
         forage,
         rung,
         favored_conversion_gain(rung, forage),
+        &TakeSelection::EVERYTHING,
     )
 }
 
 /// The decomposition itself: one row per species per material, at `basket_rung`'s shares and the
 /// stated `favored_gain`. Split out so the live reading (an interpolated gain) and a per-rung quote
 /// (that rung's own gain) cannot come to be two decompositions.
+#[allow(clippy::too_many_arguments)] // the patch, the basket, both configs, the rung, the gain and the selection
 fn rung_material_yields_at(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
@@ -1392,8 +1573,10 @@ fn rung_material_yields_at(
     forage: &ForageLaborConfig,
     basket_rung: RungKey,
     favored_gain: f32,
+    take: &TakeSelection,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
-    let composition = composition_for_rung(patch, tile_composition, forage, basket_rung);
+    let standing = composition_for_rung(patch, tile_composition, forage, basket_rung);
+    let composition = narrowed(&standing, take);
     let mut rows = Vec::new();
     for entry in composition.iter() {
         let Some(def) = flora.species.get(&entry.species) else {
@@ -1433,6 +1616,26 @@ pub fn patch_provisions_per_biomass(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> f32 {
+    patch_provisions_per_biomass_taking(
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        &TakeSelection::EVERYTHING,
+    )
+}
+
+/// [`patch_provisions_per_biomass`] for a crew that named **which plants it carries home** — the
+/// share-weighted average over the selected subset alone, each member weighted *within* the
+/// selection. Narrowing to the food species of a mixed stand therefore converts at that plant's own
+/// rate rather than at the basket's, which is the whole point of choosing.
+pub fn patch_provisions_per_biomass_taking(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take: &TakeSelection,
+) -> f32 {
     // **THE RATE INTERPOLATES ON THE PATCH'S POSITION** (`docs/plan_standing_upkeep.md` §2.8): a
     // Field 40% raised converts at a whole tended patch's rate plus 40% of the Field's extra, so the
     // payoff starts on turn one of a build instead of arriving all at once at the end. `rung_rate`
@@ -1444,6 +1647,7 @@ pub fn patch_provisions_per_biomass(
             flora,
             forage,
             rung,
+            take,
             |def| def.yield_.provisions_per_biomass,
             forage.provisions_per_biomass,
         )
@@ -1467,6 +1671,7 @@ fn rung_provisions_per_biomass(
         flora,
         forage,
         rung,
+        &TakeSelection::EVERYTHING,
         |def| def.yield_.provisions_per_biomass,
         forage.provisions_per_biomass,
     )
@@ -1612,6 +1817,45 @@ pub fn resolve_committed_species(
         None => default_species_for_rung(composition, flora, rung)
             .ok_or(SpeciesRefusal::NothingClimbsHere),
     }
+}
+
+/// **May this crew ask for these plants HERE?** — the take selection's legality, the seam the
+/// `assign_labor` rejection reads (the selective gather's twin of [`resolve_committed_species`]).
+///
+/// A named species is legal iff the roster knows it **and it is in this tile's basket** — resolved
+/// through [`tile_flora_composition`], never `FloraConfig::composition` on a raw terrain, so a
+/// navigable hex is judged on the two-term basket it actually has. **There is no rung gate**: this
+/// says what a crew carries home from the stand that is standing, not what the ground may be
+/// committed to, so a `wild`-ceiling species (an oak's mast, a fishery) is a perfectly legal choice.
+///
+/// **It fails closed at the command**, like the floor does. A silently-dropped selection is
+/// indistinguishable from *"take everything"* on every readout the player has, so it would be
+/// undiagnosable; the refusal names the first offending key in the selection's own order.
+///
+/// The whole basket ([`TakeSelection::is_everything`]) is always legal — it names no plant to be
+/// wrong about.
+pub fn resolve_take_selection<'a>(
+    take: &'a TakeSelection,
+    composition: &[FloraShare],
+    flora: &FloraConfig,
+) -> Result<(), (&'a str, SpeciesRefusal)> {
+    for species in take.keys() {
+        if composition
+            .iter()
+            .any(|entry| entry.species == species && entry.share > NO_SHARE)
+        {
+            continue;
+        }
+        return Err((
+            species,
+            if flora.species.contains_key(species) {
+                SpeciesRefusal::NotHere
+            } else {
+                SpeciesRefusal::Unknown
+            },
+        ));
+    }
+    Ok(())
 }
 
 /// **What a patch pays, standing on `rung`** — in provisions/turn, through the *same* helpers the sim
@@ -2514,12 +2758,20 @@ pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
 /// The take resolves the patch's **conversion rate** off its own basket as well as its ecology, so
 /// it carries the tile's composition and the flora table alongside the forage config — one extra
 /// reference each, not one extra model.
+///
+/// **WHAT THE CREW IS HERE FOR is `take_species`** (the selective gather). Empty — the default —
+/// takes the whole basket and is byte-identical to the take before the selection existed. Naming
+/// plants scales the escapement ceiling by their summed share, converts at *their* basket average
+/// ([`narrowed`]), and draws down **only what was taken**: gathering the wheat does not trample the
+/// cotton, so the biomass hit is never scaled back up to the whole stand.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     tile_composition: &[FloraShare],
     workers: u32,
     floor: f32,
+    // **Which plants this crew carries home** — empty is the whole basket.
+    take_species: &TakeSelection,
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     output_multiplier: f32,
@@ -2533,7 +2785,15 @@ pub(crate) fn forage_take(
     // The ceiling is `r`-independent, so unlike the retired MSY skim it does **not** vary with the
     // patch's rung: what a tended patch buys is a faster refill, which shows up next turn as more
     // stock standing above the floor. One call still serves rungs 1 and 2 alike.
-    let take_ceiling = forage_escapement_ceiling(floor, patch.biomass, patch.carrying_capacity);
+    // **THE SELECTION SCALES THE OFFER, and nothing else about it.** Only the named plants' share of
+    // the stand is standing there to be carried home, so the ceiling and the standing-crop clamp
+    // below are both taken on that share. `WHOLE_BASKET` when the crew named nothing.
+    let selected = selected_biomass_share(
+        &patch_composition(patch, tile_composition, forage),
+        take_species,
+    );
+    let take_ceiling =
+        forage_escapement_ceiling(floor, patch.biomass, patch.carrying_capacity) * selected;
     // **`workers` IS THE TAKE CREW, and it is the only crew in this expression**
     // (`docs/plan_standing_upkeep.md` §2.2). A build and a keeping on this same patch are their own
     // allocations with their own hands; nothing they do scales what these gatherers carry. The
@@ -2545,11 +2805,16 @@ pub(crate) fn forage_take(
     let take = worker_cap
         .min(take_ceiling)
         .max(0.0)
-        .clamp(0.0, patch.biomass);
+        // The selected species' own standing crop — belt-and-braces beside the ceiling, which is
+        // already `≤ B × selected` for any floor `≥ 0`, and the honest bound either way: a crew
+        // cannot carry home more wheat than there is wheat.
+        .clamp(0.0, patch.biomass * selected);
     // The **conversion** half of the commit trade: every patch turns its biomass into food at its own
     // effective basket's share-weighted average, with the tended rung's gain on the favored crop.
-    // Resolved before the take is applied so it reads the same patch state the ceiling did.
-    let rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
+    // Resolved before the take is applied so it reads the same patch state the ceiling did — and over
+    // the **selected** subset, so what one unit of the take converts at is what the crew chose.
+    let rate =
+        patch_provisions_per_biomass_taking(patch, tile_composition, flora, forage, take_species);
     patch.biomass -= take;
     // FOOD income is fully fractional (a few foragers may gather < 1 provision/turn).
     scalar_from_f32(forage_provisions(take, rate, output_multiplier))
@@ -2844,9 +3109,37 @@ pub(crate) fn patch_fodder_per_biomass(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> f32 {
+    patch_fodder_per_biomass_taking(
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        &TakeSelection::EVERYTHING,
+    )
+}
+
+/// [`patch_fodder_per_biomass`] for a crew that named **which plants it carries home** — the fodder
+/// twin of [`patch_provisions_per_biomass_taking`], and the second of the three accounts the one
+/// [`narrowed`] basket routes.
+pub(crate) fn patch_fodder_per_biomass_taking(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take: &TakeSelection,
+) -> f32 {
     // The fodder twin of `patch_provisions_per_biomass`, interpolating on the same standing.
     patch_interpolate(patch, |rung| {
-        rung_fodder_per_biomass(patch, tile_composition, flora, forage, rung)
+        rung_rate(
+            patch,
+            tile_composition,
+            flora,
+            forage,
+            rung,
+            take,
+            |def| def.yield_.fodder_per_biomass,
+            NO_UNCOMMITTED_YIELD_RATE,
+        )
     })
 }
 
@@ -2867,6 +3160,7 @@ fn rung_fodder_per_biomass(
         flora,
         forage,
         rung,
+        &TakeSelection::EVERYTHING,
         |def| def.yield_.fodder_per_biomass,
         NO_UNCOMMITTED_YIELD_RATE,
     )
@@ -2892,6 +3186,9 @@ fn rung_fodder_per_biomass(
 /// food. **The take is already worker-capped** by `forage_take`'s `workers × per_worker_biomass`
 /// term, so there is deliberately no second collection cap here — the crop the crew carries home is
 /// the take it made.
+///
+/// **`take` narrows it with the food account** — the crop the crew carries home decides both, so a
+/// crew that named the grain alone banks no hay off a mixed stand.
 pub fn tended_take_fodder(
     take_biomass: f32,
     patch: &ForagePatch,
@@ -2899,10 +3196,11 @@ pub fn tended_take_fodder(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
+    take: &TakeSelection,
 ) -> f32 {
     forage_provisions(
         take_biomass,
-        patch_fodder_per_biomass(patch, tile_composition, flora, forage),
+        patch_fodder_per_biomass_taking(patch, tile_composition, flora, forage, take),
         output_multiplier,
     )
 }
@@ -2979,6 +3277,11 @@ pub(crate) fn forage_forecast(
     // exactly one place the two multiply.
     per_worker_gather_biomass: f32,
     output_multiplier: f32,
+    // **Which plants the crew this forecast is for carries home** — empty is the whole basket, and
+    // every band-agnostic caller (a patch row on the wire) passes exactly that. A crew that named
+    // some must be forecast against what it will actually take, or `forecast == actual` fails on
+    // the very readout the selection exists to move.
+    take_species: &TakeSelection,
 ) -> SourceYieldForecast {
     // **A Field takes the ORDINARY path.** It used to short-circuit into a managed, seasonless,
     // never-drawn-down harvest — the model this arc retired, because a rung may change production and
@@ -2986,7 +3289,16 @@ pub(crate) fn forage_forecast(
     // makes it interpolate.
     // The patch's IN-EFFECT conversion rate — the same one `forage_take` pays with, so every ceiling
     // the forecast composes is the number the sim will hand over.
-    let rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
+    let rate =
+        patch_provisions_per_biomass_taking(patch, tile_composition, flora, forage, take_species);
+    // **THE SELECTION RIDES THE TWO STOCK TERMS, which is what keeps the ceiling one expression.**
+    // `ceiling_at` is `max(0, B − floor·K) × rate`, and scaling both `B` and `K` by the selected
+    // share scales that room by exactly the share — the same number `forage_take` multiplies its
+    // ceiling by. `WHOLE_BASKET` leaves both terms untouched.
+    let selected = selected_biomass_share(
+        &patch_composition(patch, tile_composition, forage),
+        take_species,
+    );
     SourceYieldForecast {
         // A plant is not stalked — the engagement stage is an animal-web concept, and so is the fight
         // it feeds. Nothing on the plant web is brought down.
@@ -2999,9 +3311,10 @@ pub(crate) fn forage_forecast(
         )),
         body_mass_yield: PLANTS_DO_NOT_QUANTISE,
         // **The TERMS of the take** — `ceiling_at(floor, improvement)` composes exactly what
-        // `forage_take` computes, at any floor the player's dial can name.
-        biomass: patch.biomass,
-        carrying_capacity: patch.carrying_capacity,
+        // `forage_take` computes, at any floor the player's dial can name, on the share of the stand
+        // the crew is here for.
+        biomass: patch.biomass * selected,
+        carrying_capacity: patch.carrying_capacity * selected,
         // What one unit of this patch's standing crop is worth, at its own basket rate. Food-only:
         // the plant web's trade/fodder PROJECTION is a known gap (`plant_food_only`), while the
         // trade a gather actually earns is reported on the resolved row.
@@ -3081,6 +3394,8 @@ pub fn project_realized_forage(
     output_multiplier: f32,
     workers: u32,
     floor: f32,
+    // **What this crew carries home** — threaded so a projection runs the same take the turn will.
+    take_species: &TakeSelection,
     horizon: u32,
 ) -> f32 {
     if horizon == 0 {
@@ -3105,6 +3420,7 @@ pub fn project_realized_forage(
                 tile_composition,
                 workers,
                 floor,
+                take_species,
                 forage,
                 flora,
                 output_multiplier,
@@ -3153,6 +3469,8 @@ pub fn project_arrivals_forage(
     output_multiplier: f32,
     workers: u32,
     floor: f32,
+    // **What this crew carries home** — see [`project_realized_forage`].
+    take_species: &TakeSelection,
     horizon: u32,
 ) -> Vec<f32> {
     // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
@@ -3171,6 +3489,7 @@ pub fn project_arrivals_forage(
                 tile_composition,
                 workers,
                 floor,
+                take_species,
                 forage,
                 flora,
                 output_multiplier,
@@ -3201,6 +3520,10 @@ pub fn forage_source_yield_preview(
     output_multiplier: f32,
     workers: u32,
     floor: f32,
+    // **What this crew carries home** — empty is the whole basket. The seed must price the selection
+    // the command just stored, or the row a player reads before committing is not the row the turn
+    // pays (the `forecast == actual` rule, one axis over from the floor).
+    take_species: &TakeSelection,
     realized_horizon: u32,
     arrivals_horizon: u32,
     // `combat_config.forecast_range_sigmas`. **The plant web has no stochastic stage** — no
@@ -3215,17 +3538,26 @@ pub fn forage_source_yield_preview(
         flora,
         forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
         output_multiplier,
+        take_species,
     );
     // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
     // curve, so a Sustain gather of it reads no ⚠ while a Surplus gather of it does. Reading
     // `forage.ecology` here would flag every tended Sustain as an overdraw.
+    //
+    // **The reference line narrows with the take it sits beside.** A crew gathering one species of a
+    // mixed stand is comparing what it took against what *that* stand sustains, so both the stock
+    // terms and the conversion read the selected subset — the same scaling the ceiling gets.
+    let selected = selected_biomass_share(
+        &patch_composition(patch, tile_composition, forage),
+        take_species,
+    );
     let sustainable = forage_provisions(
         sustainable_yield(
-            patch.biomass,
-            patch.carrying_capacity,
+            patch.biomass * selected,
+            patch.carrying_capacity * selected,
             &patch_ecology(patch, forage),
         ),
-        patch_provisions_per_biomass(patch, tile_composition, flora, forage),
+        patch_provisions_per_biomass_taking(patch, tile_composition, flora, forage, take_species),
         output_multiplier,
     );
     // The steady headline is the forward projection from THIS patch state — the same computation the
@@ -3240,6 +3572,7 @@ pub fn forage_source_yield_preview(
         output_multiplier,
         workers,
         floor,
+        take_species,
         realized_horizon,
     );
     // The discrete twin, from the same patch state: what lands on each of the next
@@ -3254,6 +3587,7 @@ pub fn forage_source_yield_preview(
         output_multiplier,
         workers,
         floor,
+        take_species,
         arrivals_horizon,
     );
     // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
@@ -3401,6 +3735,7 @@ mod tests {
             NO_BASKET,
             20,
             0.5,
+            &TakeSelection::EVERYTHING,
             &forage,
             &FloraConfig::builtin(),
             1.0,
@@ -3439,6 +3774,7 @@ mod tests {
                 NO_BASKET,
                 20,
                 0.5,
+                &TakeSelection::EVERYTHING,
                 &forage,
                 &FloraConfig::builtin(),
                 1.0,
@@ -3492,6 +3828,7 @@ mod tests {
                 NO_BASKET,
                 3,
                 0.0,
+                &TakeSelection::EVERYTHING,
                 &forage,
                 &FloraConfig::builtin(),
                 1.0,
@@ -3533,6 +3870,7 @@ mod tests {
                 NO_BASKET,
                 workers,
                 policy,
+                &TakeSelection::EVERYTHING,
                 &forage,
                 &FloraConfig::builtin(),
                 1.0,
@@ -3661,6 +3999,7 @@ mod tests {
                 NO_BASKET,
                 50,
                 0.0,
+                &TakeSelection::EVERYTHING,
                 &forage,
                 &FloraConfig::builtin(),
                 1.0,

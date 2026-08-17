@@ -125,6 +125,7 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
 }
 
 use core_sim::RungKey;
+use core_sim::TakeSelection;
 
 /// A world with one band that works `count` cultivable patches in its own work range, staffs
 /// `builders`, keeps every meter it holds, and has queued a `Cultivate` on each source **in the
@@ -182,6 +183,7 @@ fn world_with_a_queue_knowing(
                 tile: *source,
                 floor: FOOD_PEAK,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: GATHERERS,
             kit: None,
@@ -1109,6 +1111,7 @@ fn unqueue_withdraws_the_declaration_and_the_source_stops_publishing_a_job() {
             tile: sources[0],
             floor: FOOD_PEAK,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         });
     assert!(
         app.world
@@ -1130,6 +1133,7 @@ fn unqueue_withdraws_the_declaration_and_the_source_stops_publishing_a_job() {
             tile: sources[0],
             floor: FOOD_PEAK,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         }),
         take_before,
         "…and the take crew is untouched: `unqueue` is the undo for a DECLARATION"
@@ -1170,6 +1174,7 @@ fn abandon_drops_the_row_and_its_entry_and_leaves_the_meter_to_rot() {
                 tile: sources[0],
                 floor: FOOD_PEAK,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             }),
         "the band held the source"
     );
@@ -1472,6 +1477,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                 tile: source,
                 floor: FOOD_PEAK,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: GATHERERS,
             kit: None,
@@ -1722,6 +1728,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             tile: source,
             floor: FOOD_PEAK,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         },
         workers: GATHERERS,
         kit: None,

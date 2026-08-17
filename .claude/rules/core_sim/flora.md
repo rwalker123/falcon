@@ -456,6 +456,169 @@ same scarce sowable tile" is the land-use tension, and *cash* is now literally *
   rather than the cash crop being kept off that ground. Material rates are **playtest dials**.
 - **The crop picker's cash quote is PER MATERIAL** — see the section below.
 
+### THE GATHER CAN NAME WHAT IT CARRIES HOME — the selective take
+
+**The one-sentence model:** a `Forage` crew may name one or more of the plants growing on the patch
+and carry home only those, leaving the rest standing; naming nothing takes the whole basket, exactly
+as every gather did before. A tile's basket mixes food with fibre and early food is scarce while
+baskets — the kit that raises what a gatherer carries — are made of fibre, so **what am I here for**
+becomes a real decision beside **how hard do I press** (the harvest floor).
+
+- **It rides the assignment, beside the floor** — `LaborTarget::Forage::take_species`, a
+  `components::TakeSelection`. It is a **mutable property of the same source** (a change on the same
+  tile replaces the assignment rather than adding one, `same_source`) and it rides the checkpoint for
+  free, because `SimState` clones `LaborAllocation` whole.
+  > **It is NOT `LaborTarget::Forage::species`.** That is the *commit* crop a `Cultivate`/`Sow` names,
+  > inert until an improvement completes; this one is live at rung 1, on the take itself. The two are
+  > independent — a crew can gather flax off ground it is committing to emmer.
+- **SORTED AND DEDUPLICATED BY CONSTRUCTION, not by presentation.** `TakeSelection` wraps a
+  **`BTreeSet`** with a private field and one constructor (`from_keys`, which also drops blanks), so
+  *unsorted* is unrepresentable rather than merely unusual. The selection reaches the snapshot, and a
+  collection whose iteration order varies between two builds has already cost this repo a
+  ~50%-of-runs `deterministic_snapshots_match` flake — see the share-denominator note in the
+  `flora_config.json` row above. Sorting the *output* is not the fix; not being able to hold an
+  unsorted one is.
+- **Legality is judged against THIS TILE's basket** (`forage::resolve_take_selection`, the take-side
+  twin of `resolve_committed_species`) — through `tile_flora_composition`, never
+  `FloraConfig::composition` on a raw terrain, so a navigable hex is judged on the two-term basket it
+  actually has. The refusals reuse `SpeciesRefusal` (`unknown_species` / `species_not_here`); no new
+  variant was needed. **There is no rung gate**: a selection says what the crew carries home from the
+  stand that is standing, so a `wild`-ceiling plant is a perfectly good answer where naming it as a
+  *crop* would be `CeilingTooLow`.
+  > **It fails closed at the command**, exactly as `floor_is_valid` does, and that is the whole reason
+  > it is validated at all: a silently dropped selection produces the identical take, crew count and
+  > row that *"take everything"* produces, so the mistake would be undiagnosable from any readout the
+  > player has. One bad key refuses the **whole** selection rather than being filtered out of it —
+  > half a selection is a different order than the one that was given. Pinned through the command by
+  > `server::tests::assign_labor_rejects_a_take_selection_this_ground_cannot_offer`, never through
+  > the validator it calls (see `cultivation.md` on the guard that passed while nothing validated).
+- **THE TAKE: the selection scales the OFFER; it does not change the crew, and it does not trample
+  the rest.** In `forage_take`:
+  - **available** = `max(0, B − floor·K) × Σ selected share` — `forage::selected_biomass_share` over
+    the patch's own basket, and an empty selection **short-circuits to `WHOLE_BASKET`** rather than
+    summing the shares, which is what makes naming nothing byte-identical to the take before this
+    existed rather than merely close to it;
+  - the **worker cap is unchanged** — a hand carries what a hand carries;
+  - **conversion decomposes over the selected subset**, each member weighted *within* the selection
+    (`forage::narrowed`, applied **after** the rung's own reweight — weeding is a property of the
+    ground and a crew's choice cannot change what grew). Food, fodder and every material row route
+    through that one basket, **commodity-generic, no `role` branch**, exactly as
+    `patch_material_yields` already decomposes;
+  - **the drawdown removes only what was taken.** Taking the wheat must not destroy the cotton, so
+    the biomass hit is never scaled back up to the whole stand.
+- **AND THE CREW COUNT ANSWERS FOR IT — this is the readout the mechanic depends on.**
+  `workers_needed`, `wasted`, the `sustainable` reference line and the whole pre-commit forecast all
+  read the selected subset: the forecast scales **both** `biomass` and `carrying_capacity` by the
+  share, so `ceiling_at`'s one expression `max(0, B − floor·K) × rate` narrows with no second copy of
+  it, and `forecast == actual` holds per component. Pick a plant that is a tenth of the tile and the
+  published count reads **1** where the whole basket reads **2** — *"there is very little of it
+  standing"* has to be **visible**, not merely true.
+  > #### ⛔ THE BUILD IS GATED ON THE GROUND, NOT ON THE SELECTION — the one term that does NOT narrow
+  >
+  > `Cultivate`'s accrual gate (`crew_is_working_the_source`) reads the **whole stand's** room above
+  > the floor, `ground_is_workable`, and the selective take must never be threaded into it. The gate
+  > says *"a crew stripping the ground it is sowing builds nothing"* — a statement about **the ground
+  > being stripped** — and a selection does not strip the ground; it leaves the rest standing, by
+  > definition. The builders are a **band-level pool that is not gathering at all**, so the gatherers'
+  > pickiness has no bearing on whether the ground can be cleared and planted.
+  >
+  > Narrowing it makes the undiagnosable failure: tick *fibre* on a work row and a 25-turn `Cultivate`
+  > ordered elsewhere quietly stops advancing, with nothing said and no way to connect the two. **The
+  > LESSON does narrow** — you learn by working the ground, and a crew that carried nothing home did
+  > not work it — so the two readings sit beside each other in the arm, named apart
+  > (`ground_is_workable` vs `working_the_patch`), and the projection's copy of the gate reads the
+  > same one the live arm does.
+  >
+  > It bites where a row's share of the stand is **zero** — a roster `reload_config` that drops a
+  > plant from a tile's basket after the row was written, or a rung's own reweight (a tended patch
+  > weeds its volunteers down; a Field drops them). Pinned by
+  > `forage_selective_take::a_narrowed_gather_never_stalls_the_build_beside_it`, which asserts the
+  > take is `0` **and** the build banked the same work the whole-basket run did — confirmed to fail
+  > against the narrowed gate before the split landed.
+- **DELIBERATELY NOT IN SCOPE: THE TILE DOES NOT DRIFT.** Selective taking does not shift the realized
+  composition over time. Per-species biomass would make `realized_composition` **stored** state, and
+  its being a pure function of `(map_seed, tile)` is exactly what makes it free and rollback-safe
+  (see "Per-tile realization"). **Within-turn scarcity is the whole of what this delivers** — that is
+  a stated limit of the model, not a gap waiting to be filled.
+- **Command grammar:** `assign_labor <f> <b> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers>`.
+  The take selection is an **explicitly prefixed** token lifted out of the tail beside `kit`, never a
+  third positional one: the tail's two optional tokens are already disambiguated by *"does this parse
+  as `f32`"*, and a third would be indistinguishable from the commit species. On the wire it is
+  `AssignLaborCommand.take_species` (proto field 12, append-only).
+- **Wire (append-only):** `LaborAssignment.takeSpecies:[string]` — the selection itself, so it
+  round-trips (a compose sheet reopened on the row has no other way to show what the crew was sent
+  for), **empty = the whole basket**; and `ForagePatchState.compositionStandingBiomass:[float]`, the
+  biomass each `composition` entry accounts for (`share × biomass`), **index-aligned** with it, so a
+  crop chip can read `70% (63)` without holding any capacity arithmetic.
+  > **The standing biomass rides the PATCH ROW rather than `FloraShareInfo`, and the reason is the
+  > memo.** A composition entry is a pure function of ground and config, derived once per tile per
+  > world and shared by refcount (`snapshot/flora_quotes.rs`); a standing biomass moves every turn, so
+  > putting it there would rebuild — and deep-copy two `String`s per named plant of — every patch's
+  > basket every turn. Every per-entry vector comes out of **one call** (`patch_composition_info`
+  > returns a `PublishedBasket`), so no later edit can leave them describing different baskets.
+- **THE SHEET MUST BE ABLE TO PRICE A NARROWING BEFORE COMMITTING TO IT** —
+  `ForagePatchState.compositionProvisionsPerBiomass` / `compositionFodderPerBiomass`, the same
+  index-aligned shape, from `forage::patch_species_rates` (the scalar twin of
+  `patch_material_yields`: the patch's basket at its **standing** rung, the favored crop's
+  interpolated gain on its own term, **not** scaled by share).
+  > **`provisionsPerBiomass` is the BASKET AVERAGE, so it cannot answer a crop chip.** Without the
+  > per-species pair a compose sheet's forecast sits still while the player ticks plants and quotes
+  > live when they drag the worker dial — and *a readout that is live for one control and inert for
+  > the other is worse than one that is inert for both*: it teaches that toggling chips is free, when
+  > it is the entire decision. A sheet composes
+  > `available = max(0, B − floor·K) × Σ_S share` and `rate = Σ_S share × rate ÷ Σ_S share`, which is
+  > `materialPerBiomass` / `perWorkerMaterial`'s existing contract at finer grain — the same three
+  > rules: never summed by the sim, **empty is "no row" not zero**, key always present. A forecast
+  > **query** arm for a selection is the heavier alternative and is deliberately not taken.
+  >
+  > **The identity is what ties the grain to the economy:** `Σ share × rate` is the published basket
+  > average, in both scalar accounts. Guarded the way the existing rates are — a real narrowed turn,
+  > composed off the published fields alone and asserted against what the band **banked**
+  > (`the_published_per_species_rates_compose_to_what_the_band_banks`), on a fixture that insists its
+  > selection names two plants with **different** rates one of which is **zero**. Confirmed to fail
+  > against a sim publishing the basket average per entry.
+  >
+  > #### …AND THE MATERIAL ACCOUNT, which is the case the feature was ARGUED on
+  >
+  > `ForagePatchState.compositionMaterialPerBiomass:[SpeciesMaterialRates]` — the same alignment, one
+  > entry per composition entry, each a **wrapper table** holding that plant's own
+  > `[MaterialPayoff]` (FlatBuffers has no vector-of-vectors; that is plumbing, not a model). Off the
+  > same `patch_species_rates` seam, so all three accounts come from one basket at one rung.
+  >
+  > **Without it the motivating example is the one thing the sheet cannot answer.** Baskets are made
+  > of **fibre** and baskets are what let a gatherer carry more food, so *"tick cotton, see how much
+  > fibre"* is the first thing a player tries — and `materialPerBiomass` beside it is basket-averaged.
+  > The scalar accounts were priced and the account the argument rested on was not.
+  >
+  > **The three rules bind harder here than for a scalar.** Rows merge by material id **within one
+  > plant and stop there**: a characteristic reading belongs to the batch a take creates, and
+  > averaging two species' would invent a plant that is not growing there — so the sim never sums
+  > across species and the *sheet's* weighted mean is a **rate**, not a merged reading. **Empty rows
+  > are "no row", never zero** (a grain pays no material; a `0` row would read as a crop that pays
+  > badly), and every entry is present, empty rows and all.
+  >
+  > Guarded by `the_published_per_species_material_rates_compose_to_what_the_band_banks` against
+  > `LocalStore::material_total` after a real narrowed turn, on a fixture that **insists its selection
+  > names one material from two species** (cotton fibre beside flax fibre) — the last-write-wins trap
+  > this file already records for the basket-wide rate, which passes a single-species fixture and is
+  > off by a factor per species. Confirmed to fail against a sim publishing the basket-averaged rows
+  > per entry, on the composed amount (`0.264` composed against `0.827` banked) as well as on the
+  > empty-list rule.
+- **Measured on the reference stand** (`(35, 19)` under seed `119304647`, `K = 275`, basket
+  `river_fish` 0.291 / `wild_tubers` 0.248 / **cotton** 0.213 / `wild_pulses` 0.142 / `wild_rice`
+  0.106, two hands at floor 0.15): the whole basket banks **0.769 food + 0.264 fibre**; narrowed to
+  the four food plants it banks **0.954 food and no fibre**. Same stand, same crew, +24% food or a
+  quarter-unit of fibre — that trade *is* the decision.
+- **Pinned by `core_sim/tests/forage_selective_take.rs`**: naming nothing pays bit-exactly what the
+  whole-basket rate seams compose (the neutrality bar, asserted as an identity rather than as a
+  remembered figure); narrowing banks more food and no fibre **with the precondition that the two
+  runs differ asserted**, so the pair cannot pass by both collapsing; the scarce plant's crew count
+  reads 1 against the whole basket's 2, off the **encoded envelope**; and one selection publishes one
+  key order however it was typed, duplicates included. The codec's own half is
+  `sim_schema::the_selective_gathers_selection_and_standing_biomass_survive_the_wire`.
+- **Client:** nothing renders either field yet — the chips, the picker and the sheet's per-species
+  availability are the client pass.
+
 ### A WILD gather's material rate is on the wire too — the rung-1 half (arc #527)
 
 The crop picker's quotes above answer *a commitment* at rungs 2 and 3. **Rung 1 had nothing**, and

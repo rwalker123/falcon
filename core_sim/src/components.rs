@@ -1559,6 +1559,66 @@ pub fn available_workers(working: Scalar) -> u32 {
     (working.raw().max(0) / Scalar::SCALE) as u32
 }
 
+/// **WHICH PLANTS A GATHERING CREW CARRIES HOME** — the take selection a `Forage` assignment rides
+/// (`docs/plan_flora_roster.md`; the selective-gather slice). A tile's basket mixes food with fibre,
+/// so *what am I here for* is a decision beside *how hard do I press* (the harvest floor).
+///
+/// **Empty means take EVERYTHING**, which is the default and is exactly today's behaviour — a crew
+/// that names nothing fills its baskets from the whole stand. Naming one or more species leaves the
+/// rest standing: only the named plants' share of the biomass is available, and only their rows are
+/// converted and drawn down.
+///
+/// **Sorted and deduplicated by construction, not by presentation.** The selection reaches the
+/// snapshot, and a set whose iteration order varies between two builds has already cost this repo a
+/// ~50%-of-runs determinism flake (`flora.md` → the share-denominator note). A `BTreeSet` makes the
+/// unsorted state unrepresentable rather than merely unusual, so no call site has to remember to
+/// sort. Blank keys are dropped at construction for the same reason a blank
+/// [`LaborTarget::Forage::species`] is: `""` is not a plant.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TakeSelection {
+    /// Private so the ordered, blank-free invariant has exactly one enforcing constructor.
+    species: BTreeSet<String>,
+}
+
+impl TakeSelection {
+    /// **The whole basket** — what a crew that named nothing carries home, and the default. Named
+    /// so a quote that is deliberately about the *land* rather than about one crew says which of the
+    /// two it means, instead of passing an anonymous empty set.
+    pub const EVERYTHING: Self = Self {
+        species: BTreeSet::new(),
+    };
+
+    /// Build a selection from whatever the player named, trimming blanks and folding duplicates.
+    pub fn from_keys<I, S>(keys: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self {
+            species: keys
+                .into_iter()
+                .map(|key| key.as_ref().trim().to_string())
+                .filter(|key| !key.is_empty())
+                .collect(),
+        }
+    }
+
+    /// **Is this the whole basket?** — the empty selection, and the only reading `is_empty` has.
+    pub fn is_everything(&self) -> bool {
+        self.species.is_empty()
+    }
+
+    /// Whether a named species is one this crew carries home. Always `true` on the whole basket.
+    pub fn takes(&self, species: &str) -> bool {
+        self.is_everything() || self.species.contains(species)
+    }
+
+    /// The named keys, in the collection's own ascending order — what the wire publishes.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.species.iter().map(String::as_str)
+    }
+}
+
 /// A single labor demand a band can staff from its working-age pool (Early-Game Labor, slice 3a):
 /// an in-range food source (Forage tile / Hunt herd) or a band-wide role (Scout / Warrior).
 /// The band is a labor pool drawing subsistence from many sources at once
@@ -1589,6 +1649,15 @@ pub enum LaborTarget {
         /// Inert at every floor — the patch records the commitment, so changing the selection after
         /// the ground is committed does nothing until the patch goes feral.
         species: Option<String>,
+        /// **WHICH PLANTS THIS CREW CARRIES HOME** — see [`TakeSelection`]. Empty (the default)
+        /// takes the whole basket, exactly as every assignment did before the selective gather.
+        ///
+        /// **It is NOT [`LaborTarget::Forage::species`]**, which is the *commit* crop a
+        /// `Cultivate`/`Sow` names and which is inert until an improvement completes. This one is
+        /// live at rung 1, on the take itself. Like the floor, it is a mutable property of the same
+        /// source: changing it on the same tile replaces the assignment rather than adding a second
+        /// (see [`LaborTarget::same_source`]).
+        take_species: TakeSelection,
     },
     /// Hunt a fauna group by id, stopping at a **floor**. The band tracks a roaming herd up to
     /// `band_work_range + hunt_leash_tiles` (leashed follow); past that the assignment lapses.
@@ -3817,6 +3886,7 @@ mod tests {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: take,
             kit: None,
@@ -3984,16 +4054,19 @@ mod tests {
             tile,
             floor: DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let deplete = LaborTarget::Forage {
             tile,
             floor: 0.15,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let other_tile = LaborTarget::Forage {
             tile: UVec2::new(5, 6),
             floor: DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         // Same tile, different FLOOR → same source (the floor is a mutable property).
         assert!(sustain.same_source(&deplete));
@@ -4024,6 +4097,7 @@ mod tests {
             tile,
             floor: DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let source = BuildSource::Patch(tile);
         let mut allocation = LaborAllocation::default();
@@ -4044,6 +4118,7 @@ mod tests {
             tile,
             floor: 0.15,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         allocation.set_assignment(deplete.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].target, deplete);
@@ -4086,6 +4161,7 @@ mod tests {
                 tile: UVec2::new(9, 9),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             0,
             10,

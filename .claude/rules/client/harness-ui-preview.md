@@ -1397,3 +1397,105 @@ states that assertion rides.
 minimum and the BODY's minimum together for every state the assertion visits. `card − body_min` is the
 chrome `refit` used, and where that differs from the same subtraction on the panel, the two readings
 were taken at different widths.
+
+## `chapters/selective_gather.gd` — the species chips, and what they cost (the selective gather)
+
+**Appended LAST in `CHAPTERS`**, after `trade`, so no existing frame moves. Ten frames and
+forty-three `PASS`. It ends by closing the sheet, resetting the compose source and handing the
+reference band back, so a chapter appended after it starts where every other one does.
+
+**The three chip states are one subject, and two of them are one glance apart** — so the states are
+asserted off `HudWidgets.SPECIES_CHIP_STATE_META`, never off ink. At the HUD's real type size a faint
+check and an empty box differ by a couple of pixels; what carries the distinction on the FRAME is the
+face weight and the picked chip's filled pill, which is why the meta exists at all.
+
+**The other subject is the PRICE, and no picture can judge it.** The defect this chapter is written
+against is a sheet SITTING STILL when a chip is ticked, which renders a perfectly ordinary readout —
+so every price claim is a RELATION between two rendered readings of the same tile, never a magnitude
+compared against a constant the fixture also states.
+
+| frame | what only IT can say |
+|---|---|
+| `forage_take_default` | with nothing ticked every chip reads INCLUDED, the line says the whole basket comes home, and the whole basket's take + useful count are recorded as the baseline everything below is a relation against |
+| `forage_take_chip_priced` | a real press on a real chip moves BOTH the quoted food and the useful-worker count — `0.96 → 0.15 FOOD` at 3 hands becomes `0.05 → 0.01` at 1 |
+| `forage_take_narrowed` | the sheet OPENS on the selection the band's own row carries, and prices it IDENTICALLY to the ticked one |
+| `forage_take_zero_food` | a plant paying `0.0` food is PRICED — a live `1.22 → 0.18 FODDER`, no food row, no *not priced* aside |
+| `forage_take_unquoted` | a selection the WIRE priced no rate for quotes nothing, in words |
+| `forage_take_cultivate` | single-pick: exactly one chip lit, and the line NAMES the crop the game would settle on |
+| `forage_take_cultivate_picked` | a picked crop reads PICKED, and the line says cultivating weeds the rest out |
+| `forage_take_cash_narrowed` | **the case the feature was argued on** — tick cotton, see `3.55 FIBRE · 1.52 TOBACCO` where the *not priced* apology used to be, and no FOOD row |
+| `forage_take_cash_merged` | flax + cotton, both fibre payers, composing into ONE fibre row |
+| `forage_take_cash_grain` | the same basket narrowed to the grain: NO material row at all, and the food still quoted |
+
+**THE TICK IS DRIVEN AS A POINTER GESTURE** (`_press_chip`, through `InputProbe`), because the tick
+is what broke: a state that wrote the selection into `ComposeState` and re-rendered would assert the
+harness's own write rather than the control's effect. A chip is a plain `Button` under a
+mouse-transparent face stack, so a press at its rect centre reaches it exactly as a player's does —
+and the press FREES that button (the compose block rebuilds), so the helper settles before anything
+is counted and the caller must not touch it after.
+
+**THE SCARCE PLANT IS CHOSEN TO MOVE BOTH ARMS OF THE TAKE'S `min`** — the tile's smallest share AND
+its poorest converter — so a sheet that re-clamped the crew without re-pricing, or re-priced without
+re-capping, fails one of the pair.
+
+**THE PER-SPECIES RATES ARE DERIVED, NOT AUTHORED** (`_price_basket`). The wire's contract is an
+identity — `Σ(share × rate) == provisionsPerBiomass` — so three rates written freehand would describe
+a patch no server can publish, and the sheet's composition would then be checked against arithmetic
+that does not close. The fixture states WEIGHTS and normalises them against the patch's own
+basket-averaged rate, so the identity holds whatever that rate is; the hay meadow does the same one
+member at a time (`0.6 × (rate / 0.6) + 0.4 × 0 == rate`).
+
+**THE MERGE CLAIM IS ARITHMETIC ON THE COMPOSITION, NOT A READING OFF THE TAKE.** Flax and cotton pay
+fibre at rates 3.5x apart, so a composition that took the LAST one rather than merging by material id
+lands on `0.12` or `0.42` where the weighted mean is `0.24` — and a take is that mean through two more
+clamps, so a frame showing a plausible number cannot separate the two answers. The chapter therefore
+calls `SourceForecast.selection_rates` directly for the merge, with a **single-species control** beside
+it (cotton alone must compose its own rate, unmerged) so the `0.24` is demonstrably neither plant's
+number by accident. The rendered frame's claim is the weaker, complementary one: the sheet draws ONE
+fibre row.
+
+**THE THIRD PLANT IS A CONTROL, AND THE FIT ASSERTION RIDES THE MERGED FRAME.** `wild_emmer` pays the
+whole cash tile's food and NO material, so `forage_take_cash_grain` can claim "no row" is
+distinguishable from a zero on the same basket. `forage_take_cash_merged` carries
+`_assert_compose_sheet_fits` / `_assert_compose_sheet_card_holds_its_content` because a narrowed take
+states every account the selection pays and this is the widest readout the sheet can produce — the nine
+standing fit states are all whole-basket sheets and cannot see it (measured: 300 demanded of 306
+usable).
+
+**THE CASH TILE'S PATCH VECTORS ARE COMPOSED FROM ITS ENTRIES', never authored beside them** — the
+`Σ(share × rate)` identity the schema pins, on every account — for `_price_basket`'s reason one
+account out: a fixture stating them freehand describes a patch no server can publish, and the
+whole-basket half of every claim is then checked against arithmetic that does not close.
+
+**THE ZERO-FOOD STATE IS A PAIR ON ONE BASKET.** Ticking the hay must state no food row; ticking the
+grain in the same meadow must still state one — without the second half, "no food row" passes on a
+readout that stopped stating the account. Its `Foddering` track is dialled complete in this chapter's
+`update_intensification`, or the fodder account is locked and the `0.0` this state exists for has no
+live sibling beside it.
+
+**THE BRACKET'S CLAIM IS A DRIVEN PROBE, NOT THE FIXTURE'S NUMBERS.** Both surfaces read the wire's
+`standing_biomass` now, so the fixture's figures MATCH the tile card's split on purpose — a fixture
+that made them disagree would put two bracket sets for one basket on one screen and read as a defect.
+`_assert_bracket_follows_the_wire` instead moves ONE entry's published biomass to a value no share of
+this tile can produce, recomposes, asserts the chip followed, and restores it — PNG-less, so the
+frames after it are the frames before it.
+
+**`forage_take_narrowed` PAYS FOR A SECOND `_settle` EXPLICITLY.** `ComposeSheet.refit` waits TWO
+frames — width first, then the body's height at that width — and every other state here composes
+twice and pays that frame incidentally; this one composes ONCE on purpose (the selection must come
+off the band's row and nothing else), so without it the card renders at the previous fit's height.
+
+**Three existing negatives were re-pointed when the chips landed, and they were asserting a rule this
+arc narrows.** `ForageFx.GATED_CROP_NEEDLE` was `"Wild Grain"` — a plant name asserted absent from
+the whole compose sheet, to prove the retired crop LIST was gone. The chip row puts one chip per
+named plant back on that sheet, so all three states now name Wild Grain legitimately. What those
+states still claim is true and worth asserting — a sheet composing a plain gather offers no crop
+CHOICE — so the needle is `GATHER_SHEET_CROP_KEY_NEEDLE`, the chip row's SINGLE-PICK key (`Crop`),
+which appears only where a rung is in flight. A plant name is no longer evidence of a crop picker.
+
+**RETIRED — `forage_take_overstaffed`.** It staged a crew above the standing row's `workersNeeded`
+and asserted a chip-row idle warning that no longer exists: the crew stepper's own
+`max N useful here` note moves with the chips now, so a second sentence would be a second producer of
+one verdict. Its claim survives, sharper, as `forage_take_chip_priced`'s useful-count half.
+
+**A clean run is 344 frames / 1166 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.

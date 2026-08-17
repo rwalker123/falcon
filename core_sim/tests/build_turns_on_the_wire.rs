@@ -54,6 +54,7 @@
 use bevy::app::App;
 use bevy::math::UVec2;
 
+use core_sim::TakeSelection;
 use core_sim::{
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
@@ -321,6 +322,7 @@ fn world_with_a_patch_knowing(
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: gatherers,
                     kit: None,

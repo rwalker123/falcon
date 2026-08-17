@@ -24,6 +24,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
     default_species_for_rung, generate_hydrology, rung_site_refusal, scalar_from_f32, scalar_one,
@@ -428,6 +429,7 @@ fn spawn_forager_of(
                             tile: patch,
                             floor: policy,
                             species: None,
+                            take_species: TakeSelection::EVERYTHING,
                         },
                         workers: foragers,
                         kit: None,
@@ -1292,6 +1294,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         tile: sown_tile,
         floor,
         species,
+        ..
     } = &assignment.target
     else {
         panic!("completion must not change the target's KIND: {assignment:?}");

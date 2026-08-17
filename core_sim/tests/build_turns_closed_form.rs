@@ -32,6 +32,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_cultivation, advance_herds, advance_labor_allocation, build_fraction,
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
@@ -1224,6 +1225,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                             tile: source,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
                             species: None,
+                            take_species: TakeSelection::EVERYTHING,
                         },
                         workers: GATHERERS,
                         kit: None,

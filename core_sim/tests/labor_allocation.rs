@@ -38,6 +38,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventKind,
@@ -164,6 +165,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
                 tile,
                 floor: policy,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers,
             kit: None,
@@ -706,6 +708,7 @@ fn assignment_sum_clamps_to_working_age() {
             tile: UVec2::new(1, 1),
             floor: 0.5,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         },
         3,
         available,
@@ -724,6 +727,7 @@ fn assignment_sum_clamps_to_working_age() {
             tile: UVec2::new(1, 1),
             floor: 0.5,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         },
         0,
         available,

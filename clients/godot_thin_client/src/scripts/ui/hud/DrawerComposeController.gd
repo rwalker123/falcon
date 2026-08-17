@@ -206,9 +206,10 @@ func _herd_label_for_id(herd_id: String) -> String:
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
-        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+        kit_id: String = KitRoster.NO_KIT_ID,
+        take_species: PackedStringArray = PackedStringArray()) -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
-        kit_id)
+        kit_id, take_species)
 
 ## **RETIRED — `_emit_improvement`, THE DECLARE/WITHDRAW EMITTER**
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). It turned the improvement checkbox's tick into the SET
@@ -788,17 +789,41 @@ const YIELD_MODEL_WASTE := "waste"
 ## muted row and the sentence explaining it are two readings of one model dict: whoever evaluates this
 ## model at a given floor and crew gets both, and neither can be composed without the other.
 const YIELD_MODEL_LOCKED_REASON := "locked_reason"
+## **THE HONEST-SILENCE LINES THIS MODEL OWES THE PLAYER** — an `Array[String]` of asides rendered
+## under the rows, `[]` on the ordinary sheet. A narrowed take earns one when the wire priced no
+## per-species rate for something the player ticked, and another when the patch pays a MATERIAL (which
+## is basket-averaged and has no per-species twin on the wire, so a narrowed crew's fibre is a number
+## this client does not have). They ride the MODEL for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
+## evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
+const YIELD_MODEL_NOTES := "notes"
+## **`tile_info` IS THE SOURCE THIS TAKE IS COMPOSED FROM, AND FOR A NARROWED CREW THE CALLER HAS
+## ALREADY NARROWED IT** (`SourceForecast.narrowed_source`). That is the whole shape of the selective
+## gather on this sheet: the stand, the rates and the crew throughput are substituted ONCE, upstream,
+## so the take, the `now → after` walk, the worker cap, the crew targets and the chart all answer for
+## the selection through the identical arithmetic — and ticking a chip moves the forecast exactly as
+## stepping the crew does, which is the asymmetry this feature exists to remove.
+##
+## `take` is `{narrowed, quoted, materials}` — see `_selective_take_state`. It reaches this model for
+## the two things the narrowed SOURCE cannot say for itself: that an unquotable narrowing must print
+## no number at all, and which asides are owed.
 func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE,
-        reaches: bool = false) -> Dictionary:
+        reaches: bool = false, take: Dictionary = {}) -> Dictionary:
+    var narrowed := bool(take.get(TAKE_SELECTION_NARROWED, false))
+    var notes := _take_notes(take)
+    if narrowed and not bool(take.get(TAKE_SELECTION_QUOTED, false)):
+        # The wire priced no per-species rate for something the player ticked, so there is no number
+        # this client has the right to print — and the whole basket's take under a narrowed heading is
+        # the quote-vs-payout defect wearing a heading.
+        return _wordless_take_model(notes)
     # The FOOD-PEAK ceiling is the patch's sustainable yield (what it will pay forever), so a take
     # above it draws the patch down — the same bar the hunt version uses, for the same reason.
     var sustain := _forage_forecast(tile_info, band, SourceForecast.FLOOR_FOOD_PEAK)
     if not bool(sustain["known"]):
-        return {}
+        return _wordless_take_model(notes)
     var forecast := _forage_forecast(tile_info, band, floor)
     if not bool(forecast["known"]):
-        return {}
+        return _wordless_take_model(notes)
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     # **THE HEADLINE IS WHAT LANDS NEXT TURN, NOT THE ROOM STANDING NOW.** The sim regrows a whole
     # stage before it harvests, so a patch held at its floor pays its regrowth while the standing room
@@ -843,7 +868,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after, materials)
     if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
-        return {}
+        # **A NARROWING TO CASH CROPS ALONE NO LONGER LANDS HERE**, and that is what the per-species
+        # material rates bought: cotton pays `0.0` food and `0.0` hay honestly, and its fibre is now a
+        # composed row like any other, so the readout states what the crew brings home instead of an
+        # apology. What still reaches this line is a selection that genuinely pays into nothing.
+        return _wordless_take_model(notes)
     # **THE FODDER ACCOUNT MAY BE REAL AND UNBANKABLE AT ONCE** (issue #485). The sim credits a WILD
     # patch's hay only to a faction that has learned Foddering (a committed patch is paid
     # unconditionally — committing is the bid), and Foddering is taught by KEEPING A PEN, so a forager
@@ -883,7 +912,192 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, workers),
         YIELD_MODEL_WASTE: "",
         YIELD_MODEL_LOCKED_REASON: locked,
+        YIELD_MODEL_NOTES: notes,
     }
+
+## ---- THE SELECTIVE GATHER — which plants this crew carries home ---------------------------------
+##
+## A `Forage` assignment names the species it carries; naming none takes the whole basket, exactly as
+## before. Two keys travel together because they answer one question in two halves — *is this crew
+## narrowed*, and *can the wire price that narrowing*.
+const TAKE_SELECTION_NARROWED := "narrowed"
+const TAKE_SELECTION_QUOTED := "quoted"
+## The composed rates themselves (`SourceForecast.selection_rates`' answer), carried on the state so
+## the source is narrowed from the SAME composition the quoted/unquoted verdict was taken from.
+const TAKE_SELECTION_RATES := "rates"
+
+## Resolve the composed selection against the tile's basket — ONCE per render, above every reading.
+##
+## **THE CLIENT CAN PRICE A NARROWING NOW, AND IT PRICES IT FROM THE WIRE'S OWN PER-SPECIES RATES.**
+## `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet could once only
+## sit still when a chip was ticked; `compositionProvisionsPerBiomass` and its fodder twin are the same
+## quantity per plant, index-aligned with the basket, and `SourceForecast.selection_rates` is the one
+## place they are composed (`Σ(share × rate) ÷ Σ share`, never a sum across species).
+##
+## **THE MATERIAL ACCOUNT COMPOSES THE SAME WAY, per material id.** It was the one silence this sheet
+## still owed for a release — `material_per_biomass` on the patch is basket-averaged — and
+## `compositionMaterialPerBiomass` closes it, which matters more than the two scalars did: baskets are
+## made of fibre, baskets are what let a gatherer carry more food, so *tick cotton, see how much fibre*
+## is the first thing a player tries.
+func _selective_take_state(basket: Array[Dictionary],
+        selection: PackedStringArray) -> Dictionary:
+    if selection.is_empty():
+        return {TAKE_SELECTION_NARROWED: false, TAKE_SELECTION_QUOTED: false,
+            TAKE_SELECTION_RATES: {}}
+    var rates := SourceForecast.selection_rates(basket, selection)
+    return {
+        TAKE_SELECTION_NARROWED: true,
+        TAKE_SELECTION_QUOTED: bool(rates.get(SourceForecast.SELECTION_KNOWN, false)),
+        TAKE_SELECTION_RATES: rates,
+    }
+
+## **THE PATCH AS THE TICKED PLANTS ALONE** — the ONE substitution the whole narrowed sheet is built
+## on. Everything downstream (the forecast, the worker cap, the floor presets, the chart's two crew
+## targets, the readout and its `now → after` walk) reads this dict through the code it already read
+## the whole patch through, which is what makes a chip tick and a stepper tick move the same numbers
+## the same way.
+##
+## **THE RAW PATCH SURVIVES FOR EVERYTHING THAT IS NOT A TAKE** — the basket itself, the commit crop,
+## the improvement control and its deal row — because those are facts about the ground rather than
+## about what this crew carries home.
+func _forage_take_source(tile_info: Dictionary, take: Dictionary) -> Dictionary:
+    return SourceForecast.narrowed_source(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+        take.get(TAKE_SELECTION_RATES, {}) as Dictionary)
+
+## The asides a narrowed take owes — `[]` for the whole basket AND for a fully priced narrowing, which
+## is what keeps every other sheet on this controller unchanged. **ONE silence survives**: a plant the
+## wire priced no per-species rate for, which makes the whole weighted mean unquotable.
+func _take_notes(take: Dictionary) -> Array[String]:
+    var notes: Array[String] = []
+    if not bool(take.get(TAKE_SELECTION_NARROWED, false)):
+        return notes
+    if not bool(take.get(TAKE_SELECTION_QUOTED, false)):
+        notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
+    return notes
+
+## A model with NO numbers in it — the shape every "there is nothing this sheet may state" path
+## returns. `{}` when there is not even an aside to print, which is the whole-basket sheet's own
+## unknown-source answer and leaves it byte-identical.
+func _wordless_take_model(notes: Array[String]) -> Dictionary:
+    if notes.is_empty():
+        return {}
+    return {
+        YIELD_MODEL_ROWS: ([] as Array[Dictionary]),
+        YIELD_MODEL_TEXT: "",
+        YIELD_MODEL_OVERDRAW: false,
+        YIELD_MODEL_WASTE: "",
+        YIELD_MODEL_LOCKED_REASON: "",
+        YIELD_MODEL_NOTES: notes,
+    }
+
+## **THE SPECIES CHIP ROW, ITS CONSEQUENCE LINE AND ITS IDLE WARNING** — the whole selective-gather
+## control, mounted as one block so the row and the sentence explaining it cannot be composed apart.
+##
+## `single_pick` is the VERB: foraging takes several plants, cultivating commits the ground to one.
+## The two are the same chips in the same place, so the row's key, its marks and its consequence line
+## all fork on it — the label alone cannot carry a difference that changes what a click MEANS.
+func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
+        selection: PackedStringArray, single_pick: bool,
+        crop_is_default: bool, crop_rung: String, rebuild: Callable) -> void:
+    if basket.is_empty():
+        return
+    var committed := _compose.forage_species()
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_child(HudWidgets.alloc_section_label(
+        HudFloraVocab.TAKE_ROW_LABEL_SINGLE if single_pick else HudFloraVocab.TAKE_ROW_LABEL))
+    block.add_child(HudWidgets.build_species_chips(
+        _take_chip_entries(basket, selection, single_pick, crop_is_default, committed),
+        single_pick,
+        func(species: String) -> void:
+            if single_pick:
+                # A commit crop is one plant, so a chip WRITES it rather than toggling a set —
+                # re-picking the lit one is a no-op, exactly as re-picking a selected option is.
+                _compose.set_forage_species(species)
+            else:
+                # `basket.size()` is what makes "every plant ticked" collapse back to the empty
+                # default: all of them and the whole basket are one instruction, and keeping them as
+                # two states would put a selection on the wire saying nothing the omission does not.
+                _compose.toggle_forage_take_species(species, basket.size())
+            rebuild.call()))
+    block.add_child(HudWidgets.alloc_hint_label(
+        _take_consequence_note(selection, single_pick, crop_is_default, crop_rung, committed,
+            basket)))
+    # **THE IDLE WARNING IS NOT WRITTEN HERE, AND NOT BECAUSE IT WAS DROPPED.** It is the crew
+    # stepper's own `max N useful here — more would be idle`, one control up, and that note now moves
+    # with the chips: the cap divides the NARROWED patch's ceiling
+    # (`SourceForecast.max_useful_workers` over `_forage_take_source`), so ticking a scarce plant
+    # lowers the useful count and the stepper says so in the words it already uses for every other way
+    # of running out of useful hands. A second sentence down here would be a second producer of one
+    # verdict — the shape this arc has shipped three defects of — and the two would drift the first
+    # time either moved.
+    target.add_child(block)
+
+## One chip per named plant, written EXACTLY as the tile card writes it — the card's own icon, share
+## and biomass-clause consts, so the two surfaces cannot come to spell one stand two ways.
+func _take_chip_entries(basket: Array[Dictionary], selection: PackedStringArray, single_pick: bool,
+        crop_is_default: bool, committed: String) -> Array:
+    var entries: Array = []
+    for entry in basket:
+        var species := String(entry.get("species", ""))
+        if species == "":
+            continue
+        var face := String(FoodIcons.for_crop_role(String(entry.get("role", ""))))
+        if face != "":
+            face += " "
+        face += HudFloraVocab.FLORA_SHARE_FORMAT % [
+            String(entry.get("display_name", "")), int(entry.get("percent", 0))]
+        # **THE BRACKETED NUMBER IS THE WIRE'S OWN**, and an unstated one renders NO clause rather
+        # than a `(0)` — a stand the server quoted no quantity for is not a stand drawn to nothing.
+        if bool(entry.get("has_standing_biomass", false)):
+            face += HudFloraVocab.FLORA_SHARE_BIOMASS_CLAUSE_FORMAT % int(round(
+                float(entry.get("standing_biomass", 0.0))))
+        else:
+            face += HudFloraVocab.TAKE_CHIP_UNKNOWN_BIOMASS
+        entries.append({
+            "species": species,
+            "face": face,
+            "state": _take_chip_state(species, selection, single_pick, crop_is_default, committed),
+            "tooltip": face,
+        })
+    return entries
+
+## The three states, and the DEFAULT one is the point: with nothing ticked anywhere every plant is
+## coming home, so every chip reads faintly INCLUDED rather than off. On the single-pick side the
+## resolved crop reads faintly picked while it is the game's own answer and fully picked once the
+## player has chosen it — the same distinction, one axis over.
+func _take_chip_state(species: String, selection: PackedStringArray, single_pick: bool,
+        crop_is_default: bool, committed: String) -> String:
+    if single_pick:
+        if species != committed:
+            return HudFloraVocab.TAKE_STATE_EXCLUDED
+        return HudFloraVocab.TAKE_STATE_INCLUDED if crop_is_default \
+            else HudFloraVocab.TAKE_STATE_PICKED
+    if selection.is_empty():
+        return HudFloraVocab.TAKE_STATE_INCLUDED
+    return HudFloraVocab.TAKE_STATE_PICKED if selection.has(species) \
+        else HudFloraVocab.TAKE_STATE_EXCLUDED
+
+## What the selection COSTS, in one sentence, and it differs by VERB: a gatherer leaves the plants
+## nobody picked standing, a cultivator weeds them out of the ground. The cultivate-with-nothing-picked
+## line NAMES the crop the game would settle on, because silence there is the game choosing for the
+## player without saying so.
+func _take_consequence_note(selection: PackedStringArray, single_pick: bool, crop_is_default: bool,
+        crop_rung: String, committed: String, basket: Array[Dictionary]) -> String:
+    if single_pick:
+        if crop_is_default:
+            return HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % _take_display_name(
+                committed, basket)
+        return HudFloraVocab.TAKE_NOTE_CULTIVATE_NARROWED_FORMAT % String(
+            HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(crop_rung, crop_rung))
+    return HudFloraVocab.TAKE_NOTE_FORAGE_ALL if selection.is_empty() \
+        else HudFloraVocab.TAKE_NOTE_FORAGE_NARROWED
+
+func _take_display_name(species: String, basket: Array[Dictionary]) -> String:
+    for entry in basket:
+        if String(entry.get("species", "")) == species:
+            return String(entry.get("display_name", species))
+    return species
 
 ## **THE ONE SPELLING OF THE WILD-FODDER LOCK ON THIS SHEET** — `""` when this crew's hay is bankable,
 ## the reason when it is not. Two surfaces answer to it and they sit one control apart: the yields
@@ -1828,6 +2042,19 @@ func _live_reaches(live: Dictionary) -> bool:
 func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -> void:
     if model.is_empty():
         return
+    # **WHAT THIS SHEET MAY NOT STATE, STATED IN WORDS** — a narrowed take whose per-species rates the
+    # wire never sent, and the material account, which is basket-averaged with no per-species twin
+    # behind it. Printing the whole basket's numbers under a narrowed heading is the quote-vs-payout
+    # defect wearing a heading; printing nothing at all teaches that the sheet has no opinion.
+    var notes: Array = model.get(YIELD_MODEL_NOTES, [])
+    var rows: Array = model.get(YIELD_MODEL_ROWS, [])
+    if rows.is_empty():
+        # No numbers to draw — the asides ARE the readout here (a narrowing to cash crops alone, or an
+        # unquotable one). The chart, the crew targets and the verdict above are facts about the LAND
+        # and are unaffected by which plants are ticked.
+        for line in notes:
+            host.add_child(HudWidgets.alloc_hint_label(String(line)))
+        return
     var overdraws := bool(model[YIELD_MODEL_OVERDRAW])
     var note := HudComposeVocab.OVERHUNT_FLAG + " " + String(
         HudComposeVocab.LOCAL_OVERDRAW_NOTES.get(labor_kind, "")) if overdraws         else SourceForecast.YIELD_RENEWABLE_NOTE
@@ -2722,9 +2949,19 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         # `patch_committed_species` says anything at all. Seeding from it is the only way a sheet
         # reopened over unworked ground shows the crop the player picked.
         var staffed := _band_labor.workers_for_forage(band, x, y)
+        # **THE TAKE SELECTION SEEDS WITH THEM**, and it must: re-issuing `assign_labor` without a
+        # `take:` token CLEARS it sim-side exactly as an omitted floor or species token does, so a
+        # sheet that opened on an empty selection over a band already gathering only emmer would
+        # silently widen the crew back to the whole basket the moment anything else was committed.
         _compose.seed_forage(staffed if staffed > 0 else HudConst.WORKER_STEP,
             _band_labor.floor_for_forage(band, x, y), standing_improvement,
-            _band_labor.species_for_forage(band, x, y))
+            _band_labor.species_for_forage(band, x, y),
+            _band_labor.take_species_for_forage(band, x, y))
+    # **THE TAKE SELECTION, resolved ONCE for the whole sheet** — the chips render it, the take side of
+    # the sheet is composed against it and the commit sends it. Resolved here, above every reading, for
+    # the reason the cap is: a readout composed against one selection beside chips drawn from another
+    # is the sheet arguing with itself.
+    var take_selection := _compose.forage_take_species()
     # The effective (pending-aware) standing crew, which the commit's unassign/no-op test reads below.
     var current := _band_labor.effective_forage_workers(band, x, y)
     # **THE HANDS THIS SHEET MAY SPEND** — idle plus the crew this band already has on this patch
@@ -2746,6 +2983,18 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # crop they would commit to (issue #419) — a face computed off a species-blind patch reads the same
     # number whichever crop is lit, which is the "nothing above the list moves" half of that issue.
     var basket := SourceForecast.flora_basket_entries(tile_info.get("patch_composition", []))
+    # **THE SELECTION IS PRICED HERE, AND WHAT COMES OUT IS A PATCH.** `take_tile` is `tile_info` with
+    # the ticked plants' stand, conversion rates and crew throughput substituted in — so everything
+    # below that answers about the TAKE reads it and nothing below has to know a narrowing happened:
+    # the worker cap, the floor presets, the chart's two crew targets and the readout's `now → after`
+    # walk all move when a chip is ticked, exactly as they move when the stepper is.
+    #
+    # **THE RAW `tile_info` SURVIVES FOR EVERYTHING THAT IS NOT A TAKE** — the basket above, the commit
+    # crop, the improvement control and its deal row — because those are facts about the ground rather
+    # than about what this crew carries home. Reading the wrong one of the two is the failure this
+    # comment exists to prevent, so they are named apart.
+    var take_state := _selective_take_state(basket, take_selection)
+    var take_tile := _forage_take_source(tile_info, take_state)
     # The SPECIES KEY, not the display name: the picker marks the committed row by matching the wire
     # key its entries carry, exactly as the tile card's basket does — one identity, two panels.
     var committed_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
@@ -2783,6 +3032,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             HudComposeVocab.FORAGE_FORECAST_PREFIX).get("policy", ""))
     _compose.resolve_forage_species(func(current: String) -> String:
         return _resolve_crop_selection(basket, crop_rung, is_committed, current))
+    # **WHETHER THE CROP IS THE PLAYER'S OR THE GAME'S IS THE MODEL'S TO REMEMBER, not a comparison
+    # made here.** The resolver writes its answer back, so from the second render on the pick and the
+    # fall-back are the same string and a before-and-after comparison reads every settled crop as a
+    # chosen one. The single-pick chip row needs the distinction: silence on a Cultivate is the game
+    # choosing the crop without saying so, and the consequence line has to name the plant it settled on.
+    var crop_is_default := not _compose.forage_species_chosen()
     # Per-preset per-turn takes on the buttons, so the forage picker wears the SAME metric the
     # local-hunt picker does. The two build verbs do not ride this picker at all — they wear their
     # payoff on the improvement control below (issue #442).
@@ -2796,7 +3051,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # over-assign while composing. Both the stepper and the stance picker re-render these controls, so
     # the cap and the preview below recompute on every change (a Deplete/Eradicate ceiling is higher
     # than Sustain's, so switching stance moves the cap; a rung going up moves it too).
-    var forecast := _forage_forecast(tile_info, band, _compose.forage_floor())
+    var forecast := _forage_forecast(take_tile, band, _compose.forage_floor())
     # …and floored on the rung's OWN build crew, the plant twin of a managed herd's herding crew. The
     # dip and the cap otherwise fight: dividing the dipped ceiling collapses the count, so committing
     # to a 25-turn improvement would ask for fewer hands than gathering the same ground — and the sim,
@@ -2814,7 +3069,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if _compose.consume_forage_autofill():
         _compose.set_forage_count(cap)
     _compose.clamp_forage_count(cap)
-    var forage_takes := _forage_floor_takes(tile_info, band)
+    var forage_takes := _forage_floor_takes(take_tile, band)
     var on_floor_picked := func(floor: float) -> void:
         _compose.set_forage_floor(floor)
         # Picking a floor auto-fills the foragers to its max-useful (consumed next rebuild).
@@ -2833,7 +3088,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, _player_knowledge())
     # Priced at the chosen kit, exactly as the hunt sheet's is and for the same reason: the two crew
     # pills are this model's and the stepper cap is the forecast's, so both sides must know the basket.
-    var chart_model := SourceForecast.floor_chart_model(_forage_priced_patch(tile_info, band),
+    # **THE CHART IS PRICED ON THE NARROWED PATCH TOO, and that is what keeps its two crew pills
+    # reachable.** Both targets are clickable and both are clamped to the stepper's cap; with the cap
+    # divided from the ticked plants' stand and the pills from the whole basket's, a target would name
+    # a count the `+` refuses — the panel arguing with itself, which this file already records once.
+    # Uniform scaling leaves the stock FRACTION `B/K` untouched, so the curve's shape, the floor's
+    # position on it and the phase bands behind it are exactly the whole patch's; what shrinks is the
+    # absolute biomass, which is the selected plants' stand and is the number the chips state.
+    var chart_model := SourceForecast.floor_chart_model(_forage_priced_patch(take_tile, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(),
         crew_label.to_lower(), lesson_known)
@@ -2846,7 +3108,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
                 else:
                     _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                        _forage_priced_patch(_live_tile_info(subject_key, tile_info), band),
+                        _forage_priced_patch(_forage_take_source(
+                            _live_tile_info(subject_key, tile_info), take_state), band),
                         SourceForecast.SOURCE_KIND_FORAGE,
                         HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
                         lesson_known),
@@ -2880,6 +3143,19 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     _mount_kit_row(target, forage_kits, KitRoster.JOB_FORAGE, forage_kit_id, forage_default_kit, band,
         func(picked: String) -> void:
             _compose.set_forage_kit_id(picked)
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+    # **THE SPECIES CHIPS — what this crew carries home**, standing where the retired crop picker stood
+    # and doing both of that control's jobs: on a plain gather it narrows the TAKE (multi-select, the
+    # selective gather); with a rung composed it is the COMMIT crop (single-select), which is the same
+    # decision the crop list used to make, back on the sheet because it is now inseparable from what
+    # the crew is picking up this turn.
+    #
+    # It mounts BELOW the kit row and ABOVE the improvement control, so the sheet reads
+    # band → floor → crew → kit → what we carry home → what we are building → the terms.
+    var single_pick := composed_improvement != SourceForecast.IMPROVEMENT_NONE
+    _mount_take_chips(target, basket, take_selection, single_pick,
+        crop_is_default, crop_rung,
+        func() -> void:
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
     # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
@@ -2936,8 +3212,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # floor, which is what lets the numbers the player is dragging toward move while the drag runs.
     _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
         func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
-            return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement,
-                reaches),
+            return _forage_yield_model(band, take_tile, floor_value, crew, composed_improvement,
+                reaches, take_state),
         SourceForecast.LABOR_KIND_FORAGE,
         _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
@@ -2974,9 +3250,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # rides it as its `species` token exactly as before, which is why moving the declaration out did
     # not strand the crop picker: the crop is part of the assignment, not part of the verb.
     assign_btn.pressed.connect(func() -> void:
+        # **THE SELECTION RIDES EVERY COMMIT, IN FULL, NEVER AS A DELTA.** Re-issuing `assign_labor`
+        # without a `take:` token CLEARS the selection sim-side, exactly as it clears the floor and the
+        # commit crop — so the sheet has to restate what it is composing on every press, and the empty
+        # answer (the whole basket) is what makes a composition that never touched the chips emit the
+        # byte-identical line it emitted before they existed.
         _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_count(),
             x, y, "", _compose.forage_floor(), _compose.forage_species(),
-            composed_improvement, forage_kit_id)
+            composed_improvement, forage_kit_id, _compose.forage_take_species())
         close_compose_sheet())
     target.add_child(assign_btn)
 

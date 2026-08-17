@@ -1060,6 +1060,23 @@ func _validated_improvement(assignment: Dictionary, web: Array) -> String:
 func species_for_forage(band: Dictionary, x: int, y: int) -> String:
 	return String(forage_assignment_of(band, x, y).get("species", "")).strip_edges()
 
+## **WHICH PLANTS THIS BAND'S CREW ALREADY CARRIES HOME FROM (x, y)** — the standing take selection,
+## EMPTY for the whole basket. A different question from `species_for_forage` one row up: that is the
+## COMMIT crop a Cultivate/Sow names, this is what the gatherers pick up at rung 1, and a crew can be
+## doing both at once on different plants.
+##
+## **THE WIRE'S ORDER IS PRESERVED** — the sim sorts and deduplicates the set at the source, so this is
+## already the ascending key order the composed selection is normalised into, and the two are therefore
+## comparable by value. Never re-sort it into a display order: what would go back on the wire is a
+## different instruction from the one that came off it.
+func take_species_for_forage(band: Dictionary, x: int, y: int) -> PackedStringArray:
+	var keys := PackedStringArray()
+	for key in forage_assignment_of(band, x, y).get("take_species", []):
+		var trimmed := String(key).strip_edges()
+		if trimmed != "":
+			keys.append(trimmed)
+	return keys
+
 ## **THE HANDS ONE COMPOSE SHEET MAY SPEND — idle, plus the crew this band already has on THIS
 ## source.** It is the ceiling the sim judges `assign_labor` against (`set_assignment` gives back the
 ## standing crew of the row being restated), so a sheet re-editing a fully-staffed source can still

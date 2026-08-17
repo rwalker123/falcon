@@ -52,6 +52,21 @@ pub struct LaborAssignmentState {
     /// Empty on every non-Forage row. Appended (append-only).
     #[serde(default)]
     pub species: String,
+    /// **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** — the take selection (the selective gather),
+    /// or an **empty** list for *"take the whole basket"*, which is the default and is byte-identical
+    /// to every assignment sent before the field existed. Naming plants leaves the rest of the stand
+    /// standing: only their summed share of the biomass is available, only their rows are converted,
+    /// and only what was taken is drawn down.
+    ///
+    /// **It is not [`Self::species`]**, which is the *commit* crop a `Cultivate`/`Sow` names and
+    /// which is inert until an improvement completes; this one is live at rung 1, on the take.
+    /// Persisted intent, exactly like [`Self::species`]: it rides the rollback record.
+    ///
+    /// Sorted and deduplicated at the source (a `BTreeSet` on the assignment), so the order here is
+    /// the keys' own ascending order and is stable frame to frame. Empty on every non-Forage row.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub take_species: Vec<String>,
     /// Provisions this source actually produced this turn (per-source food-income breakdown). Derived
     /// per-turn at capture (0.0 on a row no turn has resolved yet). Appended (append-only).
     #[serde(default)]

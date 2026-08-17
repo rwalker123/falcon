@@ -14,6 +14,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::NO_CREW_ON_THIS_ACTIVITY;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation, commit_payoff,
@@ -224,6 +225,7 @@ fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
             tile: patch,
             floor: policy,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         },
         workers: foragers,
         kit: None,
@@ -2137,6 +2139,7 @@ fn unstaff_the_gatherers(app: &mut App, band: bevy::prelude::Entity, coord: UVec
                 tile: coord,
                 floor: FOOD_PEAK_FLOOR,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             0,
             NO_HEADROOM_NEEDED,
@@ -2873,6 +2876,7 @@ fn spawn_band_keeping_two_patches(
             tile: second,
             floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         },
         workers: GATHERERS,
         kit: None,

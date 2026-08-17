@@ -1262,6 +1262,7 @@ pub fn advance_labor_allocation(
                     tile,
                     floor,
                     species,
+                    take_species,
                 } => {
                     // **Out of range → the assignment is ABANDONED**, the plant twin of the hunt
                     // leash lapse. A patch cannot move, so beyond `band_work_range` the band walked
@@ -1594,6 +1595,7 @@ pub fn advance_labor_allocation(
                         mult_f,
                         workers,
                         *floor,
+                        take_species,
                         realized_horizon,
                     );
                     // **RETIRED: the rung-3 MANAGED HARVEST BRANCH.** A Field used to be paid a
@@ -1620,14 +1622,43 @@ pub fn advance_labor_allocation(
                     // different answers below: the work predicate ([`crew_is_working_the_source`],
                     // which replaced this arm's `EcologyPhase::Thriving` gate) and the `production`
                     // the telemetry row reports as offered.
-                    let standing_above_floor =
+                    // **HOW MUCH OF THE STAND THIS CREW IS HERE FOR** — the selected species'
+                    // summed share of the patch's own basket, `WHOLE_BASKET` for a crew that named
+                    // nothing (the default, and the neutrality bar). Every reading below that
+                    // describes what the ground *offered these gatherers* is taken on it, so the
+                    // published crew count, the wasted signal and the sustainable line all answer
+                    // for the selection rather than for the whole basket a narrowed crew never
+                    // touched. Resolved before the take, off the same pre-take state the ceiling is.
+                    let selected_share = crate::forage::selected_biomass_share(
+                        &crate::forage::patch_composition(patch, &tile_composition, &labor.forage),
+                        take_species,
+                    );
+                    // **THE WHOLE STAND'S ROOM ABOVE THE FLOOR — what the BUILD is gated on.**
+                    //
+                    // The gate exists to say *"a crew stripping the ground it is sowing builds
+                    // nothing"*, which is a statement about **the ground being stripped**. A take
+                    // selection does not strip the ground — it leaves the rest standing, by
+                    // definition — and the builders are a band-level pool that is not gathering at
+                    // all, so the gatherers' pickiness has no bearing on whether this ground can be
+                    // worked. Narrowing this term stalled a 25-turn `Cultivate` the moment a player
+                    // ticked *fibre* on the take row, silently and with no way to connect the two.
+                    // It is also what `head_rung_gate` reads a stage earlier, so the quoted gate and
+                    // the live one keep answering the same question.
+                    let stand_above_floor =
                         forage_escapement_ceiling(*floor, biomass_before, patch.carrying_capacity);
+                    let ground_is_workable = crew_is_working_the_source(stand_above_floor);
+                    // **AND THE CREW'S OWN ROOM — what the TAKE is measured against**: the whole
+                    // stand narrowed to the plants these gatherers came for. It answers the
+                    // production the row reports as offered, and the lesson: you learn by working
+                    // the ground, and a crew that carried nothing home did not work it.
+                    let standing_above_floor = stand_above_floor * selected_share;
                     let working_the_patch = crew_is_working_the_source(standing_above_floor);
                     let provisions = forage_take(
                         patch,
                         &tile_composition,
                         workers,
                         *floor,
+                        take_species,
                         &labor.forage,
                         &flora,
                         mult_f,
@@ -1710,6 +1741,7 @@ pub fn advance_labor_allocation(
                             &flora,
                             &labor.forage,
                             mult_f,
+                            take_species,
                         ))
                     } else {
                         scalar_zero()
@@ -1754,7 +1786,10 @@ pub fn advance_labor_allocation(
                             tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }),
-                            working_the_patch,
+                            // **The WHOLE stand's room, not this crew's narrowed share** — see
+                            // `ground_is_workable`. What the gatherers chose to carry home says
+                            // nothing about whether the ground can be cleared and planted.
+                            ground_is_workable,
                             patch.species.is_some(),
                         );
                         let eligible = gate.holds();
@@ -1949,7 +1984,10 @@ pub fn advance_labor_allocation(
                             // below every floor, so requiring room would make the rung
                             // create-from-nothing exists for unquotable.
                             let crew_is_at_work = match next.verb_improvement() {
-                                Some(Improvement::Cultivate) => working_the_patch,
+                                // The whole stand's room, exactly as the live arm reads it — a
+                                // projection that quoted the gatherers' narrowed share would
+                                // promise a stall the build will not actually hit.
+                                Some(Improvement::Cultivate) => ground_is_workable,
                                 _ => true,
                             };
                             // Stated as terms, like the live arms', so a projection quote carries
@@ -2030,11 +2068,12 @@ pub fn advance_labor_allocation(
                     let credited_materials = crate::materials_config::credit_material_yield(
                         &mut cohort.stores,
                         &materials_cfg,
-                        &crate::forage::patch_material_yields(
+                        &crate::forage::patch_material_yields_taking(
                             patch,
                             &tile_composition,
                             &flora,
                             &labor.forage,
+                            take_species,
                         ),
                         take,
                         mult_f,
@@ -2048,14 +2087,15 @@ pub fn advance_labor_allocation(
                     // rung 2 draws down, so it can be over-farmed. (It never could before — the old
                     // managed branch recorded `sustainable == actual` by construction.)
                     let sustainable = sustainable_yield(
-                        biomass_before,
-                        patch.carrying_capacity,
+                        biomass_before * selected_share,
+                        patch.carrying_capacity * selected_share,
                         &patch_ecology(patch, &labor.forage),
-                    ) * patch_provisions_per_biomass(
+                    ) * patch_provisions_per_biomass_taking(
                         patch,
                         &tile_composition,
                         &flora,
                         &labor.forage,
+                        take_species,
                     ) * mult_f;
                     // The two staffing signals, from the same take, and **both about the TAKE
                     // activity alone** (`docs/plan_standing_upkeep.md` §2.2) — the build's crew and
@@ -2073,7 +2113,8 @@ pub fn advance_labor_allocation(
                     // ground standing above the floor is there whether or not a second crew is
                     // clearing it, so a thin gathering crew's shortfall shows up honestly as
                     // `wasted` — "this is what more hands would have brought home".
-                    let production = standing_above_floor.clamp(0.0, biomass_before);
+                    let production =
+                        standing_above_floor.clamp(0.0, biomass_before * selected_share);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
                     // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -2089,6 +2130,7 @@ pub fn advance_labor_allocation(
                         mult_f,
                         workers,
                         *floor,
+                        take_species,
                         arrivals_horizon,
                     );
                     yields[idx] = SourceYield {
@@ -2111,11 +2153,12 @@ pub fn advance_labor_allocation(
                         range: YieldRange::certain(provisions.to_f32()),
                         wasted: forage_provisions(
                             (production - take).max(0.0),
-                            patch_provisions_per_biomass(
+                            patch_provisions_per_biomass_taking(
                                 patch,
                                 &tile_composition,
                                 &flora,
                                 &labor.forage,
+                                take_species,
                             ),
                             mult_f,
                         ),
@@ -4985,7 +5028,7 @@ mod labor_yield_tests {
 
     use crate::components::{
         BuildJob, BuildSource, Improvement, LaborAllocation, LaborAssignment, LaborTarget,
-        LocalStore, MoraleCause, PopulationCohort, SourceYield, Tile,
+        LocalStore, MoraleCause, PopulationCohort, SourceYield, TakeSelection, Tile,
     };
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
@@ -5391,6 +5434,7 @@ mod labor_yield_tests {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -5651,6 +5695,7 @@ mod labor_yield_tests {
                     tile: UVec2::new(0, 0),
                     floor,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -5745,6 +5790,7 @@ mod labor_yield_tests {
                     tile: UVec2::new(0, 0),
                     floor: 0.0,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: assigned,
                 kit: None,
@@ -5819,6 +5865,7 @@ mod labor_yield_tests {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -5989,6 +6036,7 @@ mod labor_yield_tests {
                         tile: SOURCE,
                         floor: BUILDER_FLOOR,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -6096,6 +6144,7 @@ mod labor_yield_tests {
                 NEUTRAL_OUTPUT_MULT,
                 GATHERERS,
                 SHALLOW_DRAW_FLOOR,
+                &TakeSelection::EVERYTHING,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 SHIPPED_FORECAST_RANGE_SIGMAS,
@@ -6117,6 +6166,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: SHALLOW_DRAW_FLOOR,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: GATHERERS,
                 kit: None,
@@ -6706,6 +6756,7 @@ mod labor_yield_tests {
                             SEASONAL_WEIGHT,
                         ),
                         NEUTRAL_OUTPUT_MULT,
+                        &TakeSelection::EVERYTHING,
                     );
                     drop(labor);
 
@@ -6717,6 +6768,7 @@ mod labor_yield_tests {
                                 tile: SOURCE,
                                 floor: policy,
                                 species: None,
+                                take_species: TakeSelection::EVERYTHING,
                             },
                             workers,
                             kit: None,
@@ -6898,6 +6950,7 @@ mod labor_yield_tests {
             &FloraConfig::builtin(),
             crate::forage::forage_per_worker_biomass(equipped_gather_rate(), SEASONAL_WEIGHT),
             NEUTRAL_OUTPUT_MULT,
+            &TakeSelection::EVERYTHING,
         );
         let hunt_per_worker = equipped_haul_rate();
         drop(labor);
@@ -7005,6 +7058,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: field_workers_needed,
                 kit: None,
@@ -7256,6 +7310,7 @@ mod labor_yield_tests {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -7344,6 +7399,7 @@ mod labor_yield_tests {
                         tile: SOURCE,
                         floor: policy,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -7424,6 +7480,7 @@ mod labor_yield_tests {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -7440,6 +7497,7 @@ mod labor_yield_tests {
                     tile: UVec2::new(1, 0),
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -7485,6 +7543,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -7580,6 +7639,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -7609,6 +7669,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -7700,6 +7761,7 @@ mod labor_yield_tests {
                         tile: SOURCE,
                         floor: 0.5,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: SOLE_FORAGER,
                     kit: None,
@@ -7964,6 +8026,7 @@ mod labor_yield_tests {
             &FloraConfig::builtin(),
             crate::forage::forage_per_worker_biomass(equipped_gather_rate(), SEASONAL_WEIGHT),
             NEUTRAL_OUTPUT_MULT,
+            &TakeSelection::EVERYTHING,
         );
         expected_yield(&forecast, workers, floor)
     }
@@ -8076,6 +8139,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
                     species: Some(crop.clone()),
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -8134,6 +8198,7 @@ mod labor_yield_tests {
         let LaborTarget::Forage {
             tile: completed_tile,
             floor,
+            take_species: _,
             species,
         } = &completed.target
         else {
@@ -8839,6 +8904,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -8954,6 +9020,7 @@ mod labor_yield_tests {
                     tile: SOURCE,
                     floor: policy,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: WORKERS,
                 kit: None,

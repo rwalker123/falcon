@@ -47,7 +47,7 @@ use crate::{
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{
         forage_escapement_ceiling, forage_per_worker_biomass, forage_provisions, forage_take,
-        patch_ecology, patch_provisions_per_biomass, patch_rung, patch_rung_key,
+        patch_ecology, patch_provisions_per_biomass_taking, patch_rung, patch_rung_key,
         resolve_committed_species, rung_site_refusal, tended_take_fodder, tile_flora_composition,
         tile_forage_capacity, tile_is_fresh_watered, ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },

@@ -22,6 +22,7 @@
 use bevy::math::UVec2;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+use core_sim::TakeSelection;
 use core_sim::{
     available_workers, build_headless_app, run_turn, FactionId, ForageRegistry, HerdRegistry,
     LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
@@ -130,6 +131,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
                     tile: field_tile,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 1,
                 available,

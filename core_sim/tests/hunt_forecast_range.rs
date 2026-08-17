@@ -57,6 +57,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_labor_allocation, build_headless_app, herd_hunt_yield, hunt_take,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds,
@@ -902,6 +903,7 @@ fn a_gather_reports_a_point_and_pays_it() {
                             tile: coord,
                             floor: FOOD_PEAK,
                             species: None,
+                            take_species: TakeSelection::EVERYTHING,
                         },
                         workers: CREW,
                         kit: None,
@@ -934,6 +936,7 @@ fn a_gather_reports_a_point_and_pays_it() {
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
             FOOD_PEAK,
+            &TakeSelection::EVERYTHING,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             // Deliberately WIDER than the shipped lever: a plant range must be a point because the
@@ -945,6 +948,7 @@ fn a_gather_reports_a_point_and_pays_it() {
         tile: coord,
         floor: FOOD_PEAK,
         species: None,
+        take_species: TakeSelection::EVERYTHING,
     };
     app.world
         .get_mut::<LaborAllocation>(band)

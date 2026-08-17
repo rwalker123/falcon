@@ -1550,6 +1550,25 @@ table LaborAssignment {
   // a rewind restores the selection they made rather than a re-picked one. A compose sheet reopened
   // on a patch nobody has worked yet has no other way to show the crop it is about to plant.
   species:string;
+  // --- WHICH PLANTS THIS CREW CARRIES HOME (appended last, the selective gather) ---------------
+  // The species keys this Forage crew is gathering, or an EMPTY list for "take the whole basket" -
+  // the default, and byte-identical to every assignment sent before this field existed. Naming one
+  // or more leaves the rest of the stand standing: only their summed share of the biomass is
+  // available (the ceiling is `max(0, B - floor*K) x that share`), only their rows are converted,
+  // and only what was taken is drawn down - gathering the wheat does not trample the cotton.
+  //
+  // IT IS NOT `species` ABOVE, which is the COMMIT crop a Cultivate/Sow names and which is inert
+  // until an improvement completes. This one is live at rung 1, on the take itself, and the two are
+  // independent: a crew can gather flax while committing the ground to emmer.
+  //
+  // SORTED AND DEDUPLICATED at the source (a BTreeSet on the assignment), so the order here is the
+  // keys' own ascending order and is stable frame to frame. A client must not re-sort it into a
+  // display order and send that back as a different selection.
+  //
+  // The row's own numbers - actualYield, workersNeeded, wastedYield, sustainableYield and the
+  // arrival schedule - ALREADY answer for this selection. Render them; never re-derive a per-species
+  // take on the client, which holds none of the capacity arithmetic.
+  takeSpecies:[string];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1773,6 +1792,14 @@ table SedentarizationState {
 // `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
 // faction (`hasOwner = false` = a wild/untended patch, since faction 0 is a valid id).
 // `biomass`/`carryingCapacity`/`ecologyPhase` let the client optionally show patch health.
+// ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
+// vector-of-vectors, so `ForagePatchState.compositionMaterialPerBiomass` is a vector of these
+// one-field tables. `rows` is EMPTY for a plant that pays no material: "no row", never a zero-valued
+// one. See that field for the whole contract.
+table SpeciesMaterialRates {
+  rows:[MaterialPayoff];
+}
+
 table ForagePatchState {
   x:uint;
   y:uint;
@@ -2410,6 +2437,81 @@ table ForagePatchState {
   // THE LEGS STILL TO LAY (appended), in climb order, first-incomplete first. Empty when the source
   // is not queued, or has already arrived. The FIRST entry is the leg in flight.
   buildLegs:[BuildLegState];
+
+  // --- HOW MUCH OF EACH PLANT IS STANDING (appended last, the selective gather) ------------------
+  // The BIOMASS each entry of `composition` accounts for on this tile, index-aligned with it:
+  // `share x biomass`, in the same units as `biomass` / `carryingCapacity` above. A crop chip reads
+  // "70% (63)" off the pair.
+  //
+  // IT RIDES THE PATCH ROW RATHER THAN FloraShareInfo, and the reason is the memo: a composition
+  // entry is a pure function of ground and config and is derived ONCE PER TILE PER WORLD, shared by
+  // refcount across every frame, while a standing biomass moves every turn - so putting it there
+  // would rebuild, and deep-copy two strings per named plant of, every patch's basket every turn.
+  // Index alignment is safe because both vectors are written from the same basket in the same
+  // expression; a client must still read the two as one object.
+  //
+  // WHY PUBLISH IT AT ALL, when it is one multiplication: a selective gather asks "is there enough
+  // emmer here to be worth two hands", which is a question about a QUANTITY, and the client holds no
+  // capacity arithmetic. The sim states it, exactly as it states the take.
+  compositionStandingBiomass:[float];
+
+  // --- WHAT EACH PLANT CONVERTS AT (appended last, the selective gather) -------------------------
+  // What ONE UNIT of each named plant's biomass is worth, index-aligned with `composition` exactly
+  // as compositionStandingBiomass above is, at the patch's CURRENT standing rung (the favored crop's
+  // conversion gain already in its own term). Two vectors, one per scalar account:
+  //   compositionProvisionsPerBiomass - food
+  //   compositionFodderPerBiomass     - hay
+  //
+  // WHY, when provisionsPerBiomass already ships: that one is the BASKET AVERAGE, so a sheet holding
+  // it cannot price a NARROWING at all - tick a crop chip and the forecast sits still until the
+  // player commits and waits a turn, while the worker dial beside it quotes live. A readout that is
+  // live for one control and inert for the other teaches that toggling chips is free, when it is the
+  // whole decision this feature exists to create.
+  //
+  // HOW A SHEET COMPOSES A SELECTION S, using these and the fields already beside them:
+  //   available = max(0, biomass - floor*carryingCapacity) x Sum_S share
+  //   rate      = Sum_S (share x rate) / Sum_S share      <- the rate WITHIN the selection
+  //   take      = min(workers x perWorkerBiomass, available) ; food = take x rate
+  // It is the same contract materialPerBiomass / perWorkerMaterial already carry, at finer grain.
+  //
+  // NOT SCALED BY SHARE, which is what makes it composable: the share is on the entry beside it, and
+  // a pre-scaled rate would have to be un-scaled before a subset could use it. Summing these across
+  // species WITHOUT the shares is meaningless - it is not a total of anything.
+  //
+  // EMPTY MEANS NO ROW, NEVER ZERO (the materialPerBiomass rule): a tile that names no plants
+  // publishes empty vectors, not a column of zeros. A plant this server's roster no longer knows
+  // reads 0 in both accounts, exactly as it contributes 0 to the basket average.
+  //
+  // THE IDENTITY, which is what pins these to the economy: Sum(share x provisions) ==
+  // provisionsPerBiomass above, and the fodder twin the same - so the finer grain can never disagree
+  // with the number the sim actually pays with.
+  compositionProvisionsPerBiomass:[float];
+  compositionFodderPerBiomass:[float];
+
+  // ...AND WHAT EACH OF THEM IS MADE OF (appended last, the selective gather). One entry per
+  // `composition` entry, index-aligned with it exactly as the two rate vectors above are: the
+  // MATERIALS one unit of that plant's biomass yields, at the patch's current standing rung, with
+  // the favored crop's conversion gain in its own term and NOT scaled by share.
+  //
+  // WHY IT NEEDS A WRAPPER TABLE: FlatBuffers has no vector-of-vectors, so each entry is a one-field
+  // table holding its own [MaterialPayoff]. That is plumbing, not a model - read
+  // `compositionMaterialPerBiomass[i].rows` as "entry i's materials".
+  //
+  // WHY IT EXISTS: `materialPerBiomass` above is BASKET-AVERAGED, so a sheet holding only that one
+  // cannot price a narrowing to a cash crop at all - which is the headline case of the whole
+  // feature. Baskets are made of fibre and baskets are what let a gatherer carry more food, so
+  // "tick cotton, see how much fibre" is the first thing a player tries.
+  //
+  // THE THREE RULES, which bind harder here than for a scalar:
+  //  - NEVER SUMMED ACROSS SPECIES by the sim. Rows merge by material id WITHIN one plant and stop
+  //    there: a characteristic reading belongs to the batch a take creates, and averaging two
+  //    species' would invent a plant that is not growing there. A sheet composes a SELECTION the way
+  //    it composes food - Sum_S (share x amount) / Sum_S share - and that weighted mean is a rate,
+  //    not a merged reading.
+  //  - EMPTY MEANS "NO ROW", NEVER ZERO. A grain pays no material and says so with an empty list; a
+  //    0-valued row would read as a crop that pays badly.
+  //  - KEY ALWAYS PRESENT: every composition entry has an entry here, empty rows and all.
+  compositionMaterialPerBiomass:[SpeciesMaterialRates];
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it

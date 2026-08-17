@@ -211,7 +211,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "assign_labor",
         aliases: &[],
         summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the third band-wide pool: it serves both webs and its whole output goes on the head of the band's build queue, so zero stops building altogether.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | builders <workers>",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1015,6 +1015,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             // has to make room for it. Absent = the job's default.
             let mut tail: Vec<&str> = parts.collect();
             let kit_id = take_named_token(&mut tail, "kit", "assign_labor kit id")?;
+            // **The take selection is a PREFIXED token, lifted out beside the kit** — never a third
+            // positional one. The forage tail's two optional tokens are already disambiguated by
+            // "does this parse as `f32`", and a third would have to be told apart from the floor and
+            // from the commit species by shape alone; `take:` says which it is.
+            let take_species = take_prefixed_token(&mut tail, TAKE_SELECTION_PREFIX);
             let mut parts = tail.into_iter();
             let (workers, target_x, target_y, fauna_id, floor, species) = match role.as_str() {
                 "forage" => {
@@ -1129,6 +1134,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 species,
                 floor,
                 kit_id,
+                take_species,
             })
         }
         "move_band" => {
@@ -1447,6 +1453,39 @@ fn take_named_token(
     let value = tokens.remove(index + 1).to_string();
     tokens.remove(index);
     Ok(Some(value))
+}
+
+/// **The `take:` prefix** — how a forage crew says *which plants it carries home*
+/// (`take:emmer,flax`). A prefix rather than a third positional token because the forage tail's two
+/// optional tokens are already resolved by shape, and a third would be indistinguishable from a
+/// commit species.
+const TAKE_SELECTION_PREFIX: &str = "take:";
+
+/// **The comma the selection's keys are separated by.** One token, so the line stays whitespace
+/// delimited like every other; a `flora_config.json` species key is snake_case and never contains a
+/// comma.
+const TAKE_SELECTION_SEPARATOR: char = ',';
+
+/// Lift a `<prefix><value>` token out of a role's tail, wherever it sits, and split its value on
+/// [`TAKE_SELECTION_SEPARATOR`]. The [`take_named_token`] shape for a one-token form.
+///
+/// **A bare prefix with nothing after it yields an EMPTY selection**, which is *"take the whole
+/// basket"* — the same reading as omitting the token. There is nothing to fail closed on here: an
+/// unknown or absent species is judged by the sim against the tile's own basket, which this parser
+/// cannot see.
+fn take_prefixed_token(tokens: &mut Vec<&str>, prefix: &str) -> Vec<String> {
+    let Some(index) = tokens.iter().position(|token| {
+        token.len() >= prefix.len() && token[..prefix.len()].eq_ignore_ascii_case(prefix)
+    }) else {
+        return Vec::new();
+    };
+    let token = tokens.remove(index);
+    token[prefix.len()..]
+        .split(TAKE_SELECTION_SEPARATOR)
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// The parsed source of a build-queue verb — exactly one of the two forms is filled. A named struct
@@ -2131,6 +2170,7 @@ mod tests {
                 species: None,
                 floor: None,
                 kit_id: None,
+                take_species: Vec::new(),
             }
         );
     }
@@ -2154,6 +2194,7 @@ mod tests {
                 species: None,
                 floor: Some(0.5),
                 kit_id: None,
+                take_species: Vec::new(),
             },
             "a numeric optional token is the FLOOR"
         );
@@ -2171,6 +2212,7 @@ mod tests {
                 species: Some("wild_emmer".to_string()),
                 floor: None,
                 kit_id: None,
+                take_species: Vec::new(),
             },
             "a non-numeric optional token is the SPECIES"
         );
@@ -2261,6 +2303,7 @@ mod tests {
                 species: Some("wild_emmer".to_string()),
                 floor: Some(0.15),
                 kit_id: None,
+                take_species: Vec::new(),
             }
         );
         // A fourth token is a typo, not a longer form — fail closed rather than silently drop it.
@@ -2279,6 +2322,65 @@ mod tests {
             parse_command_line("assign_labor 0 904 forage 3 5 sustain wild_emmer 6"),
             Err(CommandParseError::RetiredStanceToken(_))
         ));
+    }
+
+    /// **THE TAKE SELECTION IS A PREFIXED TOKEN, so it cannot be confused with the two positional
+    /// ones** (the selective gather). `take:` may sit anywhere after the role, exactly like `kit`,
+    /// and it is lifted out before the forage tail's own "does this parse as `f32`" reading runs —
+    /// which is the whole reason it is prefixed rather than made a third position: a third
+    /// positional token would be indistinguishable from the commit species beside it.
+    #[test]
+    fn parse_assign_labor_forage_take_selection() {
+        let with_take = |line: &str| match parse_command_line(line).unwrap() {
+            CommandPayload::AssignLabor {
+                workers,
+                floor,
+                species,
+                take_species,
+                kit_id,
+                ..
+            } => (workers, floor, species, take_species, kit_id),
+            other => panic!("expected an assign_labor payload, got {other:?}"),
+        };
+
+        // Beside BOTH positional tokens, and the positional reading is untouched by it.
+        assert_eq!(
+            with_take("assign_labor 0 904 forage 3 5 0.15 wild_emmer take:wild_emmer,flax 6"),
+            (
+                6,
+                Some(0.15),
+                Some("wild_emmer".to_string()),
+                vec!["wild_emmer".to_string(), "flax".to_string()],
+                None,
+            )
+        );
+        // Anywhere after the role, and beside the kit token — neither eats the other.
+        assert_eq!(
+            with_take("assign_labor 0 904 forage 3 5 take:flax kit none 0.5 6"),
+            (
+                6,
+                Some(0.5),
+                None,
+                vec!["flax".to_string()],
+                Some("none".to_string()),
+            )
+        );
+        // Absent is the whole basket, and so is a bare prefix — there is nothing to fail closed on
+        // here, because which plants grow on a tile is the sim's question and not the parser's.
+        assert_eq!(
+            with_take("assign_labor 0 904 forage 3 5 6").3,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            with_take("assign_labor 0 904 forage 3 5 take: 6").3,
+            Vec::<String>::new()
+        );
+        // A lone species token is still the COMMIT crop, never a selection — the two are different
+        // decisions and the grammar keeps them apart.
+        assert_eq!(
+            with_take("assign_labor 0 904 forage 3 5 wild_emmer 6"),
+            (6, None, Some("wild_emmer".to_string()), Vec::new(), None)
+        );
     }
 
     /// **Hunt's floor is OPTIONAL**, where the stance it replaced was required — symmetric with
@@ -2300,6 +2402,7 @@ mod tests {
                 species: None,
                 floor: None,
                 kit_id: None,
+                take_species: Vec::new(),
             },
             "one tail token is the worker count; the floor defaults"
         );
@@ -2319,6 +2422,7 @@ mod tests {
                     species: None,
                     floor: Some(floor),
                     kit_id: None,
+                    take_species: Vec::new(),
                 },
                 "hunt floor {floor} should round-trip"
             );
@@ -2352,6 +2456,7 @@ mod tests {
                 species: None,
                 floor: None,
                 kit_id: None,
+                take_species: Vec::new(),
             }
         );
         assert_eq!(
@@ -2368,6 +2473,7 @@ mod tests {
                 species: None,
                 floor: None,
                 kit_id: None,
+                take_species: Vec::new(),
             }
         );
     }
@@ -2394,6 +2500,7 @@ mod tests {
                 species: None,
                 floor: None,
                 kit_id: None,
+                take_species: Vec::new(),
             }
         );
         // The kit is lifted out of the tail before the role's shape is read, so the builders row
@@ -2412,6 +2519,7 @@ mod tests {
                 species: None,
                 floor: None,
                 kit_id: Some("hurdling".to_string()),
+                take_species: Vec::new(),
             }
         );
         assert!(matches!(

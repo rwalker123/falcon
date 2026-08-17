@@ -799,6 +799,17 @@ impl Default for HerdTelemetryState {
     }
 }
 
+/// **One composition entry's material rates** — the wrapper the wire needs because FlatBuffers has
+/// no vector-of-vectors, and the shape a reader should think in: `rows` is *that plant's* materials.
+///
+/// **Empty is "no row", never zero** — see
+/// [`ForagePatchState::composition_material_per_biomass`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SpeciesMaterialRates {
+    #[serde(default)]
+    pub rows: Vec<MaterialPayoff>,
+}
+
 /// One depletable forage patch's cultivation + ecology state for the client tile card
 /// (Intensification Phase 1a). Keyed by tile `(x, y)`. `cultivation_progress` is the 0..1 taming
 /// meter; `is_cultivated` = a completed tended patch. `owner` is the tending faction (`None` = a
@@ -882,6 +893,50 @@ pub struct ForagePatchState {
     /// is invisible to every reader.
     #[serde(default)]
     pub composition: Arc<[FloraShareInfo]>,
+    /// **How much of each plant is STANDING here**, index-aligned with [`Self::composition`]:
+    /// `share × biomass`, in the same units as [`Self::biomass`]. A crop chip reads *"70% (63)"* off
+    /// the pair, and a selective gather is a decision about a **quantity** — so the sim states it
+    /// rather than leaving the client to hold capacity arithmetic.
+    ///
+    /// **It rides the patch row rather than [`FloraShareInfo`] because the basket is a MEMO**: a
+    /// composition entry is a pure function of ground and config, derived once per tile per world
+    /// and shared by refcount, while a standing biomass moves every turn. Appended (append-only).
+    #[serde(default)]
+    pub composition_standing_biomass: Vec<f32>,
+    /// **What one unit of each named plant's biomass converts at**, index-aligned with
+    /// [`Self::composition`] exactly as [`Self::composition_standing_biomass`] is, at the patch's
+    /// **current standing rung** (the favored crop's conversion gain already in its own term).
+    ///
+    /// [`Self::provisions_per_biomass`] beside it is the **basket average**, which cannot price a
+    /// *narrowing*: a compose sheet holding only that one watches its forecast sit still while the
+    /// player ticks crop chips, though the worker dial next to it quotes live. These are what let the
+    /// sheet compose `Σ_S share × rate ÷ Σ_S share` itself — the same contract
+    /// [`Self::material_per_biomass`] already carries, at finer grain.
+    ///
+    /// **Not scaled by share** (the share is on the entry beside it), so summing them across species
+    /// without the shares totals nothing. **Empty is "no row", never zero.** The identity
+    /// `Σ share × rate == provisions_per_biomass` holds by construction. Appended (append-only).
+    #[serde(default)]
+    pub composition_provisions_per_biomass: Vec<f32>,
+    /// The **fodder** twin of [`Self::composition_provisions_per_biomass`] — same alignment, same
+    /// rules, `0` for a plant whose vector pays no hay. Appended (append-only).
+    #[serde(default)]
+    pub composition_fodder_per_biomass: Vec<f32>,
+    /// **What each named plant is MADE OF** — the material twin of the two rate vectors above, one
+    /// entry per [`Self::composition`] entry and index-aligned with it, at the patch's standing rung
+    /// and **not scaled by share**.
+    ///
+    /// [`Self::material_per_biomass`] beside it is the **basket average**, so a sheet holding only
+    /// that one cannot price a narrowing to a **cash crop** — the headline case of the whole
+    /// selective gather, since baskets are made of fibre and baskets are what let a gatherer carry
+    /// more food.
+    ///
+    /// **Never summed across species by the sim**: rows merge by material id *within* one plant and
+    /// stop there, because a characteristic reading belongs to the batch a take creates and
+    /// averaging two species' would invent a plant that is not growing there. **Empty rows mean "no
+    /// row", never zero** — a grain pays no material and says so. Appended (append-only).
+    #[serde(default)]
+    pub composition_material_per_biomass: Vec<SpeciesMaterialRates>,
     /// **Which ONE named plant this patch has been committed to** (Flora Roster S1) — the stable
     /// `flora_config.json` species key. **`""` means the wild mixed basket, not "unknown"**: it is a
     /// positive statement that the patch is gathered as the whole [`Self::composition`] above.

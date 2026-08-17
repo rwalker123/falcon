@@ -152,8 +152,12 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
     term** (a build crew is not pulling on the patch — see "THE FLOOR CAME OFF THE BUILD RATE" in
     `intensification.md`),
     in **work units**, toward the rung's `work_cost` (sets `owner` on first accrual;
-    only the owner accrues), **gated** on the faction *knowing Cultivation* and on the crew having
-    something standing above its floor to work (`systems::labor::crew_is_working_the_source`). See
+    only the owner accrues), **gated** on the faction *knowing Cultivation* and on there being
+    something standing above the floor to work (`systems::labor::crew_is_working_the_source`).
+    **That term reads the WHOLE stand, never the gatherers' take selection** — a selective gather
+    leaves the rest standing by definition, and the builders are a band pool that is not gathering at
+    all, so threading the selection in stalls a queued build the moment a player narrows a work row.
+    `flora.md` → "THE BUILD IS GATED ON THE GROUND, NOT ON THE SELECTION" owns that split. See
     "An improvement costs WORK, not turns" in `intensification.md`: the cost is fixed, **turns are
     the output**, and there is no crew cap. **The crew's KIT is not in that expression** — a tool
     takes work off the **job**, never off the crew's output, which is what makes a hoe fade on a

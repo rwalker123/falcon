@@ -21,6 +21,7 @@
 //! confusion this slice corrects.
 
 use bevy::{math::UVec2, prelude::Entity};
+use core_sim::TakeSelection;
 use core_sim::{
     available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
     CommandEventLog, CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat,
@@ -142,6 +143,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                     tile: patch,
                     floor: STRIP_THE_PATCH,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: workers.max(1),
                 kit: None,

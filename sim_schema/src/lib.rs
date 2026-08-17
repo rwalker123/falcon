@@ -1091,6 +1091,165 @@ mod tests {
         );
     }
 
+    /// **THE SELECTIVE GATHER'S TWO FIELDS SURVIVE THE WIRE** — the crew's take selection on the
+    /// assignment, and each composition entry's standing biomass on the patch row.
+    ///
+    /// Both are asserted on the **decoded** buffer rather than on the in-process state, because a
+    /// field that never reached the codec still passes an in-process assertion — and both have an
+    /// "absent means something" reading a codec bug would hide: an empty selection is *"take the
+    /// whole basket"*, and an empty standing-biomass vector is *"this tile names no plants"*.
+    #[test]
+    fn the_selective_gathers_selection_and_standing_biomass_survive_the_wire() {
+        /// Two plants standing, in the order a `BTreeSet` hands them over.
+        const SELECTION: [&str; 2] = ["flax", "wild_emmer"];
+        /// The biomass each composition entry accounts for — deliberately different numbers, so a
+        /// codec that wrote one value twice cannot pass.
+        const STANDING: [f32; 2] = [63.5, 27.25];
+        /// What each of them converts at, food then fodder. The second plant pays **no food**, which
+        /// is the reading a client must be able to see rather than infer.
+        const PROVISIONS: [f32; 2] = [0.08, 0.0];
+        const FODDER: [f32; 2] = [0.0, 0.2];
+        /// What the first plant's biomass is made of — a real row beside a genuinely empty one.
+        const FIBRE_RATE: f32 = 0.07;
+
+        let snapshot = WorldSnapshot {
+            forage_patches: vec![ForagePatchState {
+                composition: vec![
+                    FloraShareInfo {
+                        species: "wild_emmer".to_string(),
+                        ..FloraShareInfo::default()
+                    },
+                    FloraShareInfo {
+                        species: "flax".to_string(),
+                        ..FloraShareInfo::default()
+                    },
+                ]
+                .into(),
+                composition_standing_biomass: STANDING.to_vec(),
+                // The per-species conversion rates, index-aligned with the same basket. Different
+                // numbers again, and one of them a genuine `0` — a cash crop pays no food, and a
+                // codec that dropped the vector would decode as absent, which is the same shape as
+                // "this tile names no plants".
+                composition_provisions_per_biomass: PROVISIONS.to_vec(),
+                composition_fodder_per_biomass: FODDER.to_vec(),
+                // The per-species MATERIAL rows: the first plant pays fibre, the second pays
+                // nothing at all. **Empty is "no row"** — a nested vector that failed to serialize
+                // decodes as *absent*, which is the same shape, so the empty entry is asserted to
+                // survive as an entry.
+                composition_material_per_biomass: vec![
+                    SpeciesMaterialRates {
+                        rows: vec![MaterialPayoff {
+                            material_id: "fibre".to_string(),
+                            amount: FIBRE_RATE,
+                        }],
+                    },
+                    SpeciesMaterialRates::default(),
+                ],
+                ..ForagePatchState::default()
+            }],
+            populations: vec![PopulationCohortState {
+                labor_assignments: vec![
+                    LaborAssignmentState {
+                        kind: "forage".to_string(),
+                        take_species: SELECTION.iter().map(|key| key.to_string()).collect(),
+                        ..LaborAssignmentState::default()
+                    },
+                    // The whole-basket row beside it: empty, and it must decode as empty rather
+                    // than as a fabricated selection.
+                    LaborAssignmentState {
+                        kind: "forage".to_string(),
+                        ..LaborAssignmentState::default()
+                    },
+                ],
+                ..PopulationCohortState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let payload = envelope.payload_as_snapshot().expect("a snapshot payload");
+
+        let rows = payload
+            .population()
+            .expect("a population section")
+            .populations()
+            .expect("the cohort list")
+            .get(0)
+            .laborAssignments()
+            .expect("the labor rows");
+        let named: Vec<&str> = rows
+            .get(0)
+            .takeSpecies()
+            .expect("a named selection survives the codec")
+            .iter()
+            .collect();
+        assert_eq!(named, SELECTION.to_vec());
+        assert!(
+            rows.get(1).takeSpecies().is_none_or(|keys| keys.is_empty()),
+            "an unnamed selection is the whole basket — empty, never a fabricated list"
+        );
+
+        let standing = payload
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0)
+            .compositionStandingBiomass()
+            .expect("the per-plant standing biomass survives the codec");
+        assert_eq!(standing.len(), STANDING.len());
+        for (index, expected) in STANDING.iter().enumerate() {
+            assert!(
+                (standing.get(index) - expected).abs() < 1e-6,
+                "entry {index} of the standing biomass must be its own number"
+            );
+        }
+
+        let patch = payload
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0);
+        let provisions = patch
+            .compositionProvisionsPerBiomass()
+            .expect("the per-species food rate survives the codec");
+        let fodder = patch
+            .compositionFodderPerBiomass()
+            .expect("the per-species fodder rate survives the codec");
+        assert_eq!((provisions.len(), fodder.len()), (2, 2));
+        for (index, expected) in PROVISIONS.iter().enumerate() {
+            assert!((provisions.get(index) - expected).abs() < 1e-6);
+        }
+        for (index, expected) in FODDER.iter().enumerate() {
+            assert!((fodder.get(index) - expected).abs() < 1e-6);
+        }
+        assert_eq!(
+            provisions.get(1),
+            0.0,
+            "a plant that pays no food publishes a real 0 — the vector is not a sparse list"
+        );
+
+        let materials = patch
+            .compositionMaterialPerBiomass()
+            .expect("the per-species material rows survive the codec");
+        assert_eq!(
+            materials.len(),
+            2,
+            "one entry per composition entry, empty rows included"
+        );
+        let first = materials.get(0).rows().expect("the first plant's rows");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first.get(0).materialId(), Some("fibre"));
+        assert!((first.get(0).amount() - FIBRE_RATE).abs() < 1e-6);
+        assert!(
+            materials.get(1).rows().is_none_or(|rows| rows.is_empty()),
+            "a plant that pays no material keeps its ENTRY and publishes no row — an entry lost to \
+             the codec is indistinguishable from that, which is why it is asserted by index"
+        );
+    }
+
     /// A species the roster does not name ships `""` — **unstated**, which a client must not read as
     /// `"staple"`. The empty-string convention is only worth anything if the encoder actually writes
     /// the field rather than leaving the slot absent.

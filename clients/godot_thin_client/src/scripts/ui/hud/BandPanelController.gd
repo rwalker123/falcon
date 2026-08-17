@@ -456,9 +456,10 @@ func _faction_knowledge_is_full() -> bool:
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
-        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+        kit_id: String = KitRoster.NO_KIT_ID,
+        take_species: PackedStringArray = PackedStringArray()) -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
-        kit_id)
+        kit_id, take_species)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -3699,7 +3700,14 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         # means "the job's default" to the parser, so a `+`/`−` that dropped it would re-kit a crew
         # the player deliberately sent out bare-handed. Restated from the row model, which carries the
         # assignment's own `kit_id`.
-        String(model.get("kit_id", KitRoster.NO_KIT_ID)))
+        String(model.get("kit_id", KitRoster.NO_KIT_ID)),
+        # **AND THE TAKE SELECTION RIDES IT TOO, for the identical reason one axis over.** An omitted
+        # `take:` token means *the whole basket* to the parser and CLEARS whatever the row carried, so
+        # a `+`/`−` on the board that dropped it would silently widen a crew the player had narrowed
+        # to one plant. Restated off the band's OWN row rather than re-derived — the work model
+        # carries no take selection, and a second derivation could disagree with the board being
+        # clicked on.
+        _band_labor.take_species_for_forage(band, int(model.get("x", -1)), int(model.get("y", -1))))
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:

@@ -465,3 +465,86 @@ const STOCK_UNKNOWN_FORMAT := STOCK_UNKNOWN_GLYPH + " / %.0f"
 # so it reads after it on the same line — and the tint is unchanged: `DetailFormat.ecology_value_hex`
 # still keys the neutral/amber/red off the phase word, now matched inside the composed value.
 const STOCK_PHASE_CLAUSE_FORMAT := "%s · %s"
+
+# ---- THE SPECIES CHIPS — which plants this crew carries home (the selective gather) --------------
+#
+# One row of chips on the forage compose sheet, one per named plant in the tile's basket, standing
+# where the retired crop picker stood: under the crew's kit row and above the improvement control, so
+# the sheet reads band → floor → crew → kit → WHAT WE CARRY HOME → what we are building → the terms.
+#
+# **A CHIP IS WRITTEN EXACTLY AS THE TILE CARD WRITES THE SPECIES** — `🌾 Wild Emmer 70% (63)` — and
+# it is composed from that card's OWN consts (`FoodIcons.for_crop_role`, `FLORA_SHARE_FORMAT`,
+# `FLORA_SHARE_BIOMASS_CLAUSE_FORMAT`), never from a second spelling. One plant reads one way in this
+# client, or the card and the sheet start disagreeing about the same stand the first time either moves.
+#
+# **THE BRACKETED NUMBER IS OFF THE WIRE** (`ForagePatchState.compositionStandingBiomass`, folded onto
+# the composition entry by the decoder). The client holds no capacity arithmetic and must not multiply
+# a share by a stock to recover it: a selective gather asks *"is there enough emmer here to be worth
+# two hands"*, which is a question about a QUANTITY, and the sim states it exactly as it states the
+# take. A plant the wire quotes no biomass for renders NO clause rather than a `(0)`.
+const TAKE_CHIP_UNKNOWN_BIOMASS := ""
+
+# **THREE STATES, AND THE THIRD IS THE POINT.** With nothing ticked anywhere every plant is coming
+# home, so every chip reads faintly INCLUDED; ticking one makes it PICKED and makes every other chip
+# EXCLUDED. Ticking every species collapses back to the default rather than being a separate state,
+# since the two mean the same thing — and the commit sends an EMPTY selection there, which is what the
+# sim reads as "the whole basket".
+const TAKE_STATE_INCLUDED := "included"
+const TAKE_STATE_PICKED := "picked"
+const TAKE_STATE_EXCLUDED := "excluded"
+
+# **THE MARK CARRIES MULTI-VS-SINGLE, BECAUSE THE LABEL WILL NOT.** Foraging takes several plants;
+# cultivating commits the ground to exactly one — the same chips in the same place doing two different
+# things, and a player who reads the row as multi-select on a Cultivate has been told the wrong thing
+# about a ~25-turn commitment. So the SHAPE says how many may be lit (a square box takes several, a
+# round one takes one), and the COLOUR reinforces it.
+const TAKE_MARK_MULTI_ON := "☑"
+const TAKE_MARK_MULTI_OFF := "☐"
+const TAKE_MARK_SINGLE_ON := "◉"
+const TAKE_MARK_SINGLE_OFF := "○"
+
+# The chip's own type sizes — the work row's, like every other compact list on this sheet, with the
+# mark one step up so it stays legible at the HUD's real scale.
+const TAKE_CHIP_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE
+const TAKE_CHIP_MARK_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE + 1
+const TAKE_CHIP_SEPARATION := 4
+const TAKE_CHIP_MARK_GAP := 4
+
+# The row's own key, in the compose sheet's field-row idiom.
+const TAKE_ROW_LABEL := "Carry home"
+const TAKE_ROW_LABEL_SINGLE := "Crop"
+
+# ---- THE CONSEQUENCE LINE — one sentence under the row, and it differs by VERB -------------------
+#
+# The row states what is ticked; this states what that COSTS. Four sentences, because foraging and
+# cultivating do opposite things to the plants nobody picked: a gatherer leaves them standing, a
+# cultivator weeds them out. The cultivate-with-nothing-picked line names the crop the sim would
+# settle on, because silence there is the game choosing for the player without saying so.
+const TAKE_NOTE_FORAGE_ALL := "The whole basket comes home."
+const TAKE_NOTE_FORAGE_NARROWED := "Everything else is left standing."
+const TAKE_NOTE_CULTIVATE_NARROWED_FORMAT := "%s weeds the rest out of the ground."
+const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground would be committed to %s."
+
+# **THE NUMBERS FOR A NARROWED CREW ARE COMPOSED FROM THE WIRE'S PER-SPECIES RATES.**
+# `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet once sat still
+# when a chip was ticked; `compositionProvisionsPerBiomass` and its fodder twin state the same
+# quantity per plant, index-aligned with the basket, so a selection's rate is
+# `Sum(share x rate) / Sum(share)` over the ticked species and the forecast moves the moment a chip
+# does — the same `NOW -> AFTER` treatment the worker stepper already gets.
+#
+# **WHAT IS STILL NOT KNOWN IS SAID OUT LOUD, in two different sentences.**
+#
+# The first is a narrowing the wire priced NO per-species rate for. The composition is a weighted
+# mean, so one missing term is not a term that can be left out of it, and there is nothing else this
+# client holds that a rate could be recovered from — so it quotes nothing at all rather than the
+# whole basket's numbers under a narrowed heading, which is the quote-vs-payout defect this arc has
+# shipped before. **A `0.0` rate is NOT this case**: a cash crop pays no food and says so, and the
+# selection is fully quoted.
+const TAKE_UNQUOTED_NOTE := "This selection is not priced yet — no take is quoted for it."
+
+# **THE MATERIAL ACCOUNT IS NO LONGER ONE OF THESE SILENCES.** It was, for exactly as long as
+# `materialPerBiomass` was the only material rate on the wire — a basket average with nothing finer
+# behind it, so a narrowed crew's fibre was a number this client did not have.
+# `compositionMaterialPerBiomass` publishes it per plant, and the sheet composes it per MATERIAL ID
+# through the same weighted mean the two scalars take, so *tick cotton, see how much fibre* — the
+# case the whole feature was argued on — is answered with a real number.

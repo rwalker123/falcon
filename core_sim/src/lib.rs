@@ -112,8 +112,8 @@ pub use components::{
     EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
     MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement,
-    SourceYield, StartingUnit, Tile, TownCenter, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-    FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -217,11 +217,11 @@ pub use forage::{
     patch_meter_rot, patch_provisions_per_biomass, patch_rung_already_built, patch_rung_work_done,
     patch_species_quality, patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall,
     patch_upkeep_workers_needed, plant_rung_span, project_arrivals_forage, project_realized_forage,
-    resolve_committed_species, rung_material_yields, rung_payoff, rung_site_refusal,
-    spawn_initial_forage, species_is_legal_here, tended_take_fodder, tile_flora_composition,
-    tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
-    SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
-    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    resolve_committed_species, resolve_take_selection, rung_material_yields, rung_payoff,
+    rung_site_refusal, selected_biomass_share, spawn_initial_forage, species_is_legal_here,
+    tended_take_fodder, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
+    wild_payoff, ForagePatch, ForageRegistry, SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO,
+    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};

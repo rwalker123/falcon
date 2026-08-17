@@ -4813,6 +4813,12 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             "species": String(entry.get("species", "")).strip_edges(),
             "display_name": name,
             "percent": percent,
+            # **THE RAW SHARE RIDES BESIDE THE ROUNDED PERCENT, and the two are not interchangeable.**
+            # `percent` is a DISPLAY figure — rounded, with the remainder folded into the first row so
+            # the column sums to 100 — and arithmetic done on it inherits that fold. This is the wire's
+            # own fraction, and it is what `selection_rates` weights the per-species conversion rates
+            # by: a rate composed off the display percent would be off by the fold on every tile.
+            "share": float(entry.get("share", 0.0)),
             "can_cultivate": bool(entry.get("can_cultivate", false)),
             "can_sow": bool(entry.get("can_sow", false)),
             "cultivate_yield_ratio": float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE)),
@@ -4855,11 +4861,204 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # in the weeding and conversion gains, and they read all-zero for a species that cannot
             # climb on this ground, which is exactly where the role is still true and useful.
             "role": String(entry.get("role", "")).strip_edges().to_lower(),
+            # **HOW MUCH OF THIS PLANT IS STANDING** (`ForagePatchState.compositionStandingBiomass`,
+            # folded onto the entry by the decoder) — carried through so the compose sheet's species
+            # chips can quote a QUANTITY. A selective gather asks *"is there enough emmer here to be
+            # worth two hands"*, and the client holds no capacity arithmetic: the sim states this
+            # exactly as it states the take.
+            #
+            # **PRESENCE IS ITS OWN KEY, because `0.0` is a real reading** — a stand drawn to nothing
+            # is not the same fact as a server that quoted no biomass at all, and only the second may
+            # render no clause. It is also the ONE producer of the quantity: the tile card's basket
+            # rows read this same number rather than re-deriving `share × stock`.
+            "standing_biomass": float(entry.get("standing_biomass", 0.0)),
+            "has_standing_biomass": entry.has("standing_biomass"),
+            # **WHAT ONE UNIT OF THIS PLANT CONVERTS AT**
+            # (`ForagePatchState.compositionProvisionsPerBiomass` and its fodder twin, folded onto the
+            # entry by the decoder) — the patch's standing rung, the favored crop's gain already in,
+            # and NOT pre-scaled by the share above. They are what let the compose sheet price a
+            # NARROWING live: `provisionsPerBiomass` on the patch is the basket AVERAGE, so a sheet
+            # holding only that quoted the same number however many chips were ticked.
+            #
+            # **PRESENCE IS ITS OWN KEY HERE TOO, and here it earns its keep twice over**: a cash crop
+            # honestly pays `0.0` food, so a missing-means-zero reading would make an unstated rate and
+            # a real one indistinguishable on exactly the plants this feature is about.
+            "provisions_per_biomass": float(entry.get("provisions_per_biomass", 0.0)),
+            "has_provisions_per_biomass": entry.has("provisions_per_biomass"),
+            "fodder_per_biomass": float(entry.get("fodder_per_biomass", 0.0)),
+            "has_fodder_per_biomass": entry.has("fodder_per_biomass"),
+            # **…AND WHAT ONE UNIT OF IT IS MADE OF** (`compositionMaterialPerBiomass[i].rows`, the
+            # same seam a third time). It is the account the whole selective gather was argued on:
+            # baskets are made of fibre and baskets are what let a gatherer carry more food, so
+            # *tick cotton, see how much fibre* is the first thing a player tries, and
+            # `material_per_biomass` on the PATCH is basket-averaged and cannot answer it.
+            #
+            # **AN EMPTY LIST IS "NO ROW", NEVER ZERO** — a grain pays no material and says so — which
+            # is why presence still needs its own key beside it: an entry the wrapper vector never
+            # reached is a server that stated nothing, and only that one makes the selection
+            # unquotable. Carried VERBATIM; `selection_rates` composes it per MATERIAL ID and nothing
+            # anywhere sums it into one materials/turn figure.
+            "material_per_biomass": material_payoff_rows(entry.get("material_per_biomass", [])),
+            "has_material_per_biomass": entry.has("material_per_biomass"),
         })
     if entries.is_empty():
         return entries
     entries[0]["percent"] = int(entries[0]["percent"]) + FLORA_SHARE_PERCENT_TOTAL - total
     return entries
+
+# ---- THE SELECTIVE GATHER — pricing a NARROWED take ---------------------------------------------
+#
+# A forage crew may name the plants it carries home. The patch's own `provisions_per_biomass` is the
+# BASKET AVERAGE, so a sheet holding only that quotes the same take however many chips are ticked —
+# live for the worker stepper beside it and inert for the control that is the whole decision. The wire
+# answers that with two per-species vectors folded onto the basket entries
+# (`flora_basket_entries`' `provisions_per_biomass` / `fodder_per_biomass`), and these two functions
+# are the ONE place this client composes them.
+#
+# **THE COMPOSITION, and every term of it comes off the wire:**
+#
+#     available = max(0, biomass − floor·K) × Σ_S share        <- the selected plants' stand
+#     rate      = Σ_S (share × rate) ÷ Σ_S share               <- the rate WITHIN the selection
+#     take      = min(workers × perWorkerBiomass, available) ; food = take × rate
+#
+# **`narrowed_source` EXPRESSES ALL OF IT AS A SOURCE DICT rather than as a second take model**, which
+# is what keeps the narrowed sheet and the whole-basket sheet one piece of code: the stand, the rates
+# and the crew throughput are substituted, and `forecast_inputs` / `max_useful_workers` /
+# `expected_yield_account` / `hold_crew` / `reach_crew` / the chart then answer for the selection
+# through the identical arithmetic. A narrowed take that had its own model would drift from the
+# whole-basket one the first time either moved — and the `now → after` walk, which is exactly what the
+# player must see move when a chip is ticked, would have had to be written twice.
+
+## The keys of a composed selection: is it QUOTABLE at all, and the three accounts if so. The material
+## one is a `[{material_id, amount}]` VECTOR like every other material reading in this file — never a
+## scalar, which is the retired trade axis under a new name.
+const SELECTION_KNOWN := "known"
+const SELECTION_SHARE := "share"
+const SELECTION_PROVISIONS := "provisions"
+const SELECTION_FODDER := "fodder"
+const SELECTION_MATERIAL := "material"
+
+## Compose `selection` (species keys, EMPTY meaning the whole basket) against `basket` —
+## `flora_basket_entries`' answer for the same tile.
+##
+## **`known` IS FALSE WHERE THE WIRE STATED NO RATE FOR SOMETHING THE PLAYER TICKED**, and that is the
+## honest-silence case: this client cannot recover a per-species conversion from anything else it
+## holds, so the sheet says the narrowing is unquoted rather than quoting it at the basket's numbers
+## under a narrowed heading — the quote-vs-payout defect this arc has shipped before.
+##
+## **A `0.0` RATE IS NOT THAT CASE.** A cash crop pays no food and says so; the selection is fully
+## quoted, its food rate is zero, and `yield_rows`' own render-where-it-pays rule then decides whether
+## a FOOD row exists at all. Presence travels on the entry's `has_*` key for exactly this reason.
+##
+## An empty selection returns `known = false` as well — there is nothing to narrow, and the caller
+## reads the patch unchanged.
+static func selection_rates(basket: Array[Dictionary],
+        selection: PackedStringArray) -> Dictionary:
+    var unquoted := {SELECTION_KNOWN: false, SELECTION_SHARE: 0.0,
+        SELECTION_PROVISIONS: 0.0, SELECTION_FODDER: 0.0,
+        SELECTION_MATERIAL: ([] as Array[Dictionary])}
+    if selection.is_empty() or basket.is_empty():
+        return unquoted
+    var share_sum := 0.0
+    var provisions := 0.0
+    var fodder := 0.0
+    # **THE MATERIAL ARM MERGES BY ID, and that is the half a single-species fixture cannot check.**
+    # Two ticked plants both paying `fibre` compose into ONE fibre rate — which is what a rate means,
+    # and what the store sums the same way — so the weighted sums accumulate into a per-id map rather
+    # than a list. A last-write-wins composition passes a one-plant selection and is wrong by a factor
+    # on cotton beside flax. Insertion ORDER is the basket's (the wire's), kept in `material_order`,
+    # so the rendered rows do not reshuffle between renders.
+    var material_weighted := {}
+    var material_order: Array[String] = []
+    var matched := 0
+    for entry in basket:
+        if not selection.has(String(entry.get("species", ""))):
+            continue
+        # A plant the wire quoted no rate for makes the WHOLE selection unquotable: the composition is
+        # a weighted mean, so one missing term is not a term that can be left out of it. **The
+        # material arm is gated on PRESENCE, never on emptiness** — an empty row list is a plant that
+        # pays no material, which is a real answer and composes as a zero contribution.
+        if not bool(entry.get("has_provisions_per_biomass", false)) \
+                or not bool(entry.get("has_fodder_per_biomass", false)) \
+                or not bool(entry.get("has_material_per_biomass", false)):
+            return unquoted
+        var share := maxf(float(entry.get("share", 0.0)), 0.0)
+        matched += 1
+        share_sum += share
+        provisions += share * float(entry.get("provisions_per_biomass", 0.0))
+        fodder += share * float(entry.get("fodder_per_biomass", 0.0))
+        for row in (entry.get("material_per_biomass", []) as Array):
+            var material_id := String((row as Dictionary).get(MATERIAL_PAYOFF_ID_KEY, ""))
+            if material_id == "":
+                continue
+            if not material_weighted.has(material_id):
+                material_weighted[material_id] = 0.0
+                material_order.append(material_id)
+            material_weighted[material_id] = float(material_weighted[material_id]) \
+                + share * float((row as Dictionary).get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    # A selection naming nothing this tile grows, or naming only plants the tile carries no share of,
+    # divides by zero — there is no stand to price and no mean to take.
+    if matched == 0 or share_sum <= 0.0:
+        return unquoted
+    # **THE DENOMINATOR IS THE WHOLE SELECTION'S SHARE, on every material.** A plant that pays no fibre
+    # contributes a zero to the fibre mean rather than leaving the mean to the plants that do — the
+    # selection is one crew gathering one stand, and dividing each material by only its own payers
+    # would quote a narrowing to `flax + oak mast` the same fibre rate as `flax` alone.
+    var materials: Array[Dictionary] = []
+    for material_id in material_order:
+        materials.append({
+            MATERIAL_PAYOFF_ID_KEY: material_id,
+            MATERIAL_PAYOFF_AMOUNT_KEY: float(material_weighted[material_id]) / share_sum,
+        })
+    return {
+        SELECTION_KNOWN: true,
+        SELECTION_SHARE: share_sum,
+        SELECTION_PROVISIONS: provisions / share_sum,
+        SELECTION_FODDER: fodder / share_sum,
+        SELECTION_MATERIAL: materials,
+    }
+
+## The patch as the SELECTED plants alone — a copy of `src` with the selection folded into the terms
+## every take reading is composed from. Returns `src` untouched for an unquotable selection, so a
+## caller that forgot to check still renders the whole basket rather than a scaled ghost of it.
+##
+## **THE STAND SCALES AND THE CREW DOES NOT**, which is the composition above written into a dict:
+## `biomass`, `carrying_capacity` and the regrowth curve all take the selection's share (so
+## `escapement_room` returns `Σshare × (B − floor·K)` exactly, and the stock FRACTION `B/K` the curve
+## and the chart are read at is untouched), while `per_worker_biomass` stays whole — a worker's basket
+## does not shrink because they walk past the flax.
+##
+## **`per_worker_yield` IS RE-COMPOSED, NOT SCALED.** The wire's is `perWorkerBiomass × basket rate`;
+## this crew converts at the SELECTION's rate, so it is multiplied out again from the throughput
+## rather than nudged. It is substituted BEFORE `KitRoster.repriced_source` runs, so the kit's carry
+## ratio still lands on it exactly as it lands on the whole-basket figure.
+##
+## **AND THE MATERIAL VECTORS ARE SUBSTITUTED THE SAME WAY, per material id.** `material_per_biomass`
+## takes the selection's composed rate vector; `per_worker_material` is RE-COMPOSED off the throughput
+## exactly as `per_worker_yield` is, because the wire's is that throughput at the basket's rate. An
+## empty answer stays empty and renders NO material row (`yield_rows`' "empty means no row" rule) —
+## which is what a selection of pure grain honestly is, not a column of zeros.
+static func narrowed_source(src: Dictionary, prefix: String, rates: Dictionary) -> Dictionary:
+    if not bool(rates.get(SELECTION_KNOWN, false)):
+        return src
+    var share := clampf(float(rates.get(SELECTION_SHARE, 0.0)), 0.0, 1.0)
+    var out := src.duplicate()
+    out[prefix + FORECAST_BIOMASS_KEY] = float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)) * share
+    out[prefix + FORECAST_CAPACITY_KEY] = float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)) * share
+    var samples := regrowth_samples(src, prefix)
+    var scaled := PackedFloat32Array()
+    for sample in samples:
+        scaled.push_back(sample * share)
+    out[prefix + FORECAST_REGROWTH_SAMPLES_KEY] = scaled
+    var provisions := float(rates.get(SELECTION_PROVISIONS, 0.0))
+    out[prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY] = provisions
+    out[prefix + FORECAST_FODDER_PER_BIOMASS_KEY] = float(rates.get(SELECTION_FODDER, 0.0))
+    var carry := per_worker_biomass(src, prefix)
+    out[prefix + FORECAST_PER_WORKER_KEY] = carry * provisions
+    var materials: Array[Dictionary] = rates.get(SELECTION_MATERIAL, [] as Array[Dictionary])
+    out[prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY] = materials
+    out[prefix + FORECAST_PER_WORKER_MATERIAL_KEY] = scaled_material_rows(materials, carry)
+    return out
 
 ## The two keys of ONE per-material payoff row, as `native/src/dict/subsistence.rs` writes them.
 ## `material_id` is the `materials.json` id (`fibre`, `tobacco`, `grape`) — the same id the material

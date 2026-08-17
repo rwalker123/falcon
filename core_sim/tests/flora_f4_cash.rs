@@ -17,6 +17,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, commit_payoff, generate_hydrology,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world,
@@ -345,6 +346,7 @@ fn spawn_forager(
                         tile: patch,
                         floor: FIXTURE_FLOOR,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: FORAGE_WORKERS,
                     kit: None,

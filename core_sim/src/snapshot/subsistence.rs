@@ -1,4 +1,4 @@
-use sim_runtime::MaterialPayoff;
+use sim_runtime::{MaterialPayoff, SpeciesMaterialRates};
 
 use super::*;
 use crate::fauna::{
@@ -932,7 +932,17 @@ pub(crate) fn snapshot_forage_patches(
                 // (`forageCarryPerWorkerBiomass`) and its `SourceYield` row.
                 forage_per_worker_biomass(equipped_gather_rate, seasonal),
                 FORECAST_OUTPUT_MULTIPLIER,
+                // **The WHOLE basket** — a patch row is a fact about the *patch*, and a patch has no
+                // crew to have named anything, exactly as it has no band to resolve a kit against. A
+                // narrowed crew's own numbers ride its `SourceYield` row; what the client composes
+                // per species off this one is `share × biomass`, which is why every entry's standing
+                // biomass ships beside the composition.
+                &crate::components::TakeSelection::EVERYTHING,
             );
+            // **The published basket and every vector aligned with it, resolved together** — see
+            // the fields below.
+            let basket =
+                patch_composition_info(patch, tile_composition, forage, flora, tile_quotes);
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
@@ -1177,13 +1187,23 @@ pub(crate) fn snapshot_forage_patches(
                 // deep-copying it re-allocated two `String`s per named plant on every patch on
                 // every turn (half this readout's whole cost). Only a committed patch pays for a
                 // rebuilt list, and there are few of those.
-                composition: patch_composition_info(
-                    patch,
-                    tile_composition,
-                    forage,
-                    flora,
-                    tile_quotes,
-                ),
+                composition: basket.composition,
+                // **HOW MUCH OF EACH PLANT IS STANDING** — `share × biomass`, index-aligned with the
+                // basket above **by construction**: both come out of one call, so no later edit can
+                // leave the two describing different baskets. It is what a selective gather's crop
+                // chip reads ("70% (63)"), and it rides the patch row rather than the memoized
+                // composition entries because it moves every turn while they do not.
+                composition_standing_biomass: basket.standing_biomass,
+                // **AND WHAT EACH OF THEM CONVERTS AT** — the per-species twins of
+                // `provisions_per_biomass` / `fodder_per_biomass` beside them, so a compose sheet
+                // can price a **narrowing** before the player commits to it. The basket average
+                // alone cannot: it does not move when a crop chip does.
+                composition_provisions_per_biomass: basket.provisions_per_biomass,
+                composition_fodder_per_biomass: basket.fodder_per_biomass,
+                // …and the third account, which is the one the selective gather was argued on:
+                // baskets are made of fibre, so *"tick cotton, see how much fibre"* is the first
+                // thing a player tries and the basket-averaged rate beside it cannot answer it.
+                composition_material_per_biomass: basket.material_per_biomass,
                 // **Which ONE plant this patch is committed to** (Flora Roster S1) — `""` is the
                 // wild mixed basket, a positive statement rather than "unknown". The display name is
                 // resolved here because the client holds no roster (the `FloraShareInfo::display_name`
@@ -1221,13 +1241,65 @@ fn patch_composition_info(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     tile_quotes: &FloraQuoteCache,
-) -> Arc<[FloraShareInfo]> {
+) -> PublishedBasket {
+    // **Every per-entry vector is derived from the SAME list that is published**, so all of them are
+    // index-aligned by construction rather than by call sites agreeing about which entries survive
+    // the zero-share filter. Adding a fifth means adding it here, and nowhere else.
+    let aligned = |shares: &[FloraShareInfo]| -> PublishedBasket {
+        let rates = crate::forage::patch_species_rates(patch, tile_composition, flora, forage);
+        // The rate rows come off `patch_composition` too, so they are the same basket in the same
+        // order — but only the *published* entries survive the zero-share filter above, so each row
+        // is matched **by key** rather than by position. A plant with no row reads `0`, which is what
+        // an unnamed plant contributes to the basket average as well.
+        let rate_of = |species: &str| {
+            rates
+                .iter()
+                .find(|rate| rate.species == species)
+                .map_or((NO_SPECIES_RATE, NO_SPECIES_RATE), |rate| {
+                    (rate.provisions_per_biomass, rate.fodder_per_biomass)
+                })
+        };
+        PublishedBasket {
+            standing_biomass: shares
+                .iter()
+                .map(|info| info.share * patch.biomass)
+                .collect(),
+            provisions_per_biomass: shares.iter().map(|info| rate_of(&info.species).0).collect(),
+            fodder_per_biomass: shares.iter().map(|info| rate_of(&info.species).1).collect(),
+            // **What each of them is MADE OF** — the same rows, in the wire's per-entry wrapper.
+            // Empty `rows` is a plant that pays no material ("no row"), and a plant the roster no
+            // longer names lands there too: it contributes to no account at all.
+            material_per_biomass: shares
+                .iter()
+                .map(|info| SpeciesMaterialRates {
+                    rows: rates
+                        .iter()
+                        .find(|rate| rate.species == info.species)
+                        .and_then(|rate| rate.materials.as_ref())
+                        .map(|rows| {
+                            rows.iter()
+                                .map(|payoff| MaterialPayoff {
+                                    material_id: payoff.material.clone(),
+                                    amount: payoff.amount,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect(),
+            composition: shares.into(),
+        }
+    };
     let effective = patch_composition(patch, tile_composition, forage);
     let quoted = tile_quotes.composition(patch.tile);
     let Cow::Owned(effective) = effective else {
-        return quoted; // wild: the tile's basket verbatim, shared rather than rebuilt.
+        // wild: the tile's basket verbatim, shared rather than rebuilt.
+        return PublishedBasket {
+            composition: Arc::clone(&quoted),
+            ..aligned(&quoted)
+        };
     };
-    effective
+    let shares: Arc<[FloraShareInfo]> = effective
         .iter()
         .filter(|entry| entry.share > NO_PUBLISHED_SHARE)
         .map(|entry| {
@@ -1258,8 +1330,25 @@ fn patch_composition_info(
                     },
                 )
         })
-        .collect()
+        .collect();
+    aligned(&shares)
 }
+
+/// **The patch's basket as the wire carries it** — the published entries and every per-entry vector
+/// that must line up with them, resolved in one call so the alignment is structural. A named record
+/// rather than a tuple because four vectors in a row is a shape a caller can mis-order.
+struct PublishedBasket {
+    composition: Arc<[FloraShareInfo]>,
+    standing_biomass: Vec<f32>,
+    provisions_per_biomass: Vec<f32>,
+    fodder_per_biomass: Vec<f32>,
+    material_per_biomass: Vec<SpeciesMaterialRates>,
+}
+
+/// **What a plant the roster no longer names converts at** — `0`, in either scalar account, which is
+/// exactly what it contributes to the basket average it must stay consistent with. Named because a
+/// bare `0.0` at the call site reads as a measurement rather than as "there is no such plant".
+const NO_SPECIES_RATE: f32 = 0.0;
 
 /// **A source's material rows scaled onto one basis, in the WIRE's shape** — the sim's own
 /// [`crate::materials_config::material_yield_totals`] with its rows renamed for the snapshot.

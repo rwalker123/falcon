@@ -774,11 +774,75 @@ pub(crate) fn forage_patches_to_array(
         // every tile of a biome reads the same list. Already sorted (share DESC, then species key
         // ASC) server-side: preserve the wire order, never re-sort client-side.
         if let Some(composition) = patch.composition() {
+            // **HOW MUCH OF EACH PLANT IS STANDING** — `compositionStandingBiomass` is INDEX-ALIGNED
+            // with `composition` and is folded into the entry it belongs to rather than published as
+            // a parallel array. The wire keeps them apart because a composition entry is memoized per
+            // tile per world while a standing biomass moves every turn; on this side the two are ONE
+            // OBJECT (the schema says a client must read them as one), and folding here is what makes
+            // that structural — a chip reads `share` and `standing_biomass` off one dict, and no
+            // consumer can index the two lists apart.
+            //
+            // It also means the patch's cross-ref needs NO new key: `composition` travels whole in
+            // `patch_composition`, so the two-wirings trap that has bitten the plant web three times
+            // cannot reach this field.
+            //
+            // An entry the biomass array is too short for carries no key at all — absent means the
+            // server stated no quantity, which a chip renders as "not known" rather than as a zero
+            // stand.
+            let standing = patch.compositionStandingBiomass();
+            // **WHAT ONE UNIT OF EACH PLANT CONVERTS AT** — `compositionProvisionsPerBiomass` and its
+            // fodder twin, index-aligned with `composition` exactly as the standing biomass above is
+            // and folded onto the same entry for the same reason. They are the patch's CURRENT
+            // standing rung, with the favored crop's conversion gain already in.
+            //
+            // **NEITHER IS PRE-SCALED BY SHARE, and that is what makes them composable**: the share
+            // sits on the entry beside them, so a sheet pricing a SUBSET evaluates
+            // `Σ(share × rate) ÷ Σ(share)` over the plants the player ticked. Summing these without
+            // the shares is not a total of anything — see `SourceForecast.selection_rates`, which is
+            // the one place in this client that composes them.
+            //
+            // **A `0.0` IS A REAL READING** — a cash crop pays no food — so presence is carried by the
+            // key EXISTING rather than by the value, exactly as `standing_biomass` above does: an
+            // entry the vector is too short for carries no key at all, and the sheet then says the
+            // narrowing is unquoted rather than quoting it at zero.
+            let provisions_rate = patch.compositionProvisionsPerBiomass();
+            let fodder_rate = patch.compositionFodderPerBiomass();
+            // …AND WHAT EACH PLANT IS MADE OF. `compositionMaterialPerBiomass` is the same seam a
+            // third time, one `SpeciesMaterialRates` per composition entry — a WRAPPER TABLE only
+            // because FlatBuffers has no vector-of-vectors, so `rows` is read as "entry i's
+            // materials" and the wrapper is plumbing rather than a model.
+            //
+            // **THIS IS THE HEADLINE CASE OF THE WHOLE FEATURE.** `material_per_biomass` on the patch
+            // is basket-averaged, so a sheet holding only that could not price a narrowing to a cash
+            // crop at all — and baskets are made of fibre, baskets are what let a gatherer carry more
+            // food, so *tick cotton, see how much fibre* is the first thing a player tries.
+            //
+            // **EMPTY ROWS MEAN "NO ROW", NEVER ZERO**, so this key is written for EVERY entry the
+            // wrapper vector reaches, empty list and all: a grain pays no material and says so with
+            // an empty list, while a `0`-valued row would read as a crop that pays badly. The rows
+            // are copied VERBATIM and are never summed into one materials/turn figure — that is the
+            // retired trade scalar under a new name.
+            let material_rate = patch.compositionMaterialPerBiomass();
             let mut shares = VarArray::new();
-            for share in composition {
+            for (index, share) in composition.iter().enumerate() {
                 let mut share_dict = VarDictionary::new();
                 if let Some(species) = share.species() {
                     let _ = share_dict.insert("species", species);
+                }
+                if let Some(biomass) = standing.filter(|values| index < values.len()) {
+                    let _ = share_dict.insert("standing_biomass", biomass.get(index) as f64);
+                }
+                if let Some(rates) = provisions_rate.filter(|values| index < values.len()) {
+                    let _ = share_dict.insert("provisions_per_biomass", rates.get(index) as f64);
+                }
+                if let Some(rates) = fodder_rate.filter(|values| index < values.len()) {
+                    let _ = share_dict.insert("fodder_per_biomass", rates.get(index) as f64);
+                }
+                if let Some(rates) = material_rate.filter(|values| index < values.len()) {
+                    let _ = share_dict.insert(
+                        "material_per_biomass",
+                        &material_payoffs_to_array(rates.get(index).rows()),
+                    );
                 }
                 if let Some(display_name) = share.displayName() {
                     let _ = share_dict.insert("display_name", display_name);

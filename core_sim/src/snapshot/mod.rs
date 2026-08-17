@@ -902,7 +902,7 @@ mod tests {
     use super::*;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
-    use crate::components::{ElementKind, LocalStore, MoraleCause, YieldRange};
+    use crate::components::{ElementKind, LocalStore, MoraleCause, TakeSelection, YieldRange};
     use crate::forage::ForagePatch;
     use crate::power::PowerNodeId;
     use crate::{
@@ -1391,6 +1391,7 @@ mod tests {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: 10,
                     kit: None,
@@ -1511,6 +1512,7 @@ mod tests {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
                         species: Some("hay_grass".to_string()),
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: 10,
                     kit: None,
@@ -1580,6 +1582,7 @@ mod tests {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: 10,
                 kit: None,
@@ -1620,6 +1623,7 @@ mod tests {
             tile: UVec2::new(7, 9),
             floor: UNNAMED_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let assignment = LaborAssignment {
             target,
@@ -1653,6 +1657,7 @@ mod tests {
                 tile: UVec2::new(7, 9),
                 floor: 0.15,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: 6,
             kit: None,

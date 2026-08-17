@@ -276,6 +276,18 @@ pub enum CommandPayload {
         /// compares tiers, so a quiet substitution answers a different question than the one asked.
         /// Ignored by the band-wide roles, which consume no kit component.
         kit_id: Option<String>,
+        /// **WHICH PLANTS A FORAGE CREW CARRIES HOME** (the selective gather) — `flora_config.json`
+        /// species keys. **Empty means take the whole basket**, the default and byte-identical to
+        /// every command sent before this field existed; naming one or more leaves the rest of the
+        /// stand standing.
+        ///
+        /// Not [`Self::AssignLabor::species`], which is the *commit* crop a `Cultivate`/`Sow` names
+        /// and which is inert until that improvement completes. A key the roster does not know, or
+        /// one that does not grow on **this** tile, is a **command failure with a reason** — never
+        /// silently dropped, because a dropped selection is indistinguishable from *"take
+        /// everything"*. Order and duplicates are irrelevant: the sim sorts and deduplicates on
+        /// construction. Ignored by every other role.
+        take_species: Vec<String>,
     },
     MoveBand {
         faction_id: u32,
@@ -1108,6 +1120,7 @@ impl CommandEnvelope {
                 species,
                 floor,
                 kit_id,
+                take_species,
             } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -1120,6 +1133,7 @@ impl CommandEnvelope {
                 species: species.clone(),
                 floor: *floor,
                 kit_id: kit_id.clone(),
+                take_species: take_species.clone(),
             }),
             CommandPayload::MoveBand {
                 faction_id,
@@ -1527,6 +1541,7 @@ impl CommandEnvelope {
                 species: cmd.species,
                 floor: cmd.floor,
                 kit_id: cmd.kit_id,
+                take_species: cmd.take_species,
             },
             pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
                 faction_id: cmd.faction_id,

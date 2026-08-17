@@ -77,11 +77,17 @@ pub(crate) fn labor_assignment_to_state(
             tile,
             floor,
             species,
+            take_species,
         } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
             state.floor = *floor;
             state.species = species.clone().unwrap_or_default();
+            // **WHICH PLANTS THIS CREW CARRIES HOME** — the take selection, published so it
+            // round-trips (a compose sheet reopened on the row has no other way to show what the
+            // crew was sent for) and in the collection's own ascending order, which is the only
+            // order it has. **Empty is "take everything"**, the default, never "unknown".
+            state.take_species = take_species.keys().map(str::to_string).collect();
         }
         LaborTarget::Hunt { fauna_id, floor } => {
             state.fauna_id = fauna_id.clone();

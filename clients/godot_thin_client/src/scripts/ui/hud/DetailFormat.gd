@@ -1735,21 +1735,37 @@ static func flora_composition_lines(
 ## the player is not looking at, and the two numbers on one card would disagree about which stand is
 ## being talked about.
 ##
-## Derived from the entries' already-rounded PERCENTS rather than the raw shares, so a row's two
-## numbers are consistent with each other (38% of 205 really is the 78 printed beside it) — and the
-## remainder is folded into the FIRST (largest) entry, exactly as `flora_basket_entries` folds the
-## percentage remainder, because a decomposition that visibly fails to add up is worse than a ±1 on
-## the row where it is proportionally smallest. Returns zeros for a stripped or stockless surface;
-## those rows print no biomass at all.
+## **THE QUANTITY IS THE WIRE'S OWN** — `ForagePatchState.compositionStandingBiomass`, folded onto each
+## entry by the decoder and read here through `standing_biomass`. It used to be re-derived as
+## `percent × stock`, which agreed with the wire in production and is exactly the shape this arc has
+## shipped three defects of: two seams answering one question, drifting the first time either moves.
+## The compose sheet's species chips read the same key, so the card and the sheet cannot come to spell
+## one stand two ways.
+##
+## **THE ROUNDING RECONCILIATION STAYS, and it is display-only.** A decomposition that visibly fails to
+## add up is worse than a ±1, so each figure is rounded and the remainder folded into the FIRST
+## (largest) entry — the same fold `flora_basket_entries` applies to the percentages. That adjusts
+## PRESENTATION of the wire's numbers; it does not produce them.
+##
+## **A BASKET THE WIRE QUOTED NO QUANTITY FOR FALLS BACK TO THE SHARE SPLIT**, all-or-nothing rather
+## than per row: a column mixing stated and derived figures would be two producers inside one list. It
+## is the "the server stated nothing" case, not a second opinion about a stand it did state.
+##
+## Returns zeros for a stripped or stockless surface; those rows print no biomass at all.
 static func _flora_biomass_split(entries: Array[Dictionary], stock: float) -> Array[int]:
     var split: Array[int] = []
     if stock <= 0.0:
         split.resize(entries.size())
         split.fill(0)
         return split
+    var stated := true
+    for entry in entries:
+        if not bool(entry.get("has_standing_biomass", false)):
+            stated = false
+            break
     var total := 0
     for entry in entries:
-        var value := int(round(
+        var value := int(round(float(entry["standing_biomass"]))) if stated else int(round(
             float(entry["percent"]) / float(SourceForecast.FLORA_SHARE_PERCENT_TOTAL) * stock))
         total += value
         split.append(value)

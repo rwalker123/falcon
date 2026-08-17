@@ -891,6 +891,29 @@ static func _kit_token(payload: Dictionary) -> String:
         return ""
     return " kit %s" % kit_id
 
+## **THE SELECTIVE-GATHER TOKEN — `take:emmer,flax`, a PREFIX rather than a third positional.** The
+## forage tail's two optional tokens are already told apart by shape (a floor parses as a float, a
+## species key never does) and a third would be indistinguishable from the commit species, so the
+## parser lifts this one out of the tail wherever it sits — exactly like `kit`, and for the same
+## reason. One token, comma-separated, because a `flora_config.json` species key is snake_case and
+## never contains a comma.
+##
+## **AN EMPTY SELECTION EMITS NOTHING**, which is what *"take the whole basket"* means to the parser —
+## so a composition that never touched the chips produces the byte-identical line it produced before
+## this axis existed. That is also why the client must send the FULL selection on every commit: an
+## omitted token CLEARS the row's selection sim-side rather than leaving it alone.
+const TAKE_SELECTION_PREFIX := " take:"
+const TAKE_SELECTION_SEPARATOR := ","
+static func _take_species_token(payload: Dictionary) -> String:
+    var keys := PackedStringArray()
+    for key in payload.get("take_species", []):
+        var trimmed := String(key).strip_edges()
+        if trimmed != "":
+            keys.append(trimmed)
+    if keys.is_empty():
+        return ""
+    return TAKE_SELECTION_PREFIX + TAKE_SELECTION_SEPARATOR.join(keys)
+
 static func format_assign_labor(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -920,6 +943,10 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # two optional positionals above it (a floor parses as a float, a species key never does,
             # and `kit` is neither).
             forage_line += _kit_token(payload)
+            # The selective gather rides the tail too, and for the identical reason: it is lifted out
+            # before any positional form is read, so it never has to be disambiguated against the
+            # floor or the commit species above it.
+            forage_line += _take_species_token(payload)
             return {
                 "line": forage_line,
                 "message": "Assign %d forager%s to (%d, %d), leaving %s standing." % [

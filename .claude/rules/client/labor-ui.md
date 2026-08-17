@@ -6035,3 +6035,212 @@ It is the same gap "KNOWN GAP — the local per-turn readout does not carry the 
 section up, reaching the raid sheet through the chart the fill-target slice brought back, and it closes
 the same way: threading `hunterAttack` into the projection, which puts a band-scoped term into a
 source-scoped layer and ripples through `max_useful_workers`, both crew targets and the verdict.
+
+---
+
+## THE FORAGE SHEET NAMES THE PLANTS AGAIN — the selective gather's chip row
+
+A `Forage` assignment carries the species its crew carries home (`LaborAssignment.takeSpecies`, an
+empty list meaning *the whole basket* and byte-identical to every assignment sent before the field
+existed). The control is **one row of chips on the compose sheet**, mounted under the kit row and
+above the improvement control, so the sheet reads **band → floor → crew → kit → what we carry home →
+what we are building → the terms**.
+
+**A CHIP IS WRITTEN EXACTLY AS THE TILE CARD WRITES THE SPECIES** — `🌾 Wild Emmer 45% (40)` —
+composed from the card's OWN consts (`FoodIcons.for_crop_role`, `HudFloraVocab.FLORA_SHARE_FORMAT`,
+`FLORA_SHARE_BIOMASS_CLAUSE_FORMAT`), never a second spelling. One plant reads one way in this client
+or the card and the sheet start disagreeing about the same stand the first time either moves.
+
+**THE BRACKETED NUMBER IS OFF THE WIRE.** `ForagePatchState.compositionStandingBiomass` is
+index-aligned with `composition` and the decoder **folds it onto the entry it belongs to** as
+`standing_biomass` rather than publishing a parallel array — the schema says a client must read the
+two as one object, and folding makes that structural. It also means the patch's cross-ref needs NO
+new key: `composition` travels whole in `patch_composition`, so the two-wirings trap that has bitten
+the plant web three times cannot reach this field. A plant the wire quotes no quantity for renders NO
+clause rather than a `(0)`; `flora_basket_entries` carries `has_standing_biomass` beside the value
+for exactly that, `0.0` being a real reading. **The tile card's basket rows read the same key** —
+`DetailFormat._flora_biomass_split` used to re-derive `share × rounded stock`, which agreed with the
+wire in production and was a second producer of one question; it now reads the wire and keeps only
+its display-side remainder fold, so the two surfaces cannot drift (`land-readouts.md` → "EACH ROW
+STATES ITS ABSOLUTE").
+
+### Three states, and the third is the point
+
+| state | mark | ink |
+|---|---|---|
+| **included** — nothing ticked anywhere, so everything is coming home | `☑` / `◉` | `INK_DIM` on both mark and face |
+| **picked** — explicitly ticked | the same shape, lit | `SIGNAL` (take) / `HEALTHY` (crop) mark, `INK` face, filled pill |
+| **excluded** — dimmed, because something else was picked | `☐` / `○` | `INK_FAINT` on both |
+
+**The DEFAULT state must read as faintly INCLUDED rather than as off** — with nothing ticked every
+plant really is coming home, and an OFF shape there says the opposite. **Ticking every species
+collapses back to the default** (`ComposeState.toggle_forage_take_species` takes the basket size for
+it): "all of them" and "the whole basket" are one instruction, and keeping them apart would put a
+selection on the wire saying nothing the omission does not.
+
+**THE MARK MOVES A STEP WITH THE FACE, and that is what makes DEFAULT and EXCLUDED tell apart at the
+HUD's real type size.** The two shapes differ by ~2px of a 13px glyph, so on a rendered frame the
+distinction is carried by WEIGHT; leaving both marks at one ink halves that gap for nothing.
+
+### Foraging takes several, cultivating takes one, and the SHAPE carries it
+
+Same chips, same place, two different acts — so the affordance forks and the label does not. A square
+box takes several (the take selection); a round one takes exactly one (the crop a Cultivate or Sow
+commits the ground to). `single_pick` is `composed_improvement != IMPROVEMENT_NONE`, which on this
+sheet means a rung already declared or running, and the crop still travels as `assign_labor`'s
+`species` token exactly as it did.
+
+> **THIS PARTLY REVERSES §4.7a ③, AND THE NARROWING IS THE POINT.** The crop picker left this sheet
+> because *"the CROP TO TEND shouldn't be a selection here as the user can't do the cultivate here"* —
+> a sheet that could not declare a rung had no business configuring one. What comes back is not that
+> picker: on a plain gather the row is a TAKE control and offers no crop at all, and it only becomes a
+> crop picker where a rung is **already in flight**, i.e. exactly where the player CAN do the
+> cultivate here. The `⌃` on the Work board still declares; this states which plant it commits to.
+
+**The consequence line states the cost, and it differs by verb** (`HudFloraVocab.TAKE_NOTE_*`): a
+gatherer leaves the plants nobody picked standing, a cultivator weeds them out. The
+cultivate-with-nothing-picked line NAMES the crop the game would settle on, because silence there is
+the game choosing for the player without saying so.
+
+**WHETHER THE CROP WAS CHOSEN OR SETTLED IS THE MODEL'S TO REMEMBER.** `resolve_forage_species`
+writes its answer back every render, so from the second render on the player's pick and the game's
+default are the same string and a before-and-after comparison reads every settled crop as a chosen
+one. `ComposeState._forage_species_chosen` is the fact: written by the chip, written by `seed_forage`
+(the band's row IS the player's stated intent), and cleared by the resolver whenever it MOVES the
+value — a fall-back being the game's answer however it got there.
+
+### The chips PRICE THEMSELVES, and the sheet is one arithmetic
+
+A sheet whose forecast moved for the worker stepper and sat still for the chips taught that toggling
+was free when it is the entire decision. `provisionsPerBiomass` on the patch is the BASKET AVERAGE
+and cannot quote a narrowing at all — so the wire carries the same quantity **per plant**,
+`ForagePatchState.compositionProvisionsPerBiomass` and `compositionFodderPerBiomass`, index-aligned
+with `composition` exactly as the standing biomass is and folded onto the same entries by the
+decoder. Both are at the patch's standing rung with the favored crop's conversion gain already in,
+and **neither is pre-scaled by share** — the share sits on the entry beside them, which is what makes
+a SUBSET composable at all.
+
+```text
+available = max(0, biomass − floor·K) × Σ_S share
+rate      = Σ_S (share × rate) ÷ Σ_S share        <- the rate WITHIN the selection
+take      = min(workers × perWorkerBiomass, available) ; food = take × rate
+```
+
+**⛔ NEVER SUM THESE RATES ACROSS SPECIES.** Without the shares the sum is not a total of anything;
+`SourceForecast.selection_rates` is the ONE place in this client that composes them, and it is a
+weighted MEAN.
+
+#### The composition is expressed as a SOURCE, not as a second take model
+
+`SourceForecast.narrowed_source(src, prefix, rates)` returns the patch as the ticked plants alone —
+`biomass`, `carrying_capacity` and the regrowth curve each scaled by `Σ share`, the three per-biomass
+accounts substituted, and `per_worker_yield` / `per_worker_material` re-composed off the throughput
+(the wire's are that throughput at the BASKET's rates, so they are multiplied out again rather than
+nudged). `DrawerComposeController._forage_take_source` is its one caller, and everything below it on
+the sheet that answers about the TAKE reads that dict through the code it already read the whole
+patch through:
+
+| reads the narrowed patch | reads the RAW patch |
+|---|---|
+| the forecast, hence the worker cap and its `max N useful here` note | the basket itself |
+| the floor presets' per-preset takes | the commit crop |
+| the chart, hence both crew-target pills | the improvement control and its deal row |
+| the readout, hence the `now → after` walk | `rung_lesson_known`, the build's own terms |
+
+**A SECOND TAKE MODEL WAS THE ALTERNATIVE AND IS THE WRONG SHAPE.** It would drift from the
+whole-basket one the first time either moved, and the `now → after` walk — which is precisely what
+the player must see move when a chip is ticked — would have had to be written twice.
+
+**THE STAND SCALES AND THE CREW DOES NOT.** A worker's basket does not shrink because they walk past
+the flax, so `per_worker_biomass` is untouched while the stand takes the share; scaling `biomass` and
+`carrying_capacity` together is what makes `escapement_room` return `Σshare × (B − floor·K)` exactly.
+
+**THE CHART IS NARROWED TOO, and that is not a slip.** Both its crew pills are clickable and both
+are clamped to the stepper's cap, so a cap divided from the ticked plants' stand beside pills drawn
+from the whole basket's would name a count the `+` refuses — the panel arguing with itself, which
+this file already records once. Uniform scaling leaves the stock FRACTION `B/K` untouched, so the
+curve's shape, the floor's position on it and the phase bands behind it are exactly the whole
+patch's; what shrinks is the absolute biomass, which is the selected plants' stand and is the number
+the chips state.
+
+#### THE IDLE WARNING IS THE STEPPER'S OWN NOTE, and it moves with the chips now
+
+There is deliberately no second sentence under the chip row. The crew stepper already carries
+`max N useful here — more would be idle`, and that N divides the NARROWED patch's ceiling — so
+ticking a scarce plant lowers it and the stepper says so in the words it already uses for every other
+way of running out of useful hands. A `_take_idle_note` reading the standing row's `workersNeeded`
+was a SECOND producer of one verdict (the shape this arc has shipped three defects of) and is
+retired.
+
+#### THE MATERIAL ACCOUNT COMPOSES PER MATERIAL ID — the case the feature was argued on
+
+**Baskets are made of fibre and baskets are what let a gatherer carry more food, so *tick cotton, see
+how much fibre* is the first thing a player tries.** `material_per_biomass` on the PATCH is
+basket-averaged, so for one release that question was answered with an apology;
+`ForagePatchState.compositionMaterialPerBiomass` is the same quantity **per plant** — one
+`SpeciesMaterialRates` per composition entry, a wrapper table only because FlatBuffers has no
+vector-of-vectors — and `selection_rates` composes it through the identical weighted mean the two
+scalars take, applied **per material id**.
+
+```text
+rate[m] = Σ_S (share × amount[m]) ÷ Σ_S share     <- the SAME denominator on every material
+```
+
+- **MERGE BY ID, NEVER BY LAST WRITE.** Two ticked plants both paying `fibre` compose into ONE fibre
+  rate — which is what a rate means, and what the store sums the same way. A last-write-wins
+  composition passes every single-species selection and is wrong by a factor the moment cotton stands
+  beside flax, which is why the harness's merge claim is arithmetic on the composition rather than a
+  reading off a rendered take.
+- **THE DENOMINATOR IS THE WHOLE SELECTION'S SHARE, on every material.** A plant that pays no fibre
+  contributes a zero to the fibre mean rather than leaving the mean to the plants that do — the
+  selection is one crew gathering one stand, and dividing each material by only its own payers would
+  quote `flax + oak mast` the same fibre rate as `flax` alone.
+- **THE ROWS' ORDER IS THE BASKET'S**, kept as a first-seen list beside the per-id sums, so the
+  rendered rows do not reshuffle between renders.
+- **⛔ NEVER SUM THEM INTO ONE materials/turn FIGURE**, here or anywhere: that is the retired trade
+  scalar under a new name. **And never merge two species' CHARACTERISTIC readings** — the sim
+  deliberately merges rows by id only WITHIN one plant, because averaging two species' readings
+  invents a plant that is not growing there.
+- **EMPTY MEANS "NO ROW", NEVER ZERO, and presence still needs its own key.** A grain pays no material
+  and says so with an empty list, which composes as a zero contribution and renders nothing; an entry
+  the wire's wrapper vector never reached is a server that stated nothing, and only THAT makes the
+  selection unquotable.
+
+#### …AND WHAT IS STILL NOT KNOWN IS SAID OUT LOUD
+
+ONE silence survives, and it rides the model as `YIELD_MODEL_NOTES` — an `Array[String]` of asides
+`_fill_yields_host` renders under the rows — for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
+evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
+
+**A narrowing the wire priced no per-species rate for quotes NOTHING** (`TAKE_UNQUOTED_NOTE`). The
+composition is a weighted mean, so one missing term is not a term that can be left out of it, and
+there is nothing else this client holds that a rate could be recovered from. **A `0.0` rate is NOT
+this case** — a cash crop pays no food and says so, the selection is fully quoted, and `yield_rows`'
+own render-where-it-pays rule then decides whether a FOOD row exists at all. Presence travels on the
+entry's `has_*` key for exactly that reason, and it is checked on all THREE accounts.
+
+**`_wordless_take_model` is what that silence renders through** — an empty row set carrying only the
+aside, so the sheet says why rather than going blank. **A narrowing to cash crops alone no longer
+reaches it**: cotton's fibre is a composed row like any other now, and what still lands there is a
+selection that genuinely pays into nothing.
+
+### The selection rides EVERY commit, in full, never as a delta
+
+Re-issuing `assign_labor` without a `take:` token **CLEARS** the selection sim-side, exactly as it
+clears the floor and the commit crop. Three consequences, and each is a place the selection would
+otherwise be lost silently:
+
+- **The compose sheet sends `_compose.forage_take_species()` on every press**, and the empty answer is
+  what keeps a composition that never touched the chips emitting the byte-identical line it emitted
+  before the chips existed.
+- **`seed_forage` seeds it from the band's own row**, so a sheet reopened over a narrowed crew
+  restates what the band HAS rather than widening it back on the next commit.
+- **`BandPanelController._emit_work_assign` restates it**, the rule the kit and the improvement
+  already follow: a `+`/`−` on the work board that dropped the token would widen a crew the player had
+  narrowed to one plant. It is read off `HudBandLaborState.take_species_for_forage` rather than the row
+  model, which carries no take selection.
+
+**The command token is `take:emmer,flax` — a PREFIX, lifted out of the tail wherever it sits, like
+`kit`.** The forage tail's two optional positionals are already told apart by shape and a third would
+be indistinguishable from the commit species. `Main._take_species_token` omits it on an empty
+selection, which is what an absent token means to the parser.

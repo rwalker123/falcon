@@ -29,14 +29,15 @@ use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     herd_build_verb, hunt_source_yield_preview, knows, load_simulation_config_for_new_world,
     output_multiplier, patch_build_verb, resolve_active_profile, resolve_committed_species,
-    rung_site_refusal, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
-    BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
-    BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
-    LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
-    RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides, UpkeepFundMode,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    resolve_take_selection, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
+    ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle,
+    BeatConfigHandle, BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle,
+    CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
+    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
+    StartProfileOverrides, TakeSelection, UpkeepFundMode, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -558,6 +559,10 @@ enum Command {
         /// job's default. Rejected with a reason if unknown or wrong-job; ignored by the band-wide
         /// roles.
         kit_id: Option<String>,
+        /// **Which plants a forage crew carries home** (the selective gather) — `flora_config.json`
+        /// species keys, **empty = the whole basket**. Rejected with a reason if the roster does not
+        /// know a key or it does not grow on this tile; ignored by every other role.
+        take_species: Vec<String>,
     },
     MoveBand {
         faction: FactionId,
@@ -1912,7 +1917,12 @@ fn seed_source_yield(
     let seeded = match target {
         // The three band-wide roles work no source, so there is nothing to price — see the arm at
         // the end of this match.
-        LaborTarget::Forage { tile, floor, .. } => {
+        LaborTarget::Forage {
+            tile,
+            floor,
+            take_species,
+            ..
+        } => {
             // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
             if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
                 > labor.band_work_range
@@ -1975,6 +1985,10 @@ fn seed_source_yield(
                 output_mult,
                 workers,
                 *floor,
+                // **The crew's own take selection** — a seed priced on the whole basket would
+                // promise a narrowed crew a stand it will not touch, which is exactly the
+                // forecast-vs-actual split the seed exists to close.
+                take_species,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 range_sigmas,
@@ -2115,7 +2129,12 @@ fn validate_labor_policy(
             }
             Ok(())
         }
-        LaborTarget::Forage { tile, species, .. } => {
+        LaborTarget::Forage {
+            tile,
+            species,
+            take_species,
+            ..
+        } => {
             // **CAN THEY GATHER HERE AT ALL?** The plant branch's rung 1 carries a
             // `site_requirement` of its own — the ground must be a **gathering site** — and this is
             // where it is enforced. It is the whole of the early game's scarcity: a `FoodModuleTag`
@@ -2141,6 +2160,15 @@ fn validate_labor_policy(
             // judging at `PlantField` here would refuse a crop the player may legitimately intend
             // to `cultivate`, and the stance command does not yet know which verb will follow.
             // `handle_sow` re-judges the crew's crop at its own rung.
+            // **WHICH PLANTS ARE THEY HERE FOR?** — judged before the commit crop because it is
+            // the live one: the take selection changes what this turn banks, while the crop below
+            // does nothing until an improvement completes.
+            //
+            // **It FAILS CLOSED, and that is the whole of why it is validated at all.** A silently
+            // dropped selection produces exactly the numbers *"take everything"* produces, on every
+            // readout the player has, so the mistake would be undiagnosable. The floor's rule,
+            // applied to the other half of the same command.
+            validate_take_selection(app, *tile, take_species)?;
             let Some(named) = species.as_deref() else {
                 return Ok(());
             };
@@ -2521,6 +2549,56 @@ fn validate_sow(
     validate_species_selection(app, tile, species, RungKey::PlantField)
 }
 
+/// **May this crew gather these plants HERE?** — the take selection's gate, phrased for the player.
+///
+/// It resolves through the *same* `forage::resolve_take_selection` seam the take path narrows with,
+/// against the tile's own basket via `forage::tile_flora_composition` (never
+/// `FloraConfig::composition` on a raw terrain), so a selection this accepts is one the turn can
+/// actually gather. **There is no rung in it**: a take selection says what the crew carries home
+/// from the stand that is standing, so a `wild`-ceiling plant is a perfectly good answer.
+///
+/// The whole basket (an empty selection) is always accepted — it names no plant to be wrong about.
+fn validate_take_selection(
+    app: &bevy::prelude::App,
+    tile: UVec2,
+    take: &TakeSelection,
+) -> Result<(), String> {
+    if take.is_everything() {
+        return Ok(());
+    }
+    // **No map, nothing to judge** — the same carve-out `validate_species_selection` makes, and for
+    // the same reason: the command-unit harnesses and the idle boot carry no `TileRegistry`, and the
+    // labor arm (which always has the real tiles) remains the authority.
+    let Some(registry) = app.world.get_resource::<TileRegistry>() else {
+        return Ok(());
+    };
+    let Some(ground) = registry
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+    else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let flora = app.world.resource::<FloraConfigHandle>().get();
+    let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+    match resolve_take_selection(take, &composition, &flora) {
+        Ok(()) => Ok(()),
+        Err((species, SpeciesRefusal::Unknown)) => {
+            Err(format!("Your people know no plant called '{species}'."))
+        }
+        Err((species, _)) => Err(format!(
+            "{} does not grow at ({}, {}).",
+            flora
+                .species
+                .get(species)
+                .map_or_else(|| species.to_string(), |def| def.display_name.clone()),
+            tile.x,
+            tile.y
+        )),
+    }
+}
+
 /// **May a `Cultivate`/`Sow` on this tile commit to this plant?** — the species-side gate
 /// (`docs/plan_flora_roster.md` §4.3), phrased for the player.
 ///
@@ -2750,6 +2828,7 @@ fn handle_assign_labor(
     species: Option<String>,
     floor: Option<f32>,
     kit_id: Option<String>,
+    take_species: Vec<String>,
 ) {
     // **The floor FAILS CLOSED** (`docs/plan_harvest_floor.md` §4): absent means the default, but a
     // value outside `0.0..=1.0` is rejected with its own failure event rather than clamped. A clamp
@@ -2783,6 +2862,12 @@ fn handle_assign_labor(
                     .map(str::trim)
                     .filter(|key| !key.is_empty())
                     .map(str::to_string),
+                // **WHICH PLANTS THIS CREW CARRIES HOME** (the selective gather) — sorted and
+                // deduplicated by the constructor, so the order the player typed cannot reach the
+                // snapshot. Empty = the whole basket, the same absent-means-default convention the
+                // floor and the commit species have. Its legality is judged below, against this
+                // tile's own basket, and **fails closed**.
+                take_species: TakeSelection::from_keys(&take_species),
             },
             _ => {
                 emit_command_failure(
@@ -5178,14 +5263,16 @@ fn handle_answer_fork(
 }
 
 /// **The forage source at `tile`, as the improvement commands name it.** `same_source` matches on
-/// the tile alone, so the stance and crop slots are placeholders — this exists so the two build
-/// verbs cannot accidentally *carry* a stance or a crop into `queue_build_on_working_bands`, and
-/// so "the command names a source, not an assignment" is stated once.
+/// the tile alone, so the stance, crop and take-selection slots are placeholders — this exists so
+/// the two build verbs cannot accidentally *carry* a stance, a crop or a selection into
+/// `queue_build_on_working_bands`, and so "the command names a source, not an assignment" is stated
+/// once.
 fn forage_source(tile: UVec2) -> LaborTarget {
     LaborTarget::Forage {
         tile,
         floor: SOURCE_NAMED_NOT_ASSIGNED,
         species: None,
+        take_species: TakeSelection::EVERYTHING,
     }
 }
 
@@ -5220,6 +5307,7 @@ fn validate_forage_improvement_for_crews(
             tile,
             floor: SOURCE_NAMED_NOT_ASSIGNED,
             species,
+            take_species: TakeSelection::EVERYTHING,
         };
         validate_improvement(app, faction, &target, improvement)?;
     }
@@ -6949,6 +7037,7 @@ fn command_from_payload(
             species,
             floor,
             kit_id,
+            take_species,
         } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
             band_id,
@@ -6960,6 +7049,7 @@ fn command_from_payload(
             species,
             floor,
             kit_id,
+            take_species,
         }),
         ProtoCommandPayload::MoveBand {
             faction_id,
@@ -7904,10 +7994,21 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             species,
             floor,
             kit_id,
+            take_species,
         } => {
             handle_assign_labor(
-                app, faction, band_id, role, workers, target_x, target_y, fauna_id, species, floor,
+                app,
+                faction,
+                band_id,
+                role,
+                workers,
+                target_x,
+                target_y,
+                fauna_id,
+                species,
+                floor,
                 kit_id,
+                take_species,
             );
         }
         Command::MoveBand {
@@ -8793,6 +8894,7 @@ mod tests {
                     tile,
                     floor: DEFAULT_ESCAPEMENT_FLOOR,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
             )
             .is_ok(),
@@ -8989,6 +9091,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -9042,6 +9145,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -9206,6 +9310,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
         );
         assert_eq!(
             role_crew(&mut app, faction, &LaborTarget::Agriculture),
@@ -9229,6 +9334,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
         );
         assert_eq!(
             role_crew(&mut app, faction, &LaborTarget::Agriculture),
@@ -9307,6 +9413,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -9340,6 +9447,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -9448,6 +9556,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         erode_a_tended_patch(&mut app, coord, faction);
@@ -9490,6 +9599,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         {
@@ -9525,6 +9635,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         let top = rung_top(&app, RungKey::PlantField);
@@ -9559,6 +9670,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         {
@@ -9677,6 +9789,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             Improvement::Cultivate,
         );
@@ -9696,6 +9809,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         {
@@ -9720,6 +9834,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
         );
         let allocation = app
             .world
@@ -9766,6 +9881,7 @@ mod tests {
             tile: coord,
             floor: 0.5,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
 
         let mut thriving = build_headless_app();
@@ -9857,6 +9973,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: crop.map(str::to_string),
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         app
@@ -9911,6 +10028,113 @@ mod tests {
         );
     }
 
+    /// **A TAKE SELECTION IS JUDGED BY THE COMMAND THAT CARRIES IT** (the selective gather).
+    ///
+    /// `assign_labor` is the only command that can set `LaborTarget::Forage::take_species`, and the
+    /// selection **fails closed** there for the reason the floor does: a silently dropped selection
+    /// produces exactly the numbers *"take everything"* produces — the same take, the same crew
+    /// count, the same row — so the mistake would be undiagnosable from any readout the player has.
+    ///
+    /// Both refusals are asserted **through the command**, never through the validator it calls:
+    /// `cultivation.md` records a guard that went on passing while no command path validated
+    /// anything, because it fed the validator an input no command could supply.
+    ///
+    /// The control comes first, so a rejection cannot be the verb being broken outright, and the
+    /// legal case is a plant the tile really grows — the selective gather has **no rung gate**, so a
+    /// `wild`-ceiling plant nobody can ever commit to is a perfectly good thing to carry home.
+    #[test]
+    fn assign_labor_rejects_a_take_selection_this_ground_cannot_offer() {
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+
+        // The control: naming nothing is the whole basket, which cannot be wrong.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        assign_forage_take(&mut app, faction, coord, &[]);
+        assert!(
+            !forage_failure_detail_contains(&app, "know no plant"),
+            "control: naming no plants is the whole basket, which is always legal"
+        );
+
+        // …and so is a plant that actually grows here, whatever rung it can climb.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let growing = a_species_growing_at(&app, coord);
+        assign_forage_take(&mut app, faction, coord, &[growing.as_str()]);
+        assert!(
+            !forage_failure_detail_contains(&app, "does not grow at"),
+            "control: a plant this tile's basket carries is a legal thing to gather"
+        );
+
+        // 1. A plant that does not exist at all.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        assign_forage_take(&mut app, faction, coord, &["not_a_plant"]);
+        assert!(
+            forage_failure_detail_contains(&app, "know no plant"),
+            "an unknown plant is refused where it is named, never quietly dropped"
+        );
+
+        // 2. A real plant that does not grow on this ground — legal to gather somewhere, not here.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let elsewhere = a_tendable_species_absent_from(&app, coord);
+        assign_forage_take(&mut app, faction, coord, &[elsewhere.as_str()]);
+        assert!(
+            forage_failure_detail_contains(&app, "does not grow at"),
+            "a plant this tile's basket does not carry is refused, naming the tile"
+        );
+
+        // 3. …and one bad key spoils the whole selection, rather than being quietly filtered out of
+        //    it. Half a selection is a different order than the one the player gave.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let growing = a_species_growing_at(&app, coord);
+        assign_forage_take(&mut app, faction, coord, &[growing.as_str(), "not_a_plant"]);
+        assert!(
+            forage_failure_detail_contains(&app, "know no plant"),
+            "one unknown plant refuses the whole selection; it is not silently narrowed"
+        );
+    }
+
+    /// Re-issue the band's forage assignment naming a take selection — the real `assign_labor`
+    /// command path, which is the only one that can carry one.
+    fn assign_forage_take(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        coord: UVec2,
+        take: &[&str],
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            None,
+            "forage".to_string(),
+            BAND_WORKERS,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            None,
+            None,
+            take.iter().map(|key| (*key).to_string()).collect(),
+        );
+    }
+
+    /// A plant the tile at `coord` really grows, through the one `tile_flora_composition` seam the
+    /// command judges with — the legal input the refusals above are measured against.
+    fn a_species_growing_at(app: &bevy::prelude::App, coord: UVec2) -> String {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let ground = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .and_then(|entity| app.world.get::<Tile>(entity))
+            .expect("the fixture seeded this tile");
+        tile_flora_composition(&flora, &labor.forage, ground, map_seed)
+            .first()
+            .expect("the fixture tile grows something")
+            .species
+            .clone()
+    }
+
     /// A `wild`-ceiling species from the shipped roster — one that reaches neither plant rung, so
     /// naming it as a crop is always the `CeilingTooLow` refusal. Named by key rather than resolved
     /// at runtime because the *point* of the assertion is that this particular kind of plant is
@@ -9954,6 +10178,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
         app
@@ -9979,6 +10204,7 @@ mod tests {
             crop.map(str::to_string),
             None,
             None,
+            Vec::new(),
         );
     }
 
@@ -10597,6 +10823,7 @@ mod tests {
                 floor: None,
                 species: None,
                 kit_id: None,
+                take_species: Vec::new(),
             };
             log_dispatched_command(&mut log, &command);
             apply_command(&mut app, command, &loopback_snapshot_server());
@@ -10662,6 +10889,7 @@ mod tests {
             floor: None,
             species: None,
             kit_id: None,
+            take_species: Vec::new(),
         };
         log_dispatched_command(&mut log, &command);
         apply_command(&mut app, command, &loopback_snapshot_server());
@@ -10819,6 +11047,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -10856,6 +11085,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -10891,6 +11121,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -10947,6 +11178,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -11033,6 +11265,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -11084,6 +11317,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -11114,6 +11348,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -11157,6 +11392,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -11215,6 +11451,7 @@ mod tests {
                     tile: coord,
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
             );
 
@@ -12135,6 +12372,7 @@ mod tests {
                 None,
                 None,
                 Some(bad_kit.to_string()),
+                Vec::new(),
             );
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 entry
@@ -12210,6 +12448,7 @@ mod tests {
             None,
             None,
             Some(RETIRED_KIT.to_string()),
+            Vec::new(),
         );
         assert!(
             !staffed(&mut app),
@@ -12272,6 +12511,7 @@ mod tests {
                         tile: patch,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(patch),
@@ -12299,6 +12539,7 @@ mod tests {
                 None,
                 None,
                 named.map(str::to_string),
+                Vec::new(),
             );
 
             let equipment = app.world.resource::<EquipmentConfigHandle>().get();
@@ -12560,6 +12801,7 @@ mod tests {
                 tile: coord,
                 floor: 0.15,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
         );
 
@@ -12569,6 +12811,7 @@ mod tests {
             tile: coord,
             floor: 0.15,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         assert!(validate_labor_policy(&app, faction, &target).is_ok());
         assert!(
@@ -12612,6 +12855,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             Improvement::Corral,
         );
@@ -12760,6 +13004,7 @@ mod tests {
             None,
             Some(floor),
             None,
+            Vec::new(),
         );
     }
 
@@ -12782,6 +13027,7 @@ mod tests {
             None,
             Some(floor),
             None,
+            Vec::new(),
         );
     }
 
@@ -12854,6 +13100,7 @@ mod tests {
             1.0,
             BAND_WORKERS,
             0.5,
+            &TakeSelection::EVERYTHING,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             app.world
@@ -13345,6 +13592,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             CANCEL_FORAGE_WORKERS,
             available,
@@ -13504,6 +13752,7 @@ mod tests {
                 tile: coord,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             CANCEL_FORAGE_WORKERS,
             available,
@@ -13887,6 +14136,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
         );
 
         assert_eq!(
