@@ -652,7 +652,7 @@ and hold there for ever — which is the case the client's own gate got wrong be
 | web | producer | crew throughput | curve |
 |---|---|---|---|
 | plant | `forage::forage_take_overdraws` | `workers × forage_per_worker_biomass` (no engagement stage) | `fauna::reseeding_logistic_regrowth` at the patch's own `patch_ecology` |
-| animal | `fauna::hunt_take_overdraws` | `min(carry, animals_engaged × stay_fraction × body_mass)` | `fauna::net_biomass_delta` at the herd's own `herd_ecology` |
+| animal | `fauna::hunt_take_overdraws` | `min(carry, animals_engaged × stay_fraction × body_mass)` | `fauna::regrowth_delta_at` at the herd's own `herd_ecology` — **the seam that picks the curve**, logistic for a domesticated herd and `net_biomass_delta` otherwise, so the ⚠ samples what `regrow_biomass` will actually pay. Sampling the wild curve under a managed herd standing below its collapse fraction reads a *negative* regrowth where the real one is positive, and the ability conjunct then passes on a crew that cannot draw the herd down |
 
 Both call `fauna::peak_regrowth_between` over `fauna::floor_reach_band`, and both feed the one
 `take_overdraws`. The band is **anchored at `floor·K`, never below it**: a source already under its

@@ -253,10 +253,22 @@ static func _row_face(row: Dictionary, state: String) -> String:
         return HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(work)
     return HudWorkVocab.RUNG_TRACK_COST_FORMAT % [DetailFormat.format_work_units(work), turns]
 
+## **EVERY STATE `_row_face` CAN REACH HAS AN ARM HERE, and the third one is why.** `open` had none —
+## there was no `RUNG_TRACK_STATE_OPEN` to return — so an open rung the wire prices no job on rendered
+## a **`Button` with no text that still emitted its `tame`/`corral` declaration on press**, which is
+## the worst shape a control can take. Reachable through a herd the snapshot no longer carries: the
+## source resolves to `{}`, `husbandry_ceiling` defaults to the pen so no outright bar fires, and
+## `build_work_cost` reads nothing.
+##
+## **The word rather than a refusal to build the row**, because a track exists to state the WHOLE
+## branch: dropping a selectable rung reads as a shorter ladder, which is the same failure a hidden
+## locked rung would be, and the destination is real whether or not this client can price it. With all
+## three arms present the `""` below is unreachable — it is the compile-time else, not a state.
 static func _state_word(state: String) -> String:
     match state:
         STATE_PATH: return HudWorkVocab.RUNG_TRACK_STATE_PATH
         STATE_TARGET: return HudWorkVocab.RUNG_TRACK_STATE_TARGET
+        STATE_OPEN: return HudWorkVocab.RUNG_TRACK_STATE_OPEN
     return ""
 
 ## The row's ink. `SIGNAL` is what this HUD spells a LIVE state in — the rung you stand on and the one
@@ -359,9 +371,11 @@ static func _rung_refusals(kind: String, source: Dictionary, prefix: String, imp
 
 ## **WHAT THE SPECIES OR THE GROUND WILL NEVER ADMIT** — `""` when the rung is admitted at all.
 ##
-## `RungGates.hunt_rungs_admitted` / `_any_crop_allows` WITHHOLD such a rung, which is right for a
+## `RungGates.hunt_rungs_admitted` / `any_crop_allows` WITHHOLD such a rung, which is right for a
 ## MARK: a mark promises the verb is available. A TRACK says what the branch holds, so the same answer
-## has to arrive as a visible refusal instead — see `HudFloraVocab.GATE_REASON_SPECIES_CEILING_FORMAT`.
+## has to arrive as a visible refusal instead — the three this function returns, which are
+## `HudFloraVocab.GATE_REASON_SPECIES_NEVER_TAMED` / `_NEVER_PENNED` on the animal web and
+## `GATE_REASON_CROP_CANNOT_CLIMB_FORMAT` on the plant one.
 static func _outright_bar(kind: String, source: Dictionary, prefix: String,
         improvement: String) -> String:
     if kind == SourceForecast.LABOR_KIND_HUNT:

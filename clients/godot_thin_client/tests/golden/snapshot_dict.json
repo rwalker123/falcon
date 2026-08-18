@@ -2191,8 +2191,8 @@
           "species": "populations[0].labor_assignments[0].species",
           "sustainable_yield": 16.4,
           "take_species": [
-            "wild_emmer",
-            "flax"
+            "flax",
+            "wild_emmer"
           ],
           "target_x": 117,
           "target_y": 128,
@@ -2226,8 +2226,8 @@
           "species": "populations[0].labor_assignments[1].species",
           "sustainable_yield": 35.830002,
           "take_species": [
-            "wild_emmer",
-            "flax"
+            "flax",
+            "wild_emmer"
           ],
           "target_x": 44,
           "target_y": 33,
@@ -2766,8 +2766,8 @@
           "species": "populations[1].labor_assignments[0].species",
           "sustainable_yield": 23.76,
           "take_species": [
-            "wild_emmer",
-            "flax"
+            "flax",
+            "wild_emmer"
           ],
           "target_x": 62,
           "target_y": 51,
@@ -2801,8 +2801,8 @@
           "species": "populations[1].labor_assignments[1].species",
           "sustainable_yield": 31.49,
           "take_species": [
-            "wild_emmer",
-            "flax"
+            "flax",
+            "wild_emmer"
           ],
           "target_x": 135,
           "target_y": 146,

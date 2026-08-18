@@ -283,6 +283,78 @@ fn world_with_a_patch_knowing(
         patch.species = (banked > NOTHING_BANKED).then_some(crop);
     }
 
+    spawn_the_holding_band(
+        &mut app,
+        tile,
+        source,
+        gatherers,
+        builders,
+        // **THE DECLARATION, and only where there is something to declare it on.** A patch with
+        // **nothing banked** is exactly the state a compose sheet is looking at — the player has
+        // not queued it yet — and that is what makes the wire publish a *projection* rather than
+        // a running countdown. A half-built meter is a build in flight and carries its entry.
+        (banked > core_sim::RUNG_UNSTARTED).then_some(core_sim::Improvement::Cultivate),
+    );
+    (app, source)
+}
+
+/// ⛔ **THE PATCH ROW'S FOUR KEEPING TERMS ARE ONE BILL — INCLUDING THE HEAD COUNT.**
+///
+/// `snapshot.fbs` states the identity `upkeepWorkersNeeded == ceil(upkeepDemand /
+/// PER_WORKER_OUTPUT)` and tells the client to do no arithmetic of its own, so the two must come
+/// off the same seam. `upkeepDemand` and `upkeepShortfall` ship the **stamped** bill — the demand
+/// the keepers were handed, taken before the turn's build accrual — while the head count was `ceil`
+/// of the **live** interpolated demand, which by capture has already risen. A patch mid-build then
+/// published *"wants 3, you have 2"* beside a shortfall of zero.
+///
+/// **Swept across the rung's whole span**, because a `ceil` hides a disagreement of less than one
+/// worker: only the fullnesses where the two readings straddle a whole hand can show it, and which
+/// those are is a property of the shipped rates. The sweep needs no fixture to be tuned onto the
+/// boundary — it walks over it.
+#[test]
+fn the_patch_rows_keeping_head_count_is_the_ceil_of_the_bill_it_publishes() {
+    /// Steps across the rung, fine enough that some step lands inside the one-worker window the
+    /// turn's own accrual opens.
+    const STEPS: u32 = 20;
+
+    /// The pool raising the Cultivate — enough that the meter climbs a visible amount in the turn
+    /// between the stamp and the capture, which is the whole gap under test.
+    const BUILDERS: u32 = A_MULTI_TURN_CREW;
+
+    let mut billed_at_all = false;
+    for step in 1..STEPS {
+        let banked = step as f32 / STEPS as f32;
+        let (mut app, source) = world_with_a_patch(BUILDERS, banked);
+        resolve_a_turn(&mut app, source);
+        let (demand, needed) = published_patch_field(&app, source, |patch| {
+            (patch.upkeepDemand(), patch.upkeepWorkersNeeded())
+        });
+        billed_at_all |= demand > 0.0;
+        assert_eq!(
+            needed,
+            (demand / core_sim::PER_WORKER_OUTPUT).ceil() as u32,
+            "at {banked} of the rung the row must state one bill: {needed} hands published against \
+             a demand of {demand}"
+        );
+    }
+    assert!(
+        billed_at_all,
+        "fixture: the rung must actually bill something somewhere on its span, or the identity is \
+         a comparison of zeroes"
+    );
+}
+
+/// **THE BAND THAT HOLDS THE SOURCE** — one gathering row, one builders pool, and at most one queue
+/// entry. Shared by every fixture in this file, because the *only* things that differ between them
+/// are the three the caller states here.
+fn spawn_the_holding_band(
+    app: &mut App,
+    tile: bevy::prelude::Entity,
+    source: UVec2,
+    gatherers: u32,
+    builders: u32,
+    declared: Option<core_sim::Improvement>,
+) {
     app.world.spawn((
         PopulationCohort {
             home: tile,
@@ -337,22 +409,173 @@ fn world_with_a_patch_knowing(
                     kit: None,
                 },
             ],
-            // **THE DECLARATION, and only where there is something to declare it on.** A patch with
-            // **nothing banked** is exactly the state a compose sheet is looking at — the player has
-            // not queued it yet — and that is what makes the wire publish a *projection* rather than
-            // a running countdown. A half-built meter is a build in flight and carries its entry.
-            build_queue: if banked > core_sim::RUNG_UNSTARTED {
-                vec![core_sim::BuildQueueEntry {
+            build_queue: declared
+                .map(|declared| core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
-                    declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
-                }]
-            } else {
-                Vec::new()
-            },
+                    declared: core_sim::BuildJob::Rung(declared),
+                })
+                .into_iter()
+                .collect(),
             ..Default::default()
         },
     ));
-    (app, source)
+}
+
+/// **A WATERED GATHERING SITE WHOSE BASKET CAN CLIMB TO `plant:field`** — [`a_cultivable_site`]'s
+/// rung-3 twin, and it has to be its own scan: the Field rung adds fresh water to the site rule and
+/// narrows the crop test to plants that can be sown, so a merely cultivable site would refuse the
+/// `Sow` gate and publish *no estimate* for a reason that is not the one under test.
+///
+/// Swept in a totally-ordered `(y, x)` pass, never map iteration order.
+fn a_sowable_site(app: &mut App) -> UVec2 {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let config = app.world.resource::<core_sim::SimulationConfig>();
+    let map_seed = config.map_seed;
+    let wrap = config.map_topology.wrap_horizontal;
+    let (width, height) = {
+        let registry = app.world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let tiles: std::collections::HashMap<UVec2, core_sim::Tile> = {
+        let mut query = app.world.query::<&core_sim::Tile>();
+        query
+            .iter(&app.world)
+            .map(|tile| (tile.position, tile.clone()))
+            .collect()
+    };
+    for y in 0..height {
+        for x in 0..width {
+            let coord = UVec2::new(x, y);
+            let Some(ground) = tiles.get(&coord) else {
+                continue;
+            };
+            if app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_none()
+            {
+                continue;
+            }
+            let fresh_water =
+                core_sim::tile_is_fresh_watered(ground, width, height, wrap, |neighbor| {
+                    tiles.get(&neighbor).map(|tile| tile.terrain_tags)
+                });
+            let refusal = core_sim::rung_site_refusal(
+                ladder.rung(RungKey::PlantField),
+                ground,
+                &labor.forage,
+                app.world
+                    .resource::<core_sim::FoodSiteRegistry>()
+                    .is_site(coord),
+                fresh_water,
+            );
+            if refusal.is_some() {
+                continue;
+            }
+            let composition =
+                core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+            if core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
+                .is_some()
+            {
+                return coord;
+            }
+        }
+    }
+    panic!("the shipped map must carry sowable ground — rung 3 is unreachable without it");
+}
+
+/// ⛔ **AN ABANDONED TWO-LEG SOW PUBLISHES A METER STATE, NOT A SILENCE.**
+///
+/// A `sow` ordered on untended ground climbs `plant:tended` first, so a player who walks away
+/// mid-first-leg has a meter carrying work sitting **below** the Field rung's own base. The boundary
+/// is *work banked, not hands on the job* (`.claude/rules/core_sim/intensification.md`), so that
+/// meter has promised something and owes the player `-2` or `-3` — but the quote read the Field
+/// rung's clamped share of the position, which is `0` for the whole of that leg, and `-1` renders as
+/// **no line at all** on the tile card.
+///
+/// Read off the encoded buffer, and staged exactly like the rotting arm above: unkept, past the
+/// rung's own grace, with nobody on the pool.
+#[test]
+fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
+    let mut app = build_headless_app();
+    app.update();
+    let source = a_sowable_site(&mut app);
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(source.x, source.y)
+        .expect("the fixture tile resolves");
+    // **Both gates the climb passes through** — the entry names the Field, and its first leg is the
+    // tended rung, so a fixture granting only one of them would be measuring a refusal.
+    for knowledge in [
+        core_sim::CULTIVATION_DISCOVERY_ID,
+        core_sim::SEED_SELECTION_DISCOVERY_ID,
+    ] {
+        app.world
+            .resource_mut::<core_sim::DiscoveryProgressLedger>()
+            .add_progress(FactionId(0), knowledge, scalar_one());
+    }
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let tended_cost = ladder
+        .rung(RungKey::PlantTended)
+        .build_cost(core_sim::RUNG_COST_UNSCALED)
+        .expect("the tended rung builds");
+    let (field_base, _) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    let crop = {
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+        let mut query = app.world.query::<&core_sim::Tile>();
+        let ground = query
+            .iter(&app.world)
+            .find(|tile| tile.position == source)
+            .expect("the source tile exists")
+            .clone();
+        let composition =
+            core_sim::tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
+        core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
+            .expect("the site was chosen for having one")
+    };
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry
+            .patch_mut(source)
+            .expect("the site carries a patch");
+        // **Mid the FIRST leg** — work banked, and every unit of it below the Field's own base,
+        // which is the span the per-rung reading cannot see.
+        patch.set_ladder_position(tended_cost * HALF_BUILT, &core_sim::LadderConfig::builtin());
+        patch.owner = Some(FactionId(0));
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+        patch.species = Some(crop);
+        assert!(
+            patch.ladder_position() > core_sim::RUNG_UNSTARTED
+                && patch.ladder_position() < field_base,
+            "fixture: the abandoned sow stands on its first leg, got {}",
+            patch.ladder_position()
+        );
+    }
+    spawn_the_holding_band(
+        &mut app,
+        tile,
+        source,
+        A_GATHERER,
+        NOBODY_BUILDING,
+        Some(core_sim::Improvement::Sow),
+    );
+
+    let span = turns_past_the_grace(&app);
+    let mut published = NO_BUILD_TURNS_ESTIMATE;
+    for _ in 0..span {
+        published = resolve_a_turn(&mut app, source);
+    }
+    assert_eq!(
+        published, BUILD_METER_ROTS,
+        "a two-leg sow abandoned on its first leg is losing bought work and must say so — {published} \
+         is the silence the sentinel exists to replace"
+    );
 }
 
 /// Well above the escapement floor, so the crew is genuinely working the source every turn.

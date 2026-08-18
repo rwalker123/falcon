@@ -343,6 +343,16 @@ pub struct ForagePatch {
     /// means no band answered for this source this turn — an abandoned patch — and the live demand
     /// is then the honest basis, because the whole of it went unmet.
     ///
+    /// # ⛔ THE FIRST BAND TO REACH THE SOURCE WRITES IT, AND NOBODY OVERWRITES IT
+    ///
+    /// The demand is per-source, but that does **not** make it safe for every band to assign the
+    /// same number: the position it interpolates on moves *between* band visits, because each
+    /// band's build accrual runs inside its own arm. Every band's keeping share, meanwhile, was
+    /// split from the pool **before** the loop, at the position as it stood then — so a later
+    /// band's stamp is a bill nobody was handed, and two bands on one patch (one keeping it, one
+    /// building it) judged a correctly-staffed keeping short in one of the two visit orders. The
+    /// shares are struck at the pre-accrual position, so the bill is too.
+    ///
     /// Transient per-turn scratch on [`Self::upkeep_supplied`]'s exact cycle, and for its reason.
     pub upkeep_demanded: Option<f32>,
     // **RETIRED before it shipped: `ForagePatch::repair_verb`** — a per-turn flag stamped on the edge a
@@ -2552,8 +2562,15 @@ pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32
 /// fiftieth of a hand — the readout and the bill describing different sources, which is exactly the
 /// drift the demand seam exists to prevent. It rounds **up**, so any live demand at all asks for at
 /// least one keeper: you cannot send a fiftieth of a person.
+///
+/// **AND IT IS `ceil` OF THE BILL, THE SAME [`patch_keeping_basis`] THE ROW'S OTHER TWO TERMS READ.**
+/// The wire states the identity `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)` and
+/// tells the client to do no arithmetic of its own, so a second reading here is a row that
+/// contradicts itself: the bill is stamped *before* the turn's build accrual, so the live demand at
+/// capture is already the higher number, and a patch mid-`Sow` published *"wants 3, you have 2"*
+/// beside a shortfall of zero.
 pub fn patch_upkeep_workers_needed(patch: &ForagePatch, ladder: &LadderConfig) -> u32 {
-    let demand = patch_upkeep_demand(patch, ladder);
+    let demand = patch_keeping_basis(patch, ladder);
     if demand <= NO_UPKEEP_DEMAND {
         return NO_CREW_ON_THIS_ACTIVITY;
     }

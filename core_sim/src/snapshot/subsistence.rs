@@ -1130,16 +1130,22 @@ pub(crate) fn snapshot_forage_patches(
                 collapse_fraction: ecology.collapse_fraction,
                 stressed_fraction: ecology.stressed_fraction,
                 // **THE STANDING UPKEEP** — the plant twin; see the herd row for the seam and why
-                // all three terms ship. Every one of them is resolved through the **at-risk** rung
+                // all three terms ship.
+                //
+                // **ALL FOUR TERMS ARE THE BILL, so the row is internally consistent**:
+                // `demand − supplied == shortfall`, and `workersNeeded == ceil(demand /
+                // PER_WORKER_OUTPUT)`, are what the client's under-kept readout is built on and it
+                // is told to do no arithmetic of its own. The supply answers the demand the keepers
+                // were *handed* (`forage::patch_keeping_basis`), not the one the turn's own build
+                // work has since raised — the stamp is taken before the accrual, so a fourth term
+                // reading the live demand published *"wants 3, you have 2"* beside a shortfall of
+                // zero. The *live* cost of holding the rung a player is composing against is the
+                // `<rung>UpkeepDemand` quote pair above, which is what that pair exists for.
+                //
+                // The bill is itself struck through the **at-risk** rung
                 // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
                 // the grace below counts down against, so a row cannot bill one rung's demand while
                 // the sim bleeds another's.
-                // **THE BILL, so the trio beside it is internally consistent**:
-                // `demand − supplied == shortfall` is what the client's under-kept readout is built
-                // on, and the supply answers the demand the keepers were *handed*
-                // (`forage::patch_keeping_basis`), not the one the turn's own build work has since
-                // raised. The *live* cost of holding the rung a player is composing against is the
-                // `<rung>UpkeepDemand` quote pair above, which is what that pair exists for.
                 upkeep_demand: crate::forage::patch_keeping_basis(patch, ladder),
                 upkeep_supplied: patch.upkeep_supplied,
                 // **Derived, so the three always describe one turn and one rung.** A stored
@@ -1147,7 +1153,8 @@ pub(crate) fn snapshot_forage_patches(
                 // therefore read `0` on exactly the abandoned patches that are reverting.
                 upkeep_shortfall: crate::forage::patch_upkeep_shortfall(patch, ladder),
                 // **The MAINTAIN activity's own `workers_needed`** — the plant twin, and what makes
-                // a standing cost legible: *"this wants 1, you have 0"*.
+                // a standing cost legible: *"this wants 1, you have 0"*. `ceil` of the **same
+                // bill** the three terms above ship, never of the live demand beside it.
                 upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(patch, ladder),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
@@ -1245,7 +1252,13 @@ fn patch_composition_info(
     // **Every per-entry vector is derived from the SAME list that is published**, so all of them are
     // index-aligned by construction rather than by call sites agreeing about which entries survive
     // the zero-share filter. Adding a fifth means adding it here, and nowhere else.
-    let aligned = |shares: &[FloraShareInfo]| -> PublishedBasket {
+    // ⛔ **IT RETURNS THE FOUR VECTORS, NEVER A WHOLE `PublishedBasket`.** It used to answer the
+    // basket, and the wild arm — the >99% case — took the four rows off it with a functional update
+    // while overriding `composition` with the memo's `Arc`. Functional-update syntax evaluates the
+    // base expression *in full*, so that arm built the deep copy of the whole basket (three `String`s
+    // and two `Vec<MaterialPayoff>` per named plant) that the memo exists to avoid, and then dropped
+    // it. Handing back the rows alone makes the copy unspellable rather than merely avoided.
+    let aligned = |shares: &[FloraShareInfo]| -> AlignedRows {
         let rates = crate::forage::patch_species_rates(patch, tile_composition, flora, forage);
         // The rate rows come off `patch_composition` too, so they are the same basket in the same
         // order — but only the *published* entries survive the zero-share filter above, so each row
@@ -1259,7 +1272,7 @@ fn patch_composition_info(
                     (rate.provisions_per_biomass, rate.fodder_per_biomass)
                 })
         };
-        PublishedBasket {
+        AlignedRows {
             standing_biomass: shares
                 .iter()
                 .map(|info| info.share * patch.biomass)
@@ -1287,17 +1300,13 @@ fn patch_composition_info(
                         .unwrap_or_default(),
                 })
                 .collect(),
-            composition: shares.into(),
         }
     };
     let effective = patch_composition(patch, tile_composition, forage);
     let quoted = tile_quotes.composition(patch.tile);
     let Cow::Owned(effective) = effective else {
         // wild: the tile's basket verbatim, shared rather than rebuilt.
-        return PublishedBasket {
-            composition: Arc::clone(&quoted),
-            ..aligned(&quoted)
-        };
+        return aligned(&quoted).published(Arc::clone(&quoted));
     };
     let shares: Arc<[FloraShareInfo]> = effective
         .iter()
@@ -1331,7 +1340,7 @@ fn patch_composition_info(
                 )
         })
         .collect();
-    aligned(&shares)
+    aligned(&shares).published(shares)
 }
 
 /// **The patch's basket as the wire carries it** — the published entries and every per-entry vector
@@ -1343,6 +1352,30 @@ struct PublishedBasket {
     provisions_per_biomass: Vec<f32>,
     fodder_per_biomass: Vec<f32>,
     material_per_biomass: Vec<SpeciesMaterialRates>,
+}
+
+/// **The per-entry vectors alone, before a basket is named to carry them** — what
+/// [`patch_composition_info`]'s aligner answers, so a caller that already holds the published
+/// entries (the wild patch, which shares the tile memo's `Arc`) can pair them up without a second
+/// copy of the basket being built and thrown away.
+struct AlignedRows {
+    standing_biomass: Vec<f32>,
+    provisions_per_biomass: Vec<f32>,
+    fodder_per_biomass: Vec<f32>,
+    material_per_biomass: Vec<SpeciesMaterialRates>,
+}
+
+impl AlignedRows {
+    /// Pair the rows with the entries they were aligned against.
+    fn published(self, composition: Arc<[FloraShareInfo]>) -> PublishedBasket {
+        PublishedBasket {
+            composition,
+            standing_biomass: self.standing_biomass,
+            provisions_per_biomass: self.provisions_per_biomass,
+            fodder_per_biomass: self.fodder_per_biomass,
+            material_per_biomass: self.material_per_biomass,
+        }
+    }
 }
 
 /// **What a plant the roster no longer names converts at** — `0`, in either scalar account, which is

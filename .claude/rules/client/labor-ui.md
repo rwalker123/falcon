@@ -4,6 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/{HudBandLaborState,SourceForecast,FoodOutlookChart,ArrivalStrip}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{hud_compose_vocab,hud_work_vocab}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/RungGates.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/RungLadder.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/HarvestFloorChart.gd"
 ---
 

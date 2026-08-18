@@ -1509,6 +1509,9 @@ func _ready() -> void:
 	await _assert_leg_in_flight_first_turn()
 	await _assert_leg_in_flight_single_leg()
 	await _assert_leg_in_flight_animal_twin()
+	# …and the track's own PNG-less claim, for the same reason: a rung row with nothing written on it
+	# renders as a perfectly plausible gap in a card.
+	_assert_rung_track_names_every_offer()
 	_set_forage_patches([])
 	_set_world_herds([])
 	await _settle()
@@ -8461,6 +8464,51 @@ func _assert_rung_track_climbing() -> void:
 	_assert_band_panel("track — …and the target quotes its own chained date — \"%s\" (got \"%s\")"
 		% [target, String(faces.get(SourceForecast.IMPROVEMENT_SOW, ""))],
 		String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")) == target)
+
+## **A ROW THAT SENDS A COMMAND MUST SAY WHAT IT SENDS** — built from a source the wire describes not
+## at all, which is the state that made a track render **blank clickable buttons each emitting a real
+## `tame` declaration on press**.
+##
+## **THE `{}` IS THE FIXTURE, and it is reachable rather than synthetic**: `_open_rung_track` reads its
+## source through `_rung_track_source`, which answers `{}` for a herd the snapshot no longer carries.
+## Nothing then bars the track — `husbandry_ceiling` defaults to the pen, so no outright bar fires —
+## and `build_work_cost` reads nothing, so every priced face falls through to its state word and the
+## one state with no word rendered as `""`.
+##
+## **PNG-LESS AND DRIVEN, over the SHIPPED controls rather than the row dicts.** A face is composed at
+## render time and the defect is a `Button` whose `text` is empty; a claim made against the rows would
+## testify about the model and not about the control the press lands on. It builds the track detached
+## and frees it, so it costs the walk no frame and cannot move a later one.
+func _assert_rung_track_names_every_offer() -> void:
+	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, {},
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
+		_standing_knowledge_row())
+	# **THE PRECONDITIONS ARE THE VACUITY GUARD.** "No selectable row is blank" passes for free on a
+	# track with no selectable row at all, and on one whose rows are all priced — so the fixture is
+	# asserted to hold the exact shape the defect needs before the claim is made.
+	var offered := rows.filter(func(row): return bool(row.get(RungLadder.ROW_SELECTABLE_KEY, false)))
+	_assert_band_panel("track — an unknown source still offers a destination to press (%d of %d rows)"
+		% [offered.size(), rows.size()], offered.size() > 0)
+	var unpriced := offered.filter(func(row): return float(row.get(RungLadder.ROW_WORK_KEY,
+		RungLadder.WORK_UNKNOWN)) <= RungLadder.WORK_UNKNOWN)
+	_assert_band_panel("track — …and the wire prices none of them, so each face is its STATE alone (%d)"
+		% unpriced.size(), unpriced.size() == offered.size())
+	var track := RungLadder.build_track(rows, func(_rung: String) -> void: pass)
+	var pressable: Array[Button] = []
+	_collect_buttons_typed(track, pressable)
+	var blank := pressable.filter(func(button: Button): return button.text.strip_edges().is_empty())
+	_assert_band_panel("track — every pressable rung renders a face (%d of %d blank)"
+		% [blank.size(), pressable.size()],
+		pressable.size() == offered.size() and blank.is_empty())
+	track.queue_free()
+
+## Every `Button` under `node`, typed, for the claim above. `_collect_buttons` beside it collects
+## `Node`s, which a `filter` over `.text` cannot read without a cast per row.
+func _collect_buttons_typed(node: Node, into: Array[Button]) -> void:
+	for child in node.get_children():
+		if child is Button:
+			into.append(child as Button)
+		_collect_buttons_typed(child, into)
 
 # =====================================================================================
 #  THE WORK TAB READS THE LEG IN FLIGHT (`docs/plan_standing_upkeep.md` §2.8)

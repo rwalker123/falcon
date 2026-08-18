@@ -1038,6 +1038,102 @@ fn a_crew_that_can_reach_a_below_peak_floor_warns_on_the_first_turn() {
     );
 }
 
+/// ⛔ **A MANAGED HERD IS SAMPLED ON THE CURVE IT IS ACTUALLY ON.**
+///
+/// `regrow_biomass` runs a **domesticated** group on the logistic curve — *"a managed group never
+/// crosses into the depensation crash"* — while the overdraw ⚠ kept its own copy of that decision and
+/// always sampled the wild `net_biomass_delta`. Below `collapse_fraction × K` the two disagree in
+/// sign: the wild curve is *losing* biomass there, so the sampled peak clamps to zero, the ability
+/// conjunct passes for any positive throughput at all, and the ⚠ lights on a crew that cannot draw
+/// the herd down — the exact class of defect the predicate was written to remove.
+///
+/// **Read through `hunt_take_overdraws` directly**, because it is the one function every surface's
+/// verdict is a reading of; the crew's haul is stated as a parameter so the throughput sits
+/// unambiguously **under** the herd's real regrowth and the answer turns on the curve alone.
+#[test]
+fn a_tamed_herd_below_its_collapse_fraction_is_not_overdrawn_by_a_crew_it_out_grows() {
+    /// A taming job the fixture pays in full — any positive cost makes `is_domesticated()` turn on
+    /// the progress beside it.
+    const A_FINISHED_TAMING: f32 = 50.0;
+    /// **Well inside the crash band** — the herd stands at this fraction of its own collapse
+    /// threshold, so both ends of the reach band are on the wild curve's negative arm.
+    const DEEP_INSIDE_THE_CRASH_BAND: f32 = 0.5;
+    /// **And the FLOOR is inside it as well**, as a fraction of the collapse threshold. The band a
+    /// take has to cross is anchored at `floor × K` (`floor_reach_band`), *not* at the stock standing
+    /// today — so a floor above the crash band would have both curves sampled on the logistic arm
+    /// they agree on, and the fixture would pass whichever one it read.
+    const A_FLOOR_INSIDE_THE_CRASH_BAND: f32 = 0.25;
+    /// One hunter, so the crew's own haul is the whole throughput.
+    const A_LONE_HUNTER: u32 = 1;
+    /// The share of the herd's real (logistic) regrowth this crew can carry home — under it, so the
+    /// stock climbs away from any floor whatever the dial says.
+    const UNDER_WHAT_IT_REGROWS: f32 = 0.5;
+
+    let mut app = spawn_world();
+    let (id, _tile, capacity) = stocked_stationary_herd(&mut app);
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let (regrowth, standing, floor) = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.domestication_cost = A_FINISHED_TAMING;
+        herd.domestication_progress = A_FINISHED_TAMING;
+        assert!(
+            herd.is_domesticated(),
+            "fixture: the herd must be tamed, or it is on the wild curve legitimately"
+        );
+        // **The herd's OWN ecology and its OWN curve** — a tamed herd keeps neither the wild `r` nor
+        // the wild collapse fraction, so the band is placed off `herd_ecology` and the crew sized
+        // off `regrowth_delta_at`, the seam `regrow_biomass` itself applies. The liveness assert
+        // below is what keeps that from being circular: on the wild curve this number is negative,
+        // and the fixture says so instead of passing quietly.
+        let ecology = core_sim::herd_ecology(herd, &fauna);
+        herd.biomass = capacity * ecology.collapse_fraction * DEEP_INSIDE_THE_CRASH_BAND;
+        (
+            core_sim::regrowth_delta_at(herd, herd.biomass, capacity, &ecology),
+            herd.biomass,
+            ecology.collapse_fraction * A_FLOOR_INSIDE_THE_CRASH_BAND,
+        )
+    };
+    assert!(
+        core_sim::floor_overdraws(floor),
+        "fixture: the floor must be below the food peak, or the INTENT conjunct answers this and \
+         the curve never gets a say — {floor} against {}",
+        core_sim::MSY_BIOMASS_FRACTION
+    );
+    assert!(
+        floor * capacity < standing,
+        "fixture: the whole reach band must sit inside the crash band — a floor of {floor} of {capacity} \
+         against a herd standing at {standing}"
+    );
+    assert!(
+        regrowth > 0.0,
+        "fixture: a managed herd regrows even down here — that is the whole claim, and it must be a \
+         positive number for the crew to be sized under: {regrowth} at {standing}"
+    );
+
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .expect("the fixture herd survives")
+        .clone();
+    let overdraws = core_sim::hunt_take_overdraws(
+        &herd,
+        &fauna,
+        herd.biomass,
+        regrowth * UNDER_WHAT_IT_REGROWS,
+        &core_sim::HuntingParty::builtin_equipped(),
+        A_LONE_HUNTER,
+        floor,
+    );
+    assert!(
+        !overdraws,
+        "a crew hauling at most {} a turn cannot draw a herd that regrows {regrowth} a turn down to \
+         {floor} of its capacity — the ⚠ is a lie about the curve it sampled",
+        regrowth * UNDER_WHAT_IT_REGROWS
+    );
+}
+
 /// **THE PLANT WEB ANSWERS THE SAME WAY, THROUGH THE SAME PREDICATE.** Both halves at once on one
 /// patch: a gathering crew whose carry is far under the stand's regrowth warns at nothing, and an
 /// overwhelming one at the same floor warns on its first turn.

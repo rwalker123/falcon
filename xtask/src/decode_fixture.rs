@@ -1026,7 +1026,12 @@ fn seed_snapshot() -> WorldSnapshot {
             // **WHICH PLANTS THE CREW CARRIES HOME** (the selective gather) — a `[string]`, seeded
             // for the same reason: a repeated field the fixture leaves empty is a field the decode
             // guard cannot exercise.
-            assignment.take_species = vec!["wild_emmer".to_string(), "flax".to_string()];
+            //
+            // **SORTED, because the sim can emit it no other way.** `TakeSelection` wraps a
+            // `BTreeSet` and the capture publishes its keys, so a golden baked with the pair the
+            // other way round would show a client author an ordering the schema promises cannot
+            // happen — and invite exactly the re-sort it forbids.
+            assignment.take_species = vec!["flax".to_string(), "wild_emmer".to_string()];
         }
         // **A trade party's shipment** (arc #527) — a repeated field on the cohort, seeded for the
         // same reason the assignment's material account above is: an empty one is a field the decode

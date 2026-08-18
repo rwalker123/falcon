@@ -7238,6 +7238,27 @@ pub(crate) fn floor_reach_band(floor: f32, biomass: f32, cap: f32) -> (f32, f32)
     (floor_stock, biomass.max(floor_stock))
 }
 
+/// **THE CURVE THIS HERD IS ON, AT ANY STOCK** — the one place the choice between the two growth
+/// models is made, so a reader and the pass that applies it cannot sample different curves.
+///
+/// **A managed group is immune to the overhunting collapse**: it regrows logistically toward
+/// capacity at every stock and never crosses into the depensation crash, where a wild one below its
+/// `collapse_fraction` is *losing* biomass. Anything sampling the wild curve for a tamed or penned
+/// herd reads a negative where the real answer is positive — which is how the overdraw ⚠ came to fire
+/// on a crew that cannot draw its herd down.
+///
+/// **The per-turn modifiers are NOT here** — [`regrow_biomass`] applies the pen's feed fraction and
+/// the abandoned-pastoral gate on top, because those describe *this turn's* keeping rather than the
+/// shape of the curve. A forecast sampling the curve at a stock the herd is not standing on has no
+/// business assuming either.
+pub fn regrowth_delta_at(herd: &Herd, stock: f32, cap: f32, ecology: &EcologyConfig) -> f32 {
+    if herd.is_domesticated() {
+        logistic_regrowth(stock, cap, ecology.regrowth_rate)
+    } else {
+        net_biomass_delta(stock, cap, ecology)
+    }
+}
+
 /// **Can a crew of `workers` hunters draw THIS herd to `floor`, and is that floor below the food
 /// peak?** — the animal web's producer of [`SourceYield::overdraws`], and the only thing the Hunt
 /// arms (resolved and seeded) publish that flag through.
@@ -7276,8 +7297,11 @@ pub fn hunt_take_overdraws(
     take_overdraws(
         floor,
         carry.min(reach),
+        // **THE HERD'S OWN CURVE** ([`regrowth_delta_at`]), never the wild one by default: a tamed
+        // or penned herd below its `collapse_fraction` regrows where a wild one crashes, so the wild
+        // sample under-reports the peak and lights the ⚠ on a crew that cannot draw it down.
         peak_regrowth_between(cap, low, high, |stock| {
-            net_biomass_delta(stock, cap, &ecology)
+            regrowth_delta_at(herd, stock, cap, &ecology)
         }),
     )
 }
@@ -7300,11 +7324,9 @@ pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
     let cap = herd_capacity(herd, fauna);
     // A domesticated (managed) group is immune to the overhunting collapse: it always
     // regrows logistically toward capacity and never crosses into the depensation crash.
-    let delta = if herd.is_domesticated() {
-        logistic_regrowth(herd.biomass, cap, ecology.regrowth_rate)
-    } else {
-        net_biomass_delta(herd.biomass, cap, &ecology)
-    };
+    // **Through [`regrowth_delta_at`]**, which every reader of the curve shares — the overdraw
+    // predicate kept its own copy of this choice and lost the domesticated arm out of it.
+    let delta = regrowth_delta_at(herd, herd.biomass, cap, &ecology);
     // **The pen's growth is what the FEED buys.** A penned herd cannot graze, so an unfed one does not
     // grow at all (`docs/plan_corral_managed_population.md` §3.1: *fed → regrow; underfed → shrink*) —
     // its growth scales with the fraction of last turn's feed its keeper actually paid, and

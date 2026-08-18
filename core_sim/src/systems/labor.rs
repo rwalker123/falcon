@@ -1538,11 +1538,27 @@ pub fn advance_labor_allocation(
                     // **AND THE BILL IT ANSWERS**, recorded because the plant demand INTERPOLATES on
                     // the source's position and this stamp is read a whole turn later, after the
                     // build has banked more work. Judged against the risen demand, a fully-staffed
-                    // keeping reads permanently short — see `ForagePatch::upkeep_demanded`. It is
-                    // *assigned* rather than accumulated: the demand is per-SOURCE, so every band
-                    // writes the same number, where the supply beside it is each band's own share.
-                    patch.upkeep_demanded =
-                        Some(crate::forage::patch_upkeep_demand(patch, &ladder));
+                    // keeping reads permanently short — see `ForagePatch::upkeep_demanded`.
+                    //
+                    // # ⛔ THE FIRST BAND TO REACH THE SOURCE WRITES IT, AND NOBODY OVERWRITES IT
+                    //
+                    // It is **not** *assigned* per band. The demand is per-source, but the position
+                    // it interpolates on **moves between band visits**: the build accrual below runs
+                    // inside each band's own arm, so a later band would stamp a bill struck after an
+                    // earlier band's builders had already banked their turn — while every band's
+                    // `keeping_share` was split from the pool *before* the loop, against the
+                    // position as it stood then. Two bands on one patch — one keeping it, one
+                    // building it — would then judge a correctly-staffed keeping against a bill
+                    // nobody was handed, re-arming `neglect_turns` every turn.
+                    //
+                    // The shares are all struck at the pre-accrual position, so the bill has to be
+                    // too: the first visit is the one that still sees it, and this arm runs before
+                    // its own band's accrual. `advance_cultivation` clears it at the top of every
+                    // turn, so "already stamped" always means *this* turn.
+                    if patch.upkeep_demanded.is_none() {
+                        patch.upkeep_demanded =
+                            Some(crate::forage::patch_upkeep_demand(patch, &ladder));
+                    }
                     // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
                     // `WearQuantum::UpkeepWork` charge, billed on what the pool **supplied** to this
                     // patch and not on what the rung demanded, so an under-staffed pool wears only
@@ -4341,7 +4357,14 @@ fn accrue_field(
                 BuildSource::Patch(tile),
                 BuildQuote {
                     cost: sow_cost,
-                    banked: crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
+                    // **THE WHOLE CLIMB'S POSITION, not this rung's share of it.** `banked` is what
+                    // `build_turns_estimate` reads to tell *"nobody has promised anything yet"* from
+                    // *"a meter the player has paid into"*, and a `sow` ordered on untended ground
+                    // banks its first leg **below** the Field's base — where the per-rung reading is
+                    // still `RUNG_UNSTARTED` and the entry would publish "no estimate" for a build
+                    // the player is watching climb. The turn count is untouched: `BuildQuote::turns`
+                    // spends `banked` only as `banked + Σ legs − banked`.
+                    banked: patch.ladder_position(),
                     legs: crate::forage::patch_build_legs(patch, RungKey::PlantField, ladder),
                     balance,
                     gate,
@@ -4358,7 +4381,13 @@ fn accrue_field(
     // spends nothing — a property of the arithmetic rather than of this site re-checking the gate.
     // The three equipment arguments ride here rather than the caller charging afterwards because
     // the meter this bills against is the one this function advances.
-    let progress_before = crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder);
+    // **The WHOLE ladder position, not the Field rung's clamped share of it.** A `sow` on untended
+    // ground climbs `plant:tended` through this same arm, and a per-rung reading is pinned at
+    // `RUNG_UNSTARTED` for the whole of that leg — so a delta measured against it charges the kit
+    // nothing for work it did (`.claude/rules/core_sim/equipment.md` — *wear follows the work
+    // actually done*), and under-charges the boundary turn by the part of the accrual below the
+    // Field's base.
+    let position_before = patch.ladder_position();
     // **EVERY rung this turn's work crossed**, not just the Field. A `sow` on untended ground lays
     // two legs, and the tended rung completing on the way is news the player who ordered *"take it to
     // Field"* wants to see — announced on **Cultivate's** channel, because a rung's whole life reads
@@ -4372,7 +4401,8 @@ fn accrue_field(
             BuildSource::Patch(tile),
             BuildQuote {
                 cost: sow_cost,
-                banked: crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
+                // The whole climb's position — see the stalled quote above.
+                banked: patch.ladder_position(),
                 legs: crate::forage::patch_build_legs(patch, RungKey::PlantField, ladder),
                 balance,
                 gate,
@@ -4383,7 +4413,7 @@ fn accrue_field(
         equipment,
         equipment_cfg,
         builders_kit,
-        crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder) - progress_before,
+        patch.ladder_position() - position_before,
     );
     for rung in &crossed {
         announce_plant_rung_built(event_log, tick, faction, *rung, tile);

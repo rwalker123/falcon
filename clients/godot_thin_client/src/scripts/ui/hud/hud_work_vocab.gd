@@ -1586,13 +1586,22 @@ const RUNG_TRACK_NAME_FORMAT := "%s %s"
 ## and naming it is what makes the track a ladder rather than a list of purchases.
 const RUNG_TRACK_WILD_NAME := "Wild"
 
-## **THE FIVE STATES, AS WORDS.** A track is read once, in a hurry, and a glyph vocabulary invented
-## for it would be five more marks to learn beside the three the work row already carries.
+## **THE SIX STATES, AS WORDS — every one of them, which is the invariant.** A track is read once, in
+## a hurry, and a glyph vocabulary invented for it would be six more marks to learn beside the three
+## the work row already carries. **A state with no word here renders as an EMPTY face**, and on the
+## three selectable states that is a control with nothing on it that still sends a command, so a state
+## added to `RungLadder` adds its word in this block.
 const RUNG_TRACK_STATE_BANKED := "banked"
 const RUNG_TRACK_STATE_STANDING := "where you are"
 const RUNG_TRACK_STATE_PATH := "on the way"
 const RUNG_TRACK_STATE_TARGET := "the target"
 const RUNG_TRACK_STATE_LOCKED := "locked"
+## …and its MIRROR, which is the pair this word is chosen for: a destination the branch admits reads
+## `open` exactly where a refused one reads `locked`, one column apart on the same card. It is the
+## face a selectable rung falls back to where the wire prices no such job on this source — the state
+## being the whole of what is known there — and without it that row rendered as a **blank button that
+## still issued a `tame`/`corral` declaration on press.**
+const RUNG_TRACK_STATE_OPEN := "open"
 
 ## `75 work · ≈12 turns` — what a selectable destination's own leg still owes and when the sim says it
 ## lands. **The turns half renders only where the wire dates the leg**, which is when an entry is

@@ -1418,9 +1418,18 @@ stamped companions (`*_cost`, `*_retain_bar`) are **gone**.
   were handed. Measured on a three-entry build queue with `agriculture` fully staffed, that gap bled
   **~0.03 work a turn** off the very meter it was funding: a permanent shortfall on a correctly-played
   band, which also re-armed `neglect_turns` every turn so the wire counted down a grace that could
-  never reset. `forage::patch_keeping_basis` is the one seam the decay pass, the published shortfall
-  and the published rot all read — the stamped bill where a band answered, the live demand where none
-  did (an abandoned patch, whose whole bill is genuinely unmet).
+  never reset. `forage::patch_keeping_basis` is the one seam the decay pass, the published shortfall,
+  the published rot **and the published worker count** all read — the stamped bill where a band
+  answered, the live demand where none did (an abandoned patch, whose whole bill is genuinely unmet).
+  > **⛔ THE FIRST BAND TO REACH THE SOURCE WRITES THE BILL, AND THE REST ARE JUDGED AGAINST IT.**
+  > The stamp is `if upkeep_demanded.is_none()` rather than an assignment, because *"the demand is
+  > per-source, so every band writes the same number"* is **false**: the build accrual runs inside
+  > each band's own arm, so the position — and therefore the interpolated demand — moves **between**
+  > band visits. Last-write-wins reopened the very defect this field closes, in band-visit order. The
+  > reproducing case is not two bands but a **third band reached after the accrual that supplies
+  > nothing** — a band merely holding the ground — which overwrote the bill with the risen demand
+  > while the keeper had been billed at the earlier position. Pinned in both visit orders by
+  > `forage_cultivation::every_band_on_one_patch_is_judged_against_one_bill_in_either_visit_order`.
 - **`RungDef::meter_rot_against(demand, ..)` exists for the same reason**: `meter_rot` computes the
   demand from the rung's own rate, which is not what an interpolated web was billed.
 - **`upkeepDemand` on the wire is the BILL** (`patch_keeping_basis`), so the published trio satisfies
@@ -1488,82 +1497,9 @@ dates are chained against a queue the client cannot see.
 - **The animal web publishes ONE leg** — it still carries per-rung meters, so an entry there is the
   rung its verb names, owing that meter's remainder. The field is on the wire now so moving that web
   onto one position costs the schema nothing.
-- **Client work remains**: the native reader does not surface either field yet.
-
-#### The delta form: `interpolate` states it, and validation guards it
-
-`intensification::interpolate(&standing, value_at)` is `held + credit × (value_at(raising) − held)`.
-**The config keeps stating ABSOLUTES** — *a Field pays 3.50, a Tended patch 1.20* — and the delta is
-derived in this one function, so the numbers stay readable and nothing is restated in a second form. A
-Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
-
-- **The result is deliberately NOT clamped to the held rung's value.** That ordering is wanted for
-  payouts and upkeep demands — and it is enforced in `LadderConfig::validate` where a violation is a
-  *config* fault — but some interpolated quantities are **better when lower** (the animal escape
-  fraction runs pen `0.10` below pastoral `0.25`), and a runtime clamp would break those silently.
-- **THE PLANT WEB IS ON IT; THE ANIMAL WEB IS NOT YET.** `ForagePatch` carries one
-  `ladder_position` and a stamped `standing` (below); `Herd` still carries `domestication_progress` /
-  `corral_progress` with their stamped costs, and `animal:pen`'s `on_completion` therefore does
-  nothing until that web moves. `retain_fraction` is **deleted on both webs** — the animal rungs
-  never declared one.
-
-#### The plant web's storage: ONE position, and a STAMPED standing beside it
-
-`ForagePatch::ladder_position` is authoritative and **private**; `ForagePatch::standing` is derived
-from it and re-stamped on every write. `cultivation_progress` / `field_progress` and their four
-stamped companions (`*_cost`, `*_retain_bar`) are **gone**.
-
-- **⛔ THE ONLY WAY TO MOVE THE POSITION IS `set_ladder_position(position, ladder)`**, which writes
-  both fields together. There is no public mutator for the position alone, so the pair cannot be
-  half-written — this arc has shipped three "two seams answered one question and drifted" defects and
-  a hand-updatable cache would have been the fourth.
-- **The standing is STORED rather than resolved on demand because the readers hold no config.**
-  `is_cultivated()` has ~a hundred call sites and the rate seams run on paths that carry no
-  `LadderConfig` — which is exactly why the retired `standing_rung` was written ladder-free. Stamping
-  is what lets the predicates keep their signatures while the *boundaries* come from live config.
-- **`is_cultivated()` is `held >= plant:tended`, `is_field()` is `held == plant:field`.** Same
-  signatures, same call sites. `cultivation_meter_full` / `field_meter_full` are **retired**: they
-  differed from these only by the retention bar, and with the bar gone *achieved* and *its meter is
-  full* are one fact again. `validate_cultivate` / `validate_sow` ask `is_cultivated()` /
-  `is_field()` accordingly.
-- **The accrual is capped at the rung being raised, in BOTH directions** — `ForagePatch::accrue_rung`
-  and the two verb-specific arms bank only while that verb's rung is the one in flight. A Cultivate
-  crew's surplus may not run on into the Field, and a Sow may not implicitly finish the tended ground
-  beneath: §2.8 rule 1, which is what keeps every unit of work priced at the kit that did it.
-- **The decay is one call and the unwind is arithmetic.** `decay_ladder` drops the position; because
-  the Field's range sits above the tended rung's, the Field is consumed first and the ground beneath
-  is untouched until it is gone. The newest-first rule `advance_cultivation` used to spell out is now
-  a property of the number, and `decay_ladder` returns *the rung this call took the patch out of* so
-  the feed line still rides the edge.
-- **`patch_at_risk_cost` IS the position** — *"what did this cost me"* answered directly. It used to
-  read the at-risk meter's *stamped* cost so a rotting source would not slide down the `Priority`
-  order as it started needing hands; that hazard is accepted, because a rotted source really is worth
-  less and there is no stamped cost left to prefer.
-- **The wire is unchanged in shape.** `cultivationProgress` / `fieldProgress` and the `*WorkDone`
-  pair are the position clamped into each rung's own span (`forage::patch_rung_work_done`) over that
-  rung's live cost. **`patch_rung_work_done` is a READOUT** — nothing in the sim branches on it.
-
-#### Two seams collapsed, and one was ADDED for the carry
-
-- **`forage::patch_keeping_meter` is retired.** It answered *which of the two meters* this turn's
-  keeping spoke for, and there is one meter now. Its two jobs split: **how much** is
-  `patch_upkeep_demand`, which interpolates and takes no verb, and **does this claim at all** is
-  `forage::patch_claims_keeping`, which keeps the verb term for the one-turn carry.
-- **`ForagePatch::upkeep_demanded` is the new one, and it closes a defect the interpolation created.**
-  The supply is stamped in Population and judged by the next Logistics pass; while the demand was the
-  rung's flat rate that carry was exact, but an interpolated demand is a **moving target** — the build
-  banks work between the stamp and the judgement, so the pass reads a bill above the one the keepers
-  were handed. Measured on a three-entry build queue with `agriculture` fully staffed, that gap bled
-  **~0.03 work a turn** off the very meter it was funding: a permanent shortfall on a correctly-played
-  band, which also re-armed `neglect_turns` every turn so the wire counted down a grace that could
-  never reset. `forage::patch_keeping_basis` is the one seam the decay pass, the published shortfall
-  and the published rot all read — the stamped bill where a band answered, the live demand where none
-  did (an abandoned patch, whose whole bill is genuinely unmet).
-- **`RungDef::meter_rot_against(demand, ..)` exists for the same reason**: `meter_rot` computes the
-  demand from the rung's own rate, which is not what an interpolated web was billed.
-- **`upkeepDemand` on the wire is the BILL** (`patch_keeping_basis`), so the published trio satisfies
-  `demand − supplied == shortfall`. The *live* cost of holding a rung a player is composing against
-  is the `<rung>UpkeepDemand` quote pair, which is what that pair is for.
+- **BOTH FIELDS ARE CONSUMED CLIENT-SIDE** — `native/src/dict/subsistence.rs` folds them onto the
+  herd and patch rows alike, and `SourceForecast` / `RungLadder.track` / `BandPanelController`'s
+  rung track read them. `.claude/rules/client/labor-ui.md` owns that half.
 
 #### A DECLARATION MAY NAME A RUNG ABOVE THE ONE IN FLIGHT
 

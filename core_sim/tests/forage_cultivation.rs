@@ -1630,6 +1630,166 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
     );
 }
 
+/// ⛔ **THE BANDS ON ONE PATCH ARE JUDGED AGAINST ONE BILL, WHICHEVER ORDER THEY ARE VISITED IN.**
+///
+/// `upkeep_demanded` exists because the plant demand **interpolates on the position**, so a supply
+/// stamped in Population and judged by the next Logistics pass would always be measured against a
+/// bill that had since risen. It was *assigned* per band, on the reasoning that the demand is
+/// per-source and so every band writes the same number — and that reasoning is false the moment more
+/// than one band holds a patch: **the build accrual runs inside a band's own arm**, so the position
+/// moves between visits, and a band reached *after* the builders have banked their turn writes a
+/// bigger bill than the keepers were billed at.
+///
+/// The fixture is the three roles that make that visible, spawned both ways round: a band **keeping**
+/// the patch, a band **building** it, and a band merely **holding** it. Visited keeper-first the
+/// keeper pays the bill at the position it read, the builders then bank their turn, and the third
+/// band — which supplies nothing — overwrites the bill with the risen one. The keeping is short by
+/// the difference **every turn**, on a correctly-staffed band: `neglect_turns` re-arms and the
+/// published grace never resets. Visited the other way round the same three bands are fine, which is
+/// what makes this a **visit-order** defect rather than an arithmetic one.
+///
+/// **Nobody gathers, and the patch starts part-built.** A take would draw the stand down to the
+/// escapement floor and stall the Cultivate, and a stalled build leaves the position still — which
+/// is the one state in which every band's stamp trivially agrees. The rows survive on the meter at
+/// risk (`source_has_a_meter_at_risk`), which is what a band *holding* ground means.
+#[test]
+fn every_band_on_one_patch_is_judged_against_one_bill_in_either_visit_order() {
+    /// Enough turns that the second Logistics pass has judged the first turn's stamps, with a
+    /// margin — the shortfall this catches is per-turn and permanent, not a one-turn edge.
+    const TURNS: u32 = 4;
+
+    /// **The turn that pays for seating the meter by hand** — no band has kept the patch yet when
+    /// the first decay pass judges it, so its shortfall is the fixture's and not the sim's.
+    const THE_UNKEPT_OPENING_TURN: u32 = 1;
+
+    /// **Part-built when the fixture opens**, as a fraction of the tended rung's cost — so the
+    /// keeping is owed from the very first visit and every band's row survives with no take crew.
+    const PART_BUILT: f32 = 0.2;
+
+    /// What the patch is holding at the end of one turn.
+    #[derive(Debug)]
+    struct Held {
+        supplied: f32,
+        basis: f32,
+        neglect: u16,
+        progress: f32,
+    }
+
+    let run = |keeper_first: bool| -> Vec<Held> {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        {
+            let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
+            let cost = cultivate_cost(&app);
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).expect("patch");
+            patch.set_ladder_position(cost * PART_BUILT, &ladder);
+            // The work landed with an owner, exactly as it would have in play — an unowned meter is
+            // ground the build gate refuses.
+            patch.owner = Some(FactionId(0));
+        }
+        // **The builders keep NOTHING** — the whole keeping comes from the band below, which is what
+        // makes the stamps distinguishable. `spawn_builder` staffs the role by default.
+        let spawn_the_builders = |app: &mut App| {
+            let band = spawn_builder(app, tile, coord, Improvement::Cultivate);
+            set_maintain_workers(app, band, NOBODY_KEEPING);
+            stand_the_take_down(app, band);
+        };
+        // **The band that holds the ground** — one keeper, which covers either plant rung's whole
+        // demand, so a shortfall here is the bill moving rather than the pool being thin.
+        let spawn_the_keepers = |app: &mut App| {
+            let band = spawn_forager_of(app, tile, coord, None, SOLE_FORAGER);
+            set_maintain_workers(app, band, tended_keeping_crew());
+            stand_the_take_down(app, band);
+        };
+        // **A band that only holds it.** It answers for the source — it carries a row on it — but
+        // pays nothing toward keeping it, so any bill *it* writes is a bill nobody was handed.
+        let spawn_the_holders = |app: &mut App| {
+            let band = spawn_forager_of(app, tile, coord, None, SOLE_FORAGER);
+            set_maintain_workers(app, band, NOBODY_KEEPING);
+            stand_the_take_down(app, band);
+        };
+        if keeper_first {
+            spawn_the_keepers(&mut app);
+            spawn_the_builders(&mut app);
+            spawn_the_holders(&mut app);
+        } else {
+            spawn_the_holders(&mut app);
+            spawn_the_builders(&mut app);
+            spawn_the_keepers(&mut app);
+        }
+
+        // **One opening turn, unmeasured.** The fixture seats the meter directly, so the very first
+        // Logistics pass judges a patch no band has yet had a chance to keep — an artifact of
+        // seating, not a state the game reaches.
+        run_turns_with_forage(&mut app, THE_UNKEPT_OPENING_TURN);
+        (0..TURNS)
+            .map(|_| {
+                run_turns_with_forage(&mut app, 1);
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let registry = app.world.resource::<ForageRegistry>();
+                let patch = registry.patch(coord).expect("patch");
+                Held {
+                    supplied: patch.upkeep_supplied,
+                    basis: core_sim::patch_keeping_basis(patch, &ladder),
+                    neglect: patch.neglect_turns,
+                    progress: patch.ladder_position(),
+                }
+            })
+            .collect()
+    };
+
+    for (order, turns) in [("keepers first", run(true)), ("holders first", run(false))] {
+        // **Liveness** — the meter must climb on every turn, or the position stands still and every
+        // band's stamp agrees for a reason that has nothing to do with the fix.
+        for pair in turns.windows(2) {
+            assert!(
+                pair[1].progress > pair[0].progress,
+                "fixture ({order}): the Cultivate must bank work every turn, got {pair:?}"
+            );
+        }
+        for (turn, held) in turns.iter().enumerate() {
+            assert!(
+                held.basis > 0.0,
+                "fixture ({order}, turn {turn}): the meter must cost something to hold"
+            );
+            assert!(
+                held.supplied >= held.basis,
+                "({order}, turn {turn}) a staffed keeping must cover the bill it was handed — \
+                 supplied {} against a basis of {}",
+                held.supplied,
+                held.basis
+            );
+            assert_eq!(
+                held.neglect, 0,
+                "({order}, turn {turn}) a correctly-staffed keeping is never neglect, so the \
+                 published grace resets"
+            );
+        }
+    }
+}
+
+/// **A band that pays nothing toward keeping** — its `agriculture` row stated at zero, so the whole
+/// of the patch's keeping comes from the one band that staffs it.
+const NOBODY_KEEPING: u32 = 0;
+
+/// **Take the gatherers off the row without taking the row away.** Set through the assignment
+/// directly rather than `set_assignment`, which *drops* a row it is handed zero workers for — and
+/// dropping the row would prune the build queue entry standing on it.
+fn stand_the_take_down(app: &mut App, band: bevy::prelude::Entity) {
+    for assignment in &mut app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("band exists")
+        .assignments
+    {
+        if matches!(assignment.target, LaborTarget::Forage { .. }) {
+            assignment.workers = 0;
+        }
+    }
+}
+
 /// **ON THE TURN A CULTIVATE BANKS ITS FIRST WORK, ITS KEEPING IS ALREADY BEING PAID.**
 ///
 /// Reported from play: a band 6% into a Cultivate with `agriculture` staffed at 1, and the pool card

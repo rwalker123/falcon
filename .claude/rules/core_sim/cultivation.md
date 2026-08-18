@@ -404,9 +404,16 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
     exactly the abandoned patches that are reverting — and the wire row would say *"demand 0.75,
     supplied 0, shortfall 0"* while the sim bled the ground underneath it. `forage::patch_upkeep_demand`
     / `patch_upkeep_shortfall` / `patch_upkeep_workers_needed` are the one definition, reached by the
-    decay pass and by the snapshot alike, and all three resolve through `patch_unwinding_rung` — so
-    the demand the sim bleeds against and the demand the wire bills for can never be two different
-    rungs' answers.
+    decay pass and by the snapshot alike — so the demand the sim bleeds against and the demand the
+    wire bills for can never be two different rungs' answers.
+    > **TWO OF THE THREE READ THE STAMPED BILL, NOT THE LIVE DEMAND**, since the position moves
+    > within a turn: `patch_upkeep_shortfall` and `patch_upkeep_workers_needed` resolve through
+    > `forage::patch_keeping_basis` (what the keepers were actually handed), and only
+    > `patch_upkeep_demand` is the live interpolated cost. That is what keeps the published trio
+    > satisfying `demand − supplied == shortfall`. **The head count must follow the bill too** — it
+    > briefly did not, and published *"wants 3, you have 2"* beside a zero shortfall on a patch
+    > mid-`Sow`, because the bill is stamped before the accrual and the live demand had already
+    > risen.
 - **The loop (the settle pull).** Sustain-forage a thriving patch → *learn* Cultivation → **choose** to
   staff a Cultivate crew for ~25 turns at two hands → the patch becomes tended → a band tending it collects the
   higher tended yield **place-locally** → move the band away and it goes feral, reverting to wild.
@@ -652,7 +659,7 @@ herd has one appetite).
     fixing, only pinning:** `validate_sow` refuses it through `SpeciesRefusal::NothingClimbsHere`
     (`sow` names no species, so `resolve_committed_species` asks the rung for its default and finds
     none), and the client **withholds the rung outright rather than gating it**
-    (`RungGates._any_crop_allows` — greying it would imply a prerequisite that could be lifted). Guards:
+    (`RungGates.any_crop_allows` — greying it would imply a prerequisite that could be lifted). Guards:
     `server::tests::sow_rejected_where_nothing_in_the_basket_can_climb`, whose fixture *finds* such a
     site on the pinned map through the same `tile_flora_composition` + `default_species_for_rung`
     seams the command judges with, and `ui_preview`'s "a wild-ceiling species is offered nothing,

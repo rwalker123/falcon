@@ -1474,8 +1474,14 @@ const TAKE_SELECTION_SEPARATOR: char = ',';
 /// unknown or absent species is judged by the sim against the tile's own basket, which this parser
 /// cannot see.
 fn take_prefixed_token(tokens: &mut Vec<&str>, prefix: &str) -> Vec<String> {
+    // `get(..len)` rather than `len() >= len` + slice: the guard a byte length gives is a byte
+    // guard, and a tail token whose prefix-length byte offset lands inside a multibyte character
+    // would panic on the slice. `get` returns `None` there instead, which is the same "not this
+    // token" answer an ASCII mismatch gives.
     let Some(index) = tokens.iter().position(|token| {
-        token.len() >= prefix.len() && token[..prefix.len()].eq_ignore_ascii_case(prefix)
+        token
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
     }) else {
         return Vec::new();
     };
@@ -2381,6 +2387,34 @@ mod tests {
             with_take("assign_labor 0 904 forage 3 5 wild_emmer 6"),
             (6, None, Some("wild_emmer".to_string()), Vec::new(), None)
         );
+    }
+
+    /// **A MULTIBYTE TAIL TOKEN IS NOT A `take:` PREFIX, AND IS NOT A PANIC EITHER.** The prefix
+    /// scan runs over the tail of *every* `assign_labor` line, before the role dispatch, so any
+    /// role's tail can carry one; a species key long enough to reach the prefix's byte length whose
+    /// character boundary falls inside it must read as "not this token" rather than slicing a
+    /// character in half.
+    #[test]
+    fn parse_assign_labor_multibyte_tail_token_is_not_a_take_prefix() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 forage 3 5 wildé 6").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(904),
+                role: "forage".to_string(),
+                workers: 6,
+                target_x: Some(3),
+                target_y: Some(5),
+                fauna_id: None,
+                policy: None,
+                species: Some("wildé".to_string()),
+                floor: None,
+                kit_id: None,
+                take_species: Vec::new(),
+            }
+        );
+        // And on a role that never reads a species at all — the scan is upstream of the dispatch.
+        assert!(parse_command_line("assign_labor 0 904 agriculture wildé").is_err());
     }
 
     /// **Hunt's floor is OPTIONAL**, where the stance it replaced was required — symmetric with

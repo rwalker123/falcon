@@ -967,8 +967,17 @@ pub struct ForagePatchState {
     // pair; see [`HerdTelemetryState`] for why the dip dissolved into the work budget. The wire slots
     // `cultivateBuildFraction` / `sowBuildFraction` stay `(deprecated)`.
     // **RETIRED: `maintain`** — see [`HerdTelemetryState`] for why the toggle became a crew count.
-    /// **What holding this patch's rung DEMANDS this turn**, in work units — always meaningful, `0`
-    /// on a rung that declares no upkeep (every shipped rung today).
+    /// **THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn**, in work units — always meaningful,
+    /// `0` on a rung that declares no upkeep and on ground nobody has started.
+    ///
+    /// **One field name, two meanings, and the herd twin's is not stale.**
+    /// [`HerdTelemetryState::upkeep_demand`] is *what the rung demands this turn* and that is still
+    /// exactly right for a herd. A patch's demand **interpolates on its position**, so the live cost
+    /// rises between the moment the keepers are billed (before the turn's build accrual) and the
+    /// moment the next Logistics pass judges what they paid — judged against the risen number, a
+    /// correctly-staffed keeping reads permanently short. What ships here is therefore the *stamped*
+    /// bill, which is what makes `demand − supplied == shortfall` hold and what
+    /// [`Self::upkeep_workers_needed`] is the `ceil` of.
     #[serde(default)]
     pub upkeep_demand: f32,
     /// **What the crew actually paid toward it** out of this turn's work budget.

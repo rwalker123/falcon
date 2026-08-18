@@ -982,6 +982,92 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     );
 }
 
+/// ⛔ **THE BUILDERS' KIT WEARS ON THE FIRST LEG OF A TWO-LEG SOW.**
+///
+/// A `sow` on untended ground climbs `plant:tended` **through the Sow arm** before it ever reaches
+/// the Field's own span, and the wear charge is a delta across the accrual. Measured against the
+/// *Field rung's* clamped meter that delta is `0 → 0` for the whole of that leg — 40% of the shipped
+/// two-leg climb — so the tools came home unworn from work they had done, against
+/// `.claude/rules/core_sim/equipment.md`'s *"wear follows the work actually done"*.
+///
+/// **The keepers are deliberately sent out BARE.** An absent kit derives per job, and the roster's
+/// `tillage` answer serves `agriculture` as well as `builders` — so keeping wear would spend the very
+/// item this asserts on and the arm would pass with the build charging nothing at all.
+#[test]
+fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
+    let mut app = spawn_world();
+    let (tile, coord) = find_bare_sowable_tile(&mut app);
+    grant_seed_selection(&mut app, FactionId(0));
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    gear_the_builders_alone(&mut app, band);
+
+    run_turns_with_forage(&mut app, 1);
+
+    // **The fixture is still on the FIRST leg** — below the Field rung's base, which is exactly the
+    // span the per-rung reading cannot see. Without this the arm would pass on a climb that had
+    // already crossed into the Field.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let (field_base, _) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    let position = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("the sow created a patch")
+        .ladder_position();
+    assert!(
+        position > core_sim::RUNG_UNSTARTED && position < field_base,
+        "fixture: one turn of a bare-ground sow stands on the tended leg, got {position}"
+    );
+
+    let spent = app
+        .world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("the fixture geared its builders")
+        .wear_of(TILLAGE_ITEM);
+    assert!(
+        spent > 0.0,
+        "the crew banked {position} work units this turn and the hoes must have paid for it, got \
+         {spent} condition spent"
+    );
+}
+
+/// **Put the shipped plant builders' kit on the `builders` row, and NOTHING on the keeping row** —
+/// the isolation the wear arm above needs, since both jobs derive the same kit when a row names none.
+fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let kit = equipment
+        .kit(TILLAGE_KIT)
+        .expect("the shipped roster carries the tillage kit");
+    let builders = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band keeps its allocation");
+        let mut builders = 0;
+        for assignment in &mut allocation.assignments {
+            match assignment.target {
+                LaborTarget::Builders => {
+                    assignment.kit = Some(kit.clone());
+                    builders = assignment.workers;
+                }
+                LaborTarget::Agriculture => assignment.kit = Some(bare_builders()),
+                _ => {}
+            }
+        }
+        builders
+    };
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandEquipment::start_stocked_for(
+            &equipment,
+            builders as f32,
+        ));
+}
+
+/// The plant web's builders kit, and the one item it carries — what a build's wear is spent on.
+const TILLAGE_KIT: &str = "tillage";
+const TILLAGE_ITEM: &str = "hoes";
+
 /// **THE LADDER MUST CLIMB: wild ≤ tended < Field** (on a *bare* patch). Same tile, same biomass,
 /// same workers, same policy — the only difference is which rung the patch stands on. Runs the labor
 /// arm alone (no Logistics pass), so neither regrowth nor the feral decay can move one rung.
