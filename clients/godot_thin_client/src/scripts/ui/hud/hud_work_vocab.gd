@@ -1292,10 +1292,24 @@ const BUILD_QUEUE_HEAD_MARKER := "▸"
 const BUILD_QUEUE_MARKER_WIDTH := 10.0
 
 ## The date column. Fixed and CLIPPING: the widest values this column takes — the `∞`-carrying
-## sentinels and the `turn N (0%)` completion form — would squeeze the job face to nothing on a left
-## dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
+## sentinels and the `<verb> N% · turn N` completion form — would squeeze the job face to nothing on a
+## left dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
 ## only) and the row tooltip repeats it, so nothing is unreachable.
-const BUILD_QUEUE_DATE_WIDTH := 118.0
+##
+## **IT IS THE WIDEST VALUE THE COLUMN CAN BE HANDED, MEASURED, and that is why it went 118 → 168**
+## (`docs/plan_standing_upkeep.md` §2.8). The completion form leads with the leg in flight's
+## participle now, so the value is `Cultivating 100% · turn 999` at its longest — 168px at
+## `WORK_ROW_FONT_SIZE`, printed by `band_panel_preview._report_queue_row_columns` rather than
+## guessed. **Under-sizing it is not a cosmetic loss here**: the Label trims from the END whatever its
+## alignment, so a column short of the value cuts the DATE off a row whose whole remaining job is to
+## state one. That is also why the Corral's participle was shortened to `Penning` — see
+## `HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`.
+##
+## The 50px comes out of the job FACE, which is the row's only expanding child: at the tall dock it
+## leaves ~106px, which holds a plant face (`▦ Sow (66, 25)` needs 89) and ellipsises a long animal one
+## (`🐄 Corral Thunder Mammoths` needs 189 — it was already ellipsised at the old width). The hover
+## carries face and date in full.
+const BUILD_QUEUE_DATE_WIDTH := 168.0
 
 ## `3 builders · Tillage kit` — the head's readout, naming the pool that funds the queue and the kit
 ## it is holding. The kit comes from the SAME resolution the Builders role card's gear line states
@@ -1345,7 +1359,8 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 ##
 ## **THE ROW HAD THREE COLUMNS WHEN CLIPPING-PLUS-TOOLTIP WAS DECIDED FOR IT, AND A LIST IS SCANNED.**
 ## A tooltip answers a question a player already has; it cannot repair a list they are reading down.
-## So the row goes back to marker · mark · face · date · `✕`, and the settings open BENEATH it — the
+## So the row goes back to marker · face · date · `✕` (it kept a SOURCE mark between the two until the
+## date column learned a verb), and the settings open BENEATH it — the
 ## WORK BOARD's own inspector pattern (`_build_work_inspector`), one open at a time, clicked to
 ## toggle.
 ##

@@ -1234,12 +1234,29 @@ static func build_countdown_value(turns: int, build_crew: int, percent: int) -> 
 ##
 ## `current_turn` is `HudBandLaborState.current_turn()`, threaded in because this layer holds no
 ## snapshot.
+##
+## **`leg` NAMES THE RUNG THE PERCENTAGE IS ABOUT, and on a two-leg entry that is NOT the row's
+## title** (`docs/plan_standing_upkeep.md` §2.8). `percent` is the leg in flight's fullness, so the
+## face leads with that leg's participle — `Cultivating 18% · turn 83` under a row titled `Sow`.
+## Without the verb the same number is worse than the `0%` it replaces: the reader attributes it to
+## the destination the title names.
+##
+## **THE SENTINELS TAKE NO VERB, and that is not an oversight.** Each names a STATE of the ENTRY —
+## blocked, stalled, holding, rotting — which is a fact about the whole climb rather than about one
+## leg, and a hazard face that also carried a participle would put two subjects on a 118px column.
+## They still state the leg's `percent`, which is the half of this fix that applies to every face.
+##
+## `""` — or a rung with no participle — renders the bare dated face, which is what every caller
+## emitted before a leg was in the question.
 static func build_completion_value(turns: int, build_crew: int, percent: int,
-        current_turn: int) -> String:
+        current_turn: int, leg: String = "") -> String:
     var sentinel := build_sentinel_value(turns, build_crew, percent)
     if sentinel != "":
         return sentinel
-    return HudSelectionVocab.RUNG_COMPLETES_FORMAT % [current_turn + turns, percent]
+    var verb := String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(leg, ""))
+    if verb == "":
+        return HudSelectionVocab.RUNG_COMPLETES_FORMAT % [current_turn + turns, percent]
+    return HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [verb, percent, current_turn + turns]
 
 ## **THE SENTINEL BRANCHES ON THEIR OWN, so the two faces above cannot fork twice.** It answers `""`
 ## for a real positive count — the one case the two callers word differently — and every sentinel the

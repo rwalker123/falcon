@@ -1487,8 +1487,9 @@ func _ready() -> void:
 	# picker opened from the RUNNING build slot, and the queue row opened into its own legs.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_set_forage_patches(_track_climbing_patch_fixtures())
-	_push_bands([_track_band_fixture()])
+	_push_bands([_track_band_fixture(SourceForecast.IMPROVEMENT_SOW)])
 	await _settle()
+	_assert_queue_row_reads_the_leg_in_flight()
 	await _assert_rung_track_climbing()
 	await _save("band_panel_rung_track_climbing")
 	_assert_zones_within_bounds()
@@ -1498,11 +1499,18 @@ func _ready() -> void:
 	_hud._bandpanel._rung_track.hide()
 	await _settle()
 	await _assert_queue_row_legs()
+	_report_queue_row_columns("band_panel_queue_legs")
 	await _save("band_panel_queue_legs")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_hud._bandpanel._queue_open_key = ""
+	# **THE THREE CASES THE RENDERED FRAME ABOVE CANNOT HOLD**, PNG-LESS and driven: a percentage is a
+	# number, and a row quoting the wrong rung's meter renders a perfectly plausible row.
+	await _assert_leg_in_flight_first_turn()
+	await _assert_leg_in_flight_single_leg()
+	await _assert_leg_in_flight_animal_twin()
 	_set_forage_patches([])
+	_set_world_herds([])
 	await _settle()
 
 	_hud.update_intensification([])
@@ -8205,13 +8213,17 @@ func _track_patch_row(is_cultivated: bool, cultivation_work_done: float) -> Dict
 ## whole arc is about: one position, one queue row, and a destination two rungs above where the patch
 ## stands. `build_legs` is the WIRE's — the client re-derives neither the owing nor the dates — and
 ## the first leg is the one in flight, the list being published first-incomplete first.
-func _track_climbing_patch_fixtures() -> Array:
+##
+## **`work_done` IS THE ONE DIAL**, so the FIRST-TURN case below is this same board with a single work
+## unit banked rather than a fixture of its own — the leg's own owing and its published fraction both
+## follow it, which is what keeps the two states arithmetically the same board.
+func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -> Array:
 	return [{
 		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
 		"is_cultivated": false, "is_field": false, "sow_site_refusal": "",
 		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
-		"cultivation_work_done": TRACK_TENDED_WORK_DONE,
-		"cultivation_progress": TRACK_TENDED_WORK_DONE / TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": work_done,
+		"cultivation_progress": work_done / TRACK_TENDED_WORK_COST,
 		"field_work_cost": TRACK_FIELD_WORK_COST,
 		"field_work_done": 0.0,
 		"build_queue_position": 0,
@@ -8219,7 +8231,7 @@ func _track_climbing_patch_fixtures() -> Array:
 		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
 		"build_legs": [
 			{"rung": SourceForecast.RUNG_KEY_TENDED,
-				"work_remaining": TRACK_TENDED_LEG_REMAINING,
+				"work_remaining": TRACK_TENDED_WORK_COST - work_done,
 				"turns_remaining": TRACK_TENDED_LEG_TURNS},
 			{"rung": SourceForecast.RUNG_KEY_FIELD,
 				"work_remaining": TRACK_FIELD_WORK_COST,
@@ -8229,6 +8241,88 @@ func _track_climbing_patch_fixtures() -> Array:
 			"share": 1.0, "can_cultivate": true, "can_sow": true}],
 	}]
 
+## **ONE WORK UNIT BANKED — the FIRST turn of a thirty-nine-turn climb**, which is the turn the
+## reported defect starts on and the one an assertion at a comfortable 60% cannot reach.
+const TRACK_FIRST_TURN_WORK_DONE := 1.0
+
+## **THE SINGLE-LEG CONTROL: the same `sow`, ordered on ground that is ALREADY TENDED.** Its climb is
+## one rung, so the leg in flight IS the destination and the row must read exactly as it always did —
+## which is the half that fails on a fix that simply always names the rung BELOW the one declared.
+const TRACK_SINGLE_LEG_FIELD_WORK_DONE := 30.0
+
+func _track_single_leg_patch_fixtures() -> Array:
+	return [{
+		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": TRACK_TENDED_WORK_COST,
+		"cultivation_progress": 1.0,
+		"field_work_cost": TRACK_FIELD_WORK_COST,
+		"field_work_done": TRACK_SINGLE_LEG_FIELD_WORK_DONE,
+		"field_progress": TRACK_SINGLE_LEG_FIELD_WORK_DONE / TRACK_FIELD_WORK_COST,
+		"build_queue_position": 0,
+		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_legs": [
+			{"rung": SourceForecast.RUNG_KEY_FIELD,
+				"work_remaining": TRACK_FIELD_WORK_COST - TRACK_SINGLE_LEG_FIELD_WORK_DONE,
+				"turns_remaining": TRACK_FIELD_LEG_TURNS},
+		],
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+
+# ---- THE ANIMAL TWIN: a `corral` ordered on a herd that is not tamed yet ------------------------
+#
+# The same two-leg shape one web over — `animal:pastoral` then `animal:pen` — and the same defect: the
+# declared Corral's own meter is at zero for the whole taming, so the Work tab read `🐄0%` on a herd
+# that was 35% gentled. The species ceiling is `pen`, or the Corral rung is not admitted at all.
+
+const TRACK_HERD_ID := "leg_corral_herd"
+
+const TRACK_HERD_TILE := Vector2i(67, 26)
+
+const TRACK_HERD_DOMESTICATION := 0.35
+
+const TRACK_PASTORAL_LEG_TURNS := 6
+
+const TRACK_PEN_LEG_TURNS := 21
+
+func _track_climbing_herd_fixtures() -> Array:
+	return [{
+		"id": TRACK_HERD_ID, "species": "Wild Aurochs",
+		"x": TRACK_HERD_TILE.x, "y": TRACK_HERD_TILE.y,
+		"population": 40, "ecology_phase": "thriving",
+		"husbandry_ceiling": SourceForecast.HUSBANDRY_CEILING_PEN,
+		"domestication": TRACK_HERD_DOMESTICATION,
+		"corralled": false, "corral_progress": 0.0,
+		"build_queue_position": 0,
+		"build_turns_remaining": TRACK_PEN_LEG_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_legs": [
+			{"rung": SourceForecast.RUNG_KEY_PASTORAL, "work_remaining": 32.5,
+				"turns_remaining": TRACK_PASTORAL_LEG_TURNS},
+			{"rung": SourceForecast.RUNG_KEY_PEN, "work_remaining": 75.0,
+				"turns_remaining": TRACK_PEN_LEG_TURNS},
+		],
+	}]
+
+## The band that HUNTS that herd, carrying the `corral` token the wire derives for the entry — the
+## animal twin of `_track_band_fixture`'s `build_job`, and load-bearing for the same reason.
+func _track_herd_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 948
+	band["id"] = "Band 18"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"fauna_id": TRACK_HERD_ID,
+			"target_x": TRACK_HERD_TILE.x, "target_y": TRACK_HERD_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_CORRAL,
+			"actual_yield": 0.60, "sustainable_yield": 0.60},
+		{"kind": "builders", "workers": 3},
+	]
+	return band
+
 ## The faction that knows how to TEND and not how to SOW — the one dial the locked half of the track
 ## turns on, so the two states below differ in knowledge and in the patch's own position and in
 ## nothing else.
@@ -8237,13 +8331,21 @@ func _track_half_knowledge_row() -> Dictionary:
 
 ## A band working that one patch, so it carries a WORK ROW — the precondition the whole `⌃` rests on —
 ## with builders on the pool, so a declared climb reads as RUNNING rather than as stalled.
-func _track_band_fixture() -> Dictionary:
+##
+## **`build_job` IS THE WIRE'S OWN `improvement` TOKEN, AND ON A CLIMBING PATCH IT NAMES THE
+## DESTINATION.** `snapshot::population::resolved_build_job` publishes `patch_build_verb`'s answer,
+## which honours a declaration at or above the rung being raised — so a `sow` ordered on untended
+## ground publishes `sow` while the crew is still clearing. **Stating it is what makes the two-leg
+## fixture reproduce the reported state at all**: without it `build_verb` falls through to the
+## Cultivate meter and the board reads the leg by accident, which is a board that cannot tell the
+## defect from the fix. `""` is the honest token for a patch no band has queued.
+func _track_band_fixture(build_job: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 947
 	band["id"] = "Band 17"
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
-			"target_x": TRACK_PATCH.x, "target_y": TRACK_PATCH.y,
+			"target_x": TRACK_PATCH.x, "target_y": TRACK_PATCH.y, "improvement": build_job,
 			"actual_yield": 0.48, "sustainable_yield": 0.48},
 		{"kind": "builders", "workers": 3},
 	]
@@ -8359,6 +8461,192 @@ func _assert_rung_track_climbing() -> void:
 	_assert_band_panel("track — …and the target quotes its own chained date — \"%s\" (got \"%s\")"
 		% [target, String(faces.get(SourceForecast.IMPROVEMENT_SOW, ""))],
 		String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")) == target)
+
+# =====================================================================================
+#  THE WORK TAB READS THE LEG IN FLIGHT (`docs/plan_standing_upkeep.md` §2.8)
+# =====================================================================================
+#
+# **REPORTED FROM PLAY.** A `sow` ordered on untended ground is a two-leg entry; the Work tab quoted
+# the DESTINATION's meter in two places — the queue row's date column and the source row's rung chip
+# — and both read `0%` for the thirty-nine turns the crew spent clearing, beside a tile card reading
+# `18%` for the same job on the same turn. Neither number was wrong; they answered a question nobody
+# asked, and **a progress number must never sit at zero while work is going in.**
+#
+# **THE ASSERTIONS ARE CROSS-CHECKS AGAINST THE TILE CARD'S OWN PRODUCER, never literals.** The claim
+# is that two surfaces AGREE, and a literal on each side lets both be separately plausible: they
+# compose the wanted percent through `SourceForecast.improvement_progress` at the leg's own rung,
+# which is the `<rung>Progress` the card renders and the position clamped into that rung's span
+# sim-side (`forage::patch_rung_work_done`).
+
+## **THE REPORTED CASE.** Four claims on one row, and the SET is what makes any of them worth
+## anything: the title still names the destination, the date is still the whole climb's, and only the
+## percentage and its verb moved. A fix that repointed the whole row would pass the last two alone.
+func _assert_queue_row_reads_the_leg_in_flight() -> void:
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(TRACK_PATCH, {})
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
+	# **THE PRECONDITION IS THE FIXTURE ITSELF** — work banked on the leg and NOTHING on the
+	# destination is the only state the defect lives in, and without both halves every claim below is
+	# satisfied for free.
+	_assert_band_panel("leg — the board is mid-CULTIVATE with work banked (%d percent)" % leg_percent,
+		leg_percent > 0)
+	_assert_band_panel("leg — …and the DESTINATION's own meter is the zero that used to be rendered",
+		HudFormat.progress_percent(SourceForecast.improvement_progress(
+			patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW)) == 0)
+	_assert_queue_row_states("the reported two-leg sow", TRACK_PATCH,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE, leg_percent,
+		TRACK_FIELD_LEG_TURNS)
+
+## **THE FIRST TURN OF BANKED WORK — the assertion that actually catches the reported bug.** At 60% a
+## renderer that had merely swapped one meter for another would pass; the claim here is that the
+## number is non-zero from the turn the first work unit lands, which is when a player watching `0%`
+## concludes the job is stuck.
+func _assert_leg_in_flight_first_turn() -> void:
+	_set_forage_patches(_track_climbing_patch_fixtures(TRACK_FIRST_TURN_WORK_DONE))
+	_push_bands([_track_band_fixture(SourceForecast.IMPROVEMENT_SOW)])
+	await _settle()
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(TRACK_PATCH, {})
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
+	_assert_band_panel("leg — one work unit of %d reads as a NON-ZERO percentage (%d)"
+			% [int(TRACK_TENDED_WORK_COST), leg_percent], leg_percent > 0)
+	_assert_queue_row_states("the first turn of banked work", TRACK_PATCH,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE, leg_percent,
+		TRACK_FIELD_LEG_TURNS)
+
+## **THE SINGLE-LEG CONTROL — a `sow` on ground already tended, which must be UNCHANGED.** Its leg IS
+## its destination, so the row names its own rung and its own meter. Without it, "read the leg" is
+## satisfied by a renderer that always names the rung below the one declared.
+func _assert_leg_in_flight_single_leg() -> void:
+	_set_forage_patches(_track_single_leg_patch_fixtures())
+	_push_bands([_track_band_fixture(SourceForecast.IMPROVEMENT_SOW)])
+	await _settle()
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(TRACK_PATCH, {})
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW))
+	_assert_band_panel("leg — the single-leg board's own FIELD meter carries work (%d percent)"
+			% leg_percent, leg_percent > 0)
+	_assert_queue_row_states("a single-leg sow on tended ground", TRACK_PATCH,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_SOW, leg_percent,
+		TRACK_FIELD_LEG_TURNS)
+
+## **THE ANIMAL TWIN.** A `corral` on an untamed herd has the same two-leg shape and had the same
+## defect, and the two webs share no fixture and no rung table — so a fix that reached only the plant
+## one passes every claim above.
+func _assert_leg_in_flight_animal_twin() -> void:
+	_set_forage_patches([])
+	_set_world_herds(_track_climbing_herd_fixtures())
+	_push_bands([_track_herd_band_fixture()])
+	await _settle()
+	var herd: Dictionary = _hud._band_labor.find_world_herd(TRACK_HERD_ID)
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		herd, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME))
+	_assert_band_panel("leg — the herd is mid-TAME with its pen meter at zero (%d percent)"
+			% leg_percent, leg_percent > 0
+		and HudFormat.progress_percent(SourceForecast.improvement_progress(
+			herd, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CORRAL)) == 0)
+	_assert_queue_row_states("a corral ordered on an untamed herd", TRACK_HERD_TILE,
+		SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.IMPROVEMENT_TAME, leg_percent,
+		TRACK_PEN_LEG_TURNS)
+	# The one PICTURE of the animal twin: `◎35%` on the board row under `Taming 35% · turn N` in the
+	# queue, with the row still titled for the pen it is headed for.
+	await _save("band_panel_queue_leg_animal")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+## **THE FOUR CLAIMS, ON BOTH WORK-TAB READOUTS AT ONCE** — the queue row's title, its date column,
+## and the source row's rung chip, every one composed through the SHIPPED format so a claim pins the
+## numbers rather than the wording.
+##
+## `destination` is what the player ordered and `leg` the rung the crew is on; on a single-leg entry
+## they are the same verb, which is exactly the control case.
+func _assert_queue_row_states(where: String, tile: Vector2i, destination: String, leg: String,
+		leg_percent: int, climb_turns: int) -> void:
+	var rows := _build_queue_rows()
+	if rows.size() != 1:
+		_fail("leg — %s draws %d queue rows to judge, wanted 1" % [where, rows.size()])
+		return
+	# 1. THE TITLE STILL NAMES THE DESTINATION. That is what the player ordered, and it is why nothing
+	#    is lost by moving the percentage off it.
+	var face := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_FACE_META)
+	var drawn_face := "" if face == null else String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
+	_assert_band_panel("leg — %s: the row is still titled for its DESTINATION (\"%s\")"
+			% [where, drawn_face],
+		drawn_face.begins_with(HudFormat.policy_face(destination)))
+	# 2 + 3. THE DATE IS STILL THE WHOLE CLIMB'S and the PERCENTAGE AND ITS VERB are the leg's — one
+	#    equality, because the three are one string and asserting them apart would let a row state a
+	#    leg's date beside a leg's percentage and pass.
+	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META)
+	var drawn_date := "" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	var wanted_date := HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [
+		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(leg, "")), leg_percent,
+		_hud._band_labor.current_turn() + climb_turns]
+	_assert_band_panel("leg — %s: the date column reads \"%s\" (got \"%s\")"
+			% [where, wanted_date, drawn_date], drawn_date == wanted_date)
+	# 4. THE SOURCE ROW'S RUNG CHIP TAKES THE SAME LEG, so the mark on the row and the number in the
+	#    queue cannot name two different rungs — which is the whole shape of the reported defect.
+	var row_label := _work_row_label_for_source(tile)
+	var chip: Dictionary = _work_row_build_faces().get(row_label, {})
+	var wanted_chip := HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [FoodIcons.for_policy(leg), leg_percent]
+	_assert_band_panel("leg — %s: the source row's chip reads \"%s\" (got \"%s\" on \"%s\")"
+			% [where, wanted_chip, String(chip.get("face", "")), row_label],
+		String(chip.get("face", "")) == wanted_chip)
+
+## **HOW THE QUEUE ROW SPENT ITS WIDTH** — PRINTED, never asserted, for `_report_work_row_name_column`'s
+## reason: the verb made the date column longer, and what a red line would ask for is a DECISION (a
+## shorter face, a wider flank, or nothing) rather than a failing run. Both columns clip and the row's
+## tooltip carries the pair in full, so an elided face is legible-by-hover rather than lost.
+func _report_queue_row_columns(state_name: String) -> void:
+	var rows := _build_queue_rows()
+	if rows.is_empty():
+		_fail("%s — no queue row to measure the columns on" % state_name)
+		return
+	var face := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
+	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	if face == null or date == null:
+		_fail("%s — the queue row has no face/date pair to measure" % state_name)
+		return
+	var font := face.get_theme_font("font")
+	var size := face.get_theme_font_size("font_size")
+	# The two WIDEST strings either column can be handed — the roster's longest quarry under the
+	# animal face format, and the longest participle over a three-digit turn.
+	var widest_face := HudWorkVocab.BUILD_QUEUE_ANIMAL_FACE_FORMAT % [
+		HudFormat.policy_face(SourceForecast.IMPROVEMENT_CORRAL), WIDEST_SHIPPED_ROW_NAME]
+	var widest_date := ""
+	var widest_date_px := 0.0
+	for verb in HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.values():
+		var candidate: String = HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [String(verb), 100, 999]
+		var px := font.get_string_size(candidate, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		if px > widest_date_px:
+			widest_date_px = px
+			widest_date = candidate
+	print("band_panel_preview: %s — queue NAME column %.0fpx (\"%s\" needs %.0f; the widest \"%s\" needs %.0f); DATE column %.0fpx (\"%s\" needs %.0f; the widest \"%s\" needs %.0f)"
+		% [state_name, face.size.x, face.text, _label_text_width(face), widest_face,
+			font.get_string_size(widest_face, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x,
+			date.size.x, date.text, _label_text_width(date), widest_date, widest_date_px])
+	# …and the BOARD row's line one on the same state, which is the tight line of the two-line row and
+	# the one the widened rung chip (`🌱60%` for `▦0%`) is charged to.
+	var row_label := _work_row_label_for_source(TRACK_PATCH)
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text != row_label:
+			continue
+		print("band_panel_preview: %s — the BOARD row's name column is %.0fpx (\"%s\" needs %.0f)"
+			% [state_name, label.size.x, label.text, _label_text_width(label)])
+		return
+
+## The board label whichever row stands on `tile` renders, read off the MODEL — the forage twin
+## `_work_row_label_for_tile` answers for a patch, and a hunt row's tile is its herd's, so one lookup
+## over the models serves both webs.
+func _work_row_label_for_source(tile: Vector2i) -> String:
+	var band: Dictionary = _hud._band_labor._panel_band
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if int(model.get("x", -1)) == tile.x and int(model.get("y", -1)) == tile.y:
+			return String(model.get("label", ""))
+	return ""
 
 ## **A MULTI-LEG ENTRY IS ONE QUEUE ROW WITH ITS LEGS INSIDE.** Splitting it would offer two `✕`s for
 ## one withdrawal and two places to drag for one reorder, so the entry stays one unit and the row
@@ -12335,14 +12623,20 @@ func _assert_build_queue_block(entries: int, where: String, rows_drawn: int = -1
 ## last entry therefore carries `BUILD_TURNS_ROTS`, which must still read as its own hazard face.
 func _assert_build_queue_dates_ascend() -> void:
 	var wanted := [QUEUE_TURNS_HEAD, QUEUE_TURNS_SECOND]
+	# **AND EACH DATE LEADS WITH ITS ENTRY'S OWN LEG** (§2.8) — these are one-leg entries whose meters
+	# are all at zero, so the leg IS the declaration and the verbs are the band fixture's own
+	# `improvement` tokens, in queue order.
+	var verbs := [SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.IMPROVEMENT_TAME]
 	var turn: int = _hud._band_labor.current_turn()
 	var seen: Array[String] = []
 	for row in _build_queue_rows():
 		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
 		seen.append("" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META)))
 	var expected: Array[String] = []
-	for turns in wanted:
-		expected.append(HudSelectionVocab.RUNG_COMPLETES_FORMAT % [turn + int(turns), 0])
+	for i in range(wanted.size()):
+		expected.append(HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [
+			String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[verbs[i]]), 0,
+			turn + int(wanted[i])])
 	expected.append(HudSelectionVocab.RUNG_ROTTING_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
 		DetailFormat.BUILD_TURNS_NEVER_GLYPH, HudSelectionVocab.RUNG_ROTTING_PHRASE, 0])
 	_assert_band_panel("the queue states COMPLETION TURNS off turn %d — %s (want %s)"
@@ -12705,8 +12999,10 @@ func _assert_queue_row_settings() -> void:
 		return
 	var face_label := _find_meta_control(plant_row, HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
 	var wanted_face := String(face_label.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
-	_assert_band_panel("the queue row's job face renders UNCLIPPED — `%s` in %.0fpx"
-			% [wanted_face, face_label.size.x],
+	_assert_band_panel("the queue row's job face renders UNCLIPPED — `%s` needs %.0f of the %.0fpx it has"
+			% [wanted_face, face_label.get_theme_font("font").get_string_size(wanted_face,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+				face_label.get_theme_font_size("font_size")).x, face_label.size.x],
 		face_label.size.x + QUEUE_FACE_WIDTH_TOLERANCE
 			>= face_label.get_theme_font("font").get_string_size(wanted_face,
 				HORIZONTAL_ALIGNMENT_LEFT, -1.0,
@@ -13040,8 +13336,9 @@ func _assert_work_row_and_badge_agree() -> void:
 		checked += 1
 		var source: Dictionary = _hud._band_labor.forage_patch_lookup().get(
 			Vector2i(int(model.get("x", -1)), int(model.get("y", -1))), {})
-		var building := RungGates.rung_in_progress(SourceForecast.LABOR_KIND_FORAGE, source,
-			String(model.get("improvement", "")))
+		var building := RungGates.leg_in_progress(source,
+			RungGates.rung_in_progress(SourceForecast.LABOR_KIND_FORAGE, source,
+				String(model.get("improvement", ""))))
 		var badge_stalled := not building.is_empty() and SourceForecast.build_is_stalled(
 			source, float(building.get("progress", 0.0)), builders)
 		if badge_stalled:
@@ -13781,7 +14078,7 @@ func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) 
 			and not bool(builders.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
 
 ## …and the queue ROW states the job's full price on its own hover — the work pile and the keeping rate
-## it will owe. **Tooltip only**: the row is five slots and cannot take a sixth, and the price is the
+## it will owe. **Tooltip only**: the row is four slots and cannot take a fifth, and the price is the
 ## other half of the decision the mark above is warning about.
 func _assert_queue_row_states_the_price(where: String) -> void:
 	var rows := _build_queue_rows()

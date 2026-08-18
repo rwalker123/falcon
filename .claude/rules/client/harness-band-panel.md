@@ -118,8 +118,14 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 379 `assert OK` lines, 570 `: PASS` ones and ZERO `FAIL` ones, over
-115 frames — RE-MEASURED, into an emptied `ui_preview_out/`.** The figure recorded here before the
+**A clean run exits 0 and prints 382 `assert OK` lines, 589 `: PASS` ones and ZERO `FAIL` ones, over
+116 frames.** (It was 379 / 570 / 115 before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
+→ "THE PERCENTAGE IS THE LEG IN FLIGHT'S". That step is **+1 frame and +17 `: PASS`**:
+`band_panel_queue_leg_animal` and the four-state block below, whose remaining two `assert OK`s are
+that frame's own bounds/content-fits pair. The `assert OK` delta reads +3 rather than +2 and the
+`PASS` one +19 rather than +17, which is the recorded figure's own drift rather than two lost claims —
+the paragraph below already records this tally as having been behind the harness twice.) (The figures
+before it were RE-MEASURED into an emptied `ui_preview_out/`.) The figure recorded here before the
 MATERIALS-ONLY WORK ROW read 260 / 420 / 104 and was already 119 / 150 / 11 behind the harness, so
 that change's delta is not recoverable by subtracting them: it is **+2 frames, +8 `assert OK` and +6
 `: PASS`** — `band_panel_work_material_forage` / `_crops`, each contributing its own shell / bounds /
@@ -1112,6 +1118,51 @@ naming the phantom rows it found.
 - **The wide dock reads `Zone_work` at 252px of a 300px box.** `Zone_band` at 749/300 and
   `Zone_parties` at 300/300 are the same numbers `band_panel_build_queue_wide` prints and are
   structural (the board is `EXPAND_FILL` and pages).
+
+## THE LEG IN FLIGHT — the two-leg fixture existed and could not tell the defect from the fix
+
+**`_track_climbing_patch_fixtures` had staged a two-leg entry since the destination track landed, and
+no assertion in this file could have caught the reported defect on it**, because its band's forage row
+carried **no `improvement` token**. The wire publishes one — `snapshot::population::resolved_build_job`
+is `patch_build_verb`'s answer, which honours a declaration at or above the rung being raised, so a
+`sow` on untended ground publishes `sow` — and without it the client's own `build_verb` fell through
+to the Cultivate meter and the board read the leg **by accident**. `_track_band_fixture(build_job)`
+states it, which is what makes `band_panel_rung_track_climbing` reproduce the played state.
+
+Four claims per state, from `_assert_queue_row_states`, and the SET is what makes any of them worth
+anything — a fix that repointed the whole row passes the last two alone:
+
+| claim | why it is there |
+|---|---|
+| the row is still titled for its DESTINATION | that is what the player ordered, and it is why moving the percentage costs nothing |
+| the date column, by EQUALITY | one string carries the verb, the leg's percent AND the whole climb's turn, so asserting them apart would let a row state a leg's date beside a leg's percentage and pass |
+| the source row's rung chip | the two Work-tab readouts must name ONE rung — the shape of the reported defect |
+| the wanted percent is composed through the TILE CARD's own producer | the claim is that two surfaces AGREE; a literal on each side lets both be separately plausible |
+
+**Four states, and three of them are PNG-less** — a percentage is a number and a row quoting the wrong
+rung's meter renders a perfectly plausible row:
+
+- the reported two-leg `sow`, on `band_panel_rung_track_climbing`;
+- **the FIRST turn of banked work** (`TRACK_FIRST_TURN_WORK_DONE`, one unit of fifty ⇒ 2%) — the
+  assertion that actually catches the bug, since at 60% a renderer that had merely swapped one meter
+  for another passes;
+- **a single-leg `sow` on already-tended ground, which must be UNCHANGED** — its leg IS its
+  destination, and without it "read the leg" is satisfied by a renderer that always names the rung
+  below the one declared;
+- **the animal twin** (`band_panel_queue_leg_animal`), a `corral` on an untamed herd: the two webs
+  share no fixture and no rung table, so a fix reaching only the plant one passes every claim above.
+
+Sabotage-verified by returning the destination reading: **exactly six fail** — both readouts on the
+two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,
+while the single-leg control stays green.
+
+**`_report_queue_row_columns` PRINTS the row's two columns and both worst cases**, the
+`_report_work_row_name_column` rule one block over: the verb made the date column longer, and what a
+red line there asks for is a design decision. It reads **queue NAME 126px** (the widest shipped face,
+`🐄 Corral Thunder Mammoths`, needs 189 — it was already ellipsised before this change) and **DATE
+168px** (its own widest, `Cultivating 100% · turn 999`, needs exactly 168), beside the BOARD row's
+line one at **109px**. Those numbers are what bought the queue row's SOURCE ICON its retirement — the
+arithmetic is in `band-city-panel.md`.
 
 ## The MATERIALS-ONLY work row — the assertions were fine, the fixtures never reached the state
 

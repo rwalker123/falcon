@@ -436,6 +436,14 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 	var stalled := false
 	if not source.is_empty():
 		building = RungGates.rung_in_progress(kind, source, improvement)
+		# **AND THE PLATE STATES THE LEG IN FLIGHT** (`docs/plan_standing_upkeep.md` §2.8), the same
+		# re-pointing the Work tab's two readouts take. A `sow` on untended ground is one entry and
+		# two legs, so the declared rung's meter reads 0% for the whole first leg — the badge would
+		# sit at `▦0%` while the crew cleared the ground. **The pairing is why it is here rather than
+		# only on the board**: this plate and the work row are held to ONE verdict by
+		# `band_panel_preview._assert_work_row_and_badge_agree`, so a leg-aware board beside a
+		# destination-bound badge is the two-surface disagreement `build_is_stalled` exists to stop.
+		building = RungGates.leg_in_progress(source, building)
 		if building.is_empty():
 			ready = RungGates.next_rung_ready(kind, source, improvement, _view.faction_knowledge)
 		else:

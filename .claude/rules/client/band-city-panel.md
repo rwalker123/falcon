@@ -2288,9 +2288,9 @@ what order, or which entry the builders were funding. It is a block in the WORK 
 
 ```
 BUILD QUEUE                          3 builders · Tillage kit
-▸ 🌱 Cultivate (71, 18)              ≈42 turns (0%)            ✕
-  🐄 Tame Red Deer                   ≈61 turns (0%)            ✕
-  ▦ Sow (72, 18)                     ≈98 turns (0%)            ✕
+▸ 🌱 Cultivate (71, 18)    Cultivating 0% · turn 82            ✕
+  ◎ Tame Red Deer               Taming 0% · turn 101           ✕
+  ▦ Sow (72, 18)          ⚠ ∞ turns, losing ground…            ✕
 ```
 
 - **ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the band's own list
@@ -2308,16 +2308,19 @@ BUILD QUEUE                          3 builders · Tillage kit
   `build_turns_remaining` off the same `rung_source` dict the rung marks already read).
 - **THE HEAD MARKER'S SLOT IS RESERVED ON EVERY ROW.** A conditionally-omitted Label shifts every row
   behind the head sideways, which reads as a list that has lost its alignment rather than as a head.
-- **THE ROW IS THE BOARD'S OWN UNIT** — exactly `WORK_ROW_HEIGHT`, `HudStyle.work_row_stylebox`,
-  `HudWidgets.build_marker_icon` for the source mark — so the two lists read at one density and the
-  capacity arithmetic below still divides by that number.
+- **THE ROW IS THE BOARD'S OWN UNIT** — exactly `WORK_ROW_HEIGHT` and `HudStyle.work_row_stylebox` —
+  so the two lists read at one density and the capacity arithmetic below still divides by that number.
 - **THE VERB IS `HudFormat.policy_face`'s, never a second table.** That is the same word and glyph
   the board row's in-progress axis states in its tooltip and the map badge draws, so a rung under way
-  cannot be called two things on one screen. The SOURCE mark stays its own column beside it — what
-  the source IS against what is being DONE to it, the row's own standing distinction.
-- **THE DATE GOES THROUGH `DetailFormat.build_countdown_value`**, which is `rung_row_value`'s own
-  sentinel fork EXTRACTED rather than copied: a positive count, `-2` holding, `-3` rotting, `-4` the
-  queue blocked, `-1` no answer. A second fork here is precisely how this client has twice been left
+  cannot be called two things on one screen.
+- **THE SOURCE MARK IS GONE FROM THIS ROW, and the face is why it could go.** It was
+  `HudWidgets.build_marker_icon` in its own 16px column beside the marker; the face already names the
+  source in words AND leads with the destination's rung glyph, so the icon carried nothing the row did
+  not. What bought its 20px is in "THE PERCENTAGE IS THE LEG IN FLIGHT'S" below. **The board's rows
+  keep theirs** — they are a list of SOURCES whose names lead with no glyph at all.
+- **THE DATE GOES THROUGH `DetailFormat.build_completion_value`**, which shares `build_sentinel_value`
+  with `rung_row_value`'s countdown — one fork for a positive count, `-2` holding, `-3` rotting, `-4`
+  the queue blocked, `-1` no answer. A second fork is precisely how this client has twice been left
   behind by a newly-spelled sentinel. Its ink is `DetailFormat.rung_value_color`, the `Color` twin of
   `rung_value_hex` written in terms of it (a `Label` can do nothing with a hex string).
 - **THE DATE COLUMN CLIPS AND THE ROW TOOLTIP CARRIES BOTH FACES IN FULL.**
@@ -2360,7 +2363,78 @@ answers *when*, and an absolute turn cannot be misread as a duration.
   pass any all-positive fixture. Sabotage-verified by dropping `current_turn +`: exactly one assertion
   fails, naming `["turn 42 (0%)", …] (want ["turn 82 (0%)", …])`.
 
-### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF STAYS FIVE SLOTS (§4.7a ③)
+### THE PERCENTAGE IS THE LEG IN FLIGHT'S, NOT THE DESTINATION'S (§2.8)
+
+Reported from play. A `Sow` ordered on untended ground is a **two-leg** entry — the tended rung
+`0 → 50`, then the field rung `50 → 125` — and with nine work banked the tile card correctly read
+`Cultivation ≈39 turns (18%)` while the Work tab read **`0%` in two places**: the queue row's date
+column (`▸ ▦ Sow (28, 19)   turn 83 (0%)`) and the source row's rung chip (`▦0%`). Both were quoting
+the DESTINATION's own meter, which is honestly zero for as long as the crew is still clearing. Neither
+number was wrong; they answered a question nobody asked and they contradicted the card.
+
+> **A progress number must never sit at zero while work is going in.** A player watching `0%` for
+> thirty-nine turns concludes the job is stuck.
+
+**Both Work-tab readouts state the leg**, and the row loses nothing by it:
+
+| what | reads |
+|---|---|
+| the row's TITLE | the DESTINATION — `▦ Sow (28, 19)`, what the player ordered |
+| the date | the WHOLE CLIMB's completion turn — unchanged |
+| the percentage **and its verb** | the leg in flight — `Cultivating 18% · turn 83` |
+| the source row's rung chip | the same leg — `🌱18%`, so the two surfaces wear one mark |
+
+- **ONE RE-POINTING FEEDS BOTH**, `RungGates.leg_in_progress` — which takes `rung_in_progress`'s
+  ALREADY-RESOLVED answer rather than producing a second one (`build_is_stalled`'s discipline) and
+  swaps its rung for the first published leg still owing work. `_work_source_models` calls it once and
+  the chip, the chip's hover, `build_stalled` and the queue row's percent-and-verb all read that trio.
+- **THE FRACTION IS THE WIRE'S OWN PER-RUNG ONE**, `improvement_progress` at the leg's verb — the
+  source's single position clamped into that rung's span, sim-side (`forage::patch_rung_work_done`),
+  and **the very number the tile card renders**. Nothing divides `work_remaining` by anything: a second
+  derivation of a number the sim publishes is how this arc has shipped defects before.
+- **THE LEG IS SCANNED, not `legs[0]`.** The sim drops a rung the position has already paid for, so on
+  an honest payload the head IS the leg — but a fixture, or a producer that one day publishes the whole
+  branch, can carry a paid leg and a reader taking the head on faith would name a rung nobody works.
+- **THE MAP BADGE TAKES THE SAME RE-POINTING**, and that is not scope creep: the plate and the work row
+  are held to ONE verdict by `band_panel_preview._assert_work_row_and_badge_agree`, so a leg-aware board
+  beside a destination-bound badge is exactly the two-surface disagreement `build_is_stalled` exists to
+  stop.
+- **THE ENTRY'S PRICE STAYS ON THE DESTINATION.** `build_work_cost` / `build_upkeep_demand` are
+  composed off the declared rung, held in a local before the re-point: the row's hover quotes the whole
+  climb's bill, and a leg-following price would understate a two-leg job on the one surface that states
+  it.
+- **THE SENTINELS TAKE THE LEG'S PERCENT AND NO VERB.** Each names a state of the ENTRY — blocked,
+  stalled, holding, rotting — which is a fact about the climb rather than about one leg, and a hazard
+  face carrying a participle too would put two subjects in one 168px column.
+
+**THE VERB IS WHAT COST THE ROW ITS SOURCE ICON, and the arithmetic is worth writing down** because
+the next control added to this row will face the same wall. Measured at the tall LEFT dock: the row's
+content line is **338px**, of which the marker, the icon, the `✕` and four separations took 64, leaving
+**274** for the two columns that carry information. The face's widest shipped string needs **123**
+(`🌱 Cultivate (72, 18)` — asserted UNCLIPPED since a play report), and the date's widest needs **168**
+(`Cultivating 100% · turn 999`). 291 into 274 does not go, and **neither column could give**: the face
+is a shipped guarantee, and what a clip takes off the end of the date string is the DATE. The icon was
+the only slot with no informational duty, and dropping it makes 294. `band_panel_preview.
+_report_queue_row_columns` PRINTS both columns and both worst cases rather than asserting them — what a
+red line there asks for is a decision, not a failing run.
+
+- **`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS["corral"]` went `Building the pen` → `Penning`** in the
+  same measurement. It was the one phrase among four single words, it is the craft's own name, and at
+  203px it would have set this column's reservation on its own.
+- **The date column is `168.0`, measured and not guessed**, and under-sizing it is not cosmetic here.
+
+Asserted in `band_panel_preview` on FOUR states — the reported two-leg sow (rendered as
+`band_panel_queue_legs`), the same board with **one** work unit banked (the turn the defect starts on,
+which a claim at 60% cannot reach), a single-leg sow on already-tended ground that must be UNCHANGED,
+and the animal twin (`band_panel_queue_leg_animal`, a `corral` on an untamed herd). Each makes four
+claims off the SHIPPED formats — the title still names the destination, the date column by EQUALITY
+(which pins the verb, the percent and the whole-climb date in one string), and the source row's chip —
+and the wanted percent is composed through the tile card's own producer rather than as a literal, so
+the claim is that the two surfaces AGREE. Sabotage-verified by returning the destination reading:
+exactly **six** fail (both readouts × the two-leg sow, the first turn and the animal twin) while the
+single-leg control stays green, printing the played `Sowing 0% · turn 64` and `▦0%`.
+
+### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 
 The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't
 do the cultivate here"* — and its first home was a sixth column on this row. **At the narrow shell's
@@ -2369,7 +2443,8 @@ face and the crop name ellipsised into fragments that look like words. The LEFT 
 default edge, and a tooltip is not a fix for a list the player SCANS.
 
 So the settings live in a **row expansion** — the WORK board's own inspector pattern, one strip beneath
-the clicked row, one open at a time. The entry row goes back to marker · mark · face · date · `✕`.
+the clicked row, one open at a time. The entry row goes back to marker · face · date · `✕` (it was
+marker · mark · face · date · `✕` until the date column learned a verb — see above).
 
 - **ONE PREDICATE DECIDES BOTH THE INVITATION AND THE CONTENTS** (`_queue_crop_choices`), so a row can
   never offer a click that opens an empty strip. An animal entry has no crop, is not expandable, and

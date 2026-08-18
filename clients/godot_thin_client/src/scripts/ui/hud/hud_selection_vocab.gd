@@ -145,6 +145,21 @@ const RUNG_TURNS_ONE_FORMAT := "≈1 turn (%d%%)"
 # correct at one turn out, which is exactly the case `RUNG_TURNS_ONE_FORMAT` exists for on a span.
 const RUNG_COMPLETES_FORMAT := "turn %d (%d%%)"
 
+# **…AND THE SAME DATE UNDER A CLIMB WHOSE PERCENTAGE BELONGS TO ANOTHER RUNG** — `Cultivating 18% ·
+# turn 83`, on a queue row titled `Sow` (`docs/plan_standing_upkeep.md` §2.8).
+#
+# **THE VERB LEADS BECAUSE THE PERCENTAGE IS THE THING BEING QUALIFIED.** A queue entry names a
+# DESTINATION and climbs every rung on the way, so the leg in flight is routinely a rung the row's own
+# title does not name; `18%` alone under a `Sow` reads as the Field being 18% sown, which is a
+# different and false claim from the one it replaces. The participle is
+# `HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`' — the same word the compose sheet's running face uses,
+# so one job is not called two things on one screen.
+#
+# **The `·` separates two statements about ONE job**, the row tooltip's own separator: how far into
+# the leg, and when the whole climb lands. It is deliberately not a parenthesis — the bracketed form
+# above reads as a gloss on the date, which is exactly the attribution this face exists to break.
+const RUNG_COMPLETES_LEG_FORMAT := "%s %d%% · turn %d"
+
 # **A BUILT RUNG: its badge, then how full its meter still is.** `100%` is the healthy reading and
 # anything less is erosion already under way.
 const RUNG_BUILT_FORMAT := "%s %d%%"

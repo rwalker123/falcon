@@ -292,6 +292,14 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   `_labor_assignments_of_marker` beside it already follows. Full rationale, and the other three
   surfaces, in `selection-card.md` → "A build DECLARED with nobody on it is a fourth state". Frames:
   `map_worked_ready` / `map_worked_unstaffed`, an A/B on ONE band with only its `builders` ROW moving.
+- **THE RUNG IT REPORTS IS THE LEG IN FLIGHT, NOT THE ENTRY'S DESTINATION** (§2.8). A `sow` ordered
+  on untended ground is one queue entry and two legs, so the declared rung's own meter reads 0% for
+  as long as the crew is clearing — the plate sat at `▦0%` beside a tile card reading 18%.
+  `RungGates.leg_in_progress` re-points `rung_in_progress`'s answer at the first published leg still
+  owing work, and this renderer takes it for the same reason it takes `build_is_stalled`: the plate
+  and the WORK board are held to ONE verdict, so a leg-aware board beside a destination-bound badge
+  is the two-surface disagreement that shared producer exists to stop. The autopsy is
+  `band-city-panel.md` → "THE PERCENTAGE IS THE LEG IN FLIGHT'S".
 - **The badge shows a rung ON OFFER or a rung UNDER WAY, never both** — one axis in two states,
   mutually exclusive by construction. Under way renders `<verb glyph><percent>%` in
   `HudStyle.SIGNAL_DEEP` with **no chevron** (`⌃` offers; this reports); on offer renders `⌃<glyph>` in

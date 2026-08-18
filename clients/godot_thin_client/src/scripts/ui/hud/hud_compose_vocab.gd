@@ -354,11 +354,18 @@ const IMPROVEMENT_OFFER_LABELS := {
 
 # What is HAPPENING while it builds — the present participle, so the running line reads as work under
 # way rather than as an option still on offer.
+#
+# **FOUR SINGLE WORDS, and the Corral's used to be a PHRASE** (`Building the pen`). It is the craft's
+# own name — the rung earns `Penning` — so the set is uniform without inventing a word, and the
+# phrase's extra width was a real cost on the BUILD QUEUE's date column, which states a participle
+# beside a percentage and a turn in one clipping slot (`HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT`).
+# There the phrase pushed the column past what the row can afford, and what a clip takes off the end
+# of that string is the DATE.
 const IMPROVEMENT_RUNNING_LABELS := {
     "cultivate": "Cultivating",
     "sow": "Sowing",
     "tame": "Taming",
-    "corral": "Building the pen",
+    "corral": "Penning",
 }
 
 # The STATE the finished rung leaves the source in — a noun, because nothing is happening any more.

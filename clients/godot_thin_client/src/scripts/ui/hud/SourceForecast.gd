@@ -886,6 +886,13 @@ const FORECAST_BUILD_LEGS_KEY := "build_legs"
 const BUILD_LEG_RUNG_KEY := "rung"
 const BUILD_LEG_WORK_KEY := "work_remaining"
 const BUILD_LEG_TURNS_KEY := "turns_remaining"
+# …and the fourth key `build_legs` ADDS: the wire's rung crossed to the improvement verb a command
+# names, so a caller matching legs against a branch and a caller naming the verb read one row.
+const BUILD_LEG_IMPROVEMENT_KEY := "improvement"
+# A leg owing this much or less has been paid for. The sim never publishes one
+# (`forage::patch_build_legs` pushes a leg only where `owed > LEG_ALREADY_PAID`), which is exactly why
+# the client states the boundary rather than trusting the head of the list — see `build_leg_in_flight`.
+const BUILD_LEG_NOTHING_OWED := 0.0
 # **THE WIRE'S RUNG SPELLING, AND THE VERB THAT NAMES EACH RUNG AS A DESTINATION.** The sim spells a
 # rung `<branch>:<id>` — branch-qualified because `wild` names a rung on BOTH webs — and this client
 # spells the same thing as an improvement verb, because that is what a command carries. This is the
@@ -3998,7 +4005,7 @@ static func build_legs(src: Dictionary, prefix: String) -> Array[Dictionary]:
             continue
         rows.append({
             BUILD_LEG_RUNG_KEY: key,
-            "improvement": String(RUNG_KEY_IMPROVEMENTS[key]),
+            BUILD_LEG_IMPROVEMENT_KEY: String(RUNG_KEY_IMPROVEMENTS[key]),
             BUILD_LEG_WORK_KEY: maxf(float(leg.get(BUILD_LEG_WORK_KEY, 0.0)), 0.0),
             # The four negatives are the countdown's own and are passed through VERBATIM — a leg
             # cannot be dated when the entry carrying it cannot, and flattening one into another is
@@ -4006,6 +4013,30 @@ static func build_legs(src: Dictionary, prefix: String) -> Array[Dictionary]:
             BUILD_LEG_TURNS_KEY: int(leg.get(BUILD_LEG_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE)),
         })
     return rows
+
+## **THE LEG THE CREW IS ACTUALLY ON** — the first published leg still owing work, as one `build_legs`
+## row; `{}` for a source with nothing queued and for one whose climb has arrived.
+##
+## **IT IS THE ANSWER A DECLARATION CANNOT GIVE.** `build_verb` names the rung the player ORDERED
+## (`forage::patch_build_verb` honours a declaration at or above the rung being raised), which for a
+## `sow` on untended ground is the Field — a rung standing at 0% while the crew clears the ground
+## beneath it. Every readout that quoted that rung's meter therefore sat at zero for the whole first
+## leg, which reads as a job that is not moving.
+##
+## **THE FRACTION TO PUT BESIDE IT IS THE PER-RUNG ONE THE WIRE ALREADY PUBLISHES** —
+## `improvement_progress` at this leg's own verb, i.e. the source's one position clamped into that
+## rung's span (`forage::patch_rung_work_done`). Nothing here divides `work_remaining` by anything: a
+## second derivation of a number the sim publishes is how this arc has shipped defects before.
+##
+## **A SCAN RATHER THAN `legs[0]`, deliberately.** The sim drops a rung the position has already paid
+## for, so on an honest payload the head IS the leg in flight — but a fixture, or a producer that one
+## day publishes the whole branch, can carry a paid leg, and a reader that took the head on faith
+## would then name a rung nobody is working.
+static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
+    for leg in build_legs(src, prefix):
+        if float(leg.get(BUILD_LEG_WORK_KEY, BUILD_LEG_NOTHING_OWED)) > BUILD_LEG_NOTHING_OWED:
+            return leg
+    return {}
 
 ## The BRANCH a source climbs, bottom rung first — `RUNG_BRANCH_PLANT` for a patch, `RUNG_BRANCH_ANIMAL`
 ## for a herd. One picker, so the two webs' tracks cannot be walked in two different orders.

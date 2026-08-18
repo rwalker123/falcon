@@ -2328,11 +2328,16 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     marker.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marker)
-    # The SOURCE mark, through the board row's own builder — bundled art where the client has it, the
-    # emoji where it does not, in the same fixed column so the two lists line up.
-    line.add_child(HudWidgets.build_marker_icon(
-        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
-        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    # **THE SOURCE MARK LEFT THIS ROW WHEN THE DATE COLUMN LEARNED A VERB** (§2.8). The queue row was
+    # five slots on a ~338px line and the pair of columns that carry information — the job face and
+    # the date — measured 291 of the 274 the icon left them: the face is a shipped, play-reported
+    # unclipped guarantee (`band_panel_preview._assert_queue_row_settings`) and a clipped date is a
+    # date column that has stopped stating a date, so neither could give. **The icon was the one slot
+    # with no informational duty**: the face names the source in words (`Sow (28, 19)` /
+    # `Corral Red Deer`) and carries the destination's own rung glyph, so a second mark said nothing
+    # the row did not. The board's rows keep theirs — they are a list of SOURCES and their names do
+    # not lead with a glyph. The `+N more` row's spacer was already reserving the marker alone, so the
+    # block's own two rows line up now where they did not before.
     var face := _build_queue_job_face(model)
     var label := Label.new()
     label.set_meta(HudWorkVocab.BUILD_QUEUE_FACE_META, face)
@@ -2355,12 +2360,20 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # be invented. The slot carries the client's one spelling of pending instead — `○` in amber,
     # `FoodIcons`' `STATUS_PENDING`, the same mark the work rows' status clause and the map's dashed
     # overlays wear — rather than a second vocabulary for the same idea.
+    #
+    # **THE PERCENTAGE AND ITS VERB ARE THE LEG IN FLIGHT'S** (`docs/plan_standing_upkeep.md` §2.8).
+    # A `sow` on untended ground is a two-leg entry, and quoting the DESTINATION's meter left this
+    # column reading `turn 83 (0%)` for the thirty-nine turns the crew spent clearing — a number that
+    # answers a question nobody asked, and that contradicts the tile card. So the column reads
+    # `Cultivating 18% · turn 83`: the title still names what was ordered, the date is still the whole
+    # climb's, and the verb is what makes the percentage attributable to a rung the title does not
+    # name. A single-leg entry's leg IS its destination, so it names its own rung unchanged.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
     var percent := HudFormat.progress_percent(float(model.get("building_progress", 0.0)))
     var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
         else DetailFormat.build_completion_value(turns, builders, percent,
-            _band_labor.current_turn())
+            _band_labor.current_turn(), String(model.get("building_policy", "")))
     var date := Label.new()
     date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
     date.text = value
@@ -2395,7 +2408,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # **AND THE JOB'S FULL PRICE, BOTH HALVES — the work pile and the keeping it will owe.** The row
     # already carries the face and the date; what it never said is that finishing this job commits the
     # band to a standing bill, which is the other half of the decision and the reason the keeping
-    # warning used to arrive a turn late. **TOOLTIP ONLY** — the row is five slots and cannot take a
+    # warning used to arrive a turn late. **TOOLTIP ONLY** — the row is four slots and cannot take a
     # sixth. `DetailFormat.build_price_clause` is the same composer the `⌃`'s own hover uses, so the
     # offer and the queued entry quote one price in one wording; `BUILD_TURNS_NO_ESTIMATE` suppresses
     # its turn term deliberately, the date column above being the sim's own chained answer and a
@@ -3322,6 +3335,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var rung_source: Dictionary = patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd
         # A rung UNDER WAY takes the slot from a rung on OFFER — they are one axis in two states, and
         # mutually exclusive by construction (`next_rung_ready` excludes the verb in flight).
+        #
         var building := RungGates.rung_in_progress(kind, rung_source, improvement)
         # **AN ERODED RUNG NOBODY HAS ORDERED IS AN OFFER, NOT A BUILD UNDER WAY** — the client half of
         # the 99% repair. `build_verb` answers for any meter between zero and its cost, so a Tended
@@ -3333,6 +3347,20 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         if not building.is_empty() and _rung_is_an_unordered_repair(rung_source, improvement,
                 String(building.get("policy", ""))):
             building = {}
+        # **THE RUNG THE ENTRY IS HEADED FOR, HELD BEFORE THE READOUTS MOVE TO THE LEG.** A queue
+        # entry's PRICE is the whole climb's, so the two cost fields below stay on the declared rung;
+        # what follows the leg is the percentage and its verb. Keeping both is what stops one fix
+        # quietly understating a two-leg job's bill.
+        var destination_rung := String(building.get("policy", ""))
+        # **AND THE READOUTS SHOW THE LEG IN FLIGHT, NOT THE DESTINATION**
+        # (`docs/plan_standing_upkeep.md` §2.8). A `sow` ordered on untended ground is one entry and
+        # two legs, and `rung_in_progress` names the rung the player DECLARED — whose meter is honestly
+        # 0% while the crew is still clearing the ground beneath it. Reported from play: the queue row
+        # and this row's rung chip both read `0%` for thirty-nine turns beside a tile card reading
+        # `18%`. BOTH Work-tab readouts take the leg from this ONE re-pointing — the chip below, and
+        # the queue row's percent and verb, which read `building_glyph` / `building_policy` /
+        # `building_progress` off this model.
+        building = RungGates.leg_in_progress(rung_source, building)
         var ready := {} if not building.is_empty() \
             else RungGates.next_rung_ready(kind, rung_source, improvement, _player_knowledge())
         # The row's HARVEST mark is the floor's ZONE glyph — where this crew's floor sits relative to
@@ -3467,21 +3495,25 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "ready_policy": String(ready.get("policy", "")), "ready_glyph": String(ready.get("glyph", "")),
             # …and the hover BOTH the mark and the row state, resolved once above.
             "ready_tooltip": ready_tooltip,
-            # The rung it is BUILDING right now, and how far in. The board shows the percent the map
-            # badge shows, off the same `RungGates` answer.
+            # The LEG the crew is on right now, and how far into it. Both Work-tab readouts spend
+            # this trio — the row's rung chip and the queue row's percent-and-verb — so they cannot
+            # name two different rungs. See `RungGates.leg_in_progress` for why it is the leg rather
+            # than the entry's destination.
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
             # **WHAT THAT RUNG COSTS, BOTH HALVES — the one-off pile and the standing rate.** They ride
             # the model because this is where the raw wire source is in hand, and TWO surfaces spend
             # them: the queue row's tooltip states the job's full price, and the POOLS block reads the
-            # rate to mark a keeping pool a queued job is about to need. Composed off `building_policy`
-            # so a pending declaration prices identically to a placed entry — which is the whole of
-            # what makes the warning arrive at DECLARE time rather than a turn later.
+            # rate to mark a keeping pool a queued job is about to need. Composed off the DESTINATION
+            # rung so a pending declaration prices identically to a placed entry — which is the whole
+            # of what makes the warning arrive at DECLARE time rather than a turn later — and
+            # deliberately NOT off the leg in flight, whose cheaper rung would understate a two-leg
+            # job's bill on the one surface that quotes it.
             "build_work_cost": SourceForecast.build_work_cost(rung_source,
-                HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
+                HudComposeVocab.BARE_FORECAST_PREFIX, destination_rung),
             "build_upkeep_demand": SourceForecast.build_upkeep_demand(rung_source,
-                HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
+                HudComposeVocab.BARE_FORECAST_PREFIX, destination_rung),
             # …and the BARE per-worker work rate that source publishes, which is what the POOLS block
             # prices a keeping pool's own hands at when the queue is the only thing asking for them.
             # Read here because this is where the raw wire source is in hand, exactly as the two
