@@ -808,6 +808,53 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    *"is this worth it"* does not move — but the payoff starts on turn one, which softens the
    commitment considerably. That may be right, given this arc has been about removing cliffs; it
    should be a deliberate smoothing rather than a discovered one.
+   > **LANDED — in full, and it diverged from this plan in three ways worth recording.**
+   > A source carries one `ladder_position` in cumulative work units; `RungStanding` is the one
+   > producer of "where is this source", stamped on every write so no call site re-derives it;
+   > `interpolate` states the delta form once, for the payout and the keeping demand alike. The
+   > **~100 binary predicates figure was wrong** — the real split is **24 payout branch sites** and
+   > about 20 verb/knowledge gates, and the plant half funnels almost entirely through the one rate
+   > seam. `retain_fraction`, the retention bar and its four stamp sites are **deleted**.
+   >
+   > **① `partial_credit` IS A RUNG PROPERTY, not the pen special case it was designed as.** Ray:
+   > *"make sure it is a configuration of the rung and not something hardcoded for pen."* It is
+   > honoured in exactly one place — `RungStanding::credit` is already zeroed for an `on_completion`
+   > rung — so no call site tests it. **`animal:pen` is its only member**, and deliberately so: a
+   > half-sown field genuinely has half a crop in the ground, while half a fence is not half a pen.
+   >
+   > **② RUNG 3 ON BOTH WEBS WAS CHANGING THE DRAW, WHICH IS WHY ITS PAYOUT COULD NOT INTERPOLATE.**
+   > Found by Ray in play: *"a field can be drawn down and its main goal is to increase the output of
+   > the tile. The production draw and the production of a tile are two totally separate concerns."*
+   > A Field and a pen were each switching the harvest itself to a flat managed rate with no
+   > drawdown, no escapement floor and no engagement bound — which is also why the harvest floor, the
+   > one pressure lever the player holds, did nothing on the ground they had spent the most work
+   > reaching. **A rung may change production; no rung changes the draw.** A Field now holds ~2.5× the
+   > standing crop and regrows ~2.5× faster and is foraged by the ordinary path; a penned herd is
+   > drawn down with a real engagement bound in place of the infinite one. **Both are
+   > re-expressions, measured against the pinned references**: the Field reads 6.2409 where it read
+   > 6.2400 (0.014% off, rungs 1–2 bit-identical), the pen 0.9990 where it read 0.9990, with no
+   > existing gain retuned. Rung 3 on both webs can now be over-farmed, which is the point.
+   >
+   > **③ A QUEUE ENTRY NAMES A DESTINATION, not a rung.** `sow` means *take it to Field*, so on
+   > untended ground it lays two legs and costs **125 rather than 75** — the tended rung's work was
+   > previously skipped rather than paid. That is a model change, not a tuning edit; if the combined
+   > climb is too steep the answer is moving the rung spans in §4.14, never exempting a rung. Each
+   > leg's work is what remains **from where the source stands**, which is what makes an existing
+   > improvement a receipt rather than a discount. The client's `⌃` opens a "take it to…" ladder
+   > track as an overlay, so neither Work-zone budget moved.
+   >
+   > **Three defects fixed on the way, each reachable in play:** a herd paid the **pen** rung's
+   > keeping from the first corral work banked while still getting only pastoral benefits (the
+   > benefit/cost asymmetry §2.8 forbids); `decay_ladder` reported only the top rung crossed, so a
+   > bleed spanning two boundaries took two rungs and announced one; and an interpolated demand is a
+   > moving target across the Population→Logistics carry, so a fully-staffed band bled ~0.03
+   > work/turn forever while re-arming its neglect grace every turn.
+   >
+   > **⛔ THE SUITE WAS REPEATEDLY GREEN BECAUSE NO FIXTURE REACHED THE STATE — four times.** The
+   > overdraw ⚠, the hunt byproducts, the material-only work row and the two-leg queue entry each had
+   > passing tests that could not distinguish the defect from the fix. Every fix in this slice was
+   > therefore **falsified** — the defect restored, the failing assertions counted and named — and
+   > that is the practice to keep, not the fixtures.
 11. **Plant upkeep SCALES WITH THE SOURCE.** Both plant rungs ship `scaled_by: flat`, so a rich
     alluvial patch and a thin one cost the same to hold. Ray: *"the flora track should scale by size,
     just like animals."* The whole-number demands were an explicit short-term step, not the model —
