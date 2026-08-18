@@ -873,12 +873,57 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,
     so tuning before it would be tuning a shape that is about to move.
+    > **§4.11 LANDS FIRST, for this item's own reason.** A flat per-rung demand and a size-scaled one
+    > are different shapes, not different numbers, so tuning the plant demands before the scale
+    > primitive exists would tune something about to move — the same argument that put this slice
+    > after §4.10.
+    >
+    > #### WHAT §4.10's PLAYTEST LEFT ON THE TABLE — each measured, none tuned
+    >
+    > - **THE FIELD'S SPLIT BETWEEN CAPACITY AND REGROWTH IS ARBITRARY AND IS THE FIRST THING TO
+    >   PLAY.** Both ship at **×2.53** because what was held was the *product* — the Field had to land
+    >   within 5% of where it already paid, and it did (6.2400 → 6.2409). The split was never chosen.
+    >   It matters because the two do different jobs: **capacity is the size of the store, regrowth is
+    >   how fast it refills**, so a big-store slow-refill field is one you strip and then wait on,
+    >   while a small-store fast-refill field must be harvested steadily or you waste it. Ray, on
+    >   being told the product was what was held: *"that split is what decides whether a field is a
+    >   granary or a treadmill."* **Trust the measurement over the algebra here** — `MSY = r·K/4`
+    >   predicts a product of 8.25 and the real answer was 6.40; the clamp and the operating point eat
+    >   the difference.
+    >
+    > - **SOWING UNTOUCHED GROUND COSTS 125 WORK UNITS, UP FROM 75, AND THE ANSWER IS THE SPANS.** The
+    >   tended rung's work was previously skipped rather than paid, so this is a model change and not
+    >   a tuning edit. If the combined climb is too steep the fix is **moving the rung spans** (tended
+    >   40 + field 60 = 100), never exempting a rung from the climb. Ray: *"it isn't a tuning change,
+    >   but tuning could help it."* **Do not shave it before it is played** — hiding a model change
+    >   behind a config edit is how the jump stops being visible.
+    >
+    > - **`WearQuantum::UpkeepWork` HAS NO CONVERSION TO INVERT.** Recorded at §4.8 and repeated here
+    >   because this is the slice that owns it: a keeping tool wears on the work it supplied, but the
+    >   rate is an opening value rather than a re-minted one, because the quantum never existed
+    >   before. It is the one number in the arc with no prior to be neutral against.
+    >
+    > #### AND ONE THAT IS **NOT THIS ARC'S DIAL**, recorded because it was measured here
+    >
+    > - **`fauna_config.json`'s `engage_rate` INVERTS THE ECONOMY OF SCALE ON BIG GAME.** Wild Boar
+    >   sits at **0.33**, and a party that exists always reaches at least one animal, so **every crew
+    >   from 1 to 6 hunters brings down exactly one boar** — a lone hunter is **four times more
+    >   efficient per head** than a party of twelve, and twelve hunters split across twelve herds take
+    >   twelve boar where twelve on one herd take three. The truncation is lumpy at the margin too:
+    >   `floor(12 × 0.33) = 3`, so the twelfth hunter contributes nothing while the thirteenth is
+    >   worth a third more food than the eleven before him. `fauna.md` already names the hazard —
+    >   *"an `engage_rate` authored too low silently becomes a second floor"* — and
+    >   `HuntTakeBound::Engagement` exists to make it visible. **The mechanism is correct and the
+    >   number is not**; at a rate near 1.0 the minimum-of-one stops being a bonus and party size
+    >   means what it looks like it means. It is the **fauna** arc's edit, not this one's.
 
 > **Every number in this arc is provisional until §4.14.** The plant demands of `2.0` / `4.0` are
-> whole-number placeholders chosen to be legible, not balanced; the `retain_fraction` of `0.75` is a
-> playtest dial that §4.10 largely dissolves; the graces of `2` and `1` are inherited from the rung
-> they replaced rather than chosen. Do not tune any of them in an earlier slice — the mechanism is
-> what the earlier slices are for.
+> whole-number placeholders chosen to be legible, not balanced; the graces of `2` and `1` are
+> inherited from the rung they replaced rather than chosen; and the Field's `2.53` / `2.53` were
+> never a split at all — only their product was held. Do not tune any of them in an earlier slice —
+> the mechanism is what the earlier slices are for. **`retain_fraction` is no longer on this list:
+> §4.10 deleted it outright rather than dissolving it, because interpolation removed the cliff it
+> was patching.**
 
 ## 5. The allocation layer this arc kept running into
 
