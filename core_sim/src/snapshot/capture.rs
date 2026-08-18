@@ -2222,8 +2222,18 @@ pub fn capture_snapshot(
     let grid = config.grid_size;
     let wrap_horizontal = config.map_topology.wrap_horizontal;
     let mut sow_site_refusals: HashMap<UVec2, SiteRefusal> = HashMap::new();
+    // **The size of the land under each patch** — the tile's own forage `K`, through the one
+    // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
+    // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
+    // keeper-load, so the row needs the ground and not just the patch. Collected in this sweep for
+    // the same reason `sow_site_refusals` is: the tiles are here and the readout is not.
+    let mut tile_capacities: HashMap<UVec2, f32> = HashMap::new();
     let mut flora_sweep = flora_quotes.sweep(&flora_config, &labor_config, config.map_seed, grid);
     for tile in patch_tiles {
+        tile_capacities.insert(
+            tile.position,
+            crate::forage::tile_forage_capacity(&labor_config.forage, tile),
+        );
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
@@ -2932,6 +2942,7 @@ pub fn capture_snapshot(
         &ladder_config,
         &seasonal_weights,
         &sow_site_refusals,
+        &tile_capacities,
         &flora_quotes,
     );
     drop(forage_patches_scope);

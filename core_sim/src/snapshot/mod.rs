@@ -2190,6 +2190,10 @@ mod tests {
             &LadderConfig::builtin(),
             &HashMap::new(),
             &HashMap::new(),
+            // No tiles behind these fixture patches, so no ground is named here either: the row
+            // presents no tender-load and its upkeep figures read the honest zero, the same
+            // absent-means-nothing reading the composition takes below.
+            &HashMap::new(),
             // No tiles behind these fixture patches, so the quote memo was never swept over them and
             // no composition is published — "unknown ground names no plants", never a fabricated
             // basket.

@@ -4080,8 +4080,9 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
 ## `demand − supplied == shortfall` hold exactly, and is why the trio may be read as one statement.
 ##
 ## **SO NOTHING MAY QUOTE IT AS *what would this rung cost to hold*.** That question is the per-rung
-## `<rung>UpkeepDemand` pair (`build_upkeep_demand`), which is the ladder's own rate and answers for a
-## rung nobody has started. This one answers *where is my pooled shortfall landing*, and every
+## `<rung>UpkeepDemand` pair (`build_upkeep_demand`), which answers for a rung nobody has started —
+## the ladder's rate scaled by THIS patch's own tender-load, so the quote is the bill the keeping pool
+## will actually be handed rather than a figure true of one biome. This one answers *where is my pooled shortfall landing*, and every
 ## surviving reader words it that way: the pool card's coverage line, the fund-mode row's presence and
 ## `_queued_keeping_load`'s already-billed test. The one surface that ever said *"holding this costs
 ## N"* per source — the `Keeping:` row — was retired in issue #545.

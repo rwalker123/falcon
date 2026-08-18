@@ -89,15 +89,15 @@ const UNCROSSED_KEYS := {
 ## the patch carries is live state a discovered-but-unseen hex cannot know, and belongs in
 ## `FOW_DISCOVERED_HIDDEN_KEYS`.
 const FOW_EXEMPT_KEYS := {
-	"patch_carrying_capacity":
-		"the ground's ceiling, not its stock — the stock/capacity split this list's header states",
+	"patch_tile_capacity":
+		"the TILE's own K with no rung gain in it — terrain, which a Discovered hex knows by definition, and what a remembered card states in place of the redacted `patch_carrying_capacity` beside it",
 	"patch_composition":
 		"what GROWS here is ground knowledge like the terrain label; a remembered tile remembers the mix",
 	"patch_committed_species":
 		"read only under the Forage line, which is already past the discovered early-return",
 	"patch_committed_display_name": "as patch_committed_species",
 	"patch_cultivation_upkeep_demand":
-		"the LADDER's rate for that rung, not this patch's bill — both plant rungs are `scaled_by: flat`, so it reads identically on every patch in the game and carries no live state to leak",
+		"the rung's standing PRICE, not this patch's bill — both plant rungs are `scaled_by: source_load` and the sim strikes them through the TILE's K, which is terrain, so the figure sent for an unseen hex is the one it last showed",
 	"patch_field_upkeep_demand": "as patch_cultivation_upkeep_demand",
 }
 

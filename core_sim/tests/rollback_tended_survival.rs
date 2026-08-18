@@ -80,9 +80,26 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     // plant rung's demand cannot leave this fixture supplying too little.
     {
         let ladder = core_sim::LadderConfig::builtin();
+        // **The bill is quoted per tender-load of this ground** (`forage::patch_tender_loads`), so
+        // the fixture resolves the Field's own tile rather than handing the seam a bare load — a
+        // rich tile owes more than a thin one, and supplying the reference rate on rich ground would
+        // leave this Field short.
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let tile_entity = app
+            .world
+            .resource::<core_sim::TileRegistry>()
+            .index(field_tile.x, field_tile.y)
+            .expect("the Field's tile is on the map");
+        let tile_capacity = core_sim::tile_forage_capacity(
+            &labor.forage,
+            app.world
+                .get::<core_sim::Tile>(tile_entity)
+                .expect("the Field's tile carries a Tile"),
+        );
         let mut forage = app.world.resource_mut::<ForageRegistry>();
         let patch = forage.patch_mut(field_tile).expect("the Field persists");
-        patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
+        patch.upkeep_supplied =
+            core_sim::patch_upkeep_demand(patch, &ladder, tile_capacity, &labor.forage);
     }
 
     // --- Set up a completed, worked corral (pen) on a real herd. --------------------------------

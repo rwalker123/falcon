@@ -728,6 +728,11 @@ fn create_forage_patches<'a>(
                 compositionFodderPerBiomass: composition_fodder,
                 // …and what each of them is made of — appended last (append-only wire).
                 compositionMaterialPerBiomass: composition_materials,
+                // **The GROUND's own K** — appended last (append-only wire), with no rung gain in
+                // it, beside the `carryingCapacity` that carries one. The pair is what lets a
+                // remembered hex state a capacity without stating the ladder position the fog
+                // redaction exists to hide.
+                tileCapacity: patch.tile_capacity,
             },
         );
         entries.push(entry);

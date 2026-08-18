@@ -217,14 +217,14 @@ pub use forage::{
     forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
     forage_take_overdraws, patch_build_verb, patch_claims_keeping, patch_composition,
     patch_keeping_basis, patch_material_yields, patch_meter_rot, patch_provisions_per_biomass,
-    patch_rung_already_built, patch_rung_work_done, patch_species_quality, patch_unwinding_key,
-    patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed, plant_rung_span,
-    project_arrivals_forage, project_realized_forage, resolve_committed_species,
+    patch_rung_already_built, patch_rung_work_done, patch_species_quality, patch_tender_loads,
+    patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed,
+    plant_rung_span, project_arrivals_forage, project_realized_forage, resolve_committed_species,
     resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
     selected_biomass_share, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
     tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
     ForageRegistry, SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID,
-    NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    NO_FORAGE_SEASON, NO_TENDER_LOAD, ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -251,7 +251,7 @@ pub use intensification::{
     RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
     FABRICATED_BUILD_COST, FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR,
     NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
-    RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED, UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
+    RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

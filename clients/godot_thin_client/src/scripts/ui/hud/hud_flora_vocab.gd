@@ -433,9 +433,11 @@ const KNOWLEDGE_TRACK_FODDERING := "foddering"
 # food-module tile; animals eat grass and browse off nearly every land tile. Your best farm is
 # usually not your best pasture.
 #
-# Each is rendered ONLY where that web has a stock at all — `patch_carrying_capacity > 0` /
+# Each is rendered ONLY where that web has a stock at all — `DetailFormat.patch_capacity > 0` /
 # `graze_capacity > 0` — so a glacier prints no Grazing row and a moduleless tile no Foraging row,
-# never a "0 / 0" that would read as a starved stock rather than an absent one.
+# never a "0 / 0" that would read as a starved stock rather than an absent one. The forage side asks
+# a HELPER rather than a key because a remembered hex states the tile's ground `K` while a visible one
+# states the patch's boosted ceiling (`MapView.FOW_DISCOVERED_HIDDEN_KEYS` header).
 const FORAGING_KEY := "Foraging"
 
 const GRAZING_KEY := "Grazing"

@@ -34,7 +34,7 @@ use crate::fauna::{
 };
 use crate::fauna_config::{FaunaConfig, HusbandryCeiling, SizeClass};
 use crate::flora_config::FloraConfig;
-use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED, UNSCALED_UPKEEP};
+use crate::intensification::{LadderConfig, RungDef, RungKey, RUNG_COST_UNSCALED};
 use crate::labor_config::LaborConfig;
 use crate::systems::hunt_take;
 use sim_runtime::TerrainType;
@@ -63,6 +63,19 @@ fn full_crew(rung: &RungDef, source_measure: f32) -> u32 {
 /// level.
 const SOLE_WORKER: u32 = 1;
 
+/// **THE REFERENCE SOURCE THIS PROBE QUOTES ITS UPKEEP FIGURES AT** — one load of whatever the rung's
+/// own web measures. Every rung's `upkeep.work_per_turn` is declared per load
+/// (`scaled_by: source_load` on all four managed rungs), and the two webs' identity constants read
+/// back the same number by construction: [`ONE_TENDER_LOAD`] is a tile of exactly
+/// `cultivation.capacity_per_tender`, [`crate::fauna::ONE_KEEPER_LOAD`] a herd of exactly
+/// `animals_per_herder`.
+///
+/// **The probe's plant runs sit on the reference tile anyway** — [`REFERENCE_BIOME`]'s own `K` *is*
+/// `capacity_per_tender` — so the plant figures are the reference tile's whichever way they are
+/// reached; the runs that hold a live patch resolve the load through [`patch_tender_loads`] instead,
+/// so a retuned dial moves them.
+const PROBE_REFERENCE_LOAD: f32 = ONE_TENDER_LOAD;
+
 /// **What one builder banks on `verb` per turn**, in work units — the term the probe's headers
 /// report where they used to report `yield_fraction_while_building`. A build is staffed in its own
 /// right now (`docs/plan_standing_upkeep.md` §2.2), so what a build costs the *take* is simply the
@@ -72,7 +85,7 @@ fn builder_work_per_turn(ladder: &LadderConfig, verb: Improvement) -> f32 {
     rung.build_accrual(
         Some(verb),
         true,
-        full_crew(rung, UNSCALED_UPKEEP),
+        full_crew(rung, PROBE_REFERENCE_LOAD),
         crate::intensification::NO_BUILD_GEAR,
     )
 }
@@ -309,7 +322,10 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             let accrual = rung.build_accrual(
                 improvement,
                 eligible,
-                full_crew(rung, UNSCALED_UPKEEP),
+                // **This run holds a real tile, so it prices the crew off that tile's own load**
+                // rather than off the reference — it happens to be the reference tile, and saying so
+                // through the measure is what keeps it true if `REFERENCE_BIOME` ever moves.
+                full_crew(rung, patch_tender_loads(cap, forage)),
                 crate::intensification::NO_BUILD_GEAR,
             );
             if accrual > 0.0 {
@@ -1183,16 +1199,16 @@ fn probe_build_and_teach_axis() {
                 rung.build_accrual(
                     verb,
                     true,
-                    full_crew(rung, UNSCALED_UPKEEP),
+                    full_crew(rung, PROBE_REFERENCE_LOAD),
                     crate::intensification::NO_BUILD_GEAR,
                 ),
                 rung.build_accrual(
                     verb,
                     false,
-                    full_crew(rung, UNSCALED_UPKEEP),
+                    full_crew(rung, PROBE_REFERENCE_LOAD),
                     crate::intensification::NO_BUILD_GEAR,
                 ),
-                rung.upkeep_demand(UNSCALED_UPKEEP),
+                rung.upkeep_demand(PROBE_REFERENCE_LOAD),
             );
         }
     }

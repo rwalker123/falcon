@@ -698,6 +698,11 @@ fn maintenance_shares(
     allocation: &LaborAllocation,
     banking: &SourceBankingFirstWork,
     forage_registry: &ForageRegistry,
+    // **The ground under each plant claim**, resolved by coord: the plant demand is quoted per
+    // tender-load of the TILE's own `K` (`forage::patch_tender_loads`), so a claim cannot be priced
+    // off the patch alone. A tile that is not on the map presents no land and therefore no claim.
+    tile_capacity_of: &dyn Fn(UVec2) -> f32,
+    forage: &crate::labor_config::ForageLaborConfig,
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
@@ -748,7 +753,12 @@ fn maintenance_shares(
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
                     // on the turn its first work is about to land*.
-                    demand: crate::forage::patch_upkeep_demand(patch, ladder),
+                    demand: crate::forage::patch_upkeep_demand(
+                        patch,
+                        ladder,
+                        tile_capacity_of(*tile),
+                        forage,
+                    ),
                     invested: crate::forage::patch_at_risk_cost(patch),
                     tiebreak: format!("{:010}:{:010}", tile.x, tile.y),
                 });
@@ -1024,10 +1034,25 @@ pub fn advance_labor_allocation(
                 wrap_horizontal,
             )
         });
+        // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
+        // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
+        // system is (the registry index, then the query). Ground that is not on the map reads
+        // `NO_FORAGE_CAPACITY`, which presents no tender-load and so no claim — the same
+        // absent-means-nothing reading the composition below takes.
+        let tile_capacity_of = |coord: UVec2| {
+            tile_registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |ground| {
+                    tile_forage_capacity(&labor.forage, ground)
+                })
+        };
         let upkeep_shares = maintenance_shares(
             &allocation,
             &banking,
             &forage_registry,
+            &tile_capacity_of,
+            &labor.forage,
             &registry,
             &fauna,
             &ladder,
@@ -1474,6 +1499,15 @@ pub fn advance_labor_allocation(
                         |_| Cow::Owned(Vec::new()),
                         |ground| tile_flora_composition(&flora, &labor.forage, ground, map_seed),
                     );
+                    // **THE SIZE OF THE LAND** — the tile's own `K`, resolved here beside the basket
+                    // and off the same tile, because the standing upkeep is quoted per **tender-load**
+                    // of it (`forage::patch_tender_loads`). Ground nobody can see offers no capacity,
+                    // exactly as it names no plants.
+                    let plant_tile_capacity = tiles
+                        .get(tile_entity)
+                        .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |ground| {
+                            tile_forage_capacity(&labor.forage, ground)
+                        });
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
                     // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
                     // seeded a patch at Startup; a missing one (a dynamically-tagged tile, or ground
@@ -1556,8 +1590,12 @@ pub fn advance_labor_allocation(
                     // its own band's accrual. `advance_cultivation` clears it at the top of every
                     // turn, so "already stamped" always means *this* turn.
                     if patch.upkeep_demanded.is_none() {
-                        patch.upkeep_demanded =
-                            Some(crate::forage::patch_upkeep_demand(patch, &ladder));
+                        patch.upkeep_demanded = Some(crate::forage::patch_upkeep_demand(
+                            patch,
+                            &ladder,
+                            plant_tile_capacity,
+                            &labor.forage,
+                        ));
                     }
                     // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
                     // `WearQuantum::UpkeepWork` charge, billed on what the pool **supplied** to this
@@ -1583,7 +1621,12 @@ pub fn advance_labor_allocation(
                     // **Not stored**: `upkeep_supplied` and `neglect_turns` are, so the capture
                     // re-derives the same number through the same seam — and an *unworked* patch,
                     // which this loop never visits, is then honest rather than reading a stale `0`.
-                    let meter_rot = crate::forage::patch_meter_rot(patch, &ladder);
+                    let meter_rot = crate::forage::patch_meter_rot(
+                        patch,
+                        &ladder,
+                        plant_tile_capacity,
+                        &labor.forage,
+                    );
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
                     // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -5072,7 +5115,7 @@ mod labor_yield_tests {
     }
     use super::advance_labor_allocation;
     use crate::fauna;
-    use crate::intensification::{NO_CREW_ON_THIS_ACTIVITY, UNSCALED_UPKEEP};
+    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
     use crate::{FoodSiteEntry, FoodSiteRegistry};
 
     /// **The floor at which `intensification::learn_multiplier` is exactly ×1.0** — the food peak.
@@ -5158,7 +5201,17 @@ mod labor_yield_tests {
     /// count, the padding [`builders_above_the_rate`] explains.
     fn plant_builders(world: &World, key: RungKey) -> u32 {
         let ladder = world.resource::<LadderConfigHandle>().get();
-        the_harness_build_crew(ladder.rung(key), UNSCALED_UPKEEP)
+        the_harness_build_crew(ladder.rung(key), harness_patch_load(world))
+    }
+
+    /// **The harness patch's own tender-load** — the measure the plant rungs' maintenance rate
+    /// scales by (`forage::patch_tender_loads`), the plant twin of [`harness_herd_load`]. Resolved
+    /// off [`SOURCE_BIOME`]'s own `K` rather than assumed to be one, because this harness stands on
+    /// `PrairieSteppe` and not on the reference tile: thin ground presents well under one load, and
+    /// that is the whole point of the measure.
+    fn harness_patch_load(world: &World) -> f32 {
+        let labor = world.resource::<LaborConfigHandle>().get();
+        crate::forage::patch_tender_loads(labor.forage.capacity_for(SOURCE_BIOME), &labor.forage)
     }
 
     /// **THE BUILD CREW AN ANIMAL FIXTURE STAFFS** — the same [`WORKERS`] the plant fixtures state,
@@ -5179,15 +5232,14 @@ mod labor_yield_tests {
     }
 
     /// **The harness herd's own keeper load** — the measure the animal rungs' maintenance rate
-    /// scales by (`fauna::herd_keeper_load`). A plant source has none, so the plant fixtures pass
-    /// [`crate::intensification::UNSCALED_UPKEEP`].
+    /// scales by (`fauna::herd_keeper_load`). The plant fixtures' twin is [`harness_patch_load`].
     fn harness_herd_load(world: &World) -> f32 {
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let registry = world.resource::<HerdRegistry>();
         registry
             .herds
             .first()
-            .map_or(crate::intensification::UNSCALED_UPKEEP, |herd| {
+            .map_or(crate::fauna::ONE_KEEPER_LOAD, |herd| {
                 fauna::herd_keeper_load(herd, &fauna)
             })
     }
@@ -6072,7 +6124,7 @@ mod labor_yield_tests {
 
         let with_upkeep = tended_upkeep(serde_json::json!({
             "work_per_turn": 1.0,
-            "scaled_by": "flat",
+            "scaled_by": "source_load",
             "grace_turns": 0,
         }));
         let without_upkeep = tended_upkeep(serde_json::Value::Null);
@@ -7407,8 +7459,14 @@ mod labor_yield_tests {
             "a gathering crew supplies nothing toward the keeping"
         );
         let ladder = world.resource::<LadderConfigHandle>().get();
+        let labor_cfg = world.resource::<LaborConfigHandle>().get();
+        // The bill is quoted per tender-load of this ground's own `K` — resolved through the
+        // config rather than assumed, since the harness stands on thin steppe, not the reference
+        // tile.
+        let tile_capacity = labor_cfg.forage.capacity_for(SOURCE_BIOME);
         assert!(
-            crate::forage::patch_upkeep_shortfall(patch, &ladder) > NO_UPKEEP_DEMAND,
+            crate::forage::patch_upkeep_shortfall(patch, &ladder, tile_capacity, &labor_cfg.forage,)
+                > NO_UPKEEP_DEMAND,
             "so a gathered-but-unkept tended patch is running a shortfall"
         );
         // Telemetry: `sustainable` is a *measured* MSY line, and a Sustain take is sustainable by
@@ -7679,8 +7737,13 @@ mod labor_yield_tests {
             let ladder = world.resource::<LadderConfigHandle>().get();
             let tended = ladder.rung(RungKey::PlantTended);
             (
-                build_work_per_turn(tended, FOOD_PEAK_FLOOR, UNSCALED_UPKEEP),
-                turns_to_finish(tended, FOOD_PEAK_FLOOR, RUNG_COST_UNSCALED, UNSCALED_UPKEEP),
+                build_work_per_turn(tended, FOOD_PEAK_FLOOR, harness_patch_load(&world)),
+                turns_to_finish(
+                    tended,
+                    FOOD_PEAK_FLOOR,
+                    RUNG_COST_UNSCALED,
+                    harness_patch_load(&world),
+                ),
             )
         };
 
@@ -8181,7 +8244,7 @@ mod labor_yield_tests {
                 ladder.rung(RungKey::PlantTended),
                 BUILDER_FLOOR,
                 RUNG_COST_UNSCALED,
-                UNSCALED_UPKEEP,
+                harness_patch_load(&world),
             )
         };
         let builders = plant_builders(&world, RungKey::PlantTended);

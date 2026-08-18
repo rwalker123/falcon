@@ -3461,9 +3461,15 @@ one-off `workCost` cannot state.
 - **`upkeepDemand` keeps its own meaning and its own readers.** It resolves through the AT-RISK rung,
   which is the right answer for *what is this source losing* and the wrong one for *what would this
   rung cost to hold*. Both ship; nothing may substitute one for the other.
-- **The plant pair is still deliberately NOT in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`, and for ONE
-  reason now.** Both plant rungs declare `scaled_by: flat`, so the figure is the ladder's and reads
-  identically on every patch in the game — there is no live patch state in it to leak. The second
+- **The plant pair is still deliberately NOT in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`, and the reason
+  it survives the move onto `scaled_by: source_load` is worth stating.** The pair no longer reads
+  identically on every patch — it is scaled by the patch's **tender-load** — but that load is
+  `tile forage capacity / capacity_per_tender`, a pure function of the tile's **terrain**, which a
+  Discovered tile remembers by definition. It is the same argument `patch_carrying_capacity` already
+  rides on ("Fog splits a stock from its CAPACITY"): no player action moves it, so the figure sent
+  for an unseen hex is the figure that hex last showed. **What would break this is a scale term that
+  read live patch state** — `ForagePatch::carrying_capacity`, say, which carries the rung's own gain
+  — and that is a second reason the measure reads the tile's K rather than the patch's. The second
   reason it used to carry — that redacting it would cost the closed form its rate term — died with the
   subtraction. **`patch_meter_rot_per_turn` IS redacted**, beside the shortfall it is derived from,
   and nothing is lost by that: a remembered tile's whole build payload is redacted, so the estimate

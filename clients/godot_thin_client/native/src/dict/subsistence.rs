@@ -683,6 +683,17 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("owner", patch.owner() as i64);
         let _ = dict.insert("biomass", patch.biomass());
         let _ = dict.insert("carrying_capacity", patch.carryingCapacity());
+        // **WHAT THE *GROUND* HOLDS** — this tile's own forage `K` off `forage.capacity_by_biome`,
+        // with NO rung gain in it, beside the patch's CURRENT ceiling above. The two are not one
+        // number: `carrying_capacity` is that figure times the interpolated `field_capacity_gain`, so
+        // a standing Field reads ~2.53x the same ground wild. That gain is LIVE STATE THAT CARRIES
+        // THE RUNG — publishing it on a hex the player only REMEMBERS hands over the ladder position
+        // `is_field`/`field_progress` are redacted to hide, and continuously, since it interpolates.
+        // So the client redacts `carrying_capacity` under fog and renders this one instead
+        // (`MapView.FOW_DISCOVERED_HIDDEN_KEYS`); no player action moves a tile's terrain, which is
+        // exactly what makes this safe to remember. It is ALSO the denominator the plant standing
+        // upkeep is quoted per — see the per-rung block below.
+        let _ = dict.insert("tile_capacity", patch.tileCapacity());
         if let Some(ecology_phase) = patch.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
@@ -1015,8 +1026,12 @@ pub(crate) fn forage_patches_to_array(
         );
         // **THE STANDING PRICE, PER RUNG** — the plant twin of the herd block's pair; see there for
         // why `upkeep_demand` cannot price a rung nobody has started, and why this is a price rather
-        // than a threshold. Both plant rungs declare `scaled_by: flat`, so these are the ladder's
-        // numbers verbatim (2 and 4 work a turn today) and are the same on every patch in the game.
+        // than a threshold. Both plant rungs declare `scaled_by: source_load` and quote their rate
+        // PER TENDER-LOAD, so the sim strikes each through **this patch's own `tile_capacity`** (the
+        // same measure `patch_upkeep_demand` bills against) before it ships them. They therefore
+        // differ from patch to patch, and reading them as the ladder's bare rates would promise `4.0`
+        // for a Field about to be billed `4.31`. They scale off the TILE's `K`, never the patch's, so
+        // they carry no rung and survive fog — see `tile_capacity` above.
         let _ = dict.insert("cultivation_upkeep_demand", patch.cultivationUpkeepDemand());
         let _ = dict.insert("field_upkeep_demand", patch.fieldUpkeepDemand());
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the plant twin, and the one web where it is

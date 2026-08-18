@@ -80,7 +80,7 @@ use crate::{
         interpolate, rung_span, upkeep_shortfall, BuildLeg, LadderConfig, LadderConfigHandle,
         RungBranch, RungDef, RungKey, RungStanding, SiteRefusal, LEG_ALREADY_PAID, NEGLECT_NONE,
         NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
-        RUNG_COST_UNSCALED, RUNG_UNSTARTED, UNSCALED_UPKEEP,
+        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
@@ -2395,9 +2395,17 @@ pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig)
 /// so the demand the sim bleeds against, the demand the player is billed for and the demand the wire
 /// shows can never be three different answers.
 ///
-/// [`UNSCALED_UPKEEP`] because a patch is **one tile**: the plant web has no head count for a rate to
-/// ride, which is the whole reason [`crate::intensification::UpkeepScale::SourceLoad`] exists for the
-/// pen instead.
+/// # IT SCALES WITH THE SIZE OF THE LAND, and the measure is [`patch_tender_loads`]
+///
+/// Both plant rungs declare `scaled_by: source_load` and quote their rate **per tender-load**, so a
+/// rich alluvial patch costs more to hold than a thin steppe one. One tile is exactly what the load
+/// measures — the tile's own `K` over `forage.cultivation.capacity_per_tender` — which is why the
+/// tile's capacity is a **parameter here** rather than something the caller pre-scales: no caller can
+/// pass a bare `1.0` by habit and quietly re-flatten the bill.
+///
+/// **The measure applies ONCE, across the interpolation**, because it rides inside each endpoint's
+/// own `upkeep_demand` and both endpoints carry the same load. A Field half-raised on a tile of
+/// `loads` therefore owes `loads × (tended + 0.5 × (field − tended))`, never the factor twice.
 ///
 /// **It takes no verb any more.** The verb term existed because the demand *stepped* when a `Sow`
 /// started on finished tended ground — the claim side and the payment side had to agree which meter
@@ -2405,11 +2413,59 @@ pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig)
 /// the interpolated demand is exactly the tended rung's, and it rises continuously from there. What
 /// the verb still decides — *does this source claim a share at all before it has banked anything* —
 /// is [`patch_claims_keeping`].
-pub fn patch_upkeep_demand(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
+pub fn patch_upkeep_demand(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    let loads = patch_tender_loads(tile_capacity, forage);
     interpolate(&patch.standing(), |rung| {
-        ladder.rung(rung).upkeep_demand(UNSCALED_UPKEEP)
+        ladder.rung(rung).upkeep_demand(loads)
     })
 }
+
+/// **THE PLANT WEB'S SCALE MEASURE** — how many *tender-loads* a tile presents, `tile_capacity /
+/// forage.cultivation.capacity_per_tender`. The exact twin of [`crate::fauna::herd_keeper_loads`],
+/// which divides a herd's head count by the species' `animals_per_herder`: the web owns the ratio,
+/// the rung owns the rate.
+///
+/// # ⛔ IT TAKES THE **TILE'S** `K`, NEVER [`ForagePatch::carrying_capacity`]
+///
+/// [`patch_carrying_capacity`] has already multiplied the tile's `K` by
+/// `cultivation.field_capacity_gain`, **interpolated on the very ladder position the upkeep demand
+/// interpolates on**. Reading the patch would therefore bill the gain and the rate's own climb
+/// together, landing a Field near ten times a tended patch — a cost nobody chose. **The tile's `K` is
+/// the size of the place; the gain is the rung's payout.** Callers resolve it through
+/// [`tile_forage_capacity`], the single source of truth for the land's `K`.
+///
+/// # It is a MEASURE, not a demand — the ladder turns it into one
+///
+/// Both plant rungs declare `work_per_turn × scaled_by: source_load`, so `upkeep_demand = rate ×
+/// loads`. [`NO_TENDER_LOAD`] where either term is not positive — barren ground, or a patch whose
+/// tile is off the map — which is the same *"there is nothing here to keep"* the animal web's
+/// `NO_KEEPER_LOAD` states.
+pub fn patch_tender_loads(tile_capacity: f32, forage: &ForageLaborConfig) -> f32 {
+    // NaN-safe by construction: every guard is a positive test, so a NaN input falls through to `0`
+    // (no load) rather than sneaking past a negated comparison.
+    let sane = tile_capacity > 0.0 && forage.cultivation.capacity_per_tender > 0.0;
+    if !sane {
+        return NO_TENDER_LOAD;
+    }
+    tile_capacity / forage.cultivation.capacity_per_tender
+}
+
+/// **GROUND THAT PRESENTS NOTHING TO TEND** — a tile with no forage capacity at all, or one that is
+/// not on the map. Named because a bare `0.0` in a load position reads as a missing value rather than
+/// the deliberate *"there is nothing here to keep"* it is. The plant twin of
+/// [`crate::fauna::NO_KEEPER_LOAD`].
+pub const NO_TENDER_LOAD: f32 = 0.0;
+
+/// **ONE tender-load** — the measure at which both plant rungs' `upkeep.work_per_turn` is quoted, so
+/// `rung.upkeep_demand(ONE_TENDER_LOAD)` reads back *"the work one tender-load costs"*. The plant twin
+/// of [`crate::fauna::ONE_KEEPER_LOAD`], and the reading the **reference tile** presents by
+/// construction: `cultivation.capacity_per_tender` ships at that tile's own `K`.
+pub const ONE_TENDER_LOAD: f32 = 1.0;
 
 /// **DOES THIS SOURCE DRAW ON THE BAND'S KEEPING POOL AT ALL?** — the boolean the three keeping seams
 /// share (`docs/plan_standing_upkeep.md` §2.5/§4.6a): there is work on the ladder to hold, **or** a
@@ -2502,10 +2558,15 @@ pub fn patch_upkeep_supply(
 /// so what the sim bleeds, what the wire bills and what the wire forecasts cannot be three different
 /// demands. The `None` arm is what keeps an **abandoned** patch honest: nobody was handed a bill, so
 /// the whole of the live one went unmet and the ground reverts.
-pub fn patch_keeping_basis(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
+pub fn patch_keeping_basis(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> f32 {
     patch
         .upkeep_demanded
-        .unwrap_or_else(|| patch_upkeep_demand(patch, ladder))
+        .unwrap_or_else(|| patch_upkeep_demand(patch, ladder, tile_capacity, forage))
 }
 
 /// **WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — what
@@ -2523,12 +2584,18 @@ pub fn patch_keeping_basis(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
 ///
 /// [`NO_UPKEEP_DECAY`] on a wild patch, on one whose keeping covers its demand, and on one still
 /// inside its rung's grace.
-pub fn patch_meter_rot(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
+pub fn patch_meter_rot(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> f32 {
     patch_unwinding_rung(patch, ladder).map_or(NO_UPKEEP_DECAY, |rung| {
-        // **Against the bill that was issued**, not the rung's own flat rate — the demand this web
-        // owes is interpolated, so the rung's number is not what these keepers were asked for.
+        // **Against the bill that was issued**, not the rung's own declared rate — the demand this
+        // web owes is interpolated *and* scaled by the tile's tender-loads, so the rung's number is
+        // not what these keepers were asked for.
         rung.meter_rot_against(
-            patch_keeping_basis(patch, ladder),
+            patch_keeping_basis(patch, ladder, tile_capacity, forage),
             patch.upkeep_supplied,
             patch.neglect_turns,
         )
@@ -2543,8 +2610,16 @@ pub fn patch_meter_rot(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
 /// only visits sources some band is assigned to, so a stored shortfall would read a tidy `0` on
 /// exactly the patches that are bleeding — a wire row saying *"demand 0.75, supplied 0, shortfall 0"*
 /// while the sim reverts the ground underneath it.
-pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32 {
-    upkeep_shortfall(patch_keeping_basis(patch, ladder), patch.upkeep_supplied)
+pub fn patch_upkeep_shortfall(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    upkeep_shortfall(
+        patch_keeping_basis(patch, ladder, tile_capacity, forage),
+        patch.upkeep_supplied,
+    )
 }
 
 /// **The MAINTAIN activity's own `workers_needed`** — whole keepers to meet
@@ -2569,8 +2644,13 @@ pub fn patch_upkeep_shortfall(patch: &ForagePatch, ladder: &LadderConfig) -> f32
 /// contradicts itself: the bill is stamped *before* the turn's build accrual, so the live demand at
 /// capture is already the higher number, and a patch mid-`Sow` published *"wants 3, you have 2"*
 /// beside a shortfall of zero.
-pub fn patch_upkeep_workers_needed(patch: &ForagePatch, ladder: &LadderConfig) -> u32 {
-    let demand = patch_keeping_basis(patch, ladder);
+pub fn patch_upkeep_workers_needed(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    tile_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> u32 {
+    let demand = patch_keeping_basis(patch, ladder, tile_capacity, forage);
     if demand <= NO_UPKEEP_DEMAND {
         return NO_CREW_ON_THIS_ACTIVITY;
     }
@@ -2580,11 +2660,29 @@ pub fn patch_upkeep_workers_needed(patch: &ForagePatch, ladder: &LadderConfig) -
 pub fn advance_cultivation(
     mut registry: ResMut<ForageRegistry>,
     ladder_config: Res<LadderConfigHandle>,
+    labor_config: Res<LaborConfigHandle>,
+    tile_registry: Res<crate::resources::TileRegistry>,
+    tiles: Query<&Tile>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
 ) {
     let ladder = ladder_config.get();
+    let labor = labor_config.get();
+    let forage = &labor.forage;
     for patch in registry.patches.values_mut() {
+        // **THE SIZE OF THE LAND UNDER THIS PATCH** — the tile's own `K`, looked up exactly as
+        // `advance_forage_regrowth` looks it up, because the plant upkeep is quoted **per
+        // tender-load** (`patch_tender_loads`) and one tile is what a load measures. A patch whose
+        // tile is absent from the map reads [`NO_FORAGE_CAPACITY`] and therefore no load at all —
+        // the same *"ground nobody can see offers nothing"* reading the regrowth pass, the labor
+        // arm's composition and the capture already take, rather than a substituted capacity that
+        // would bill land that is not there.
+        let tile_capacity = tile_registry
+            .index(patch.tile.x, patch.tile.y)
+            .and_then(|entity| tiles.get(entity).ok())
+            .map_or(NO_FORAGE_CAPACITY, |tile| {
+                tile_forage_capacity(forage, tile)
+            });
         // **Newest first, through the one seam the wire reads too.** Exactly one meter is ever at
         // risk — the Field while it has anything left, then the tended ground under it — and that
         // rung owns *both* halves of the question, because the grace sits inside the same `upkeep`
@@ -2604,7 +2702,7 @@ pub fn advance_cultivation(
         // **THE BILL THE KEEPERS WERE HANDED, not the one that has since risen** — see
         // `ForagePatch::upkeep_demanded`. Judging the lagged supply against a demand that moved
         // under it makes a fully-staffed source permanently short the moment its meter climbs.
-        let demand = patch_keeping_basis(patch, &ladder);
+        let demand = patch_keeping_basis(patch, &ladder, tile_capacity, forage);
         let shortfall = upkeep_shortfall(demand, patch.upkeep_supplied);
         // **HOW SHORT, as a fraction of what was asked** — what the decay actually rides
         // (`crate::intensification::upkeep_shortfall_fraction`). The absolute shortfall still gates
@@ -3706,6 +3804,15 @@ mod tests {
     /// one a `RiverineDelta` food module actually sits on.
     const TEST_BIOME: TerrainType = TerrainType::AlluvialPlain;
 
+    /// **[`TEST_BIOME`] IS THE REFERENCE TILE**, and every upkeep assertion below leans on it: its
+    /// own `K` (195) is exactly `forage.cultivation.capacity_per_tender`, so a patch standing on it
+    /// presents [`ONE_TENDER_LOAD`] and owes precisely the rate its rung declares. A test that wants
+    /// the *scaling* to show has to stand somewhere else — see
+    /// [`a_rich_patch_costs_more_to_hold_than_a_thin_one`].
+    fn test_tile_capacity() -> f32 {
+        test_forage_config().capacity_for(TEST_BIOME)
+    }
+
     /// **The basket of a patch standing on no tile at all** — empty, which is exactly what these
     /// mechanics tests want: they exercise biomass/regrowth/policy, not composition, and an empty
     /// basket makes every rate fall back to `forage.provisions_per_biomass`, the number the
@@ -4315,40 +4422,212 @@ mod tests {
     /// interpolates on exactly the standing the payout does, so a Field half-raised owes a whole
     /// tended patch plus half of what a Field adds.
     ///
-    /// On the shipped ladder that is `2.0 + 0.5 × (4.0 − 2.0) = 3.0`, and the **delta** form is what
-    /// is asserted: a flat fraction of the Field's own rate would answer `2.0`, which is the reading
+    /// Per tender-load that is `2.0 + 0.5 × (4.0 − 2.0) = 3.0`, and the **delta** form is what is
+    /// asserted: a flat fraction of the Field's own rate would answer `2.0`, which is the reading
     /// §2.8's callout exists to rule out.
+    ///
+    /// # AND THE SCALE MEASURE APPLIES **ONCE**, ACROSS THE INTERPOLATION
+    ///
+    /// It is deliberately run on a **scaled** tile rather than the reference one, so `loads ≠ 1`
+    /// and every wrong place to apply the factor gives a different number: once per endpoint would
+    /// square it, once on the delta alone would leave the tended term unscaled. The measure rides
+    /// inside each endpoint's own `upkeep_demand` and both endpoints carry the same load, so the
+    /// interpolation is linear in it and the answer is `loads × (tended + f × (field − tended))`.
     #[test]
     fn a_half_raised_field_owes_the_tended_rate_in_full_plus_half_the_step() {
         const HALF_WAY_UP: f32 = 0.5;
+        let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let (field_base, field_width) = plant_rung_span(RungKey::PlantField, &ladder);
         let tended = ladder
             .rung(RungKey::PlantTended)
-            .upkeep_demand(UNSCALED_UPKEEP);
+            .upkeep_demand(ONE_TENDER_LOAD);
         let field = ladder
             .rung(RungKey::PlantField)
-            .upkeep_demand(UNSCALED_UPKEEP);
+            .upkeep_demand(ONE_TENDER_LOAD);
         assert!(
             field > tended,
             "fixture: the demands must climb, or the delta is zero and the form is untestable"
         );
 
-        let mut patch = ForagePatch::new(UVec2::new(4, 4), 120.0);
+        // A tile deliberately NOT the reference one, so the measure is visible in the answer.
+        let tile_capacity = forage.capacity_for(SCALED_TILE_BIOME);
+        let loads = patch_tender_loads(tile_capacity, &forage);
+        assert!(
+            (loads - ONE_TENDER_LOAD).abs() > 1e-3,
+            "fixture: the tile must NOT read one load, or applying the factor twice would be \
+             invisible ({loads})"
+        );
+
+        let mut patch = ForagePatch::new(UVec2::new(4, 4), tile_capacity);
         patch.set_ladder_position(field_base + field_width * HALF_WAY_UP, &ladder);
-        let owed = patch_upkeep_demand(&patch, &ladder);
-        let expected = tended + HALF_WAY_UP * (field - tended);
+        let owed = patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage);
+        let expected = loads * (tended + HALF_WAY_UP * (field - tended));
         assert!(
             (owed - expected).abs() < 1e-4,
-            "a half-raised Field owes {expected}, not {owed}"
+            "a half-raised Field on {loads} tender-loads owes {expected}, not {owed}"
         );
         assert!(
-            owed > field * HALF_WAY_UP,
+            (owed - loads * loads * (tended + HALF_WAY_UP * (field - tended))).abs() > 1e-3,
+            "…and the measure is applied ONCE, not once per endpoint — {owed} against the squared \
+             reading {}",
+            loads * loads * (tended + HALF_WAY_UP * (field - tended))
+        );
+        assert!(
+            owed > loads * field * HALF_WAY_UP,
             "…and NOT a flat fraction of the Field's own rate, which is the reading §2.8 rules out \
              ({owed} against {})",
-            field * HALF_WAY_UP
+            loads * field * HALF_WAY_UP
         );
     }
+
+    /// **A tile that is NOT the reference tile** — `RiverDelta`'s `K` of 210 against the reference
+    /// 195, so a patch on it reads `210 / 195` tender-loads and any figure quoted per load shows the
+    /// scaling instead of hiding behind a factor of one.
+    const SCALED_TILE_BIOME: TerrainType = TerrainType::RiverDelta;
+
+    /// **A THIN TILE** — `PrairieSteppe`'s `K` of 70, well under the reference 195, so a patch on it
+    /// owes materially LESS than the rung's declared rate. The other end of the same claim.
+    const THIN_TILE_BIOME: TerrainType = TerrainType::PrairieSteppe;
+
+    /// **THE BILL IS THE SIZE OF THE LAND** — two patches at the *same* ladder position on tiles of
+    /// different `K` owe in exactly the ratio of those `K`s, because both plant rungs quote their rate
+    /// per tender-load (`patch_tender_loads`). This is the whole of what `scaled_by: source_load`
+    /// buys the plant web: a rich alluvial patch costs more to hold than a thin steppe one.
+    #[test]
+    fn a_rich_patch_costs_more_to_hold_than_a_thin_one() {
+        let forage = test_forage_config();
+        let ladder = LadderConfig::builtin();
+        let (base, width) = plant_rung_span(RungKey::PlantTended, &ladder);
+        let held = base + width;
+
+        let rich_capacity = forage.capacity_for(SCALED_TILE_BIOME);
+        let thin_capacity = forage.capacity_for(THIN_TILE_BIOME);
+        let mut rich = ForagePatch::new(UVec2::new(1, 1), rich_capacity);
+        let mut thin = ForagePatch::new(UVec2::new(2, 2), thin_capacity);
+        rich.set_ladder_position(held, &ladder);
+        thin.set_ladder_position(held, &ladder);
+
+        // **THE PRECONDITION: the two really are at the same position.** Without it the pair can pass
+        // by both sides collapsing — two zeroes are in every ratio there is.
+        assert_eq!(
+            rich.ladder_position(),
+            thin.ladder_position(),
+            "PRECONDITION: the two patches must stand on the SAME rung, or this compares positions \
+             and not ground"
+        );
+        assert!(
+            rich_capacity > thin_capacity && thin_capacity > NO_FORAGE_CAPACITY,
+            "PRECONDITION: the two tiles must differ in `K`, or the ratio below is 1 whatever the \
+             mechanism ({rich_capacity} against {thin_capacity})"
+        );
+
+        let rich_bill = patch_upkeep_demand(&rich, &ladder, rich_capacity, &forage);
+        let thin_bill = patch_upkeep_demand(&thin, &ladder, thin_capacity, &forage);
+        assert!(
+            thin_bill > NO_UPKEEP_DEMAND,
+            "PRECONDITION: the thin patch must owe something, or the ratio is a division by zero"
+        );
+        assert!(
+            (rich_bill / thin_bill - rich_capacity / thin_capacity).abs() < 1e-4,
+            "the demand ratio IS the capacity ratio: {rich_bill}/{thin_bill} against \
+             {rich_capacity}/{thin_capacity}"
+        );
+    }
+
+    /// **⛔ THE TRAP: CLIMBING TO A FIELD MUST NOT COMPOUND THE CAPACITY GAIN.**
+    ///
+    /// [`patch_carrying_capacity`] multiplies the tile's `K` by `field_capacity_gain`, interpolated
+    /// on the very ladder position the upkeep demand interpolates on. If the measure read the
+    /// **patch's** capacity rather than the **tile's**, a finished Field would be billed
+    /// `4.0 × gain × tile_K / capacity_per_tender` — the 2.53 gain stacked on top of the rate's own
+    /// `2.0 → 4.0`, landing near ten times a tended patch's bill, a cost nobody chose.
+    ///
+    /// The tile's `K` is the size of the place; the gain is the rung's **payout**.
+    #[test]
+    fn climbing_to_field_does_not_compound_the_capacity_gain() {
+        let forage = test_forage_config();
+        let ladder = LadderConfig::builtin();
+        let (field_base, field_width) = plant_rung_span(RungKey::PlantField, &ladder);
+
+        // Deliberately NOT the reference tile, so `tile_K / capacity_per_tender ≠ 1` and the two
+        // readings below are different numbers.
+        let tile_capacity = forage.capacity_for(SCALED_TILE_BIOME);
+        let mut patch = ForagePatch::new(UVec2::new(5, 5), tile_capacity);
+        patch.set_ladder_position(field_base + field_width, &ladder);
+        // The one write that sets a patch's capacity (`advance_forage_regrowth`), replayed here.
+        patch.carrying_capacity = patch_carrying_capacity(tile_capacity, &patch, &forage);
+
+        // **THE PRECONDITION: the gain really did apply.** Without it this test passes on any turn
+        // the Field's capacity boost silently stops working, which is the failure it exists to catch.
+        assert!(
+            (patch.carrying_capacity - tile_capacity * forage.cultivation.field_capacity_gain)
+                .abs()
+                < 1e-3,
+            "PRECONDITION: a standing Field holds `field_capacity_gain ×` the tile's own K — \
+             {} against {tile_capacity} × {}",
+            patch.carrying_capacity,
+            forage.cultivation.field_capacity_gain
+        );
+        assert!(
+            forage.cultivation.field_capacity_gain > NO_GROWTH_GAIN,
+            "PRECONDITION: the gain must be a real multiplier, or there is nothing to compound"
+        );
+
+        let field_rate = ladder
+            .rung(RungKey::PlantField)
+            .upkeep_demand(ONE_TENDER_LOAD);
+        let expected = field_rate * tile_capacity / forage.cultivation.capacity_per_tender;
+        let owed = patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage);
+        assert!(
+            (owed - expected).abs() < 1e-4,
+            "a Field owes the rung's rate per tender-load of the TILE's K: {owed} against {expected}"
+        );
+        assert!(
+            (owed - expected * forage.cultivation.field_capacity_gain).abs() > 1e-3,
+            "…and emphatically NOT that times the capacity gain, which is the reading that lands a \
+             Field near ten times a tended patch: {owed} against {}",
+            expected * forage.cultivation.field_capacity_gain
+        );
+    }
+
+    /// **THE PACING PIN: the reference tile owes exactly what it owed before the measure existed.**
+    /// `cultivation.capacity_per_tender` ships at `AlluvialPlain`'s own `K`, so a patch there presents
+    /// exactly [`ONE_TENDER_LOAD`] and the conversion from a flat rate to a per-load one is provably
+    /// neutral: `2.0` tended and `4.0` on a Field, the rates the ladder already declared.
+    #[test]
+    fn the_reference_tile_owes_exactly_what_it_owed() {
+        let forage = test_forage_config();
+        let ladder = LadderConfig::builtin();
+        let reference = forage.capacity_for(TEST_BIOME);
+        assert!(
+            (patch_tender_loads(reference, &forage) - ONE_TENDER_LOAD).abs() < 1e-6,
+            "PRECONDITION: `capacity_per_tender` ({}) is the reference tile's own K ({reference})",
+            forage.cultivation.capacity_per_tender
+        );
+
+        for (key, expected) in [
+            (RungKey::PlantTended, TENDED_RATE_BEFORE_THE_MEASURE),
+            (RungKey::PlantField, FIELD_RATE_BEFORE_THE_MEASURE),
+        ] {
+            let (base, width) = plant_rung_span(key, &ladder);
+            let mut patch = ForagePatch::new(UVec2::new(0, 0), reference);
+            patch.set_ladder_position(base + width, &ladder);
+            let owed = patch_upkeep_demand(&patch, &ladder, reference, &forage);
+            assert!(
+                (owed - expected).abs() < 1e-5,
+                "{key:?} on the reference tile owes {expected} — the number it owed while the rate \
+                 was flat — got {owed}"
+            );
+        }
+    }
+
+    /// **The two plant rungs' shipped rates, restated at the point the conversion promised to hold
+    /// them.** Named rather than read back off the ladder deliberately: reading the ladder would make
+    /// [`the_reference_tile_owes_exactly_what_it_owed`] a tautology, and what it pins is that these
+    /// two *numbers* survived the move from a flat rate to a per-tender-load one.
+    const TENDED_RATE_BEFORE_THE_MEASURE: f32 = 2.0;
+    const FIELD_RATE_BEFORE_THE_MEASURE: f32 = 4.0;
 
     /// **⛔ THE RUNG-ORDERING BUG IS UNREPRESENTABLE.** Ray built a Field on a tended patch and got
     /// *Field above 0% while Cultivation read 99%*; with two independent meters that state could be
@@ -4509,7 +4788,7 @@ mod tests {
                 .expect("both plant rungs build");
             // **The whole demand is what a patch with no keepers goes short by**, which is the step
             // that turns a staffing into a rot rate.
-            let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+            let demand = rung.upkeep_demand(ONE_TENDER_LOAD);
             let fraction = crate::intensification::upkeep_shortfall_fraction(
                 demand,
                 crate::intensification::NO_UPKEEP_DEMAND,
@@ -4556,7 +4835,7 @@ mod tests {
             .expect("the tended rung builds");
         let demand = ladder
             .rung(RungKey::PlantTended)
-            .upkeep_demand(UNSCALED_UPKEEP);
+            .upkeep_demand(ONE_TENDER_LOAD);
 
         const HALF_WAY_UP: f32 = 0.5;
         let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
@@ -4564,7 +4843,7 @@ mod tests {
         // --- Half-built: billed to the pool, at the INTERPOLATED rate. -------------------------
         patch.set_ladder_position(cost * HALF_WAY_UP, &ladder);
         assert_eq!(
-            patch_upkeep_workers_needed(&patch, &ladder),
+            patch_upkeep_workers_needed(&patch, &ladder, test_tile_capacity(), &forage),
             (demand * HALF_WAY_UP).ceil() as u32,
             "hands to meet the rate the position actually owes"
         );
@@ -4594,10 +4873,10 @@ mod tests {
         // is achieved exactly at the top of its span, which is where the position now sits.
         patch.set_ladder_position(cost, &ladder);
         assert_eq!(
-            patch_upkeep_workers_needed(&patch, &ladder),
+            patch_upkeep_workers_needed(&patch, &ladder, test_tile_capacity(), &forage),
             ladder
                 .rung(RungKey::PlantTended)
-                .upkeep_crew_needed(UNSCALED_UPKEEP),
+                .upkeep_crew_needed(ONE_TENDER_LOAD),
             "a held rung asks for the hands that hold it"
         );
         assert_eq!(
@@ -4622,7 +4901,10 @@ mod tests {
              does. What makes that safe is the payout, which is still 99% of a tended patch's"
         );
         assert!(
-            (patch_upkeep_demand(&patch, &ladder) - demand * ALL_BUT_FINISHED).abs() < 1e-3,
+            (patch_upkeep_demand(&patch, &ladder, test_tile_capacity(), &forage)
+                - demand * ALL_BUT_FINISHED)
+                .abs()
+                < 1e-3,
             "and it owes 99% of the rate, which is the other half of the same statement"
         );
 
@@ -4643,14 +4925,17 @@ mod tests {
 
         // --- A wild patch: nothing built, nothing owed, nobody wanted. -------------------------
         let wild = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
-        assert_eq!(patch_upkeep_demand(&wild, &ladder), NO_UPKEEP_DEMAND);
+        assert_eq!(
+            patch_upkeep_demand(&wild, &ladder, test_tile_capacity(), &forage),
+            NO_UPKEEP_DEMAND
+        );
         assert_eq!(
             patch_upkeep_supply(&wild, None, A_KEEPERS_TURN),
             NO_UPKEEP_DEMAND,
             "ground with nothing on it cannot be billed, so nothing can be short"
         );
         assert_eq!(
-            patch_upkeep_workers_needed(&wild, &ladder),
+            patch_upkeep_workers_needed(&wild, &ladder, test_tile_capacity(), &forage),
             NO_CREW_ON_THIS_ACTIVITY
         );
         assert!(
@@ -4680,15 +4965,18 @@ mod tests {
         const HALF_WAY_UP: f32 = 0.5;
         let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
         patch.set_ladder_position(cost * HALF_WAY_UP, &ladder);
-        let demand = patch_upkeep_demand(&patch, &ladder);
+        let demand = patch_upkeep_demand(&patch, &ladder, test_tile_capacity(), &forage);
         assert!(
-            (demand - rung.upkeep_demand(UNSCALED_UPKEEP) * HALF_WAY_UP).abs() < 1e-4,
+            (demand - rung.upkeep_demand(ONE_TENDER_LOAD) * HALF_WAY_UP).abs() < 1e-4,
             "a half-raised tended rung owes half the tended rung's rate"
         );
 
         let short_at = |keeping_share: f32| -> f32 {
             let supplied = patch_upkeep_supply(&patch, Some(Improvement::Cultivate), keeping_share);
-            crate::intensification::upkeep_shortfall(patch_upkeep_demand(&patch, &ladder), supplied)
+            crate::intensification::upkeep_shortfall(
+                patch_upkeep_demand(&patch, &ladder, test_tile_capacity(), &forage),
+                supplied,
+            )
         };
 
         assert_eq!(
@@ -4716,7 +5004,7 @@ mod tests {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let tended_rung = ladder.rung(RungKey::PlantTended);
-        let demand = tended_rung.upkeep_demand(UNSCALED_UPKEEP);
+        let demand = tended_rung.upkeep_demand(ONE_TENDER_LOAD);
         let cost = tended_rung
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
@@ -4764,7 +5052,7 @@ mod tests {
     fn a_half_staffed_keeping_bleeds_at_half_rate() {
         let ladder = LadderConfig::builtin();
         let rung = ladder.rung(RungKey::PlantTended);
-        let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+        let demand = rung.upkeep_demand(ONE_TENDER_LOAD);
         let half = demand / 2.0;
         assert!(
             (crate::intensification::upkeep_shortfall(demand, half) - half).abs() < 1e-6,

@@ -911,6 +911,26 @@ static func _split_kv(line: String) -> Array:
 static func tile_is_gathering_site(tile_info: Dictionary) -> bool:
     return String(tile_info.get("food_module", "")).strip_edges() != ""
 
+## **THE ONE ANSWER TO "WHAT FORAGE CAPACITY DOES THIS CARD SHOW"** — the patch's live ceiling where
+## the player can see it, the tile's own ground `K` where they only remember it. `0.0` where the
+## ground carries no patch at all, which is every caller's "print no row" test.
+##
+## **The two keys are not interchangeable and the pick is the fog rule** (`MapView.FOW_DISCOVERED_HIDDEN_KEYS`
+## header). `patch_carrying_capacity` is the tile's `K` times the interpolated `field_capacity_gain`,
+## so it carries the ladder position and is REDACTED on a Discovered hex; `patch_tile_capacity` is
+## terrain and survives. Presence therefore IS the visibility here — a card that gets the ceiling is
+## looking at the patch, one that does not falls back to the ground beneath it.
+##
+## **NOBODY ELSE MAY WRITE THIS `or`.** The stock row and the basket's capacity guard both need it,
+## one level apart, and two sites answering one question is precisely how this card ends up stating a
+## ceiling its own decomposition disagrees with. It is a ROW reader only: the harvest-floor arithmetic
+## takes `patch_carrying_capacity` straight, because a floor is a fraction of the stand ACTUALLY
+## standing here and that instrument does not render on a hex the player cannot see.
+static func patch_capacity(tile_info: Dictionary) -> float:
+    if tile_info.has("patch_carrying_capacity"):
+        return float(tile_info["patch_carrying_capacity"])
+    return float(tile_info.get("patch_tile_capacity", 0.0))
+
 ## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's BBCode
 ## hex and the chip's Color, so the two forms cannot drift apart.
 static func sight_is_live(value: String) -> bool:

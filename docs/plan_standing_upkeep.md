@@ -862,6 +862,51 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     hold differs by what it is. The animal web has had this since slice 4 (`SourceLoad`, the herd's
     own keeper load); the plant web needs its own measure, most likely the patch's capacity.
     **Mechanism, not tuning** — it is a scale primitive, and the numbers move in §4.14 regardless.
+    > **LANDED.** The plant's measure is `forage::patch_tender_loads` =
+    > `tile forage capacity / capacity_per_tender`, the exact twin of `head count /
+    > animals_per_herder`, so one rate says *a tender minds this much standing crop*. Both plant
+    > rungs declare `scaled_by: source_load` at unchanged rates of `2.0` and `4.0`.
+    >
+    > **① THE MEASURE READS THE TILE'S K, NOT THE PATCH'S — and the alternative was measured, not
+    > argued.** `ForagePatch::carrying_capacity` is the tile's K *already multiplied* by an
+    > interpolated `field_capacity_gain`, and the demand interpolates on the same position, so the
+    > two compound: under sabotage a Field on `RiverDelta` billed **10.898** work/turn against the
+    > **4.308** it owes — the 2.53× landing on top of the rate's own climb, exactly as predicted.
+    > The tile's K is the size of the *place*; the gain is the rung's *payout*. `labor_config.json`
+    > already stated the first half — *the land owns K and no rung may lower it* (#433) — and this is
+    > the second: **no rung may be billed for the K it raised.**
+    >
+    > **② `capacity_per_tender` IS 195.0, the reference tile's own K**, so the conversion is provably
+    > pacing-neutral on `AlluvialPlain` and nowhere else, which is the point. Measured, work/turn:
+    >
+    > | tile | K | tender-loads | tended | half-raised | Field |
+    > |---|---|---|---|---|---|
+    > | `PrairieSteppe` | 70 | 0.359 | 0.718 | 1.077 | 1.436 |
+    > | `AlluvialPlain` | 195 | 1.000 | **2.000** | **3.000** | **4.000** |
+    > | `RiverDelta` | 210 | 1.077 | 2.154 | 3.231 | 4.308 |
+    >
+    > **The plant demands stop being whole numbers a player can staff on the nose**, which they were
+    > chosen to be. That is the cost of scaling and it was taken deliberately: *"two hands hold a
+    > tended patch"* is now true of one biome rather than of the ladder.
+    >
+    > **③ `UpkeepScale::Flat` AND `UNSCALED_UPKEEP` ARE DELETED — this answers §6's open item.** With
+    > both plant rungs scaled, nothing declared `flat`, and the rung-monotonicity check compares only
+    > adjacent rungs *sharing* a `scaled_by` — so the unused variant was a way for a rung to opt out
+    > of that check silently. With one variant every adjacent pair is now compared. **The `scaled_by`
+    > key stays**: §4.13's `length × terrain` is the next primitive to land in it. One primitive with
+    > a per-branch reading beat a second variant, because the rung already declares its `branch` and
+    > a variant would have restated it.
+    >
+    > **④ THE PRICE QUOTE HAD TO MOVE WITH THE BILL.** `cultivationUpkeepDemand` /
+    > `fieldUpkeepDemand` — what the compose sheet shows *before* you commit — were the bare ladder
+    > rates, identical on every patch. Left alone they would have quoted `4.0` for a Field the
+    > keeping pool bills `4.31`: two producers of one verdict, the failure this arc keeps repeating.
+    > Both now strike off the same patch's tile as the bill, pinned on a **non-reference** tile since
+    > on `AlluvialPlain` the right and wrong answers agree.
+    >
+    > **Every fix was falsified** — the defect restored, the failing assertion named, the fix put
+    > back — including the interpolation test, which had to catch the measure being applied twice
+    > (`3.479` against the correct `3.231`).
 12. **The RESOURCE HALF of upkeep** (§2.7). Designed and **not built**: upkeep currently costs work
     and nothing else, while the pen's feed runs as its own separate mechanism, deliberately untouched
     so that moving it would not risk the pen-food ledger identity for no behaviour change.
@@ -954,11 +999,16 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   `0.5` would give ~53, which reads as *"never lost"* while a rung's benefit is still binary. **It
   becomes much less load-bearing once §4's symmetric partial credit lands**, because a rung sliding
   back turns into a fading payout rather than a status you lose — so it is not worth over-tuning now.
-- **The scale primitives' bounded set.** `Flat` and `SourceLoad` ship. A **plant** measure is §4.11's
-  to add and a **route** wants length × terrain (`infrastructure_cost`), which is §4.13's. Whether
-  those are two more primitives or one parameterisation is a question for the code, not for this doc —
-  but note that after §4.11 **no shipped rung uses `Flat`**, which is the point at which to ask
-  whether the variant still earns its place.
+- **ANSWERED in §4.11 — the scale primitives' bounded set is ONE primitive with a per-branch
+  reading.** `SourceLoad` is the only variant: the animal branch reads keeper-loads
+  (`head count / animals_per_herder`), the plant branch tender-loads
+  (`tile forage capacity / capacity_per_tender`). A second variant would have restated the `branch`
+  the rung already declares. **`Flat` is deleted** — nothing declared it once both plant rungs moved,
+  and the rung-monotonicity check skips adjacent rungs that do *not* share a `scaled_by`, so an
+  unused variant was a silent opt-out from that check rather than a harmless spare. **The `scaled_by`
+  key stays** for §4.13's `length × terrain` (`infrastructure_cost`), which is the one remaining
+  candidate and is genuinely a different shape: it reads the improvement's own geometry rather than
+  the source it sits on.
 - **Whether the two keeping pools should split further.** Agriculture and husbandry split because the
   webs do. A finer split — a herd keeper's kit versus a field tender's — is only meaningful once a kit
   declares a maintenance contribution, which none does today, so splitting now would invent a

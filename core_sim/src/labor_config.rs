@@ -132,6 +132,20 @@ const DEFAULT_CULTIVATION_TENDED_WEEDING_GAIN: f32 = 1.5;
 /// `tended_regrowth_gain` to a neutral 1.0 with nothing in its place. A **playtest dial**.
 const DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN: f32 = 2.0;
 
+/// **HOW MUCH STANDING CROP ONE TENDER CAN LOOK AFTER** — the divisor that turns a tile's own forage
+/// capacity into the *tender-loads* the plant rungs quote their upkeep rate per
+/// ([`CultivationConfig::capacity_per_tender`], read through `forage::patch_tender_loads`).
+///
+/// It is the plant twin of `fauna_config`'s per-species `animals_per_herder`, and deliberately **one
+/// global ratio rather than one per flora species**: a patch's basket is several species at once, and
+/// a Field forces it to a single one, so a per-crop ratio would make the divisor *move as the source
+/// climbs the ladder* — the same compounding the tile-K rule exists to prevent.
+///
+/// **195.0 is the reference tile's own `K`** (`AlluvialPlain` in `capacity_by_biome`), which makes the
+/// scaled bill provably **pacing-neutral there**: a tended patch on the reference tile goes on owing
+/// exactly the rung's declared `2.0`, and a Field exactly `4.0`. A **playtest dial**.
+const DEFAULT_CULTIVATION_CAPACITY_PER_TENDER: f32 = 195.0;
+
 /// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
 /// The plant rung-2 build dials (how fast a patch is prepared, how fast it goes feral, and the
 /// investment dip it pays while preparing) moved to the shared ladder,
@@ -204,6 +218,20 @@ pub struct CultivationConfig {
     /// forces the favored share to `1.0` (nothing left to weed) and converts at its own dial,
     /// `field_provisions_per_biomass`.
     pub tended_conversion_gain: f32,
+    /// **THE PLANT WEB'S SCALE MEASURE** — how much standing crop one tender can look after, so a
+    /// tile's own forage capacity divided by this is the **tender-loads** both plant rungs quote
+    /// their `upkeep.work_per_turn` per (`forage::patch_tender_loads`, the twin of
+    /// `fauna::herd_keeper_loads`). A rich alluvial patch therefore costs more to hold than a thin
+    /// steppe one, which is what `scaled_by: source_load` says on the plant branch.
+    ///
+    /// **It divides the TILE's `K`, never the patch's** — `patch_carrying_capacity` has already
+    /// multiplied the tile's `K` by the Field's `field_capacity_gain`, and the upkeep demand
+    /// interpolates on the very same ladder position, so reading the patch would bill the gain twice.
+    /// The tile's `K` is the size of the place; the gain is the rung's payout.
+    ///
+    /// Validated finite and `> 0`: a `0` is a division by zero and a negative one an inverted load —
+    /// both silent nonsense. See [`DEFAULT_CULTIVATION_CAPACITY_PER_TENDER`].
+    pub capacity_per_tender: f32,
 }
 
 impl Default for CultivationConfig {
@@ -214,6 +242,7 @@ impl Default for CultivationConfig {
             field_regrowth_gain: DEFAULT_CULTIVATION_FIELD_REGROWTH_GAIN,
             tended_weeding_gain: DEFAULT_CULTIVATION_TENDED_WEEDING_GAIN,
             tended_conversion_gain: DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN,
+            capacity_per_tender: DEFAULT_CULTIVATION_CAPACITY_PER_TENDER,
         }
     }
 }
@@ -657,8 +686,31 @@ fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), Labor
             });
         }
     }
+    // **THE PLANT WEB'S SCALE DIVISOR** — how much standing crop one tender minds
+    // (`forage::patch_tender_loads`). A `0` divides by zero and a negative one inverts the load, so a
+    // rich tile would cost *less* to hold than a thin one; both are silent nonsense rather than
+    // aggressive tuning, which is why this is a rejection and not a clamp.
+    if !cultivation.capacity_per_tender.is_finite()
+        || cultivation.capacity_per_tender <= NO_CAPACITY_PER_TENDER
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.capacity_per_tender",
+            constraint: format!(
+                "be finite and greater than {NO_CAPACITY_PER_TENDER} — it is the divisor that turns \
+                 a tile's own K into the tender-loads both plant rungs quote their upkeep rate per, \
+                 so a zero is a division by zero and a negative one inverts the load, making rich \
+                 ground CHEAPER to hold than thin ground"
+            ),
+            value: cultivation.capacity_per_tender.to_string(),
+        });
+    }
     Ok(())
 }
+
+/// **A tender who minds nothing** — the excluded bound of
+/// [`CultivationConfig::capacity_per_tender`], named rather than a bare `0.0` because the rejection
+/// is about a *divisor*, not about a quantity being small.
+const NO_CAPACITY_PER_TENDER: f32 = 0.0;
 
 /// **The tended gain that changes nothing** — a tended patch would hold exactly the crop's own share
 /// of the basket and convert it at exactly the basket's own rate. The floor both tended gains must

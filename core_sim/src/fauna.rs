@@ -1277,7 +1277,7 @@ pub const NO_KEEPER_LOAD: f32 = 0.0;
 
 /// **ONE keeper-load** — the measure at which a rung's `upkeep.work_per_turn` is quoted, so
 /// `rung.upkeep_demand(ONE_KEEPER_LOAD)` reads back *"the work one keeper-load costs"*. It is the
-/// animal branch's twin of [`crate::intensification::UNSCALED_UPKEEP`], and the divisor that turns a
+/// animal branch's twin of [`crate::forage::ONE_TENDER_LOAD`], and the divisor that turns a
 /// shortfall in **work** back into a shortfall in **loads**.
 pub const ONE_KEEPER_LOAD: f32 = 1.0;
 

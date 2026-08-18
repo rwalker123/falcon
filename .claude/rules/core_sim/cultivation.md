@@ -71,6 +71,25 @@ exactly as the upkeep does:
 | `field_capacity_gain` | the one `carrying_capacity` write in `advance_forage_regrowth` | a sown field is planted densely with the competitors pulled out, so it **holds** more standing crop |
 | `field_regrowth_gain` | `patch_ecology`, the seam that already existed for this | you sowed it and you replant it, so it **comes back** faster |
 
+> #### ⛔ THE UPKEEP SCALE READS THE **TILE's** K, NEVER `ForagePatch::carrying_capacity`
+>
+> `forage::patch_tender_loads` takes `forage::tile_forage_capacity` — the land's own K — and never
+> the patch's stored `carrying_capacity`, which is that K **already multiplied** by the interpolated
+> `field_capacity_gain`. The demand interpolates on the *same* position the gain does, so a measure
+> reading the boosted number multiplies the keeping bill by **2.53 on top of** the rate's own climb
+> from 2.0 to 4.0 — a Field landing near **10×** a tended patch's upkeep, compounded out of two terms
+> nobody chose to multiply.
+>
+> **The separation is the model, not a guard.** The tile's K is the size of the *place* and it is what
+> the rung is billed against; the gain is the rung's *payout*. `labor_config.json` already states the
+> half of it that was written first — **the land owns K and no rung may lower it** (issue #433) — and
+> this is the other half: no rung may be billed for the K it raised.
+>
+> Pinned by `climbing_to_field_does_not_compound_the_capacity_gain`, which asserts the demand is
+> `4.0 × tile K / capacity_per_tender` **and** the precondition that `carrying_capacity` really did
+> rise by the gain — without that second assertion the test passes whenever the gain silently stops
+> applying.
+
 **This is the animal web's shape, which is the argument for it** — a herd already gets a regrowth
 multiplier and a density multiplier on the land's capacity at pastoral and again at pen. Plants were
 the odd web out.
@@ -475,13 +494,16 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
   is why 25 turns is still the reference reading.
 - **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
-  food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn — a
-  whole number a player staffs exactly, out of the band's `agriculture` pool —
+  food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn
+  **per tender-load**, out of the band's `agriculture` pool — a whole number on the reference tile
+  and only there, since the load scales it with the ground (2.0 on `AlluvialPlain`, 0.718 on
+  `PrairieSteppe`, 2.154 on `RiverDelta`) —
   `upkeep.meter_decay` **`{ per_turn 0.5 }`**, what an *unkept* patch loses per turn (its
   `retain_fraction` companion is **deleted** — see "A COMPLETED RUNG *IS* LOST ON THE FIRST BLEEDING
   TURN AGAIN"),
-  `upkeep.scaled_by` **`flat`** (a patch is one tile — there is no head count on the plant web for a
-  rate to ride), **`upkeep.grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
+  `upkeep.scaled_by` **`source_load`** (× the patch's **tender-load**, `tile forage capacity /
+  capacity_per_tender` — one tile is what the load measures, and the tiles are not the same size),
+  **`upkeep.grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
   turns after the crew stops; **`crew_needed` and `yield_fraction_while_building` are both retired**
   — the builders are the band's own pool and the gatherers beside them are untouched, so neither a
   staffing floor nor a dip has anything left to say), so
@@ -497,6 +519,15 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
   **favored species' whole yield vector**, #433; the term that makes a 25-turn Cultivate pay back in
   the teens of turns instead of the eighties, and the reason a marginal favorite barely moves the
   number while a dominant one pays twice). Both validated finite and `>= 1.0`.
+  **`capacity_per_tender`** (195.0 — **HOW MUCH STANDING CROP ONE TENDER LOOKS AFTER**, the divisor in
+  `forage::patch_tender_loads` and the plant twin of `fauna_config`'s per-species `animals_per_herder`.
+  **One global ratio, deliberately not one per flora species**: a patch's basket is several species
+  and a Field forces it to one, so a per-crop divisor would swing as a patch climbs the ladder —
+  the same compounding the tile-K rule exists to prevent. 195.0 is the **reference tile's own K**
+  (`AlluvialPlain`), which is what makes the move onto the scale provably pacing-neutral there:
+  a tended patch on that ground still owes exactly 2.0 work/turn and a Field 4.0. Validated finite
+  and `> 0` — a zero divisor is a division by zero and a negative one an inverted load, and both
+  read as live dials. **PLAYTEST DIAL**, and the number moves in `plan_standing_upkeep.md` §4.14.)
   **`field_concentration_gain` is RETIRED** — a Field forces the favored share to 1.0, so there is no
   gain left to tune. Plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
@@ -721,7 +752,8 @@ herd has one appetite).
 - **Feral if abandoned — one rule for the whole plant web, and rung 3 goes FIRST.**
   `advance_cultivation` bleeds **one** meter per untended turn, the highest rung that still has
   progress on it, each at its own rung's `upkeep.meter_decay.per_turn` and past its own
-  `upkeep.grace_turns` (`plant:field`: `work_cost` **75**, upkeep demand **4.0**/turn `flat`, rot
+  `upkeep.grace_turns` (`plant:field`: `work_cost` **75**, upkeep demand **4.0**/turn per
+  **tender-load**, rot
   **0.75**/turn held to **0.75** of its cost, grace **1** — a standing crop is the most perishable
   thing on the ladder and wants hands every turn; the 75-unit cost is 25 turns at three hands, sowing
   *placing* a source rather than tidying one).

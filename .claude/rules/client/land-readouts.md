@@ -17,11 +17,12 @@ paths:
   snapshot and delta dicts under `forage_patches`; `MapView.display_snapshot` ingests it into
   the tile-keyed `forage_patch_lookup`, and `_tile_info_at` cross-refs it onto `tile_info`
   (`cultivation_progress` / `is_cultivated` / `patch_ecology_phase` / `patch_has_owner` /
-  `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, plus the harvest-floor instrument's four
+  `patch_owner` / `patch_biomass` / `patch_carrying_capacity` / `patch_tile_capacity`, plus the
+  harvest-floor instrument's four
   — `patch_per_worker_biomass` / `patch_regrowth_samples` / `patch_collapse_fraction` /
   `patch_stressed_fraction` — all in `FOW_DISCOVERED_HIDDEN_KEYS` **except
-  `patch_carrying_capacity`**, so a remembered tile redacts them but keeps the ceiling (see "Fog
-  splits a stock from its CAPACITY" below); the cross-ref is an explicit key list, so a decoded field left
+  `patch_tile_capacity`**, so a remembered tile redacts the patch's own ceiling and keeps the
+  **ground's** (see "Fog splits a stock from its CAPACITY" below); the cross-ref is an explicit key list, so a decoded field left
   off it is absent on the plant web alone — see `labor-ui.md` → "THE PATCH'S FORECAST FIELDS REACH THE
   SHEET THROUGH `tile_info`"). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
@@ -588,13 +589,35 @@ computed against the forage patch's 205.
 **The line that does separate them runs inside each web.** It rests on a sim guarantee, not on taste:
 
 - **A carrying capacity is ground.** `advance_forage_regrowth` recomputes `K` from the tile *every
-  turn* and states the invariant itself — *"THE LAND OWNS `K` … no rung below 4 raises `K` and none
-  lowers it, so a commitment changes only what the patch's biomass is made of"* — and `GrazePatch`'s
-  is *"the tile's biome-derived graze capacity … the land's property, not any animal's"*. **No player
-  action moves either.** So the value the client is sent for a hex it cannot see IS the value that hex
-  last showed, and rendering it leaks nothing. That is what makes remembering it honest with **no
+  turn*, and `GrazePatch`'s is *"the tile's biome-derived graze capacity … the land's property, not
+  any animal's"*. So the value the client is sent for a hex it cannot see IS the value that hex last
+  showed, and rendering it leaks nothing. That is what makes remembering it honest with **no
   last-known store anywhere in the client** — and there is none; "remembered" here has only ever meant
   "the sim says Discovered, so we hide some of what it sent us".
+  > **⛔ THE FORAGE HALF OF THIS STOPPED BEING TRUE, AND `patch_carrying_capacity` IS NOW REDACTED.**
+  > The invariant this rested on read *"no rung below 4 raises `K` and none lowers it"*. The
+  > **lowers** half still holds (issue #433). The **raises** half does not: since the Field's model
+  > was rebuilt, `plant:field` multiplies the tile's `K` by `field_capacity_gain` (2.53), interpolated
+  > on the patch's ladder position. So the wire's `carryingCapacity` is **live state carrying the
+  > rung** — a Discovered hex was publishing a capacity `2.53×` its biome's base while
+  > `patch_is_field` and `patch_field_progress` were redacted beside it, handing over a reading finer
+  > than the boolean the list was hiding.
+  >
+  > **The fix redacts the GAIN, not the capacity, so this section's rule survives intact.** The sim
+  > publishes `tileCapacity` — the ground's own `K`, a pure function of terrain — and
+  > `patch_carrying_capacity` joined `FOW_DISCOVERED_HIDDEN_KEYS`. A remembered hex still states both
+  > webs' capacity (issue #462), and it states the **land's**. `DetailFormat.patch_capacity` is the
+  > one function that picks: the patch's ceiling where the key is present, the ground's where fog
+  > erased it. **Presence, not zero** — `_apply_visibility_to_info` *erases* hidden keys.
+  >
+  > **The harvest-floor readers deliberately stayed on `patch_carrying_capacity`**: a floor is a
+  > fraction of the stand actually standing, so the boosted number is the right one, and none of them
+  > renders on a hex the player cannot see. All five already return early on a missing capacity.
+  >
+  > **This is also why `forage::patch_tender_loads` reads the TILE's `K`** (`cultivation.md` → "THE
+  > UPKEEP SCALE READS THE **TILE's** K"): an upkeep quote scaled off the *patch's* capacity would
+  > have carried the same rung into the same gap, one field over.
+
 - **A biomass is live.** It moves every turn as the ground is grazed or gathered, by herds and rival
   bands a remembered tile cannot see, so a remembered reading is stale by construction. The ecology
   phase goes with it, being `classify_ecology_phase`'s reading OF that biomass.
@@ -608,7 +631,11 @@ at all — it was that turn's live value, arriving through a hole in the redacti
 ### Where each half lives, and why the render is a BRANCH rather than a consequence
 
 - `MapView.FOW_DISCOVERED_HIDDEN_KEYS` holds `graze_biomass` / `graze_ecology_phase` /
-  `patch_biomass` / `patch_ecology_phase` and **not** `graze_capacity` / `patch_carrying_capacity`.
+  `patch_biomass` / `patch_ecology_phase` — and `patch_carrying_capacity`, which is the **asymmetry**
+  with `graze_capacity` and is deliberate: the forage ceiling carries the Field rung's gain and the
+  graze one does not (the herd density multipliers land on `Herd::carrying_capacity`, a different
+  field). `patch_tile_capacity` is the unredacted plant term, and `DetailFormat.patch_capacity` is
+  the ONE function that picks between the two.
 - `SubjectDrawerController._tile_terrain_lines` derives `stock_known` from the VISIBILITY STATE and
   threads it into the two symmetric leaves `_forage_stock_lines` / `_graze_stock_lines`, which share
   `_stock_value`. **The flag is not inferred from an absent key**: the pair's meaning is positional,
@@ -673,6 +700,10 @@ assertions, each sabotage-verified: both webs render in the live order; each sta
 the stock unknown; neither carries a phase; the basket does not render; the SAME fixture in sight
 still states both stocks in full (the half without which the rest pass on a blank card); and — the
 half a fixture alone cannot reach — a tile put through the REAL `FOW_DISCOVERED_HIDDEN_KEYS` still
-states both capacity rows, reading identically to the unredacted one. That last pair is what would
-catch `patch_carrying_capacity` going back into the list, which every other assertion would survive
-while the live client shipped a card with no `Foraging` row at all.
+states both capacity rows, reading identically to the unredacted one. **That last pair now catches
+the FALLBACK breaking** rather than the key moving: `patch_carrying_capacity` *is* redacted, so a
+`DetailFormat.patch_capacity` that read the redacted key straight would fail its own `capacity > 0`
+guard and ship a card with no `Foraging` row at all, which every other assertion would survive.
+**It is still not enough on its own** — the fixture behind it stands below rung 3, where the ground
+and the ceiling are the same number, so it cannot see which one was picked. That is what
+`_assert_fog_field_capacity_is_the_ground` is for.

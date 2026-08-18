@@ -12,7 +12,6 @@ use crate::forage::{
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR,
     NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
-    UNSCALED_UPKEEP,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
@@ -877,7 +876,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// are derived once per tile per world (`snapshot/flora_quotes.rs`, #410). A patch whose tile is
 /// absent from the map ships an **empty** composition — "no named plants here", never a fabricated
 /// one.
-#[allow(clippy::too_many_arguments)] // the registry, three configs, two lookup maps and a rate
+///
+/// `tile_capacities` maps tile coord → that tile's own forage `K` (`forage::tile_forage_capacity`),
+/// filled by the caller (which has the tiles) for the same reason the two maps above are: it is the
+/// **size of the land**, and every plant upkeep figure on the row is quoted per tender-load of it
+/// (`forage::patch_tender_loads`). A coord absent from the map presents [`NO_TENDER_LOAD`] worth of
+/// ground, the same absent-means-nothing convention — never a substituted capacity.
+#[allow(clippy::too_many_arguments)] // the registry, three configs, three lookup maps and a rate
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
     forage: &ForageLaborConfig,
@@ -888,6 +893,7 @@ pub(crate) fn snapshot_forage_patches(
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
     sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
+    tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
@@ -903,6 +909,16 @@ pub(crate) fn snapshot_forage_patches(
             // derives from this one (#433). A patch whose tile is absent from the map names no
             // plants and falls back to the empty-basket defaults.
             let tile_composition = tile_quotes.tile_composition(patch.tile);
+            // **THE SIZE OF THE LAND UNDER THIS PATCH** — the tile's own `K`, which every upkeep
+            // figure on this row is quoted per tender-load of. Absent ground presents none, exactly
+            // as it names no plants above.
+            let tile_capacity = tile_capacities
+                .get(&patch.tile)
+                .copied()
+                .unwrap_or(crate::labor_config::NO_FORAGE_CAPACITY);
+            // **The measure both rung quotes below are struck per** — one reading, so the price a
+            // compose sheet shows and the bill the patch is handed cannot come from two places.
+            let tender_loads = crate::forage::patch_tender_loads(tile_capacity, forage);
             let neglect_grace = patch_neglect_grace_remaining(patch, ladder);
             // The patch's own ecology — the seam `refresh_ecology_phase` classified the published
             // `ecology_phase` word with, so the bands and the word describe the same source.
@@ -959,6 +975,11 @@ pub(crate) fn snapshot_forage_patches(
                 is_cultivated: patch.is_cultivated(),
                 owner: patch.owner.map(|faction| faction.0),
                 biomass: patch.biomass,
+                // **WHAT THE PATCH HOLDS NOW — the rung is IN this number.** It is the tile's `K`
+                // times the interpolated `field_capacity_gain` (`patch_carrying_capacity`, written
+                // once per turn by `advance_forage_regrowth`), so a standing Field reads ~2.53× the
+                // same ground wild. **The client must redact it under fog** and render
+                // `tile_capacity` below instead — see that field.
                 carrying_capacity: patch.carrying_capacity,
                 ecology_phase: patch.ecology_phase.as_str().to_string(),
                 // The plant web's forecast is food-only for now — its fodder component is
@@ -1063,14 +1084,19 @@ pub(crate) fn snapshot_forage_patches(
                 // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
                 // `upkeep_demand` below resolves through the **at-risk** rung
                 // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
-                // precisely the patch a compose sheet is quoting. [`UNSCALED_UPKEEP`] on both,
-                // because a patch is one tile: both plant rungs declare `scaled_by: flat`.
+                // precisely the patch a compose sheet is quoting.
+                //
+                // # ⛔ THE QUOTE MOVES WITH THE BILL, or there are two producers of one verdict
+                //
+                // Both plant rungs declare `scaled_by: source_load` and quote their rate **per
+                // tender-load**, so these are struck through **this patch's own tile capacity** —
+                // the same measure `patch_upkeep_demand` bills against. Quoting the bare ladder rate
+                // would price every patch in the game identically and promise `4.0` for a Field that
+                // will actually be billed `4.31`.
                 cultivation_upkeep_demand: ladder
                     .rung(RungKey::PlantTended)
-                    .upkeep_demand(UNSCALED_UPKEEP),
-                field_upkeep_demand: ladder
-                    .rung(RungKey::PlantField)
-                    .upkeep_demand(UNSCALED_UPKEEP),
+                    .upkeep_demand(tender_loads),
+                field_upkeep_demand: ladder.rung(RungKey::PlantField).upkeep_demand(tender_loads),
                 // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
                 // decay pass will bleed off the at-risk meter, and the term a build's closed form
                 // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
@@ -1084,7 +1110,12 @@ pub(crate) fn snapshot_forage_patches(
                 // rot would read a tidy `0` on exactly the abandoned patches that are bleeding. Both
                 // its inputs — `upkeep_supplied` and `neglect_turns` — are stored, so the number is
                 // the same one the labor arm struck its countdown from.
-                meter_rot_per_turn: crate::forage::patch_meter_rot(patch, ladder),
+                meter_rot_per_turn: crate::forage::patch_meter_rot(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this patch would climb
                 // next, so the compose sheet can quote the job before the player commits. Read it
@@ -1102,6 +1133,11 @@ pub(crate) fn snapshot_forage_patches(
                 // staffing the KEEPING rather than by adding builders.
                 build_destination_rung: published_destination_rung(patch.build_destination),
                 build_legs: published_build_legs(&patch.build_legs),
+                // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
+                // fog-safe twin of `carrying_capacity` above and the denominator every upkeep figure
+                // on this row is quoted per. **The reading already resolved once above**, never a
+                // second lookup: two producers of one number are two numbers.
+                tile_capacity,
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -1146,16 +1182,31 @@ pub(crate) fn snapshot_forage_patches(
                 // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
                 // the grace below counts down against, so a row cannot bill one rung's demand while
                 // the sim bleeds another's.
-                upkeep_demand: crate::forage::patch_keeping_basis(patch, ladder),
+                upkeep_demand: crate::forage::patch_keeping_basis(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 upkeep_supplied: patch.upkeep_supplied,
                 // **Derived, so the three always describe one turn and one rung.** A stored
                 // shortfall would be stamped only on patches some band is assigned to, and would
                 // therefore read `0` on exactly the abandoned patches that are reverting.
-                upkeep_shortfall: crate::forage::patch_upkeep_shortfall(patch, ladder),
+                upkeep_shortfall: crate::forage::patch_upkeep_shortfall(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 // **The MAINTAIN activity's own `workers_needed`** — the plant twin, and what makes
                 // a standing cost legible: *"this wants 1, you have 0"*. `ceil` of the **same
                 // bill** the three terms above ship, never of the live demand beside it.
-                upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(patch, ladder),
+                upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
                 // that will actually revert, not one the patch merely stands on. `None` = a wild

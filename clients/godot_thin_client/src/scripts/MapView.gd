@@ -254,16 +254,38 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 #
 # THE TWO FOOD WEBS SPLIT ON STOCK vs CAPACITY, NOT ON WEB (issue #462). Each web's CAPACITY is
 # remembered and each web's BIOMASS — plus the ecology phase, which is classified FROM that biomass —
-# is redacted. So `graze_capacity` / `patch_carrying_capacity` are deliberately ABSENT from this list
-# while `graze_biomass` / `patch_biomass` and both phases are in it. Why a live capacity can be shown
-# on a hex the player cannot see without leaking anything is in
-# `.claude/rules/client/land-readouts.md` → "Fog splits a stock from its CAPACITY"; the short form is
-# that the sim recomputes `K` from the tile every turn and no player action moves it, so the value we
-# are sent for an unseen hex IS the value that hex last showed.
+# is redacted, so `graze_biomass` / `patch_biomass` and both phases are in this list while both webs
+# still state a ceiling on a remembered card. Why a capacity can be shown on a hex the player cannot
+# see without leaking anything is in `.claude/rules/client/land-readouts.md` → "Fog splits a stock
+# from its CAPACITY"; the short form is that the sim recomputes `K` from the tile every turn and no
+# player action moves it, so the value we are sent for an unseen hex IS the value that hex last showed.
+#
+# # ⛔ WHICH FORAGE CAPACITY: THE GAIN IS REDACTED, NOT THE CEILING
+#
+# **`patch_carrying_capacity` IS IN THIS LIST**, and that is not a retreat from the split above — it
+# is the split applied to a field that stopped being ground. It is the PATCH's ceiling, the tile's own
+# `K` times the interpolated `field_capacity_gain`, so a standing Field publishes ~2.53× its biome's
+# base while `patch_is_field` and `patch_field_progress` are redacted two lines down. That ratio is a
+# finer reading of the ladder position than the boolean being hidden, and it moves continuously as the
+# meter fills, so a remembered hex was handing over exactly what the redaction exists to withhold.
+#
+# **`patch_tile_capacity` is what a remembered hex renders instead** — the ground's own `K`, a pure
+# function of the tile's terrain with no rung in it, which a Discovered tile knows by definition.
+# ONE reader answers "what capacity does this card show" for both states: `DetailFormat.patch_capacity`
+# prefers the patch's ceiling and falls back to the tile's. Nothing else may do that `or` itself.
+#
+# **`graze_capacity` IS UNAFFECTED AND STAYS OUT OF THIS LIST — do not "fix" the asymmetry.** The
+# animal web's density multipliers land on `Herd::carrying_capacity`, a different field entirely;
+# `GrazePatch`'s capacity is still the tile's biome-derived graze ceiling and no rung moves it. The
+# graze row really is ground, so redacting it would delete a true reading from every remembered card
+# for the sake of a symmetry the sim does not have.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
 	"patch_cultivation_progress", "patch_is_cultivated", "patch_has_owner", "patch_owner",
 	"patch_ecology_phase", "patch_biomass",
+	# THE PATCH'S CEILING, redacted because the FIELD RUNG IS IN IT — see this list's header. Its
+	# fog-safe twin `patch_tile_capacity` is deliberately NOT here: that one is terrain.
+	"patch_carrying_capacity",
 	# The ANIMAL web's stock, redacted under the same rule as the plant web's above — grass on a hex
 	# you cannot see is drawn down by herds you cannot see. Its `graze_capacity` twin stays.
 	"graze_biomass", "graze_ecology_phase",
@@ -309,8 +331,8 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# patch's standing crop is worth in each account, plus the two investment rungs' non-food payoff
 	# twins. **It replaced the six per-policy row dicts**, which could only answer four floors; the
 	# client composes `max(0, B − floor·K) × rate` at any floor from these three plus `patch_biomass`
-	# (redacted above — `patch_carrying_capacity` is NOT, per the stock/capacity split in this list's
-	# header, which is why the composition still answers nothing). Redacted for the same reason every
+	# and `patch_carrying_capacity` (both redacted above, which is why the composition answers nothing
+	# on a remembered hex — the ceiling has no `K` to be a fraction of). Redacted for the same reason every
 	# forecast field is — each describes live patch state a remembered tile does not know — and
 	# redacting them is also what keeps a remembered tile reading "no forecast" rather than a stale
 	# one: `SourceForecast.forecast_is_known` reads the vector's PRESENCE, so the answer comes for free.
@@ -326,9 +348,13 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"patch_upkeep_demand", "patch_upkeep_supplied", "patch_upkeep_shortfall",
 	"patch_upkeep_workers_needed",
 	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
-	# per-rung `*_upkeep_demand` figures beside it are deliberately NOT here (they are the ladder's
-	# flat rates, identical on every patch); this one is derived from a shortfall a remembered tile has
-	# no way to observe.
+	# per-rung `*_upkeep_demand` figures beside it are deliberately NOT here: since the plant rungs
+	# moved onto `scaled_by: source_load` they no longer read identically on every patch, but the
+	# scale is the tile's own forage capacity — TERRAIN, which a Discovered tile remembers — so the
+	# figure sent for an unseen hex is the figure that hex last showed, exactly as
+	# `patch_tile_capacity` they are struck through does. (Emphatically NOT
+	# `patch_carrying_capacity`, which carries the rung and is redacted above.) This one is derived
+	# from a shortfall a remembered tile has no way to observe.
 	"patch_meter_rot_per_turn",
 	# THE NEGLECT GRACE. Live patch state by construction — it counts the turns of upkeep SHORTFALL —
 	# and redacting it is what keeps a remembered tile from counting down a lapse it has no way to
@@ -2727,6 +2753,12 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).
 		info["patch_biomass"] = float(patch.get("biomass", 0.0))
 		info["patch_carrying_capacity"] = float(patch.get("carrying_capacity", 0.0))
+		# …AND THE GROUND UNDER IT — the tile's own `K`, with no `field_capacity_gain` folded in. The
+		# ceiling above moves when the player builds, so it is redacted on a remembered hex and THIS is
+		# what such a card states (`FOW_DISCOVERED_HIDDEN_KEYS` header). Both cross: the client cannot
+		# derive either from the other, holding neither the gain nor the ladder position it
+		# interpolates on. `DetailFormat.patch_capacity` is the ONE reader that picks between them.
+		info["patch_tile_capacity"] = float(patch.get("tile_capacity", 0.0))
 		# WHERE THE PHASE WORD ABOVE CHANGES HANDS — `classify_ecology_phase`'s own cut points, as
 		# fractions of `patch_carrying_capacity`, i.e. the units the escapement floor is in. The harvest
 		# floor chart draws them as horizontal zones BEHIND the floor line, which is only honest because
@@ -2810,7 +2842,8 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# THE TILE'S PER-BIOMASS YIELD VECTOR (docs/plan_harvest_floor.md §5) — what ONE UNIT of this
 		# patch's standing crop is worth in each account, at the patch's own basket-averaged rates.
 		# **This is the patch's whole ceiling representation now**: with `patch_biomass` and
-		# `patch_carrying_capacity` above, the client composes the ceiling at ANY floor
+		# `patch_carrying_capacity` above — the PATCH's ceiling, since the floor is a fraction of the
+		# stand actually standing here — the client composes the ceiling at ANY floor
 		# (`SourceForecast.escapement_room`). The six per-policy row dicts it replaced — and the six
 		# flat `patch_ceiling_*` scalars before them — are retired `(deprecated)` wire slots, so nothing
 		# can read one representation while the sim pays the other. The vector's PRESENCE is what tells
@@ -2850,10 +2883,15 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `patch_upkeep_demand` above is `0` on a patch with nothing started, which is what made the
 		# stepper quote a finish date for a build that could never advance.
 		#
-		# **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`, and for ONE reason now.** Both plant rungs
-		# declare `scaled_by: flat`, so this is the LADDER's number and reads identically on every
-		# patch in the game — there is no live patch state in it to leak. The second reason it used to
-		# carry is gone: the closed form no longer reads it at all (`docs/plan_standing_upkeep.md`
+		# **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`, and the reason had to be re-argued when
+		# both plant rungs moved onto `scaled_by: source_load`.** The pair is no longer the ladder's
+		# bare number — it is struck through this patch's own TENDER-LOAD, so it differs patch to
+		# patch. What keeps it fog-safe is that the load is `tile forage capacity /
+		# capacity_per_tender`: a pure function of the tile's TERRAIN, which a Discovered tile
+		# remembers by definition, so the figure sent for an unseen hex is the figure that hex last
+		# showed. That is the same argument `patch_tile_capacity` rides on — and the reason
+		# `patch_carrying_capacity` beside it IS redacted, since that one carries the Field rung's
+		# own gain. The second reason this pair used to carry is gone: the closed form no longer reads it at all (`docs/plan_standing_upkeep.md`
 		# §2.4 — the keeping pool owes the rate at every fullness, so a build crew nets the ROT
 		# instead), so redacting it could no longer cost the estimate its term. The surviving reason
 		# stands on its own, and the field is a PRICE on the offered face rather than a term.

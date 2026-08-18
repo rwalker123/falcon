@@ -1558,23 +1558,31 @@ pub struct RungBuild {
 /// its length and the terrain it crosses. So a rung declares a **rate** plus **what scales it**,
 /// chosen from here — adding a primitive is coding one thing once, after which using it is a config
 /// edit.
+///
+/// **`source_load` is the only shipped variant today**, and both webs declare it: an animal rung
+/// quotes its rate per keeper-load, a plant rung per tender-load. The **retired** variant was `flat`,
+/// the rate as declared — it survived only on the two plant rungs, on the reading that "a patch is
+/// one tile, so there is no count for the rate to ride", and that reading was wrong: a tile's own `K`
+/// *is* the count, which is what `forage::patch_tender_loads` measures. The enum and the `scaled_by`
+/// config key stay for the route branch, whose `length × terrain` scale is the next primitive to land
+/// in here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpkeepScale {
-    /// **The rate as declared** — the demand does not vary with the source. What a rung whose cost is
-    /// the *thing existing* rather than the thing's size says.
-    Flat,
     /// **× the source's own LOAD reading, in whatever unit the rung quotes its rate in.** The
     /// animal rungs quote **per keeper-load** — `head count / animals_per_herder` — which is what
     /// lets one rate say *a shepherd minds 300 sheep and a cowherd 80 cattle*: the species owns the
-    /// ratio, the rung owns the rate. Linear in the source either way, which is the pen's shape:
-    /// twice the animals, twice the keeping.
+    /// ratio, the rung owns the rate. The plant rungs quote **per tender-load** — the tile's own `K`
+    /// over `cultivation.capacity_per_tender` — which is what makes rich ground dearer to hold than
+    /// thin ground. Linear in the source either way, which is the pen's shape: twice the animals,
+    /// twice the keeping.
     ///
     /// **It is deliberately NOT "head count".** A per-*head* rate would say "one keeper per 100 fowl
     /// but one per 2 boar" and invent a 45-herder steppe megaherd that is a pure artifact of the
     /// unit — the measurement error `animals_per_herder` exists to prevent, restated one level up.
-    /// The caller supplies the reading (`fauna::herd_keeper_loads`), so the species' own ratio is
-    /// folded in before the ladder ever sees it and there is still exactly one definition of it.
+    /// The caller supplies the reading (`fauna::herd_keeper_loads` / `forage::patch_tender_loads`),
+    /// so the web's own ratio is folded in before the ladder ever sees it and there is still exactly
+    /// one definition of it.
     SourceLoad,
 }
 
@@ -1582,26 +1590,18 @@ impl UpkeepScale {
     /// Stable config key, used in validation messages — the [`RungBranch::as_str`] convention.
     pub fn as_str(self) -> &'static str {
         match self {
-            UpkeepScale::Flat => "flat",
             UpkeepScale::SourceLoad => "source_load",
         }
     }
 
-    /// **The scale term this primitive reads**, given the source's own measure. `source_measure` is
-    /// the load reading for [`Self::SourceLoad`] and is ignored by [`Self::Flat`], which is why the
-    /// caller may pass anything — including [`UNSCALED_UPKEEP`] — for a rung it has not resolved.
+    /// **The scale term this primitive reads**, given the source's own measure — the load reading for
+    /// [`Self::SourceLoad`], floored at zero so a source presenting nothing owes nothing.
     pub fn factor(self, source_measure: f32) -> f32 {
         match self {
-            UpkeepScale::Flat => UNSCALED_UPKEEP,
             UpkeepScale::SourceLoad => source_measure.max(0.0),
         }
     }
 }
-
-/// **The scale term of a source that costs exactly what its rung declares** — the identity, passed by
-/// every caller with no per-source measure to apply (and read by [`UpkeepScale::Flat`] whatever it is
-/// handed). The upkeep twin of [`RUNG_COST_UNSCALED`].
-pub const UNSCALED_UPKEEP: f32 = 1.0;
 
 /// **WHAT IT COSTS TO HOLD THIS RUNG** — the *rate* half of the ladder, beside `build`'s *pile*
 /// (`docs/plan_standing_upkeep.md` §2.1). Both are in work units; the build is a fixed job you finish
@@ -2072,9 +2072,9 @@ impl RungDef {
     /// pool** (§4.6a). The builders pay none of it, so a lone builder banks a whole worker-turn on
     /// the dearest rung on the ladder.
     ///
-    /// `source_measure` is the source's own scale reading — a herd's head count for
-    /// [`UpkeepScale::SourceLoad`], ignored by [`UpkeepScale::Flat`], so a caller with nothing to
-    /// measure passes [`UNSCALED_UPKEEP`]. It is the exact twin of [`Self::build_cost`]'s
+    /// `source_measure` is the source's own scale reading — a herd's keeper-loads
+    /// (`fauna::herd_keeper_loads`) or a patch's tender-loads (`forage::patch_tender_loads`), each
+    /// resolved by the web that owns the ratio. It is the exact twin of [`Self::build_cost`]'s
     /// `cost_multiplier`: the rung owns the mechanic, the source is priced.
     pub fn upkeep_demand(&self, source_measure: f32) -> f32 {
         self.upkeep.as_ref().map_or(NO_UPKEEP_DEMAND, |upkeep| {
@@ -2693,12 +2693,12 @@ impl LadderConfig {
     /// cheaper to hold than the finished rung beneath it, and a player would be paid to start a job
     /// they never intend to finish (`docs/plan_standing_upkeep.md` §2.8).
     ///
-    /// **The comparison is only made between rungs sharing a [`UpkeepScale`].** `flat` is a rate per
-    /// *source* and `source_load` a rate per *keeper-load*, so comparing the two bare numbers would
-    /// be comparing different units and would report a fault that is not one. A branch that mixes
-    /// scales across a step is therefore **not checked here** rather than checked wrongly — the
-    /// ordering it needs is between the *scaled* demands, which are per-source facts this validator
-    /// cannot see.
+    /// **The comparison is only made between rungs sharing a [`UpkeepScale`].** Two rungs quoting
+    /// their rates in different units would be compared as bare numbers and would report a fault that
+    /// is not one, so a branch that mixes scales across a step is **not checked here** rather than
+    /// checked wrongly — the ordering it needs is between the *scaled* demands, which are per-source
+    /// facts this validator cannot see. **Every shipped step is checked today**, because
+    /// `source_load` is the only variant: plant `2.0 → 4.0` and animal `1.0 → 1.0` both climb.
     ///
     /// A rung with **no upkeep** costs [`NO_UPKEEP_DEMAND`] to hold, which nothing can be below, so
     /// the two wild rungs pass by construction.
@@ -3130,6 +3130,14 @@ mod tests {
     /// one worker.
     const A_CREW_OF_TWO: u32 = 2;
 
+    /// **ONE LOAD OF WHATEVER THE RUNG'S OWN WEB MEASURES** — the reference every rung's
+    /// `upkeep.work_per_turn` is quoted at, so a ladder-level assertion can ask for *"the rate as
+    /// declared"* without naming a web. Both webs' identity constants read back the same number by
+    /// construction: [`crate::fauna::ONE_KEEPER_LOAD`] is a herd of exactly `animals_per_herder`
+    /// head, and `forage::ONE_TENDER_LOAD` a tile of exactly `capacity_per_tender`. Stated through
+    /// the animal one rather than as a bare literal so it names a real measure.
+    const ONE_SOURCE_LOAD: f32 = crate::fauna::ONE_KEEPER_LOAD;
+
     /// **THE STAFFING EVERY ACCRUAL ASSERTION BELOW USES** — the rung's keeper count plus a hand,
     /// held at that number only so the readings recorded against it stay comparable.
     ///
@@ -3137,7 +3145,7 @@ mod tests {
     /// crew supplies nothing toward it, so a lone worker banks its whole [`PER_WORKER_OUTPUT`] on
     /// every managed rung and this crew banks exactly `workers × PER_WORKER_OUTPUT`.
     fn reference_crew(rung: &RungDef) -> u32 {
-        rung.upkeep_crew_needed(UNSCALED_UPKEEP)
+        rung.upkeep_crew_needed(ONE_SOURCE_LOAD)
             .saturating_add(SOLE_BUILDER)
     }
 
@@ -3310,7 +3318,7 @@ mod tests {
         assert_eq!(tended.build_cost(RUNG_COST_UNSCALED), Some(build.work_cost));
         // **The rung declares a standing upkeep**, and it is what a fully unmaintained patch bleeds:
         // shortfall IS the decay (`docs/plan_standing_upkeep.md` §2.4), so there is no second dial.
-        assert!(tended.upkeep_demand(UNSCALED_UPKEEP) > NO_UPKEEP_DEMAND);
+        assert!(tended.upkeep_demand(ONE_SOURCE_LOAD) > NO_UPKEEP_DEMAND);
         // **Its neglect is counted in SHORTFALL turns, not un-worked ones**, so the build's own
         // grace is absent rather than parked at a value nothing reads.
         assert_eq!(build.grace_turns, None);
@@ -3693,7 +3701,7 @@ mod tests {
                 keepers,
                 per_worker,
                 BuildGate::Open,
-                UNSCALED_UPKEEP,
+                ONE_SOURCE_LOAD,
             )
         };
 
@@ -3705,7 +3713,7 @@ mod tests {
                 true,
                 keepers,
                 per_worker,
-                UNSCALED_UPKEEP,
+                ONE_SOURCE_LOAD,
             )
         };
 
@@ -3759,10 +3767,10 @@ mod tests {
                 pastoral,
                 UNSCALED_SPECIES,
                 RUNG_UNSTARTED,
-                pastoral.upkeep_crew_needed(UNSCALED_UPKEEP),
+                pastoral.upkeep_crew_needed(ONE_SOURCE_LOAD),
                 NO_BUILD_GEAR,
                 BuildGate::Open,
-                UNSCALED_UPKEEP,
+                ONE_SOURCE_LOAD,
             ),
             Some(BuildTurns::Holding),
             "a quoted bare crew that exactly pays the rate holds the meter — and says so"
@@ -3813,7 +3821,7 @@ mod tests {
                 );
             }
             assert_eq!(wild.build_cost(RUNG_COST_UNSCALED), None);
-            assert_eq!(wild.upkeep_demand(UNSCALED_UPKEEP), NO_UPKEEP_DEMAND);
+            assert_eq!(wild.upkeep_demand(ONE_SOURCE_LOAD), NO_UPKEEP_DEMAND);
         }
     }
 
@@ -3957,15 +3965,17 @@ mod tests {
                 key.id()
             );
         }
-        // **The scale term is where the two webs differ**, and that is the whole of the difference:
-        // a patch is one tile (`flat`), a herd is as many keeper-loads as it has animals.
+        // **BOTH WEBS SCALE, AND EACH SUPPLIES ITS OWN MEASURE** — a herd is as many keeper-loads
+        // as it has animals, a patch as many tender-loads as its tile's `K` is worth. `flat` is
+        // retired: the plant rungs carried it on the reading that a patch is one tile and so has
+        // nothing for the rate to ride, and a tile's own `K` is exactly that count.
         assert_eq!(
             ladder
                 .rung(RungKey::PlantTended)
                 .upkeep
                 .as_ref()
                 .map(|upkeep| upkeep.scaled_by),
-            Some(UpkeepScale::Flat)
+            Some(UpkeepScale::SourceLoad)
         );
         assert_eq!(
             ladder
@@ -4194,7 +4204,7 @@ mod tests {
             let idx = rung_index(json, "animal", "pen");
             json["rungs"][idx]["upkeep"] = serde_json::json!({
                 "work_per_turn": 0.0,
-                "scaled_by": "flat",
+                "scaled_by": "source_load",
                 "grace_turns": 0,
             });
         });
@@ -4251,12 +4261,12 @@ mod tests {
                 key.id()
             );
             assert_eq!(
-                rung.upkeep_demand(UNSCALED_UPKEEP),
+                rung.upkeep_demand(ONE_SOURCE_LOAD),
                 NO_UPKEEP_DEMAND,
                 "…so its demand is the honest zero"
             );
             assert_eq!(
-                rung.upkeep_crew_needed(UNSCALED_UPKEEP),
+                rung.upkeep_crew_needed(ONE_SOURCE_LOAD),
                 NO_CREW_ON_THIS_ACTIVITY,
                 "…and nobody is needed to keep it"
             );
@@ -4308,7 +4318,7 @@ mod tests {
         let rung = ladder.rung(RungKey::PlantTended);
         // Above the rung's maintenance rate, or the assertion would be that zero equals zero.
         let a_crew_above_the_rate = rung
-            .upkeep_crew_needed(UNSCALED_UPKEEP)
+            .upkeep_crew_needed(ONE_SOURCE_LOAD)
             .saturating_add(A_CREW_OF_TWO);
         #[allow(non_snake_case)]
         let A_CREW_ABOVE_THE_RATE = a_crew_above_the_rate;
@@ -4438,14 +4448,14 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in RungKey::ALL {
             let rung = ladder.rung(key);
-            let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+            let demand = rung.upkeep_demand(ONE_SOURCE_LOAD);
             let expected = if rung.declares_upkeep() {
                 demand.ceil() as u32
             } else {
                 NO_CREW_ON_THIS_ACTIVITY
             };
             assert_eq!(
-                rung.upkeep_crew_needed(UNSCALED_UPKEEP),
+                rung.upkeep_crew_needed(ONE_SOURCE_LOAD),
                 expected,
                 "{}:{} — nobody is needed to hold something that costs nothing to hold, and a rung \
                  that does asks for its demand in whole hands",
@@ -4455,8 +4465,12 @@ mod tests {
         }
         // A fractional demand still wants a whole worker — you cannot send half a keeper.
         const HALF_A_WORKER_TURN: f32 = 0.5;
-        let rung = rung_with_upkeep(HALF_A_WORKER_TURN, UpkeepScale::Flat, NO_NEGLECT_GRACE);
-        assert_eq!(rung.upkeep_crew_needed(UNSCALED_UPKEEP), 1);
+        let rung = rung_with_upkeep(
+            HALF_A_WORKER_TURN,
+            UpkeepScale::SourceLoad,
+            NO_NEGLECT_GRACE,
+        );
+        assert_eq!(rung.upkeep_crew_needed(ONE_SOURCE_LOAD), 1);
         let per_head = rung_with_upkeep(
             HALF_A_WORKER_TURN,
             UpkeepScale::SourceLoad,
@@ -4511,7 +4525,7 @@ mod tests {
         const ROT_PER_TURN: f32 = 0.25;
         let rung = rung_with_meter_decay(
             A_DEMAND_OF_ONE_WORKER_TURN,
-            UpkeepScale::Flat,
+            UpkeepScale::SourceLoad,
             GRACE,
             ROT_PER_TURN,
         );
@@ -4670,19 +4684,19 @@ mod tests {
         );
     }
 
-    /// **The scale term is the generic piece** (§2.6) — `flat` states the rate, `source_load`
-    /// multiplies it by the source's own size.
+    /// **The scale term is the generic piece** (§2.6) — `source_load` multiplies the declared rate
+    /// by the source's own size, and reads the rate back untouched at one load, which is the
+    /// reference every rung is quoted at.
     #[test]
     fn the_upkeep_scale_reads_the_sources_own_measure() {
-        let flat = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::Flat, 0);
+        let per_load = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::SourceLoad, 0);
         assert_eq!(
-            flat.upkeep_demand(A_TWENTY_HEAD_FLOCK),
+            per_load.upkeep_demand(ONE_SOURCE_LOAD),
             A_DEMAND_OF_ONE_WORKER_TURN,
-            "a flat rate ignores whatever measure it is handed"
+            "at one load the rate is what the rung declares — that is what makes it the quote"
         );
-        let per_head = rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::SourceLoad, 0);
         assert_eq!(
-            per_head.upkeep_demand(A_TWENTY_HEAD_FLOCK),
+            per_load.upkeep_demand(A_TWENTY_HEAD_FLOCK),
             A_DEMAND_OF_ONE_WORKER_TURN * A_TWENTY_HEAD_FLOCK,
             "twice the animals, twice the keeping"
         );
@@ -5112,12 +5126,15 @@ mod tests {
             Some(build.work_cost * TWICE_THE_WORK),
             "the multiplier is the source's own nature, and it prices the JOB"
         );
-        // The upkeep seam takes a `source_measure`, not a cost multiplier, and `flat` ignores it —
-        // so nothing about the size of the build reaches what it costs to hold.
+        // **The upkeep seam takes a `source_measure`, which is a different quantity entirely** — a
+        // reading of how big the SOURCE is, not of how big the JOB was. At one load it is the rate
+        // the rung declares and nothing about `cost_multiplier` has reached it, which is the whole
+        // claim: a Steppe Runner is five times the work to tame and is kept at its own load.
+        let upkeep = tended.upkeep.as_ref().expect("the tended rung is held");
         assert_eq!(
-            tended.upkeep_demand(UNSCALED_UPKEEP),
-            tended.upkeep_demand(TWICE_THE_WORK),
-            "a `flat` upkeep is the cost of the thing existing, whatever the job cost to raise"
+            tended.upkeep_demand(ONE_SOURCE_LOAD),
+            upkeep.work_per_turn,
+            "at one load the bill is the rung's declared rate, whatever the job cost to raise"
         );
     }
 

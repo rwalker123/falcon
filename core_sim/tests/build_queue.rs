@@ -324,12 +324,25 @@ const NOT_BLOCKED: &str = "";
 /// a retune moves the fixture with the game. Staffed wherever an arm must not be measuring rot.
 fn keeping_for(sources: usize) -> u32 {
     let probe = build_headless_app();
+    // **THE RATE IS QUOTED PER TENDER-LOAD** (`forage::patch_tender_loads`), and this fixture's
+    // sources sit on whatever ground `a_cultivable_site` picked — so the hands are read at the
+    // RICHEST tile the shipped biome table offers rather than at one load. Over-staffing a keeping
+    // pool costs these arms nothing (a surplus is not a credit); under-staffing would make every
+    // one of them measure rot instead of what it is about.
+    let labor = probe.world.resource::<core_sim::LaborConfigHandle>().get();
+    let richest_capacity = labor
+        .forage
+        .capacity_by_biome
+        .values()
+        .copied()
+        .fold(core_sim::NO_FORAGE_CAPACITY, f32::max);
+    let richest = core_sim::patch_tender_loads(richest_capacity, &labor.forage);
     let hands = probe
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(core_sim::UNSCALED_UPKEEP);
+        .upkeep_crew_needed(richest);
     hands * sources as u32
 }
 

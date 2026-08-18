@@ -11588,13 +11588,33 @@ mod tests {
         // a Field adds — not the Field's own rate, which is what it owed while the demand stepped at
         // the rung boundary (`docs/plan_standing_upkeep.md` §2.8). The cost moves with the benefit or
         // not at all.
+        // **AND IT IS QUOTED PER TENDER-LOAD OF THIS GROUND**, because both plant rungs declare
+        // `scaled_by: source_load`: the fixture sits on whatever tile `find_sowable_tile` picked, so
+        // the load is resolved off that tile's own `K` rather than assumed to be the reference one.
         let ladder = core_sim::LadderConfig::builtin();
+        let tender_loads = {
+            let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+            let registry = app.world.resource::<core_sim::TileRegistry>();
+            let tile_entity = registry
+                .index(coord.x, coord.y)
+                .expect("the fixture tile is on the map");
+            let ground = app
+                .world
+                .get::<core_sim::Tile>(tile_entity)
+                .expect("the fixture tile carries a Tile");
+            core_sim::patch_tender_loads(
+                core_sim::tile_forage_capacity(&labor.forage, ground),
+                &labor.forage,
+            )
+        };
+        assert!(
+            tender_loads > 0.0,
+            "fixture: sowable ground presents land to tend, or every upkeep figure below is zero"
+        );
         let tended_demand = ladder
             .rung(RungKey::PlantTended)
-            .upkeep_demand(core_sim::UNSCALED_UPKEEP);
-        let field_demand = ladder
-            .rung(RungKey::PlantField)
-            .upkeep_demand(core_sim::UNSCALED_UPKEEP);
+            .upkeep_demand(tender_loads);
+        let field_demand = ladder.rung(RungKey::PlantField).upkeep_demand(tender_loads);
         assert!(
             field_demand > tended_demand && tended_demand > 0.0,
             "the ladder's demands climb, or this block asserts nothing about interpolation"

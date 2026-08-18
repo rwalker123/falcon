@@ -59,7 +59,7 @@ use core_sim::{
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
     LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
-    SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR, UNSCALED_UPKEEP,
+    SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
@@ -162,13 +162,35 @@ fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
 }
 
 /// **`plant:tended`'s keeping demand in whole hands** — what the holding arm staffs, read straight
-/// off the shipped ladder so a retune moves the fixture with the game.
-fn keeping_demand_in_hands(app: &App) -> u32 {
+/// off the shipped ladder so a retune moves the fixture with the game, and **at the fixture tile's
+/// own tender-load**, since the rung quotes its rate per load (`forage::patch_tender_loads`).
+fn keeping_demand_in_hands(app: &App, coord: UVec2) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP)
+        .upkeep_crew_needed(tender_loads_at(app, coord))
+}
+
+/// **THE MEASURE BOTH PLANT RUNGS QUOTE THEIR UPKEEP RATE PER** — this tile's own `K` over
+/// `forage.cultivation.capacity_per_tender` (`forage::patch_tender_loads`). Resolved off the ground
+/// worldgen actually handed the fixture, never assumed to be the reference tile's one load: these
+/// fixtures pick whichever cultivable site the map offers, and its `K` is whatever its biome says.
+fn tender_loads_at(app: &App, coord: UVec2) -> f32 {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let tile_entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(coord.x, coord.y)
+        .expect("the fixture tile is on the map");
+    let ground = app
+        .world
+        .get::<core_sim::Tile>(tile_entity)
+        .expect("the fixture tile carries a Tile");
+    core_sim::patch_tender_loads(
+        core_sim::tile_forage_capacity(&labor.forage, ground),
+        &labor.forage,
+    )
 }
 
 /// Turns enough to outlast `plant:tended`'s own grace, so the rotting arm is genuinely bleeding
@@ -760,7 +782,7 @@ fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
     // wired to the same branch. Pinning the exact equality — a rot of exactly zero against a build of
     // exactly zero — is what makes them two answers.
     let (mut app, source) = world_with_a_cultivate_staffed_at(NOBODY_BUILDING);
-    let keepers = keeping_demand_in_hands(&app);
+    let keepers = keeping_demand_in_hands(&app, source);
     assert!(
         keepers > NOBODY_BUILDING,
         "fixture: the rung must cost something to hold, or both arms are the same arm"
@@ -887,7 +909,7 @@ fn an_abandoned_half_built_patch_publishes_rotting_and_a_kept_one_holding() {
         THE_GATE_IS_OPEN,
         NOBODY_GATHERING,
     );
-    let keepers = keeping_demand_in_hands(&app);
+    let keepers = keeping_demand_in_hands(&app, source);
     staff_the_keeping(&mut app, source, keepers);
     let span = turns_past_the_grace(&app);
     let mut parked = NO_BUILD_TURNS_ESTIMATE;
@@ -996,7 +1018,7 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
     for _ in 1..grace.max(2) {
         resolve_a_turn(&mut app, source);
     }
-    let keepers = keeping_demand_in_hands(&app);
+    let keepers = keeping_demand_in_hands(&app, source);
     staff_the_keeping(&mut app, source, keepers);
     resolve_a_turn(&mut app, source);
     assert_eq!(
@@ -1053,23 +1075,22 @@ fn the_four_sentinels_are_distinct_and_below_every_real_count() {
 /// agree.
 #[test]
 fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_zero() {
-    let ladder_rate = {
-        let probe = build_headless_app();
-        probe
-            .world
-            .resource::<LadderConfigHandle>()
-            .get()
-            .rung(RungKey::PlantTended)
-            .upkeep_demand(UNSCALED_UPKEEP)
-    };
+    // **A crew of ONE, below the rung's rate** — the repro's staffing.
+    const A_CREW_UNDER_THE_RATE: u32 = 1;
+    let (mut app, source) = world_with_a_patch(A_CREW_UNDER_THE_RATE, NOTHING_BANKED);
+    // **The quote is per tender-load of the ground the fixture is actually standing on**, so the
+    // expectation is struck off *this* world's own tile — the rung's bare rate would be the
+    // reference tile's, and `a_cultivable_site` picks whatever the map offers.
+    let ladder_rate = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_demand(tender_loads_at(&app, source));
     assert!(
         ladder_rate > core_sim::NO_UPKEEP_DEMAND,
         "fixture: the tended rung must charge a rate, or the two fields cannot differ"
     );
-
-    // **A crew of ONE, below the rung's rate** — the repro's staffing.
-    const A_CREW_UNDER_THE_RATE: u32 = 1;
-    let (mut app, source) = world_with_a_patch(A_CREW_UNDER_THE_RATE, NOTHING_BANKED);
     core_sim::run_turn(&mut app);
     recapture_snapshot_in_place(&mut app.world);
 
@@ -1138,6 +1159,202 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
     );
 }
 
+/// **⛔ THE PUBLISHED `tileCapacity` IS THE GROUND, AND `carryingCapacity` IS THE GROUND PLUS THE
+/// RUNG** — the split that lets a remembered hex state a capacity without stating a ladder position.
+///
+/// `carryingCapacity` is `tile K × the interpolated field_capacity_gain`, so on a standing Field it is
+/// ~2.53× the same ground wild. The client withholds `isField` and `fieldProgress` under fog and does
+/// **not** withhold the capacity, on the (now dead) grounds that a capacity is ground nobody can move
+/// — so an unredacted `carryingCapacity` hands back the very rung those two redactions hide, and
+/// continuously rather than as a boolean. `tileCapacity` is the fog-safe half.
+///
+/// **Run on a FIELD**, because that is the only rung at which the two numbers differ at all — the
+/// wild arm below is the same field's honesty check and is deliberately *not* this test's fixture.
+///
+/// **Asserted on the ENCODED envelope**, this file's discipline: a field can be right in the capture
+/// and wrong in the buffer.
+#[test]
+fn the_published_tile_capacity_is_the_ground_and_not_the_rung() {
+    /// Ground with a stated `K`, so "the tile's own capacity" is a number this test knows rather than
+    /// whatever site `a_cultivable_site` happened to pick (which is not stable run to run).
+    const GROUND: sim_runtime::TerrainType = sim_runtime::TerrainType::RiverDelta;
+
+    let (mut app, source) = world_with_a_patch(NOBODY_BUILDING, NOTHING_BANKED);
+    pin_the_ground(&mut app, source, GROUND);
+
+    // Seat a WHOLE Field, which is where the gain is fully applied.
+    {
+        let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
+        let (field_base, field_width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(source).expect("the fixture patch");
+        patch.set_ladder_position(field_base + field_width, &ladder);
+        patch.owner = Some(FactionId(0));
+        assert!(
+            patch.is_field(),
+            "fixture: the patch must stand on plant:field"
+        );
+    }
+    core_sim::run_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let ground_k = app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get()
+        .forage
+        .capacity_for(GROUND);
+    let gain = app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get()
+        .forage
+        .cultivation
+        .field_capacity_gain;
+
+    let tile_capacity = published_patch_field(&app, source, |patch| patch.tileCapacity());
+    let carrying = published_patch_field(&app, source, |patch| patch.carryingCapacity());
+
+    // **THE PRECONDITION.** Without it this test passes on any turn the Field's capacity gain
+    // silently stops applying — the two numbers would agree and every assertion below would hold
+    // about a mechanism that had stopped working.
+    assert!(
+        (tile_capacity - carrying).abs() > 1e-3,
+        "PRECONDITION: on a standing Field the ground and the patch must differ, or the gain is not \
+         applying and this test asserts nothing ({tile_capacity} against {carrying})"
+    );
+    assert!(
+        (tile_capacity - ground_k).abs() < 1e-3,
+        "`tileCapacity` is the tile's own biome capacity with NO rung in it: {tile_capacity} against \
+         {ground_k}"
+    );
+    assert!(
+        (carrying - tile_capacity * gain).abs() < 1e-2,
+        "…and `carryingCapacity` is that same ground times the Field's own gain: {carrying} against \
+         {tile_capacity} × {gain}"
+    );
+}
+
+/// **THE WILD ARM: the same field is honest where the two numbers coincide.** A wild patch has bought
+/// no gain, so `tileCapacity == carryingCapacity` — which is exactly why a wild patch is **useless**
+/// as the Field test's fixture above: publishing `patch.carrying_capacity` into `tileCapacity` would
+/// pass here. This arm pins that the field is a real reading and not a constant.
+#[test]
+fn a_wild_patch_publishes_the_ground_twice() {
+    const GROUND: sim_runtime::TerrainType = sim_runtime::TerrainType::PrairieSteppe;
+
+    let (mut app, source) = world_with_a_patch(NOBODY_BUILDING, NOTHING_BANKED);
+    pin_the_ground(&mut app, source, GROUND);
+    core_sim::run_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let ground_k = app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get()
+        .forage
+        .capacity_for(GROUND);
+    let tile_capacity = published_patch_field(&app, source, |patch| patch.tileCapacity());
+    let carrying = published_patch_field(&app, source, |patch| patch.carryingCapacity());
+
+    assert!(
+        !published_patch_field(&app, source, |patch| patch.isField()),
+        "fixture: this arm is about ground nobody has built on"
+    );
+    assert!(
+        (tile_capacity - ground_k).abs() < 1e-3,
+        "a wild patch's `tileCapacity` is its biome's own K: {tile_capacity} against {ground_k}"
+    );
+    assert!(
+        (tile_capacity - carrying).abs() < 1e-3,
+        "…and with no rung bought the two agree: {tile_capacity} against {carrying}"
+    );
+}
+
+/// **State the ground under `coord`**, so a test that is about a capacity knows which capacity.
+/// Which site [`a_cultivable_site`] lands on is not stable run to run, so a fixture that inherited
+/// its terrain would be asserting against a number that moves.
+fn pin_the_ground(app: &mut App, coord: UVec2, terrain: sim_runtime::TerrainType) {
+    let tile_entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(coord.x, coord.y)
+        .expect("the fixture tile is on the map");
+    app.world
+        .get_mut::<core_sim::Tile>(tile_entity)
+        .expect("the fixture tile carries a Tile")
+        .terrain = terrain;
+}
+
+/// **⛔ THE QUOTED PRICE IS THE PRICE THE PATCH WILL BE BILLED** — one verdict, one producer.
+///
+/// `cultivationUpkeepDemand` is what a compose sheet shows **before** the player commits;
+/// `upkeepDemand` is what the patch is actually charged. Both plant rungs quote their rate **per
+/// tender-load** (`forage::patch_tender_loads`), so a quote struck off the ladder's bare rate would
+/// be the *reference tile's* price shown on every patch in the game — promising `4.0` for a Field
+/// that will be billed `4.31`.
+///
+/// **Run on a patch standing on the tended rung, on ground that is NOT the reference tile**, so the
+/// two numbers cannot agree by coincidence: at one tender-load every scaling bug is invisible.
+#[test]
+fn the_quoted_price_is_the_price_the_patch_will_be_billed() {
+    /// A whole tended rung on the meter, so the **at-risk** rung the bill is struck through and the
+    /// rung the quote names are the same rung — which is what makes the two comparable at all.
+    const A_WHOLE_TENDED_RUNG: f32 = 1.0;
+    /// Nobody building, so the position cannot climb into the Field's span between the stamp and
+    /// the capture and leave the two describing different rungs.
+    const NOBODY_BUILDING: u32 = 0;
+
+    /// **Ground that is emphatically not the reference tile** — `RiverDelta`'s `K` of 210 against the
+    /// 195 `capacity_per_tender` ships at. **Stated rather than inherited**: which site
+    /// [`a_cultivable_site`] lands on is not stable run to run, and it sometimes lands on
+    /// `AlluvialPlain`, where a quote struck off the bare ladder rate agrees with the bill by
+    /// coincidence and this test asserts nothing.
+    const NOT_THE_REFERENCE_TILE: sim_runtime::TerrainType = sim_runtime::TerrainType::RiverDelta;
+
+    let (mut app, source) = world_with_a_patch(NOBODY_BUILDING, A_WHOLE_TENDED_RUNG);
+    pin_the_ground(&mut app, source, NOT_THE_REFERENCE_TILE);
+    let loads = tender_loads_at(&app, source);
+    assert!(
+        (loads - core_sim::ONE_TENDER_LOAD).abs() > 1e-3,
+        "PRECONDITION: this fixture's ground must NOT be the reference tile ({loads} tender-loads), \
+         or a quote struck off the bare ladder rate would agree with the bill by coincidence"
+    );
+
+    core_sim::run_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let quoted = published_patch_field(&app, source, |patch| patch.cultivationUpkeepDemand());
+    let billed = published_patch_field(&app, source, |patch| patch.upkeepDemand());
+    assert!(
+        billed > core_sim::NO_UPKEEP_DEMAND,
+        "PRECONDITION: a patch holding the tended rung is billed something, or both sides are zero"
+    );
+    assert!(
+        (quoted - billed).abs() < 1e-4,
+        "the sheet's price and the patch's bill are one number: quoted {quoted}, billed {billed}"
+    );
+
+    // **AND IT IS THE SCALED NUMBER, not the ladder's bare rate.** Without this the pair above is
+    // satisfiable by scaling neither — two producers agreeing on the wrong answer.
+    let bare_rate = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .upkeep_demand(core_sim::ONE_TENDER_LOAD);
+    assert!(
+        (quoted - bare_rate).abs() > 1e-3,
+        "…and it is this GROUND's price, not the reference tile's: {quoted} against the ladder's \
+         bare {bare_rate} at {loads} tender-loads"
+    );
+    assert!(
+        (quoted - bare_rate * loads).abs() < 1e-4,
+        "…which is the rung's rate per tender-load of this tile: {quoted} against \
+         {bare_rate} × {loads}"
+    );
+}
+
 /// **A BLOCKED HEAD AT ZERO PROGRESS PUBLISHES `upkeepSupplied 0` AGAINST ITS `upkeepDemand 0`** —
 /// a row that no longer disagrees with itself (`docs/plan_standing_upkeep.md` §4.6a).
 ///
@@ -1182,7 +1399,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
             }
             assert!(found, "fixture: the band holds the source patch");
         }
-        let keepers = keeping_demand_in_hands(&app);
+        let keepers = keeping_demand_in_hands(&app, source);
         staff_the_keeping(&mut app, source, keepers);
         core_sim::run_turn(&mut app);
         recapture_snapshot_in_place(&mut app.world);

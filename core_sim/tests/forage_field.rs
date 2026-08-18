@@ -343,7 +343,7 @@ fn spawn_builder(
     const CULTIVATE_CREW: u32 = 2;
     let crew = match improvement {
         Improvement::Cultivate => CULTIVATE_CREW,
-        _ => sow_crew(app),
+        _ => sow_crew(app, patch),
     };
     spawn_forager_of(app, tile, patch, Some(improvement), crew)
 }
@@ -378,12 +378,14 @@ fn spawn_forager_of(
     // measuring a build's pace — it is measuring the build racing the rot. Sized at the dearer plant
     // rung's own count, so it covers a tended patch and a Field alike; the tests that want an
     // *unkept* patch unstaff the band or walk it away.
-    let keepers = app
-        .world
-        .resource::<LadderConfigHandle>()
-        .get()
-        .rung(RungKey::PlantField)
-        .upkeep_crew_needed(core_sim::UNSCALED_UPKEEP);
+    let keepers = {
+        let loads = tender_loads_at(app, patch);
+        app.world
+            .resource::<LadderConfigHandle>()
+            .get()
+            .rung(RungKey::PlantField)
+            .upkeep_crew_needed(loads)
+    };
     app.world
         .spawn((
             PopulationCohort {
@@ -509,6 +511,27 @@ fn field_progress_of(app: &App, coord: UVec2) -> f32 {
 /// bleed forgives before it starts (`docs/plan_standing_upkeep.md` §2.4). Read off the ladder's
 /// `upkeep` block, never restated; the build's own grace is absent on both plant rungs, because
 /// this branch counts unmet demand rather than un-worked turns.
+/// **THE MEASURE BOTH PLANT RUNGS QUOTE THEIR UPKEEP RATE PER** — this tile's own `K` over
+/// `forage.cultivation.capacity_per_tender` (`forage::patch_tender_loads`). Resolved off the ground
+/// worldgen handed the fixture rather than assumed to be the reference tile's one load: these tests
+/// sow whichever site the map offers, and a rich tile costs more to hold than a thin one.
+fn tender_loads_at(app: &App, coord: UVec2) -> f32 {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let tile_entity = app
+        .world
+        .resource::<core_sim::TileRegistry>()
+        .index(coord.x, coord.y)
+        .expect("the fixture tile is on the map");
+    let ground = app
+        .world
+        .get::<core_sim::Tile>(tile_entity)
+        .expect("the fixture tile carries a Tile");
+    core_sim::patch_tender_loads(
+        core_sim::tile_forage_capacity(&labor.forage, ground),
+        &labor.forage,
+    )
+}
+
 fn field_grace(app: &App) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
@@ -521,14 +544,14 @@ fn field_grace(app: &App) -> u32 {
 /// bleed** — both in absolute work units. The accrual is read at [`SOW_CREW`], the head count the
 /// build fixtures actually staff, because the crew *is* the throughput now
 /// (`docs/plan_unit_costed_work.md` §1.2).
-fn field_build(app: &App) -> (f32, f32) {
+fn field_build(app: &App, coord: UVec2) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
         field.build_accrual(
             Some(Improvement::Sow),
             true,
-            sow_crew(app),
+            sow_crew(app, coord),
             core_sim::NO_BUILD_GEAR,
         ),
         // **The feral bleed is the rung's own ROT RATE**, not the demand it goes short by: the two
@@ -548,7 +571,7 @@ const WELL_PAST_ANY_GRACE: u16 = 32;
 /// **This is the number the reported bug is about**: a completed meter sits exactly at its cost, so
 /// a `progress >= cost` predicate answered `grace + 1` and the rung was lost on the first bleed of
 /// any size. Derived from the rung's own dials, so a retune of any of the three moves it.
-fn unmaintained_field_turns_before_loss(app: &App) -> u32 {
+fn unmaintained_field_turns_before_loss(app: &App, coord: UVec2) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     let cost = field_cost(app);
@@ -556,7 +579,7 @@ fn unmaintained_field_turns_before_loss(app: &App) -> u32 {
     // (`docs/plan_standing_upkeep.md` §2.8), so what a bleed has to eat before the rung is lost is
     // the rung's own cost.
     let erodable = cost;
-    let (_, bleed) = field_build(app);
+    let (_, bleed) = field_build(app, coord);
     // Lost the turn the meter falls **below** the bar, so eroding exactly the erodable amount still
     // holds it — hence `floor + 1` rather than `ceil`.
     field.upkeep_grace_turns() + (erodable / bleed).floor() as u32 + 1
@@ -569,7 +592,7 @@ fn unmaintained_field_turns_before_loss(app: &App) -> u32 {
 /// The rung's own `crew_needed` is the staffing the shipped cost was priced against
 /// (`docs/plan_unit_costed_work.md` §3). The one-turn over-crewed build is real and pinned on
 /// purpose by `forage_cultivation::over_crewing_a_build_is_no_longer_capped`.
-fn sow_crew(app: &App) -> u32 {
+fn sow_crew(app: &App, coord: UVec2) -> u32 {
     /// The net supply the `plant:field` rung's 75-unit `work_cost` was priced against — the
     /// staffing this file's paces are all quoted at.
     const NET_WORKER_TURNS: u32 = 3;
@@ -582,7 +605,7 @@ fn sow_crew(app: &App) -> u32 {
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantField)
-        .upkeep_crew_needed(core_sim::UNSCALED_UPKEEP)
+        .upkeep_crew_needed(tender_loads_at(app, coord))
         .saturating_add(NET_WORKER_TURNS)
 }
 
@@ -615,11 +638,15 @@ fn field_cost(app: &App) -> f32 {
 /// Cultivate's price and with Cultivate's tool. A bare-ground Sow is therefore `50 + 75` work units,
 /// and a fixture that ran only the Field's own 75 would measure a **tended patch** and report it as
 /// a failed Sow.
-fn turns_to_sow(app: &App) -> u32 {
+fn turns_to_sow(app: &App, coord: UVec2) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
-    core_sim::build_turns_remaining(base + width, core_sim::RUNG_UNSTARTED, field_build(app).0)
-        .expect("a staffed Sow finishes")
+    core_sim::build_turns_remaining(
+        base + width,
+        core_sim::RUNG_UNSTARTED,
+        field_build(app, coord).0,
+    )
+    .expect("a staffed Sow finishes")
 }
 
 /// **PLAYABILITY, not mechanic — this is the check that caught worldgen dropping the Field rung.**
@@ -770,9 +797,12 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     );
 
     // **IT PASSES THROUGH CULTIVATED ON THE WAY.** Enough turns to lay the first leg and no more.
-    let first_leg_turns =
-        core_sim::build_turns_remaining(legs[0].1, core_sim::RUNG_UNSTARTED, field_build(&app).0)
-            .expect("a staffed Sow finishes");
+    let first_leg_turns = core_sim::build_turns_remaining(
+        legs[0].1,
+        core_sim::RUNG_UNSTARTED,
+        field_build(&app, coord).0,
+    )
+    .expect("a staffed Sow finishes");
     run_turns_with_forage(&mut app, first_leg_turns);
     {
         let registry = app.world.resource::<ForageRegistry>();
@@ -794,7 +824,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     }
 
     // Then the rest of the climb.
-    let rest_of_the_climb = turns_to_sow(&app);
+    let rest_of_the_climb = turns_to_sow(&app, coord);
     run_turns_with_forage(&mut app, rest_of_the_climb);
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(coord).expect("patch persists");
@@ -946,7 +976,7 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
         "freshly sown ground has nothing to take a fraction of"
     );
 
-    let turns_to_sow = turns_to_sow(&app);
+    let turns_to_sow = turns_to_sow(&app, coord);
     run_turns_with_forage(&mut app, turns_to_sow);
     let while_building = provisions_f32(&mut app);
     assert!(
@@ -1276,7 +1306,7 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
 
     // Worked to completion the patch stands on rung 3 — and its crew starts gathering again.
     spawn_builder(&mut app, tile, coord, Improvement::Sow);
-    let turns_to_sow = turns_to_sow(&app);
+    let turns_to_sow = turns_to_sow(&app, coord);
     run_turns_with_forage(&mut app, turns_to_sow);
     let patch_is_field = app
         .world
@@ -1325,7 +1355,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     }
 
     // Every turn but the last: the meter fills and the verb stays put.
-    let turns_to_sow = turns_to_sow(&app);
+    let turns_to_sow = turns_to_sow(&app, coord);
     let turns_to_build = turns_to_sow;
     run_turns_with_forage(&mut app, turns_to_build - 1);
     assert!(
@@ -1368,7 +1398,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     let assignment = sources[0];
     assert_eq!(
         assignment.workers,
-        sow_crew(&app),
+        sow_crew(&app, coord),
         "the crew stays on the ground it sowed"
     );
     assert_eq!(
@@ -1407,8 +1437,8 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
     let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
-    let turns_to_sow = turns_to_sow(&app);
-    let (_, decay_per_turn) = field_build(&app);
+    let turns_to_sow = turns_to_sow(&app, coord);
+    let (_, decay_per_turn) = field_build(&app, coord);
     assert!(decay_per_turn > 0.0, "an unworked field must bleed");
     run_turns_with_forage(&mut app, turns_to_sow);
     assert!(app
@@ -1471,7 +1501,24 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
             .expect("patch")
             .clone();
         probe.set_ladder_position(position, &ladder);
-        core_sim::patch_upkeep_demand(&probe, &ladder)
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let tile_entity = app
+            .world
+            .resource::<core_sim::TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("the fixture tile is on the map");
+        let ground = app
+            .world
+            .get::<core_sim::Tile>(tile_entity)
+            .expect("the fixture tile carries a Tile");
+        // **Billed per tender-load of THIS ground**, which is what makes the two readings below a
+        // comparison of rungs rather than of tiles.
+        core_sim::patch_upkeep_demand(
+            &probe,
+            &ladder,
+            core_sim::tile_forage_capacity(&labor.forage, ground),
+            &labor.forage,
+        )
     };
 
     // **THE PRECONDITION.** A whole Field and the bare tended patch beneath it must owe materially
@@ -1614,7 +1661,7 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
     // Long enough for the meter to fill however the two crews' accruals interleave, plus the turn a
     // band that did not finish it needs to notice (its clear is decided at the top of its own
     // iteration, so a crew processed *before* the finisher clears on the following turn).
-    let turns_to_sow = turns_to_sow(&app);
+    let turns_to_sow = turns_to_sow(&app, coord);
     run_turns_with_forage(&mut app, turns_to_sow + 1);
 
     assert!(
@@ -1696,7 +1743,7 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
         patch.owner = Some(FactionId(0));
     }
 
-    let (_, field_decay) = field_build(&app);
+    let (_, field_decay) = field_build(&app, coord);
     let grace = field_grace(&app);
     // Run right through the Field's whole bleed. Cultivation must not move by so much as one turn's
     // decay while the Field still has anything left.
@@ -1880,7 +1927,7 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
     // **Then run it into the ground.** The source walks down through the tended rung's range and
     // loses that too, once, on its own channel — and the Field's line is NOT repeated over the
     // hundred bleeding turns in between, which is the thing this test exists to catch.
-    let survives = unmaintained_field_turns_before_loss(&app);
+    let survives = unmaintained_field_turns_before_loss(&app, coord);
     run_turns_untended(&mut app, survives);
     assert_eq!(
         feral_lines_on(&app, "sow"),

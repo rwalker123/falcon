@@ -244,6 +244,16 @@ const SHIPPED_ART_SPECIES := "wild_emmer"
 const DEGRADED_TIER_SPECIES := "hay_grass"
 const DEGRADED_TIER_ROLE := "fodder"
 
+## `labor_config.json`'s shipped `cultivation.field_capacity_gain` — what a completed Field multiplies
+## the TILE's own `K` by. Named here rather than written as a boosted number so the fixture's two
+## capacities are visibly one ground reading and its gain, which is the whole claim being asserted.
+const FIELD_CAPACITY_GAIN := 2.53
+
+## The GROUND's own `K` under that Field. `BaseFx.FIXTURE_CAPACITY`, so the Field fixture stands on
+## exactly the ground every other tile fixture in this chapter does and the only thing that changed is
+## the rung.
+const FIELD_GROUND_CAPACITY := BaseFx.FIXTURE_CAPACITY
+
 ## The two guard keys chosen so that the path they WOULD compose under the override resolves to a
 ## real shipped PNG — which is the only way to ask whether the guard fires while flora coverage is
 ## zero and every key answers `""` for free.
@@ -345,6 +355,70 @@ func _assert_fog_stock_parity() -> void:
 	# what says the capacity-only form comes from the visibility DECISION and not from the erasure.
 	h._assert_hud("…reading identically to the unredacted remembered tile, decision not accident",
 		redacted_lines == remembered)
+
+## **THE REMEMBERED CARD STATES THE GROUND, NOT THE RUNG** — the half `_assert_fog_stock_parity`
+## structurally cannot reach, and the defect this fixture exists for.
+##
+## `patch_carrying_capacity` on the wire is the tile's own `K` times the interpolated
+## `field_capacity_gain`, so a standing Field publishes ~2.53x its biome's base while `patch_is_field`
+## and `patch_field_progress` are redacted beside it — a finer reading of the ladder position than the
+## boolean being hidden. The fix redacts the GAIN rather than the ceiling: the card falls back to
+## `patch_tile_capacity`, which is terrain.
+##
+## **WHY IT NEEDS ITS OWN FIXTURE.** Everything above runs on `TileFx.sight_tile_fixture`, which
+## stands below the Field rung — there the ground's `K` and the patch's ceiling are THE SAME NUMBER,
+## so the parity assertion passes whether the fallback works or is not wired at all. It cannot tell
+## the defect from the fix. This fixture is the one where the two genuinely differ, and the FIRST
+## claim below is that precondition: without it the whole block goes vacuous the moment the gain stops
+## applying.
+func _assert_fog_field_capacity_is_the_ground() -> void:
+	var ground := FIELD_GROUND_CAPACITY
+	var boosted := FIELD_GROUND_CAPACITY * FIELD_CAPACITY_GAIN
+	# CLAIM 0 — the two numbers are actually different. Everything after it is about which one the
+	# card picked, and on equal numbers there is no pick to observe.
+	h._assert_hud("a FIELD's ceiling and the ground under it are DIFFERENT numbers (%.0f vs %.0f)"
+		% [boosted, ground], boosted > ground)
+	# Floorified BEFORE the erasure, exactly as the parity assertion above: the seeder fills growth
+	# terms off the capacity, and four of the keys it seeds are keys the shipped list removes.
+	var remembered := ForageFx.floorify(
+		_field_rung_tile_fixture(TileFx.VIS_DISCOVERED), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	for key in h.MAP_VIEW_SCRIPT.FOW_DISCOVERED_HIDDEN_KEYS:
+		remembered.erase(key)
+	var remembered_lines = h._hud._drawer._tile_terrain_lines(remembered)
+	var remembered_index = Readout.detail_row_index(remembered_lines, HudFloraVocab.FORAGING_KEY)
+	var ground_face := HudFloraVocab.STOCK_UNKNOWN_FORMAT % ground
+	# CLAIM 1 — the redacted card states the GROUND's capacity. A card that kept the ceiling would read
+	# `— / 253` and hand over the rung; one that read the redacted key straight would find nothing,
+	# fail its own `capacity > 0` guard and drop the Foraging row altogether.
+	h._assert_hud("a REMEMBERED tile on the FIELD rung states the GROUND's capacity (`%s`)"
+			% ground_face,
+		remembered_index >= 0 and remembered_lines[remembered_index].ends_with(ground_face))
+	# CLAIM 2 — and the SAME tile in sight still states the BOOSTED one. Without this half, a fallback
+	# that ignored `patch_carrying_capacity` entirely would satisfy claim 1 while quietly deleting the
+	# Field's whole payoff from the live card.
+	var live := ForageFx.floorify(
+		_field_rung_tile_fixture(TileFx.VIS_ACTIVE), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var live_lines = h._hud._drawer._tile_terrain_lines(live)
+	var live_index = Readout.detail_row_index(live_lines, HudFloraVocab.FORAGING_KEY)
+	var boosted_face := HudFloraVocab.STOCK_FORMAT % [float(live["patch_biomass"]), boosted]
+	h._assert_hud("…while the SAME tile in sight states the PATCH's boosted ceiling (`%s`)"
+			% boosted_face,
+		live_index >= 0 and live_lines[live_index].contains(boosted_face))
+
+
+## A hex carrying a COMPLETED Field, in a given sight state — the one fixture where the patch's
+## ceiling and the tile's own `K` are different numbers.
+##
+## It states BOTH capacities explicitly, after `BaseFx.seed_forage_rows` has run: the seeder equates
+## them (every fixture through it stands below rung 3) and this is the state that must not.
+func _field_rung_tile_fixture(visibility_state: String) -> Dictionary:
+	var tile := TileFx.sight_tile_fixture(visibility_state)
+	tile["patch_tile_capacity"] = FIELD_GROUND_CAPACITY
+	tile["patch_carrying_capacity"] = FIELD_GROUND_CAPACITY * FIELD_CAPACITY_GAIN
+	tile["patch_is_field"] = true
+	tile["patch_field_progress"] = 1.0
+	return tile
+
 
 ## The two webs' capacities on `TileFx.sight_tile_fixture`, read back OFF the fixture so the assertion above
 ## cannot drift from the numbers it is asserting about.
@@ -703,6 +777,10 @@ func run(harness) -> void:
 	# The FOG half of the same pair (issue #462) — what each web states on a hex the player remembers
 	# but cannot see. `tile_sight_remembered` is its frame; these are the claims that frame cannot make.
 	_assert_fog_stock_parity()
+	# …and the half that pair cannot reach: a remembered hex standing on the FIELD rung, where the
+	# patch's ceiling and the ground's own K are different numbers and the card has a genuine pick to
+	# make. Driven and PNG-less, like the block above.
+	_assert_fog_field_capacity_is_the_ground()
 
 	# State 2-pasture-stressed — the graze drawn down into the stressed band: "Grazing 61 / 240 ·
 	# ⚠ Stressed", the phase inline and WARN-amber, identical in label and tint to a stressed herd or

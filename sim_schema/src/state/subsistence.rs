@@ -827,6 +827,18 @@ pub struct ForagePatchState {
     pub owner: Option<u32>,
     #[serde(default)]
     pub biomass: f32,
+    /// **WHAT THIS PATCH HOLDS NOW** — the ground's own `K` already multiplied by the **interpolated**
+    /// `field_capacity_gain` this patch's ladder position has bought
+    /// (`forage::patch_carrying_capacity`). It is **live state that carries the rung**, not a fact
+    /// about the terrain: a standing Field reads ~2.53× the same ground left wild, and a half-raised
+    /// one reads part-way between, continuously.
+    ///
+    /// # ⛔ REDACT IT UNDER FOG — [`Self::tile_capacity`] is what replaces it there
+    ///
+    /// `is_field` and `field_progress` are already withheld on a remembered hex; publishing this one
+    /// unredacted hands back the same ladder position, and in a finer grain than the boolean did —
+    /// being interpolated it states *how far up*, not merely *whether*. Render this where the tile is
+    /// **visible** and [`Self::tile_capacity`] where it is merely **discovered**.
     #[serde(default)]
     pub carrying_capacity: f32,
     #[serde(default)]
@@ -1219,8 +1231,11 @@ pub struct ForagePatchState {
     /// build is in flight — exactly the rule the `*_work_cost` beside it follows. On a patch
     /// mid-build the two agree; on an unstarted one they differ, and that difference was the trap.
     ///
-    /// **Neither scales with anything**, because a patch is one tile: both plant rungs declare
-    /// `scaled_by: flat`, so the rate is what the ladder states. Appended (append-only).
+    /// **Both scale with the size of the land, through the same measure the bill uses.** Both plant
+    /// rungs declare `scaled_by: source_load` and quote their rate **per tender-load** — the tile's
+    /// own forage capacity over `forage.cultivation.capacity_per_tender` — so these are struck at
+    /// capture off *this patch's* tile, exactly as [`Self::upkeep_demand`] is, and not off the
+    /// ladder's bare rate. Appended (append-only).
     #[serde(default)]
     pub cultivation_upkeep_demand: f32,
     /// The rung-3 twin of [`Self::cultivation_upkeep_demand`].
@@ -1292,6 +1307,31 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_legs: Vec<BuildLegState>,
+    /// **WHAT THE GROUND HOLDS** — this tile's own forage `K`, off `forage.capacity_by_biome` through
+    /// `forage::tile_forage_capacity`, with **no rung gain in it**.
+    ///
+    /// # THE SPLIT, AND WHY BOTH SHIP
+    ///
+    /// - [`Self::carrying_capacity`] is what the **patch** holds now — this number × the interpolated
+    ///   `field_capacity_gain`. It moves when the player builds, so it is live state.
+    /// - This is a pure function of the tile's **terrain**. No player action moves it, which is
+    ///   exactly what makes it safe to render on a hex the player has only ever *remembered*.
+    ///
+    /// **The client picks between them on visibility**, and neither is redundant: dropping this one
+    /// as "the same number" is wrong on any patch above rung 2, and dropping
+    /// [`Self::carrying_capacity`] as "derivable" is wrong because the client holds neither the gain
+    /// nor the position it interpolates on. Collapsing either re-opens the fog leak this field closed
+    /// while keeping issue #462's *"both webs state their capacity on a remembered tile"* intact.
+    ///
+    /// It is **also the denominator the plant standing upkeep is quoted per**:
+    /// [`Self::upkeep_demand`] and the `*_upkeep_demand` quote pair are
+    /// `rate × tile_capacity / cultivation.capacity_per_tender` (`forage::patch_tender_loads`), so
+    /// this is the term that explains why two patches on one rung are billed differently.
+    ///
+    /// `0` where the tile is not on the map, the same absent-means-nothing reading
+    /// [`Self::composition`] takes there — never a fabricated capacity. Appended (append-only).
+    #[serde(default)]
+    pub tile_capacity: f32,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from

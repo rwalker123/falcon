@@ -286,8 +286,10 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 > `upkeepShortfall` stays non-zero throughout and `neglectGraceRemaining` reads `0` from the first
 > turn. A surface that renders the demand without one of those two is reporting a recovery.
 >
-> **The plant rungs cannot do this** — both declare `scaled_by: flat`, so a patch's demand is the
-> ladder's own number whatever state the ground is in.
+> **The plant rungs cannot do this even though they are now scaled too.** Both declare
+> `scaled_by: source_load`, but the plant load reads the **tile's** forage capacity — terrain, which
+> no amount of neglect moves — where the herd load reads the flock's live head count. A patch's bill
+> is constant for the ground it stands on; a herd's falls as the herd dies.
 
 ### The shed waits out a NEGLECT GRACE, and the notice does not
 

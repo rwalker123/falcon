@@ -395,7 +395,7 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # never goes silent about ground that feeds herds — what disappears is only the claim that PEOPLE
     # can eat it. Fodder needs no forage action, and it keeps its row.
     var gathering_site := DetailFormat.tile_is_gathering_site(tile_info)
-    var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    var patch_capacity := DetailFormat.patch_capacity(tile_info)
     # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
     # basket below decomposes it. Reading it twice is how the row and its own decomposition would
     # start describing different stands.
@@ -540,11 +540,17 @@ func _tile_terrain_lines(tile_info: Dictionary,
 ## twice, so each branch of `_tile_terrain_lines` calls the pair and neither can grow a shape the
 ## other lacks (issue #462 was precisely that drift).
 ##
-## Empty when the ground carries no patch at all (`patch_carrying_capacity <= 0`): a moduleless tile
-## prints nothing, never a "0 / 0" that would read as an exhausted stand rather than an absent one.
+## Empty when the ground carries no patch at all (`DetailFormat.patch_capacity <= 0`): a moduleless
+## tile prints nothing, never a "0 / 0" that would read as an exhausted stand rather than an absent one.
+##
+## **THE CAPACITY COMES THROUGH `DetailFormat.patch_capacity`, never off a key here.** A remembered
+## hex has no `patch_carrying_capacity` — it carries the Field rung's gain, so the fog list redacts it
+## — and this row states `patch_tile_capacity`, the ground beneath it, instead. Reading the ceiling
+## key directly would find `0` on every remembered hex and drop the `Foraging` row from the card
+## entirely, which is the failure `_assert_fog_stock_parity` exists to catch.
 func _forage_stock_lines(tile_info: Dictionary, stock_known: bool) -> Array[String]:
     var lines: Array[String] = []
-    var capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    var capacity := DetailFormat.patch_capacity(tile_info)
     if capacity <= 0.0:
         return lines
     lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, _stock_value(

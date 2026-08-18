@@ -1813,6 +1813,8 @@ table SpeciesMaterialRates {
 // `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
 // faction (`hasOwner = false` = a wild/untended patch, since faction 0 is a valid id).
 // `biomass`/`carryingCapacity`/`ecologyPhase` let the client optionally show patch health.
+// `carryingCapacity` is LIVE STATE THAT CARRIES THE RUNG and `tileCapacity` (appended last) is
+// the GROUND — see both fields, and read `tileCapacity` on a remembered hex.
 table ForagePatchState {
   x:uint;
   y:uint;
@@ -1821,6 +1823,19 @@ table ForagePatchState {
   hasOwner:bool = false;
   owner:uint = 0;
   biomass:float = 0;
+  // WHAT THIS PATCH HOLDS *NOW*, in biomass - the ground's own K already multiplied by the
+  // INTERPOLATED `field_capacity_gain` the patch's ladder position has bought
+  // (`forage::patch_carrying_capacity`). So it is LIVE STATE THAT CARRIES THE RUNG, not a fact
+  // about the terrain: a standing Field reads ~2.53x the same ground left wild, and a half-raised
+  // one reads part-way between, continuously.
+  //
+  // ⛔ IT MUST BE REDACTED ON A REMEMBERED HEX, AND `tileCapacity` (appended last) IS WHAT REPLACES
+  // IT THERE. `isField` and `fieldProgress` are already redacted under fog; publishing this one
+  // unredacted hands the same ladder position back, and worse than the boolean did - being
+  // interpolated, it states HOW FAR UP rather than merely whether. The pair exists precisely so the
+  // client can keep stating a capacity on ground it remembers (issue #462) while giving away
+  // nothing a player's own action moved. Render `carryingCapacity` where the tile is VISIBLE and
+  // `tileCapacity` where it is merely DISCOVERED.
   carryingCapacity:float = 0;
   ecologyPhase:string;
   // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
@@ -2354,9 +2369,16 @@ table ForagePatchState {
   // On a patch mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
   // cannot yet give. `0` only where the rung declares no upkeep.
   //
-  // NEITHER SCALES WITH ANYTHING, because a patch is ONE TILE: both plant rungs declare
-  // `scaled_by: flat`, so the rate is what the ladder states (2 and 4 work per turn today - whole
-  // numbers a player can staff exactly).
+  // BOTH SCALE WITH THE SIZE OF THE LAND, and they scale with the SAME measure the bill does.
+  // Both plant rungs declare `scaled_by: source_load` and quote their rate PER TENDER-LOAD - the
+  // tile's own forage capacity over `forage.cultivation.capacity_per_tender` (the plant twin of a
+  // herd's keeper-load). So these are `rate x this patch's tile's loads`, not the ladder's bare 2
+  // and 4: a Field on rich delta ground quotes ~4.31 and is billed ~4.31, and a thin steppe patch
+  // quotes less than either. Quoting the bare rate here would show one price and charge another,
+  // which is two producers of one verdict.
+  //
+  // The client still does NO arithmetic of its own on these - they are struck at capture off the
+  // same patch's tile as `upkeepDemand`.
   cultivationUpkeepDemand:float = 0;
   fieldUpkeepDemand:float = 0;
   // WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS, in WORK UNITS (appended,
@@ -2535,6 +2557,30 @@ table ForagePatchState {
   //    0-valued row would read as a crop that pays badly.
   //  - KEY ALWAYS PRESENT: every composition entry has an entry here, empty rows and all.
   compositionMaterialPerBiomass:[SpeciesMaterialRates];
+
+  // WHAT THE *GROUND* HOLDS (appended last, append-only wire) - this tile's own forage K, straight
+  // off `forage.capacity_by_biome` via `forage::tile_forage_capacity`, with NO rung gain in it.
+  //
+  // THE SPLIT, AND WHY BOTH SHIP:
+  //  - `carryingCapacity` above is what the PATCH holds now = this number x the interpolated
+  //    `field_capacity_gain`. It moves when the player builds, so it is live state.
+  //  - `tileCapacity` is a pure function of the tile's terrain. NO PLAYER ACTION MOVES IT, which is
+  //    exactly what makes it safe to render on a hex the player has only ever REMEMBERED.
+  //
+  // SO THE CLIENT PICKS BETWEEN THEM ON VISIBILITY, and neither is redundant. A remembered hex
+  // states `tileCapacity`; a visible one states `carryingCapacity`. Collapsing the two - either by
+  // dropping this field as "the same number" (it is not, on any patch above rung 2) or by dropping
+  // `carryingCapacity` as "derivable" (the client does not hold the gain, nor the position it
+  // interpolates on) - re-opens the leak this field was added to close.
+  //
+  // It is ALSO the denominator the plant standing upkeep is quoted per: `upkeepDemand` and the
+  // `*UpkeepDemand` quote pair are `rate x tileCapacity / cultivation.capacity_per_tender`
+  // (`forage::patch_tender_loads`), so this is the term that explains why two patches on one rung
+  // are billed differently. Deliberately the TILE's K and not the patch's - see those fields.
+  //
+  // `0` where the tile is not on the map at all, the same absent-means-nothing reading `composition`
+  // takes there; never a fabricated capacity.
+  tileCapacity:float = 0;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
