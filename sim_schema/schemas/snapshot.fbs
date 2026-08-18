@@ -1355,9 +1355,21 @@ table LaborAssignment {
   wastedYield:float = 0;
   // THE overhunting ⚠, answered by the sim rather than derived by the client from
   // actualYield > sustainableYield (which mis-fires on a hunt's lumpy per-turn take — see actualYield).
-  // = SourceYield.overdraws: `!managed && policy.overdraws()` — false for Sustain and the investment
-  // rungs (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Deplete/
-  // Eradicate. A row with no yield (Scout/Warrior, or a rehydrated SourceYield::ZERO) is false.
+  // = SourceYield.overdraws = core_sim `components::take_overdraws`: INTENT **and** ABILITY — the
+  // floor is below the food peak (floor < 0.5) AND this crew's per-turn throughput out-takes the
+  // biggest one-turn regrowth between that floor and the stock standing today. A crew that settles
+  // above the floor and holds there is drawing nothing below what the source sustains, whatever the
+  // dial says, so it reads false; the intent half alone put `⚠ overdrawing` on a tile card beside a
+  // compose sheet reading "this crew can't draw it that low. It settles at 92% and holds there".
+  // False for every managed rung-3 source (a Field, a pen) whatever the floor and the crew.
+  //
+  // **DO NOT RE-DERIVE IT, and do not gate it.** Every surface that says "overdrawing" — the mark,
+  // the tooltip's word, the map badge, the compose sheet's verdict — reads THIS field, so that one
+  // question has one answer. A client-side `actualYield > sustainableYield` test is the wrong
+  // predicate outright (see actualYield); a client-side reachability gate is a second copy of a
+  // model the sim owns the curves for.
+  //
+  // A row with no yield (Scout/Warrior, or a rehydrated SourceYield::ZERO) is false.
   // Derived per-turn at capture. Appended (append-only).
   overdraws:bool = false;
   // THE STEADY per-turn income this source realizes = the honest long-run average of the lumpy
@@ -1425,8 +1437,9 @@ table LaborAssignment {
   // four values those names stand for (0.50 / 0.30 / 0.15 / 0) — a label is true of the assignment
   // or absent, never rounded. Read `floor`; do not infer it from `policy`.
   //
-  // The overhunting warning is `overdraws` above, which is now `floor < 0.5`: you are drawing this
-  // source below the biomass at which it grows fastest. Appended last (append-only).
+  // The overhunting warning is `overdraws` above. It is NOT `floor < 0.5` on its own: that is the
+  // intent half, and the flag also requires the crew to be able to draw the source down to it —
+  // read the field, never this number. Appended last (append-only).
   floor:float = 0;
   // --- THE FORECAST IS A DISTRIBUTION (appended, docs/plan_hunt_through_combat.md 6.4) -----------
   // THE BAND `actualYield` / `tradeYield` SIT IN THE MIDDLE OF - "6-11, likely 9". A hunt has two
@@ -1550,6 +1563,25 @@ table LaborAssignment {
   // a rewind restores the selection they made rather than a re-picked one. A compose sheet reopened
   // on a patch nobody has worked yet has no other way to show the crop it is about to plant.
   species:string;
+  // --- WHICH PLANTS THIS CREW CARRIES HOME (appended last, the selective gather) ---------------
+  // The species keys this Forage crew is gathering, or an EMPTY list for "take the whole basket" -
+  // the default, and byte-identical to every assignment sent before this field existed. Naming one
+  // or more leaves the rest of the stand standing: only their summed share of the biomass is
+  // available (the ceiling is `max(0, B - floor*K) x that share`), only their rows are converted,
+  // and only what was taken is drawn down - gathering the wheat does not trample the cotton.
+  //
+  // IT IS NOT `species` ABOVE, which is the COMMIT crop a Cultivate/Sow names and which is inert
+  // until an improvement completes. This one is live at rung 1, on the take itself, and the two are
+  // independent: a crew can gather flax while committing the ground to emmer.
+  //
+  // SORTED AND DEDUPLICATED at the source (a BTreeSet on the assignment), so the order here is the
+  // keys' own ascending order and is stable frame to frame. A client must not re-sort it into a
+  // display order and send that back as a different selection.
+  //
+  // The row's own numbers - actualYield, workersNeeded, wastedYield, sustainableYield and the
+  // arrival schedule - ALREADY answer for this selection. Render them; never re-derive a per-species
+  // take on the client, which holds none of the capacity arithmetic.
+  takeSpecies:[string];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1766,6 +1798,14 @@ table SedentarizationState {
   faction:uint;
   score:float = 0;
   stage:string;
+}
+
+// ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
+// vector-of-vectors, so `ForagePatchState.compositionMaterialPerBiomass` is a vector of these
+// one-field tables. `rows` is EMPTY for a plant that pays no material: "no row", never a zero-valued
+// one. See that field for the whole contract.
+table SpeciesMaterialRates {
+  rows:[MaterialPayoff];
 }
 
 // One depletable forage patch's cultivation + ecology state for the client tile card
@@ -2253,11 +2293,21 @@ table ForagePatchState {
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
   // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
   //
-  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
-  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
-  //                     honestly 0. It resolves through the rung this source STANDS ON or is
-  //                     RAISING, so a source nobody has started reads 0 - see the
-  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
+  //   upkeepDemand    = THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn. Follows penUpkeep's
+  //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
+  //                     no upkeep it is honestly 0, and a source nobody has started reads 0 (see
+  //                     the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
+  //                     wants).
+  //
+  //                     ONE FIELD NAME, TWO DOCUMENTED MEANINGS - the HERD table's own
+  //                     upkeepDemand below still reads "what the rung demands this turn", and that
+  //                     wording is still CORRECT there. On a PATCH the demand INTERPOLATES on the
+  //                     position, so the live cost moves between the moment the keepers are billed
+  //                     (before the turn's build accrual) and the moment the next Logistics pass
+  //                     judges what they paid. Judged against the risen number a correctly-staffed
+  //                     keeping reads permanently short - so what ships here is the STAMPED bill,
+  //                     which is what makes `demand - supplied == shortfall` hold and what
+  //                     upkeepWorkersNeeded is the ceil of.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -2397,6 +2447,125 @@ table ForagePatchState {
   // the head's own reason, because that is why they are stuck too. And it rides the SAME WINNER as
   // the three fields above.
   buildBlockedReason:string;
+
+  // WHERE THE PLAYER SENT THIS LAND (appended) - the queued entry's DESTINATION rung, as
+  // `<branch>:<id>`, or "" when no band has queued this source. See [BuildLegState] for why an entry
+  // names a destination rather than a rung.
+  //
+  // READ IT BESIDE `buildLegs`: this says where the climb ends, those say what is left of it. The
+  // entry leaves the queue when the source reaches this rung's top - NOT when an intermediate rung
+  // fills - so a two-leg `sow` holds the head of the queue through its Cultivate leg.
+  buildDestinationRung:string;
+
+  // THE LEGS STILL TO LAY (appended), in climb order, first-incomplete first. Empty when the source
+  // is not queued, or has already arrived. The FIRST entry is the leg in flight.
+  buildLegs:[BuildLegState];
+
+  // --- HOW MUCH OF EACH PLANT IS STANDING (appended last, the selective gather) ------------------
+  // The BIOMASS each entry of `composition` accounts for on this tile, index-aligned with it:
+  // `share x biomass`, in the same units as `biomass` / `carryingCapacity` above. A crop chip reads
+  // "70% (63)" off the pair.
+  //
+  // IT RIDES THE PATCH ROW RATHER THAN FloraShareInfo, and the reason is the memo: a composition
+  // entry is a pure function of ground and config and is derived ONCE PER TILE PER WORLD, shared by
+  // refcount across every frame, while a standing biomass moves every turn - so putting it there
+  // would rebuild, and deep-copy two strings per named plant of, every patch's basket every turn.
+  // Index alignment is safe because both vectors are written from the same basket in the same
+  // expression; a client must still read the two as one object.
+  //
+  // WHY PUBLISH IT AT ALL, when it is one multiplication: a selective gather asks "is there enough
+  // emmer here to be worth two hands", which is a question about a QUANTITY, and the client holds no
+  // capacity arithmetic. The sim states it, exactly as it states the take.
+  compositionStandingBiomass:[float];
+
+  // --- WHAT EACH PLANT CONVERTS AT (appended last, the selective gather) -------------------------
+  // What ONE UNIT of each named plant's biomass is worth, index-aligned with `composition` exactly
+  // as compositionStandingBiomass above is, at the patch's CURRENT standing rung (the favored crop's
+  // conversion gain already in its own term). Two vectors, one per scalar account:
+  //   compositionProvisionsPerBiomass - food
+  //   compositionFodderPerBiomass     - hay
+  //
+  // WHY, when provisionsPerBiomass already ships: that one is the BASKET AVERAGE, so a sheet holding
+  // it cannot price a NARROWING at all - tick a crop chip and the forecast sits still until the
+  // player commits and waits a turn, while the worker dial beside it quotes live. A readout that is
+  // live for one control and inert for the other teaches that toggling chips is free, when it is the
+  // whole decision this feature exists to create.
+  //
+  // HOW A SHEET COMPOSES A SELECTION S, using these and the fields already beside them:
+  //   available = max(0, biomass - floor*carryingCapacity) x Sum_S share
+  //   rate      = Sum_S (share x rate) / Sum_S share      <- the rate WITHIN the selection
+  //   take      = min(workers x perWorkerBiomass, available) ; food = take x rate
+  // It is the same contract materialPerBiomass / perWorkerMaterial already carry, at finer grain.
+  //
+  // NOT SCALED BY SHARE, which is what makes it composable: the share is on the entry beside it, and
+  // a pre-scaled rate would have to be un-scaled before a subset could use it. Summing these across
+  // species WITHOUT the shares is meaningless - it is not a total of anything.
+  //
+  // EMPTY MEANS NO ROW, NEVER ZERO (the materialPerBiomass rule): a tile that names no plants
+  // publishes empty vectors, not a column of zeros. A plant this server's roster no longer knows
+  // reads 0 in both accounts, exactly as it contributes 0 to the basket average.
+  //
+  // THE IDENTITY, which is what pins these to the economy: Sum(share x provisions) ==
+  // provisionsPerBiomass above, and the fodder twin the same - so the finer grain can never disagree
+  // with the number the sim actually pays with.
+  compositionProvisionsPerBiomass:[float];
+  compositionFodderPerBiomass:[float];
+
+  // ...AND WHAT EACH OF THEM IS MADE OF (appended last, the selective gather). One entry per
+  // `composition` entry, index-aligned with it exactly as the two rate vectors above are: the
+  // MATERIALS one unit of that plant's biomass yields, at the patch's current standing rung, with
+  // the favored crop's conversion gain in its own term and NOT scaled by share.
+  //
+  // WHY IT NEEDS A WRAPPER TABLE: FlatBuffers has no vector-of-vectors, so each entry is a one-field
+  // table holding its own [MaterialPayoff]. That is plumbing, not a model - read
+  // `compositionMaterialPerBiomass[i].rows` as "entry i's materials".
+  //
+  // WHY IT EXISTS: `materialPerBiomass` above is BASKET-AVERAGED, so a sheet holding only that one
+  // cannot price a narrowing to a cash crop at all - which is the headline case of the whole
+  // feature. Baskets are made of fibre and baskets are what let a gatherer carry more food, so
+  // "tick cotton, see how much fibre" is the first thing a player tries.
+  //
+  // THE THREE RULES, which bind harder here than for a scalar:
+  //  - NEVER SUMMED ACROSS SPECIES by the sim. Rows merge by material id WITHIN one plant and stop
+  //    there: a characteristic reading belongs to the batch a take creates, and averaging two
+  //    species' would invent a plant that is not growing there. A sheet composes a SELECTION the way
+  //    it composes food - Sum_S (share x amount) / Sum_S share - and that weighted mean is a rate,
+  //    not a merged reading.
+  //  - EMPTY MEANS "NO ROW", NEVER ZERO. A grain pays no material and says so with an empty list; a
+  //    0-valued row would read as a crop that pays badly.
+  //  - KEY ALWAYS PRESENT: every composition entry has an entry here, empty rows and all.
+  compositionMaterialPerBiomass:[SpeciesMaterialRates];
+}
+
+// ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
+// owes on that rung FROM WHERE THE SOURCE STANDS NOW.
+//
+// A QUEUE ENTRY NAMES A DESTINATION, NOT A RUNG (docs/plan_standing_upkeep.md section 2.8). The four
+// verbs always were destinations - `cultivate` means take it to Cultivated, `sow` means take it to
+// Field - and with one position per source that reading became literal: the entry lays every leg
+// between where the source stands and where it was sent, in order, and stays at the head until it
+// arrives. So `sow` on untended ground is TWO legs and costs the whole branch.
+//
+// THE CLIENT MUST NOT RE-DERIVE THESE. The rung spans are the sim's config, the source's position is
+// the sim's state, and the turns below are chained against a build queue the client cannot see. A
+// client that reconstructed them would be a second producer of a verdict that already has one.
+table BuildLegState {
+  // The rung this leg raises, as `<branch>:<id>` - `plant:tended`, `plant:field`. Branch-qualified
+  // because `wild` names a rung on each web; the same spelling the sim's validation messages use.
+  rung:string;
+
+  // Work units still owed ON THIS LEG, from the source's current position - NOT the rung's full
+  // span. A patch already 30 units into a Cultivate owes 20 here, not 50: a previous improvement is
+  // a RECEIPT, NOT A DISCOUNT, so the player is never asked to buy work already paid for.
+  workRemaining:float;
+
+  // Turns until THIS LEG is done, CHAINED exactly as `buildTurnsRemaining` is: everything above this
+  // leg plus its own span, at the band's full builders pool. So the last leg's number equals the
+  // entry's own `buildTurnsRemaining`.
+  //
+  // The same negative vocabulary as `buildTurnsRemaining` - -1 no estimate, -2 holding, -3 rotting,
+  // -4 blocked - because a leg cannot be dated when the entry carrying it cannot.
+  turnsRemaining:int = -1;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3520,6 +3689,17 @@ table HerdTelemetryState {
   // `escapement` is the key this web reaches most: an unkept flock's suppressed regrowth pins it at
   // the hunters' floor, so a Tame's own gate never reopens and only the `husbandry` pool moves it.
   buildBlockedReason:string;
+
+  // WHERE THE PLAYER SENT THIS HERD (appended) - the animal twin of
+  // `ForagePatchState.buildDestinationRung`; that field carries the rationale.
+  buildDestinationRung:string;
+
+  // THE LEGS STILL TO LAY (appended) - the animal twin of `ForagePatchState.buildLegs`.
+  //
+  // THE ANIMAL WEB STILL CARRIES PER-RUNG METERS, so an entry here is always ONE leg: the rung its
+  // verb names, owing that meter's own remainder. It becomes a real climb when this web moves onto
+  // one position, and the field is here now so that move costs the wire nothing.
+  buildLegs:[BuildLegState];
 }
 
 table CommandEventState {

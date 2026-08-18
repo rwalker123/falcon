@@ -696,6 +696,17 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_blocked_reason: String,
+    /// **WHERE THE PLAYER SENT THIS SOURCE** — the queued entry's destination rung, as
+    /// `<branch>:<id>`, or empty when no band has queued it. The entry retires when the source
+    /// reaches this rung's **top**, not when an intermediate rung fills.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_destination_rung: String,
+    /// **THE LEGS STILL TO LAY** ([`BuildLegState`]), in climb order, first-incomplete first. Empty
+    /// when the source is not queued or has already arrived; the first entry is the leg in flight.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_legs: Vec<BuildLegState>,
 }
 
 impl Default for HerdTelemetryState {
@@ -780,10 +791,23 @@ impl Default for HerdTelemetryState {
             meter_rot_per_turn: 0.0,
             build_queue_position: crate::NOT_IN_ANY_BUILD_QUEUE,
             build_blocked_reason: String::new(),
+            build_destination_rung: String::new(),
+            build_legs: Vec::new(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
     }
+}
+
+/// **One composition entry's material rates** — the wrapper the wire needs because FlatBuffers has
+/// no vector-of-vectors, and the shape a reader should think in: `rows` is *that plant's* materials.
+///
+/// **Empty is "no row", never zero** — see
+/// [`ForagePatchState::composition_material_per_biomass`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SpeciesMaterialRates {
+    #[serde(default)]
+    pub rows: Vec<MaterialPayoff>,
 }
 
 /// One depletable forage patch's cultivation + ecology state for the client tile card
@@ -869,6 +893,50 @@ pub struct ForagePatchState {
     /// is invisible to every reader.
     #[serde(default)]
     pub composition: Arc<[FloraShareInfo]>,
+    /// **How much of each plant is STANDING here**, index-aligned with [`Self::composition`]:
+    /// `share × biomass`, in the same units as [`Self::biomass`]. A crop chip reads *"70% (63)"* off
+    /// the pair, and a selective gather is a decision about a **quantity** — so the sim states it
+    /// rather than leaving the client to hold capacity arithmetic.
+    ///
+    /// **It rides the patch row rather than [`FloraShareInfo`] because the basket is a MEMO**: a
+    /// composition entry is a pure function of ground and config, derived once per tile per world
+    /// and shared by refcount, while a standing biomass moves every turn. Appended (append-only).
+    #[serde(default)]
+    pub composition_standing_biomass: Vec<f32>,
+    /// **What one unit of each named plant's biomass converts at**, index-aligned with
+    /// [`Self::composition`] exactly as [`Self::composition_standing_biomass`] is, at the patch's
+    /// **current standing rung** (the favored crop's conversion gain already in its own term).
+    ///
+    /// [`Self::provisions_per_biomass`] beside it is the **basket average**, which cannot price a
+    /// *narrowing*: a compose sheet holding only that one watches its forecast sit still while the
+    /// player ticks crop chips, though the worker dial next to it quotes live. These are what let the
+    /// sheet compose `Σ_S share × rate ÷ Σ_S share` itself — the same contract
+    /// [`Self::material_per_biomass`] already carries, at finer grain.
+    ///
+    /// **Not scaled by share** (the share is on the entry beside it), so summing them across species
+    /// without the shares totals nothing. **Empty is "no row", never zero.** The identity
+    /// `Σ share × rate == provisions_per_biomass` holds by construction. Appended (append-only).
+    #[serde(default)]
+    pub composition_provisions_per_biomass: Vec<f32>,
+    /// The **fodder** twin of [`Self::composition_provisions_per_biomass`] — same alignment, same
+    /// rules, `0` for a plant whose vector pays no hay. Appended (append-only).
+    #[serde(default)]
+    pub composition_fodder_per_biomass: Vec<f32>,
+    /// **What each named plant is MADE OF** — the material twin of the two rate vectors above, one
+    /// entry per [`Self::composition`] entry and index-aligned with it, at the patch's standing rung
+    /// and **not scaled by share**.
+    ///
+    /// [`Self::material_per_biomass`] beside it is the **basket average**, so a sheet holding only
+    /// that one cannot price a narrowing to a **cash crop** — the headline case of the whole
+    /// selective gather, since baskets are made of fibre and baskets are what let a gatherer carry
+    /// more food.
+    ///
+    /// **Never summed across species by the sim**: rows merge by material id *within* one plant and
+    /// stop there, because a characteristic reading belongs to the batch a take creates and
+    /// averaging two species' would invent a plant that is not growing there. **Empty rows mean "no
+    /// row", never zero** — a grain pays no material and says so. Appended (append-only).
+    #[serde(default)]
+    pub composition_material_per_biomass: Vec<SpeciesMaterialRates>,
     /// **Which ONE named plant this patch has been committed to** (Flora Roster S1) — the stable
     /// `flora_config.json` species key. **`""` means the wild mixed basket, not "unknown"**: it is a
     /// positive statement that the patch is gathered as the whole [`Self::composition`] above.
@@ -899,8 +967,17 @@ pub struct ForagePatchState {
     // pair; see [`HerdTelemetryState`] for why the dip dissolved into the work budget. The wire slots
     // `cultivateBuildFraction` / `sowBuildFraction` stay `(deprecated)`.
     // **RETIRED: `maintain`** — see [`HerdTelemetryState`] for why the toggle became a crew count.
-    /// **What holding this patch's rung DEMANDS this turn**, in work units — always meaningful, `0`
-    /// on a rung that declares no upkeep (every shipped rung today).
+    /// **THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn**, in work units — always meaningful,
+    /// `0` on a rung that declares no upkeep and on ground nobody has started.
+    ///
+    /// **One field name, two meanings, and the herd twin's is not stale.**
+    /// [`HerdTelemetryState::upkeep_demand`] is *what the rung demands this turn* and that is still
+    /// exactly right for a herd. A patch's demand **interpolates on its position**, so the live cost
+    /// rises between the moment the keepers are billed (before the turn's build accrual) and the
+    /// moment the next Logistics pass judges what they paid — judged against the risen number, a
+    /// correctly-staffed keeping reads permanently short. What ships here is therefore the *stamped*
+    /// bill, which is what makes `demand − supplied == shortfall` hold and what
+    /// [`Self::upkeep_workers_needed`] is the `ceil` of.
     #[serde(default)]
     pub upkeep_demand: f32,
     /// **What the crew actually paid toward it** out of this turn's work budget.
@@ -1204,6 +1281,50 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_blocked_reason: String,
+    /// **WHERE THE PLAYER SENT THIS SOURCE** — the queued entry's destination rung, as
+    /// `<branch>:<id>`, or empty when no band has queued it. The entry retires when the source
+    /// reaches this rung's **top**, not when an intermediate rung fills.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_destination_rung: String,
+    /// **THE LEGS STILL TO LAY** ([`BuildLegState`]), in climb order, first-incomplete first. Empty
+    /// when the source is not queued or has already arrived; the first entry is the leg in flight.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_legs: Vec<BuildLegState>,
+}
+
+/// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from
+/// where the source stands now** (`docs/plan_standing_upkeep.md` §2.8).
+///
+/// A queue entry names a **destination**, not a rung, so it lays every leg between the source's
+/// position and where the player sent it. `sow` on untended ground is two legs and costs the whole
+/// branch.
+///
+/// **The client must not re-derive these**: the rung spans are the sim's config, the position is the
+/// sim's state, and [`Self::turns_remaining`] is chained against a queue the client cannot see.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildLegState {
+    /// The rung, as `<branch>:<id>` — `plant:tended`, `plant:field`.
+    pub rung: String,
+    /// Work still owed **on this leg**, from the source's current position — never the rung's full
+    /// span. A patch 30 units into a Cultivate owes `20` here: a previous improvement is a receipt,
+    /// not a discount.
+    pub work_remaining: f32,
+    /// Turns until this leg is done, **chained** exactly as `build_turns_remaining` is, so the last
+    /// leg's number equals the entry's own. Carries the same negative vocabulary.
+    #[serde(default = "no_build_turns_estimate")]
+    pub turns_remaining: i32,
+}
+
+impl Default for BuildLegState {
+    fn default() -> Self {
+        Self {
+            rung: String::new(),
+            work_remaining: 0.0,
+            turns_remaining: crate::NO_BUILD_TURNS_ESTIMATE,
+        }
+    }
 }
 
 /// The serde default of a `build_turns_remaining` field — [`crate::NO_BUILD_TURNS_ESTIMATE`], so an

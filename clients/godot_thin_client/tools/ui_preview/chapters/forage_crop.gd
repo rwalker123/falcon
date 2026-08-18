@@ -323,11 +323,13 @@ func run(harness) -> void:
 	# The visible symptom of getting this wrong, and why it is asserted separately: dropping the reason
 	# WITHOUT suppressing the control leaves an unchecked, live box over a live crop list — the sheet
 	# inviting a commitment the sim rejects, which is strictly worse than the line that was cut.
-	# **NO CROP LIST — which since §4.7a ③ is true of EVERY state**, so this claim has stopped
-	# separating a suppressed control from a rendered one. It is kept as the sheet-wide negative it now
-	# is: nothing anywhere on this sheet offers a crop.
-	h._assert_hud("…and no crop list anywhere, the crop being the queue row's setting now",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE))
+	# **NO CROP CHOICE — and the needle moved with the SELECTIVE GATHER.** The chip row puts one chip
+	# per named plant back on this sheet, so a plant name is no longer evidence of a crop picker; what
+	# is asserted is the absence of the row's SINGLE-PICK key, which appears only where a rung is in
+	# flight. See `ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE`.
+	h._assert_hud("…and no crop CHOICE anywhere, this sheet composing a plain gather",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE))
 	# **THIS IS WHAT MAKES THE REMOVAL A PROGRESSION.** The rung is not merely hidden: the aside names
 	# the very craft whose absence suppressed the control, live, in the same frame. Read BY META — the
 	# aside's siblings move with the floor too, so a whole-aside search says nothing about this line.
@@ -704,13 +706,15 @@ func run(harness) -> void:
 	# recomposed from a live format could only ever describe whatever the code still says.
 	h._assert_hud("…and no ecology refusal is stated anywhere on the sheet",
 		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, RETIRED_PHASE_GATE_NEEDLE))
-	# **NO CROP LIST — ON ANY STATE** (`docs/plan_standing_upkeep.md` §4.7a ③). It rode the improvement
-	# control until Ray took it off this sheet: *"The CROP TO TEND shouldn't be a selection here as the
-	# user can't do the cultivate here."* The crop is still COMMITTED by this sheet's own
-	# `assign_labor` `species` token — the control moved, the token did not — and the picker now lives
-	# on the job's BUILD QUEUE row. Asked of the whole sheet, since the list had no meta of its own.
-	h._assert_hud("…and NO crop list anywhere on the sheet, the crop being the queue row's setting",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, ForageFx.GATED_CROP_NEEDLE))
+	# **NO CROP CHOICE ON A PLAIN GATHER.** The retired crop LIST rode the improvement control until
+	# Ray took it off this sheet: *"The CROP TO TEND shouldn't be a selection here as the user can't do
+	# the cultivate here."* The selective gather brings a chip per named plant back — as a TAKE
+	# control, which is a different decision — and it turns into a crop picker only where a rung is
+	# actually in flight, i.e. where the player CAN do the cultivate here. This state composes a plain
+	# gather, so the row's SINGLE-PICK key must be nowhere on the sheet.
+	h._assert_hud("…and NO crop CHOICE on the sheet, this sheet composing a plain gather",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			ForageFx.GATHER_SHEET_CROP_KEY_NEEDLE))
 	# **THE WORKED HALF OF THE OFFER PAIR** (§4.7a ①, ③). This band composes a crew on this patch, so
 	# it will have a work row for it and the `⌃` is one press away — the one-line pointer. Its twin is
 	# `compose_offer_no_hands` in `chapters/improvements.gd`, where the band can staff nobody and the

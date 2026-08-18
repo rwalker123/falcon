@@ -17,6 +17,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, commit_payoff, generate_hydrology,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world,
@@ -256,20 +257,48 @@ const FIELD_OWNER: FactionId = FactionId(0);
 /// Turn the patch at `coord` into a completed **Field** of `species` standing at `biomass`. Written
 /// straight onto the registry: what is under test is the *harvest routing* of a finished rung, not
 /// the build that gets there.
-fn seat_field(app: &mut App, coord: UVec2, species: &str, biomass: f32) {
+/// Stand a completed **Field** at `coord`, on the ground a real one would have.
+///
+/// `tile_capacity` is the TILE's own `K`. A Field **raises** it (`field_capacity_gain` — a sown field
+/// is planted densely with the competitors pulled out), and it is **drawn down** like every other
+/// plant rung now, so it settles where a Sustain skim leaves it rather than at its full standing
+/// crop. Seating the tile's bare `K` would be a Field standing on rung-2 land, which is exactly what
+/// the picker's quote does not describe.
+///
+/// **The stock is seated where a SUSTAIN-worked Field SETTLES** — `floor × K` plus one turn's MSY —
+/// and that is the whole subtlety this fixture now carries.
+///
+/// The escapement floor is **live** on a Field since the managed rate retired, and `forage_take`'s
+/// ceiling is `B − floor × K`: what is standing above the floor, **not** the steady-state MSY. So a
+/// full stand hands over half its biomass in one turn (a legitimate one-off draw-down, and exactly
+/// the over-farming rung 3 is now capable of), while the picker's quote describes the **steady
+/// state**. Seating the settled stock is what makes the two the same number — and asserting them
+/// equal anywhere else would be comparing a stock against a rate.
+fn seat_field(app: &mut App, coord: UVec2, species: &str, tile_capacity: f32) {
+    let forage = labor().forage.clone();
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch exists");
     patch.species = Some(species.to_string());
     // The rung is FINISHED here. A meter set to a bare `1.0` no longer completes anything now that a
     // job has a size (`docs/plan_unit_costed_work.md`), so this runs the real accrual.
-    patch.complete_field(FIELD_OWNER);
-    patch.carrying_capacity = biomass;
-    patch.biomass = biomass;
+    patch.complete_field(FIELD_OWNER, &core_sim::LadderConfig::builtin());
+    patch.carrying_capacity = tile_capacity * forage.cultivation.field_capacity_gain;
+    // One turn's MSY on this rung's own curve, above the Sustain floor the fixture's forager works
+    // at — the settled stock (see the note above).
+    let msy = forage.ecology.regrowth_rate
+        * forage.cultivation.field_regrowth_gain
+        * patch.carrying_capacity
+        / 4.0;
+    patch.biomass = patch.carrying_capacity * FIXTURE_FLOOR + msy;
 }
 
+/// The escapement floor every forager in this file works at — Sustain. Named because the seated
+/// stock is stated relative to it.
+const FIXTURE_FLOOR: f32 = 0.5;
+
 /// Turn the patch at `coord` into a completed cotton **Field** standing at `biomass`.
-fn seat_cotton_field(app: &mut App, coord: UVec2, biomass: f32) {
-    seat_field(app, coord, "cotton", biomass);
+fn seat_cotton_field(app: &mut App, coord: UVec2, tile_capacity: f32) {
+    seat_field(app, coord, "cotton", tile_capacity);
 }
 
 fn spawn_forager(
@@ -315,8 +344,9 @@ fn spawn_forager(
                     // arms and `continue`s. Sustain is the harmless default.
                     target: LaborTarget::Forage {
                         tile: patch,
-                        floor: 0.5,
+                        floor: FIXTURE_FLOOR,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: FORAGE_WORKERS,
                     kit: None,

@@ -1023,6 +1023,15 @@ fn seed_snapshot() -> WorldSnapshot {
             // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same
             // reason `arrival_schedule` is: an empty one is a field the decode guard cannot see.
             assignment.material_yield = rows();
+            // **WHICH PLANTS THE CREW CARRIES HOME** (the selective gather) — a `[string]`, seeded
+            // for the same reason: a repeated field the fixture leaves empty is a field the decode
+            // guard cannot exercise.
+            //
+            // **SORTED, because the sim can emit it no other way.** `TakeSelection` wraps a
+            // `BTreeSet` and the capture publishes its keys, so a golden baked with the pair the
+            // other way round would show a client author an ordering the schema promises cannot
+            // happen — and invite exactly the re-sort it forbids.
+            assignment.take_species = vec!["flax".to_string(), "wild_emmer".to_string()];
         }
         // **A trade party's shipment** (arc #527) — a repeated field on the cohort, seeded for the
         // same reason the assignment's material account above is: an empty one is a field the decode
@@ -1062,6 +1071,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // …and the two investment rungs' material payoffs.
         herd.corral_material = rows();
         herd.pastoral_material = rows();
+        // The animal twin of `ForagePatchState.build_legs` — one leg on this web today, and seeded
+        // for the same reason: a repeated field the fixture leaves empty is a field the decode guard
+        // cannot exercise.
+        herd.build_legs = rows();
     }
     s.food_modules = rows();
     // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
@@ -1114,6 +1127,20 @@ fn seed_snapshot() -> WorldSnapshot {
             share.sow_material_payoff = rows();
             share.cultivate_material_payoff = rows();
         }
+        // **How much of each plant is standing** (the selective gather) — index-aligned with the
+        // basket above, so it is seeded to the SAME length rather than to `ROWS`: a fixture whose
+        // two vectors disagreed would encode a shape the capture cannot produce.
+        patch.composition_standing_biomass = vec![0.0; composition.len()];
+        // …and the two per-species conversion rates, index-aligned with the same basket for the same
+        // reason (the selective gather's pre-commit sheet composes all three together).
+        patch.composition_provisions_per_biomass = vec![0.0; composition.len()];
+        patch.composition_fodder_per_biomass = vec![0.0; composition.len()];
+        // …and the per-species MATERIAL rows, one entry per basket entry with real rows inside, so
+        // the guard exercises the nested vector rather than a column of empty tables.
+        patch.composition_material_per_biomass = composition
+            .iter()
+            .map(|_| sim_schema::SpeciesMaterialRates { rows: rows() })
+            .collect();
         // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
         // handed over as one — the encoded bytes are identical either way.
         patch.composition = composition.into();
@@ -1125,6 +1152,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
         patch.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+        // **THE LEGS OF A QUEUE ENTRY'S CLIMB** — a repeated field, seeded for the same reason the
+        // curve above is. A `sow` on untended ground is a two-leg climb, which is what the fixture
+        // stands for here.
+        patch.build_legs = rows();
     }
     s.intensification_knowledge = rows();
 

@@ -194,6 +194,7 @@ fn run_patch_with_crew(
             &composition,
             foragers,
             floor,
+            &TakeSelection::EVERYTHING,
             forage,
             &flora,
             UNIT_OUTPUT_MULTIPLIER,
@@ -287,6 +288,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             &composition,
             FULLY_STAFFED_FORAGERS,
             floor,
+            &TakeSelection::EVERYTHING,
             forage,
             &flora,
             UNIT_OUTPUT_MULTIPLIER,
@@ -310,21 +312,12 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
                 full_crew(rung, UNSCALED_UPKEEP),
                 crate::intensification::NO_BUILD_GEAR,
             );
-            let cost = rung
-                .build_cost(RUNG_COST_UNSCALED)
-                .expect("a rung a verb builds has a build meter");
             if accrual > 0.0 {
                 // The completion bool is the labor arm's feed-line trigger; this probe reads the
                 // meter itself just below, so it is deliberately discarded here.
-                let _completed_this_turn = match verb {
-                    Improvement::Cultivate => patch.accrue_cultivation(
-                        PROBE_FACTION,
-                        accrual,
-                        cost,
-                        rung.retention_bar(cost),
-                    ),
-                    _ => patch.accrue_field(PROBE_FACTION, accrual, cost, rung.retention_bar(cost)),
-                };
+                // One accrual seam, whichever rung the probe is climbing: the position decides
+                // which rung the work lands on, so the probe no longer names it.
+                let _completed_this_turn = patch.accrue_rung(PROBE_FACTION, accrual, &ladder);
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),
                     _ => patch.is_field(),
@@ -340,7 +333,11 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
     PlantBuildOutcome {
         turns_to_complete,
         provisions_over_build,
-        progress_at_horizon: patch.cultivation_progress,
+        progress_at_horizon: crate::forage::patch_rung_work_done(
+            &patch,
+            crate::intensification::RungKey::PlantTended,
+            &ladder,
+        ),
         fraction_at_completion,
     }
 }

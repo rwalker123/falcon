@@ -324,14 +324,10 @@ func run(harness) -> void:
 	# side would satisfy both `contains` claims above if the dip happened to round to the same face.
 	h._assert_hud("…and the two readouts state the SAME take, which is the whole of the claim",
 		Readout.yields_text(bare_sheet) == Readout.yields_text(dip_sheet))
-	# (5) **THE OVERDRAW GATE WALKS ONE CREW NOW.** It used to have to carry the verb so the projection
-	# and the take stayed in step; with nothing to keep in step, the same crew at the same floor gets
-	# the same answer whether or not a rung is going up.
-	h._assert_hud("the overdraw gate answers the same for the same crew, build or no build",
-		SourceForecast.take_draws_down(dip_herd, SourceForecast.SOURCE_KIND_HERD,
-			HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR, HERD_DIP_CREW)
-			== SourceForecast.take_draws_down(dip_herd, SourceForecast.SOURCE_KIND_HERD,
-				HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR, HERD_DIP_CREW))
+	# (5) **THE OVERDRAW GATE IS GONE — the ⚠ is `LaborAssignment.overdraws` and nothing else.** This
+	# used to assert that the client's own drawdown walk answered alike with a build and without one;
+	# there is no client-side walk left to answer, so the claim is retired rather than restated. What
+	# replaced it is `chapters/hunt.gd`'s three-surface agreement block.
 	h._hud._band_labor._player_band = prior_dip_band
 	h._hud._band_labor._player_bands = prior_dip_bands
 	h._hud._compose.reset_hunt_source()   # the states after this one open on their own herd

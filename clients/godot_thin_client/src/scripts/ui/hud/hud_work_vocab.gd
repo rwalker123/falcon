@@ -586,6 +586,11 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
+##
+## **THIS IS ONE LINE, AND A SOURCE ROW ON THE BOARD IS TWO OF THEM** — see
+## `WORK_ROW_TWO_LINE_HEIGHT` below, which the capacity arithmetic divides by. What still draws at
+## exactly this height is the BUILD QUEUE's row, which is one line and stays one: the two lists read
+## at one line-height rather than at one row-height, and the queue has no accounts to state.
 const WORK_ROW_HEIGHT := 28.0
 
 ## The node name of the PARTIES zone's scrolling LIST — the party rows plus whichever inspector strip
@@ -659,8 +664,15 @@ const WORK_PAGER_HEIGHT := 24.0
 ## adequate by **2px** at the worst case a model can state (186 reserved against 184 drawn) — and every
 ## pixel of that cushion was charged to the ZONE, on every dock, whether or not a row was even
 ## selected. With the conditional terms stated on their own the base is measured as a base:
-## `band_panel_inspector` draws **78px** of head + sentence + links + gaps + card padding.
-const WORK_INSPECTOR_EXTENT := 78.0
+## `band_panel_inspector` draws **58px** of head + links + gaps + card padding.
+##
+## **IT WAS 78 UNTIL THE BOARD ROW GREW A SECOND LINE.** The base carried a one-sentence readout
+## (*accounts · 50% left standing · ● Working · 3 assigned*) whose every clause the ROW now states —
+## the accounts and the floor on line two, the crew on the stepper, the pending state on the stripe —
+## so the whole `Label` and its `ZONE_BLOCK_SEPARATION` went, which is the 20px that pays for the
+## taller row. **Re-measure this after touching the strip's base children**; the conditional terms
+## below are stated separately for exactly that reason and must not be folded back in.
+const WORK_INSPECTOR_EXTENT := 58.0
 
 ## The slack that base carries over its measurement. **A measurement tolerance, not padding** — the
 ## same statement `BandCityPanel.BAND_ZONE_TWO_COLUMN_SLACK` makes about the flank's extent, and the
@@ -677,6 +689,24 @@ const WORK_INSPECTOR_HEIGHT := WORK_INSPECTOR_EXTENT + WORK_INSPECTOR_SLACK
 const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
 
 const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
+
+## **WHAT ONE BOARD ROW COSTS, and it is TWO LINES.** A source row holds a name, a variable-length
+## ACCOUNT list, four affordances and a stepper, and 356px of narrow-shell zone does not hold them on
+## one line — the accounts either elide to a fragment or take the name's pixels, and the name is the
+## one thing a row may never yield. So the accounts get a line of their own, full width, and this is
+## what the pair reserves AND draws at: line one at `WORK_ROW_HEIGHT`, the two-line stepper's own gap,
+## and the accounts line.
+##
+## **THE SECOND LINE IS `HudWidgets.build_two_line_stepper`'S, TERM FOR TERM** — its
+## `TWO_LINE_STEPPER_SEPARATION` gap under a part at `ALLOC_SECTION_FONT_SIZE`, whose measured line
+## height is the one `WORK_INSPECTOR_NOTE_LINE_HEIGHT` already states. The board's own 13px type has
+## no measured line height anywhere in this file, and inventing one is how a row comes to draw taller
+## than the capacity arithmetic paid for.
+##
+## **IT IS DECLARED HERE RATHER THAN BESIDE `WORK_ROW_HEIGHT` BECAUSE A GDScript `const` MAY NOT READ
+## ONE DECLARED BELOW IT**, and the note line's height is declared on the line above this.
+const WORK_ROW_TWO_LINE_HEIGHT := WORK_ROW_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
+    + WORK_INSPECTOR_NOTE_LINE_HEIGHT
 
 ## …and what the `ArrivalStrip` costs when the model's schedule has a gap worth drawing.
 ##
@@ -740,7 +770,20 @@ const WORK_ROW_SEPARATION := 4
 
 const WORK_ROW_ICON_WIDTH := 16.0
 
-const WORK_ROW_RATE_WIDTH := 46.0
+## **THE ACCOUNTS LINE IS INDENTED ONTO THE NAME'S OWN COLUMN**, so the board reads as a column of
+## names with each row's products hanging under its own name rather than under the severity stripe.
+## It is exactly what line one spends before the name begins — the icon slot and its separation — and
+## it is DERIVED from those two rather than measured off a render, since the stripe lives outside both
+## lines' container and costs neither.
+const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
+
+## The stable handle on a row's ACCOUNTS line, the `WORK_ROW_RUNG_META` treatment one control down: it
+## is a `Label` in its own margin under line one, and a harness that found it by text would be
+## asserting the string it had already composed. **A RETIRED `WORK_ROW_RATE_WIDTH` (46px) IS WHAT IT
+## REPLACED** — the accounts used to be a fixed slot on line one, where a four-cash-crop patch's
+## `+0.06 fibre · +0.07 grape · +0.06 tea · +0.07 tobacco` measured 583px of a 356px zone and the row's
+## NAME, its only expanding child, was allocated Godot's 1px floor.
+const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
@@ -846,7 +889,11 @@ const WORK_ROW_READY_FORMAT := "⌃%s"
 ## already there. The TURN COUNT is deliberately not in it: the BUILD QUEUE row's date is the sim's
 ## own chained answer and the one a reorder is judged against, so quoting a second estimate here would
 ## be two producers for one number.
-const WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT := "Ready to %s — click ⌃ to queue it for this band's builders."
+## **RETIRED — it promised a one-click queue, and the press opens a TRACK now**
+## (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION and climbs every rung on
+## the way, so *"click ⌃ to queue it"* named the next rung as though it were the whole decision.
+## `WORK_ROW_READY_TRACK_TOOLTIP` says what the press does; everything above about the PRICE riding
+## beneath it, and about the turn count deliberately not being in it, is unchanged and still true.
 
 ## A rung UNDER WAY: the verb glyph and how far in. No chevron — `⌃` offers, this reports.
 const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
@@ -1226,8 +1273,10 @@ const BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT := WORK_INSPECTOR_HEIGHT
 ## two rows and is handed four entries shows ONE entry and the overflow — the drawn count is the same
 ## either way, and computing it here is what stops the reservation and the render disagreeing.
 static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int) -> int:
+    # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
+    # divides for are QUEUE rows, which are one line each.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
-        + ZONE_HEAD_HEIGHT + WORK_ROW_HEIGHT + WORK_PAGER_HEIGHT \
+        + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
         + BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT \
         + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
@@ -1243,10 +1292,24 @@ const BUILD_QUEUE_HEAD_MARKER := "▸"
 const BUILD_QUEUE_MARKER_WIDTH := 10.0
 
 ## The date column. Fixed and CLIPPING: the widest values this column takes — the `∞`-carrying
-## sentinels and the `turn N (0%)` completion form — would squeeze the job face to nothing on a left
-## dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
+## sentinels and the `<verb> N% · turn N` completion form — would squeeze the job face to nothing on a
+## left dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
 ## only) and the row tooltip repeats it, so nothing is unreachable.
-const BUILD_QUEUE_DATE_WIDTH := 118.0
+##
+## **IT IS THE WIDEST VALUE THE COLUMN CAN BE HANDED, MEASURED, and that is why it went 118 → 168**
+## (`docs/plan_standing_upkeep.md` §2.8). The completion form leads with the leg in flight's
+## participle now, so the value is `Cultivating 100% · turn 999` at its longest — 168px at
+## `WORK_ROW_FONT_SIZE`, printed by `band_panel_preview._report_queue_row_columns` rather than
+## guessed. **Under-sizing it is not a cosmetic loss here**: the Label trims from the END whatever its
+## alignment, so a column short of the value cuts the DATE off a row whose whole remaining job is to
+## state one. That is also why the Corral's participle was shortened to `Penning` — see
+## `HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`.
+##
+## The 50px comes out of the job FACE, which is the row's only expanding child: at the tall dock it
+## leaves ~106px, which holds a plant face (`▦ Sow (66, 25)` needs 89) and ellipsises a long animal one
+## (`🐄 Corral Thunder Mammoths` needs 189 — it was already ellipsised at the old width). The hover
+## carries face and date in full.
+const BUILD_QUEUE_DATE_WIDTH := 168.0
 
 ## `3 builders · Tillage kit` — the head's readout, naming the pool that funds the queue and the kit
 ## it is holding. The kit comes from the SAME resolution the Builders role card's gear line states
@@ -1296,7 +1359,8 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 ##
 ## **THE ROW HAD THREE COLUMNS WHEN CLIPPING-PLUS-TOOLTIP WAS DECIDED FOR IT, AND A LIST IS SCANNED.**
 ## A tooltip answers a question a player already has; it cannot repair a list they are reading down.
-## So the row goes back to marker · mark · face · date · `✕`, and the settings open BENEATH it — the
+## So the row goes back to marker · face · date · `✕` (it kept a SOURCE mark between the two until the
+## date column learned a verb), and the settings open BENEATH it — the
 ## WORK BOARD's own inspector pattern (`_build_work_inspector`), one open at a time, clicked to
 ## toggle.
 ##
@@ -1419,18 +1483,161 @@ const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 ## `rows_max` is `build_queue_rows_max`'s answer for the zone being drawn into, so both callers hand
 ## over the SAME number rather than each reading the ceiling.
 ##
-## **`settings_open` IS THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED** (§4.7a ②, ③). The strip is
-## open-only and one-at-a-time, so it adds its height exactly when it draws — the work board's own
-## inspector term (`_work_board_capacity`'s `inspector_h`) in this block's arithmetic. It is a BOOL
-## rather than a height so the number lives in one place; a caller passing a float could pass a
-## different one from the strip's own.
+## **`settings_legs` / `settings_crop` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
+## (§4.7a ②, ③). The strip is open-only and one-at-a-time, so it adds its height exactly when it
+## draws — the work board's own inspector term (`_work_board_capacity`'s `inspector_h`) in this
+## block's arithmetic.
+##
+## **THEY ARE THE STRIP'S TWO INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
+## It was a lone BOOL for exactly that reason — a caller passing a float could pass a different one
+## from the strip's own — and a strip that also lists an entry's LEGS has a height that varies, so
+## what a caller states is the CONTENT and `build_queue_settings_height` remains the one arithmetic
+## both the reservation and the render read.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_open: bool = false) -> float:
+        settings_legs: int = 0, settings_crop: bool = false) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
     if entries > rows_max:
         rows += 1
-    var height := ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT
-    return height + BUILD_QUEUE_SETTINGS_HEIGHT if settings_open else height
+    return ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
+        + build_queue_settings_height(settings_legs, settings_crop)
+
+## **WHAT AN OPEN SETTINGS STRIP DRAWS AT — one expression, and `0.0` when there is nothing to open.**
+## The crop picker costs its control row; each LEG of the entry's climb costs a line.
+##
+## **THE LEGS ARE IN THE STRIP BECAUSE A MULTI-LEG ENTRY IS ONE ROW** (`docs/plan_standing_upkeep.md`
+## §2.8). A `sow` declared on untended ground is a two-leg climb, and splitting it into two queue rows
+## would offer two `✕`s for one withdrawal and two places to drag for one reorder. So the entry stays
+## one unit and its legs are what the row opens into.
+## **THE LEG LIST'S OWN KEY COSTS A LINE, and forgetting it is how a strip draws taller than it was
+## paid for** — which this zone answers by clipping the bottom of the BOARD, silently.
+static func build_queue_settings_height(legs: int, has_crop: bool) -> float:
+    var height := BUILD_QUEUE_SETTINGS_HEIGHT if has_crop else 0.0
+    if legs > 0:
+        height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
+    return height
+
+# ---- THE ENTRY'S LEGS, inside its row's expansion (`docs/plan_standing_upkeep.md` §2.8) ----------
+
+## One leg line. Shorter than a queue ROW because it is a readout rather than a control — nothing on
+## it is pressable, and a leg at the row's own 28px would read as a second queue.
+const BUILD_QUEUE_LEG_HEIGHT := 18.0
+
+const BUILD_QUEUE_LEG_FONT_SIZE := 11
+
+## The strip's key for the leg list, in the CROP key's own register.
+const BUILD_QUEUE_LEGS_KEY := "CLIMB"
+
+## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot —
+## the block's standing rule one level in. The first published leg IS the one in flight (the wire
+## lists them first-incomplete first), so nothing here decides which.
+const BUILD_QUEUE_LEG_MARKER := BUILD_QUEUE_HEAD_MARKER
+
+## `▦ Field · 75 work · turn 96` — a leg's rung, what it still owes FROM WHERE THE SOURCE STANDS, and
+## its own chained date. **The work figure is the wire's `workRemaining` and not the rung's span**: a
+## patch thirty units into a Cultivate owes twenty on that leg, because a previous improvement is a
+## RECEIPT, NOT A DISCOUNT.
+const BUILD_QUEUE_LEG_FORMAT := "%s · %s work · %s"
+
+## …and the form for a leg the wire dates with a sentinel. **A leg cannot be dated when the entry
+## carrying it cannot**, and printing the work alone is the honest half rather than a fabricated turn.
+const BUILD_QUEUE_LEG_UNDATED_FORMAT := "%s · %s work"
+
+const BUILD_QUEUE_LEG_META := "build_queue_leg"
+
+# ---- THE DESTINATION PICKER — the `⌃`'s ladder track (`docs/plan_standing_upkeep.md` §2.8) --------
+#
+# **IT IS AN OVERLAY, NEVER A BLOCK IN THE ZONE.** The work zone reads 396 of 396 in height and 354
+# of 356 in width with a row selected, and both budgets ASSERT rather than clip — so a track drawn
+# inside it would fail the harness at best and slice the board at worst. A `PopupPanel` is a WINDOW
+# and cannot change any zone's height, which is the same reason the detail breakdowns are popovers
+# and the destructive confirms are `ConfirmationDialog`s.
+
+## The track card's fixed width — wide enough for a rung's name beside its two figures, narrow enough
+## to float beside a 354px dock column without covering it.
+const RUNG_TRACK_WIDTH := 292.0
+
+const RUNG_TRACK_PADDING := 10
+
+const RUNG_TRACK_GAP := 4.0
+
+const RUNG_TRACK_TITLE := "TAKE IT TO…"
+
+const RUNG_TRACK_TITLE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
+
+const RUNG_TRACK_ROW_FONT_SIZE := 12
+
+const RUNG_TRACK_REASON_FONT_SIZE := 11
+
+const RUNG_TRACK_ROW_SEPARATION := 2
+
+## The rung NAME column's share of the card, so the figures on the right line up down the track and a
+## long rung name ellipsises rather than pushing them off the edge.
+const RUNG_TRACK_NAME_WIDTH := 150.0
+
+## `🌾 Tended Patch` — the rung's own glyph and word, the pair the work row's rung mark and the
+## source card's badge already use. **A second table of rung names is how one rung comes to be called
+## two things on one screen**, so this composes `DetailFormat.rung_badge_word` and the glyph beside
+## it rather than spelling either.
+const RUNG_TRACK_NAME_FORMAT := "%s %s"
+
+## The branch's FLOOR — the rung every source starts on. It has no verb and is never a destination,
+## and naming it is what makes the track a ladder rather than a list of purchases.
+const RUNG_TRACK_WILD_NAME := "Wild"
+
+## **THE SIX STATES, AS WORDS — every one of them, which is the invariant.** A track is read once, in
+## a hurry, and a glyph vocabulary invented for it would be six more marks to learn beside the three
+## the work row already carries. **A state with no word here renders as an EMPTY face**, and on the
+## three selectable states that is a control with nothing on it that still sends a command, so a state
+## added to `RungLadder` adds its word in this block.
+const RUNG_TRACK_STATE_BANKED := "banked"
+const RUNG_TRACK_STATE_STANDING := "where you are"
+const RUNG_TRACK_STATE_PATH := "on the way"
+const RUNG_TRACK_STATE_TARGET := "the target"
+const RUNG_TRACK_STATE_LOCKED := "locked"
+## …and its MIRROR, which is the pair this word is chosen for: a destination the branch admits reads
+## `open` exactly where a refused one reads `locked`, one column apart on the same card. It is the
+## face a selectable rung falls back to where the wire prices no such job on this source — the state
+## being the whole of what is known there — and without it that row rendered as a **blank button that
+## still issued a `tame`/`corral` declaration on press.**
+const RUNG_TRACK_STATE_OPEN := "open"
+
+## `75 work · ≈12 turns` — what a selectable destination's own leg still owes and when the sim says it
+## lands. **The turns half renders only where the wire dates the leg**, which is when an entry is
+## already climbing this branch; a rung nobody has queued has no chained date and states the work
+## alone rather than a number this surface has no right to.
+const RUNG_TRACK_COST_FORMAT := "%s work · %s"
+
+const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
+
+## The card's stable handles. Every claim the track owes is a string composed at render time, so a
+## harness that found a row by its text would only confirm the string it had already assumed.
+const RUNG_TRACK_META := "rung_track"
+## Valued the rung's own improvement VERB, which is also what a press emits — so an assertion reads
+## the destination the row would send rather than the words it happens to print.
+const RUNG_TRACK_ROW_META := "rung_track_row"
+## …and valued that row's STATE, on the same node, so *which* row is the target is assertable without
+## parsing the figures beside it.
+const RUNG_TRACK_STATE_META := "rung_track_state"
+
+## **WHICH OF THE THREE THE BUILD SLOT IS**, on the slot itself beside the face it drew. It exists
+## because the slot's NODE TYPE stopped answering: a running build's face is a `Button` now (it opens
+## the same track), so *is this an offer?* can no longer be read off `control is Button` — which is
+## how a harness would come to count a climb as an offer without either side changing.
+const WORK_ROW_BUILD_KIND_META := "work_row_build_kind"
+const WORK_ROW_BUILD_KIND_OFFER := "offer"
+const WORK_ROW_BUILD_KIND_BUILDING := "building"
+const WORK_ROW_BUILD_KIND_STALLED := "stalled"
+const WORK_ROW_BUILD_KIND_NONE := ""
+
+## The `⌃` mark's own hover, once the mark opens a track instead of declaring outright. It replaces
+## `WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT`'s promise of a one-click queue with what the press actually
+## does; the PRICE line beneath it is unchanged, and is still `DetailFormat.build_price_clause`'s.
+const WORK_ROW_READY_TRACK_TOOLTIP := "Choose how far to take this source — every rung on the way is queued as one job."
+
+## …and the hover on a RUNNING build's face, which opens the same track to re-aim the climb. A build
+## in flight is where *how far are we taking this?* is most often asked, and the answer used to be
+## reachable only by withdrawing the entry and declaring again.
+const WORK_ROW_BUILDING_TRACK_TOOLTIP := "Change where this climb ends — the work already banked is kept."
 

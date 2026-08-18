@@ -166,9 +166,10 @@ const PEN_FOOTPRINT_OUTLINE_WIDTH := 2.0
 # the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
 # (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
 # sign-formatted to 2 decimals, food-income green — with a WARN-amber
-# `⚠` overhunting flag when `actual > sustainable + ε` (mirrors the allocation panel; forage is
-# renewable so never trips). ε/decimals mirror Hud's `OVERHUNT_EPSILON`/`YIELD_DECIMALS` (separate
-# script, so named here rather than shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
+# `⚠` overhunting flag driven by the assignment's own `overdraws`, the sim's verdict that every
+# surface flying this mark reads (never a client-side `actual > sustainable` comparison, which the
+# schema forbids). Decimals mirror Hud's `YIELD_DECIMALS` (separate script, so named here rather than
+# shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
 # Font scales with the hex radius (clamped) so the label reads at any zoom, not just tiny at big hexes.
 const YIELD_LABEL_SIZE_FACTOR := 0.16     # of hex radius
 const YIELD_LABEL_MIN_FONT := 11
@@ -435,6 +436,14 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 	var stalled := false
 	if not source.is_empty():
 		building = RungGates.rung_in_progress(kind, source, improvement)
+		# **AND THE PLATE STATES THE LEG IN FLIGHT** (`docs/plan_standing_upkeep.md` §2.8), the same
+		# re-pointing the Work tab's two readouts take. A `sow` on untended ground is one entry and
+		# two legs, so the declared rung's meter reads 0% for the whole first leg — the badge would
+		# sit at `▦0%` while the crew cleared the ground. **The pairing is why it is here rather than
+		# only on the board**: this plate and the work row are held to ONE verdict by
+		# `band_panel_preview._assert_work_row_and_badge_agree`, so a leg-aware board beside a
+		# destination-bound badge is the two-surface disagreement `build_is_stalled` exists to stop.
+		building = RungGates.leg_in_progress(source, building)
 		if building.is_empty():
 			ready = RungGates.next_rung_ready(kind, source, improvement, _view.faction_knowledge)
 		else:
@@ -607,7 +616,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
 				var fcenter := _label_anchor(tcol, trow, _view.secondary_food_key(int(entry.get("target_x", -1)), trow), radius, origin)
-				var forage_overdraw := bool(entry.get("overdraws", false))
+				var forage_overdraw := yield_label_overdraw(entry)
 				# The FODDER component rides along for the one-slot rule in `_draw_yield_label`; a
 				# forage patch normally pays food, so it changes nothing here — except on the patch
 				# this exists for, a sown hay Field, which pays fodder alone.
@@ -637,7 +646,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if show_yields and (entry.has("realized_yield") or entry.has("sustainable_yield")):
 				var hlabel := _label_anchor(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row,
 					_view.secondary_herd_key(String(entry.get("fauna_id", ""))), radius, origin)
-				var overhunt := bool(entry.get("overdraws", false))
+				var overhunt := yield_label_overdraw(entry)
 				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
 					else float(entry.get("sustainable_yield", 0.0))
 				# NO FODDER ARGUMENT, and that is a decision rather than an omission (issue #449): no
@@ -1016,6 +1025,16 @@ func _yield_label_rate_text(value: float, fodder: float, materials: Array = []) 
 		if material_text != "":
 			return material_text
 	return _format_yield_signed(value)
+
+## **THE ⚠ THIS LABEL FLIES — `LaborAssignment.overdraws`, read and never derived.** Split out for
+## `_yield_label_rate_text`'s reason one field over: the plate is drawn into MapView's canvas, so a
+## harness has no way to read a glyph back off it, and *whether the map agrees with the tile card and
+## the compose sheet about one source* is exactly the claim this arc exists to make. It is also the
+## one place the key is spelled on this renderer, so the forage and hunt branches cannot come to read
+## it differently. **STATIC** — it consults the entry and nothing else, which is what lets it be asked
+## without standing a MapView up.
+static func yield_label_overdraw(entry: Dictionary) -> bool:
+	return bool(entry.get("overdraws", false))
 
 ## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
 ## the HUD's `SourceForecast.format_signed`; actual yields are ≥0 but the sign keeps it explicit.

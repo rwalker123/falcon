@@ -1060,6 +1060,7 @@ pub fn log_visibility_stats(ledger: Res<VisibilityLedger>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::TakeSelection;
 
     #[test]
     fn prune_sweep_tracker_forgets_despawned_source() {
@@ -1319,6 +1320,7 @@ mod tests {
                 tile: FORAGE,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             2,
             4,

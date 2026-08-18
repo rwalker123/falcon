@@ -222,7 +222,7 @@ static func _next_rung(kind: String, source: Dictionary, prefix: String, improve
         # ever climb this rung"), never "is it wise here" — a marginal share must not suppress a rung.
         for rung in [SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE]:
             if rung != current and rung_has_room(source, prefix, rung) \
-                    and _any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
+                    and any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
                 admitted.append(rung)
     elif kind == SourceForecast.LABOR_KIND_HUNT:
         gates = hunt_gates(source, knowledge)
@@ -338,6 +338,44 @@ static func rung_in_progress(kind: String, source: Dictionary, improvement: Stri
         source, HudComposeVocab.BARE_FORECAST_PREFIX, current)
     return answer
 
+## **THE SAME ANSWER RE-POINTED AT THE LEG IN FLIGHT** — `{policy, glyph, progress}` for the rung the
+## crew is standing on RIGHT NOW, rather than for the destination the queue entry names.
+##
+## **A CLIMB IS ONE ENTRY AND SEVERAL RUNGS** (`docs/plan_standing_upkeep.md` §2.8). A `sow` ordered on
+## untended ground clears the ground first, so `rung_in_progress` — which honours the declaration
+## wherever the declared meter is at zero — answers `sow` at **0%** for as long as that clearing takes.
+## Both numbers are correct and neither is the one the player is watching: reported from play as a
+## Work tab reading `0%` in two places beside a tile card reading `18%`, for the same job, on the same
+## turn. **A progress number must never sit at zero while work is going in.**
+##
+## **THE DESTINATION IS NOT LOST, it moves to where it was already stated** — the queue row's TITLE
+## names the job the player ordered and the date column is still the whole climb's. What this changes
+## is the rung the PERCENTAGE and its glyph are about.
+##
+## **IT RE-POINTS AN ANSWER, IT DOES NOT PRODUCE ONE — `building` is `rung_in_progress`'s, ASKED
+## rather than re-derived.** That is `SourceForecast.build_is_stalled`'s own discipline and it buys
+## the same thing: the caller keeps the declared rung it started from (the queue entry's PRICE is the
+## whole climb's and must not follow a leg), and no second resolution of the verb can drift from the
+## first. A caller with `{}` gets `{}` — a source building nothing has no leg in flight either.
+##
+## A source with no published legs falls straight through, which is the honest answer for an eroded
+## rung being repaired, for a source no band has queued, and for a fixture that states none.
+static func leg_in_progress(source: Dictionary, building: Dictionary) -> Dictionary:
+    var answer := building
+    if answer.is_empty():
+        return answer
+    var leg := SourceForecast.build_leg_in_flight(source, HudComposeVocab.BARE_FORECAST_PREFIX)
+    var rung := String(leg.get(SourceForecast.BUILD_LEG_IMPROVEMENT_KEY,
+        SourceForecast.IMPROVEMENT_NONE))
+    if rung == SourceForecast.IMPROVEMENT_NONE or rung == String(answer.get("policy", "")):
+        return answer
+    var out := _ready(rung)
+    # The leg's OWN published fraction — the same `<rung>Progress` the tile card renders, which is why
+    # the two surfaces agree by construction rather than by two careful derivations.
+    out["progress"] = SourceForecast.improvement_progress(
+        source, HudComposeVocab.BARE_FORECAST_PREFIX, rung)
+    return out
+
 ## Whether ANY plant in this patch's composition may climb the rung `flag` names — species-GLOBAL
 ## legality ("can this plant ever climb this rung"), never "is it a wise crop here". `share` answers
 ## that other question, and a marginal share must never suppress the mark: a legal crop at 4% is still
@@ -346,7 +384,12 @@ static func rung_in_progress(kind: String, source: Dictionary, improvement: Stri
 ## An ABSENT composition answers **false**, which is the honest reading: the flags ride every
 ## `ForagePatchState`, so a patch without them is one the client cannot vouch for, and the mark exists
 ## to promise the verb is available.
-static func _any_crop_allows(patch: Dictionary, prefix: String, flag: String) -> bool:
+##
+## **PUBLIC because the DESTINATION TRACK asks it too** (`RungLadder._outright_bar`). A mark WITHHOLDS
+## an inadmissible rung; a track SHOWS it and says why, so both surfaces have to reach the same
+## legality flag — and a second reading of `composition` is how the picker comes to offer a Sow the
+## board has already called impossible.
+static func any_crop_allows(patch: Dictionary, prefix: String, flag: String) -> bool:
     var composition: Variant = patch.get(prefix + "composition", [])
     if not (composition is Array):
         return false

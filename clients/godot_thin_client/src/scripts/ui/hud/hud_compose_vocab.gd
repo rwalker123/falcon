@@ -293,11 +293,12 @@ const IMPROVEMENT_HINTS := {
     "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your larder every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
 }
 
-# Overhunting flag: a worked source whose actual take exceeds its renewable-sustainable ceiling by
-# more than this epsilon is overdrawing (depletable herds only — forage is renewable, actual ==
-# sustainable, so it never trips). Shown as a WARN-tinted ⚠ on the row + spelled out in the tooltip.
-const OVERHUNT_EPSILON := 0.001
-
+# The overhunting flag itself. **What it MEANS is `LaborAssignment.overdraws` and nothing else** —
+# the sim's own verdict, intent AND ability, read off the source's standing row by every surface that
+# flies this mark. The `OVERHUNT_EPSILON` that used to sit here was the tolerance on a client-side
+# `actual > sustainable` comparison; that predicate is the one the schema forbids outright (a first
+# harvest of a stocked source exceeds one turn's regrowth at every floor), and it is deleted rather
+# than merely unused.
 const OVERHUNT_FLAG := "⚠"
 
 # A MANAGED hunt source's crew are HERDERS, not a hunt party (`workersNeeded` = max(herders, haulers),
@@ -353,11 +354,18 @@ const IMPROVEMENT_OFFER_LABELS := {
 
 # What is HAPPENING while it builds — the present participle, so the running line reads as work under
 # way rather than as an option still on offer.
+#
+# **FOUR SINGLE WORDS, and the Corral's used to be a PHRASE** (`Building the pen`). It is the craft's
+# own name — the rung earns `Penning` — so the set is uniform without inventing a word, and the
+# phrase's extra width was a real cost on the BUILD QUEUE's date column, which states a participle
+# beside a percentage and a turn in one clipping slot (`HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT`).
+# There the phrase pushed the column past what the row can afford, and what a clip takes off the end
+# of that string is the DATE.
 const IMPROVEMENT_RUNNING_LABELS := {
     "cultivate": "Cultivating",
     "sow": "Sowing",
     "tame": "Taming",
-    "corral": "Building the pen",
+    "corral": "Penning",
 }
 
 # The STATE the finished rung leaves the source in — a noun, because nothing is happening any more.
@@ -609,7 +617,7 @@ const IMPROVEMENT_DECLARED_FORMAT := "%s · %s"
 # **AND THE PRICE IS NOT ON IT.** Ray, on the same pass: *"That information should be on the work tab.
 # No need to have it here, it is useless."* The pile and the standing rate are what a job COSTS, and
 # the surface that queues, funds and orders jobs is the one where a cost is actionable — so they ride
-# the `⌃` mark's own tooltip (`HudWorkVocab.WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT`) and the turn count
+# the `⌃` mark's own tooltip (`HudWorkVocab.WORK_ROW_READY_TRACK_TOOLTIP`) and the turn count
 # rides the BUILD QUEUE row's date. **The rung's PAYOFF stays here**, in the `PER TURN` readout's
 # `ONCE TENDED` row: what it pays is the "should I?" this sheet exists to answer, and is not a cost.
 #
@@ -1399,10 +1407,11 @@ const CANCEL_SCOPE_ROLES := "roles"
 # exported fields. (pinned sim-side by core_sim/tests/expedition_hunt.rs.)
 const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 
-# The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
-# with the same ⚠ / WARN amber. This is the COMPOSE preview, which derives the flag from the steady
-# forecast via `_is_overdraw` (there is no assignment yet, so no wire `overdraws` field); the CONFIRMED
-# allocation rows instead read the sim-answered `overdraws` bool off the assignment.
+# The clause the ⚠ carries on a hunt. **The compose preview and the confirmed allocation rows read
+# ONE field for it** — `LaborAssignment.overdraws` off the source's standing row — so the sheet, the
+# tile card's tooltip and the map badge cannot say three things about one herd. The preview used to
+# derive its own from the steady forecast, on the reasoning that a composition has no assignment yet;
+# what that actually produced was a fourth predicate disagreeing with the other three.
 const LOCAL_HUNT_OVERDRAW_NOTE := "overdraws the herd"
 const LOCAL_HUNT_OVERDRAW_SUFFIX := " — " + LOCAL_HUNT_OVERDRAW_NOTE
 

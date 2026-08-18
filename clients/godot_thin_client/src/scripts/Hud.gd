@@ -978,7 +978,8 @@ func _herd_label_for_id(herd_id: String) -> String:
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
-        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+        kit_id: String = KitRoster.NO_KIT_ID,
+        take_species: PackedStringArray = PackedStringArray()) -> void:
     # TWO handles, and they are not interchangeable. `band_id` is the DURABLE id the command names —
     # the sim resolves a band by it and by nothing else, because ECS entity bits are renumbered by a
     # rollback. `entity` is the CLIENT-LOCAL key the optimistic pending overlay is filed under (every
@@ -1015,6 +1016,13 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # emitter fails loudly rather than being silently reinterpreted.
         "floor": SourceForecast.clamp_floor(floor),
         "species": species,
+        # **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the FULL selection,
+        # every commit, never a delta: the sim reads an omitted `take:` token as *"the whole basket"*
+        # and CLEARS whatever the row carried, exactly as an omitted floor or species token resets
+        # those. An empty answer is therefore the honest default rather than "unchanged", and it is
+        # what keeps a composition that never touched the chips emitting the byte-identical line it
+        # emitted before this axis existed. Forage only; `Main` reads it on that branch alone.
+        "take_species": take_species,
         # **THE CREW'S KIT, AND THE DEFAULT IT IS MEASURED AGAINST** (`docs/plan_denial_raid.md`).
         # Both travel, because `Main._kit_token` OMITS the token when the two agree — that is what
         # keeps today's command lines byte-identical where the player named no kit, and the builder

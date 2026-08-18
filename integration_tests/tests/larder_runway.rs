@@ -11,6 +11,7 @@
 //! the larder really does run out on the turn that was published (±1 for the walk's clamp).
 
 use bevy::prelude::Entity;
+use core_sim::TakeSelection;
 use core_sim::{
     build_headless_app, run_turn, scalar_from_f32, ForageRegistry, LaborAllocation,
     LaborAssignment, LaborTarget, PopulationCohort, SimulationConfig, SnapshotHistory, Tile, FOOD,
@@ -96,6 +97,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
                 tile: patch,
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: GATHERERS,
             kit: None,

@@ -154,7 +154,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > **Two readings therefore changed shape, and consumers must not order them against each other:**
 > - **A ceiling row can exceed `sustainable`.** The first harvest of an untouched source is its
 >   accumulated stock, so `actual > sustainable` under *every* stance including Sustain. `sustainable`
->   stays on the row as the long-run MSY reference; the ⚠ is `components::floor_overdraws`.
+>   stays on the row as the long-run MSY reference; the ⚠ is `components::take_overdraws`.
 > - **A ceiling row cannot be compared with a rung PAYOFF** (`tendedYield`, `fieldYield`,
 >   `pastoralYield`, `corralYield`). Those are long-run rates and carry `r`; a stance ceiling is
 >   `r`-free (`B − floor·K` is `K/2` on every rung at `B = K`). "Preparing +X → then +Y" is therefore
@@ -572,8 +572,8 @@ client's compose-time "Expected yield" row promises. Shape:
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
   stays reachable, and correct, there. Consequence (intended): a fresh assignment now *previews* its
   contribution to the Food-line net rate + the Gathered/Hunted breakdown, and can pre-trip the
-  overdraw ⚠ if the chosen floor draws below the food peak (`components::floor_overdraws`) — ⚠ is a
-  leading flow signal by design.
+  overdraw ⚠ if the chosen floor draws below the food peak **and this crew can get the source down to
+  it** (`components::take_overdraws`) — ⚠ is a leading flow signal by design.
 - `LaborAllocation` now keeps `last_yields` **index-aligned with `assignments`** across every mutation
   (`set_assignment`/`normalize`/`clear` — the snapshot zips the two by index, so a row left behind by a
   removed assignment used to be attributed to the *next* source). New rows default to
@@ -617,6 +617,72 @@ a patch staffed to the `plant:tended` rung's crew of 2 had its compose sheet say
 useful here"* while the tile card beside it said *"only 1 of 2 working"* — the same patch, the same
 frame, the same (correct) yield. With the dip retired the two halves invert the *same* number, so
 there is nothing left for a floor to reconcile.
+
+### THE ⚠ IS INTENT **AND** ABILITY — one predicate, one producer per web
+
+`SourceYield::overdraws` is **`components::take_overdraws(floor, crew_biomass_per_turn,
+peak_regrowth_in_band)`**, and nothing else may write that field. Two conjuncts:
+
+- **INTENT** — `components::floor_overdraws(floor)`, unchanged: the dial is set below the food peak.
+- **ABILITY** — the crew's per-turn throughput exceeds the **biggest one-turn regrowth anywhere
+  between the floor and the stock standing today**. While it does not, the stock stalls at that
+  point and holds, and a floor the crew never reaches is a floor nothing is drawn below.
+
+**The intent half alone was the shipped bug, reported from play**: a Wild Boar herd at 85/105 with
+four herders and a 39% floor flew `⚠ overdrawing` on the tile card — `+0.18 a turn` against
+`+0.63 sustainable`, an *under*-draw by a factor of three — beside a compose sheet reading *"this
+crew can't draw it that low. It settles at 92% and holds there — 16 herders would reach the floor"*.
+Two surfaces, one question, opposite answers, because the mark read the **dial** and the sentence
+read the **crew**.
+
+**The ability half is a question about THROUGHPUT, never about this turn's take** — which is exactly
+what keeps the first-harvest rationale intact. `actual > sustainable` remains the wrong test (a
+stocked source's first harvest is accumulated stock and exceeds one turn's regrowth at every floor,
+the peak included), and it is untouched here: at or above the peak the intent conjunct is already
+`false`, so the ⚠ cannot fire however large the first haul.
+
+**Why the peak in the band, and not "is the stock falling this turn".** The regrowth curve peaks at
+`K/2` and an overdraw floor is by definition below it, so a crew descending from a full source has
+the peak still to cross. A crew that merely out-takes *today's* regrowth can settle **at** the peak
+and hold there for ever — which is the case the client's own gate got wrong before this landed.
+
+**Two producers, one per web, because there are two growth curves** — the same split
+`snapshot::patch_regrowth_samples` / `herd_regrowth_samples` already makes:
+
+| web | producer | crew throughput | curve |
+|---|---|---|---|
+| plant | `forage::forage_take_overdraws` | `workers × forage_per_worker_biomass` (no engagement stage) | `fauna::reseeding_logistic_regrowth` at the patch's own `patch_ecology` |
+| animal | `fauna::hunt_take_overdraws` | `min(carry, animals_engaged × stay_fraction × body_mass)` | `fauna::regrowth_delta_at` at the herd's own `herd_ecology` — **the seam that picks the curve**, logistic for a domesticated herd and `net_biomass_delta` otherwise, so the ⚠ samples what `regrow_biomass` will actually pay. Sampling the wild curve under a managed herd standing below its collapse fraction reads a *negative* regrowth where the real one is positive, and the ability conjunct then passes on a crew that cannot draw the herd down |
+
+Both call `fauna::peak_regrowth_between` over `fauna::floor_reach_band`, and both feed the one
+`take_overdraws`. The band is **anchored at `floor·K`, never below it**: a source already under its
+floor hands over nothing, and what decides whether the crew holds it there is the regrowth at the
+floor itself. `fauna::forecast_source_yield` no longer derives the flag — it is handed the answer and
+applies only the `managed` veto (a rung-3 Field or pen takes at most its escapement MSY, so it cannot
+overdraw whatever the dial says).
+
+**`peak_regrowth_between` is exact, not sampled.** Both webs' curves are logistic above their
+low-stock branch, so the only interior maximum either can have is the food peak; every other piece is
+monotone and its maximum sits on an endpoint. It evaluates those three candidates rather than walking
+`REGROWTH_CURVE_SAMPLES`, which is a **display** resolution and must not be what a verdict turns on.
+
+**The engagement bound is in the animal crew term and the FIGHT deliberately is not.** Sizing on
+carry alone would call a two-hunter party capable of drawing down a herd of fowl it can barely touch
+— the error `fauna::hunt_engage_workers` already exists to keep out of the crew counts. The fight's
+damage accumulates across turns (`project_realized_hunt` resolves it *inside* its loop for that
+reason), so it has no per-turn rate to compare a regrowth against; leaving it out can only make the
+crew look more capable, which leaves the ⚠ lit where a fight would have blocked it.
+
+**The fixtures that could not see this.** Every overdraw test the arc shipped with staffs a crew that
+trivially out-takes its source's regrowth, so all of them pass identically under the floor-only
+predicate and under this one. `core_sim/tests/labor_allocation.rs` therefore carries
+`TINY_PER_WORKER_HAUL` / `TINY_PER_WORKER_GATHER` fixtures on both webs
+(`a_floor_this_crew_cannot_reach_is_not_an_overdraw`,
+`the_plant_web_warns_only_where_the_gatherers_can_reach_the_floor`) beside the two that pin the
+warning still firing (`a_crew_that_can_reach_a_below_peak_floor_warns_on_the_first_turn`,
+`a_stocked_source_taken_at_the_peak_out_takes_its_regrowth_without_warning`). Reverting the ability
+conjunct fails exactly the first two and nothing else, which is the measurement that says the older
+fixtures are blind to it.
 
 ### An out-of-range source is ABANDONED, not parked at `+0.00`
 

@@ -1517,6 +1517,88 @@ fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
     );
 }
 
+/// **THE ACCEPTANCE BAR FOR THE RUNG-3 RE-EXPRESSION** — the animal twin of
+/// `field_reference_basket.rs`, on the herd this file already pins ([`FIXTURE_SPECIES`]).
+///
+/// A pen stopped being a *managed harvest* and became a *production gain*: it is hunted through the
+/// ordinary drawn-down path exactly as a wild and a pastoral herd are — escapement floor live,
+/// worker-capped, **engagement-bounded**, over-hunt reachable — and what rung 3 buys is faster
+/// breeding, a denser `K`, a slower escape and an easier handle. That is a **re-expression, not a
+/// rebalance**, so the settled yield has to land where it already was.
+///
+/// **Measured at the SETTLED operating point**, over a long enough run for each rung to converge,
+/// because that is the only place a rate means anything: a herd seated at `K` hands over a one-off
+/// windfall identical at every rung, which measures the fixture rather than the ladder.
+#[test]
+fn the_re_expressed_pen_lands_where_the_managed_rate_did() {
+    /// Long enough for every rung's logistic to settle on its own operating point.
+    const CONVERGENCE_TURNS: u32 = 80;
+    /// Sustain — the stance a managed source is worked under, and the one the retired
+    /// constant-escapement take coincided with.
+    const REFERENCE_FLOOR: f32 = 0.5;
+    /// How far the re-expressed pen may land from the number it replaced.
+    const ACCEPTANCE_BAND: f32 = 0.05;
+    /// Slack on the two rungs this arc does not touch — a pen gain leaking onto either fails here.
+    const UNCHANGED_BAND: f32 = 0.01;
+
+    /// **What each rung paid under the retired managed-harvest model**, provisions/turn on this
+    /// herd. Recorded from the measurement itself, so the re-expression is checkable rather than
+    /// asserted against algebra.
+    const WILD_BEFORE: f32 = 0.3510;
+    const PASTORAL_BEFORE: f32 = 0.6966;
+    const PEN_BEFORE: f32 = 0.9990;
+
+    let settled = |rung: u8| -> f32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        match rung {
+            0 => {}
+            1 => {
+                let mut registry = app.world.resource_mut::<HerdRegistry>();
+                let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+                herd.tame_outright(FactionId(0));
+            }
+            _ => {
+                corral_herd(&mut app, &id);
+            }
+        }
+        let keeper = spawn_hunter(&mut app, &id, REFERENCE_FLOOR);
+        let cap = herd_of(&app, &id).carrying_capacity;
+        let mut last = 0.0f32;
+        for _ in 0..CONVERGENCE_TURNS {
+            // Never let a pen's feed run out — the starvation path has its own test, and a hungry
+            // pen would be measuring that instead.
+            stock_larder(&mut app, keeper, cap);
+            run_turns_with_hunt(&mut app, 1);
+            last = yield_of(&app, keeper);
+        }
+        last
+    };
+
+    let wild = settled(0);
+    let pastoral = settled(1);
+    let pen = settled(2);
+
+    assert!(
+        (wild - WILD_BEFORE).abs() <= WILD_BEFORE * UNCHANGED_BAND,
+        "rung 1 must not move: {wild} against {WILD_BEFORE}"
+    );
+    assert!(
+        (pastoral - PASTORAL_BEFORE).abs() <= PASTORAL_BEFORE * UNCHANGED_BAND,
+        "rung 2 must not move: {pastoral} against {PASTORAL_BEFORE} — a pen gain that reached the \
+         pastoral rung would show up exactly here"
+    );
+    assert!(
+        (pen - PEN_BEFORE).abs() <= PEN_BEFORE * ACCEPTANCE_BAND,
+        "rung 3 must land where the managed rate did: {pen} against {PEN_BEFORE} (wild {wild}, \
+         pastoral {pastoral})"
+    );
+    assert!(
+        pen > pastoral && pastoral > wild,
+        "the ladder must pay more at every rung: {wild} -> {pastoral} -> {pen}"
+    );
+}
+
 /// **The pen EATS.** Its keeper's larder is debited exactly `pen.upkeep_per_biomass × biomass` every
 /// turn it tends — a confined herd cannot graze, so the keeper brings it food.
 ///

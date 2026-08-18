@@ -339,6 +339,11 @@ static func picker_products(food: float, fodder: float = 0.0,
 const YIELD_ACCOUNT_FOOD := "food"
 const YIELD_ACCOUNT_FODDER := "fodder"
 const YIELD_ACCOUNT_NONE := ""
+## Where `rescaled_accounts` hands back the MATERIAL vector it crossed off the same carried biomass.
+## It is not an account name — the two above are, and a material's account IS its own id — so it is
+## spelled apart from them and is not a plausible `materials.json` id (the same disjointness argument
+## `yield_rows` already makes for `food` / `fodder`).
+const RESCALED_MATERIALS_KEY := "material_rows"
 
 ## **WHICH ACCOUNT'S ZERO IS A FACT ABOUT THIS SOURCE**, read off its per-biomass yield VECTOR — the
 ## structural statement of what the source pays, independent of what stands on it today.
@@ -528,17 +533,55 @@ static func _row_material_id(row: Dictionary) -> String:
 ##
 ## A source with no positive provisions rate pays nothing anywhere — the degenerate case the sim's
 ## `rescaled_to` answers `ZERO` for — so it answers zeros rather than dividing by it.
+##
+## **THE MATERIAL VECTOR CROSSES HERE TOO, OFF THE SAME `share`, AND THAT IS THE WHOLE OF WHY IT IS
+## HERE.** `systems/labor.rs` banks food at `hunt_yield.apply(take.carried, …)` and materials at
+## `credit_material_yield(…, take.carried, …)` — the identical local, one carried biomass — so a
+## client that composed the two accounts from two expressions could quote a payout the sim does not
+## make. It could and it did: `expected_materials` priced a hunt's materials as a pure crew-throughput
+## line (`min(workers × per_worker_material, escapement ceiling)`), skipping the engagement→retreat arm
+## and the whole-animal quantiser the food row applies, so a pastoral Wild Boar herd — `engage_rate`
+## 0.33, hence exactly ONE animal reached at every crew from one to six — quoted five herders five
+## times the bone and hide that one herder brings home, against a food row that (correctly) did not
+## move at all. `share` IS `take.carried`, so the two accounts are now one derivation and the drift is
+## unrepresentable rather than merely unlikely.
 static func rescaled_accounts(src: Dictionary, prefix: String, value: float) -> Dictionary:
     var food_rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
-    var fodder_rate := float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
     if food_rate <= 0.0:
-        return {YIELD_ACCOUNT_FOOD: 0.0, YIELD_ACCOUNT_FODDER: 0.0}
-    var share := value / food_rate
+        return {
+            YIELD_ACCOUNT_FOOD: 0.0,
+            YIELD_ACCOUNT_FODDER: 0.0,
+            RESCALED_MATERIALS_KEY: [] as Array[Dictionary],
+        }
+    var out := rescaled_from_biomass(src, prefix, value / food_rate)
+    # …and the counted account comes back BIT-IDENTICAL rather than through the divide-then-multiply
+    # round trip: this entry point was HANDED that number, so restating it is the one thing it can do
+    # that the biomass form cannot.
+    out[YIELD_ACCOUNT_FOOD] = value
+    return out
+
+## **THE SAME CROSSING, ENTERED FROM THE BIOMASS SIDE — which is the side the sim is actually on.**
+## `take.carried` is a BIOMASS, and `hunt_yield.apply` / `credit_material_yield` are two valuations of
+## it; the food-keyed entry point above divides by the per-biomass rate to recover exactly this
+## quantity, so it is written in terms of this one rather than beside it.
+##
+## **AND IT IS THE ONLY ONE AN INEDIBLE QUARRY CAN USE.** A wolf's `provisionsPerBiomass` is a
+## structural `0`, so the division above is undefined and the food-keyed form can only answer zeros —
+## which is what left a species hunted purely for its pelts with no crossing at all, and its material
+## rows quoted off a parallel crew-throughput line instead. Biomass is what a hunt takes whether or
+## not the species converts any of it to food.
+static func rescaled_from_biomass(src: Dictionary, prefix: String, carried: float) -> Dictionary:
     return {
-        YIELD_ACCOUNT_FOOD: value,
+        YIELD_ACCOUNT_FOOD: carried
+            * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0)),
         # No animal pays fodder, so a herd's second account rescales to a structural zero and renders
         # no row — the same answer the account had before this existed.
-        YIELD_ACCOUNT_FODDER: fodder_rate * share,
+        YIELD_ACCOUNT_FODDER: carried
+            * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0)),
+        # …and every material through the same one biomass. `scaled_material_rows` is the ONE
+        # vector-times-a-scalar helper, so a material scales exactly as the two scalars beside it do.
+        RESCALED_MATERIALS_KEY: scaled_material_rows(
+            src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), carried),
     }
 
 # PRE-COMMIT YIELD FORECAST. The overstaffing note above is POST-HOC — it tells you a turn later that
@@ -616,6 +659,12 @@ const FORECAST_ENGAGE_RATE_KEY := "engage_rate"
 # resolve, and the whole PLANT web, which never publishes the field at all. Read it as UNBOUNDED and
 # drop the term: that is what leaves forage and corrals byte-identical to before this arm existed.
 const NO_ENGAGEMENT_STAGE := 0.0
+# **THE ROOM A WHOLE-ANIMAL TAKE IS QUANTISED AGAINST, WHEN IT CANNOT BE STATED IN BIOMASS.** A
+# NEGATIVE, so it can never be mistaken for the real reading `0.0` — an empty room, which is a take of
+# nothing rather than a question with no answer. It reaches exactly one shape: a MANAGED source (a
+# built Pen), whose production is a payoff figure with no escapement room behind it, on a species that
+# also pays no food to read that payoff back through.
+const NO_ROOM_IN_BIOMASS := -1.0
 # The value the dropped term contributes to a `min()` / the crew `max()` — an unbounded reach cannot
 # be the binding arm, and `INF` says so without a branch at every call site.
 const ENGAGEMENT_UNBOUNDED := INF
@@ -782,11 +831,13 @@ const FORECAST_BUILD_WORK_COST_KEYS := {
 # a threshold would name a mechanism that no longer exists. What can still eat a build is the ROT,
 # which is `FORECAST_METER_ROT_KEY` and is a fact about the source rather than about the rung.
 #
-# **`upkeep_demand` IS STILL NOT THIS NUMBER.** That field is what the source is BILLED right now,
-# resolved through the rung actually at risk, so it reads `0` on a source with no progress — the
-# right answer for *what is this source losing* and the wrong one for *what would this rung cost to
-# hold*. The rung is picked with the same key table the cost is, so price, meter and rate can never
-# name three different rungs.
+# **`upkeep_demand` IS STILL NOT THIS NUMBER, and since §2.8 it is one step further away.** That
+# field is the BILL THE KEEPERS WERE HANDED this turn (`forage::patch_keeping_basis`), which is what
+# makes `demand − supplied == shortfall` hold exactly — the right answer for *where is my pooled
+# shortfall landing* and the wrong one for *what would this rung cost to hold*. On the plant web it
+# is now INTERPOLATED up the branch as the one position climbs, so it is not even the rung's own
+# rate; this pair is, at every fullness and on a rung nobody has started. The rung is picked with the
+# same key table the cost is, so price, meter and rate can never name three different rungs.
 const FORECAST_BUILD_UPKEEP_DEMAND_KEYS := {
     IMPROVEMENT_CULTIVATE: "cultivation_upkeep_demand",
     IMPROVEMENT_SOW: "field_upkeep_demand",
@@ -814,6 +865,61 @@ const FORECAST_BUILD_QUEUE_POSITION_KEY := "build_queue_position"
 # **THE SIM DECIDES `eligible`, SO THE SIM SAYS WHY** — this client holds no gate machinery for it and
 # must not re-derive one. It rides the SAME winning band as the three fields above.
 const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
+# **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, AND WHAT IS LEFT OF THE CLIMB**
+# (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a single
+# rung — the four verbs always were destinations, and with ONE POSITION PER SOURCE that reading
+# became literal: the entry lays every rung between where the source stands and where it was sent,
+# in order, and stays at the head until it ARRIVES. So a `sow` declared on untended ground is two
+# legs and costs the whole branch.
+#
+# **BOTH ARE READ AND NEITHER IS RE-DERIVED.** A leg's `work_remaining` is its owing FROM WHERE THE
+# SOURCE STANDS (a patch 30 units into a Cultivate owes 20 on that leg, not 50 — a previous
+# improvement is a RECEIPT, NOT A DISCOUNT) and its `turns_remaining` is CHAINED behind the legs
+# above it against a build queue this client cannot see. Reconstructing either would be a second
+# producer of a verdict that already has one, which is the failure the whole `buildTurnsRemaining`
+# family exists to prevent.
+const FORECAST_BUILD_DESTINATION_KEY := "build_destination_rung"
+const FORECAST_BUILD_LEGS_KEY := "build_legs"
+# The three keys of one published leg. **Named**, because the producer is the Rust decoder and the
+# readers are two GDScript surfaces: a typo in a `get` here is a silent zero, which on the work side
+# would price a whole branch as free.
+const BUILD_LEG_RUNG_KEY := "rung"
+const BUILD_LEG_WORK_KEY := "work_remaining"
+const BUILD_LEG_TURNS_KEY := "turns_remaining"
+# …and the fourth key `build_legs` ADDS: the wire's rung crossed to the improvement verb a command
+# names, so a caller matching legs against a branch and a caller naming the verb read one row.
+const BUILD_LEG_IMPROVEMENT_KEY := "improvement"
+# A leg owing this much or less has been paid for. The sim never publishes one
+# (`forage::patch_build_legs` pushes a leg only where `owed > LEG_ALREADY_PAID`), which is exactly why
+# the client states the boundary rather than trusting the head of the list — see `build_leg_in_flight`.
+const BUILD_LEG_NOTHING_OWED := 0.0
+# **THE WIRE'S RUNG SPELLING, AND THE VERB THAT NAMES EACH RUNG AS A DESTINATION.** The sim spells a
+# rung `<branch>:<id>` — branch-qualified because `wild` names a rung on BOTH webs — and this client
+# spells the same thing as an improvement verb, because that is what a command carries. This is the
+# ONE place the two vocabularies meet.
+#
+# **`wild` HAS NO VERB, AND ITS ABSENCE IS THE ANSWER.** You do not build the rung every source
+# starts on, so it maps to `IMPROVEMENT_NONE` and a destination picker renders it as the floor of the
+# branch rather than as something to take the land to.
+const RUNG_KEY_WILD_PLANT := "plant:wild"
+const RUNG_KEY_TENDED := "plant:tended"
+const RUNG_KEY_FIELD := "plant:field"
+const RUNG_KEY_WILD_ANIMAL := "animal:wild"
+const RUNG_KEY_PASTORAL := "animal:pastoral"
+const RUNG_KEY_PEN := "animal:pen"
+const RUNG_KEY_IMPROVEMENTS := {
+    RUNG_KEY_WILD_PLANT: IMPROVEMENT_NONE,
+    RUNG_KEY_TENDED: IMPROVEMENT_CULTIVATE,
+    RUNG_KEY_FIELD: IMPROVEMENT_SOW,
+    RUNG_KEY_WILD_ANIMAL: IMPROVEMENT_NONE,
+    RUNG_KEY_PASTORAL: IMPROVEMENT_TAME,
+    RUNG_KEY_PEN: IMPROVEMENT_CORRAL,
+}
+# …and the branch each web climbs, BOTTOM RUNG FIRST. It is an ORDER as well as a membership list:
+# every consumer walks it to say where a source stands and what is above it, so a branch listed out
+# of climb order would mark the wrong rung as *banked*.
+const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
+const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -1725,18 +1831,31 @@ static func fodder_rate_of(source: Dictionary) -> float:
     return float(source.get("fodder_yield", 0.0))
 
 ## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn` (food only),
-## `+0.08 /turn · 0.40 fodder` (a hay meadow), `0.40 fodder` (a hay-only one). One definition, so
-## every surface that states a source's per-turn products states them the same way and none of them
-## can print a zero for a component the source does not produce. Food leads. When EVERY component is
-## absent the food zero survives ("+0.00 /turn"): a worked source that produced nothing this turn is
-## a fact worth reading.
+## `+0.08 /turn · +0.40 fodder` (a hay meadow), `+0.40 fodder` (a hay-only one), `+0.22 hide` (an
+## inedible quarry). One definition, so every surface that states a source's per-turn products states
+## them the same way and none of them can print a zero for a component the source does not produce.
+## Food leads. When EVERY component is absent the food zero survives ("+0.00 /turn"): a worked source
+## that produced nothing this turn is a fact worth reading.
+##
+## **EVERY ACCOUNT IS SIGNED, AND FOR A RELEASE ONLY THE FOOD ONE WAS.** Food read `+0.20 /turn`
+## beside a bare `0.40 fodder` and a bare `0.22 hide` — one list, one register, one account wearing a
+## `+` and the others not, which a reader can only take as meaningful. **They are all income**: every
+## one of them is a per-turn credit to a store, so they all carry the sign that says so, and the sign
+## is what separates them from the standing COSTS this HUD also states (a pen's feed, a rung's
+## keeping). The tooltip half of this vocabulary already signed the fodder
+## (`POLICY_CAP_FODDER_FORMAT` → `+0.40 fodder/turn`), so the face was the outlier rather than the
+## rule.
+##
+## **`magnitude_components` IS THE UNSIGNED TWIN AND STAYS UNSIGNED** — a filter chip states a LEVEL
+## rather than a change, and its own note gives the reason. That pair is what makes this one's sign a
+## decision rather than an inconsistency.
 ##
 ## The fodder term wears the WORD, not a glyph, because fodder has none — the same reason
 ## `picker_products` names its accounts. It is plant-only, so every hunt-side caller leaves it
 ## defaulted and reads exactly as it did.
 ##
 ## `zero_account` names the component whose zero survives an all-empty take (`zero_account_of`), so a
-## hay-only meadow reads `0.00 fodder` rather than the `+0.00 /turn` that says its hay is worth no
+## hay-only meadow reads `+0.00 fodder` rather than the `+0.00 /turn` that says its hay is worth no
 ## meals, and a source that pays nothing in either account renders no line at all.
 static func yield_components(food: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> String:
@@ -1745,11 +1864,11 @@ static func yield_components(food: float, fodder: float = 0.0,
         var material_id := _row_material_id(row)
         if material_id != "":
             parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
-                format_magnitude(row[YIELD_ROW_VALUE]), material_id])
+                format_signed(row[YIELD_ROW_VALUE]), material_id])
         elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
             parts.append(format_yield(row[YIELD_ROW_VALUE]))
         else:
-            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
     return COMPONENT_SEPARATOR.join(parts)
 
 ## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
@@ -1988,6 +2107,38 @@ static func source_is_managed(src: Dictionary, kind: String, prefix: String) -> 
 ## weight, so a dead-season patch honestly moves no biomass per worker. Callers must not divide by it
 ## (`can_price_crew` is that test), and must not read it as "the wire sent no forecast" — the stock,
 ## the capacity and the rate vector still describe the patch.
+## **ONE BODY, IN THE UNIT THE QUANTISER'S OTHER TWO ARMS ARE IN.** A whole-animal take is
+## `min(room, crew carry, what stays) ÷ one body`, and the sim states all four in BIOMASS
+## (`fauna::quantise_animal_take` takes a `body_mass` and a biomass ceiling). So does this client: the
+## room comes through `escapement_room`, the carry through `per_worker_biomass`, and this is the
+## quantum they are divided by.
+##
+## **IT IS RECOVERED FROM THE FOOD PAIR WHERE ONE EXISTS, AND READ OFF `bodyMass` WHERE IT DOES NOT** —
+## which is the same number twice on the wire, `food_per_animal` BEING `body_mass ×
+## provisionsPerBiomass` (`snapshot.fbs`). The recovery leads because the room and the carry both reach
+## the quantiser THROUGH `provisionsPerBiomass`, and three arms of one `min` must be in one unit: a
+## quantum taken from a different pairing than the two numerators makes the count wrong by whatever
+## the two pairings disagree by, rather than by a rounding.
+##
+## **A source that pays no food has no such pair — that is what an inedible quarry IS** — and it is
+## exactly the source this function exists for: a wolf's `food_per_animal` and `provisionsPerBiomass`
+## are both structural zeros, so the quantum can only be the published `bodyMass`, and without it the
+## whole quantiser had nothing to divide by and its material rows fell through to a crew-throughput
+## line that ignored the reach.
+##
+## > **The harness's fixtures are where the two pairings visibly part.** `ForageFx.floorify` derives a
+## > patch's / herd's `provisions_per_biomass` from the authored peak ceiling and the room, so a
+## > fixture that also states `body_mass` outright ends up with `body_mass × provisions_per_biomass !=
+## > food_per_animal` — a herd no server can publish. The recovery makes the take immune to it; the
+## > animal COUNTS beside it (`animal_count`, the floor flag, `crew_to_hold`'s rounding) still read the
+## > stated field, so those fixtures state one body two ways.
+static func body_quantum(src: Dictionary, prefix: String) -> float:
+    var per_animal := float(src.get(prefix + FORECAST_FOOD_PER_ANIMAL_KEY, 0.0))
+    var rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+    if per_animal > 0.0 and rate > 0.0:
+        return per_animal / rate
+    return maxf(0.0, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
+
 static func per_worker_biomass(src: Dictionary, prefix: String) -> float:
     return maxf(0.0, float(src.get(prefix + FORECAST_PER_WORKER_BIOMASS_KEY, 0.0)))
 
@@ -2469,48 +2620,6 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
             return need
         need += 1
     return NO_CREW_ANSWER
-
-## **IS THIS CREW ACTUALLY DRAWING THE SOURCE DOWN?** — the projection's own answer, and the gate on
-## the ⚠ overdraw flag both compose sheets carry.
-##
-## The flag's own test is a take against the **food-peak** ceiling, which on a source standing at or
-## below that peak is `take > 0` — i.e. a fact about the FLOOR, not about the stock. So a patch whose
-## projection climbs could render `⚠ overdraws the patch` directly above a verdict reading *it settles
-## at 53% and holds there*: the panel saying the stock falls and rises in the same breath. Reported
-## from play. Nothing is being overdrawn while the stock rises, whatever the floor is — and the
-## projection is the one instrument that already knows, so the two sentences are now readings of it.
-##
-## **`true` WHERE THERE IS NOTHING TO CONSULT**, which keeps this purely subtractive: a source with no
-## capacity, no published curve, or a rung-3 managed one has no drawdown projection at all, so the
-## flag is left exactly as it was rather than suppressed on the strength of a walk that was never
-## taken.
-##
-## **IT WALKS THE ENGAGEMENT-BOUND PROJECTION, THE SAME ONE THE VERDICT IS WRITTEN OFF.** The gate and
-## the sentence beneath it are two readings of ONE walk — that is the whole point of the gate — so a
-## carry-only walk here would fall where the verdict's rises and put `⚠ overdraws the herd` back above
-## *it settles at 84% and holds there*, in the one case the arm exists for: a party that cannot reach
-## what it could carry. It is not the safe direction either, however subtractive the gate is; a flag
-## kept by a projection the panel does not believe is the same contradiction the flag was gated to
-## remove. A source with no engagement stage resolves to `ENGAGEMENT_UNBOUNDED` and walks exactly the
-## carry-bound projection it always did.
-static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int) -> bool:
-    var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
-    var samples := regrowth_samples(src, prefix)
-    if capacity <= 0.0 or not has_growth_curve(samples) \
-            or source_is_managed(src, kind, prefix):
-        return true
-    var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
-    var carry := per_worker_biomass(src, prefix)
-    var crew := maxi(workers, 0)
-    var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
-        float(crew) * carry,
-        engaged_quantum(crew, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-            float(src.get(prefix + FORECAST_STAY_FRACTION_KEY,
-                STAY_FRACTION_NONE_BREAKS_OFF))))
-    return float(walk["settled_fraction"]) \
-        < clampf(biomass / capacity, 0.0, 1.0) - STOCK_FRACTION_EPSILON
 
 # ---- THE VERDICT (docs/plan_harvest_floor.md §7.1) ----------------------------------------------
 #
@@ -3076,6 +3185,15 @@ static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
         # take, and quoting the room reads `0.00` beside a work board quoting the regrowth.
         "next_ceiling": float(forecast["axis_next_ceiling"]),
         "per_animal": float(forecast["axis_per_animal"]),
+        # **THE QUANTISER'S OWN THREE TERMS, IN BIOMASS.** A take of whole animals is
+        # `min(room, crew carry, what stays) ÷ one body`, and every one of those is a BIOMASS — so
+        # stating them in food is a conversion the quantiser does not need and that an inedible quarry
+        # cannot make. `body_mass` is the quantum, `carry` the crew's throughput, and the two rooms the
+        # numerators; `DrawerComposeController._hunt_delivered_and_waste` is their one consumer.
+        "body_mass": body_quantum(herd, ""),
+        "carry": per_worker_biomass(herd, ""),
+        "hold_room": float(forecast["hold_room_biomass"]),
+        "next_room": float(forecast["next_room_biomass"]),
         # **THE ENGAGEMENT PAIR, so the delivered take can bound itself on the party's REACH.** The
         # quantised take (`DrawerComposeController._hunt_delivered_and_waste`) composes its own
         # `collection` rather than calling `expected_yield_account`, so the third arm has to reach it
@@ -3162,6 +3280,14 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     var next_ceiling := 0.0
     var next_ceiling_fodder := 0.0
     var next_ceiling_material: Array[Dictionary] = []
+    # …AND THE SAME TWO ROOMS IN **BIOMASS**, which is the unit a whole-animal take is quantised in.
+    # A body is a biomass and a take is a count of bodies, so the quantiser divides a room by a
+    # `body_mass` — and a room stated in FOOD can only answer that division for a species that pays
+    # food, which is precisely the species an inedible quarry is not. `NO_ROOM_IN_BIOMASS` is the one
+    # shape that has no such answer: a MANAGED source whose production is a payoff figure rather than
+    # an escapement room, on a species with no per-biomass food rate to state that payoff through.
+    var hold_room_biomass := NO_ROOM_IN_BIOMASS
+    var next_room_biomass := NO_ROOM_IN_BIOMASS
     if source_is_managed(src, kind, prefix):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
@@ -3185,6 +3311,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         next_ceiling = ceiling
         next_ceiling_fodder = ceiling_fodder
         next_ceiling_material = ceiling_material
+        # A pen's production has no escapement room behind it, so the only biomass expression of it is
+        # the payoff read back through the species' own per-biomass rate. A species that pays no food
+        # states none, and the quantiser declines rather than inventing one.
+        var managed_rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+        if managed_rate > 0.0:
+            hold_room_biomass = ceiling / managed_rate
+            next_room_biomass = hold_room_biomass
     else:
         # ONE composition, both webs — the terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
@@ -3214,6 +3347,9 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
             * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
         next_ceiling_material = scaled_material_rows(
             src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), next_room)
+        # The same two rooms, unconverted — the quantiser's own denominator-free readings.
+        hold_room_biomass = growth
+        next_room_biomass = next_room
     # ---- THE CREW'S THROUGHPUT, PER ACCOUNT, DIPPED ---------------------------------------------
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var per_worker_fodder := 0.0
@@ -3276,6 +3412,10 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         "next_ceiling": next_ceiling,
         "next_ceiling_fodder": next_ceiling_fodder,
         "next_material_ceiling": next_ceiling_material,
+        # …and the two of them in BIOMASS, for the whole-animal quantiser alone. See the declarations
+        # above for why the pair exists and what `NO_ROOM_IN_BIOMASS` means.
+        "hold_room_biomass": hold_room_biomass,
+        "next_room_biomass": next_room_biomass,
         # The QUANTISED-AXIS triple every divide-by-a-quantum consumer reads (`max_useful_workers` and
         # the local preview). **The axis is provisions and is no longer a choice** (arc #527): the
         # trade account it could otherwise resolve to is retired, so these are aliases of the food
@@ -3830,6 +3970,79 @@ static func build_queue_position(src: Dictionary, prefix: String) -> int:
 static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
     return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
 
+## **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE** — the destination rung as an IMPROVEMENT VERB,
+## `IMPROVEMENT_NONE` when no band has queued it. It is the wire's `<branch>:<id>` read through the
+## one crossing table (`RUNG_KEY_IMPROVEMENTS`), so nothing else in the client has to know how the sim
+## spells a rung.
+##
+## Read it BESIDE `build_legs`: this says where the climb ENDS, those say what is LEFT of it. The
+## entry retires when the source reaches this rung's top and not when an intermediate rung fills, so
+## a two-leg `sow` holds the head of the queue through its Cultivate leg.
+static func build_destination_rung(src: Dictionary, prefix: String) -> String:
+    var key := String(src.get(prefix + FORECAST_BUILD_DESTINATION_KEY, "")).strip_edges()
+    return String(RUNG_KEY_IMPROVEMENTS.get(key, IMPROVEMENT_NONE))
+
+## **THE LEGS THE QUEUED ENTRY STILL HAS TO LAY**, in climb order, first-incomplete first — the FIRST
+## row is the leg in flight. `[]` when the source is not queued, or has already arrived, and that
+## emptiness is a real answer rather than an absence to fill in.
+##
+## Each row is normalised to `{rung, improvement, work_remaining, turns_remaining}` — the wire's rung
+## key crossed to a verb beside it, so a caller matching legs against a branch and a caller naming the
+## verb read one row. **NOTHING IS RECOMPUTED**: the work is the leg's owing from where the source
+## stands now, and the turns are chained behind the legs above it. A row the wire cannot name a rung
+## for is DROPPED rather than carried as a nameless leg, which would render as a step to nowhere.
+static func build_legs(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var raw: Variant = src.get(prefix + FORECAST_BUILD_LEGS_KEY, [])
+    if not (raw is Array):
+        return rows
+    for entry in (raw as Array):
+        if not (entry is Dictionary):
+            continue
+        var leg: Dictionary = entry
+        var key := String(leg.get(BUILD_LEG_RUNG_KEY, "")).strip_edges()
+        if not RUNG_KEY_IMPROVEMENTS.has(key):
+            continue
+        rows.append({
+            BUILD_LEG_RUNG_KEY: key,
+            BUILD_LEG_IMPROVEMENT_KEY: String(RUNG_KEY_IMPROVEMENTS[key]),
+            BUILD_LEG_WORK_KEY: maxf(float(leg.get(BUILD_LEG_WORK_KEY, 0.0)), 0.0),
+            # The four negatives are the countdown's own and are passed through VERBATIM — a leg
+            # cannot be dated when the entry carrying it cannot, and flattening one into another is
+            # how this client twice lost a sentinel the wire had already spelled.
+            BUILD_LEG_TURNS_KEY: int(leg.get(BUILD_LEG_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE)),
+        })
+    return rows
+
+## **THE LEG THE CREW IS ACTUALLY ON** — the first published leg still owing work, as one `build_legs`
+## row; `{}` for a source with nothing queued and for one whose climb has arrived.
+##
+## **IT IS THE ANSWER A DECLARATION CANNOT GIVE.** `build_verb` names the rung the player ORDERED
+## (`forage::patch_build_verb` honours a declaration at or above the rung being raised), which for a
+## `sow` on untended ground is the Field — a rung standing at 0% while the crew clears the ground
+## beneath it. Every readout that quoted that rung's meter therefore sat at zero for the whole first
+## leg, which reads as a job that is not moving.
+##
+## **THE FRACTION TO PUT BESIDE IT IS THE PER-RUNG ONE THE WIRE ALREADY PUBLISHES** —
+## `improvement_progress` at this leg's own verb, i.e. the source's one position clamped into that
+## rung's span (`forage::patch_rung_work_done`). Nothing here divides `work_remaining` by anything: a
+## second derivation of a number the sim publishes is how this arc has shipped defects before.
+##
+## **A SCAN RATHER THAN `legs[0]`, deliberately.** The sim drops a rung the position has already paid
+## for, so on an honest payload the head IS the leg in flight — but a fixture, or a producer that one
+## day publishes the whole branch, can carry a paid leg, and a reader that took the head on faith
+## would then name a rung nobody is working.
+static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
+    for leg in build_legs(src, prefix):
+        if float(leg.get(BUILD_LEG_WORK_KEY, BUILD_LEG_NOTHING_OWED)) > BUILD_LEG_NOTHING_OWED:
+            return leg
+    return {}
+
+## The BRANCH a source climbs, bottom rung first — `RUNG_BRANCH_PLANT` for a patch, `RUNG_BRANCH_ANIMAL`
+## for a herd. One picker, so the two webs' tracks cannot be walked in two different orders.
+static func rung_branch_for_kind(source_kind: String) -> Array:
+    return RUNG_BRANCH_ANIMAL if source_kind == SOURCE_KIND_HERD else RUNG_BRANCH_PLANT
+
 ## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
 ## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other
 ## people's work.
@@ -3858,6 +4071,20 @@ static func build_work_from_gear(src: Dictionary, prefix: String) -> float:
 ## exists to make legible. `supplied` is this source's SHARE of its band's keeping pool (§2.5), not a
 ## crew on the tile. `crew` is what the RATE is worth in hands — the keeping pool's share once the rung
 ## stands, the minimum viable BUILD crew while it is still going up, one arithmetic either way.
+##
+## ⛔ **`demand` IS THE BILL THE KEEPERS WERE HANDED, NOT THE LIVE COST OF HOLDING THE RUNG** (§2.8).
+## It was the second thing until the plant web went to ONE POSITION: the keeping rate INTERPOLATES up
+## the branch now, so a build banks work between the turn the supply is stamped and the turn it is
+## judged, and a lagged supply against a moving bill is permanently short. The sim publishes
+## `forage::patch_keeping_basis` — the demand the pass actually answered — which is what makes
+## `demand − supplied == shortfall` hold exactly, and is why the trio may be read as one statement.
+##
+## **SO NOTHING MAY QUOTE IT AS *what would this rung cost to hold*.** That question is the per-rung
+## `<rung>UpkeepDemand` pair (`build_upkeep_demand`), which is the ladder's own rate and answers for a
+## rung nobody has started. This one answers *where is my pooled shortfall landing*, and every
+## surviving reader words it that way: the pool card's coverage line, the fund-mode row's presence and
+## `_queued_keeping_load`'s already-billed test. The one surface that ever said *"holding this costs
+## N"* per source — the `Keeping:` row — was retired in issue #545.
 ##
 ## `at_risk` is the pair's gate — `has_neglect_grace` — and it means *there is something here that can
 ## be lost*. It has to be read before `grace`, exactly as `has_owner` is before `owner`: `0` grace on
@@ -4700,6 +4927,12 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             "species": String(entry.get("species", "")).strip_edges(),
             "display_name": name,
             "percent": percent,
+            # **THE RAW SHARE RIDES BESIDE THE ROUNDED PERCENT, and the two are not interchangeable.**
+            # `percent` is a DISPLAY figure — rounded, with the remainder folded into the first row so
+            # the column sums to 100 — and arithmetic done on it inherits that fold. This is the wire's
+            # own fraction, and it is what `selection_rates` weights the per-species conversion rates
+            # by: a rate composed off the display percent would be off by the fold on every tile.
+            "share": float(entry.get("share", 0.0)),
             "can_cultivate": bool(entry.get("can_cultivate", false)),
             "can_sow": bool(entry.get("can_sow", false)),
             "cultivate_yield_ratio": float(entry.get("cultivate_yield_ratio", FLORA_CROP_RATIO_NONE)),
@@ -4742,11 +4975,204 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # in the weeding and conversion gains, and they read all-zero for a species that cannot
             # climb on this ground, which is exactly where the role is still true and useful.
             "role": String(entry.get("role", "")).strip_edges().to_lower(),
+            # **HOW MUCH OF THIS PLANT IS STANDING** (`ForagePatchState.compositionStandingBiomass`,
+            # folded onto the entry by the decoder) — carried through so the compose sheet's species
+            # chips can quote a QUANTITY. A selective gather asks *"is there enough emmer here to be
+            # worth two hands"*, and the client holds no capacity arithmetic: the sim states this
+            # exactly as it states the take.
+            #
+            # **PRESENCE IS ITS OWN KEY, because `0.0` is a real reading** — a stand drawn to nothing
+            # is not the same fact as a server that quoted no biomass at all, and only the second may
+            # render no clause. It is also the ONE producer of the quantity: the tile card's basket
+            # rows read this same number rather than re-deriving `share × stock`.
+            "standing_biomass": float(entry.get("standing_biomass", 0.0)),
+            "has_standing_biomass": entry.has("standing_biomass"),
+            # **WHAT ONE UNIT OF THIS PLANT CONVERTS AT**
+            # (`ForagePatchState.compositionProvisionsPerBiomass` and its fodder twin, folded onto the
+            # entry by the decoder) — the patch's standing rung, the favored crop's gain already in,
+            # and NOT pre-scaled by the share above. They are what let the compose sheet price a
+            # NARROWING live: `provisionsPerBiomass` on the patch is the basket AVERAGE, so a sheet
+            # holding only that quoted the same number however many chips were ticked.
+            #
+            # **PRESENCE IS ITS OWN KEY HERE TOO, and here it earns its keep twice over**: a cash crop
+            # honestly pays `0.0` food, so a missing-means-zero reading would make an unstated rate and
+            # a real one indistinguishable on exactly the plants this feature is about.
+            "provisions_per_biomass": float(entry.get("provisions_per_biomass", 0.0)),
+            "has_provisions_per_biomass": entry.has("provisions_per_biomass"),
+            "fodder_per_biomass": float(entry.get("fodder_per_biomass", 0.0)),
+            "has_fodder_per_biomass": entry.has("fodder_per_biomass"),
+            # **…AND WHAT ONE UNIT OF IT IS MADE OF** (`compositionMaterialPerBiomass[i].rows`, the
+            # same seam a third time). It is the account the whole selective gather was argued on:
+            # baskets are made of fibre and baskets are what let a gatherer carry more food, so
+            # *tick cotton, see how much fibre* is the first thing a player tries, and
+            # `material_per_biomass` on the PATCH is basket-averaged and cannot answer it.
+            #
+            # **AN EMPTY LIST IS "NO ROW", NEVER ZERO** — a grain pays no material and says so — which
+            # is why presence still needs its own key beside it: an entry the wrapper vector never
+            # reached is a server that stated nothing, and only that one makes the selection
+            # unquotable. Carried VERBATIM; `selection_rates` composes it per MATERIAL ID and nothing
+            # anywhere sums it into one materials/turn figure.
+            "material_per_biomass": material_payoff_rows(entry.get("material_per_biomass", [])),
+            "has_material_per_biomass": entry.has("material_per_biomass"),
         })
     if entries.is_empty():
         return entries
     entries[0]["percent"] = int(entries[0]["percent"]) + FLORA_SHARE_PERCENT_TOTAL - total
     return entries
+
+# ---- THE SELECTIVE GATHER — pricing a NARROWED take ---------------------------------------------
+#
+# A forage crew may name the plants it carries home. The patch's own `provisions_per_biomass` is the
+# BASKET AVERAGE, so a sheet holding only that quotes the same take however many chips are ticked —
+# live for the worker stepper beside it and inert for the control that is the whole decision. The wire
+# answers that with two per-species vectors folded onto the basket entries
+# (`flora_basket_entries`' `provisions_per_biomass` / `fodder_per_biomass`), and these two functions
+# are the ONE place this client composes them.
+#
+# **THE COMPOSITION, and every term of it comes off the wire:**
+#
+#     available = max(0, biomass − floor·K) × Σ_S share        <- the selected plants' stand
+#     rate      = Σ_S (share × rate) ÷ Σ_S share               <- the rate WITHIN the selection
+#     take      = min(workers × perWorkerBiomass, available) ; food = take × rate
+#
+# **`narrowed_source` EXPRESSES ALL OF IT AS A SOURCE DICT rather than as a second take model**, which
+# is what keeps the narrowed sheet and the whole-basket sheet one piece of code: the stand, the rates
+# and the crew throughput are substituted, and `forecast_inputs` / `max_useful_workers` /
+# `expected_yield_account` / `hold_crew` / `reach_crew` / the chart then answer for the selection
+# through the identical arithmetic. A narrowed take that had its own model would drift from the
+# whole-basket one the first time either moved — and the `now → after` walk, which is exactly what the
+# player must see move when a chip is ticked, would have had to be written twice.
+
+## The keys of a composed selection: is it QUOTABLE at all, and the three accounts if so. The material
+## one is a `[{material_id, amount}]` VECTOR like every other material reading in this file — never a
+## scalar, which is the retired trade axis under a new name.
+const SELECTION_KNOWN := "known"
+const SELECTION_SHARE := "share"
+const SELECTION_PROVISIONS := "provisions"
+const SELECTION_FODDER := "fodder"
+const SELECTION_MATERIAL := "material"
+
+## Compose `selection` (species keys, EMPTY meaning the whole basket) against `basket` —
+## `flora_basket_entries`' answer for the same tile.
+##
+## **`known` IS FALSE WHERE THE WIRE STATED NO RATE FOR SOMETHING THE PLAYER TICKED**, and that is the
+## honest-silence case: this client cannot recover a per-species conversion from anything else it
+## holds, so the sheet says the narrowing is unquoted rather than quoting it at the basket's numbers
+## under a narrowed heading — the quote-vs-payout defect this arc has shipped before.
+##
+## **A `0.0` RATE IS NOT THAT CASE.** A cash crop pays no food and says so; the selection is fully
+## quoted, its food rate is zero, and `yield_rows`' own render-where-it-pays rule then decides whether
+## a FOOD row exists at all. Presence travels on the entry's `has_*` key for exactly this reason.
+##
+## An empty selection returns `known = false` as well — there is nothing to narrow, and the caller
+## reads the patch unchanged.
+static func selection_rates(basket: Array[Dictionary],
+        selection: PackedStringArray) -> Dictionary:
+    var unquoted := {SELECTION_KNOWN: false, SELECTION_SHARE: 0.0,
+        SELECTION_PROVISIONS: 0.0, SELECTION_FODDER: 0.0,
+        SELECTION_MATERIAL: ([] as Array[Dictionary])}
+    if selection.is_empty() or basket.is_empty():
+        return unquoted
+    var share_sum := 0.0
+    var provisions := 0.0
+    var fodder := 0.0
+    # **THE MATERIAL ARM MERGES BY ID, and that is the half a single-species fixture cannot check.**
+    # Two ticked plants both paying `fibre` compose into ONE fibre rate — which is what a rate means,
+    # and what the store sums the same way — so the weighted sums accumulate into a per-id map rather
+    # than a list. A last-write-wins composition passes a one-plant selection and is wrong by a factor
+    # on cotton beside flax. Insertion ORDER is the basket's (the wire's), kept in `material_order`,
+    # so the rendered rows do not reshuffle between renders.
+    var material_weighted := {}
+    var material_order: Array[String] = []
+    var matched := 0
+    for entry in basket:
+        if not selection.has(String(entry.get("species", ""))):
+            continue
+        # A plant the wire quoted no rate for makes the WHOLE selection unquotable: the composition is
+        # a weighted mean, so one missing term is not a term that can be left out of it. **The
+        # material arm is gated on PRESENCE, never on emptiness** — an empty row list is a plant that
+        # pays no material, which is a real answer and composes as a zero contribution.
+        if not bool(entry.get("has_provisions_per_biomass", false)) \
+                or not bool(entry.get("has_fodder_per_biomass", false)) \
+                or not bool(entry.get("has_material_per_biomass", false)):
+            return unquoted
+        var share := maxf(float(entry.get("share", 0.0)), 0.0)
+        matched += 1
+        share_sum += share
+        provisions += share * float(entry.get("provisions_per_biomass", 0.0))
+        fodder += share * float(entry.get("fodder_per_biomass", 0.0))
+        for row in (entry.get("material_per_biomass", []) as Array):
+            var material_id := String((row as Dictionary).get(MATERIAL_PAYOFF_ID_KEY, ""))
+            if material_id == "":
+                continue
+            if not material_weighted.has(material_id):
+                material_weighted[material_id] = 0.0
+                material_order.append(material_id)
+            material_weighted[material_id] = float(material_weighted[material_id]) \
+                + share * float((row as Dictionary).get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+    # A selection naming nothing this tile grows, or naming only plants the tile carries no share of,
+    # divides by zero — there is no stand to price and no mean to take.
+    if matched == 0 or share_sum <= 0.0:
+        return unquoted
+    # **THE DENOMINATOR IS THE WHOLE SELECTION'S SHARE, on every material.** A plant that pays no fibre
+    # contributes a zero to the fibre mean rather than leaving the mean to the plants that do — the
+    # selection is one crew gathering one stand, and dividing each material by only its own payers
+    # would quote a narrowing to `flax + oak mast` the same fibre rate as `flax` alone.
+    var materials: Array[Dictionary] = []
+    for material_id in material_order:
+        materials.append({
+            MATERIAL_PAYOFF_ID_KEY: material_id,
+            MATERIAL_PAYOFF_AMOUNT_KEY: float(material_weighted[material_id]) / share_sum,
+        })
+    return {
+        SELECTION_KNOWN: true,
+        SELECTION_SHARE: share_sum,
+        SELECTION_PROVISIONS: provisions / share_sum,
+        SELECTION_FODDER: fodder / share_sum,
+        SELECTION_MATERIAL: materials,
+    }
+
+## The patch as the SELECTED plants alone — a copy of `src` with the selection folded into the terms
+## every take reading is composed from. Returns `src` untouched for an unquotable selection, so a
+## caller that forgot to check still renders the whole basket rather than a scaled ghost of it.
+##
+## **THE STAND SCALES AND THE CREW DOES NOT**, which is the composition above written into a dict:
+## `biomass`, `carrying_capacity` and the regrowth curve all take the selection's share (so
+## `escapement_room` returns `Σshare × (B − floor·K)` exactly, and the stock FRACTION `B/K` the curve
+## and the chart are read at is untouched), while `per_worker_biomass` stays whole — a worker's basket
+## does not shrink because they walk past the flax.
+##
+## **`per_worker_yield` IS RE-COMPOSED, NOT SCALED.** The wire's is `perWorkerBiomass × basket rate`;
+## this crew converts at the SELECTION's rate, so it is multiplied out again from the throughput
+## rather than nudged. It is substituted BEFORE `KitRoster.repriced_source` runs, so the kit's carry
+## ratio still lands on it exactly as it lands on the whole-basket figure.
+##
+## **AND THE MATERIAL VECTORS ARE SUBSTITUTED THE SAME WAY, per material id.** `material_per_biomass`
+## takes the selection's composed rate vector; `per_worker_material` is RE-COMPOSED off the throughput
+## exactly as `per_worker_yield` is, because the wire's is that throughput at the basket's rate. An
+## empty answer stays empty and renders NO material row (`yield_rows`' "empty means no row" rule) —
+## which is what a selection of pure grain honestly is, not a column of zeros.
+static func narrowed_source(src: Dictionary, prefix: String, rates: Dictionary) -> Dictionary:
+    if not bool(rates.get(SELECTION_KNOWN, false)):
+        return src
+    var share := clampf(float(rates.get(SELECTION_SHARE, 0.0)), 0.0, 1.0)
+    var out := src.duplicate()
+    out[prefix + FORECAST_BIOMASS_KEY] = float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)) * share
+    out[prefix + FORECAST_CAPACITY_KEY] = float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)) * share
+    var samples := regrowth_samples(src, prefix)
+    var scaled := PackedFloat32Array()
+    for sample in samples:
+        scaled.push_back(sample * share)
+    out[prefix + FORECAST_REGROWTH_SAMPLES_KEY] = scaled
+    var provisions := float(rates.get(SELECTION_PROVISIONS, 0.0))
+    out[prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY] = provisions
+    out[prefix + FORECAST_FODDER_PER_BIOMASS_KEY] = float(rates.get(SELECTION_FODDER, 0.0))
+    var carry := per_worker_biomass(src, prefix)
+    out[prefix + FORECAST_PER_WORKER_KEY] = carry * provisions
+    var materials: Array[Dictionary] = rates.get(SELECTION_MATERIAL, [] as Array[Dictionary])
+    out[prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY] = materials
+    out[prefix + FORECAST_PER_WORKER_MATERIAL_KEY] = scaled_material_rows(materials, carry)
+    return out
 
 ## The two keys of ONE per-material payoff row, as `native/src/dict/subsistence.rs` writes them.
 ## `material_id` is the `materials.json` id (`fibre`, `tobacco`, `grape`) — the same id the material
@@ -4792,14 +5218,26 @@ static func material_payoff_rows(raw: Variant) -> Array[Dictionary]:
 static func material_rows_of(source: Dictionary) -> Array[Dictionary]:
     return material_payoff_rows(source.get(ASSIGNMENT_MATERIAL_YIELD_KEY, []))
 
-## **THE ONE-SLOT SURFACES' MATERIAL ARM** — every material this source pays, SIGNED, joined in the
+## **THE MATERIAL ARM OF A PER-TURN READOUT** — every material this source pays, SIGNED, joined in the
 ## sentence idiom (`+0.22 hide`), and `""` when there is nothing to say. The empty answer is the whole
 ## point: it is the gate a fall-through tests, so "this source pays no material" and "this source pays
 ## a material" are one call rather than a condition each caller re-derives.
 ##
-## **EVERY material, never the first one.** Picking one of a vector names a winner the sim does not
-## name; summing them is the retired trade axis under a new name. A species pays few materials, and
-## both callers size to their measured run rather than clipping.
+## **EVERY material, never the first one, and never a count of the rest.** Picking one of a vector
+## names a winner the sim does not name; summing them is the retired trade axis under a new name. Both
+## callers size to their measured run rather than clipping — the map's on-tile plate, whose pill is
+## drawn to the text's own width, and the work board row's ACCOUNTS LINE, which has the whole row.
+##
+## **A BOUNDED FORM (`+0.24 fibre +3`) EXISTED AND IS RETIRED, and the reason is worth keeping.** A
+## `Label` with no overrun behaviour reports its WHOLE text as its minimum width, so an unbounded join
+## does not merely run long — it sets the ROW's minimum, and in a fixed-width zone that lays every row
+## out past the box while the zone's `clip_contents` slices the right edge off all of them (measured:
+## 528px of a 356px box on a four-cash-crop patch, with the row's name allocated Godot's 1px floor).
+## The cap was what left a bounded, meaningful string behind the ellipsis in a **46px** rate column.
+## That column is gone — the board row's accounts moved to a full-width second line
+## (`band-city-panel.md` → "THE ROW IS TWO LINES") — so **no caller has one fixed slot any more**, and
+## the bound was deleted rather than left parameterised: an unreachable cap is a thing the next reader
+## assumes is load-bearing.
 static func signed_material_components(rows: Array) -> String:
     var parts: Array[String] = []
     for row in material_payoff_rows(rows):
@@ -4827,8 +5265,29 @@ static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary
     return out
 
 ## **WHAT A CREW OF `workers` TAKES, PER MATERIAL** — `min(workers × per_worker, material_ceiling)`
-## evaluated once per material, which is the food side's own clamp applied one account further out.
-## `forecast` is a `forecast_inputs` answer.
+## evaluated once per material. `forecast` is a `forecast_inputs` answer.
+##
+## > #### ⛔ IT IS THE FOOD SIDE'S OWN CLAMP **ON THE PLANT WEB ONLY** — the animal web has three more arms
+## >
+## > This docstring used to claim the clamp was "the food side's own clamp applied one account further
+## > out" without qualification, and that false premise WAS a defect. On a PATCH it holds: the food
+## > row is `min(workers × per_worker, ceiling)` against its own matching ceiling, there is no
+## > engagement stage and no whole-animal quantum, so both accounts are linear in workers and track by
+## > construction. On a HERD the food row is `min(room, crew carry, engagement→retreat) × the per-body
+## > carry clamp`, quantised to whole bodies — four bounds, of which this expression has one — so a
+## > pastoral Wild Boar herd (`engage_rate` 0.33, hence `floor(workers × 0.33)` pinned by its
+## > floor-of-one at exactly ONE animal reached for every crew from one to six) quoted five herders
+## > five times the bone and hide one herder brings home, beside a food row that correctly did not
+## > move. The sim credits BOTH accounts off one `take.carried` (`systems/labor.rs`), so quote and
+## > payout provably disagreed.
+## >
+## > **The animal web does not use this any more.** A hunt's material rows cross out of the delivered
+## > biomass through `rescaled_accounts`, beside the food and fodder ones. The one animal-web caller
+## > left is the INEDIBLE quarry, whose food axis is a structural zero — there is no carried biomass to
+## > cross from, and its `body_mass` is not a term any client-side quantiser here can reach — so it is
+## > still quoted on crew throughput alone and is still over-quoted at a crew the engagement bound
+## > pins. Closing that needs the quantiser expressed in BIOMASS, which needs a `body_mass` such a herd
+## > publishes and the harness fixtures do not derive.
 ##
 ## **IT TAKES NO CEILING SELECTOR, and that is deliberate.** It had one, mirroring the pair
 ## `expected_yield_account` chooses between — the ROOM and the every-turn regrowth — and the hold arm

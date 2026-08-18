@@ -118,10 +118,20 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 260 `assert OK` lines, 420 `: PASS` ones and ZERO `FAIL` ones, over
-104 frames — RE-MEASURED, into an emptied `ui_preview_out/`.** The figure recorded here before the
-Builders card lost its kit picker read 254 / 377 / 101 and was already three frames and forty-three
-`PASS` behind the harness, so the delta of that change is not recoverable by subtracting them: it is
+**A clean run exits 0 and prints 382 `assert OK` lines, 589 `: PASS` ones and ZERO `FAIL` ones, over
+116 frames.** (It was 379 / 570 / 115 before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
+→ "THE PERCENTAGE IS THE LEG IN FLIGHT'S". That step is **+1 frame and +17 `: PASS`**:
+`band_panel_queue_leg_animal` and the four-state block below, whose remaining two `assert OK`s are
+that frame's own bounds/content-fits pair. The `assert OK` delta reads +3 rather than +2 and the
+`PASS` one +19 rather than +17, which is the recorded figure's own drift rather than two lost claims —
+the paragraph below already records this tally as having been behind the harness twice.) (The figures
+before it were RE-MEASURED into an emptied `ui_preview_out/`.) The figure recorded here before the
+MATERIALS-ONLY WORK ROW read 260 / 420 / 104 and was already 119 / 150 / 11 behind the harness, so
+that change's delta is not recoverable by subtracting them: it is **+2 frames, +8 `assert OK` and +6
+`: PASS`** — `band_panel_work_material_forage` / `_crops`, each contributing its own shell / bounds /
+content-fits / width-fits quartet and `_assert_work_row_states_its_materials`' three. The figure
+recorded before the Builders card lost its kit picker read 254 / 377 / 101 and was already three
+frames and forty-three `PASS` behind the harness, so that delta is not recoverable either: it is
 **+2 `: PASS`, no `assert OK` and no frame** — eight of `_assert_builders_kit_picker`'s claims retired
 with the control, ten gear-line/absence claims and three stepper claims in their place.
 
@@ -1108,3 +1118,129 @@ naming the phantom rows it found.
 - **The wide dock reads `Zone_work` at 252px of a 300px box.** `Zone_band` at 749/300 and
   `Zone_parties` at 300/300 are the same numbers `band_panel_build_queue_wide` prints and are
   structural (the board is `EXPAND_FILL` and pages).
+
+## THE LEG IN FLIGHT — the two-leg fixture existed and could not tell the defect from the fix
+
+**`_track_climbing_patch_fixtures` had staged a two-leg entry since the destination track landed, and
+no assertion in this file could have caught the reported defect on it**, because its band's forage row
+carried **no `improvement` token**. The wire publishes one — `snapshot::population::resolved_build_job`
+is `patch_build_verb`'s answer, which honours a declaration at or above the rung being raised, so a
+`sow` on untended ground publishes `sow` — and without it the client's own `build_verb` fell through
+to the Cultivate meter and the board read the leg **by accident**. `_track_band_fixture(build_job)`
+states it, which is what makes `band_panel_rung_track_climbing` reproduce the played state.
+
+Four claims per state, from `_assert_queue_row_states`, and the SET is what makes any of them worth
+anything — a fix that repointed the whole row passes the last two alone:
+
+| claim | why it is there |
+|---|---|
+| the row is still titled for its DESTINATION | that is what the player ordered, and it is why moving the percentage costs nothing |
+| the date column, by EQUALITY | one string carries the verb, the leg's percent AND the whole climb's turn, so asserting them apart would let a row state a leg's date beside a leg's percentage and pass |
+| the source row's rung chip | the two Work-tab readouts must name ONE rung — the shape of the reported defect |
+| the wanted percent is composed through the TILE CARD's own producer | the claim is that two surfaces AGREE; a literal on each side lets both be separately plausible |
+
+**Four states, and three of them are PNG-less** — a percentage is a number and a row quoting the wrong
+rung's meter renders a perfectly plausible row:
+
+- the reported two-leg `sow`, on `band_panel_rung_track_climbing`;
+- **the FIRST turn of banked work** (`TRACK_FIRST_TURN_WORK_DONE`, one unit of fifty ⇒ 2%) — the
+  assertion that actually catches the bug, since at 60% a renderer that had merely swapped one meter
+  for another passes;
+- **a single-leg `sow` on already-tended ground, which must be UNCHANGED** — its leg IS its
+  destination, and without it "read the leg" is satisfied by a renderer that always names the rung
+  below the one declared;
+- **the animal twin** (`band_panel_queue_leg_animal`), a `corral` on an untamed herd: the two webs
+  share no fixture and no rung table, so a fix reaching only the plant one passes every claim above.
+
+Sabotage-verified by returning the destination reading: **exactly six fail** — both readouts on the
+two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,
+while the single-leg control stays green.
+
+**`_report_queue_row_columns` PRINTS the row's two columns and both worst cases**, the
+`_report_work_row_name_column` rule one block over: the verb made the date column longer, and what a
+red line there asks for is a design decision. It reads **queue NAME 126px** (the widest shipped face,
+`🐄 Corral Thunder Mammoths`, needs 189 — it was already ellipsised before this change) and **DATE
+168px** (its own widest, `Cultivating 100% · turn 999`, needs exactly 168), beside the BOARD row's
+line one at **109px**. Those numbers are what bought the queue row's SOURCE ICON its retirement — the
+arithmetic is in `band-city-panel.md`.
+
+## The MATERIALS-ONLY work row — the assertions were fine, the fixtures never reached the state
+
+`_assert_zone_content_width_fits` recurses correctly, scales off the LIVE host size and has ridden
+every `_assert_zone_content_fits` call site since the width defect first shipped. It had never seen a
+row that overflows, because **no fixture in this file gave a FORAGE assignment a `material_yield` at
+all**, and the one two-material fixture (`WIDE_SENTENCE_MATERIALS`) sits on a herd that also pays
+FOOD — so the row's retired one-slot fall-through took the food branch there and the material list
+never reached a row. The behaviour is specified in `band-city-panel.md` → "THE ROW IS TWO LINES".
+
+- **`band_panel_work_material_forage`** — the reported case, `+0.24 fibre · +0.34 grape` on a patch
+  paying no food and no fodder, in the LEFT dock (the shipped default edge and the narrowest box the
+  work zone is ever given; the same row on a bottom dock has 789px and says nothing).
+- **`band_panel_work_material_crops`** — the measured worst case, a RollingHills-style tile realizing
+  all four field-ceiling cash crops.
+- **The DEER hunt row rides both as the control.** A row that still pays food must be UNCHANGED, or
+  "shorten the rate" would be satisfied by a board that shortened every rate on it. The wolf is
+  deliberately left OFF these two boards, so the forage row is the only overflowing one and a failure
+  names it rather than whichever row happened to measure widest.
+
+**`_assert_work_row_states_its_materials` claims that BOTH LINES render WHOLE, and that is the half a
+width assertion structurally cannot see.** A zone whose content fits says nothing about how the row
+SPENT the room: the name Label was allocated **1px** — Godot's floor, not zero — so it stayed a
+perfectly valid, perfectly findable node with its `text` intact and every text-based claim about it
+passed while it rendered as nothing. Each claim is *it is not elided*, measured against the label's
+OWN font at its OWN size (`_label_text_width`, the faction page's keyless-key scan one surface over,
+with its `KEYLESS_KEY_WIDTH_TOLERANCE`). That is stronger than the RELATION it replaced — the name
+getting at least the retired 46px rate column's width — and it is what the two-line row is FOR: there
+is no sibling column left to state a relation against. Two claims ride with them and the set is what
+makes any of them worth anything: line two really did state EVERY material (otherwise "the lines fit"
+passes on a board that stopped rendering the accounts), and it states them IN FULL rather than naming
+one and counting the rest.
+
+**THE LINE-TWO WIDTH CLAIM IS ABOUT THE ACCOUNTS, NOT THE WHOLE LINE, and the difference is the FLOOR
+clause.** Line two closes with `50% left standing` (~96px), and the four-cash-crop worst case asks
+**332px of a 322px line** with it — so the trim lands on the floor, and a whole-line claim would fail
+on the one fixture built to be the widest. `_accounts_clause_width` measures the line less its
+trailing clause (`rsplit` with a limit of ONE: the clause joiner and the accounts' own separator are
+the same glyph, so splitting forward would cut after the first account instead). What the two-line row
+promises is that the ACCOUNTS never have to be cut — the reading the retired 46px slot could not give
+at any width — and a fourth claim beside it requires the WHOLE line, floor included, to ride the
+label's own hover, because the floor has no other home once the strip's sentence is gone.
+
+**AND THE STRIP MUST RESTATE NONE OF IT** (`_assert_work_inspector_restates_no_accounts`, on
+`band_panel_work_inspector_width`). That redundancy is what paid for the second line, so a sentence
+quietly growing back would put the work zone over its box on the one state with zero spare. It is the
+NEGATIVE half of `_assert_work_row_line_two_states_every_account` — which replaced the identical claim
+asked of the STRIP, the long line having moved to the row — and the two are asserted together: "line
+two says it" is satisfied by a tab that says it twice, and "the strip does not" by a tab that lost the
+accounts entirely. Sabotage-verified as a set: restoring the sentence fails the redundancy claim AND
+`band_panel_pools_wide_selected`, the latter naming `short by 16`.
+
+**`_report_work_row_name_column` PRINTS rather than asserts**, and the number is the fork it exists to
+surface: the narrow shell's name column measures **146px** (96 under the retired slot) while
+`Hunt Thunder Mammoths` — `fauna_config.json`'s widest, stated as `WIDEST_SHIPPED_ROW_NAME` — needs
+**164**, so the longest shipped name still elides by 18px in a side dock. No fixture on this board can
+say that for itself; every row here is `Forage (nn, nn)` or a short species, so the un-elided
+assertions pass on a column half this wide. Whether 18px is answered by a shorter row format, a wider
+flank or nothing at all is a design decision, and a failing assertion would state one of those answers
+— the `_report_zone_content_extent` rule.
+
+**The accounts Label is reached from the NAME by walking up to the row and back down by
+`WORK_ROW_ACCOUNTS_META`** (`_work_row_accounts_label`). The two live on different lines of one row,
+so nothing but the row's own `PanelContainer` encloses both, and a second text match over the panel is
+free to land on another row.
+
+**THE WOLF ROW SHIPS TWO MATERIALS AND THE FIXTURE CARRIED ONE.** `fauna_config.json` gives the wolf
+`hide` and `bone`, and one material fitted the retired 46px slot with room to spare — so the row that
+SHIPS was the untested one. `WORK_ROW_MATERIAL_ROWS` states both, which put
+`band_panel_work_trade_rows` / `_inspector` / `_totals` **2px over the 356px box** under that slot:
+the same defect one web across, at a twentieth of the size, predating the selective-gather work
+entirely.
+
+**Sabotage-verified** while the accounts were still a 46px slot, by reverting the elide and the cap
+together (i.e. the shipped pre-fix behaviour): **42 failures**, naming the mechanism rather than a
+symptom — the wolf's three states 2px over, `band_panel_work_material_forage` 9px over with `the row's
+NAME is allocated at least the rate column's own width (1 of 46)`, and
+`band_panel_work_material_crops` **172px** over, its column asking 528 of 356, with every `+` and `−`
+on the board reported outside the box. With the accounts on their own line both states read
+**354 / 356**, the name **146 of the 91 its own font needs**, and the four-crop line **322 of 218** —
+i.e. the defect is not merely bounded, it is unreachable at the shipped roster's widths.

@@ -55,9 +55,8 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
-        field_provisions, forage_forecast, patch_composition, rung_site_refusal,
-        tile_is_fresh_watered, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
-        NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        forage_forecast, patch_composition, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
+        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -903,7 +902,7 @@ mod tests {
     use super::*;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
-    use crate::components::{ElementKind, LocalStore, MoraleCause, YieldRange};
+    use crate::components::{ElementKind, LocalStore, MoraleCause, TakeSelection, YieldRange};
     use crate::forage::ForagePatch;
     use crate::power::PowerNodeId;
     use crate::{
@@ -1392,6 +1391,7 @@ mod tests {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: 10,
                     kit: None,
@@ -1512,6 +1512,7 @@ mod tests {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
                         species: Some("hay_grass".to_string()),
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: 10,
                     kit: None,
@@ -1581,6 +1582,7 @@ mod tests {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
                     species: None,
+                    take_species: TakeSelection::EVERYTHING,
                 },
                 workers: 10,
                 kit: None,
@@ -1621,6 +1623,7 @@ mod tests {
             tile: UVec2::new(7, 9),
             floor: UNNAMED_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let assignment = LaborAssignment {
             target,
@@ -1654,6 +1657,7 @@ mod tests {
                 tile: UVec2::new(7, 9),
                 floor: 0.15,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: 6,
             kit: None,
@@ -2166,7 +2170,10 @@ mod tests {
         let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
         // A tended (cultivated) patch owned by faction 3.
         let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
-        tended.complete_cultivation(FactionId(0));
+        tended.complete_cultivation(
+            FactionId(0),
+            &crate::intensification::LadderConfig::builtin(),
+        );
         tended.owner = Some(FactionId(3));
         registry.patches.insert(wild.tile, wild);
         registry.patches.insert(tended.tile, tended);

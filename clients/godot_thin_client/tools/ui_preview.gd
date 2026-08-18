@@ -52,6 +52,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/forecast_seam.gd",
 	"res://tools/ui_preview/chapters/crafting_bench.gd",
 	"res://tools/ui_preview/chapters/trade.gd",
+	"res://tools/ui_preview/chapters/selective_gather.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in

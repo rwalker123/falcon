@@ -295,6 +295,12 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# now, so it is redacted with the countdown it explains rather than with the ground readings: a
 	# remembered tile knows no more about a live refusal than it knows the date behind it.
 	"patch_build_blocked_reason",
+	# WHERE THE QUEUED ENTRY IS TAKING THIS PATCH, and what is left of the climb
+	# (`docs/plan_standing_upkeep.md` §2.8). Both are facts about a band's DECLARED job — the
+	# destination it named and the legs still owed from where the patch stands — so they are redacted
+	# with the queue position and the countdown they belong to. A remembered tile knows where the
+	# ground has been taken no better than it knows how far along the job is.
+	"patch_build_destination_rung", "patch_build_legs",
 	# The estimate's per-source TERM travels under the same rule as the answer beside it — it is a
 	# figure about a build being worked, and a remembered tile knows no more about that than it knows
 	# the progress. (The gear half of the estimate is not here at all: it rides the band's kit row.)
@@ -2782,6 +2788,14 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `site`, …). It crosses BESIDE the `-4` it explains: a countdown sentinel with no cause beside
 		# it is the state the field exists to end, and the client cannot re-derive the gate.
 		info["patch_build_blocked_reason"] = String(patch.get("build_blocked_reason", ""))
+		# **WHERE THE ENTRY IS TAKING THIS PATCH, AND WHAT IS LEFT OF THE CLIMB** (§2.8). A queue entry
+		# names a DESTINATION rung rather than a single rung, so a `sow` declared on untended ground is
+		# a two-leg climb that holds the head of the queue through its Cultivate leg. The legs travel
+		# WHOLE — each row's `work_remaining` is the leg's owing from where the patch stands NOW and
+		# each `turns_remaining` is chained behind the legs above it, so nothing on this path may
+		# narrow, re-order or re-derive them.
+		info["patch_build_destination_rung"] = String(patch.get("build_destination_rung", ""))
+		info["patch_build_legs"] = patch.get("build_legs", [])
 		# **THE ESTIMATE'S PER-SOURCE TERM, so the compose sheet can price a crew the player is
 		# PROPOSING.** The turn count above is the sim's answer for the crew already here; this is
 		# what the sheet's stepper and floor slider evaluate `turns(workers)` from — see

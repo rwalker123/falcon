@@ -150,6 +150,18 @@ var _party_open_key: String = ""
 ## setting today (the crop); the key is dropped on any render where its entry has left the queue or
 ## has nothing to show, exactly as `_work_open_key` is dropped for a source that leaves the board.
 var _queue_open_key: String = ""
+## The DESTINATION PICKER's card (`docs/plan_standing_upkeep.md` §2.8), built lazily on the first
+## press of a work row's build slot and reused thereafter.
+##
+## **IT IS A WINDOW AND SO IS NOT ZONE STATE.** Every other member in this block survives a snapshot
+## because it decides what the zone RENDERS; this one holds a node that renders over the zone and
+## changes no layout at all — which is the whole reason the track is a popover, the work zone having
+## no pixels left to give it.
+var _rung_track: PopupPanel = null
+## …and the card's inner `MarginContainer`, held so a re-open clears the TRACK rather than the chrome
+## that hosts it. `queue_free` is deferred, so freeing the margin renders correctly once and opens onto
+## an empty card ever after — which is a defect a frame cannot show and a second open can.
+var _rung_track_body: MarginContainer = null
 ## **THE KIT PICKED ON A BAND-WIDE ROLE CARD**, keyed `"<band entity>:<role>"` → roster id.
 ##
 ## **THE ROLE CARDS HAD NOWHERE TO KEEP PER-ROW STATE, and this is what was added rather than found.**
@@ -444,9 +456,10 @@ func _faction_knowledge_is_full() -> bool:
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
-        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+        kit_id: String = KitRoster.NO_KIT_ID,
+        take_species: PackedStringArray = PackedStringArray()) -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
-        kit_id)
+        kit_id, take_species)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -1537,6 +1550,12 @@ func _repage_work_zone() -> void:
     _fill_work_zone(_work_zone_host, _work_zone_band)
 
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
+    # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8). The
+    # card is anchored to a row this pass is about to free, and its every figure is a function of the
+    # source's position, the faction's knowledge and the queue — so a card left up over the rebuilt
+    # board would be pointing at nothing and quoting last turn. It is a momentary picker, not a panel:
+    # re-opening it is one press of the mark that is about to be redrawn.
+    _dismiss_rung_track()
     var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
     col.add_child(_build_work_head(band, models,
@@ -1585,10 +1604,10 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # **THE SETTINGS STRIP IS CHARGED TO THE BOARD, exactly as the work inspector is.** It is asked
     # of the SAME resolver the block builds from, so the height reserved here and the height drawn
     # there are one decision; asking twice is idempotent (it only prunes a stale key).
+    var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
     var capacity := _work_board_capacity(filtered.size(), inspected, queued.size(),
         queue_rows_max, bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)),
-        _queue_settings_open_index(band, queued,
-            mini(queued.size(), queue_rows_max)) >= 0)
+        int(queue_settings["legs"]), bool(queue_settings["crop"]))
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1602,7 +1621,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 
 ## Board capacity, derived ENTIRELY from the fixed zone box:
 ##   cols        = zone width / WORK_COLUMN_MIN_WIDTH, clamped to 1..WORK_MAX_COLUMNS
-##   rows_per_col = remaining height / WORK_ROW_HEIGHT, after the head, chips, inspector and (when it
+##   rows_per_col = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips, inspector and (when it
 ##                  is actually needed) the pager — each of which reserves the very height it draws at.
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
@@ -1619,22 +1638,23 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## `HudWorkVocab.pools_block_height` is both the block's own `custom_minimum_size` and this term, plus
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
 func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, queue_rows_max: int,
-        pools_fund_mode: bool, queue_settings_open: bool = false) -> Dictionary:
+        pools_fund_mode: bool, queue_settings_legs: int = 0,
+        queue_settings_crop: bool = false) -> Dictionary:
     var box := _zone_box()
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
-        queue_settings_open)
+        queue_settings_legs, queue_settings_crop)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
         gaps += 1.0
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
         + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
-    var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_HEIGHT))
+    var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
     var cols := _declare_work_columns(count, rows)
     var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
     if pages > 1:
-        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_HEIGHT))
+        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
         cols = _declare_work_columns(count, rows)
         pages = ceili(float(count) / float(maxi(cols * rows, 1)))
     return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
@@ -2067,12 +2087,13 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     block.add_theme_constant_override("separation", 0)
     var drawn := mini(queued.size(), rows_max)
     # **THE STRIP IS PAID FOR ONLY WHERE IT DRAWS**, and the test is the same one the row's own click
-    # target and the strip's contents use — `_queue_settings_open_index`, resolved ONCE here and spent
+    # target and the strip's contents use — `_queue_settings_state`, resolved ONCE here and spent
     # three times below, so the block cannot reserve a height for a strip it then declines to build.
     # An entry scrolled past the row cap cannot be open either: it has no row to hang beneath.
-    var open_index := _queue_settings_open_index(band, queued, drawn)
+    var settings := _queue_settings_state(band, queued, drawn)
+    var open_index := int(settings["index"])
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
-        queued.size(), rows_max, open_index >= 0))
+        queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"])))
     # **THE BUILDERS COUNT IS PENDING-AWARE**, the rule every compose sheet on this panel follows: a
     # player who has just staffed the role must not read a header telling them nobody is on it.
     var builders := int(_band_labor.effective_role_workers(
@@ -2094,25 +2115,46 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
     return block
 
-## **WHICH DRAWN ENTRY HAS ITS SETTINGS STRIP OPEN — `-1` for none.** The block's one answer to that
-## question, so the height it reserves, the row it draws beneath and the strip it builds are the same
-## decision made once.
+## **WHICH DRAWN ENTRY HAS ITS SETTINGS STRIP OPEN, AND WHAT THAT STRIP HOLDS** — `{index, legs,
+## crop}`, `index == -1` for none. The block's one answer to that question, so the height it reserves,
+## the row it draws beneath, the strip it builds and the board's own capacity are the same decision
+## made once.
+##
+## **IT ANSWERS THE STRIP'S CONTENT RATHER THAN ITS HEIGHT** (§2.8). The strip lists the entry's LEGS
+## as well as its crop, so its height varies — and `HudWorkVocab.build_queue_settings_height` stays the
+## one arithmetic both the reservation and the render read.
 ##
 ## **IT ALSO PRUNES THE KEY**, the way `_work_open_key` is pruned for a source that leaves the board:
-## an entry that finished, was withdrawn, scrolled past the row cap or lost its basket takes its
-## expansion with it rather than leaving a strip pinned to nothing.
-func _queue_settings_open_index(band: Dictionary, queued: Array, drawn: int) -> int:
+## an entry that finished, was withdrawn or scrolled past the row cap takes its expansion with it
+## rather than leaving a strip pinned to nothing.
+func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dictionary:
+    var closed := {"index": -1, "legs": 0, "crop": false}
     if _queue_open_key == "":
-        return -1
+        return closed
     for index in range(drawn):
         var entry: Dictionary = queued[index] as Dictionary
         if String(entry.get("key", "")) != _queue_open_key:
             continue
-        if _queue_crop_choices(band, entry).is_empty():
+        var state := _queue_settings_content(band, entry)
+        if int(state["legs"]) <= 0 and not bool(state["crop"]):
             break
-        return index
+        state["index"] = index
+        return state
     _queue_open_key = ""
-    return -1
+    return closed
+
+## **WHAT ONE ENTRY'S STRIP WOULD HOLD** — `{legs, crop}`, and `{0, false}` for an entry with nothing
+## to show. ONE predicate decides the row's clickability, the strip's existence and its height, so a
+## row can never invite a click that opens an empty strip.
+##
+## **A ONE-LEG ENTRY STILL LISTS ITS LEG.** The list is what says how far this job goes, and an entry
+## that showed nothing until it was two legs long would make the single-leg case the odd one out —
+## which is the common case on the animal web, whose entries are always one leg.
+func _queue_settings_content(band: Dictionary, model: Dictionary) -> Dictionary:
+    return {
+        "legs": (model.get("build_legs", []) as Array).size(),
+        "crop": not _queue_crop_choices(band, model).is_empty(),
+    }
 
 ## Open this entry's settings, or close them if they are already open — the queue's twin of
 ## `_toggle_work_inspector`, and one at a time for the same reason: the strip costs the block height
@@ -2129,14 +2171,32 @@ func _toggle_queue_settings(key: String) -> void:
 ## It wears the work inspector's own stylebox and its own reserved height, so the two expansions in
 ## this zone read as one idea.
 func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var content := _queue_settings_content(band, model)
     var strip := PanelContainer.new()
     strip.set_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META, String(model.get("key", "")))
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT)
+    strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
+        int(content["legs"]), bool(content["crop"])))
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 0)
+    strip.add_child(column)
+    # **THE ENTRY'S CLIMB, ONE LINE PER LEG** (`docs/plan_standing_upkeep.md` §2.8). A `sow` declared
+    # on untended ground is TWO legs and is still ONE queue row: splitting it would offer two `✕`s for
+    # one withdrawal and two places to drag for one reorder, so the entry stays one unit and its legs
+    # are what the row opens into. The wire lists them first-incomplete first, so the FIRST is the leg
+    # in flight and nothing here decides which.
+    var legs: Array = model.get("build_legs", []) as Array
+    if not legs.is_empty():
+        column.add_child(_build_queue_legs_head())
+        for index in range(legs.size()):
+            column.add_child(_build_queue_leg_line(legs[index] as Dictionary,
+                index == SourceForecast.BUILD_QUEUE_HEAD))
+    if not bool(content["crop"]):
+        return strip
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    strip.add_child(line)
+    column.add_child(line)
     var key := Label.new()
     key.text = HudWorkVocab.BUILD_QUEUE_SETTINGS_CROP_KEY
     key.add_theme_color_override("font_color", HudStyle.INK_FAINT)
@@ -2147,6 +2207,60 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     if picker != null:
         line.add_child(picker)
     return strip
+
+## The leg list's own key, in the CROP key's register — so the two halves of the strip read as one
+## expansion rather than as two panels that happened to open together.
+func _build_queue_legs_head() -> Label:
+    var head := Label.new()
+    head.text = HudWorkVocab.BUILD_QUEUE_LEGS_KEY
+    head.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_LEG_HEIGHT)
+    head.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    head.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
+    head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return head
+
+## One leg: the rung it raises, what it still owes FROM WHERE THE SOURCE STANDS, and its own chained
+## date — all three the wire's, none of them re-derived here.
+##
+## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot: a
+## conditionally-omitted marker would shift the legs behind it sideways, which is the block's standing
+## rule one level in. It also takes the cyan a rung under construction wears on the board, so *which
+## one is happening now* is answerable without reading the marker column.
+##
+## **A LEG THE WIRE DATES WITH A SENTINEL STATES ITS WORK AND NO TURN.** A leg cannot be dated when
+## the entry carrying it cannot, and a fabricated number here would be worse than the silence.
+func _build_queue_leg_line(leg: Dictionary, in_flight: bool) -> HBoxContainer:
+    var line := HBoxContainer.new()
+    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_LEG_HEIGHT)
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    var marker := Label.new()
+    marker.text = HudWorkVocab.BUILD_QUEUE_LEG_MARKER if in_flight else ""
+    marker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    marker.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    marker.add_theme_font_size_override("font_size", HudWorkVocab.BUILD_QUEUE_LEG_FONT_SIZE)
+    marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(marker)
+    var improvement := String(leg.get("improvement", ""))
+    var name := HudWorkVocab.RUNG_TRACK_NAME_FORMAT % [
+        FoodIcons.for_policy(improvement), DetailFormat.rung_badge_word(improvement)]
+    var work := DetailFormat.format_work_units(
+        float(leg.get(SourceForecast.BUILD_LEG_WORK_KEY, 0.0)))
+    var turns := DetailFormat.build_turns_clause(
+        int(leg.get(SourceForecast.BUILD_LEG_TURNS_KEY, SourceForecast.BUILD_TURNS_NO_ESTIMATE)))
+    var face := HudWorkVocab.BUILD_QUEUE_LEG_UNDATED_FORMAT % [name, work] if turns == "" \
+        else HudWorkVocab.BUILD_QUEUE_LEG_FORMAT % [name, work, turns]
+    var label := Label.new()
+    label.set_meta(HudWorkVocab.BUILD_QUEUE_LEG_META, improvement)
+    label.text = face
+    label.clip_text = true
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_color_override("font_color",
+        HudStyle.SIGNAL_DEEP if in_flight else HudStyle.INK_DIM)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.BUILD_QUEUE_LEG_FONT_SIZE)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(label)
+    return line
 
 ## The block's head — `BUILD QUEUE` and, on the right, who is funding it and with what.
 ##
@@ -2188,10 +2302,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # the crop into fragments, and a tooltip cannot repair a list a player is reading DOWN. The
     # expansion is the work board's own inspector pattern, one open at a time.
     #
-    # **ONE PREDICATE DECIDES BOTH the invitation and the contents** (`_queue_crop_choices`), so a row
-    # can never offer a click that opens an empty strip — which is what an animal entry would be, a
-    # Tame committing no species.
-    var expandable := not _queue_crop_choices(band, model).is_empty()
+    # **ONE PREDICATE DECIDES BOTH the invitation and the contents** (`_queue_settings_content`), so a
+    # row can never offer a click that opens an empty strip. It was the crop alone, and an animal entry
+    # — a Tame committing no species — was therefore never expandable; §2.8's LEGS are the second
+    # thing an entry always has, so both webs open now and the strip's content is what differs.
+    var content := _queue_settings_content(band, model)
+    var expandable := int(content["legs"]) > 0 or bool(content["crop"])
     var open := expandable and String(model.get("key", "")) == _queue_open_key
     row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
     if expandable:
@@ -2212,11 +2328,16 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     marker.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(marker)
-    # The SOURCE mark, through the board row's own builder — bundled art where the client has it, the
-    # emoji where it does not, in the same fixed column so the two lists line up.
-    line.add_child(HudWidgets.build_marker_icon(
-        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
-        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    # **THE SOURCE MARK LEFT THIS ROW WHEN THE DATE COLUMN LEARNED A VERB** (§2.8). The queue row was
+    # five slots on a ~338px line and the pair of columns that carry information — the job face and
+    # the date — measured 291 of the 274 the icon left them: the face is a shipped, play-reported
+    # unclipped guarantee (`band_panel_preview._assert_queue_row_settings`) and a clipped date is a
+    # date column that has stopped stating a date, so neither could give. **The icon was the one slot
+    # with no informational duty**: the face names the source in words (`Sow (28, 19)` /
+    # `Corral Red Deer`) and carries the destination's own rung glyph, so a second mark said nothing
+    # the row did not. The board's rows keep theirs — they are a list of SOURCES and their names do
+    # not lead with a glyph. The `+N more` row's spacer was already reserving the marker alone, so the
+    # block's own two rows line up now where they did not before.
     var face := _build_queue_job_face(model)
     var label := Label.new()
     label.set_meta(HudWorkVocab.BUILD_QUEUE_FACE_META, face)
@@ -2239,12 +2360,20 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # be invented. The slot carries the client's one spelling of pending instead — `○` in amber,
     # `FoodIcons`' `STATUS_PENDING`, the same mark the work rows' status clause and the map's dashed
     # overlays wear — rather than a second vocabulary for the same idea.
+    #
+    # **THE PERCENTAGE AND ITS VERB ARE THE LEG IN FLIGHT'S** (`docs/plan_standing_upkeep.md` §2.8).
+    # A `sow` on untended ground is a two-leg entry, and quoting the DESTINATION's meter left this
+    # column reading `turn 83 (0%)` for the thirty-nine turns the crew spent clearing — a number that
+    # answers a question nobody asked, and that contradicts the tile card. So the column reads
+    # `Cultivating 18% · turn 83`: the title still names what was ordered, the date is still the whole
+    # climb's, and the verb is what makes the percentage attributable to a rung the title does not
+    # name. A single-leg entry's leg IS its destination, so it names its own rung unchanged.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
     var percent := HudFormat.progress_percent(float(model.get("building_progress", 0.0)))
     var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
         else DetailFormat.build_completion_value(turns, builders, percent,
-            _band_labor.current_turn())
+            _band_labor.current_turn(), String(model.get("building_policy", "")))
     var date := Label.new()
     date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
     date.text = value
@@ -2279,7 +2408,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # **AND THE JOB'S FULL PRICE, BOTH HALVES — the work pile and the keeping it will owe.** The row
     # already carries the face and the date; what it never said is that finishing this job commits the
     # band to a standing bill, which is the other half of the decision and the reason the keeping
-    # warning used to arrive a turn late. **TOOLTIP ONLY** — the row is five slots and cannot take a
+    # warning used to arrive a turn late. **TOOLTIP ONLY** — the row is four slots and cannot take a
     # sixth. `DetailFormat.build_price_clause` is the same composer the `⌃`'s own hover uses, so the
     # offer and the queued entry quote one price in one wording; `BUILD_TURNS_NO_ESTIMATE` suppresses
     # its turn term deliberately, the date column above being the sim's own chained answer and a
@@ -2348,7 +2477,14 @@ func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
 ## in-progress axis states in its own tooltip and the map badge draws. A second table of verb names
 ## here is how one rung comes to be called two things on one screen.
 func _build_queue_job_face(model: Dictionary) -> String:
-    var verb := String(model.get("improvement", "")).strip_edges().to_lower()
+    # **THE FACE NAMES WHERE THE ENTRY IS GOING, NOT THE LEG IT IS ON** (`docs/plan_standing_upkeep.md`
+    # §2.8). An entry climbs every rung between where the source stands and its destination, so a row
+    # headed `Cultivate` on a `sow` the player ordered would rename their job to its first leg — and
+    # then rename it again when that leg finished. The legs are stated INSIDE the row, where the
+    # distinction belongs. A single-leg entry's destination IS its rung, so this reads unchanged there.
+    var verb := String(model.get("build_destination", "")).strip_edges().to_lower()
+    if verb == SourceForecast.IMPROVEMENT_NONE:
+        verb = String(model.get("improvement", "")).strip_edges().to_lower()
     if verb == SourceForecast.IMPROVEMENT_NONE:
         # A queued entry always carries a declaration, but the meter answers for itself if one is
         # ever missing — `building_policy` is `RungGates.rung_in_progress`'s already-resolved rung.
@@ -2450,14 +2586,20 @@ func _build_queue_crop_picker(band: Dictionary, model: Dictionary) -> OptionButt
 ## what the compose sheet's two-command commit existed to guarantee, and exactly why the declaration
 ## could move here at all. The crew, the floor, the kit and the crop on the wire are all untouched.
 ##
-## **THE RUNG IS THE MODEL'S `ready_policy`, NEVER RE-RESOLVED.** It is `RungGates.next_rung_ready`'s
-## already-resolved answer — the same one the mark the player just clicked was drawn from — so the
-## glyph on screen and the verb on the wire cannot name different rungs.
+## **THE RUNG IS THE DESTINATION THE PLAYER PICKED, AND THE VERB IS ALREADY ITS NAME**
+## (`docs/plan_standing_upkeep.md` §2.8). The four verbs always were destinations — `cultivate` means
+## *take it to Cultivated*, `sow` means *take it to Field* — and with one position per source that
+## reading is literal: the queued entry lays every rung between where the source stands and where it
+## was sent. **So a destination picker needed no new command and no new token**: it emits the verb
+## naming the chosen rung, and the sim works out the legs.
+##
+## `rung` is `RungLadder.track`'s already-resolved answer for the row the player pressed — the same
+## row the figures they read were drawn from — so the track on screen and the verb on the wire cannot
+## name different rungs.
 ##
 ## `workers` / `floor` / `pending_entity` ride the payload for the relay's optimistic write; see the
 ## signal's own note for why they are not command tokens.
-func _emit_ready_declaration(band: Dictionary, model: Dictionary) -> void:
-    var rung := String(model.get("ready_policy", ""))
+func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) -> void:
     if rung == SourceForecast.IMPROVEMENT_NONE:
         return
     var herd_id := String(model.get("herd_id", ""))
@@ -2482,6 +2624,89 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary) -> void:
         "floor": float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
         "pending_entity": int(band.get("entity", -1)),
     })
+
+## **THE DESTINATION PICKER — the `⌃`'s ladder track, floated ABOVE the zone and never inside it**
+## (`docs/plan_standing_upkeep.md` §2.8).
+##
+## **A `PopupPanel` BECAUSE IT IS A WINDOW.** The work zone is FULL — 396 of 396 in height and 354 of
+## 356 in width with a row selected, and both budgets ASSERT rather than clip — so a track drawn as a
+## block would fail the harness at best and slice the board at worst. A Window cannot change any
+## zone's height, which is exactly why the detail breakdowns are popovers and the destructive confirms
+## are `ConfirmationDialog`s. It costs the zone nothing at all.
+##
+## **THE CARD IS REBUILT PER OPEN, NEVER PATCHED.** The track is a function of the source's position,
+## the faction's knowledge and whatever entry is queued, all three of which move per snapshot — and a
+## card that survived a render would go on offering a rung the source has since climbed. The panel
+## node is reused because a Window is expensive; its CONTENT is not.
+##
+## `anchor` is the control that was pressed, captured for the popup's rect BEFORE anything re-renders.
+func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> void:
+    var kind := String(model.get("kind", ""))
+    var source := _rung_track_source(model)
+    var rows := RungLadder.track(kind, source, HudComposeVocab.BARE_FORECAST_PREFIX,
+        String(model.get("improvement", "")), _player_knowledge())
+    if not RungLadder.has_track(rows):
+        return
+    var track := _ensure_rung_track()
+    # **THE CARD'S MARGIN IS THE CHROME AND IS NEVER FREED — its CHILDREN are.** Clearing the Window's
+    # own children instead frees the margin the very line below reaches for, and `queue_free` is
+    # deferred, so the first open renders correctly and every later one opens onto an empty card. That
+    # is the exact shape this shipped in for one run of the harness.
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    # **THE PRESS CLOSES THE CARD BEFORE IT EMITS.** The declaration writes the optimistic overlay and
+    # re-renders the whole zone, which frees the very row this card is anchored to; a card left up
+    # over the rebuilt board would be showing the track it had just made stale.
+    margin.add_child(RungLadder.build_track(rows, func(rung: String) -> void:
+        _dismiss_rung_track()
+        _emit_ready_declaration(band, model, rung)))
+    track.popup(_rung_track_anchor_rect(anchor))
+
+## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.
+func _dismiss_rung_track() -> void:
+    if _rung_track != null and is_instance_valid(_rung_track) and _rung_track.visible:
+        _rung_track.hide()
+
+## The RAW wire source the track reads — the patch off the lookup, or the herd's LIVE dict. Herds
+## migrate, so a track must never read the assignment's launch-time target; it is the same resolution
+## `_work_source_models` makes for the rung mark, restated here because the model carries the mark's
+## ANSWER rather than the dict it came from.
+func _rung_track_source(model: Dictionary) -> Dictionary:
+    if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+        return _band_labor.find_world_herd(String(model.get("herd_id", "")))
+    return _band_labor.forage_patch_lookup().get(
+        Vector2i(int(model.get("x", -1)), int(model.get("y", -1))), {})
+
+## Where the card sits: a zero-height rect just under the pressed mark, in SCREEN space (what
+## `Popup.popup` wants). `get_screen_transform` folds in the window position and the canvas stretch,
+## both of which this HUD has — the `DisclosureController` popover's own anchoring.
+func _rung_track_anchor_rect(anchor: Control) -> Rect2i:
+    # **AND IT MUST BE IN THE TREE, not merely alive.** A press can arrive on a control the render
+    # that answered the previous one has already detached, and `get_screen_transform` on a detached
+    # `CanvasItem` is an engine ERROR plus an identity transform — a card at the top-left corner of
+    # the screen with nothing to say it came from this row.
+    if anchor == null or not is_instance_valid(anchor) or not anchor.is_inside_tree():
+        return Rect2i()
+    var xform := anchor.get_screen_transform()
+    var below := xform * Vector2(0.0, anchor.size.y + HudWorkVocab.RUNG_TRACK_GAP)
+    return Rect2i(Vector2i(below), Vector2i.ZERO)
+
+## The track's Window, built once and reused. Styled through `HudStyle` like every other card here.
+func _ensure_rung_track() -> PopupPanel:
+    if _rung_track != null and is_instance_valid(_rung_track):
+        return _rung_track
+    var card := PopupPanel.new()
+    card.name = HudWorkVocab.RUNG_TRACK_META
+    card.set_meta(HudWorkVocab.RUNG_TRACK_META, true)
+    card.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+    var margin := MarginContainer.new()
+    for side in DisclosureController.POPOVER_MARGIN_SIDES:
+        margin.add_theme_constant_override("margin_%s" % side, HudWorkVocab.RUNG_TRACK_PADDING)
+    card.add_child(margin)
+    _host.add_child(card)
+    _rung_track = card
+    _rung_track_body = margin
+    return card
 
 func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
     emit_signal("unqueue_requested", {
@@ -2554,9 +2779,24 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
     chip.pressed.connect(func() -> void: _set_work_filter(filter))
     return chip
 
-## ONE-LINE source row: severity stripe · glyph · label (clipped) · rate · SOURCE-RUNG mark ·
-## policy/⚠ marks · the existing −/+ stepper. Clicking anywhere but the stepper opens the row in the
-## inspector strip.
+## TWO-LINE source row. **Line one is IDENTITY AND CONTROLS** — severity stripe · glyph · name ·
+## SOURCE-RUNG mark · the rung-on-offer slot · policy/⚠ marks · the −/+ stepper. **Line two is the
+## ACCOUNTS**, full width, indented onto the name's own column. Clicking anywhere but the stepper and
+## the rung-track button opens the row in the inspector strip.
+##
+## **THE ACCOUNTS LEFT LINE ONE BECAUSE 356px DOES NOT HOLD BOTH.** The row carries a name, a
+## VARIABLE-LENGTH account list, four affordances and a stepper, and everything but the name is
+## fixed-width — so the accounts' fixed 46px slot could state one material and count the rest
+## (`+0.24 fibre +3`) while the name it was taking pixels from ellipsised on any species longer than
+## `Hunt Red Deer`. On its own full-width line the list is stated IN FULL and the name column roughly
+## doubles, which is what puts `Hunt Woolly Mammoth` on the board whole. The elide survives on both
+## labels as a FLOOR — a `Label` with no overrun behaviour reports its whole text as its minimum
+## width, which in this clipping zone lays every row out past the box — but it should not be reachable
+## in normal play.
+##
+## **THE COST IS PAGING, AND IT IS ACCEPTED.** A page falls from 8 rows to 5, so nine sources is two
+## pages in most states; the pager already exists for it and the board must not shrink back to fit
+## more.
 ##
 ## The rung mark and the policy marks are TWO AXES and both are needed: the rung says what the source
 ## IS (wild / Tended Patch / Field, wild / pastoral / penned), the marks say what is being done to it
@@ -2564,7 +2804,7 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
 func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var open := String(model.get("key", "")) == _work_open_key
     var row := PanelContainer.new()
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT)
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.mouse_filter = Control.MOUSE_FILTER_STOP
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -2573,9 +2813,13 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     row.gui_input.connect(func(event: InputEvent) -> void:
         if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
             _toggle_work_inspector(String(model.get("key", ""))))
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    row.add_child(line)
+    # **THE STRIPE IS OUTSIDE BOTH LINES, which is what keeps it the ROW's mark.** It is an
+    # `EXPAND_FILL` sibling of the two-line column rather than a child of line one, so it runs the
+    # full height of the row; inside line one it would paint the top 28px of a 44px row and read as a
+    # mark on the name rather than on the source.
+    var body := HBoxContainer.new()
+    body.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(body)
     # Severity stripe: WARN when the source is overdrawing or overstaffed, SIGNAL while an edit is
     # still pending, transparent otherwise — so the eye finds trouble without reading a word.
     var stripe := ColorRect.new()
@@ -2583,7 +2827,17 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     stripe.size_flags_vertical = Control.SIZE_EXPAND_FILL
     stripe.color = _work_row_stripe_color(model)
     stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(stripe)
+    body.add_child(stripe)
+    # The two lines, stacked. `TWO_LINE_STEPPER_SEPARATION` is the gap `WORK_ROW_TWO_LINE_HEIGHT`
+    # reserves, so what the row draws at and what the capacity arithmetic paid for are one expression.
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
+    body.add_child(col)
+    var line := HBoxContainer.new()
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    col.add_child(line)
     # The SOURCE mark: bundled art where the client has it, the emoji where it does not. The column
     # is the same fixed `WORK_ROW_ICON_WIDTH` either way, so a board mixing art and emoji rows still
     # lines up down the icon column (issue #439).
@@ -2602,18 +2856,6 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(label)
-    var rate := Label.new()
-    # ONE COMPONENT in this fixed-width column (issue #337): a board row has a single narrow rate slot
-    # beside the marks and the stepper, so it shows the product the source actually PAYS — food when
-    # there is food (every forage patch and every edible quarry), else its FODDER rate. The inspector
-    # strip below states both components in full.
-    rate.text = _work_row_rate_text(model)
-    rate.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RATE_WIDTH, 0.0)
-    rate.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    rate.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    rate.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    rate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(rate)
     # THE SOURCE-RUNG MARK, in its own reserved slot left of the marks — what the source IS, beside
     # what the band is DOING to it. Tinted SIGNAL because a standing rung is a completed investment,
     # the same treatment `DetailFormat.cultivation_value_hex` / `field_value_hex` / `corral_value_hex`
@@ -2664,17 +2906,24 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         ready_color = HudStyle.SIGNAL_DEEP
     elif ready_glyph != "":
         ready_face = HudWorkVocab.WORK_ROW_READY_FORMAT % ready_glyph
-    # **THE OFFER IS A BUTTON, AND THE TWO BUILDING STATES ARE NOT**
-    # (`docs/plan_standing_upkeep.md` §4.7a ①). Pressing `⌃` queues the rung for this band's builders,
-    # which is the whole of the declaration act: the compose sheet keeps the forecast and no longer
-    # commits, and the sim's *"an improvement command reaches only bands already working the source"*
-    # rule is satisfied by construction here — a row EXISTS because this band works this source.
+    # **THE SLOT OPENS THE DESTINATION TRACK, AND A STALLED BUILD DOES NOT**
+    # (`docs/plan_standing_upkeep.md` §2.8, §4.7a ①). Pressing `⌃` used to queue the source's next
+    # rung outright; a queue entry names a DESTINATION now and climbs every rung on the way, so the
+    # press opens a small ladder track and the PICK is the declaration. The sim's *"an improvement
+    # command reaches only bands already working the source"* rule is still satisfied by construction
+    # — a row EXISTS because this band works this source.
     #
-    # **THE BUILDING STATES STAY `Label`s, and the shape is the statement.** There is nothing left to
-    # declare on a rung already in flight, and the `⚠` a stalled build wears is a WARNING rather than
-    # an offer; a button under it would invite a click with no order behind it.
+    # **A RUNNING BUILD OPENS THE SAME TRACK, which is what gives the chosen path a live home.** *How
+    # far are we taking this?* is asked most often mid-climb, and until the track existed the only
+    # answer was to withdraw the entry and declare again. The work already banked is kept either way
+    # — it is a position on the branch, not a purchase of one rung.
+    #
+    # **A STALLED BUILD STAYS A `Label`, and the shape is the statement.** The `⚠` is a WARNING rather
+    # than an offer, and a button under it would invite a click that changes nothing about why the
+    # meter is stuck.
     var ready: Control
-    var offers_rung := ready_face != "" and building_glyph == ""
+    var stalled := building_glyph != "" and bool(model.get("build_stalled", false))
+    var offers_rung := ready_face != "" and not stalled
     if offers_rung:
         var queue_btn := Button.new()
         queue_btn.text = ready_face
@@ -2687,7 +2936,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         # AFTER `apply_button`, which writes its own `font_color`: the mark keeps the SIGNAL ink it
         # wore as a Label, and the hover brightening `apply_button` set stays as the affordance.
         queue_btn.add_theme_color_override("font_color", ready_color)
-        queue_btn.pressed.connect(func() -> void: _emit_ready_declaration(band, model))
+        queue_btn.pressed.connect(func() -> void: _open_rung_track(band, model, queue_btn))
         ready = queue_btn
     else:
         var ready_label := Label.new()
@@ -2699,6 +2948,16 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # searched for their text would only confirm the string it had already assumed. It rides whichever
     # node the slot holds, so a harness reading the slot does not have to know which kind it is.
     ready.set_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META, ready_face)
+    # …and WHICH of the three states drew it, because the node TYPE no longer says: a running build's
+    # face is a `Button` too now, so `is Button` reads a climb as an offer.
+    var build_kind := HudWorkVocab.WORK_ROW_BUILD_KIND_NONE
+    if stalled:
+        build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_STALLED
+    elif building_glyph != "":
+        build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_BUILDING
+    elif ready_glyph != "":
+        build_kind = HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER
+    ready.set_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META, build_kind)
     ready.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_READY_WIDTH, 0.0)
     # STOP on the button, so the press does not ALSO bubble to the row's `gui_input` and open the
     # inspector under the sheet the click just declared from; IGNORE on a Label, which is the slot's
@@ -2719,7 +2978,56 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(marks)
     HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
         func(n: int) -> void: _emit_work_assign(band, model, n), true)
+    col.add_child(_build_work_row_accounts(model))
     return row
+
+## LINE TWO — every account this source pays, in full, then the floor, indented onto the name's column.
+##
+## **IT CARRIES WHAT THE INSPECTOR'S RETIRED SENTENCE CARRIED**, through `_work_row_summary_text`:
+## the strip existed because the row could not show everything, and these are the parts it no longer
+## has to borrow. See that function for why the FLOOR came with the accounts rather than the accounts
+## moving alone.
+##
+## **IT STATES EVERY ACCOUNT, where the retired 46px slot fell through food → fodder → materials to
+## pick ONE.** The fall-through was a width compromise, not a reading: a hay meadow paying meat AND
+## feed had to pick, and a four-crop patch could name one material and count three. A full-width line
+## has no such choice to make, so it makes none.
+##
+## **THE ELIDE IS A FLOOR AND SHOULD NOT BE REACHABLE.** A `Label` with autowrap off reports its whole
+## text as its minimum width, and this zone's content is anchored full-rect into a host that
+## `clip_contents` — so one long line clamps the entire tab's column up to its own width and slices
+## the right edge off every row's stepper. `OVERRUN_TRIM_ELLIPSIS` drops that minimum to a pixel; what
+## keeps it from being SEEN is the width, which is now the whole row rather than 46px of it.
+##
+## **THE WHOLE LINE RIDES ITS OWN HOVER, and that is what keeps the elide honest.** The floor's ONLY
+## home is this line now — the inspector's sentence is retired and `HudFormat.floor_hint` carries the
+## zone's prose rather than the percentage — so a cut that reaches the trailing clause would put a
+## number nowhere else on the panel out of reach, which is the one thing an elide may not do. Measured:
+## the four-cash-crop worst case asks **332px of a 322px line** and the trim lands on the floor. Every
+## other elided line in this zone takes the same treatment (`HudWidgets.build_status_part(…, elide)`
+## → `set_label_tooltip`); what is different here is only that the hover is set unconditionally rather
+## than on a shortened-string test, since the row cannot know its own allocated width at build time.
+##
+## **PASS, not the STOP `set_label_tooltip` leaves behind** — the rung slot's rule: the whole row is a
+## click target, and STOP across the row's widest control would punch a full-width dead hole in it.
+## PASS shows the tooltip AND lets the press bubble to the row's `gui_input`. It does shadow the ROW's
+## own tooltip over this line, which is the accepted cost: line one is the row's identity and most of
+## its height, and a hover on the accounts that spells the accounts out is coherent on its own terms.
+func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
+    var margin := MarginContainer.new()
+    margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
+    var accounts := Label.new()
+    accounts.text = _work_row_summary_text(model)
+    accounts.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    accounts.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    accounts.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    HudWidgets.set_label_tooltip(accounts, accounts.text)
+    accounts.mouse_filter = Control.MOUSE_FILTER_PASS
+    accounts.set_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META, accounts.text)
+    margin.add_child(accounts)
+    return margin
 
 func _work_row_stripe_color(model: Dictionary) -> Color:
     if bool(model.get("warn", false)) or String(model.get("note", "")) != "":
@@ -2807,16 +3115,20 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
     head.add_child(close)
     col.add_child(head)
-    # **EVERY LINE IN THIS STRIP ELIDES, and that is a WIDTH decision the zone forces.** The zone's
+    # **RETIRED — THE ONE-SENTENCE READOUT.** It read *accounts · 50% left standing · ● Working ·
+    # 3 assigned*, and the ROW says all four now: the accounts and the floor on its own line two
+    # (`_work_row_summary_text`), the crew on its stepper, the pending state on its severity stripe and
+    # its name's amber ink. Deleting the whole `Label` is what freed the 20px the two-line row costs
+    # this zone — dropping only the accounts clause freed NOTHING, a line surviving three of its four
+    # clauses — and it is why the floor travelled with them rather than staying behind.
+    #
+    # **EVERY SURVIVING LINE STILL ELIDES, and that is a WIDTH decision the zone forces.** The zone's
     # box is reserved (`PANEL_WIDTH` less chrome, 356px on a side dock) and its content is anchored
     # full-rect into a host that clips — so a line reporting its whole text as a minimum width clamps
     # the entire tab's column up to that width, and the POOLS readout, the Builders card's `+`, the
     # BUILD QUEUE head's kit name and every board row's stepper are sliced off the right edge by a
-    # sentence none of them can see. `SourceForecast.yield_components` states EVERY account a source
-    # pays, so the sentence's length is a function of the ROSTER rather than of anything this panel
-    # controls: a deer paying meat, hide and bone measures 358px against that 356px box.
-    # `band_panel_work_inspector_width` is the frame, and `_assert_zone_content_width_fits` the claim.
-    col.add_child(HudWidgets.build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM, true))
+    # line none of them can see. `band_panel_work_inspector_width` is the frame, and
+    # `_assert_zone_content_width_fits` the claim.
     if bool(model.get("warn", false)):
         col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN, true))
     if String(model.get("note", "")) != "":
@@ -2887,57 +3199,41 @@ func _work_inspector_height(model: Dictionary) -> float:
         height += HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT
     return height
 
-## The board row's single-slot rate string — food when the source pays food, else its FODDER rate
-## spelled with the word (issue #449), and "" when the row carries no confirmed yield at all. One
-## definition, since the row and its severity reading must agree on which number is being shown.
+## **LINE TWO'S WHOLE STRING — every account this source pays, then the floor the player set it to.**
+## The accounts go through `SourceForecast.yield_components`, which already carries the
+## render-only-when-non-zero rule, the food-leads order, the fodder WORD (fodder has no glyph, and
+## borrowing another account's mark would say the wrong thing) and the per-material terms; a source
+## with no confirmed yield at all states no account clause rather than a zero.
 ##
-## Fodder wears the word rather than a glyph for the reason `SourceForecast.yield_components` gives:
-## fodder has none, and borrowing another account's mark would say the wrong thing. A sown hay Field
-## pays no food, so without this branch its row headlined `+0.00` while it fed the band's pens every
-## turn. (A trade branch sat between the two until arc #527 retired that account.)
-## **THE ONE-SLOT FALL-THROUGH: food → fodder → materials**, in the wire's own order. The column is
-## one fixed width, so it states the account the source actually PAYS rather than a food zero on a
-## source that pays no food.
+## **THE FLOOR IS HERE BECAUSE THE INSPECTOR'S SENTENCE IS GONE, AND IT IS WHAT PAID FOR THE ROW'S
+## SECOND LINE.** That sentence read *accounts · 50% left standing · ● Working · 3 assigned* on ONE
+## `Label`, so dropping the accounts clause alone freed nothing — a line survives three of its four
+## clauses. The floor was the only clause the row could not otherwise state (the stepper states the
+## crew, the stripe and the name's ink state pending), so it moved HERE and the whole sentence went,
+## which is the 20px the two-line row costs the zone. `HudComposeVocab.FLOOR_VALUE_FORMAT` is the
+## phrasing the floor presets' tooltips and the chart's caption use, so one number is never worded two
+## ways.
 ##
-## **THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE** (arc #527 follow-up). Picking one of
-## a vector would name a winner the sim does not name, and summing them is the retired trade axis
-## under a new name; a species pays few materials, and the column's width is a MINIMUM rather than a
-## clip, so the honest reading is the one that fits. The inspector strip beside the row states the
-## whole vector too, in full.
-func _work_row_rate_text(model: Dictionary) -> String:
-    if not bool(model.get("has_yield", false)):
-        return ""
-    var food := float(model.get("rate", 0.0))
-    var fodder := float(model.get("fodder_rate", 0.0))
-    if not SourceForecast.has_component(food) and SourceForecast.has_component(fodder):
-        return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder)
-    if not SourceForecast.has_component(food) and not SourceForecast.has_component(fodder):
-        # `""` is "this source pays no material", so a source that genuinely produced nothing in
-        # every account still falls through to its honest food zero.
-        var materials := SourceForecast.signed_material_components(model.get("material_rows", []))
-        if materials != "":
-            return materials
-    return SourceForecast.format_signed(food)
-
-## The inspector's one-sentence readout: rate · the floor in WORDS · status · assigned workers.
-func _work_inspector_sentence(model: Dictionary) -> String:
+## **THE JOINER IS THE SENTENCE'S OWN** (`WORK_INSPECT_SENTENCE_SEPARATOR`), because what it joins is
+## a CLAUSE to a list rather than one account to another — the two consts hold the same glyph today
+## and mean different things, and the accounts' own separator is `SourceForecast.COMPONENT_SEPARATOR`
+## one layer down.
+##
+## **IT REPLACED A ONE-SLOT FALL-THROUGH — food → fodder → materials, picking exactly ONE** — and the
+## fall-through was a WIDTH compromise rather than a reading. A board row's accounts had a fixed 46px
+## slot beside the marks and the stepper, so a hay meadow paying meat AND feed had to choose, and a
+## four-cash-crop patch could name one material and count the other three (`+0.24 fibre +3`). Line two
+## is the row's whole width, so there is no choice left to make and none is made.
+func _work_row_summary_text(model: Dictionary) -> String:
     var parts: Array[String] = []
     if bool(model.get("has_yield", false)):
-        # Both products, each only when non-zero (issue #449): a hay Field's sentence leads with its
-        # fodder rate instead of asserting "+0.00 /turn".
+        # Both products, each only when non-zero (issue #449): a hay Field leads with its fodder rate
+        # instead of asserting "+0.00 /turn".
         parts.append(SourceForecast.yield_components(
             float(model.get("rate", 0.0)), float(model.get("fodder_rate", 0.0)),
             SourceForecast.YIELD_ACCOUNT_FOOD, model.get("material_rows", [])))
-    # The floor as the player set it — `50% left standing`, the same phrasing the picker's tooltips
-    # and the slider caption use, so one number is never worded two ways.
     parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
         float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
-    parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
-        else FoodIcons.STATUS_WORKING))
-    parts.append(HudWorkVocab.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
-    # **NO `N building` CLAUSE** (`docs/plan_standing_upkeep.md` §2.5). It named the source's own
-    # build crew, and a source has none: the builders are one band-level pool funding the head of the
-    # band's queue, so the count belongs to the QUEUE rather than to any row on this board.
     return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
 
 # ---- work-zone models + state ----------------------------------------------
@@ -3039,6 +3335,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var rung_source: Dictionary = patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd
         # A rung UNDER WAY takes the slot from a rung on OFFER — they are one axis in two states, and
         # mutually exclusive by construction (`next_rung_ready` excludes the verb in flight).
+        #
         var building := RungGates.rung_in_progress(kind, rung_source, improvement)
         # **AN ERODED RUNG NOBODY HAS ORDERED IS AN OFFER, NOT A BUILD UNDER WAY** — the client half of
         # the 99% repair. `build_verb` answers for any meter between zero and its cost, so a Tended
@@ -3050,6 +3347,20 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         if not building.is_empty() and _rung_is_an_unordered_repair(rung_source, improvement,
                 String(building.get("policy", ""))):
             building = {}
+        # **THE RUNG THE ENTRY IS HEADED FOR, HELD BEFORE THE READOUTS MOVE TO THE LEG.** A queue
+        # entry's PRICE is the whole climb's, so the two cost fields below stay on the declared rung;
+        # what follows the leg is the percentage and its verb. Keeping both is what stops one fix
+        # quietly understating a two-leg job's bill.
+        var destination_rung := String(building.get("policy", ""))
+        # **AND THE READOUTS SHOW THE LEG IN FLIGHT, NOT THE DESTINATION**
+        # (`docs/plan_standing_upkeep.md` §2.8). A `sow` ordered on untended ground is one entry and
+        # two legs, and `rung_in_progress` names the rung the player DECLARED — whose meter is honestly
+        # 0% while the crew is still clearing the ground beneath it. Reported from play: the queue row
+        # and this row's rung chip both read `0%` for thirty-nine turns beside a tile card reading
+        # `18%`. BOTH Work-tab readouts take the leg from this ONE re-pointing — the chip below, and
+        # the queue row's percent and verb, which read `building_glyph` / `building_policy` /
+        # `building_progress` off this model.
+        building = RungGates.leg_in_progress(rung_source, building)
         var ready := {} if not building.is_empty() \
             else RungGates.next_rung_ready(kind, rung_source, improvement, _player_knowledge())
         # The row's HARVEST mark is the floor's ZONE glyph — where this crew's floor sits relative to
@@ -3077,17 +3388,23 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
                     HudFormat.policy_face(String(building.get("policy", ""))),
                     HudFormat.progress_percent(float(building.get("progress", 0.0)))]
-        # **THE `⌃`'s HOVER, RESOLVED ONCE FOR BOTH THE MARK AND THE ROW** (§4.7a ①). The sentence
-        # says what the click does; the line beneath is the rung's PRICE — its `<rung>WorkCost` pile
-        # and its `<rung>UpkeepDemand` rate — which left the compose sheet on Ray's call that a cost
-        # belongs on the surface that queues and funds jobs. **No turn count**: the BUILD QUEUE row's
-        # date is the sim's chained answer, and a second estimate here would be two producers for one
-        # number. `build_price_clause` is the same composer the sheet used, so the wording is unmoved.
+        # **THE BUILD SLOT'S HOVER, RESOLVED ONCE FOR BOTH THE MARK AND THE ROW** (§4.7a ①, §2.8).
+        # The sentence says what the press does — it OPENS A TRACK now rather than queueing outright,
+        # so a hover still promising a one-click declaration would describe a control that no longer
+        # exists. The line beneath is the NEXT rung's PRICE — its `<rung>WorkCost` pile and its
+        # `<rung>UpkeepDemand` rate — which left the compose sheet on Ray's call that a cost belongs on
+        # the surface that queues and funds jobs. **No turn count**: the BUILD QUEUE row's date is the
+        # sim's chained answer, and a second estimate here would be two producers for one number.
+        #
+        # **A RUNNING BUILD'S SLOT OPENS THE SAME TRACK AND SAYS SO INSTEAD.** It quotes no price: the
+        # price it would state is the rung already being raised, which the face beside it is metering.
         var ready_tooltip := ""
+        if not building.is_empty() and not build_stalled:
+            ready_tooltip = HudWorkVocab.WORK_ROW_BUILDING_TRACK_TOOLTIP
         if not ready.is_empty():
             var ready_rung := String(ready.get("policy", ""))
             ready_tooltip = HudFormat.join_tooltip_lines([
-                HudWorkVocab.WORK_ROW_READY_QUEUE_TOOLTIP_FORMAT % HudFormat.policy_face(ready_rung),
+                HudWorkVocab.WORK_ROW_READY_TRACK_TOOLTIP,
                 DetailFormat.build_price_clause(
                     SourceForecast.build_work_cost(rung_source,
                         HudComposeVocab.BARE_FORECAST_PREFIX, ready_rung),
@@ -3178,21 +3495,25 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "ready_policy": String(ready.get("policy", "")), "ready_glyph": String(ready.get("glyph", "")),
             # …and the hover BOTH the mark and the row state, resolved once above.
             "ready_tooltip": ready_tooltip,
-            # The rung it is BUILDING right now, and how far in. The board shows the percent the map
-            # badge shows, off the same `RungGates` answer.
+            # The LEG the crew is on right now, and how far into it. Both Work-tab readouts spend
+            # this trio — the row's rung chip and the queue row's percent-and-verb — so they cannot
+            # name two different rungs. See `RungGates.leg_in_progress` for why it is the leg rather
+            # than the entry's destination.
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
             # **WHAT THAT RUNG COSTS, BOTH HALVES — the one-off pile and the standing rate.** They ride
             # the model because this is where the raw wire source is in hand, and TWO surfaces spend
             # them: the queue row's tooltip states the job's full price, and the POOLS block reads the
-            # rate to mark a keeping pool a queued job is about to need. Composed off `building_policy`
-            # so a pending declaration prices identically to a placed entry — which is the whole of
-            # what makes the warning arrive at DECLARE time rather than a turn later.
+            # rate to mark a keeping pool a queued job is about to need. Composed off the DESTINATION
+            # rung so a pending declaration prices identically to a placed entry — which is the whole
+            # of what makes the warning arrive at DECLARE time rather than a turn later — and
+            # deliberately NOT off the leg in flight, whose cheaper rung would understate a two-leg
+            # job's bill on the one surface that quotes it.
             "build_work_cost": SourceForecast.build_work_cost(rung_source,
-                HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
+                HudComposeVocab.BARE_FORECAST_PREFIX, destination_rung),
             "build_upkeep_demand": SourceForecast.build_upkeep_demand(rung_source,
-                HudComposeVocab.BARE_FORECAST_PREFIX, String(building.get("policy", ""))),
+                HudComposeVocab.BARE_FORECAST_PREFIX, destination_rung),
             # …and the BARE per-worker work rate that source publishes, which is what the POOLS block
             # prices a keeping pool's own hands at when the queue is the only thing asking for them.
             # Read here because this is where the raw wire source is in hand, exactly as the two
@@ -3223,6 +3544,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # queue, so on its own it cannot tell forty turns of work from eight turns queued behind
             # four other jobs, and the position is what says which.
             "build_turns": SourceForecast.build_turns_remaining(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, AND WHAT IS LEFT OF THE CLIMB**
+            # (`docs/plan_standing_upkeep.md` §2.8). An entry names a DESTINATION and lays every rung
+            # between where the source stands and there, so it is ONE queue row with its legs INSIDE
+            # — the block reads both off the model here, beside the position and the countdown they
+            # belong with. `""` / `[]` on a source no band has queued.
+            "build_destination": SourceForecast.build_destination_rung(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            "build_legs": SourceForecast.build_legs(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN
             # CARD USES** (`docs/plan_standing_upkeep.md` §4.6b). The countdown above says the pool is
@@ -3456,7 +3786,14 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         # means "the job's default" to the parser, so a `+`/`−` that dropped it would re-kit a crew
         # the player deliberately sent out bare-handed. Restated from the row model, which carries the
         # assignment's own `kit_id`.
-        String(model.get("kit_id", KitRoster.NO_KIT_ID)))
+        String(model.get("kit_id", KitRoster.NO_KIT_ID)),
+        # **AND THE TAKE SELECTION RIDES IT TOO, for the identical reason one axis over.** An omitted
+        # `take:` token means *the whole basket* to the parser and CLEARS whatever the row carried, so
+        # a `+`/`−` on the board that dropped it would silently widen a crew the player had narrowed
+        # to one plant. Restated off the band's OWN row rather than re-derived — the work model
+        # carries no take selection, and a second derivation could disagree with the board being
+        # clicked on.
+        _band_labor.take_species_for_forage(band, int(model.get("x", -1)), int(model.get("y", -1))))
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:

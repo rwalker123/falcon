@@ -609,6 +609,27 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // survives a rollback, while the patch's is what the ground is actually committed to and
             // is only set once work begins. `""` = *"pick the tile's dominant legal plant for me"*.
             let _ = entry.insert("species", assignment.species().unwrap_or_default());
+            // **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the species
+            // keys the crew is gathering, or an EMPTY array for *"take the whole basket"*, which is
+            // the default and byte-identical to every assignment sent before this field existed.
+            //
+            // **IT IS NOT `species` ABOVE.** That one is the COMMIT crop a Cultivate/Sow names and is
+            // inert until an improvement completes; this one is live at rung 1, on the take itself,
+            // and the two are independent — a crew can gather flax while committing the ground to
+            // emmer. Two keys because they are two decisions.
+            //
+            // The key is ALWAYS inserted (empty array included) so the entry shape is stable and a
+            // reader can tell *"the whole basket"* from *"an older snapshot"* — they mean the same
+            // thing, which is exactly why neither needs a branch.
+            //
+            // **SORTED AND DEDUPLICATED AT THE SOURCE** (a `BTreeSet` on the assignment), so the
+            // order here is the keys' own ascending order and is stable frame to frame. A client
+            // must not re-sort it into a display order and send that back as a different selection.
+            let take_species = assignment
+                .takeSpecies()
+                .map(crate::dict::strings_to_variant_array)
+                .unwrap_or_default();
+            let _ = entry.insert("take_species", &take_species);
             // **THE KIT THIS CREW IS WORKING UNDER** (`docs/plan_denial_raid.md`) — the roster id the
             // row's yields are priced at: what the player named on `assign_labor`, or the job's
             // default when they named none, already RESOLVED (the sim never publishes

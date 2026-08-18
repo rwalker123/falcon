@@ -223,6 +223,19 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&assignment.kit_id))
                         };
+                        // The plants this crew carries home. **Absent rather than an empty vector**
+                        // when the crew named none, the `species`/`faunaId` convention: an absent
+                        // vector reads as empty, and empty *is* "the whole basket".
+                        let take_species = if assignment.take_species.is_empty() {
+                            None
+                        } else {
+                            let keys: Vec<_> = assignment
+                                .take_species
+                                .iter()
+                                .map(|species| builder.create_string(species))
+                                .collect();
+                            Some(builder.create_vector(&keys))
+                        };
                         fb::LaborAssignment::create(
                             builder,
                             &fb::LaborAssignmentArgs {
@@ -267,6 +280,9 @@ fn create_populations<'a>(
                                 // the patch's own `committedSpecies` cannot stand in for: that one
                                 // is set only once a crew has worked the ground. Appended last.
                                 species,
+                                // WHICH PLANTS THIS CREW CARRIES HOME — appended last. Empty is
+                                // "the whole basket", which is what every crew took before this.
+                                takeSpecies: take_species,
                             },
                         )
                     })

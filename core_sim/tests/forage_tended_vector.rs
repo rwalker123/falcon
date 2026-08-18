@@ -33,6 +33,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, patch_provisions_per_biomass, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world, tended_take_fodder,
@@ -205,7 +206,7 @@ fn seat_tended_patch(app: &mut App, coord: UVec2, species: &str) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
         patch.species = Some(species.to_string());
-        patch.complete_cultivation(PATCH_OWNER);
+        patch.complete_cultivation(PATCH_OWNER, &core_sim::LadderConfig::builtin());
         patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
     }
     grow_one_turn(app);
@@ -228,7 +229,7 @@ fn seat_wild_patch(app: &mut App, coord: UVec2) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch exists");
         patch.species = None;
-        patch.cultivation_progress = 0.0;
+        patch.set_ladder_position(0.0, &core_sim::LadderConfig::builtin());
         patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
     }
     grow_one_turn(app);
@@ -292,6 +293,7 @@ fn spawn_forager_with_workers(
                         tile: patch,
                         floor,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers,
                     kit: None,
@@ -537,6 +539,7 @@ fn a_tended_hay_patch_credits_fodder_from_its_take() {
         &flora,
         &labor().forage,
         NEUTRAL_MULTIPLIER,
+        &TakeSelection::EVERYTHING,
     );
     assert!(quoted > 0.0, "hay's vector pays a real fodder rate");
 

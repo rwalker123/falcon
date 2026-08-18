@@ -1234,12 +1234,29 @@ static func build_countdown_value(turns: int, build_crew: int, percent: int) -> 
 ##
 ## `current_turn` is `HudBandLaborState.current_turn()`, threaded in because this layer holds no
 ## snapshot.
+##
+## **`leg` NAMES THE RUNG THE PERCENTAGE IS ABOUT, and on a two-leg entry that is NOT the row's
+## title** (`docs/plan_standing_upkeep.md` §2.8). `percent` is the leg in flight's fullness, so the
+## face leads with that leg's participle — `Cultivating 18% · turn 83` under a row titled `Sow`.
+## Without the verb the same number is worse than the `0%` it replaces: the reader attributes it to
+## the destination the title names.
+##
+## **THE SENTINELS TAKE NO VERB, and that is not an oversight.** Each names a STATE of the ENTRY —
+## blocked, stalled, holding, rotting — which is a fact about the whole climb rather than about one
+## leg, and a hazard face that also carried a participle would put two subjects on a 118px column.
+## They still state the leg's `percent`, which is the half of this fix that applies to every face.
+##
+## `""` — or a rung with no participle — renders the bare dated face, which is what every caller
+## emitted before a leg was in the question.
 static func build_completion_value(turns: int, build_crew: int, percent: int,
-        current_turn: int) -> String:
+        current_turn: int, leg: String = "") -> String:
     var sentinel := build_sentinel_value(turns, build_crew, percent)
     if sentinel != "":
         return sentinel
-    return HudSelectionVocab.RUNG_COMPLETES_FORMAT % [current_turn + turns, percent]
+    var verb := String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(leg, ""))
+    if verb == "":
+        return HudSelectionVocab.RUNG_COMPLETES_FORMAT % [current_turn + turns, percent]
+    return HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [verb, percent, current_turn + turns]
 
 ## **THE SENTINEL BRANCHES ON THEIR OWN, so the two faces above cannot fork twice.** It answers `""`
 ## for a real positive count — the one case the two callers word differently — and every sentinel the
@@ -1735,21 +1752,37 @@ static func flora_composition_lines(
 ## the player is not looking at, and the two numbers on one card would disagree about which stand is
 ## being talked about.
 ##
-## Derived from the entries' already-rounded PERCENTS rather than the raw shares, so a row's two
-## numbers are consistent with each other (38% of 205 really is the 78 printed beside it) — and the
-## remainder is folded into the FIRST (largest) entry, exactly as `flora_basket_entries` folds the
-## percentage remainder, because a decomposition that visibly fails to add up is worse than a ±1 on
-## the row where it is proportionally smallest. Returns zeros for a stripped or stockless surface;
-## those rows print no biomass at all.
+## **THE QUANTITY IS THE WIRE'S OWN** — `ForagePatchState.compositionStandingBiomass`, folded onto each
+## entry by the decoder and read here through `standing_biomass`. It used to be re-derived as
+## `percent × stock`, which agreed with the wire in production and is exactly the shape this arc has
+## shipped three defects of: two seams answering one question, drifting the first time either moves.
+## The compose sheet's species chips read the same key, so the card and the sheet cannot come to spell
+## one stand two ways.
+##
+## **THE ROUNDING RECONCILIATION STAYS, and it is display-only.** A decomposition that visibly fails to
+## add up is worse than a ±1, so each figure is rounded and the remainder folded into the FIRST
+## (largest) entry — the same fold `flora_basket_entries` applies to the percentages. That adjusts
+## PRESENTATION of the wire's numbers; it does not produce them.
+##
+## **A BASKET THE WIRE QUOTED NO QUANTITY FOR FALLS BACK TO THE SHARE SPLIT**, all-or-nothing rather
+## than per row: a column mixing stated and derived figures would be two producers inside one list. It
+## is the "the server stated nothing" case, not a second opinion about a stand it did state.
+##
+## Returns zeros for a stripped or stockless surface; those rows print no biomass at all.
 static func _flora_biomass_split(entries: Array[Dictionary], stock: float) -> Array[int]:
     var split: Array[int] = []
     if stock <= 0.0:
         split.resize(entries.size())
         split.fill(0)
         return split
+    var stated := true
+    for entry in entries:
+        if not bool(entry.get("has_standing_biomass", false)):
+            stated = false
+            break
     var total := 0
     for entry in entries:
-        var value := int(round(
+        var value := int(round(float(entry["standing_biomass"]))) if stated else int(round(
             float(entry["percent"]) / float(SourceForecast.FLORA_SHARE_PERCENT_TOTAL) * stock))
         total += value
         split.append(value)

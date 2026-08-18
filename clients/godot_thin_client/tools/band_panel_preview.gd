@@ -99,6 +99,48 @@ const TRADE_ONLY_HERD_ID := "game_wolf_03"
 ## picker's basket rows and the compose sheet's readout use, one reading for all three.
 const WORK_ROW_MATERIAL_ID := "hide"
 const WORK_ROW_MATERIAL_AMOUNT := 0.22
+## …AND ITS SECOND MATERIAL, which the SHIPPED wolf has paid since arc #527 and this fixture did not.
+## `fauna_config.json`'s `hunt_yield.materials` gives the wolf `hide` 0.016 and `bone` 0.0018 per
+## biomass, so a take crediting 0.22 hide credits ~0.02 bone off the same carcasses.
+##
+## **ONE material fitted the 46px rate slot with room to spare, so the row that SHIPS was the one no
+## fixture rendered** — `+0.22 hide · +0.02 bone` asks ~17px more than the zone box holds, which is
+## the same width defect the four-crop forage row carries at four times the size. It is above
+## `SourceForecast.COMPONENT_RENDER_MIN`, so it genuinely renders rather than being gated away.
+const WORK_ROW_MATERIAL_SECOND_ID := "bone"
+const WORK_ROW_MATERIAL_SECOND_AMOUNT := 0.02
+const WORK_ROW_MATERIAL_ROWS := [
+	{"material_id": WORK_ROW_MATERIAL_ID, "amount": WORK_ROW_MATERIAL_AMOUNT},
+	{"material_id": WORK_ROW_MATERIAL_SECOND_ID, "amount": WORK_ROW_MATERIAL_SECOND_AMOUNT},
+]
+
+## ---- THE MATERIALS-ONLY FORAGE ROW (the reported width defect) ---------------------------------
+## **NO FIXTURE ANYWHERE GAVE A FORAGE ASSIGNMENT A `material_yield`**, which is why
+## `_assert_zone_content_width_fits` — which recurses properly and scales off the live host — never
+## saw the row that overflows: the one two-material fixture sits on a herd that also pays FOOD, so it
+## takes the food branch and the material list never reaches a row at all.
+##
+## The reported case: a patch realizing cash crops alone pays no provisions and no fodder, so its row
+## falls all the way through to its materials and rendered `+0.24 fibre · +0.34 grape` with NO SOURCE
+## NAME beside it.
+const MATERIAL_FORAGE_X := 36
+const MATERIAL_FORAGE_Y := 22
+const MATERIAL_FORAGE_ROWS := [
+	{"material_id": "fibre", "amount": 0.24},
+	{"material_id": "grape", "amount": 0.34},
+]
+## THE MEASURED WORST CASE — a RollingHills-style tile realizing all FOUR field-ceiling cash crops
+## (`flora_config.json`: flax→fibre 0.06, grapevine→grape 0.07, tea→tea 0.06, tobacco→tobacco 0.07,
+## every one of them `provisions_per_biomass: 0.0`). Four terms joined unbounded put the row's own
+## minimum at ~583px against a 356px zone box.
+const MATERIAL_CROPS_X := 37
+const MATERIAL_CROPS_Y := 23
+const MATERIAL_CROPS_ROWS := [
+	{"material_id": "fibre", "amount": 0.06},
+	{"material_id": "grape", "amount": 0.07},
+	{"material_id": "tea", "amount": 0.06},
+	{"material_id": "tobacco", "amount": 0.07},
+]
 
 ## ---- THE FODDER FACE (issue #449) -------------------------------------------------------------
 ## The sown hay FIELD on the work board: a forage source paying feed and NO provisions, which is the
@@ -109,17 +151,22 @@ const FODDER_FIELD_Y := 18
 ## The feed it pays per turn. It has to be big enough to read at two decimals and unequal to every other
 ## rate on this band, so an assertion matching its face cannot be satisfied by a neighbouring row.
 const FODDER_FIELD_RATE := 0.40
-## That rate as the one-slot ROW and the header TOTAL both spell it — the word, never a glyph, because
-## fodder has none. Written out rather than composed through `SourceForecast`, since a needle built by
-## the code under test agrees with whatever that code emits.
+## That rate as the header TOTAL spells it — the word, never a glyph, because fodder has none. Written
+## out rather than composed through `SourceForecast`, since a needle built by the code under test
+## agrees with whatever that code emits.
 const FODDER_ROW_RATE_FACE := "+0.40 fodder"
-## The same account as the INSPECTOR sentence spells it. `yield_components` renders a fodder magnitude
-## unsigned (the #426 picker rule), so this is deliberately NOT the row's face with the sign stripped.
-const FODDER_INSPECTOR_CLAUSE := "0.40 fodder"
+## …and as the ROW's line two spells it, which is now the SAME STRING. It was the unsigned
+## `0.40 fodder` while `yield_components` signed its food arm and no other; every account on that line
+## is income and every one of them is signed now, so the head's sibling total and the row's own term
+## read alike. Kept as its own const because the two answer different questions and a future divergence
+## should show up as a changed constant rather than as a silently shared literal.
+const FODDER_INSPECTOR_CLAUSE := "+0.40 fodder"
 ## The CONTROL row's steady food rate — an ordinary deer hunt on the same band, so "a hunt is unchanged"
 ## is asserted against a row that is genuinely there rather than against an empty board.
 const FODDER_CONTROL_HUNT_RATE := 0.20
-const FODDER_CONTROL_HUNT_FACE := "+0.20"
+## …as the row's accounts line spells it. The `/turn` is `yield_components`' own, and its presence is
+## the visible half of the accounts line no longer being a 46px slot.
+const FODDER_CONTROL_HUNT_FACE := "+0.20 /turn"
 
 # ---- THE COMBAT GATE's two herd terms on the quarry (`docs/plan_hunt_through_combat.md` §4.2) -----
 ## `defense` is whether a hit counts at all — deliberately ABOVE the roster's bare-handed `attack`
@@ -1403,6 +1450,72 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	await _assert_ready_mark_declares()
 
+	# **THE DESTINATION TRACK** (`docs/plan_standing_upkeep.md` §2.8) — the `⌃`'s ladder card, rendered
+	# in the tall LEFT dock, the SHIPPED default edge. Two states and the PAIR is the claim: at rest
+	# the track states what the branch HOLDS (a banked rung, the rung the patch stands on, and a
+	# locked one still visible with its reason), and mid-climb it states where the entry is HEADED (the
+	# rung on the way and the target), with both figures read off the wire's own legs.
+	#
+	# **THE ZONE ASSERTIONS RUN WITH THE CARD UP, and that is the overlay claim.** The work zone reads
+	# 396 of 396 with a row selected; a track drawn as a block would fail here rather than clip.
+	_hud.update_intensification([_track_half_knowledge_row()])
+	_hud.update_food_modules([{"x": TRACK_PATCH.x, "y": TRACK_PATCH.y,
+		"module": "savanna_grassland", "kind": "gather"}])
+	_set_forage_patches(_track_wild_patch_fixtures())
+	_set_world_herds([])
+	_push_bands([_track_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _assert_rung_track_at_rest()
+	await _save("band_panel_rung_track")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+	# …the SAME ground one rung up, on a faction that knows both crafts: the BANKED rung, which is the
+	# one state a track cannot show on wild ground.
+	_hud.update_intensification([_standing_knowledge_row()])
+	_set_forage_patches(_track_tended_patch_fixtures())
+	_push_bands([_track_band_fixture()])
+	await _settle()
+	await _assert_rung_track_banked()
+	await _save("band_panel_rung_track_banked")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+	# …and the SAME ground mid-climb, with a TWO-LEG entry queued to `plant:field`: the destination
+	# picker opened from the RUNNING build slot, and the queue row opened into its own legs.
+	_hud.update_intensification([_standing_knowledge_row()])
+	_set_forage_patches(_track_climbing_patch_fixtures())
+	_push_bands([_track_band_fixture(SourceForecast.IMPROVEMENT_SOW)])
+	await _settle()
+	_assert_queue_row_reads_the_leg_in_flight()
+	await _assert_rung_track_climbing()
+	await _save("band_panel_rung_track_climbing")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	# The card is dismissed before the legs are read: the queue row's expansion is charged to the
+	# BOARD, and a state measured with both open would measure the two together.
+	_hud._bandpanel._rung_track.hide()
+	await _settle()
+	await _assert_queue_row_legs()
+	_report_queue_row_columns("band_panel_queue_legs")
+	await _save("band_panel_queue_legs")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_hud._bandpanel._queue_open_key = ""
+	# **THE THREE CASES THE RENDERED FRAME ABOVE CANNOT HOLD**, PNG-LESS and driven: a percentage is a
+	# number, and a row quoting the wrong rung's meter renders a perfectly plausible row.
+	await _assert_leg_in_flight_first_turn()
+	await _assert_leg_in_flight_single_leg()
+	await _assert_leg_in_flight_animal_twin()
+	# …and the track's own PNG-less claim, for the same reason: a rung row with nothing written on it
+	# renders as a perfectly plausible gap in a card.
+	_assert_rung_track_names_every_offer()
+	_set_forage_patches([])
+	_set_world_herds([])
+	await _settle()
+
 	_hud.update_intensification([])
 
 	# THE FORAGE JUMP NAMES THE LAND (issue #412, a pre-existing defect the marks made reachable-looking).
@@ -2239,6 +2352,8 @@ func _ready() -> void:
 	await _render_repair_and_declare_states()
 
 	await _render_work_inspector_width_states()
+
+	await _render_work_material_width_states()
 
 	_assert_pending_assign_rollback()
 
@@ -8035,6 +8150,576 @@ func _assert_ready_marks() -> void:
 			and String(m["ready_policy"]) == "").size() == 1)
 
 # =====================================================================================
+#  THE DESTINATION TRACK (`docs/plan_standing_upkeep.md` §2.8)
+# =====================================================================================
+#
+# **THE `⌃` OPENS A LADDER TRACK AND THE PICK IS THE DECLARATION.** A queue entry names a DESTINATION
+# rung now and climbs every rung between where the source stands and there, so the one-rung mark could
+# not say what the player was buying: `sow` on untended ground is TWO legs and costs the whole branch.
+#
+# **THE CARD IS A `PopupPanel`, WHICH IS WHY IT COSTS THE ZONE NOTHING.** The work zone reads 396 of
+# 396 in height and 354 of 356 in width with a row selected, and both budgets ASSERT rather than clip
+# — so the states below run `_assert_zone_content_fits` with the card UP, which is the claim that the
+# overlay really is an overlay.
+
+## The track board's tile, away from every other block's so a leaked patch cannot answer for it.
+const TRACK_PATCH := Vector2i(66, 25)
+
+## The rung spans this board is priced at — the plant branch's two, distinct so a face quoting the
+## wrong one is visible in the assertion rather than merely different.
+const TRACK_TENDED_WORK_COST := 50.0
+
+const TRACK_FIELD_WORK_COST := 75.0
+
+## …and the CLIMBING board's position: thirty work into the Cultivate leg, so that leg owes 20 and the
+## Field leg owes its whole 75. **A previous improvement is a RECEIPT, NOT A DISCOUNT** — the thirty
+## already banked is what the track must never ask the player to buy again, and a fixture that banked
+## nothing could not tell the two readings apart.
+const TRACK_TENDED_WORK_DONE := 30.0
+
+const TRACK_TENDED_LEG_REMAINING := TRACK_TENDED_WORK_COST - TRACK_TENDED_WORK_DONE
+
+## The two legs' CHAINED dates, the wire's own — the second is the entry's whole `buildTurnsRemaining`,
+## which is what "chained behind the legs above it" means in arithmetic.
+const TRACK_TENDED_LEG_TURNS := 5
+
+const TRACK_FIELD_LEG_TURNS := 24
+
+## **WILD ground, on a faction that knows Cultivation and NOT Seed Selection** — the state a LOCKED
+## rung has to be seen in. It offers a `⌃` (Cultivate is ready), so the track is reachable, and the
+## rung above that is refused: a locked rung HIDDEN would read as a two-rung ladder rather than as one
+## this faction cannot yet climb, which is the whole reason the track shows what the branch holds.
+func _track_wild_patch_fixtures() -> Array:
+	return [_track_patch_row(false, 0.0)]
+
+## **THE SAME GROUND ONE RUNG UP, on a faction that knows both crafts** — where a BANKED rung is
+## visible at all. `Wild` sits beneath where the patch stands and must contribute NO figure to the
+## card: a previous improvement is a RECEIPT, NOT A DISCOUNT.
+func _track_tended_patch_fixtures() -> Array:
+	return [_track_patch_row(true, TRACK_TENDED_WORK_COST)]
+
+## The one patch row both boards are cut from, so the two states differ in the patch's POSITION and in
+## the faction's knowledge and in nothing else.
+func _track_patch_row(is_cultivated: bool, cultivation_work_done: float) -> Dictionary:
+	return {
+		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": is_cultivated, "is_field": false, "sow_site_refusal": "",
+		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": cultivation_work_done,
+		"field_work_cost": TRACK_FIELD_WORK_COST,
+		"field_work_done": 0.0,
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}
+
+## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:field`.** It is the shape the
+## whole arc is about: one position, one queue row, and a destination two rungs above where the patch
+## stands. `build_legs` is the WIRE's — the client re-derives neither the owing nor the dates — and
+## the first leg is the one in flight, the list being published first-incomplete first.
+##
+## **`work_done` IS THE ONE DIAL**, so the FIRST-TURN case below is this same board with a single work
+## unit banked rather than a fixture of its own — the leg's own owing and its published fraction both
+## follow it, which is what keeps the two states arithmetically the same board.
+func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -> Array:
+	return [{
+		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false, "sow_site_refusal": "",
+		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": work_done,
+		"cultivation_progress": work_done / TRACK_TENDED_WORK_COST,
+		"field_work_cost": TRACK_FIELD_WORK_COST,
+		"field_work_done": 0.0,
+		"build_queue_position": 0,
+		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_legs": [
+			{"rung": SourceForecast.RUNG_KEY_TENDED,
+				"work_remaining": TRACK_TENDED_WORK_COST - work_done,
+				"turns_remaining": TRACK_TENDED_LEG_TURNS},
+			{"rung": SourceForecast.RUNG_KEY_FIELD,
+				"work_remaining": TRACK_FIELD_WORK_COST,
+				"turns_remaining": TRACK_FIELD_LEG_TURNS},
+		],
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+
+## **ONE WORK UNIT BANKED — the FIRST turn of a thirty-nine-turn climb**, which is the turn the
+## reported defect starts on and the one an assertion at a comfortable 60% cannot reach.
+const TRACK_FIRST_TURN_WORK_DONE := 1.0
+
+## **THE SINGLE-LEG CONTROL: the same `sow`, ordered on ground that is ALREADY TENDED.** Its climb is
+## one rung, so the leg in flight IS the destination and the row must read exactly as it always did —
+## which is the half that fails on a fix that simply always names the rung BELOW the one declared.
+const TRACK_SINGLE_LEG_FIELD_WORK_DONE := 30.0
+
+func _track_single_leg_patch_fixtures() -> Array:
+	return [{
+		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
+		"cultivation_work_done": TRACK_TENDED_WORK_COST,
+		"cultivation_progress": 1.0,
+		"field_work_cost": TRACK_FIELD_WORK_COST,
+		"field_work_done": TRACK_SINGLE_LEG_FIELD_WORK_DONE,
+		"field_progress": TRACK_SINGLE_LEG_FIELD_WORK_DONE / TRACK_FIELD_WORK_COST,
+		"build_queue_position": 0,
+		"build_turns_remaining": TRACK_FIELD_LEG_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_FIELD,
+		"build_legs": [
+			{"rung": SourceForecast.RUNG_KEY_FIELD,
+				"work_remaining": TRACK_FIELD_WORK_COST - TRACK_SINGLE_LEG_FIELD_WORK_DONE,
+				"turns_remaining": TRACK_FIELD_LEG_TURNS},
+		],
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+
+# ---- THE ANIMAL TWIN: a `corral` ordered on a herd that is not tamed yet ------------------------
+#
+# The same two-leg shape one web over — `animal:pastoral` then `animal:pen` — and the same defect: the
+# declared Corral's own meter is at zero for the whole taming, so the Work tab read `🐄0%` on a herd
+# that was 35% gentled. The species ceiling is `pen`, or the Corral rung is not admitted at all.
+
+const TRACK_HERD_ID := "leg_corral_herd"
+
+const TRACK_HERD_TILE := Vector2i(67, 26)
+
+const TRACK_HERD_DOMESTICATION := 0.35
+
+const TRACK_PASTORAL_LEG_TURNS := 6
+
+const TRACK_PEN_LEG_TURNS := 21
+
+func _track_climbing_herd_fixtures() -> Array:
+	return [{
+		"id": TRACK_HERD_ID, "species": "Wild Aurochs",
+		"x": TRACK_HERD_TILE.x, "y": TRACK_HERD_TILE.y,
+		"population": 40, "ecology_phase": "thriving",
+		"husbandry_ceiling": SourceForecast.HUSBANDRY_CEILING_PEN,
+		"domestication": TRACK_HERD_DOMESTICATION,
+		"corralled": false, "corral_progress": 0.0,
+		"build_queue_position": 0,
+		"build_turns_remaining": TRACK_PEN_LEG_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_legs": [
+			{"rung": SourceForecast.RUNG_KEY_PASTORAL, "work_remaining": 32.5,
+				"turns_remaining": TRACK_PASTORAL_LEG_TURNS},
+			{"rung": SourceForecast.RUNG_KEY_PEN, "work_remaining": 75.0,
+				"turns_remaining": TRACK_PEN_LEG_TURNS},
+		],
+	}]
+
+## The band that HUNTS that herd, carrying the `corral` token the wire derives for the entry — the
+## animal twin of `_track_band_fixture`'s `build_job`, and load-bearing for the same reason.
+func _track_herd_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 948
+	band["id"] = "Band 18"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"fauna_id": TRACK_HERD_ID,
+			"target_x": TRACK_HERD_TILE.x, "target_y": TRACK_HERD_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_CORRAL,
+			"actual_yield": 0.60, "sustainable_yield": 0.60},
+		{"kind": "builders", "workers": 3},
+	]
+	return band
+
+## The faction that knows how to TEND and not how to SOW — the one dial the locked half of the track
+## turns on, so the two states below differ in knowledge and in the patch's own position and in
+## nothing else.
+func _track_half_knowledge_row() -> Dictionary:
+	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.45, "herding": 1.0, "penning": 1.0}
+
+## A band working that one patch, so it carries a WORK ROW — the precondition the whole `⌃` rests on —
+## with builders on the pool, so a declared climb reads as RUNNING rather than as stalled.
+##
+## **`build_job` IS THE WIRE'S OWN `improvement` TOKEN, AND ON A CLIMBING PATCH IT NAMES THE
+## DESTINATION.** `snapshot::population::resolved_build_job` publishes `patch_build_verb`'s answer,
+## which honours a declaration at or above the rung being raised — so a `sow` ordered on untended
+## ground publishes `sow` while the crew is still clearing. **Stating it is what makes the two-leg
+## fixture reproduce the reported state at all**: without it `build_verb` falls through to the
+## Cultivate meter and the board reads the leg by accident, which is a board that cannot tell the
+## defect from the fix. `""` is the honest token for a patch no band has queued.
+func _track_band_fixture(build_job: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 947
+	band["id"] = "Band 17"
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": TRACK_PATCH.x, "target_y": TRACK_PATCH.y, "improvement": build_job,
+			"actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "builders", "workers": 3},
+	]
+	return band
+
+## **THE TRACK ON WILD GROUND — where you are, what is open, and what is LOCKED.** Driven through the
+## REAL `⌃`, and every claim is read off the card's own metas rather than its text: every face here is
+## composed at render time, so a text match would only confirm the string the assertion had assumed.
+func _assert_rung_track_at_rest() -> void:
+	if not await _open_rung_track_from_mark("the wild patch"):
+		return
+	var states := _rung_track_states()
+	_assert_band_panel("track — the card draws the WHOLE plant branch, locked rung included (%s)"
+		% str(states.keys()), states.size() == SourceForecast.RUNG_BRANCH_PLANT.size())
+	# **THE SET IS THE CLAIM.** A card that marked everything `open` passes any single one of these.
+	_assert_band_panel("track — the wild floor reads as where the patch IS (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_NONE, "")) == RungLadder.STATE_STANDING)
+	_assert_band_panel("track — …the Tended rung as one it may be taken to (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == RungLadder.STATE_OPEN)
+	_assert_band_panel("track — …and the Field rung LOCKED rather than hidden (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_LOCKED)
+	# **THE SHAPE IS THE STATEMENT** — a button is a CHOICE and an unmet prerequisite is a FACT, so a
+	# locked rung carries no control at all rather than a greyed one offering an act the sim refuses.
+	_assert_band_panel("track — the open rung is pressable and the locked one is not",
+		_rung_track_row(SourceForecast.IMPROVEMENT_CULTIVATE) != null
+			and _rung_track_row(SourceForecast.IMPROVEMENT_SOW) == null)
+	# **AND THE LOCKED ROW SAYS WHY**, in the same gate reason every other surface states.
+	_assert_band_panel("track — …and the lock states the KNOWLEDGE that is missing",
+		_has_label_containing(_hud,
+			HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT.split(" %d")[0]))
+
+## **THE BANKED RUNG — the receipt-not-discount property, rendered.** The patch stands on Tended, so
+## the rung beneath it is bought and paid for: it states its STATE and no figure at all, and the fifty
+## work it once cost appears nowhere on the card.
+func _assert_rung_track_banked() -> void:
+	if not await _open_rung_track_from_mark("the tended patch"):
+		return
+	var states := _rung_track_states()
+	var faces := _rung_track_faces()
+	_assert_band_panel("track — the wild floor reads as BANKED beneath where the patch stands (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_NONE, "")) == RungLadder.STATE_BANKED)
+	_assert_band_panel("track — …the Tended rung as where it IS (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == RungLadder.STATE_STANDING)
+	_assert_band_panel("track — …and the Field rung OPEN, both crafts being known (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_OPEN)
+	# **A RUNG AT OR BELOW WHERE THE SOURCE STANDS QUOTES NO FIGURE.** The claim is over every rendered
+	# face, Buttons included — the selectable rows are Buttons, so a label-only scan would testify
+	# about neither the banked row's silence nor the open row's price.
+	var priced: Array = faces.values().filter(func(face): return String(face).contains(" work"))
+	_assert_band_panel("track — exactly ONE row quotes a price, and it is the one above the patch (%s)"
+		% str(faces), priced.size() == 1
+		and String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")).contains(" work"))
+	_assert_band_panel("track — …so a banked rung quotes no work, a previous improvement being a receipt",
+		not str(faces.values()).contains("%d work" % int(TRACK_TENDED_WORK_COST)))
+
+## Press the one `⌃` on the board and settle, answering whether a track came up. `false` (with its own
+## FAIL) when the board offers none, so a state that has lost its mark says so rather than leaving the
+## claims below it passing on an empty card.
+func _open_rung_track_from_mark(what: String) -> bool:
+	var marks := _ready_mark_buttons()
+	if marks.is_empty():
+		_fail("track — %s offers no ⌃ to open a track from" % what)
+		return false
+	(marks.values()[0] as Button).pressed.emit()
+	await _settle()
+	if _rung_track_states().is_empty():
+		_fail("track — the ⌃ on %s opened no track" % what)
+		return false
+	return true
+
+## **THE TRACK MID-CLIMB — the chosen path, its target, and the two figures the wire owns.** Opened
+## from the RUNNING build slot, which is the other half of the control: *how far are we taking this?*
+## is asked most often mid-climb, and until the track existed the only answer was to withdraw the
+## entry and declare again.
+func _assert_rung_track_climbing() -> void:
+	var running: Button = null
+	for slot in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_KIND_META, []):
+		if String(slot.get_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META)) \
+				== HudWorkVocab.WORK_ROW_BUILD_KIND_BUILDING and slot is Button:
+			running = slot as Button
+	if running == null:
+		_fail("track — the climbing row's build slot is not a pressable RUNNING face")
+		return
+	running.pressed.emit()
+	await _settle()
+	var states := _rung_track_states()
+	_assert_band_panel("track — the queued destination reads as THE TARGET (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_TARGET)
+	_assert_band_panel("track — …and the rung between reads as ON THE WAY (%s)"
+		% String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")),
+		String(states.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == RungLadder.STATE_PATH)
+	# **THE LEG'S OWING IS THE WIRE'S, FROM WHERE THE PATCH STANDS.** Thirty work is banked on the
+	# Cultivate leg, so it owes twenty — and a card quoting the rung's whole fifty would be asking the
+	# player to buy work they have already bought. Both figures are composed through the SHIPPED
+	# format, so the claim pins the numbers rather than the wording.
+	var faces := _rung_track_faces()
+	var in_flight := HudWorkVocab.RUNG_TRACK_COST_FORMAT % [
+		DetailFormat.format_work_units(TRACK_TENDED_LEG_REMAINING),
+		DetailFormat.build_turns_clause(TRACK_TENDED_LEG_TURNS)]
+	_assert_band_panel("track — the in-flight leg quotes what is LEFT of it, not the rung's span — \"%s\" (got \"%s\")"
+		% [in_flight, String(faces.get(SourceForecast.IMPROVEMENT_CULTIVATE, ""))],
+		String(faces.get(SourceForecast.IMPROVEMENT_CULTIVATE, "")) == in_flight)
+	var target := HudWorkVocab.RUNG_TRACK_COST_FORMAT % [
+		DetailFormat.format_work_units(TRACK_FIELD_WORK_COST),
+		DetailFormat.build_turns_clause(TRACK_FIELD_LEG_TURNS)]
+	_assert_band_panel("track — …and the target quotes its own chained date — \"%s\" (got \"%s\")"
+		% [target, String(faces.get(SourceForecast.IMPROVEMENT_SOW, ""))],
+		String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")) == target)
+
+## **A ROW THAT SENDS A COMMAND MUST SAY WHAT IT SENDS** — built from a source the wire describes not
+## at all, which is the state that made a track render **blank clickable buttons each emitting a real
+## `tame` declaration on press**.
+##
+## **THE `{}` IS THE FIXTURE, and it is reachable rather than synthetic**: `_open_rung_track` reads its
+## source through `_rung_track_source`, which answers `{}` for a herd the snapshot no longer carries.
+## Nothing then bars the track — `husbandry_ceiling` defaults to the pen, so no outright bar fires —
+## and `build_work_cost` reads nothing, so every priced face falls through to its state word and the
+## one state with no word rendered as `""`.
+##
+## **PNG-LESS AND DRIVEN, over the SHIPPED controls rather than the row dicts.** A face is composed at
+## render time and the defect is a `Button` whose `text` is empty; a claim made against the rows would
+## testify about the model and not about the control the press lands on. It builds the track detached
+## and frees it, so it costs the walk no frame and cannot move a later one.
+func _assert_rung_track_names_every_offer() -> void:
+	var rows := RungLadder.track(SourceForecast.LABOR_KIND_HUNT, {},
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_NONE,
+		_standing_knowledge_row())
+	# **THE PRECONDITIONS ARE THE VACUITY GUARD.** "No selectable row is blank" passes for free on a
+	# track with no selectable row at all, and on one whose rows are all priced — so the fixture is
+	# asserted to hold the exact shape the defect needs before the claim is made.
+	var offered := rows.filter(func(row): return bool(row.get(RungLadder.ROW_SELECTABLE_KEY, false)))
+	_assert_band_panel("track — an unknown source still offers a destination to press (%d of %d rows)"
+		% [offered.size(), rows.size()], offered.size() > 0)
+	var unpriced := offered.filter(func(row): return float(row.get(RungLadder.ROW_WORK_KEY,
+		RungLadder.WORK_UNKNOWN)) <= RungLadder.WORK_UNKNOWN)
+	_assert_band_panel("track — …and the wire prices none of them, so each face is its STATE alone (%d)"
+		% unpriced.size(), unpriced.size() == offered.size())
+	var track := RungLadder.build_track(rows, func(_rung: String) -> void: pass)
+	var pressable: Array[Button] = []
+	_collect_buttons_typed(track, pressable)
+	var blank := pressable.filter(func(button: Button): return button.text.strip_edges().is_empty())
+	_assert_band_panel("track — every pressable rung renders a face (%d of %d blank)"
+		% [blank.size(), pressable.size()],
+		pressable.size() == offered.size() and blank.is_empty())
+	track.queue_free()
+
+## Every `Button` under `node`, typed, for the claim above. `_collect_buttons` beside it collects
+## `Node`s, which a `filter` over `.text` cannot read without a cast per row.
+func _collect_buttons_typed(node: Node, into: Array[Button]) -> void:
+	for child in node.get_children():
+		if child is Button:
+			into.append(child as Button)
+		_collect_buttons_typed(child, into)
+
+# =====================================================================================
+#  THE WORK TAB READS THE LEG IN FLIGHT (`docs/plan_standing_upkeep.md` §2.8)
+# =====================================================================================
+#
+# **REPORTED FROM PLAY.** A `sow` ordered on untended ground is a two-leg entry; the Work tab quoted
+# the DESTINATION's meter in two places — the queue row's date column and the source row's rung chip
+# — and both read `0%` for the thirty-nine turns the crew spent clearing, beside a tile card reading
+# `18%` for the same job on the same turn. Neither number was wrong; they answered a question nobody
+# asked, and **a progress number must never sit at zero while work is going in.**
+#
+# **THE ASSERTIONS ARE CROSS-CHECKS AGAINST THE TILE CARD'S OWN PRODUCER, never literals.** The claim
+# is that two surfaces AGREE, and a literal on each side lets both be separately plausible: they
+# compose the wanted percent through `SourceForecast.improvement_progress` at the leg's own rung,
+# which is the `<rung>Progress` the card renders and the position clamped into that rung's span
+# sim-side (`forage::patch_rung_work_done`).
+
+## **THE REPORTED CASE.** Four claims on one row, and the SET is what makes any of them worth
+## anything: the title still names the destination, the date is still the whole climb's, and only the
+## percentage and its verb moved. A fix that repointed the whole row would pass the last two alone.
+func _assert_queue_row_reads_the_leg_in_flight() -> void:
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(TRACK_PATCH, {})
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
+	# **THE PRECONDITION IS THE FIXTURE ITSELF** — work banked on the leg and NOTHING on the
+	# destination is the only state the defect lives in, and without both halves every claim below is
+	# satisfied for free.
+	_assert_band_panel("leg — the board is mid-CULTIVATE with work banked (%d percent)" % leg_percent,
+		leg_percent > 0)
+	_assert_band_panel("leg — …and the DESTINATION's own meter is the zero that used to be rendered",
+		HudFormat.progress_percent(SourceForecast.improvement_progress(
+			patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW)) == 0)
+	_assert_queue_row_states("the reported two-leg sow", TRACK_PATCH,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE, leg_percent,
+		TRACK_FIELD_LEG_TURNS)
+
+## **THE FIRST TURN OF BANKED WORK — the assertion that actually catches the reported bug.** At 60% a
+## renderer that had merely swapped one meter for another would pass; the claim here is that the
+## number is non-zero from the turn the first work unit lands, which is when a player watching `0%`
+## concludes the job is stuck.
+func _assert_leg_in_flight_first_turn() -> void:
+	_set_forage_patches(_track_climbing_patch_fixtures(TRACK_FIRST_TURN_WORK_DONE))
+	_push_bands([_track_band_fixture(SourceForecast.IMPROVEMENT_SOW)])
+	await _settle()
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(TRACK_PATCH, {})
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
+	_assert_band_panel("leg — one work unit of %d reads as a NON-ZERO percentage (%d)"
+			% [int(TRACK_TENDED_WORK_COST), leg_percent], leg_percent > 0)
+	_assert_queue_row_states("the first turn of banked work", TRACK_PATCH,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE, leg_percent,
+		TRACK_FIELD_LEG_TURNS)
+
+## **THE SINGLE-LEG CONTROL — a `sow` on ground already tended, which must be UNCHANGED.** Its leg IS
+## its destination, so the row names its own rung and its own meter. Without it, "read the leg" is
+## satisfied by a renderer that always names the rung below the one declared.
+func _assert_leg_in_flight_single_leg() -> void:
+	_set_forage_patches(_track_single_leg_patch_fixtures())
+	_push_bands([_track_band_fixture(SourceForecast.IMPROVEMENT_SOW)])
+	await _settle()
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(TRACK_PATCH, {})
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		patch, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW))
+	_assert_band_panel("leg — the single-leg board's own FIELD meter carries work (%d percent)"
+			% leg_percent, leg_percent > 0)
+	_assert_queue_row_states("a single-leg sow on tended ground", TRACK_PATCH,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_SOW, leg_percent,
+		TRACK_FIELD_LEG_TURNS)
+
+## **THE ANIMAL TWIN.** A `corral` on an untamed herd has the same two-leg shape and had the same
+## defect, and the two webs share no fixture and no rung table — so a fix that reached only the plant
+## one passes every claim above.
+func _assert_leg_in_flight_animal_twin() -> void:
+	_set_forage_patches([])
+	_set_world_herds(_track_climbing_herd_fixtures())
+	_push_bands([_track_herd_band_fixture()])
+	await _settle()
+	var herd: Dictionary = _hud._band_labor.find_world_herd(TRACK_HERD_ID)
+	var leg_percent := HudFormat.progress_percent(SourceForecast.improvement_progress(
+		herd, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_TAME))
+	_assert_band_panel("leg — the herd is mid-TAME with its pen meter at zero (%d percent)"
+			% leg_percent, leg_percent > 0
+		and HudFormat.progress_percent(SourceForecast.improvement_progress(
+			herd, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CORRAL)) == 0)
+	_assert_queue_row_states("a corral ordered on an untamed herd", TRACK_HERD_TILE,
+		SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.IMPROVEMENT_TAME, leg_percent,
+		TRACK_PEN_LEG_TURNS)
+	# The one PICTURE of the animal twin: `◎35%` on the board row under `Taming 35% · turn N` in the
+	# queue, with the row still titled for the pen it is headed for.
+	await _save("band_panel_queue_leg_animal")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+## **THE FOUR CLAIMS, ON BOTH WORK-TAB READOUTS AT ONCE** — the queue row's title, its date column,
+## and the source row's rung chip, every one composed through the SHIPPED format so a claim pins the
+## numbers rather than the wording.
+##
+## `destination` is what the player ordered and `leg` the rung the crew is on; on a single-leg entry
+## they are the same verb, which is exactly the control case.
+func _assert_queue_row_states(where: String, tile: Vector2i, destination: String, leg: String,
+		leg_percent: int, climb_turns: int) -> void:
+	var rows := _build_queue_rows()
+	if rows.size() != 1:
+		_fail("leg — %s draws %d queue rows to judge, wanted 1" % [where, rows.size()])
+		return
+	# 1. THE TITLE STILL NAMES THE DESTINATION. That is what the player ordered, and it is why nothing
+	#    is lost by moving the percentage off it.
+	var face := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_FACE_META)
+	var drawn_face := "" if face == null else String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
+	_assert_band_panel("leg — %s: the row is still titled for its DESTINATION (\"%s\")"
+			% [where, drawn_face],
+		drawn_face.begins_with(HudFormat.policy_face(destination)))
+	# 2 + 3. THE DATE IS STILL THE WHOLE CLIMB'S and the PERCENTAGE AND ITS VERB are the leg's — one
+	#    equality, because the three are one string and asserting them apart would let a row state a
+	#    leg's date beside a leg's percentage and pass.
+	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META)
+	var drawn_date := "" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	var wanted_date := HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [
+		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(leg, "")), leg_percent,
+		_hud._band_labor.current_turn() + climb_turns]
+	_assert_band_panel("leg — %s: the date column reads \"%s\" (got \"%s\")"
+			% [where, wanted_date, drawn_date], drawn_date == wanted_date)
+	# 4. THE SOURCE ROW'S RUNG CHIP TAKES THE SAME LEG, so the mark on the row and the number in the
+	#    queue cannot name two different rungs — which is the whole shape of the reported defect.
+	var row_label := _work_row_label_for_source(tile)
+	var chip: Dictionary = _work_row_build_faces().get(row_label, {})
+	var wanted_chip := HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [FoodIcons.for_policy(leg), leg_percent]
+	_assert_band_panel("leg — %s: the source row's chip reads \"%s\" (got \"%s\" on \"%s\")"
+			% [where, wanted_chip, String(chip.get("face", "")), row_label],
+		String(chip.get("face", "")) == wanted_chip)
+
+## **HOW THE QUEUE ROW SPENT ITS WIDTH** — PRINTED, never asserted, for `_report_work_row_name_column`'s
+## reason: the verb made the date column longer, and what a red line would ask for is a DECISION (a
+## shorter face, a wider flank, or nothing) rather than a failing run. Both columns clip and the row's
+## tooltip carries the pair in full, so an elided face is legible-by-hover rather than lost.
+func _report_queue_row_columns(state_name: String) -> void:
+	var rows := _build_queue_rows()
+	if rows.is_empty():
+		_fail("%s — no queue row to measure the columns on" % state_name)
+		return
+	var face := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
+	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	if face == null or date == null:
+		_fail("%s — the queue row has no face/date pair to measure" % state_name)
+		return
+	var font := face.get_theme_font("font")
+	var size := face.get_theme_font_size("font_size")
+	# The two WIDEST strings either column can be handed — the roster's longest quarry under the
+	# animal face format, and the longest participle over a three-digit turn.
+	var widest_face := HudWorkVocab.BUILD_QUEUE_ANIMAL_FACE_FORMAT % [
+		HudFormat.policy_face(SourceForecast.IMPROVEMENT_CORRAL), WIDEST_SHIPPED_ROW_NAME]
+	var widest_date := ""
+	var widest_date_px := 0.0
+	for verb in HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.values():
+		var candidate: String = HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [String(verb), 100, 999]
+		var px := font.get_string_size(candidate, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		if px > widest_date_px:
+			widest_date_px = px
+			widest_date = candidate
+	print("band_panel_preview: %s — queue NAME column %.0fpx (\"%s\" needs %.0f; the widest \"%s\" needs %.0f); DATE column %.0fpx (\"%s\" needs %.0f; the widest \"%s\" needs %.0f)"
+		% [state_name, face.size.x, face.text, _label_text_width(face), widest_face,
+			font.get_string_size(widest_face, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x,
+			date.size.x, date.text, _label_text_width(date), widest_date, widest_date_px])
+	# …and the BOARD row's line one on the same state, which is the tight line of the two-line row and
+	# the one the widened rung chip (`🌱60%` for `▦0%`) is charged to.
+	var row_label := _work_row_label_for_source(TRACK_PATCH)
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text != row_label:
+			continue
+		print("band_panel_preview: %s — the BOARD row's name column is %.0fpx (\"%s\" needs %.0f)"
+			% [state_name, label.size.x, label.text, _label_text_width(label)])
+		return
+
+## The board label whichever row stands on `tile` renders, read off the MODEL — the forage twin
+## `_work_row_label_for_tile` answers for a patch, and a hunt row's tile is its herd's, so one lookup
+## over the models serves both webs.
+func _work_row_label_for_source(tile: Vector2i) -> String:
+	var band: Dictionary = _hud._band_labor._panel_band
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if int(model.get("x", -1)) == tile.x and int(model.get("y", -1)) == tile.y:
+			return String(model.get("label", ""))
+	return ""
+
+## **A MULTI-LEG ENTRY IS ONE QUEUE ROW WITH ITS LEGS INSIDE.** Splitting it would offer two `✕`s for
+## one withdrawal and two places to drag for one reorder, so the entry stays one unit and the row
+## opens into its climb.
+func _assert_queue_row_legs() -> void:
+	var rows := _build_queue_rows()
+	_assert_band_panel("legs — a two-leg entry is ONE queue row (%d)" % rows.size(), rows.size() == 1)
+	if rows.is_empty():
+		return
+	_click_control(rows[0])
+	await _settle()
+	var legs := _collect_meta_controls(_panel, HudWorkVocab.BUILD_QUEUE_LEG_META, [])
+	_assert_band_panel("legs — …that opens into BOTH of its legs (%d)" % legs.size(), legs.size() == 2)
+	if legs.size() == 2:
+		# The list is published first-incomplete first, so the FIRST line is the leg in flight — and it
+		# wears the queue head's own marker rather than a second vocabulary for the same idea.
+		_assert_band_panel("legs — …in climb order, the in-flight leg first (%s then %s)"
+			% [String(legs[0].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META)),
+				String(legs[1].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META))],
+			String(legs[0].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META))
+				== SourceForecast.IMPROVEMENT_CULTIVATE
+			and String(legs[1].get_meta(HudWorkVocab.BUILD_QUEUE_LEG_META))
+				== SourceForecast.IMPROVEMENT_SOW)
+
+# =====================================================================================
 #  THE `⌃` DECLARES (`docs/plan_standing_upkeep.md` §4.7a ①)
 # =====================================================================================
 
@@ -8129,7 +8814,11 @@ func _declare_band_fixture() -> Dictionary:
 func _ready_mark_buttons() -> Dictionary:
 	var out: Dictionary = {}
 	for control in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_STATE_META, []):
-		if not (control is Button):
+		# **THE SLOT'S OWN KIND, NEVER ITS NODE TYPE.** A running build's face is a `Button` too now —
+		# it opens the same destination track — so `is Button` counts a climb as an offer, which is a
+		# wrong answer that no assertion in this block would have flagged.
+		if String(control.get_meta(HudWorkVocab.WORK_ROW_BUILD_KIND_META,
+				HudWorkVocab.WORK_ROW_BUILD_KIND_NONE)) != HudWorkVocab.WORK_ROW_BUILD_KIND_OFFER:
 			continue
 		var line := control.get_parent()
 		if line == null:
@@ -8138,6 +8827,52 @@ func _ready_mark_buttons() -> Dictionary:
 			if child is Label and (child as Label).size_flags_horizontal == Control.SIZE_EXPAND_FILL:
 				out[(child as Label).text] = control
 				break
+	return out
+
+## **THE OPEN DESTINATION TRACK'S ROW FOR ONE RUNG** — the `Button` a press would send, or `null`.
+## Searched from `_hud` rather than from `_panel`: the track is a `PopupPanel` parented into the HUD
+## CanvasLayer, which is the whole reason it costs the work zone nothing.
+func _rung_track_row(improvement: String) -> Button:
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META)) != improvement:
+			continue
+		for child in control.get_children():
+			if child is Button:
+				return child as Button
+	return null
+
+## The FURTHEST rung the open track offers — the last selectable row, the branch being drawn in climb
+## order. `null` when no track is up or nothing on it may be picked.
+func _rung_track_top_row() -> Button:
+	var top: Button = null
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		for child in control.get_children():
+			if child is Button:
+				top = child as Button
+	return top
+
+## Every rung row's RENDERED face, as `improvement -> text` — read off whichever control the row
+## carries, because the shape is the statement: a selectable rung is a `Button` and every other kind
+## is a `Label`, so a scan for one of the two testifies about half the card.
+func _rung_track_faces() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		var key := String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META))
+		for child in control.get_children():
+			if child is Button:
+				out[key] = (child as Button).text
+			elif child is Label and (child as Label).horizontal_alignment \
+					== HORIZONTAL_ALIGNMENT_RIGHT:
+				out[key] = (child as Label).text
+	return out
+
+## Every rung row the open track carries, as `improvement -> state`. `{}` when no track is up, which
+## is what makes the card's ABSENCE assertable.
+func _rung_track_states() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		out[String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META))] = \
+			String(control.get_meta(HudWorkVocab.RUNG_TRACK_STATE_META))
 	return out
 
 ## **THE `⌃` PRESS, DRIVEN THROUGH THE REAL HANDLER, ON BOTH WEBS AND BOTH GRAMMARS**
@@ -8193,15 +8928,47 @@ func _assert_ready_mark_declares() -> void:
 		_assert_band_panel("declare — …and no turn count, the queue row's date being the sim's own",
 			not plant_mark.tooltip_text.contains(
 				HudComposeVocab.BUILD_TURNS_COUNT_FORMAT.split("%")[0]))
+	# **THE PRESS OPENS A TRACK; THE PICK IS THE DECLARATION** (`docs/plan_standing_upkeep.md` §2.8).
+	# The `⌃` used to queue the source's next rung outright, and an entry names a DESTINATION now — so
+	# the chain the player walks is two acts, and this walks both: press the mark, then press the
+	# TARGET row of the card that came up. The wanted destination is stated per row so the claim is
+	# still about the LINE the sim receives rather than about whichever rung the track happened to
+	# offer first.
+	# **THE MARKS ARE RE-COLLECTED PER ROW, and holding the first pass's nodes is a silent abort.** A
+	# declaration writes the optimistic overlay and re-renders the whole board, so every OTHER row's
+	# button is freed the moment the first pick lands — and `as Button` on a freed object raises
+	# *"Trying to cast a freed object"*, which ends this function mid-way with no `FAIL` line and an
+	# exit status of 0. The labels survive a re-render; the nodes do not.
 	var lines: Array[String] = []
 	for label in marks.keys():
+		# **AND THE BAND IS RE-PUSHED BEFORE EACH ROW, for the reason spelled out below**: the press
+		# runs `Hud._after_pending_change`, which re-renders the SELECTION card too — and this harness
+		# stages that card's occupant as a SEPARATE band, so the board that comes back after a settle
+		# is the other band's and carries none of these rows. A live client cannot reach that, both
+		# dicts coming from one snapshot.
+		_push_bands([_declare_band_fixture()])
+		await _settle()
+		var mark := _ready_mark_buttons().get(label, null) as Button
+		if mark == null:
+			_fail("declare — the ⌃ on `%s` is gone before it was pressed" % label)
+			continue
+		mark.pressed.emit()
+		await _settle()
+		# **THE FURTHEST DESTINATION THE TRACK OFFERS**, which is what makes the claim below a claim
+		# about the TRACK and not merely about the press: each of these three sources has exactly one
+		# reachable rung above where it stands, so the line the sim receives pins which rung the card
+		# put at the top of its selectable set.
+		var row := _rung_track_top_row()
+		if row == null:
+			_fail("declare — the ⌃ on `%s` opened no selectable track row" % label)
+			continue
 		var seen: Array = []
 		var sink := func(payload: Dictionary) -> void: seen.append(payload)
 		_hud.improvement_requested.connect(sink)
-		(marks[label] as Button).pressed.emit()
+		row.pressed.emit()
 		_hud.improvement_requested.disconnect(sink)
 		if seen.is_empty():
-			_fail("declare — pressing the ⌃ on `%s` emitted nothing" % label)
+			_fail("declare — picking a destination on `%s`'s track emitted nothing" % label)
 			continue
 		lines.append(String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", "")))
 	lines.sort()
@@ -8693,12 +9460,17 @@ func _assert_work_fodder_readouts() -> void:
 	if paying.is_empty():
 		return
 	var field: Dictionary = paying[0]
-	var field_rate := _hud._bandpanel._work_row_rate_text(field)
+	var field_rate := _hud._bandpanel._work_row_summary_text(field)
 	_assert_band_panel("fodder — the board row states the feed rate instead of +0.00 (got \"%s\")"
-		% field_rate, field_rate == FODDER_ROW_RATE_FACE)
-	var field_sentence := _hud._bandpanel._work_inspector_sentence(field)
-	_assert_band_panel("fodder — the inspector sentence names the account (got \"%s\")"
-		% field_sentence, field_sentence.contains(FODDER_INSPECTOR_CLAUSE))
+		% field_rate, _accounts_clause(field_rate) == FODDER_INSPECTOR_CLAUSE)
+	# …and the FLOOR rides that same line, which is the clause that moved there when the inspector's
+	# sentence was deleted. Without this the retirement is only half asserted: a line two that had
+	# dropped the floor would satisfy the accounts claim above and lose the one fact the row cannot
+	# otherwise state.
+	_assert_band_panel("fodder — …and line two carries the floor the retired sentence used to (got \"%s\")"
+		% field_rate, field_rate.contains(HudComposeVocab.FLOOR_VALUE_FORMAT
+			% SourceForecast.floor_percent(float(field.get("floor",
+				SourceForecast.DEFAULT_HARVEST_FLOOR)))))
 	var total := _work_head_fodder_total()
 	_assert_band_panel("fodder — the WORK head renders the feed total (got \"%s\")"
 		% ("<none>" if total == null else total.text),
@@ -8710,11 +9482,11 @@ func _assert_work_fodder_readouts() -> void:
 	if hunts.is_empty():
 		return
 	var hunt: Dictionary = hunts[0]
-	var hunt_rate := _hud._bandpanel._work_row_rate_text(hunt)
+	var hunt_rate := _hud._bandpanel._work_row_summary_text(hunt)
 	_assert_band_panel("fodder — a hunt row still headlines its food rate (got \"%s\")" % hunt_rate,
-		hunt_rate == FODDER_CONTROL_HUNT_FACE)
-	_assert_band_panel("fodder — no fodder term reaches a hunt row's sentence",
-		not _hud._bandpanel._work_inspector_sentence(hunt).contains("fodder"))
+		_accounts_clause(hunt_rate) == FODDER_CONTROL_HUNT_FACE)
+	_assert_band_panel("fodder — no fodder term reaches a hunt row's line two (got \"%s\")" % hunt_rate,
+		not hunt_rate.contains("fodder"))
 
 ## **THE INEDIBLE ROW STATES WHAT IT PAYS** (arc #527 follow-up) — the board half of closing the
 ## `+0.00`. Its subject is the RESOLVED `material_yield`, not a rate the compose sheet would project:
@@ -8734,13 +9506,11 @@ func _assert_work_material_readouts() -> void:
 	if paying.is_empty():
 		return
 	var wolf: Dictionary = paying[0]
-	var wolf_rate := _hud._bandpanel._work_row_rate_text(wolf)
+	var wolf_rate := _hud._bandpanel._work_row_summary_text(wolf)
 	_assert_band_panel(
 		"material — the inedible row states its hide instead of +0.00 (got \"%s\")" % wolf_rate,
 		wolf_rate.contains(WORK_ROW_MATERIAL_ID)
-			and wolf_rate.contains(SourceForecast.format_magnitude(WORK_ROW_MATERIAL_AMOUNT)))
-	_assert_band_panel("material — …and its inspector sentence names the material too",
-		_hud._bandpanel._work_inspector_sentence(wolf).contains(WORK_ROW_MATERIAL_ID))
+			and wolf_rate.contains(SourceForecast.format_signed(WORK_ROW_MATERIAL_AMOUNT)))
 	var deer: Array = models.filter(func(m):
 		return String(m.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
 			and String(m.get("key", "")) != String(wolf.get("key", "")))
@@ -8749,7 +9519,40 @@ func _assert_work_material_readouts() -> void:
 	if deer.is_empty():
 		return
 	_assert_band_panel("material — a food-paying hunt row is UNCHANGED, no material term on it",
-		not _hud._bandpanel._work_inspector_sentence(deer[0]).contains(WORK_ROW_MATERIAL_ID))
+		not _hud._bandpanel._work_row_summary_text(deer[0]).contains(WORK_ROW_MATERIAL_ID))
+
+## A board row's line two leads with its ACCOUNTS and closes with its FLOOR, so a claim about what the
+## row HEADLINES reads the leading clause. Split rather than `begins_with`, so a line that stated its
+## account and then stated it again cannot pass an equality claim about the first of them.
+##
+## **IT RETURNS THE FIRST ACCOUNT, NOT THE WHOLE ACCOUNT LIST, and that is exact rather than
+## approximate here.** The clause joiner and the accounts' own `SourceForecast.COMPONENT_SEPARATOR`
+## are the same glyph, so a multi-account line splits between its accounts too — both callers work a
+## source paying exactly ONE account, which is what makes the equality claim meaningful for them, and
+## a fixture that grew a second account would compare an account face against the first of two and
+## fail loudly rather than vacuously.
+##
+## A source with no confirmed yield states no account clause at all and its line two IS the floor,
+## which the same failure covers.
+func _accounts_clause(line_two: String) -> String:
+	return line_two.split(HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR)[0]
+
+## The width line two's ACCOUNTS need, in the label's own font at its own size — the whole line less
+## its trailing FLOOR clause. `rsplit` with a limit of one, because the clause joiner and the accounts'
+## own separator are the same glyph and the floor is the LAST clause; splitting forward would cut
+## after the first account instead.
+##
+## A line carrying no floor clause at all cannot arise (the floor is unconditional), so the one-part
+## case answers the whole line and any future line that lost its floor fails the reachability claim
+## beside this rather than passing quietly.
+func _accounts_clause_width(accounts: Label) -> float:
+	var font := accounts.get_theme_font("font")
+	if font == null:
+		return 0.0
+	var parts := accounts.text.rsplit(HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR, true, 1)
+	var accounts_only: String = String(parts[0]) if parts.size() > 1 else accounts.text
+	return font.get_string_size(accounts_only, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+		accounts.get_theme_font_size("font_size")).x
 
 ## The paired NEGATIVE: a band with no feed-paying source renders NO fodder sibling. Without it every
 ## claim above is satisfied by a head that renders the total unconditionally.
@@ -10977,7 +11780,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 		# RESOLVED take, what this source actually credited to the band's `MaterialStore` this turn.
 		# **It must still stay out of the Food line's Hunted total**: a material is not a meal.
 		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0,
-			"material_yield": [{"material_id": WORK_ROW_MATERIAL_ID, "amount": WORK_ROW_MATERIAL_AMOUNT}]},
+			"material_yield": WORK_ROW_MATERIAL_ROWS.duplicate(true)},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -11868,14 +12671,20 @@ func _assert_build_queue_block(entries: int, where: String, rows_drawn: int = -1
 ## last entry therefore carries `BUILD_TURNS_ROTS`, which must still read as its own hazard face.
 func _assert_build_queue_dates_ascend() -> void:
 	var wanted := [QUEUE_TURNS_HEAD, QUEUE_TURNS_SECOND]
+	# **AND EACH DATE LEADS WITH ITS ENTRY'S OWN LEG** (§2.8) — these are one-leg entries whose meters
+	# are all at zero, so the leg IS the declaration and the verbs are the band fixture's own
+	# `improvement` tokens, in queue order.
+	var verbs := [SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.IMPROVEMENT_TAME]
 	var turn: int = _hud._band_labor.current_turn()
 	var seen: Array[String] = []
 	for row in _build_queue_rows():
 		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
 		seen.append("" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META)))
 	var expected: Array[String] = []
-	for turns in wanted:
-		expected.append(HudSelectionVocab.RUNG_COMPLETES_FORMAT % [turn + int(turns), 0])
+	for i in range(wanted.size()):
+		expected.append(HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [
+			String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[verbs[i]]), 0,
+			turn + int(wanted[i])])
 	expected.append(HudSelectionVocab.RUNG_ROTTING_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
 		DetailFormat.BUILD_TURNS_NEVER_GLYPH, HudSelectionVocab.RUNG_ROTTING_PHRASE, 0])
 	_assert_band_panel("the queue states COMPLETION TURNS off turn %d — %s (want %s)"
@@ -12238,8 +13047,10 @@ func _assert_queue_row_settings() -> void:
 		return
 	var face_label := _find_meta_control(plant_row, HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
 	var wanted_face := String(face_label.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
-	_assert_band_panel("the queue row's job face renders UNCLIPPED — `%s` in %.0fpx"
-			% [wanted_face, face_label.size.x],
+	_assert_band_panel("the queue row's job face renders UNCLIPPED — `%s` needs %.0f of the %.0fpx it has"
+			% [wanted_face, face_label.get_theme_font("font").get_string_size(wanted_face,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+				face_label.get_theme_font_size("font_size")).x, face_label.size.x],
 		face_label.size.x + QUEUE_FACE_WIDTH_TOLERANCE
 			>= face_label.get_theme_font("font").get_string_size(wanted_face,
 				HORIZONTAL_ALIGNMENT_LEFT, -1.0,
@@ -12258,7 +13069,11 @@ func _assert_queue_row_settings() -> void:
 	else:
 		_click_control(animal_row)
 		await _settle()
-		_assert_band_panel("an ANIMAL entry does not expand — there is nothing to configure on a Tame",
+		# **AND THE CLAIM IS ABOUT THE CROP, not about the web.** §2.8 gave the strip a LEG LIST too,
+		# so an entry with published legs expands on either web — this fixture's herd publishes none,
+		# which is the state a Tame that has never been to the wire is in, and what the row must not do
+		# there is invite a click that opens an empty strip.
+		_assert_band_panel("an ANIMAL entry with no published legs does not expand — a Tame commits no species",
 			_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
 	_click_control(plant_row)
 	await _settle()
@@ -12318,8 +13133,21 @@ func _assert_queue_row_settings() -> void:
 	# builder that appended one beside the old.
 	_assert_band_panel("…and never the crop it moved off",
 		not line.contains(QUEUE_CROP_COMMITTED_SPECIES))
-	# Close it, so the states after this one are not rendered with a strip open.
-	_click_control(plant_row)
+	# **CLOSE IT ON A ROW RE-FOUND AFTER THE PICK, not on the one captured before it.** The pick runs
+	# `Hud._emit_assign_labor`, which re-renders the zone and frees every row this function is holding
+	# — and `_click_control` on a freed object raises, which ends this assertion block with no `FAIL`
+	# line and leaves the strip open over every state that follows.
+	var closer: Control = null
+	for row in _build_queue_rows():
+		var face := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_FACE_META)
+		if face != null and not String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)).contains(
+				HudFormat.policy_face(SourceForecast.IMPROVEMENT_TAME)):
+			closer = row
+			break
+	if closer == null:
+		_fail("declare — the PLANT queue row is gone, so its settings strip cannot be closed")
+		return
+	_click_control(closer)
 	await _settle()
 
 ## **THE OPEN STRIP IS PAID FOR, AND THE WIDE DOCK IS WHERE THAT MATTERS** — with the strip CLOSED
@@ -12556,8 +13384,9 @@ func _assert_work_row_and_badge_agree() -> void:
 		checked += 1
 		var source: Dictionary = _hud._band_labor.forage_patch_lookup().get(
 			Vector2i(int(model.get("x", -1)), int(model.get("y", -1))), {})
-		var building := RungGates.rung_in_progress(SourceForecast.LABOR_KIND_FORAGE, source,
-			String(model.get("improvement", "")))
+		var building := RungGates.leg_in_progress(source,
+			RungGates.rung_in_progress(SourceForecast.LABOR_KIND_FORAGE, source,
+				String(model.get("improvement", ""))))
 		var badge_stalled := not building.is_empty() and SourceForecast.build_is_stalled(
 			source, float(building.get("progress", 0.0)), builders)
 		if badge_stalled:
@@ -12594,7 +13423,11 @@ func _work_row_build_faces() -> Dictionary:
 				continue
 			out[(child as Label).text] = {
 				"face": String(control.get_meta(HudWorkVocab.WORK_ROW_BUILD_STATE_META)),
-				"color": (control as Label).get_theme_color("font_color"),
+				# **READ OFF THE `Control`, NOT A `Label`.** A running build's slot is a `Button` since
+				# the destination track landed (it opens the same track), and a `Label` cast on one
+				# yields `null` — which is a crash rather than a wrong colour, and takes every claim in
+				# this block with it. `get_theme_color` answers the override either way.
+				"color": control.get_theme_color("font_color"),
 			}
 			break
 	return out
@@ -13293,7 +14126,7 @@ func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) 
 			and not bool(builders.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
 
 ## …and the queue ROW states the job's full price on its own hover — the work pile and the keeping rate
-## it will owe. **Tooltip only**: the row is five slots and cannot take a sixth, and the price is the
+## it will owe. **Tooltip only**: the row is four slots and cannot take a fifth, and the price is the
 ## other half of the decision the mark above is warning about.
 func _assert_queue_row_states_the_price(where: String) -> void:
 	var rows := _build_queue_rows()
@@ -13372,23 +14205,240 @@ func _render_work_inspector_width_states() -> void:
 	_assert_shell_is_wide(false, "band_panel_work_inspector_width")
 	_assert_band_panel("band_panel_work_inspector_width: a work inspector strip really is open",
 		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META) != null)
-	_assert_work_inspector_sentence_states_every_account("band_panel_work_inspector_width")
+	_assert_work_row_line_two_states_every_account("band_panel_work_inspector_width")
+	_assert_work_inspector_restates_no_accounts("band_panel_work_inspector_width")
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 	_push_bands([_band_fixture()])
 	await _settle()
 
-## GUARD: the open strip's sentence really names both materials — the fixture claim beneath the width
-## one. Asked of the RENDERED strip rather than of `_work_inspector_sentence`, because a builder that
-## composed the line correctly and mounted something else would satisfy a producer-side check.
-func _assert_work_inspector_sentence_states_every_account(state_name: String) -> void:
+## GUARD: the long line really is on the board, naming both materials — the fixture claim beneath the
+## width one. **It used to be asked of the STRIP's sentence and is asked of the ROW's line two now**:
+## that sentence is retired and the account list moved to the row, so the widest line in this tab is
+## the row's, and a fixture whose materials never reached the model would render a short one and pass
+## the width claim for the wrong reason.
+##
+## Asked of the RENDERED tab rather than of `_work_row_summary_text`, because a builder that composed
+## the line correctly and mounted something else would satisfy a producer-side check.
+func _assert_work_row_line_two_states_every_account(state_name: String) -> void:
+	var missing: Array[String] = []
+	for row in WIDE_SENTENCE_MATERIALS:
+		var material := String((row as Dictionary).get("material_id", ""))
+		if not _has_label_containing(_panel, material):
+			missing.append(material)
+	_assert_band_panel("%s: a board row's line two states every account it pays (missing %s)"
+		% [state_name, missing], missing.is_empty())
+
+## GUARD: **the strip does NOT restate what line two says.** That redundancy is what paid for the
+## two-line row — the strip's one-sentence readout was deleted outright, and its 20px is the row's
+## second line — so a strip that quietly grew the sentence back would put the work zone over its box
+## again on the one state that has zero spare (`band_panel_pools_wide_selected`).
+##
+## It is the NEGATIVE half of the claim above and they are asserted together: "line two says it" is
+## satisfied by a tab that says it twice, and "the strip does not" by a tab that lost the accounts
+## entirely.
+func _assert_work_inspector_restates_no_accounts(state_name: String) -> void:
 	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
 	if strip == null:
 		_fail("%s — no work inspector strip to read" % state_name)
 		return
-	var missing: Array[String] = []
+	var restated: Array[String] = []
 	for row in WIDE_SENTENCE_MATERIALS:
 		var material := String((row as Dictionary).get("material_id", ""))
-		if not _has_label_containing(strip, material):
+		if _has_label_containing(strip, material):
+			restated.append(material)
+	_assert_band_panel("%s: …and the strip beneath it restates none of them (found %s)"
+		% [state_name, restated], restated.is_empty())
+
+# ---- THE MATERIALS-ONLY WORK ROW (the reported clip) -------------------------------------------
+#
+# **THE ASSERTIONS WERE NOT BLIND; THE FIXTURES NEVER REACHED THE STATE.**
+# `_assert_zone_content_width_fits` recurses correctly and scales off the LIVE host size, and it has
+# ridden every `_assert_zone_content_fits` call site since the width defect first shipped. What it
+# never saw was a row that overflows: no fixture in this harness gave a FORAGE assignment a
+# `material_yield` at all, and the one two-material fixture (`WIDE_SENTENCE_MATERIALS`) sits on a herd
+# that ALSO pays food — so the row's retired one-slot fall-through took the food branch there and
+# never reaches a row.
+#
+# Reported from play: a row rendering `+0.24 fibre · +0.34 grape` with **no source name whatever**,
+# and every `+` stepper on the board sliced down its middle. One over-wide rate `Label` (no
+# `clip_text`, no `text_overrun_behavior`, so its combined minimum IS its whole text) set the ROW's
+# minimum past the 356px box; the name Label, the row's only expanding child, was allocated
+# `max(0, leftover)` = 0; and the zone `Control`, laid out at its own minimum inside a host that
+# `clip_contents`, took the right edge off everything.
+
+## The reported band: a forage patch paying MATERIALS ALONE, beside the ordinary deer hunt as the
+## control — a row that still pays food must be UNCHANGED, or "shorten the rate" would be satisfied by
+## a board that shortened every rate on it. The wolf is deliberately left off, so the forage row is the
+## only overflowing one and a failure names it rather than naming whichever row measured widest.
+func _material_forage_band_fixture(rows: Array, tile: Vector2i) -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": tile.x, "target_y": tile.y,
+			"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+			"material_yield": rows.duplicate(true)},
+		{"kind": "hunt", "workers": 2, "fauna_id": EXTRACTIVE_ROW_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
+			"realized_yield": 0.46},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+func _render_work_material_width_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+
+	# THE REPORTED ROW — two materials, no food, no fodder. The LEFT dock is the shipped default edge
+	# and the narrowest box the work zone is ever given; the same row on a bottom dock has 789px to sit
+	# in and says nothing.
+	_push_bands([_material_forage_band_fixture(
+		MATERIAL_FORAGE_ROWS, Vector2i(MATERIAL_FORAGE_X, MATERIAL_FORAGE_Y))])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_material_forage")
+	_assert_shell_is_wide(false, "band_panel_work_material_forage")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_material_forage")
+	_assert_work_row_states_its_materials("band_panel_work_material_forage",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_FORAGE_X, MATERIAL_FORAGE_Y],
+		MATERIAL_FORAGE_ROWS)
+
+	# THE MEASURED WORST CASE — four cash crops on one patch.
+	_push_bands([_material_forage_band_fixture(
+		MATERIAL_CROPS_ROWS, Vector2i(MATERIAL_CROPS_X, MATERIAL_CROPS_Y))])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_material_crops")
+	_assert_shell_is_wide(false, "band_panel_work_material_crops")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_material_crops")
+	_assert_work_row_states_its_materials("band_panel_work_material_crops",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
+		MATERIAL_CROPS_ROWS)
+	# The NARROWEST box the work zone is ever given, so the name column is measured where it binds.
+	_report_work_row_name_column("band_panel_work_material_crops",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
+
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## GUARD: **both lines of the row render WHOLE** — the identity on line one and the accounts on line
+## two — which is the half of this defect no width assertion can see. A zone whose content fits says
+## nothing about how the row SPENT the room: the name Label was allocated **1px** (Godot's floor, not
+## zero) and stayed a perfectly valid, perfectly findable node with its `text` intact, so every
+## text-based claim about it passed while it rendered as nothing at all.
+##
+## **BOTH CLAIMS ARE *IT IS NOT ELIDED*, measured against the label's OWN font at its OWN size** —
+## `_label_text_width`, the faction page's keyless-key scan one surface over, with its
+## `KEYLESS_KEY_WIDTH_TOLERANCE` for the sub-pixel disagreement between a container's rounded layout
+## and the text server's float. That is a stronger claim than the RELATION it replaced (the name gets
+## at least the retired 46px rate column's width), and it is the one the two-line row is FOR: the rate
+## slot is gone, so there is no longer a sibling column to state a relation against, and what the row
+## now promises is that neither line has to be cut at all.
+##
+## Two claims ride with them and the set is what makes any of them worth anything: the accounts line
+## really did state EVERY material (otherwise "the lines fit" is satisfied by a board that stopped
+## rendering the accounts), and it states them IN FULL rather than naming one and counting the rest —
+## the cap the 46px slot needed and a full-width line does not.
+func _assert_work_row_states_its_materials(state_name: String, row_name: String,
+		rows: Array) -> void:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	var name_label: Label = null
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text == row_name:
+			name_label = label
+			break
+	if name_label == null:
+		_fail("%s — no work row named \"%s\" to judge" % [state_name, row_name])
+		return
+	_assert_band_panel(
+		"%s: the row's NAME renders whole, un-elided (%.0f of the %.0f its own font needs)"
+			% [state_name, name_label.size.x, _label_text_width(name_label)],
+		name_label.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= _label_text_width(name_label))
+	# The accounts Label is reached from the NAME by walking up to the row and back down by META, so
+	# the pair is read off ONE row: a second text match over the panel is free to land on another.
+	var accounts := _work_row_accounts_label(name_label)
+	if accounts == null:
+		_fail("%s — the row has no accounts line to judge" % state_name)
+		return
+	var missing: Array[String] = []
+	for row in rows:
+		var material := String((row as Dictionary).get("material_id", ""))
+		if not accounts.text.contains(material):
 			missing.append(material)
-	_assert_band_panel("%s: the strip's sentence states every account it pays (missing %s)"
-		% [state_name, missing], missing.is_empty())
+	_assert_band_panel("%s: line two states EVERY material in full (missing %s of \"%s\")"
+		% [state_name, missing, accounts.text], missing.is_empty())
+	# **THE CLAIM IS ABOUT THE ACCOUNTS, NOT THE WHOLE LINE, and the difference is the FLOOR clause.**
+	# Line two closes with `50% left standing`, which costs ~96px, and the four-cash-crop worst case
+	# asks 332px of a 322px line WITH it — so the trim lands on the floor and asserting the whole line
+	# un-elided would fail on the one fixture built to be the widest. What the two-line row promises is
+	# that the ACCOUNTS never have to be cut, which is the reading the retired 46px slot could not give
+	# at any width, and the claim beneath restores the floor's reachability.
+	var accounts_width := _accounts_clause_width(accounts)
+	_assert_band_panel(
+		"%s: …and every account renders whole, un-elided (%.0f of the %.0f they need)"
+			% [state_name, accounts.size.x, accounts_width],
+		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width)
+	# GUARD: **nothing on this line is unreachable.** The floor's only home is line two — the
+	# inspector's sentence is retired and the row's own tooltip carries the floor's ZONE prose rather
+	# than its percentage — so where the trim reaches it the hover has to.
+	_assert_band_panel("%s: …and the WHOLE line, floor included, rides its hover (got \"%s\")"
+		% [state_name, accounts.tooltip_text], accounts.tooltip_text == accounts.text)
+
+## The widest row name the SHIPPED roster can produce. `fauna_config.json`'s longest `display_name` is
+## `Thunder Mammoths` (tied with `Snow Hare Warren`, one character each side of it in pixels), and
+## `WORK_ROW_HUNT_FORMAT` is what a board row wraps it in — so this is the string the name column has
+## to hold if a real board is never to elide. It is stated rather than scanned because the harness
+## pushes no fauna roster; re-derive it if the config's longest name moves.
+const WIDEST_SHIPPED_ROW_NAME := "Thunder Mammoths"
+
+## REPORT: **what the name column measures against the widest name the game can produce.** No fixture
+## on this board can make that claim for itself — every row here is named `Forage (nn, nn)` or a short
+## species, so the un-elided assertions above pass on a column half this wide — and the number is what
+## says whether the accounts leaving line one bought enough width to close the name-format question.
+##
+## **IT PRINTS RATHER THAN ASSERTS, DELIBERATELY.** Measured after the two-line row landed, the
+## narrow shell's column is **146px** and `Hunt Thunder Mammoths` needs **164** — so the longest
+## shipped name still elides by 18px in a side dock, and whether that is answered by a shorter row
+## format, a wider flank or nothing at all is a design decision rather than a defect this harness may
+## declare. A failing assertion would state one of those answers; a printed margin states the fact and
+## leaves the choice, the `_report_zone_content_extent` rule.
+func _report_work_row_name_column(state_name: String, row_name: String) -> void:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	var name_label: Label = null
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text == row_name:
+			name_label = label
+			break
+	if name_label == null:
+		_fail("%s — no work row named \"%s\" to measure the name column on" % [state_name, row_name])
+		return
+	var font := name_label.get_theme_font("font")
+	if font == null:
+		_fail("%s — the row's name Label resolves no font to measure with" % state_name)
+		return
+	var widest := font.get_string_size(HudWorkVocab.WORK_ROW_HUNT_FORMAT % WIDEST_SHIPPED_ROW_NAME,
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, name_label.get_theme_font_size("font_size")).x
+	print("band_panel_preview: %s — the name column is %.0fpx; the widest shipped row name (\"%s\") needs %.0f (%.0f spare)"
+		% [state_name, name_label.size.x, HudWorkVocab.WORK_ROW_HUNT_FORMAT % WIDEST_SHIPPED_ROW_NAME,
+			widest, name_label.size.x - widest])
+
+## A board row's ACCOUNTS line, reached from its NAME label. It walks up to the row's own
+## `PanelContainer` and back down by `WORK_ROW_ACCOUNTS_META`, because the two live on different
+## lines of one two-line row and nothing but the row encloses both.
+func _work_row_accounts_label(name_label: Label) -> Label:
+	var walk: Node = name_label
+	while walk != null and not (walk is PanelContainer):
+		walk = walk.get_parent()
+	if walk == null:
+		return null
+	return _find_meta_control(walk, HudWorkVocab.WORK_ROW_ACCOUNTS_META) as Label

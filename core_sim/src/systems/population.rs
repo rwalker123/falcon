@@ -1535,7 +1535,9 @@ mod demographics_tests {
 #[cfg(test)]
 mod food_flow_tests {
     use super::band_food_flow;
-    use crate::components::{LaborAllocation, LaborAssignment, LaborTarget, SourceYield};
+    use crate::components::{
+        LaborAllocation, LaborAssignment, LaborTarget, SourceYield, TakeSelection,
+    };
 
     use bevy::math::UVec2;
 
@@ -1545,6 +1547,7 @@ mod food_flow_tests {
                 tile: UVec2::new(0, 0),
                 floor: 0.5,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: 4,
             kit: None,

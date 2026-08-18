@@ -32,6 +32,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_cultivation, advance_herds, advance_labor_allocation, build_fraction,
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
@@ -1175,8 +1176,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         let patch = registry
             .patch_mut(source)
             .expect("the site carries a patch");
-        patch.cultivation_cost = cost;
-        patch.cultivation_progress = cost * HALF_BUILT;
+        patch.set_ladder_position(cost * HALF_BUILT, &core_sim::LadderConfig::builtin());
         patch.owner = Some(FactionId(0));
         patch.species = Some(crop);
         patch.biomass = patch.carrying_capacity * STOCKED;
@@ -1225,6 +1225,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                             tile: source,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
                             species: None,
+                            take_species: TakeSelection::EVERYTHING,
                         },
                         workers: GATHERERS,
                         kit: None,

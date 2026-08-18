@@ -93,12 +93,21 @@ paths:
     made the list read as a FOURTH resource standing beside the stocks; the indent under `Foraging`
     says "these decompose the row above" without a word, and always-visible is what lets a player see
     at a glance that (on the reference tile) **62% of what grows here is not food**.
-  - **EACH ROW STATES ITS ABSOLUTE, and the three sum to the `Foraging` ceiling EXACTLY.** A share is
-    a ratio and cannot be added to anything. The biomass is `percent × patch_carrying_capacity` off
-    the ALREADY-ROUNDED percent (so a row's two numbers can never disagree), with the same
-    largest-share remainder fold applied a second time — `DetailFormat._flora_biomass_split`. It is
-    the CEILING, not the standing stock: the shares describe what the ground GROWS, a property of the
-    patch rather than of how hard it has lately been worked.
+  - **EACH ROW STATES ITS ABSOLUTE, AND THAT ABSOLUTE IS THE WIRE'S OWN.**
+    `ForagePatchState.compositionStandingBiomass` is index-aligned with the basket and folded onto
+    each entry by the decoder, so `DetailFormat._flora_biomass_split` READS it. It used to re-derive
+    `percent × stock` off the already-rounded percent — which agreed with the wire in production and
+    is exactly the shape this arc has shipped three defects of: two seams answering one question,
+    drifting the first time either moves. The compose sheet's species chips read the same key, so
+    the card and the sheet cannot come to spell one stand two ways.
+    - **THE ROUNDING RECONCILIATION STAYS, and it is display-only.** A share is a ratio and cannot be
+      added to anything, so each figure is rounded and the remainder folded into the largest row —
+      the same fold `flora_basket_entries` applies to the percentages — and the column therefore sums
+      to the `Foraging` row above it EXACTLY. That adjusts PRESENTATION of the wire's numbers; it
+      does not produce them.
+    - **A BASKET THE WIRE QUOTED NO QUANTITY FOR FALLS BACK TO THE SHARE SPLIT, all-or-nothing.** A
+      column mixing stated and derived figures would be two producers inside one list; the fallback
+      is the "the server stated nothing" case, not a second opinion about a stand it did state.
   - **EACH ROW LEADS WITH ITS CROP ROLE** (`FoodIcons.for_crop_role`, from `FloraShareInfo.role`):
     staple / fodder / cash. The marks are **BUNDLED ART** (`CropRoleSprites`, issue #463) rendered as
     `[img]` BBCode, with the three borrowed emoji (🌾 / 🐄 / 🧵) as a live fallback — see

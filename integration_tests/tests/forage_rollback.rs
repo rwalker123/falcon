@@ -75,7 +75,7 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
             .values()
             .next()
             .expect("at least one forage patch seeded");
-        (patch.tile, patch.cultivation_progress, patch.owner)
+        (patch.tile, patch.ladder_position(), patch.owner)
     };
     assert_eq!(progress0, 0.0, "a freshly-seeded patch is uncultivated");
     assert_eq!(owner0, None);
@@ -86,7 +86,7 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
         let patch = registry.patch_mut(tile).expect("mutable patch");
         // A completed rung is `progress >= cost > 0` now, so the fixture pays a nominal one-worker
         // job rather than writing a bare `1.0` that no longer completes anything.
-        patch.complete_cultivation(FactionId(3));
+        patch.complete_cultivation(FactionId(3), &core_sim::LadderConfig::builtin());
         assert!(patch.is_cultivated());
     }
 
@@ -96,7 +96,8 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(tile).expect("patch present after restore");
     assert_eq!(
-        patch.cultivation_progress, progress0,
+        patch.ladder_position(),
+        progress0,
         "cultivation progress must rewind"
     );
     assert_eq!(patch.owner, owner0, "cultivation owner must rewind");

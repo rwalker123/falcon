@@ -11,6 +11,7 @@ use sim_runtime::{
 use crate::{
     generations::GenerationId,
     grid_utils::{HEX_CORNER_COUNT, HEX_DIRECTION_COUNT},
+    intensification::RungKey,
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
@@ -1558,6 +1559,66 @@ pub fn available_workers(working: Scalar) -> u32 {
     (working.raw().max(0) / Scalar::SCALE) as u32
 }
 
+/// **WHICH PLANTS A GATHERING CREW CARRIES HOME** — the take selection a `Forage` assignment rides
+/// (`docs/plan_flora_roster.md`; the selective-gather slice). A tile's basket mixes food with fibre,
+/// so *what am I here for* is a decision beside *how hard do I press* (the harvest floor).
+///
+/// **Empty means take EVERYTHING**, which is the default and is exactly today's behaviour — a crew
+/// that names nothing fills its baskets from the whole stand. Naming one or more species leaves the
+/// rest standing: only the named plants' share of the biomass is available, and only their rows are
+/// converted and drawn down.
+///
+/// **Sorted and deduplicated by construction, not by presentation.** The selection reaches the
+/// snapshot, and a set whose iteration order varies between two builds has already cost this repo a
+/// ~50%-of-runs determinism flake (`flora.md` → the share-denominator note). A `BTreeSet` makes the
+/// unsorted state unrepresentable rather than merely unusual, so no call site has to remember to
+/// sort. Blank keys are dropped at construction for the same reason a blank
+/// [`LaborTarget::Forage::species`] is: `""` is not a plant.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TakeSelection {
+    /// Private so the ordered, blank-free invariant has exactly one enforcing constructor.
+    species: BTreeSet<String>,
+}
+
+impl TakeSelection {
+    /// **The whole basket** — what a crew that named nothing carries home, and the default. Named
+    /// so a quote that is deliberately about the *land* rather than about one crew says which of the
+    /// two it means, instead of passing an anonymous empty set.
+    pub const EVERYTHING: Self = Self {
+        species: BTreeSet::new(),
+    };
+
+    /// Build a selection from whatever the player named, trimming blanks and folding duplicates.
+    pub fn from_keys<I, S>(keys: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self {
+            species: keys
+                .into_iter()
+                .map(|key| key.as_ref().trim().to_string())
+                .filter(|key| !key.is_empty())
+                .collect(),
+        }
+    }
+
+    /// **Is this the whole basket?** — the empty selection, and the only reading `is_empty` has.
+    pub fn is_everything(&self) -> bool {
+        self.species.is_empty()
+    }
+
+    /// Whether a named species is one this crew carries home. Always `true` on the whole basket.
+    pub fn takes(&self, species: &str) -> bool {
+        self.is_everything() || self.species.contains(species)
+    }
+
+    /// The named keys, in the collection's own ascending order — what the wire publishes.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.species.iter().map(String::as_str)
+    }
+}
+
 /// A single labor demand a band can staff from its working-age pool (Early-Game Labor, slice 3a):
 /// an in-range food source (Forage tile / Hunt herd) or a band-wide role (Scout / Warrior).
 /// The band is a labor pool drawing subsistence from many sources at once
@@ -1588,6 +1649,15 @@ pub enum LaborTarget {
         /// Inert at every floor — the patch records the commitment, so changing the selection after
         /// the ground is committed does nothing until the patch goes feral.
         species: Option<String>,
+        /// **WHICH PLANTS THIS CREW CARRIES HOME** — see [`TakeSelection`]. Empty (the default)
+        /// takes the whole basket, exactly as every assignment did before the selective gather.
+        ///
+        /// **It is NOT [`LaborTarget::Forage::species`]**, which is the *commit* crop a
+        /// `Cultivate`/`Sow` names and which is inert until an improvement completes. This one is
+        /// live at rung 1, on the take itself. Like the floor, it is a mutable property of the same
+        /// source: changing it on the same tile replaces the assignment rather than adding a second
+        /// (see [`LaborTarget::same_source`]).
+        take_species: TakeSelection,
     },
     /// Hunt a fauna group by id, stopping at a **floor**. The band tracks a roaming herd up to
     /// `band_work_range + hunt_leash_tiles` (leashed follow); past that the assignment lapses.
@@ -1821,7 +1891,8 @@ impl LaborAssignment {
 /// escapement the herd could have spared: an animal you didn't kill was never produced, it is still
 /// alive (`fauna::forecast_production_and_take`).
 ///
-/// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠, answered by the sim
+/// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠ ([`take_overdraws`]),
+/// answered by the sim
 /// rather than derived by the client from `actual > sustainable`. That comparison stopped working when
 /// the hunt began taking whole animals (slice 8): a Sustain hunt is **escapement to `K/2`**, so it
 /// lands the herd exactly on its most-productive biomass and is *sustainable by construction* — but it
@@ -1829,9 +1900,10 @@ impl LaborAssignment {
 /// every kill turn. A ⚠ on the turn you correctly harvest a mammoth trains the player to ignore the
 /// one signal that matters. So `sustainable` keeps reporting the honest **long-run MSY rate** ("this
 /// herd sustains ~0.78/turn on average"), `actual` swings — that swing is *true*, and it is the
-/// mechanic — and this flag says whether the policy overdraws at all. It is false for Sustain and the
-/// investment rungs (which sit on Sustain's escapement floor) and for every managed rung-3 source;
-/// true for Surplus/Deplete/Eradicate, which genuinely draw down toward the collapse threshold.
+/// mechanic — and this flag says whether the take overdraws at all. It is false at any floor on or
+/// above the food peak and for every managed rung-3 source; below the peak it is **also** a question
+/// about the crew, because a floor these hands cannot reach is a floor nothing is drawn below. See
+/// [`take_overdraws`], which is the only thing that may write this field.
 ///
 /// `realized` = **the steady headline yield**, a **FORWARD PROJECTION**: the average food/turn this
 /// source will deliver over the next `labor_config.yield_average_horizon_turns` turns, computed by
@@ -2903,7 +2975,38 @@ pub enum BuildJob {
     ExtendPen,
 }
 
-/// One declared build: which source, and what the player said they were raising there.
+impl BuildJob {
+    /// **WHERE THE PLAYER SAID THE LAND SHOULD END UP** — the rung this entry climbs *to*, which is
+    /// not the same thing as the rung it is raising this turn.
+    ///
+    /// # A QUEUE ENTRY NAMES A DESTINATION, NOT A RUNG
+    ///
+    /// The four verbs always were destinations — `cultivate` means *take it to Cultivated*, `sow`
+    /// means *take it to Field* — and with one position per source (`docs/plan_standing_upkeep.md`
+    /// §2.8) that reading becomes literal: an entry lays **every leg between where the source stands
+    /// and here**, in order, and stays at the head until it arrives. So `sow` on untended ground is
+    /// two legs and costs the whole branch, where it used to skip the tended rung.
+    ///
+    /// # ⛔ IT IS DERIVED, NOT STORED, AND THAT IS DELIBERATE
+    ///
+    /// A destination stored beside `declared` would be a **second authority for one fact**: the map
+    /// from verb to rung is total and exhaustive ([`crate::intensification::RungKey::built_by`]), so
+    /// the two could only ever agree or drift, and this arc has already shipped three defects of
+    /// exactly that shape. If a future order ever names a rung its verb does not determine — *"take
+    /// it to rung 4"* with one verb serving several — this becomes a field, and the one call site
+    /// that reads it is here.
+    pub fn destination(self) -> RungKey {
+        match self {
+            BuildJob::Rung(improvement) => RungKey::built_by(improvement),
+            // A ring is fencing work on a pen that already stands, so its destination is the rung it
+            // widens: there is no leg to climb, only more of the one the source is already on.
+            BuildJob::ExtendPen => RungKey::AnimalPen,
+        }
+    }
+}
+
+/// One declared build: which source, and **where the player said the land should end up**
+/// ([`BuildJob::destination`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,
@@ -3435,18 +3538,52 @@ pub fn floor_is_valid(floor: f32) -> bool {
     floor.is_finite() && (0.0..=1.0).contains(&floor)
 }
 
-/// **Does a take at this floor draw the stock below what it sustains?** — THE ⚠ predicate
-/// ([`SourceYield::overdraws`]).
+/// **Is this floor set below the food peak?** — the INTENT half of the ⚠ predicate, and on its own
+/// **not** the ⚠: publish [`SourceYield::overdraws`] through [`take_overdraws`], never through this.
 ///
-/// It is `floor < MSY_BIOMASS_FRACTION`: *"you are drawing this below the food peak"*. The sustained
-/// take `r·fK·(1−f)` peaks at `f = 0.5`, so a floor at or above the peak cannot be an overdraw and a
-/// floor below it always is.
+/// It is `floor < MSY_BIOMASS_FRACTION`: *"you are asking to draw this below the food peak"*. The
+/// sustained take `r·fK·(1−f)` peaks at `f = 0.5`, so a floor at or above the peak cannot be an
+/// overdraw whatever the crew, and a floor below it is one the moment a crew can get there.
 ///
 /// **Deliberately NOT `actual > sustainable`.** A first harvest of a stocked source is its
 /// accumulated stock and exceeds one turn's regrowth under *every* floor, the peak included, so the
-/// comparison mis-fires exactly where the player most needs the ⚠ to be trustworthy.
+/// comparison mis-fires exactly where the player most needs the ⚠ to be trustworthy. That is why the
+/// ability half below is a question about the crew's **throughput**, not about the take it happened
+/// to land this turn.
 pub fn floor_overdraws(floor: f32) -> bool {
     floor < crate::fauna::MSY_BIOMASS_FRACTION
+}
+
+/// **Does this take draw the stock below what it sustains?** — THE ⚠ predicate
+/// ([`SourceYield::overdraws`]), and the **only** thing that may write that field.
+///
+/// Two conjuncts, and the ⚠ is a lie without either:
+///
+/// - **INTENT** — [`floor_overdraws`]: the dial is set below the food peak.
+/// - **ABILITY** — this crew can actually get the stock down there. It must out-take the biggest
+///   one-turn regrowth anywhere in the band it has to cross (`peak_regrowth_in_band`, from the
+///   source's own curve): while the crew's throughput is smaller than the regrowth at some stock in
+///   `floor·K ..= B`, the stock stalls at that stock and holds, and a floor it never reaches is a
+///   floor nothing is being overdrawn to.
+///
+/// Both terms are **biomass per turn**, so a caller must not hand one of them a provisions rate.
+///
+/// **The regrowth is floored at zero, and that is what keeps a crew of NOBODY out of the ⚠.** A herd
+/// past its Allee threshold regrows *negatively* — it declines whether or not anyone hunts it — so an
+/// unfloored comparison makes the empty crew's `0.0` "out-take" the decline and warn about a source
+/// nobody is touching. Floored, the statement reads *"a declining stock needs only a positive take to
+/// be drawn to the floor, and no take at all draws nothing"*, which is the honest one.
+///
+/// **Why ability is not "is the stock falling this turn".** The regrowth curve peaks at `K/2`, and an
+/// overdraw floor is by definition below it — so a crew descending from a full source has the peak
+/// still to cross, and one that merely out-takes today's regrowth can settle *at* the peak and hold
+/// there forever. Both surfaces used to disagree about that case ([reported from play] a herd at
+/// `81%` of `K` with four herders and a `39%` floor: the tile card said *overdrawing*, the compose
+/// sheet said *settles at 92%*). The whole point of stating the predicate here is that **every
+/// surface that says "overdrawing" reads one function** — the mark, the tooltip, the map badge and
+/// the compose sheet's verdict are readings of this, not four opinions about it.
+pub fn take_overdraws(floor: f32, crew_biomass_per_turn: f32, peak_regrowth_in_band: f32) -> bool {
+    floor_overdraws(floor) && crew_biomass_per_turn > peak_regrowth_in_band.max(0.0)
 }
 
 /// **Is a raid at this floor a SERIES of trips** — repeated full-cap runs to the band and back until
@@ -3764,6 +3901,54 @@ mod tests {
         );
     }
 
+    /// **THE ABILITY CONJUNCT, at its three interesting points.** The ⚠ needs both halves, so the
+    /// same below-peak floor answers differently for a crew that can make the descent and one that
+    /// cannot — and a floor at or above the peak stays dark at any crew size whatever.
+    #[test]
+    fn the_overdraw_needs_the_crew_to_reach_the_floor_as_well_as_the_dial() {
+        /// The biggest one-turn regrowth standing between a fixture's floor and its stock.
+        const PEAK_REGROWTH: f32 = 10.0;
+        let below_peak = crate::fauna::MSY_BIOMASS_FRACTION - 0.1;
+
+        assert!(
+            take_overdraws(below_peak, PEAK_REGROWTH + 1.0, PEAK_REGROWTH),
+            "a crew that out-takes the regrowth it has to cross reaches the floor — the ⚠"
+        );
+        assert!(
+            !take_overdraws(below_peak, PEAK_REGROWTH - 1.0, PEAK_REGROWTH),
+            "one that does not settles above the floor and overdraws nothing"
+        );
+        assert!(
+            !take_overdraws(
+                crate::fauna::MSY_BIOMASS_FRACTION,
+                PEAK_REGROWTH * 100.0,
+                PEAK_REGROWTH
+            ),
+            "and no crew makes a take AT the peak an overdraw — the first harvest rationale"
+        );
+    }
+
+    /// **A SOURCE NOBODY IS WORKING IS NEVER AN OVERDRAW, even one that is dying on its own.** Below
+    /// its Allee threshold a herd's one-turn regrowth is *negative*, so an unfloored ability test
+    /// would let an empty crew's `0.0` "out-take" the decline and warn about a herd it is not
+    /// touching. The regrowth is floored at zero for exactly this.
+    #[test]
+    fn a_collapsing_source_no_one_works_carries_no_warning() {
+        /// A herd past its Allee threshold, losing biomass every turn whether or not it is hunted.
+        const DECLINING: f32 = -4.0;
+        const NOBODY: f32 = 0.0;
+        let below_peak = crate::fauna::MSY_BIOMASS_FRACTION - 0.1;
+
+        assert!(
+            !take_overdraws(below_peak, NOBODY, DECLINING),
+            "an unstaffed row draws nothing, so it overdraws nothing"
+        );
+        assert!(
+            take_overdraws(below_peak, f32::EPSILON, DECLINING),
+            "…while any real take does reach a floor the stock is already falling toward"
+        );
+    }
+
     /// **A floor is valid iff it is a finite fraction of `K`.** The command boundary rejects
     /// everything else rather than clamping (`docs/plan_harvest_floor.md` §4).
     #[test]
@@ -3785,6 +3970,7 @@ mod tests {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             workers: take,
             kit: None,
@@ -3952,16 +4138,19 @@ mod tests {
             tile,
             floor: DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let deplete = LaborTarget::Forage {
             tile,
             floor: 0.15,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let other_tile = LaborTarget::Forage {
             tile: UVec2::new(5, 6),
             floor: DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         // Same tile, different FLOOR → same source (the floor is a mutable property).
         assert!(sustain.same_source(&deplete));
@@ -3992,6 +4181,7 @@ mod tests {
             tile,
             floor: DEFAULT_ESCAPEMENT_FLOOR,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         let source = BuildSource::Patch(tile);
         let mut allocation = LaborAllocation::default();
@@ -4012,6 +4202,7 @@ mod tests {
             tile,
             floor: 0.15,
             species: None,
+            take_species: TakeSelection::EVERYTHING,
         };
         allocation.set_assignment(deplete.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].target, deplete);
@@ -4054,6 +4245,7 @@ mod tests {
                 tile: UVec2::new(9, 9),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
                 species: None,
+                take_species: TakeSelection::EVERYTHING,
             },
             0,
             10,

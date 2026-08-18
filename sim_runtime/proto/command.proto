@@ -271,6 +271,18 @@ message AssignLaborCommand {
   // Ignored by the band-wide roles (scout/warrior), which consume no kit component.
   // Appended (append-only).
   optional string kit_id = 11;
+  // WHICH PLANTS A FORAGE CREW CARRIES HOME (the selective gather) - flora_config.json species keys.
+  // EMPTY means take the whole basket, which is the default and is byte-identical to every command
+  // sent before this field existed. Naming one or more leaves the rest of the stand standing.
+  //
+  // It is NOT `species` above: that is the COMMIT crop a Cultivate/Sow names, inert until the
+  // improvement completes, and the two are independent. A named species that is not in THIS tile's
+  // basket, or that the roster does not know, is a COMMAND FAILURE with a reason - never silently
+  // dropped, because a dropped selection looks exactly like "take everything" on every readout.
+  //
+  // Order and duplicates do not matter: the sim sorts and deduplicates on construction.
+  // Ignored by every non-forage role. Appended (append-only).
+  repeated string take_species = 12;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.

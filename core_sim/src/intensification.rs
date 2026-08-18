@@ -564,7 +564,7 @@ pub const BUILD_GATE_OPEN: &str = "";
 /// **Every entry is quoted at the FULL POOL**, waiting ones included — that is what *all hands on the
 /// head* means for everything below it, and it is why `balance` is the balance at `builders` rather
 /// than at whatever this source is funded at this turn.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BuildQuote {
     /// **The job, whole** — [`RungDef::build_cost`] at this source's own multiplier, and the bar the
     /// meter must reach whatever the pool is carrying. **A kit never moves it** (§4.8): gear is a
@@ -583,18 +583,78 @@ pub struct BuildQuote {
     /// is no answer"*, and at the head of a staffed queue it is [`BuildTurns::Blocked`] carrying
     /// this cause.
     pub gate: BuildGate,
+    /// **THE LEGS THIS ENTRY STILL HAS TO LAY**, in climb order, first-incomplete first
+    /// ([`BuildLeg`]). One entry for a job that climbs one rung; several for a `sow` ordered on
+    /// untended ground, which lays the tended rung and then the Field.
+    ///
+    /// **Empty means the destination is already reached** — nothing left to climb.
+    pub legs: Vec<BuildLeg>,
 }
+
+/// **ONE STEP OF A QUEUE ENTRY'S CLIMB** — a rung the entry has still to raise, and what it owes on
+/// it *from where the source stands now* (`docs/plan_standing_upkeep.md` §2.8).
+///
+/// # ⛔ THE WORK IS REMAINING, NOT THE RUNG'S SPAN
+///
+/// A patch already 30 units into a Cultivate owes **20** on that leg, not 50. That is the whole of
+/// *"a previous improvement is a receipt, not a discount"*: the player is never asked to buy work
+/// they have already paid for, and never given work they have not.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BuildLeg {
+    /// The rung this leg raises.
+    pub rung: RungKey,
+    /// Work units still owed on it, from the source's current position.
+    pub work_remaining: f32,
+}
+
+/// **A LEG AS THE WIRE CARRIES IT** — a [`BuildLeg`] with the **chained** countdown the publish pass
+/// stamps on it.
+///
+/// The chain is the queue's own arithmetic one level down: a leg's turns are everything above it
+/// plus its own span at the band's full builders pool, so the last leg's number equals the entry's
+/// `buildTurnsRemaining`. It is separate from `BuildLeg` because the work is a fact about the
+/// *source* while the date is a fact about the *queue*, and only the publish pass can see the latter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PublishedBuildLeg {
+    pub leg: BuildLeg,
+    /// `None` is the wire's *"no estimate"*, exactly as the entry's own countdown uses it.
+    pub turns: Option<BuildTurns>,
+}
+
+/// **A LEG WITH NOTHING LEFT TO PAY** — the `work_remaining` of a rung the source has already
+/// covered. Named because a leg list is built by clamping every rung's span against the position,
+/// and a zero-width leg is *"already yours"* rather than *"free"*.
+pub const LEG_ALREADY_PAID: f32 = 0.0;
 
 impl BuildQuote {
     /// This entry's **own span**, before any chaining — [`build_turns_estimate`] over the four.
+    ///
+    /// **It is quoted over the WHOLE climb**, `Σ legs`, not over the rung in flight: an entry names a
+    /// destination, so *"how long until this is done"* is how long until the source arrives there. A
+    /// `sow` on untended ground therefore quotes both legs from the first turn, which is the number
+    /// the player is deciding against.
     pub fn turns(&self, builders: u32) -> Option<BuildTurns> {
+        // **THE BANKED WORK STAYS IN THE PAIR, and the bar moves out to cover the whole climb.**
+        // `build_turns_estimate` distinguishes *"nothing started"* from *"a meter carrying work"* by
+        // `done`, and that is what mints `Holding` / `Rotting` — a meter the player has paid into has
+        // promised something. Passing a bare remainder against a zero `done` would erase that and
+        // publish "no estimate" for every stalled build.
         build_turns_estimate(
-            self.cost,
+            self.banked + self.work_remaining(),
             self.banked,
             self.balance,
             self.gate.holds(),
             builders,
         )
+    }
+
+    /// Work still owed on the whole climb — `Σ legs`, or the rung's own remainder for a job whose
+    /// web still carries per-rung meters.
+    pub fn work_remaining(&self) -> f32 {
+        if self.legs.is_empty() {
+            return (self.cost - self.banked).max(LEG_ALREADY_PAID);
+        }
+        self.legs.iter().map(|leg| leg.work_remaining).sum()
     }
 }
 
@@ -920,6 +980,21 @@ impl RungBranch {
             RungBranch::Animal => "animal",
         }
     }
+
+    /// **THE WILD RUNG THIS BRANCH STANDS ON BEFORE ANY WORK IS DONE** — the coded twin of
+    /// [`FIRST_RUNG_ORDER`], and the floor [`RungStanding::at`] starts its walk from. A branch's
+    /// order-1 rung is what a source with a position of zero already *holds*: there is nothing to
+    /// build on it, so it costs nothing to have reached.
+    ///
+    /// Exhaustive, like [`RungKey::above`] — a third web fails to compile until someone states where
+    /// its ladder starts. `the_coded_root_is_the_shipped_ladders_own_first_rung` pins it against the
+    /// records' own `order`.
+    pub fn root_rung(self) -> RungKey {
+        match self {
+            RungBranch::Plant => RungKey::PlantWild,
+            RungBranch::Animal => RungKey::AnimalWild,
+        }
+    }
 }
 
 /// **The rungs the engine currently knows how to drive.** The ladder is data, but the *code* that
@@ -1021,6 +1096,214 @@ impl RungKey {
             RungKey::AnimalPastoral => Some(RungKey::AnimalPen),
             RungKey::AnimalPen => None,
         }
+    }
+
+    /// **THE RUNG'S NAME ON THE WIRE** — `"<branch>:<id>"`, e.g. `"plant:tended"`. Branch-qualified
+    /// because `wild` names a rung on each web and a client holding one token must be able to tell
+    /// them apart; it is the same `branch:id` spelling every validation message already uses, so the
+    /// wire and the error text name a rung identically.
+    pub fn wire_key(self) -> String {
+        format!("{}:{}", self.branch().as_str(), self.id())
+    }
+
+    /// **THE VERB THAT RAISES THIS RUNG** — the inverse of [`RungKey::built_by`], answered
+    /// **without the ladder** so the derived-verb seams (`forage::patch_build_verb` and its animal
+    /// twin) stay config-free on their hundred-odd call paths. [`RungDef::verb_improvement`] is the
+    /// config's own answer to the same question; `every_rung_key_agrees_with_its_records_verb` pins
+    /// the two together, so this is a *reading* of the ladder rather than a second authority.
+    ///
+    /// `None` for a rung no verb drives — the two wild rungs, which are nothing to build.
+    pub fn builder_verb(self) -> Option<Improvement> {
+        match self {
+            RungKey::PlantWild | RungKey::AnimalWild => None,
+            RungKey::PlantTended => Some(Improvement::Cultivate),
+            RungKey::PlantField => Some(Improvement::Sow),
+            RungKey::AnimalPastoral => Some(Improvement::Tame),
+            RungKey::AnimalPen => Some(Improvement::Corral),
+        }
+    }
+
+    /// **IS THIS RUNG AT OR ABOVE `floor` ON THE SAME BRANCH?** — the ladder-free ordering test, so a
+    /// caller can ask *"has this source reached rung N"* or *"does this declaration name rung N or
+    /// something past it"* without comparing `order` numbers it would have to fetch the config for.
+    ///
+    /// **`false` across branches, always.** The two webs are separate ladders that share no rung, so
+    /// a plant rung is neither above nor below an animal one and any answer but `false` would be a
+    /// comparison of two different things.
+    pub fn is_at_or_above(self, floor: RungKey) -> bool {
+        if self.branch() != floor.branch() {
+            return false;
+        }
+        let mut cursor = Some(floor);
+        while let Some(rung) = cursor {
+            if rung == self {
+                return true;
+            }
+            cursor = rung.above();
+        }
+        false
+    }
+}
+
+/// **NO FRACTION OF A RUNG IN FLIGHT IS CREDITED** — [`RungStanding::credit`]'s neutral, and it means
+/// two things that are the same thing: a standing that is raising nothing (the source stands at the
+/// top of its branch) has no step to be part-way up, and an [`RungPartialCredit::OnCompletion`] rung
+/// short of full is worth exactly the rung below it however much work is banked on it.
+pub const NO_RUNG_CREDIT: f32 = 0.0;
+
+/// **WHERE A SOURCE STANDS ON ITS BRANCH — THE ONE PRODUCER OF THIS VERDICT.** A source has a single
+/// position, in cumulative work units, and every per-rung quantity is read off it
+/// (`docs/plan_standing_upkeep.md` §2.8). **No call site may re-derive this from a meter**: two seams
+/// answering one question is the shape that has produced three defects in this arc already, so the
+/// resolution lives here and nowhere else.
+///
+/// A source part-way up a rung is entitled to everything below it **in full**, plus its fraction of
+/// the step it is on — see [`interpolate`], which is the only thing that reads [`Self::credit`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RungStanding {
+    /// **The highest rung whose meter is FULL** — what the source is entitled to in full. Never
+    /// `None`: a position of zero already holds its branch's [`RungBranch::root_rung`], which costs
+    /// nothing to reach.
+    pub held: RungKey,
+    /// **The rung currently being raised**, if any. `None` at the top of a branch — there is nothing
+    /// left to climb, which is the honest answer rather than a rung quoted out of the other web.
+    pub raising: Option<RungKey>,
+    /// **How far into [`Self::raising`]**, `0.0..=1.0` — and a full rung is never reported here:
+    /// the walk moves it into [`Self::held`] and starts the next one at [`NO_RUNG_CREDIT`], which
+    /// is what makes *"the rung below is at 100%"* a statement about `held` rather than a float
+    /// comparison at some call site. **ALREADY forced to [`NO_RUNG_CREDIT`]
+    /// for an [`RungPartialCredit::OnCompletion`] rung in flight** — which is the whole reason this
+    /// field exists rather than a `(position, cost)` pair. The flag is honoured here, **once**, so
+    /// that no call site tests `partial_credit` and no two call sites can come to disagree about
+    /// what a half-built rung is worth.
+    pub credit: f32,
+}
+
+impl RungStanding {
+    /// **RESOLVE A POSITION INTO A STANDING** — walk `branch`'s rungs in ladder order, accumulating
+    /// each one's [`RungBuild::work_cost`], and stop at the first rung the position does not cover.
+    ///
+    /// The walk follows the **coded** climb ([`RungKey::above`] from [`RungBranch::root_rung`]),
+    /// which `the_coded_climb_matches_the_shipped_ladders_own_order` pins against the records' own
+    /// `order` — so it is the config's order, resolved through the one seam that is exhaustive over
+    /// the rungs the engine names.
+    ///
+    /// **`cost_at` is THIS SOURCE'S price for a rung, not the ladder's** — `build_cost` at whatever
+    /// multiplier the source carries: [`RUNG_COST_UNSCALED`] on the plant web, a species'
+    /// `taming_cost_multiplier` on the animal one. A ladder-wide reading would put every herd's
+    /// `animal:pastoral` boundary at 50 units when a Steppe Runner's is 250, so the resolver is the
+    /// caller's rather than a lookup in here.
+    ///
+    /// A rung with **no `build`** answers `None`, costs nothing to raise, and is stepped straight
+    /// over: the two wild rungs are the floor, not a step, so a position of `RUNG_UNSTARTED` holds
+    /// `wild` and is raising the rung above it at [`NO_RUNG_CREDIT`]. A position past the top of the
+    /// branch holds the top rung and raises nothing; a negative one is read as zero.
+    pub fn at<F: Fn(RungKey) -> Option<f32>>(
+        ladder: &LadderConfig,
+        branch: RungBranch,
+        position: f32,
+        cost_at: F,
+    ) -> Self {
+        let position = position.max(RUNG_UNSTARTED);
+        let mut held = branch.root_rung();
+        loop {
+            let Some(next) = held.above() else {
+                return Self {
+                    held,
+                    raising: None,
+                    credit: NO_RUNG_CREDIT,
+                };
+            };
+            let (base, width) = rung_span(next, &cost_at);
+            if position >= base + width {
+                held = next;
+                continue;
+            }
+            let credit = if width <= NO_RUNG_WIDTH {
+                NO_RUNG_CREDIT
+            } else {
+                match ladder.rung(next).partial_credit_mode() {
+                    RungPartialCredit::Continuous => (position - base) / width,
+                    RungPartialCredit::OnCompletion => NO_RUNG_CREDIT,
+                }
+            };
+            return Self {
+                held,
+                raising: Some(next),
+                credit,
+            };
+        }
+    }
+
+    /// **A SOURCE NOBODY HAS WORKED** — the standing of a position of [`RUNG_UNSTARTED`], answered
+    /// **without a ladder** so the constructors that fabricate a fresh source (a worldgen patch, a
+    /// spawned herd) need no config in scope.
+    ///
+    /// It is safe to answer ladder-free because a zero position cannot be *inside* any rung: it
+    /// holds the branch's root and is raising whatever sits above it, at no credit. The one thing it
+    /// assumes — that the rung above the root is an investment rather than another zero-width step —
+    /// is pinned against the shipped ladder by `an_unstarted_standing_is_the_walks_own_answer`.
+    pub fn unstarted(branch: RungBranch) -> Self {
+        let held = branch.root_rung();
+        Self {
+            held,
+            raising: held.above(),
+            credit: NO_RUNG_CREDIT,
+        }
+    }
+}
+
+/// **A RUNG THERE IS NOTHING TO BUILD** — the width of a rung with no `build` block, and the width
+/// [`rung_span`] answers for a branch's root. It is a **step of no size**: a position steps over it
+/// without ever being part-way up it, which is what makes the two wild rungs the ladder's floor
+/// rather than its first job.
+pub const NO_RUNG_WIDTH: f32 = 0.0;
+
+/// **WHERE A RUNG STARTS AND HOW WIDE IT IS**, in cumulative work units on its branch — `(base,
+/// width)`, so the rung runs `base..=base + width` and is **complete** at the top of that span.
+///
+/// The one definition of a rung's place on the ladder: [`RungStanding::at`] walks it, and every
+/// per-rung readout that has to state a meter in the wire's old two-meter shape divides by it. A
+/// second spelling of *"where does `plant:field` begin"* is the drift this arc has already paid for
+/// three times.
+///
+/// `cost_at` is the source's own resolver, exactly as [`RungStanding::at`] takes it. A branch's root
+/// answers `(RUNG_UNSTARTED, NO_RUNG_WIDTH)` — it is where the ladder starts and costs nothing.
+pub fn rung_span<F: Fn(RungKey) -> Option<f32>>(rung: RungKey, cost_at: &F) -> (f32, f32) {
+    let mut base = RUNG_UNSTARTED;
+    let mut cursor = rung.branch().root_rung();
+    while cursor != rung {
+        let next = cursor
+            .above()
+            .expect("the coded climb reaches every rung of its own branch");
+        let width = cost_at(next).unwrap_or(NO_RUNG_WIDTH);
+        if next == rung {
+            return (base, width);
+        }
+        base += width;
+        cursor = next;
+    }
+    (base, NO_RUNG_WIDTH)
+}
+
+/// **A PER-RUNG QUANTITY AT A SOURCE'S STANDING — THE DELTA FORM, STATED ONCE.** `value_at` answers
+/// the **absolute** the config declares for a rung (*a Field pays 3.50, a Tended patch 1.20*); the
+/// delta between them is derived here and nowhere else, so the numbers in the config stay readable
+/// and nothing has to be restated in a second form.
+///
+/// ```text
+/// held + credit × (value_at(raising) − value_at(held))
+/// ```
+///
+/// **The result is deliberately NOT clamped to the held rung's value.** That ordering is wanted for
+/// payouts and upkeep demands, and it is enforced in [`LadderConfig::validate`] where a violation is
+/// a *config* fault — but some interpolated quantities are better when **lower** (the animal escape
+/// fraction runs pen `0.10` below pastoral `0.25`), and a runtime clamp would silently break those.
+pub fn interpolate<F: Fn(RungKey) -> f32>(standing: &RungStanding, value_at: F) -> f32 {
+    let held = value_at(standing.held);
+    match standing.raising {
+        Some(raising) => held + standing.credit * (value_at(raising) - held),
+        None => held,
     }
 }
 
@@ -1374,13 +1657,16 @@ pub struct RungUpkeep {
 /// it made neglect cheaper. Splitting them is what lets `plant:field` ask for four hands a turn and
 /// still rot at the three-quarters of a work unit it always rotted at.
 ///
-/// # AND THE RUNG IS NOT LOST THE INSTANT ITS METER DIPS
+/// # ⛔ AND `retain_fraction` IS **DELETED**, NOT RETUNED
 ///
-/// A completed meter sits **exactly at its own cost**, so under a `progress >= cost` predicate the
-/// first bleed of any size revoked the rung: finish a Cultivate and the patch could be out of
-/// *tended* before its keepers were assigned, which no grace and no rate could fix because the loss
-/// was a **threshold test**. [`Self::retain_fraction`] is that threshold, moved down to a stated
-/// point and made scale-free.
+/// It was a *threshold*: a stamped bar below a rung's own cost, at which the rung was revoked, added
+/// because a completed meter sits exactly at its cost and the first bleed of any size therefore took
+/// the rung away. **The one-position ladder removes the cliff it was patching**
+/// (`docs/plan_standing_upkeep.md` §2.8/§4.10): a rung is achieved at `position >= its top` and lost
+/// the moment it dips below, and there is no bar — **which is safe only because the payout now
+/// interpolates.** A patch at 49.99 of the tended rung's 50 pays 99.98% of a tended patch, so the
+/// predicate flipping there is no longer a value cliff; it only changes which job the next-rung offer
+/// names. Do not re-add a bar without first re-adding the cliff.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct RungMeterDecay {
     /// **WHAT A WHOLLY UNMAINTAINED RUNG LOSES EVERY TURN**, in work units — the rate the shortfall
@@ -1389,18 +1675,28 @@ pub struct RungMeterDecay {
     /// Validated finite and `> 0`: a rate of zero says *"this rung never rots"*, which the config
     /// already says by declaring no `meter_decay` at all.
     pub per_turn: f32,
-    /// **HOW FAR THE METER MAY ERODE BEFORE THE RUNG IS REVOKED**, as a fraction of that rung's own
-    /// stamped cost. `0.75` = *"a tended patch stays tended while its meter is at least
-    /// three-quarters full"*.
-    ///
-    /// **A fraction rather than an amount, so it survives a cost retune** — the bar is stamped onto
-    /// the source when the rung completes ([`RungDef::retention_bar`]), exactly as the job's cost is,
-    /// so a later retune moves the price without revoking a rung the player has already paid for.
-    ///
-    /// **The rung is still EARNED at `progress >= cost`.** Only losing it moves. Validated finite and
-    /// in `0.0..=1.0`: above `1.0` would revoke a rung the turn it completed, and `1.0` itself is the
-    /// pre-arc behaviour, stated rather than stumbled into.
-    pub retain_fraction: f32,
+}
+
+/// **WHETHER A RUNG IS WORTH ANYTHING BEFORE IT IS FINISHED** — a bounded coded primitive on the
+/// `behavior` idiom, and the one dial [`RungStanding::credit`] reads
+/// (`docs/plan_standing_upkeep.md` §2.8/§4.10).
+///
+/// It is a property of the **rung**, not of any one shipped record: a rung is all-or-nothing when
+/// the thing it buys does not exist until it is whole, and the config states which of its rungs are
+/// like that. Nothing in the engine may ask *"is this the pen rung"*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RungPartialCredit {
+    /// **The rung's benefit and cost accrue smoothly as its meter fills** — a source half-way up it
+    /// pays half the step's extra and owes half the step's extra. **The default**, which is why an
+    /// absent `partial_credit` key means this: smoothing is what the arc is for, and the exception
+    /// has to be argued for in the config rather than fallen into.
+    #[default]
+    Continuous,
+    /// **All-or-nothing: the rung pays and costs exactly the rung below until its meter is full.**
+    /// [`RungStanding::at`] reports [`NO_RUNG_CREDIT`] for it at every position short of full, so no
+    /// consumer of a standing ever learns that this rung is different.
+    OnCompletion,
 }
 
 /// **One rung of one ladder** — the record §5 promises: the links and the dials, no logic.
@@ -1456,6 +1752,16 @@ pub struct RungDef {
     pub site_requirement: Option<RungSiteRequirement>,
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,
+    /// **WHETHER THIS RUNG IS WORTH ANYTHING BEFORE IT IS FINISHED** ([`RungPartialCredit`]).
+    /// **`None` = absent = [`RungPartialCredit::Continuous`]**, read through
+    /// [`RungDef::partial_credit_mode`] — the `Option` is kept so `validate` can tell *"the config
+    /// said continuous"* from *"the config said nothing"*, which is what lets it reject the key on a
+    /// rung there is nothing to be partial about.
+    ///
+    /// `on_completion` must therefore be an **explicit statement**: it is the exception, and a rung
+    /// that falls into it by silence is one nobody chose.
+    #[serde(default)]
+    pub partial_credit: Option<RungPartialCredit>,
     /// **What it costs to HOLD this rung, per turn** ([`RungUpkeep`]). `None` = this rung has no
     /// standing cost — the two **wild** rungs, and only those: all four managed rungs declare one.
     #[serde(default)]
@@ -1471,6 +1777,13 @@ impl RungDef {
         self.verb
             .as_deref()
             .map(|verb| Improvement::from_str(verb).expect("validated at load"))
+    }
+
+    /// **THIS RUNG'S PARTIAL-CREDIT SHAPE, WITH THE ABSENCE RESOLVED** — an unstated
+    /// `partial_credit` is [`RungPartialCredit::Continuous`]. [`RungStanding::at`] is its only
+    /// caller, deliberately: the flag is honoured once, at the seam that produces the standing.
+    pub fn partial_credit_mode(&self) -> RungPartialCredit {
+        self.partial_credit.unwrap_or_default()
     }
 
     /// The discovery gating this rung's verb. `None` for an ungated rung. (Validated at load.)
@@ -1883,8 +2196,24 @@ impl RungDef {
     /// `shortfall_turns` is the source's own consecutive-shortfall counter (`neglect_turns`) **as it
     /// stands**; this seam advances it, because the pass it describes will.
     pub fn meter_rot(&self, source_measure: f32, supplied: f32, shortfall_turns: u16) -> f32 {
+        self.meter_rot_against(
+            self.upkeep_demand(source_measure),
+            supplied,
+            shortfall_turns,
+        )
+    }
+
+    /// **[`Self::meter_rot`] AGAINST A DEMAND THE CALLER RESOLVED** — the form a web whose demand is
+    /// **interpolated** must use, because this rung's own `work_per_turn` is not what such a source
+    /// was billed (`docs/plan_standing_upkeep.md` §2.8).
+    ///
+    /// ⛔ **THE SUPPLY AND THE DEMAND MUST BE THE SAME BILL.** Reading the rung's rate here while the
+    /// keeping paid a share of an interpolated one makes a fully-staffed source read permanently
+    /// short — see `ForagePatch::upkeep_demanded`, which is the plant web's record of the bill its
+    /// keepers were actually handed.
+    pub fn meter_rot_against(&self, demand: f32, supplied: f32, shortfall_turns: u16) -> f32 {
         self.upkeep_decay(
-            upkeep_shortfall_fraction(self.upkeep_demand(source_measure), supplied),
+            upkeep_shortfall_fraction(demand, supplied),
             // **The count the NEXT pass will judge at.** It increments the counter before comparing it
             // to the grace, so a seam describing that pass has to increment it too — see the ordering
             // block above. Saturating because a counter at `u16::MAX` is a source neglected for longer
@@ -1904,23 +2233,16 @@ impl RungDef {
     // fact under it: *you cannot be billed to hold something you have not finished building* is
     // answered by who pays, not by discounting the bill.
 
-    /// **THE BAR THIS RUNG IS HELD AT ONCE IT IS EARNED** — `retain_fraction × cost`, the point the
-    /// meter may erode to before the rung is revoked (`docs/plan_standing_upkeep.md` §2.4).
-    ///
-    /// **The caller stamps it onto the source at completion**, beside the job's own cost, so the
-    /// predicates that ask *"is this patch tended"* need no config in scope — the reason
-    /// `is_cultivated()` can stay a method on the patch across its hundred call sites. It also makes
-    /// the bar survive a retune of the rung's price, exactly as the stamped cost does.
-    ///
-    /// A rung with no `meter_decay` (or no upkeep at all) is held at its **whole** cost, which is the
-    /// pre-arc predicate stated rather than special-cased: nothing bleeds it, so the bar is never
-    /// tested.
-    pub fn retention_bar(&self, cost: f32) -> f32 {
-        self.upkeep
-            .as_ref()
-            .and_then(|upkeep| upkeep.meter_decay.as_ref())
-            .map_or(cost, |decay| cost * decay.retain_fraction)
-    }
+    // **RETIRED: `retention_bar(cost)`** — `retain_fraction × cost`, the stamped point a meter could
+    // erode to before its rung was revoked. It patched a **cliff**: a completed meter sits exactly at
+    // its cost, so the first bleed of any size flipped `is_cultivated()` and the patch lost a rung it
+    // had fully paid for.
+    //
+    // **The one-position ladder removes the cliff** (`docs/plan_standing_upkeep.md` §2.8/§4.10). The
+    // payout interpolates on the source's [`RungStanding`], so a patch at 49.99 of a 50-unit rung
+    // pays 99.98% of that rung and the predicate flipping there costs it 0.02% rather than the whole
+    // rung's worth. A rung is achieved at `position >= its top`, lost the instant it dips, and the
+    // stamped bar, the four stamp sites and the `retain_fraction` dial all retire together.
 }
 
 /// **How fast the ladder is learned** — what a turn of practice is worth, what each lesson costs, and
@@ -2192,6 +2514,10 @@ impl LadderConfig {
             banked,
             balance,
             gate,
+            // **A projection quotes ONE rung** — the one this source would climb next — so it lays no
+            // legs and `work_remaining` falls back to this rung's own remainder. It is a *"what would
+            // it cost to start"* answer, and the player has declared no destination for it to chain to.
+            legs: Vec::new(),
         })
     }
 
@@ -2245,6 +2571,8 @@ impl LadderConfig {
             validate_links(rung, &where_)?;
             validate_build(rung, &where_)?;
             validate_upkeep(rung, &where_)?;
+            self.validate_upkeep_climbs(rung, &where_)?;
+            validate_partial_credit(rung, &where_)?;
             validate_site_requirement(rung, &where_)?;
         }
 
@@ -2357,6 +2685,55 @@ impl LadderConfig {
                 }
             }
         }
+    }
+
+    /// **THE UPKEEP LADDER MUST CLIMB — a rung costs at least as much to hold as the rung under it.**
+    /// The demand a source owes is [`interpolate`]d over its [`RungStanding`], so a rung declaring
+    /// *less* than the one below gives a **negative derived delta**: a half-raised rung would be
+    /// cheaper to hold than the finished rung beneath it, and a player would be paid to start a job
+    /// they never intend to finish (`docs/plan_standing_upkeep.md` §2.8).
+    ///
+    /// **The comparison is only made between rungs sharing a [`UpkeepScale`].** `flat` is a rate per
+    /// *source* and `source_load` a rate per *keeper-load*, so comparing the two bare numbers would
+    /// be comparing different units and would report a fault that is not one. A branch that mixes
+    /// scales across a step is therefore **not checked here** rather than checked wrongly — the
+    /// ordering it needs is between the *scaled* demands, which are per-source facts this validator
+    /// cannot see.
+    ///
+    /// A rung with **no upkeep** costs [`NO_UPKEEP_DEMAND`] to hold, which nothing can be below, so
+    /// the two wild rungs pass by construction.
+    fn validate_upkeep_climbs(
+        &self,
+        rung: &RungDef,
+        where_: &str,
+    ) -> Result<(), LadderConfigError> {
+        let (Some(upkeep), Some(requires)) = (rung.upkeep.as_ref(), rung.requires_rung.as_deref())
+        else {
+            return Ok(());
+        };
+        let Some(below) = self
+            .find(rung.branch, requires)
+            .and_then(|below| below.upkeep.as_ref())
+        else {
+            return Ok(());
+        };
+        if below.scaled_by != upkeep.scaled_by {
+            return Ok(());
+        }
+        if upkeep.work_per_turn < below.work_per_turn {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "cost at least as much per turn as the rung below it — a rung that \
+                             holds for less makes the derived delta negative, so a half-raised \
+                             rung would be CHEAPER to hold than the finished rung under it"
+                    .to_string(),
+                value: format!(
+                    "upkeep.work_per_turn = {} against '{requires}' at {}",
+                    upkeep.work_per_turn, below.work_per_turn
+                ),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -2556,6 +2933,29 @@ fn validate_build(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
     Ok(())
 }
 
+/// **A RUNG THAT IS NEVER RAISED HAS NO CREDIT TO BE PARTIAL ABOUT.** `partial_credit` describes
+/// what a *part-filled meter* is worth, so on a rung with no `build` it is a dial nothing can read —
+/// the silent failure mode every bound in this module guards against, and the one that would make a
+/// reader believe a shape had been chosen where none applies.
+///
+/// The check is on the field's **presence**, which is why [`RungDef::partial_credit`] is an
+/// `Option`: `"continuous"` stated on the wild rung is as meaningless as `"on_completion"` is.
+fn validate_partial_credit(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
+    let Some(stated) = rung.partial_credit else {
+        return Ok(());
+    };
+    if rung.build.is_none() {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: "state `partial_credit` only on a rung there is something to build — a \
+                         rung that is never raised has no part-filled meter for it to describe"
+                .to_string(),
+            value: format!("partial_credit = {stated:?} with build = null"),
+        });
+    }
+    Ok(())
+}
+
 /// **The upkeep block's bounds** — stated here, beside the build's, because
 /// [`LadderConfig::validate`] already owns every ladder bound and a rate that describes both webs
 /// belongs to the ladder.
@@ -2582,21 +2982,6 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
                              like a live dial"
                     .to_string(),
                 value: format!("upkeep.meter_decay.per_turn = {}", decay.per_turn),
-            });
-        }
-        if !decay.retain_fraction.is_finite()
-            || !(FULLY_SUPPLIED..=WHOLLY_UNSUPPLIED).contains(&decay.retain_fraction)
-        {
-            return Err(LadderConfigError::Invalid {
-                field: where_.to_string(),
-                constraint: "hold the rung at a fraction of its own cost within 0..=1 — above 1 \
-                             revokes the rung on the turn it completes, which is the very defect \
-                             the retention bar exists to fix"
-                    .to_string(),
-                value: format!(
-                    "upkeep.meter_decay.retain_fraction = {}",
-                    decay.retain_fraction
-                ),
             });
         }
     }
@@ -4129,7 +4514,6 @@ mod tests {
             UpkeepScale::Flat,
             GRACE,
             ROT_PER_TURN,
-            A_HALF_FULL_RETENTION_BAR,
         );
         for turns in 0..=GRACE as u16 {
             assert_eq!(
@@ -4178,33 +4562,11 @@ mod tests {
         }
     }
 
-    /// **THE RETENTION BAR IS A FRACTION OF THE RUNG'S OWN COST, and a rung that never rots is held
-    /// at the whole of it** — the pre-arc predicate, stated rather than special-cased.
-    #[test]
-    fn the_retention_bar_is_the_rungs_own_fraction_of_the_job() {
-        const A_JOB: f32 = 40.0;
-        let rots = rung_with_meter_decay(
-            A_DEMAND_OF_ONE_WORKER_TURN,
-            UpkeepScale::Flat,
-            NO_NEGLECT_GRACE,
-            A_DEMAND_OF_ONE_WORKER_TURN,
-            A_HALF_FULL_RETENTION_BAR,
-        );
-        assert_eq!(rots.retention_bar(A_JOB), A_JOB * A_HALF_FULL_RETENTION_BAR);
-        assert_eq!(
-            rung_with_upkeep(A_DEMAND_OF_ONE_WORKER_TURN, UpkeepScale::Flat, 0)
-                .retention_bar(A_JOB),
-            A_JOB,
-            "a rung whose meter never bleeds is held at its whole cost — nothing tests the bar"
-        );
-        // And so is a rung with no upkeep at all.
-        assert_eq!(
-            LadderConfig::builtin()
-                .rung(RungKey::PlantWild)
-                .retention_bar(A_JOB),
-            A_JOB
-        );
-    }
+    // **RETIRED: `the_retention_bar_is_the_rungs_own_fraction_of_the_job`** — it pinned
+    // `RungDef::retention_bar`, which is deleted with `retain_fraction` (see that field's
+    // gravestone on `RungMeterDecay`). What it asserted has no successor because the mechanism has
+    // none: a rung is achieved at the top of its span and lost the instant the position dips, and
+    // what makes that safe is `interpolate`, whose own tests are below.
 
     /// **A POOL HAS NO LEFTOVER, UNDER EITHER MODE** (§2.5) — and that is the whole reason
     /// maintenance left the tile. An indivisible per-source supplier wastes whatever it does not
@@ -4333,9 +4695,9 @@ mod tests {
         rung_with_optional_meter_decay(work_per_turn, scaled_by, grace_turns, None)
     }
 
-    /// **Half a meter's worth** — the retention bar these fixtures hold a rung at, chosen well clear
-    /// of both `0` and `1` so a bar read as either endpoint fails rather than coincides.
-    const A_HALF_FULL_RETENTION_BAR: f32 = 0.5;
+    // **RETIRED: `A_HALF_FULL_RETENTION_BAR`** — the bar these fixtures used to hold a rung at.
+    // `retain_fraction` is deleted (see `RungMeterDecay`'s gravestone), so there is no bar for a
+    // fixture to author and no endpoint for one to be read as.
 
     /// The same fixture with a `meter_decay` block — a rung whose penalty *is* a meter bleed, which
     /// no animal rung is and which is therefore the shape the plant web ships.
@@ -4344,16 +4706,12 @@ mod tests {
         scaled_by: UpkeepScale,
         grace_turns: u32,
         per_turn: f32,
-        retain_fraction: f32,
     ) -> RungDef {
         rung_with_optional_meter_decay(
             work_per_turn,
             scaled_by,
             grace_turns,
-            Some(serde_json::json!({
-                "per_turn": per_turn,
-                "retain_fraction": retain_fraction,
-            })),
+            Some(serde_json::json!({ "per_turn": per_turn })),
         )
     }
 
@@ -4372,6 +4730,14 @@ mod tests {
             "grace_turns": grace_turns,
             "meter_decay": meter_decay,
         });
+        // **The rung below has to move with it, or the fixture is not a LADDER.** These fixtures
+        // author one rung's dials in isolation, but `validate_upkeep_climbs` judges the *pair* — a
+        // pen demanding less than the pastoral rung under it is a negative derived delta and is
+        // rejected on every load path. Matching the demand (and its scale, so the two are in one
+        // unit) keeps the ladder flat, which the rule admits; only the pen rung is read back.
+        let below = rung_index(&json, "animal", "pastoral");
+        json["rungs"][below]["upkeep"]["work_per_turn"] = work_per_turn.into();
+        json["rungs"][below]["upkeep"]["scaled_by"] = scaled_by.as_str().into();
         let ladder = LadderConfig::from_json_str(&json.to_string()).expect("the fixture is valid");
         ladder.rung(RungKey::AnimalPen).clone()
     }
@@ -4957,5 +5323,209 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// **[`RungBranch::root_rung`] and the config's order-1 rung are ONE floor** — the walk starts
+    /// from the coded answer, so a branch whose coded root is not the record the ladder starts from
+    /// would resolve every position one rung out.
+    #[test]
+    fn the_coded_root_is_the_shipped_ladders_own_first_rung() {
+        let ladder = LadderConfig::builtin();
+        for branch in BOTH_BRANCHES {
+            let root = branch.root_rung();
+            assert_eq!(root.branch(), branch, "a branch's root is its own rung");
+            assert_eq!(
+                ladder.rung(root).order,
+                FIRST_RUNG_ORDER,
+                "{}'s coded root is the record the ladder starts from",
+                branch.as_str()
+            );
+        }
+    }
+
+    /// **Half-way up a rung** — where the delta form and a flat fraction of the rung's own value
+    /// visibly differ, which is why every interpolation assertion below is taken here.
+    const HALF_WAY_UP: f32 = 0.5;
+
+    /// **A rung all but finished** — a hundredth short, so an `on_completion` rung's refusal to pay
+    /// anything cannot be mistaken for float slack.
+    const ALL_BUT_FINISHED: f32 = 0.99;
+
+    /// **What a tended patch pays, as the config would state it** — an ABSOLUTE, never a delta.
+    const TENDED_PAYS: f32 = 2.0;
+
+    /// **What a Field pays** — likewise absolute, so the step between them is `FIELD_PAYS −
+    /// TENDED_PAYS` and the fixture states neither difference itself.
+    const FIELD_PAYS: f32 = 4.0;
+
+    /// The work a rung costs to raise on the shipped ladder, read off the record rather than
+    /// transcribed — a retune must move these fixtures with it, not silently invalidate them.
+    fn raise_cost(ladder: &LadderConfig, key: RungKey) -> f32 {
+        ladder
+            .rung(key)
+            .build_cost(RUNG_COST_UNSCALED)
+            .expect("every rung above wild is an investment")
+    }
+
+    /// **THE WALK, AT EVERY POINT ITS ANSWER CHANGES SHAPE.** A position of zero holds the wild rung
+    /// (there is nothing to build on it), a position exactly at a rung's cost has **held** it rather
+    /// than being 100% into it — which is what makes *"a rung is offered only when the one below is
+    /// at 100%"* a statement about `held` — and a position at the top of the branch raises nothing.
+    #[test]
+    fn a_position_resolves_to_one_place_on_the_plant_branch() {
+        let ladder = LadderConfig::builtin();
+        let tended = raise_cost(&ladder, RungKey::PlantTended);
+        let field = raise_cost(&ladder, RungKey::PlantField);
+
+        let unstarted = RungStanding::at(&ladder, RungBranch::Plant, RUNG_UNSTARTED, |key| {
+            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+        });
+        assert_eq!(unstarted.held, RungKey::PlantWild);
+        assert_eq!(unstarted.raising, Some(RungKey::PlantTended));
+        assert!((unstarted.credit - NO_RUNG_CREDIT).abs() < 1e-6);
+
+        let mid_tended =
+            RungStanding::at(&ladder, RungBranch::Plant, tended * HALF_WAY_UP, |key| {
+                ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            });
+        assert_eq!(mid_tended.held, RungKey::PlantWild);
+        assert_eq!(mid_tended.raising, Some(RungKey::PlantTended));
+        assert!((mid_tended.credit - HALF_WAY_UP).abs() < 1e-6);
+
+        let tended_done = RungStanding::at(&ladder, RungBranch::Plant, tended, |key| {
+            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+        });
+        assert_eq!(tended_done.held, RungKey::PlantTended);
+        assert_eq!(tended_done.raising, Some(RungKey::PlantField));
+        assert!((tended_done.credit - NO_RUNG_CREDIT).abs() < 1e-6);
+
+        let mid_field = RungStanding::at(
+            &ladder,
+            RungBranch::Plant,
+            tended + field * HALF_WAY_UP,
+            |key| ladder.rung(key).build_cost(RUNG_COST_UNSCALED),
+        );
+        assert_eq!(mid_field.held, RungKey::PlantTended);
+        assert_eq!(mid_field.raising, Some(RungKey::PlantField));
+        assert!((mid_field.credit - HALF_WAY_UP).abs() < 1e-6);
+
+        let topped_out = RungStanding::at(&ladder, RungBranch::Plant, tended + field, |key| {
+            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+        });
+        assert_eq!(topped_out.held, RungKey::PlantField);
+        assert_eq!(topped_out.raising, None);
+    }
+
+    /// **THE DELTA FORM: a Field half-raised pays a whole Tended patch plus half the Field's extra.**
+    /// The fixture states only the two **absolutes** the config would declare — the `3.0` is the
+    /// derivation, and a flat fraction of the Field's own value would answer `2.0`.
+    #[test]
+    fn a_half_raised_rung_pays_the_rung_below_in_full_plus_its_share_of_the_step() {
+        let ladder = LadderConfig::builtin();
+        let tended = raise_cost(&ladder, RungKey::PlantTended);
+        let field = raise_cost(&ladder, RungKey::PlantField);
+        let value_at = |key: RungKey| match key {
+            RungKey::PlantField => FIELD_PAYS,
+            _ => TENDED_PAYS,
+        };
+
+        let standing = RungStanding::at(
+            &ladder,
+            RungBranch::Plant,
+            tended + field * HALF_WAY_UP,
+            |key| ladder.rung(key).build_cost(RUNG_COST_UNSCALED),
+        );
+        let paid = interpolate(&standing, value_at);
+        assert!(
+            (paid - (TENDED_PAYS + HALF_WAY_UP * (FIELD_PAYS - TENDED_PAYS))).abs() < 1e-6,
+            "a Field at 50% pays {paid}, not the tended patch plus half the step"
+        );
+
+        let held_outright = RungStanding::at(&ladder, RungBranch::Plant, tended + field, |key| {
+            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+        });
+        assert!(
+            (interpolate(&held_outright, value_at) - FIELD_PAYS).abs() < 1e-6,
+            "a finished Field pays its own absolute"
+        );
+    }
+
+    /// **AN `on_completion` RUNG IS WORTH THE RUNG BELOW UNTIL IT IS WHOLE** — and the standing says
+    /// so with [`NO_RUNG_CREDIT`], so no call site has to test `partial_credit` to get this right.
+    /// Asserted at 99% *and* at 100%: a rung that never paid its own value would satisfy the first
+    /// half alone.
+    #[test]
+    fn an_on_completion_rung_credits_nothing_until_its_meter_is_full() {
+        let ladder = LadderConfig::builtin();
+        assert_eq!(
+            ladder.rung(RungKey::AnimalPen).partial_credit_mode(),
+            RungPartialCredit::OnCompletion,
+            "the shipped pen rung is the all-or-nothing one this test is about"
+        );
+        let pastoral = raise_cost(&ladder, RungKey::AnimalPastoral);
+        let pen = raise_cost(&ladder, RungKey::AnimalPen);
+        let value_at = |key: RungKey| match key {
+            RungKey::AnimalPen => FIELD_PAYS,
+            _ => TENDED_PAYS,
+        };
+
+        let nearly = RungStanding::at(
+            &ladder,
+            RungBranch::Animal,
+            pastoral + pen * ALL_BUT_FINISHED,
+            |key| ladder.rung(key).build_cost(RUNG_COST_UNSCALED),
+        );
+        assert_eq!(nearly.raising, Some(RungKey::AnimalPen));
+        assert!((nearly.credit - NO_RUNG_CREDIT).abs() < 1e-6);
+        assert!(
+            (interpolate(&nearly, value_at) - TENDED_PAYS).abs() < 1e-6,
+            "a pen at 99% is worth exactly the pastoral rung under it"
+        );
+
+        let fenced = RungStanding::at(&ladder, RungBranch::Animal, pastoral + pen, |key| {
+            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+        });
+        assert_eq!(fenced.held, RungKey::AnimalPen);
+        assert_eq!(fenced.raising, None);
+        assert!(
+            (interpolate(&fenced, value_at) - FIELD_PAYS).abs() < 1e-6,
+            "a finished pen is worth the pen"
+        );
+
+        // The liveness half: a `continuous` rung at the same fraction really does credit it, so the
+        // assertions above are about the flag rather than about the walk answering zero everywhere.
+        let mid_tame =
+            RungStanding::at(&ladder, RungBranch::Animal, pastoral * HALF_WAY_UP, |key| {
+                ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            });
+        assert!((mid_tame.credit - HALF_WAY_UP).abs() < 1e-6);
+    }
+
+    /// **A DECREASING UPKEEP LADDER IS A NEGATIVE DELTA** — a half-raised Field would be cheaper to
+    /// hold than the tended ground under it. Rejected at load rather than clamped at runtime, since
+    /// some interpolated quantities are legitimately better when lower.
+    #[test]
+    fn rejects_an_upkeep_that_costs_less_than_the_rung_below() {
+        let err = reject(|json| {
+            let tended = rung_index(json, "plant", "tended");
+            let cheaper = json["rungs"][tended]["upkeep"]["work_per_turn"]
+                .as_f64()
+                .expect("the tended rung declares a demand")
+                / 2.0;
+            let field = rung_index(json, "plant", "field");
+            json["rungs"][field]["upkeep"]["work_per_turn"] = cheaper.into();
+        });
+        assert_rejects(err, "plant:field");
+    }
+
+    /// A rung with nothing to build has no part-filled meter, so it has no shape to declare — and
+    /// the rejection is on the key's PRESENCE, `continuous` included.
+    #[test]
+    fn rejects_partial_credit_on_a_rung_with_nothing_to_build() {
+        let err = reject(|json| {
+            let idx = rung_index(json, "plant", "wild");
+            json["rungs"][idx]["partial_credit"] = "continuous".into();
+        });
+        assert_rejects(err, "plant:wild");
     }
 }

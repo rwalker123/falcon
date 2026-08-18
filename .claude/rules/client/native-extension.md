@@ -256,6 +256,41 @@ for a party. **That is the failure worth remembering here**: a field the decoder
 no surface reads is invisible to every guard in the tree — the golden asserts it decoded, and nothing
 asserts anyone looked.
 
+## The basket entry carries FOUR per-species facts, and none of them is a parallel array
+
+`ForagePatchState.compositionStandingBiomass`, `compositionProvisionsPerBiomass`,
+`compositionFodderPerBiomass` and `compositionMaterialPerBiomass` are all index-aligned with
+`composition`, and `dict/subsistence.rs` **folds each onto the entry it belongs to** rather than
+publishing four sibling arrays. The wire
+keeps them apart for a memo reason — a composition entry is a pure function of ground and config and
+is shared by refcount across every frame, while a standing biomass and a rate move every turn — and
+on this side the schema's own rule is that a client must read them as ONE OBJECT, which folding makes
+structural: a consumer cannot index the lists apart.
+
+It also means the patch's cross-ref needs NO new key. `composition` travels whole in
+`patch_composition`, so the two-wirings trap that has bitten the plant web three times
+(`labor-ui.md` → "THE PATCH'S FORECAST FIELDS REACH THE SHEET THROUGH `tile_info`") cannot reach any
+of the three.
+
+**PRESENCE IS CARRIED BY THE KEY EXISTING, NEVER BY THE VALUE, and on the three rates that earns its
+keep twice.** An entry a vector is too short for carries no key at all — the server stated nothing —
+while a cash crop honestly converts at `0.0`, and a missing-means-zero reading would make those two
+indistinguishable on exactly the plants the selective gather is about. The client then quotes the
+`0.0` as a real rate and says the unstated one is unpriced (`labor-ui.md` → "…AND WHAT IS STILL NOT
+KNOWN IS SAID OUT LOUD").
+
+**NONE OF THE THREE RATES IS PRE-SCALED BY SHARE**, which is what makes a subset composable, and
+**summing them across species without the shares is not a total of anything** —
+`SourceForecast.selection_rates` is the one place in the client that composes them, as a weighted
+mean (the material one **per material id**, never as a scalar).
+
+**THE MATERIAL ONE IS A VECTOR OF VECTORS AND ITS WRAPPER IS PLUMBING.** FlatBuffers has no
+vector-of-vectors, so `compositionMaterialPerBiomass[i]` is a one-field `SpeciesMaterialRates` table
+and the decoder reads `.rows()` through the same `material_payoffs_to_array` every other material
+vector goes through — read it as "entry i's materials", not as a model. **The key is written for
+every entry the wrapper vector reaches, EMPTY ROWS AND ALL**: a grain pays no material and says so
+with an empty list, while a `0`-valued row would read as a crop that pays badly.
+
 **ONE KIT, ONE JOB, and the two carry tiers are not two readings of one number.** A band can be out of
 baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
 `forage_carry_per_worker_biomass` must never be rendered on each other's rows — the defect slice 5

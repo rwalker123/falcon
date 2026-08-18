@@ -1743,3 +1743,80 @@ static func build_dashed_rule() -> Control:
             x += HudStyle.DASHED_RULE_DASH + HudStyle.DASHED_RULE_GAP)
     return rule
 
+
+# ---- THE SPECIES CHIPS — which plants a forage crew carries home ---------------------------------
+#
+# `HudFloraVocab` owns the words and the two states; this owns the CONTROL. One chip per named plant in
+# the tile's basket, in a wrapping flow so a five-plant basket costs a second line rather than a
+# horizontal scroll.
+#
+# **A CHIP IS A `MarginContainer` CELL, NOT A `Button`, and for the policy rung's structural reason**:
+# a `Button` is not a `Container`, so it will not grow to fit a child, and the face is a child here
+# because its type size and its ink are set independently of the box's. The Button underneath keeps the
+# box, the click, the focus and the disabled state; the face is painted over it at
+# `MOUSE_FILTER_IGNORE` so the press reaches through.
+#
+# **THE PILL IS THE WHOLE AFFORDANCE — there is no mark.** A filled, bordered pill says *selected* and
+# plain text says *not*, which is one signal for one fact; a checkbox glyph beside it was a second
+# saying the same thing, and it went with the third state it was drawn to distinguish
+# (`HudFloraVocab` → `TAKE_STATE_SELECTED`). The unselected chip draws NO box at rest —
+# `HudStyle.apply_pill_toggle`, not `apply_pill_button`, whose resting chrome would leave every chip
+# in a box and make the selection a fill difference rather than a presence one.
+#
+# **THE FACE IS INSET BY THE PILL'S OWN PADDING**, read off `HudStyle` rather than named again here.
+# The Button's stylebox content margins apply to `Button.text`, which is empty — so the drawn pill is
+# sized by the overlay's minimum, and an unpadded overlay put the pill's right edge exactly on the
+# face's closing parenthesis.
+const SPECIES_CHIP_META := "species_chip"
+## The chip's state (`HudFloraVocab.TAKE_STATE_*`), so a harness reads the selection off the CONTROL
+## rather than off ink it cannot measure.
+const SPECIES_CHIP_STATE_META := "species_chip_state"
+## The row itself, so an assertion can find it without matching a plant's display name.
+const SPECIES_CHIP_ROW_META := "species_chip_row"
+
+## Build the chip row. Each `entries` element is `{species, face, state}`; `on_toggle` fires with the
+## species key. WHICH chips are lit is the caller's answer, since only it knows whether the ground is
+## being committed — and a chip carries no tooltip, its face already being the whole of what it knows.
+static func build_species_chips(entries: Array, on_toggle: Callable) -> HFlowContainer:
+    var row := HFlowContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.set_meta(SPECIES_CHIP_ROW_META, true)
+    row.add_theme_constant_override("h_separation", HudFloraVocab.TAKE_CHIP_SEPARATION)
+    row.add_theme_constant_override("v_separation", HudFloraVocab.TAKE_CHIP_SEPARATION)
+    for entry_variant in entries:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var species := String(entry.get("species", ""))
+        if species == "":
+            continue
+        row.add_child(_species_chip(entry, species, on_toggle))
+    return row
+
+static func _species_chip(entry: Dictionary, species: String,
+        on_toggle: Callable) -> MarginContainer:
+    var state := String(entry.get("state", HudFloraVocab.TAKE_STATE_SELECTED))
+    var selected := state == HudFloraVocab.TAKE_STATE_SELECTED
+    var btn := Button.new()
+    btn.text = ""
+    btn.set_meta(SPECIES_CHIP_META, species)
+    btn.set_meta(SPECIES_CHIP_STATE_META, state)
+    HudStyle.apply_pill_toggle(btn, selected)
+    btn.pressed.connect(func() -> void: on_toggle.call(species))
+    var face := Label.new()
+    face.text = String(entry.get("face", ""))
+    face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    face.add_theme_color_override("font_color",
+        HudStyle.INK if selected else HudStyle.INK_DIM)
+    face.add_theme_font_size_override("font_size", HudFloraVocab.TAKE_CHIP_FONT_SIZE)
+    var pad := MarginContainer.new()
+    pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    pad.add_theme_constant_override("margin_left", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_right", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_top", HudStyle.PILL_PADDING_V)
+    pad.add_theme_constant_override("margin_bottom", HudStyle.PILL_PADDING_V)
+    pad.add_child(face)
+    var cell := MarginContainer.new()
+    cell.add_child(btn)
+    cell.add_child(pad)
+    return cell

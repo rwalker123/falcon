@@ -145,6 +145,11 @@ static func raid_estimate_table(turns_row: Array, animals_row: Array, fpa: float
 ## is the same arithmetic in cheaper units. `max(1.0, carryable)` is the load-bearing line: a crew that
 ## cannot carry one whole animal still kills one and wastes the difference.
 ##
+## **IT IS THEREFORE UNIT-FREE, AND AN INEDIBLE QUARRY'S CALLER STATES IT IN BIOMASS.** Nothing here
+## names an account: pass a room, a carry and a quantum all in biomass and `delivered` comes back in
+## biomass, which is the only form a species with a structural zero food rate has. That is what lets
+## the wolf's claim be a cross-check against the SAME oracle the deer's is, rather than a second one.
+##
 ## **`engaged` IS THE THIRD BOUND** (`docs/plan_hunt_through_combat.md` §2) — the whole animals the
 ## party can bring into CONTACT, which `quantise_animal_take` mins in beside the affordable and the
 ## carryable. It defaults to `INF`, the reading the sim itself passes for a pen and the one the wire's

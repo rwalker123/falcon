@@ -1,4 +1,4 @@
-use sim_runtime::MaterialPayoff;
+use sim_runtime::{MaterialPayoff, SpeciesMaterialRates};
 
 use super::*;
 use crate::fauna::{
@@ -6,12 +6,12 @@ use crate::fauna::{
     reseeding_logistic_regrowth, NO_RETREAT_STAGE_STAY, ONE_UNIT_OF_BIOMASS,
 };
 use crate::forage::{
-    field_fodder, forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
+    forage_per_worker_biomass, patch_ecology, patch_fodder_per_biomass,
     patch_neglect_grace_remaining, patch_provisions_per_biomass, tended_fodder,
 };
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR,
-    NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
     UNSCALED_UPKEEP,
 };
 use sim_schema::{
@@ -68,6 +68,31 @@ pub(crate) fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
         Some(EcologyPhase::Stressed) => GRAZE_PHASE_STRESSED,
         Some(EcologyPhase::Collapsing) => GRAZE_PHASE_COLLAPSING,
     }
+}
+
+/// **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, in the wire's spelling** — the destination rung as
+/// `<branch>:<id>`, or `""` for a source no band has queued.
+fn published_destination_rung(destination: Option<crate::intensification::RungKey>) -> String {
+    destination.map_or_else(String::new, |rung| rung.wire_key())
+}
+
+/// **THE LEGS THE ENTRY STILL HAS TO LAY**, each with the chained date the publish pass struck.
+///
+/// **The client must not re-derive these.** The rung spans are the sim's config, the source's
+/// position is the sim's state, and the dates are chained against a build queue the client cannot
+/// see — so a client reconstructing them would be a second producer of a verdict that has one.
+fn published_build_legs(
+    legs: &[crate::intensification::PublishedBuildLeg],
+) -> Vec<sim_runtime::BuildLegState> {
+    legs.iter()
+        .map(|published| sim_runtime::BuildLegState {
+            rung: published.leg.rung.wire_key(),
+            work_remaining: published.leg.work_remaining,
+            turns_remaining: published
+                .turns
+                .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
+        })
+        .collect()
 }
 
 pub(crate) fn snapshot_sedentarization(
@@ -769,6 +794,11 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // last three are the ones the player can act on, and they are three answers because
                 // holding wastes a turn, rotting destroys bought work, and a block is fixed by
                 // staffing the KEEPING rather than by adding builders.
+                build_destination_rung: published_destination_rung(
+                    herd.and_then(|herd| herd.build_destination),
+                ),
+                build_legs: herd
+                    .map_or_else(Vec::new, |herd| published_build_legs(&herd.build_legs)),
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -877,12 +907,24 @@ pub(crate) fn snapshot_forage_patches(
             // The patch's own ecology — the seam `refresh_ecology_phase` classified the published
             // `ecology_phase` word with, so the bands and the word describe the same source.
             let ecology = patch_ecology(patch, forage);
+            // **THE LADDER'S price for each plant rung, resolved once and used by both halves of the
+            // pair.** The fraction and the work pair must divide by the same number or the wire
+            // states one meter twice, from two denominators. `RUNG_COST_UNSCALED` on both: the only
+            // per-source cost multiplier on the ladder is a species' taming cost, and a plant has no
+            // species.
+            let cultivation_work_cost = ladder
+                .rung(RungKey::PlantTended)
+                .build_cost(RUNG_COST_UNSCALED)
+                .unwrap_or(NO_RUNG_WIDTH);
+            let field_work_cost = ladder
+                .rung(RungKey::PlantField)
+                .build_cost(RUNG_COST_UNSCALED)
+                .unwrap_or(NO_RUNG_WIDTH);
             let forecast = forage_forecast(
                 patch,
                 tile_composition,
                 forage,
                 flora,
-                equipped_gather_rate,
                 // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
                 // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
                 // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
@@ -890,16 +932,29 @@ pub(crate) fn snapshot_forage_patches(
                 // (`forageCarryPerWorkerBiomass`) and its `SourceYield` row.
                 forage_per_worker_biomass(equipped_gather_rate, seasonal),
                 FORECAST_OUTPUT_MULTIPLIER,
+                // **The WHOLE basket** — a patch row is a fact about the *patch*, and a patch has no
+                // crew to have named anything, exactly as it has no band to resolve a kit against. A
+                // narrowed crew's own numbers ride its `SourceYield` row; what the client composes
+                // per species off this one is `share × biomass`, which is why every entry's standing
+                // biomass ships beside the composition.
+                &crate::components::TakeSelection::EVERYTHING,
             );
+            // **The published basket and every vector aligned with it, resolved together** — see
+            // the fields below.
+            let basket =
+                patch_composition_info(patch, tile_composition, forage, flora, tile_quotes);
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
-                // **The wire keeps the 0..1 fraction; the meter is in work units** — divided here
-                // against the patch's OWN stamped cost, so a tended patch reads exactly `1.0`
-                // beside an `is_cultivated` that is already true.
+                // **The wire keeps the 0..1 fraction; the source keeps ONE position** — the
+                // per-rung meter is that position clamped into the rung's own span
+                // (`forage::patch_rung_work_done`), divided by the rung's live cost. So a patch that
+                // holds the tended rung reads exactly `1.0` beside an `is_cultivated` that is
+                // already true, and a Field at 40% still reads its Cultivate as complete — which is
+                // the rung-ordering bug made unrepresentable rather than merely forbidden.
                 cultivation_progress: build_fraction(
-                    patch.cultivation_progress,
-                    patch.cultivation_cost,
+                    crate::forage::patch_rung_work_done(patch, RungKey::PlantTended, ladder),
+                    cultivation_work_cost,
                 ),
                 is_cultivated: patch.is_cultivated(),
                 owner: patch.owner.map(|faction| faction.0),
@@ -916,14 +971,21 @@ pub(crate) fn snapshot_forage_patches(
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
                 // client's "then Y" is the number the sim will hand over.
-                field_progress: build_fraction(patch.field_progress, patch.field_cost),
+                field_progress: build_fraction(
+                    crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
+                    field_work_cost,
+                ),
                 is_field: patch.is_field(),
-                field_yield: field_provisions(
+                // **Through `rung_payoff` at rung 3** — the same seam the sim pays every plant rung
+                // with, asked about the Field by name. It used to call a rung-3-only managed rate;
+                // that model is retired, so the quote and the payout are one expression again.
+                field_yield: crate::forage::rung_payoff(
                     patch,
                     tile_composition,
                     forage,
                     flora,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    RungKey::PlantField,
                 ),
                 // **Why this ground will not take seed** — resolved by the caller through the *same*
                 // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so
@@ -986,16 +1048,18 @@ pub(crate) fn snapshot_forage_patches(
                 // has to quote the price before the player commits, and the patch's *stamped* cost is
                 // `0` until someone starts. `RUNG_COST_UNSCALED` on both: the only per-source cost
                 // multiplier on the ladder is a species' taming cost, and a plant has no species.
-                cultivation_work_done: patch.cultivation_progress,
-                cultivation_work_cost: ladder
-                    .rung(RungKey::PlantTended)
-                    .build_cost(RUNG_COST_UNSCALED)
-                    .unwrap_or(0.0),
-                field_work_done: patch.field_progress,
-                field_work_cost: ladder
-                    .rung(RungKey::PlantField)
-                    .build_cost(RUNG_COST_UNSCALED)
-                    .unwrap_or(0.0),
+                cultivation_work_done: crate::forage::patch_rung_work_done(
+                    patch,
+                    RungKey::PlantTended,
+                    ladder,
+                ),
+                cultivation_work_cost,
+                field_work_done: crate::forage::patch_rung_work_done(
+                    patch,
+                    RungKey::PlantField,
+                    ladder,
+                ),
+                field_work_cost,
                 // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
                 // `upkeep_demand` below resolves through the **at-risk** rung
                 // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
@@ -1036,6 +1100,8 @@ pub(crate) fn snapshot_forage_patches(
                 // last three are the ones the player can act on, and they are three answers because
                 // holding wastes a turn, rotting destroys bought work, and a block is fixed by
                 // staffing the KEEPING rather than by adding builders.
+                build_destination_rung: published_destination_rung(patch.build_destination),
+                build_legs: published_build_legs(&patch.build_legs),
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -1064,22 +1130,31 @@ pub(crate) fn snapshot_forage_patches(
                 collapse_fraction: ecology.collapse_fraction,
                 stressed_fraction: ecology.stressed_fraction,
                 // **THE STANDING UPKEEP** — the plant twin; see the herd row for the seam and why
-                // all three terms ship. Every one of them is resolved through the **at-risk** rung
+                // all three terms ship.
+                //
+                // **ALL FOUR TERMS ARE THE BILL, so the row is internally consistent**:
+                // `demand − supplied == shortfall`, and `workersNeeded == ceil(demand /
+                // PER_WORKER_OUTPUT)`, are what the client's under-kept readout is built on and it
+                // is told to do no arithmetic of its own. The supply answers the demand the keepers
+                // were *handed* (`forage::patch_keeping_basis`), not the one the turn's own build
+                // work has since raised — the stamp is taken before the accrual, so a fourth term
+                // reading the live demand published *"wants 3, you have 2"* beside a shortfall of
+                // zero. The *live* cost of holding the rung a player is composing against is the
+                // `<rung>UpkeepDemand` quote pair above, which is what that pair exists for.
+                //
+                // The bill is itself struck through the **at-risk** rung
                 // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
                 // the grace below counts down against, so a row cannot bill one rung's demand while
                 // the sim bleeds another's.
-                upkeep_demand: crate::forage::patch_upkeep_demand(
-                    patch,
-                    crate::intensification::NOTHING_IN_FLIGHT,
-                    ladder,
-                ),
+                upkeep_demand: crate::forage::patch_keeping_basis(patch, ladder),
                 upkeep_supplied: patch.upkeep_supplied,
                 // **Derived, so the three always describe one turn and one rung.** A stored
                 // shortfall would be stamped only on patches some band is assigned to, and would
                 // therefore read `0` on exactly the abandoned patches that are reverting.
                 upkeep_shortfall: crate::forage::patch_upkeep_shortfall(patch, ladder),
                 // **The MAINTAIN activity's own `workers_needed`** — the plant twin, and what makes
-                // a standing cost legible: *"this wants 1, you have 0"*.
+                // a standing cost legible: *"this wants 1, you have 0"*. `ceil` of the **same
+                // bill** the three terms above ship, never of the live demand beside it.
                 upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(patch, ladder),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
@@ -1099,12 +1174,13 @@ pub(crate) fn snapshot_forage_patches(
                     flora,
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
-                field_fodder: field_fodder(
+                field_fodder: crate::forage::rung_fodder_payoff(
                     patch,
                     tile_composition,
                     forage,
                     flora,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    RungKey::PlantField,
                 ),
                 // **What is growing here — as this PATCH has it** (#433). The tile names the
                 // plants (§2, per-tile realization §10) and the patch's rung then says how much of
@@ -1118,13 +1194,23 @@ pub(crate) fn snapshot_forage_patches(
                 // deep-copying it re-allocated two `String`s per named plant on every patch on
                 // every turn (half this readout's whole cost). Only a committed patch pays for a
                 // rebuilt list, and there are few of those.
-                composition: patch_composition_info(
-                    patch,
-                    tile_composition,
-                    forage,
-                    flora,
-                    tile_quotes,
-                ),
+                composition: basket.composition,
+                // **HOW MUCH OF EACH PLANT IS STANDING** — `share × biomass`, index-aligned with the
+                // basket above **by construction**: both come out of one call, so no later edit can
+                // leave the two describing different baskets. It is what a selective gather's crop
+                // chip reads ("70% (63)"), and it rides the patch row rather than the memoized
+                // composition entries because it moves every turn while they do not.
+                composition_standing_biomass: basket.standing_biomass,
+                // **AND WHAT EACH OF THEM CONVERTS AT** — the per-species twins of
+                // `provisions_per_biomass` / `fodder_per_biomass` beside them, so a compose sheet
+                // can price a **narrowing** before the player commits to it. The basket average
+                // alone cannot: it does not move when a crop chip does.
+                composition_provisions_per_biomass: basket.provisions_per_biomass,
+                composition_fodder_per_biomass: basket.fodder_per_biomass,
+                // …and the third account, which is the one the selective gather was argued on:
+                // baskets are made of fibre, so *"tick cotton, see how much fibre"* is the first
+                // thing a player tries and the basket-averaged rate beside it cannot answer it.
+                composition_material_per_biomass: basket.material_per_biomass,
                 // **Which ONE plant this patch is committed to** (Flora Roster S1) — `""` is the
                 // wild mixed basket, a positive statement rather than "unknown". The display name is
                 // resolved here because the client holds no roster (the `FloraShareInfo::display_name`
@@ -1162,13 +1248,67 @@ fn patch_composition_info(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     tile_quotes: &FloraQuoteCache,
-) -> Arc<[FloraShareInfo]> {
+) -> PublishedBasket {
+    // **Every per-entry vector is derived from the SAME list that is published**, so all of them are
+    // index-aligned by construction rather than by call sites agreeing about which entries survive
+    // the zero-share filter. Adding a fifth means adding it here, and nowhere else.
+    // ⛔ **IT RETURNS THE FOUR VECTORS, NEVER A WHOLE `PublishedBasket`.** It used to answer the
+    // basket, and the wild arm — the >99% case — took the four rows off it with a functional update
+    // while overriding `composition` with the memo's `Arc`. Functional-update syntax evaluates the
+    // base expression *in full*, so that arm built the deep copy of the whole basket (three `String`s
+    // and two `Vec<MaterialPayoff>` per named plant) that the memo exists to avoid, and then dropped
+    // it. Handing back the rows alone makes the copy unspellable rather than merely avoided.
+    let aligned = |shares: &[FloraShareInfo]| -> AlignedRows {
+        let rates = crate::forage::patch_species_rates(patch, tile_composition, flora, forage);
+        // The rate rows come off `patch_composition` too, so they are the same basket in the same
+        // order — but only the *published* entries survive the zero-share filter above, so each row
+        // is matched **by key** rather than by position. A plant with no row reads `0`, which is what
+        // an unnamed plant contributes to the basket average as well.
+        let rate_of = |species: &str| {
+            rates
+                .iter()
+                .find(|rate| rate.species == species)
+                .map_or((NO_SPECIES_RATE, NO_SPECIES_RATE), |rate| {
+                    (rate.provisions_per_biomass, rate.fodder_per_biomass)
+                })
+        };
+        AlignedRows {
+            standing_biomass: shares
+                .iter()
+                .map(|info| info.share * patch.biomass)
+                .collect(),
+            provisions_per_biomass: shares.iter().map(|info| rate_of(&info.species).0).collect(),
+            fodder_per_biomass: shares.iter().map(|info| rate_of(&info.species).1).collect(),
+            // **What each of them is MADE OF** — the same rows, in the wire's per-entry wrapper.
+            // Empty `rows` is a plant that pays no material ("no row"), and a plant the roster no
+            // longer names lands there too: it contributes to no account at all.
+            material_per_biomass: shares
+                .iter()
+                .map(|info| SpeciesMaterialRates {
+                    rows: rates
+                        .iter()
+                        .find(|rate| rate.species == info.species)
+                        .and_then(|rate| rate.materials.as_ref())
+                        .map(|rows| {
+                            rows.iter()
+                                .map(|payoff| MaterialPayoff {
+                                    material_id: payoff.material.clone(),
+                                    amount: payoff.amount,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect(),
+        }
+    };
     let effective = patch_composition(patch, tile_composition, forage);
     let quoted = tile_quotes.composition(patch.tile);
     let Cow::Owned(effective) = effective else {
-        return quoted; // wild: the tile's basket verbatim, shared rather than rebuilt.
+        // wild: the tile's basket verbatim, shared rather than rebuilt.
+        return aligned(&quoted).published(Arc::clone(&quoted));
     };
-    effective
+    let shares: Arc<[FloraShareInfo]> = effective
         .iter()
         .filter(|entry| entry.share > NO_PUBLISHED_SHARE)
         .map(|entry| {
@@ -1199,8 +1339,49 @@ fn patch_composition_info(
                     },
                 )
         })
-        .collect()
+        .collect();
+    aligned(&shares).published(shares)
 }
+
+/// **The patch's basket as the wire carries it** — the published entries and every per-entry vector
+/// that must line up with them, resolved in one call so the alignment is structural. A named record
+/// rather than a tuple because four vectors in a row is a shape a caller can mis-order.
+struct PublishedBasket {
+    composition: Arc<[FloraShareInfo]>,
+    standing_biomass: Vec<f32>,
+    provisions_per_biomass: Vec<f32>,
+    fodder_per_biomass: Vec<f32>,
+    material_per_biomass: Vec<SpeciesMaterialRates>,
+}
+
+/// **The per-entry vectors alone, before a basket is named to carry them** — what
+/// [`patch_composition_info`]'s aligner answers, so a caller that already holds the published
+/// entries (the wild patch, which shares the tile memo's `Arc`) can pair them up without a second
+/// copy of the basket being built and thrown away.
+struct AlignedRows {
+    standing_biomass: Vec<f32>,
+    provisions_per_biomass: Vec<f32>,
+    fodder_per_biomass: Vec<f32>,
+    material_per_biomass: Vec<SpeciesMaterialRates>,
+}
+
+impl AlignedRows {
+    /// Pair the rows with the entries they were aligned against.
+    fn published(self, composition: Arc<[FloraShareInfo]>) -> PublishedBasket {
+        PublishedBasket {
+            composition,
+            standing_biomass: self.standing_biomass,
+            provisions_per_biomass: self.provisions_per_biomass,
+            fodder_per_biomass: self.fodder_per_biomass,
+            material_per_biomass: self.material_per_biomass,
+        }
+    }
+}
+
+/// **What a plant the roster no longer names converts at** — `0`, in either scalar account, which is
+/// exactly what it contributes to the basket average it must stay consistent with. Named because a
+/// bare `0.0` at the call site reads as a measurement rather than as "there is no such plant".
+const NO_SPECIES_RATE: f32 = 0.0;
 
 /// **A source's material rows scaled onto one basis, in the WIRE's shape** — the sim's own
 /// [`crate::materials_config::material_yield_totals`] with its rows renamed for the snapshot.

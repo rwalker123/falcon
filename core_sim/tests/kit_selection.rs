@@ -15,6 +15,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_expeditions, advance_herds, advance_labor_allocation, advance_tick, build_headless_app,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
@@ -505,6 +506,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                             tile: tile_pos,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
                             species: None,
+                            take_species: TakeSelection::EVERYTHING,
                         },
                         workers: CREW,
                         kit: Some(chosen),
@@ -1761,6 +1763,7 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                         tile: tile_pos,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
                         species: None,
+                        take_species: TakeSelection::EVERYTHING,
                     },
                     workers: CREW,
                     kit: None,

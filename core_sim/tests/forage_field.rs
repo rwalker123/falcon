@@ -24,6 +24,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+use core_sim::TakeSelection;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation,
     default_species_for_rung, generate_hydrology, rung_site_refusal, scalar_from_f32, scalar_one,
@@ -351,30 +352,16 @@ fn spawn_builder(
 /// number of work units per turn (a fraction of that rung's cost), so a fixture seated at a nominal
 /// one-unit job would lapse to nothing in a single bleeding turn.
 fn seat_completed_rung(app: &mut App, coord: UVec2, rung: RungKey) {
-    let (cost, retain_bar) = {
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let def = ladder.rung(rung);
-        let cost = def.build_cost(RUNG_COST_UNSCALED).expect("the rung builds");
-        // **AND THE RETENTION BAR the completion would have stamped** — the rung is *earned* at its
-        // cost and *held* down to this bar, so a fixture that fills the meter by hand and leaves the
-        // bar at `RUNG_UNSTARTED` seats a rung that was never achieved
-        // (`docs/plan_standing_upkeep.md` §2.4).
-        (cost, def.retention_bar(cost))
-    };
+    // **One position states a completed rung: the top of its own span.** The retention bar the old
+    // fixture stamped beside the cost is deleted (`docs/plan_standing_upkeep.md` §2.8) — a rung is
+    // achieved exactly here — so the pair this used to carry has become one number.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let (base, width) = core_sim::plant_rung_span(rung, &ladder);
     let mut registry = app.world.resource_mut::<ForageRegistry>();
-    let patch = registry.patch_mut(coord).expect("patch exists");
-    match rung {
-        RungKey::PlantField => {
-            patch.field_progress = cost;
-            patch.field_cost = cost;
-            patch.field_retain_bar = retain_bar;
-        }
-        _ => {
-            patch.cultivation_progress = cost;
-            patch.cultivation_cost = cost;
-            patch.cultivation_retain_bar = retain_bar;
-        }
-    }
+    registry
+        .patch_mut(coord)
+        .expect("patch exists")
+        .set_ladder_position(base + width, &ladder);
 }
 
 /// [`spawn_forager`] with an explicit head-count — the dip test needs a crew the carry binds.
@@ -442,6 +429,7 @@ fn spawn_forager_of(
                             tile: patch,
                             floor: policy,
                             species: None,
+                            take_species: TakeSelection::EVERYTHING,
                         },
                         workers: foragers,
                         kit: None,
@@ -505,7 +493,13 @@ fn field_progress_of(app: &App, coord: UVec2) -> f32 {
     app.world
         .resource::<ForageRegistry>()
         .patch(coord)
-        .map(|patch| patch.field_progress)
+        .map(|patch| {
+            core_sim::patch_rung_work_done(
+                patch,
+                core_sim::RungKey::PlantField,
+                &core_sim::LadderConfig::builtin(),
+            )
+        })
         .unwrap_or(0.0)
 }
 
@@ -558,7 +552,10 @@ fn unmaintained_field_turns_before_loss(app: &App) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     let cost = field_cost(app);
-    let erodable = cost - field.retention_bar(cost);
+    // The Field's whole span is erodable now: there is no retention bar below it
+    // (`docs/plan_standing_upkeep.md` §2.8), so what a bleed has to eat before the rung is lost is
+    // the rung's own cost.
+    let erodable = cost;
     let (_, bleed) = field_build(app);
     // Lost the turn the meter falls **below** the bar, so eroding exactly the erodable amount still
     // holds it — hence `floor + 1` rather than `ceil`.
@@ -609,19 +606,20 @@ fn field_cost(app: &App) -> f32 {
         .expect("the field rung builds")
 }
 
-/// **Turns [`SOW_CREW`] needs to raise a whole Field**, `ceil(work_cost / work per turn)` — turns are
-/// an output now, so a bare `1.0 / rate` no longer means anything.
+/// **Turns [`SOW_CREW`] needs to raise a whole Field FROM BARE GROUND**, `ceil(work / work per
+/// turn)` — turns are an output now, so a bare `1.0 / rate` no longer means anything.
+///
+/// **THE WORK IS THE WHOLE BRANCH, not the Field rung's own span** (`docs/plan_standing_upkeep.md`
+/// §2.8, rule 1). A patch has one position, so there is no way to put work on the Field without the
+/// tended rung beneath it being whole: a `sow` ordered on untended ground clears first, at
+/// Cultivate's price and with Cultivate's tool. A bare-ground Sow is therefore `50 + 75` work units,
+/// and a fixture that ran only the Field's own 75 would measure a **tended patch** and report it as
+/// a failed Sow.
 fn turns_to_sow(app: &App) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let field = ladder.rung(RungKey::PlantField);
-    core_sim::build_turns_remaining(
-        field
-            .build_cost(RUNG_COST_UNSCALED)
-            .expect("the rung builds"),
-        core_sim::RUNG_UNSTARTED,
-        field_build(app).0,
-    )
-    .expect("a staffed Sow finishes")
+    let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    core_sim::build_turns_remaining(base + width, core_sim::RUNG_UNSTARTED, field_build(app).0)
+        .expect("a staffed Sow finishes")
 }
 
 /// **PLAYABILITY, not mechanic — this is the check that caught worldgen dropping the Field rung.**
@@ -726,26 +724,205 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
         );
     }
 
-    // Sustained work completes the Field in the rung's own `1 / progress_per_turn` turns.
-    let turns_to_sow = turns_to_sow(&app);
-    run_turns_with_forage(&mut app, turns_to_sow);
+    // **A QUEUE ENTRY NAMES A DESTINATION, so `sow` on untouched ground lays TWO LEGS** — `0 → 50`
+    // tended, then `50 → 125` field (`docs/plan_standing_upkeep.md` §2.8). The player's order is
+    // *take this land to Field*; the entry climbs everything between here and there and stays at the
+    // head until it arrives.
+    let ladder = core_sim::LadderConfig::builtin();
+    let (tended_base, tended_width) =
+        core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
+    let (field_base, field_width) =
+        core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    fn published_legs(app: &App, coord: UVec2) -> Vec<(String, f32)> {
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .build_legs
+            .iter()
+            .map(|published| (published.leg.rung.wire_key(), published.leg.work_remaining))
+            .collect()
+    }
+
+    // **THE LEGS, ASSERTED AS PUBLISHED** — never re-derived from the ladder here, because the whole
+    // point of publishing them is that nobody downstream has to.
+    let legs = published_legs(&app, coord);
+    assert_eq!(
+        legs.len(),
+        2,
+        "sowing untouched ground is a two-leg climb, got {legs:?}"
+    );
+    assert_eq!(legs[0].0, "plant:tended", "…and it clears first: {legs:?}");
+    assert_eq!(legs[1].0, "plant:field", "…then sows: {legs:?}");
+    // **The legs sum to what is LEFT of the climb**, so the whole order is that plus what the first
+    // turn above already banked — 125 work units on the shipped ladder, never the Field's own 75.
+    let banked = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .ladder_position();
+    let ordered: f32 = legs.iter().map(|(_, work)| work).sum::<f32>() + banked;
+    assert!(
+        (ordered - (tended_base + tended_width + field_width)).abs() < 1e-3,
+        "the two legs plus the work already banked are the WHOLE BRANCH: {ordered} from \
+         {legs:?} over {banked}"
+    );
+
+    // **IT PASSES THROUGH CULTIVATED ON THE WAY.** Enough turns to lay the first leg and no more.
+    let first_leg_turns =
+        core_sim::build_turns_remaining(legs[0].1, core_sim::RUNG_UNSTARTED, field_build(&app).0)
+            .expect("a staffed Sow finishes");
+    run_turns_with_forage(&mut app, first_leg_turns);
+    {
+        let registry = app.world.resource::<ForageRegistry>();
+        let patch = registry.patch(coord).expect("patch persists");
+        assert!(
+            patch.is_cultivated(),
+            "the first leg lands the tended rung: position {}",
+            patch.ladder_position()
+        );
+        assert!(
+            !patch.is_field(),
+            "…and the Field is still to come — the entry has not arrived, so it holds the head"
+        );
+        assert_eq!(
+            published_legs(&app, coord).len(),
+            1,
+            "…and one leg is left to lay"
+        );
+    }
+
+    // Then the rest of the climb.
+    let rest_of_the_climb = turns_to_sow(&app);
+    run_turns_with_forage(&mut app, rest_of_the_climb);
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(coord).expect("patch persists");
     assert!(
         patch.is_field(),
-        "sustained Sow work completes the field: progress {}",
-        patch.field_progress
+        "sustained Sow work completes the field: position {}",
+        patch.ladder_position()
     );
     assert_eq!(patch.owner, Some(FactionId(0)), "the sower owns it");
     assert!(
-        !patch.is_cultivated(),
-        "a bare-ground Field was never tended — rung 3 here stands on the tile, not on rung 2"
+        patch.is_cultivated(),
+        "and a Field IS tended — the climb laid that ground on the way, so rung 3 stands on rung 2 \
+         rather than beside it"
+    );
+    assert!(
+        (patch.ladder_position() - (field_base + field_width)).abs() < 1e-3,
+        "…at the top of the branch: {}",
+        patch.ladder_position()
     );
     assert_eq!(
         registry.cultivated_count(FactionId(0)),
         1,
         "a Field is a completed plant improvement — it must read as domestication, not as less than \
          the rung below it"
+    );
+}
+
+/// **THE SAME ORDER ON GROUND THAT IS ALREADY TENDED IS ONE LEG, AND IT OWES ONLY THE FIELD** — the
+/// other half of *"a queue entry names a destination"*. The player types the same `sow`; what it
+/// costs depends on where the land already stands.
+#[test]
+fn a_sow_ordered_on_tended_ground_lays_one_leg_owing_the_fields_own_span() {
+    let mut app = spawn_world();
+    let (tile, coord) = find_sowable_tile(&app);
+    grant_seed_selection(&mut app, FactionId(0));
+    seat_completed_rung(&mut app, coord, RungKey::PlantTended);
+    spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    run_turns_with_forage(&mut app, 1);
+
+    let ladder = core_sim::LadderConfig::builtin();
+    let (_, field_width) = core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    let legs: Vec<_> = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .build_legs
+        .clone();
+    assert_eq!(
+        legs.len(),
+        1,
+        "ground that already holds the tended rung has one leg left: {legs:?}"
+    );
+    assert_eq!(legs[0].leg.rung, RungKey::PlantField);
+    // A turn of work has already landed, so the leg owes the Field's span less that turn's banking —
+    // asserted as a bound rather than an equality, because the pool's output is the fixture's, not
+    // this test's subject.
+    assert!(
+        legs[0].leg.work_remaining <= field_width && legs[0].leg.work_remaining > field_width * 0.5,
+        "…owing the FIELD'S OWN span, not the whole branch: {} against {field_width}",
+        legs[0].leg.work_remaining
+    );
+}
+
+/// **A PREVIOUS IMPROVEMENT IS A RECEIPT, NOT A DISCOUNT** — a patch part-way up its Cultivate owes
+/// only what is *left* of that leg, and the Field's own span in full behind it.
+#[test]
+fn a_part_built_cultivate_owes_only_the_remainder_of_its_own_leg() {
+    /// How far up the tended rung the fixture seats the patch, in work units — comfortably clear of
+    /// both ends so a leg that quoted the whole span, or none of it, fails visibly.
+    const BANKED_ON_THE_LEG: f32 = 30.0;
+
+    let mut app = spawn_world();
+    let (tile, coord) = find_sowable_tile(&app);
+    grant_seed_selection(&mut app, FactionId(0));
+    let ladder = core_sim::LadderConfig::builtin();
+    let (tended_base, tended_width) =
+        core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
+    let (_, field_width) = core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    assert!(
+        BANKED_ON_THE_LEG > tended_base && BANKED_ON_THE_LEG < tended_base + tended_width,
+        "fixture: the seat must be INSIDE the tended rung's span, or the case is not the one \
+         under test"
+    );
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.set_ladder_position(BANKED_ON_THE_LEG, &ladder);
+        patch.owner = Some(FactionId(0));
+    }
+    spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    // The published legs are struck by the labor pass, so let one turn run — and read them BEFORE
+    // asserting, since that turn banks a little onto the first leg.
+    let before = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .ladder_position();
+    run_turns_with_forage(&mut app, 1);
+    let banked_this_turn = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .ladder_position()
+        - before;
+
+    let legs: Vec<_> = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .build_legs
+        .clone();
+    assert_eq!(legs.len(), 2, "still two legs to lay: {legs:?}");
+    assert_eq!(legs[0].leg.rung, RungKey::PlantTended);
+    let owed_on_the_leg = tended_base + tended_width - BANKED_ON_THE_LEG - banked_this_turn;
+    assert!(
+        (legs[0].leg.work_remaining - owed_on_the_leg).abs() < 1e-2,
+        "the part-built leg owes what is LEFT of it ({owed_on_the_leg}), not its whole span \
+         ({tended_width}): {}",
+        legs[0].leg.work_remaining
+    );
+    assert!(
+        (legs[1].leg.work_remaining - field_width).abs() < 1e-3,
+        "…and the leg above it owes its own span in full: {} against {field_width}",
+        legs[1].leg.work_remaining
     );
 }
 
@@ -805,6 +982,92 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     );
 }
 
+/// ⛔ **THE BUILDERS' KIT WEARS ON THE FIRST LEG OF A TWO-LEG SOW.**
+///
+/// A `sow` on untended ground climbs `plant:tended` **through the Sow arm** before it ever reaches
+/// the Field's own span, and the wear charge is a delta across the accrual. Measured against the
+/// *Field rung's* clamped meter that delta is `0 → 0` for the whole of that leg — 40% of the shipped
+/// two-leg climb — so the tools came home unworn from work they had done, against
+/// `.claude/rules/core_sim/equipment.md`'s *"wear follows the work actually done"*.
+///
+/// **The keepers are deliberately sent out BARE.** An absent kit derives per job, and the roster's
+/// `tillage` answer serves `agriculture` as well as `builders` — so keeping wear would spend the very
+/// item this asserts on and the arm would pass with the build charging nothing at all.
+#[test]
+fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
+    let mut app = spawn_world();
+    let (tile, coord) = find_bare_sowable_tile(&mut app);
+    grant_seed_selection(&mut app, FactionId(0));
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    gear_the_builders_alone(&mut app, band);
+
+    run_turns_with_forage(&mut app, 1);
+
+    // **The fixture is still on the FIRST leg** — below the Field rung's base, which is exactly the
+    // span the per-rung reading cannot see. Without this the arm would pass on a climb that had
+    // already crossed into the Field.
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let (field_base, _) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    let position = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("the sow created a patch")
+        .ladder_position();
+    assert!(
+        position > core_sim::RUNG_UNSTARTED && position < field_base,
+        "fixture: one turn of a bare-ground sow stands on the tended leg, got {position}"
+    );
+
+    let spent = app
+        .world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("the fixture geared its builders")
+        .wear_of(TILLAGE_ITEM);
+    assert!(
+        spent > 0.0,
+        "the crew banked {position} work units this turn and the hoes must have paid for it, got \
+         {spent} condition spent"
+    );
+}
+
+/// **Put the shipped plant builders' kit on the `builders` row, and NOTHING on the keeping row** —
+/// the isolation the wear arm above needs, since both jobs derive the same kit when a row names none.
+fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let kit = equipment
+        .kit(TILLAGE_KIT)
+        .expect("the shipped roster carries the tillage kit");
+    let builders = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band keeps its allocation");
+        let mut builders = 0;
+        for assignment in &mut allocation.assignments {
+            match assignment.target {
+                LaborTarget::Builders => {
+                    assignment.kit = Some(kit.clone());
+                    builders = assignment.workers;
+                }
+                LaborTarget::Agriculture => assignment.kit = Some(bare_builders()),
+                _ => {}
+            }
+        }
+        builders
+    };
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandEquipment::start_stocked_for(
+            &equipment,
+            builders as f32,
+        ));
+}
+
+/// The plant web's builders kit, and the one item it carries — what a build's wear is spent on.
+const TILLAGE_KIT: &str = "tillage";
+const TILLAGE_ITEM: &str = "hoes";
+
 /// **THE LADDER MUST CLIMB: wild ≤ tended < Field** (on a *bare* patch). Same tile, same biomass,
 /// same workers, same policy — the only difference is which rung the patch stands on. Runs the labor
 /// arm alone (no Logistics pass), so neither regrowth nor the feral decay can move one rung.
@@ -852,7 +1115,9 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
         (provisions_f32(&mut app), biomass, capacity, basket_rate)
     }
 
-    let (wild, biomass, capacity, basket_rate) = rung_yield(None);
+    // `basket_rate` was the retired managed rate's normalization baseline; the ladder is compared on
+    // production now, so nothing here needs it.
+    let (wild, biomass, capacity, _basket_rate) = rung_yield(None);
     let (tended, _, _, _) = rung_yield(Some(false));
     let (field, _, _, _) = rung_yield(Some(true));
 
@@ -873,23 +1138,52 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
          S2's gain of {gain}: {tended} vs {}",
         gain * wild
     );
-    // Rung 3 is *managed*: a flat rate on the standing crop, drawn from no curve at all — scaled by
-    // the projected basket's quality against the wild baseline. With **no crop committed** that
-    // basket is the tile's own, so the factor is this ground's own richness rather than a crop's
-    // (a *sown* Field's basket is 100% its crop, and `flora_f4_cash.rs` pins that arm).
-    let field_quality = basket_rate / forage.provisions_per_biomass;
-    let expected_field = biomass * forage.cultivation.field_provisions_per_biomass * field_quality;
+    // **RUNG 3 IS THE SAME SKIM, ON RICHER AND FASTER LAND.** The managed rate is retired — a rung
+    // may change production, no rung changes the draw — so a Field is drawn down like everything else
+    // and what it bought shows up in `r` and `K`.
+    //
+    // **Measured on the PRODUCTION side, because this fixture's single forager caps all three rungs
+    // at the same carry.** That equality is itself the new model working: a Field holds far more
+    // standing crop, so realizing it genuinely needs more hands, and one gatherer brings home a
+    // gatherer's load off any of them.
     assert!(
-        (field - expected_field).abs() < 1e-3,
-        "a Field pays its managed rate on the standing crop: {field} vs {expected_field}"
+        (field - tended).abs() < 1e-3,
+        "one forager carries the same load off any rung — the collection cap binds, which is the \
+         Field's new cost: {field} vs {tended}"
+    );
+    let ladder_climbs = |rung| {
+        let labor = LaborConfig::builtin();
+        let flora = core_sim::FloraConfig::builtin();
+        let mut patch = core_sim::ForagePatch::new(UVec2::new(0, 0), capacity);
+        patch.biomass = biomass;
+        core_sim::rung_payoff(&patch, &[], &labor.forage, &flora, 1.0, rung)
+    };
+    let produced_tended = ladder_climbs(RungKey::PlantTended);
+    let produced_field = ladder_climbs(RungKey::PlantField);
+    assert!(
+        produced_field > produced_tended,
+        "a Field must out-PRODUCE the tended patch beneath it: {produced_field} vs \
+         {produced_tended}"
+    );
+    let expected_field = produced_tended
+        * forage.cultivation.field_regrowth_gain
+        * forage.cultivation.field_capacity_gain
+        / forage.cultivation.tended_regrowth_gain;
+    assert!(
+        (produced_field - expected_field).abs() < 1e-3,
+        "…by exactly its two production gains, at this fixture's shared ground: {produced_field} \
+         vs {expected_field}"
     );
 
-    // **And the ladder climbs.** This is the claim; the three pins above are how it is bought. Since S2
-    // the bare wild↔tended step is `≤` (a neutral tended patch with no crop equals wild); the strict
-    // climb to the Field survives and the neutral gain only widens it.
+    // **And the ladder climbs — on PRODUCTION, which is what a rung buys.** This is the claim; the
+    // pins above are how it is bought. Since S2 the bare wild↔tended step is `≤` (a neutral tended
+    // patch with no crop equals wild); the strict climb to the Field survives and the neutral gain
+    // only widens it.
+    let produced_wild = ladder_climbs(RungKey::PlantWild);
     assert!(
-        wild <= tended && tended < field,
-        "the plant ladder must be monotone: wild {wild} → tended {tended} → field {field}"
+        produced_wild <= produced_tended && produced_tended < produced_field,
+        "the plant ladder must be monotone in production: wild {produced_wild} → tended \
+         {produced_tended} → field {produced_field}"
     );
 }
 
@@ -927,7 +1221,7 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
         {
             let mut registry = baseline.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_progress = 1.0;
+            patch.set_ladder_position(1.0, &core_sim::LadderConfig::builtin());
             patch.owner = Some(FactionId(0));
             patch.species = crop;
         }
@@ -955,7 +1249,7 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
         {
             let mut registry = sparse.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(coord).unwrap();
-            patch.cultivation_progress = 1.0;
+            patch.set_ladder_position(1.0, &core_sim::LadderConfig::builtin());
             patch.owner = Some(FactionId(0));
         }
         grant_seed_selection(&mut sparse, FactionId(0));
@@ -1086,6 +1380,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         tile: sown_tile,
         floor,
         species,
+        ..
     } = &assignment.target
     else {
         panic!("completion must not change the target's KIND: {assignment:?}");
@@ -1142,66 +1437,123 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
             .is_field(),
         "the grace turns cost the Field nothing"
     );
-    // **AND NEITHER DOES THE FIRST BLEEDING TURN** — the rung is *earned* at its cost and *held*
-    // down to a stated fraction of it (`docs/plan_standing_upkeep.md` §2.4). Before that, a
-    // completed meter sitting exactly at its cost lost the rung to the first bleed of any size,
-    // which is the defect this arc was filed against.
-    let survives = unmaintained_field_turns_before_loss(&app);
-    assert!(
-        survives > SPARED_LAG_TURNS + grace + 1,
-        "fixture: the Field must outlast its own first bleeding turn"
-    );
-    run_turns_untended(&mut app, survives - grace - SPARED_LAG_TURNS - 1);
-    assert!(
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .unwrap()
-            .is_field(),
-        "a Field stays a Field while its meter erodes toward the retention bar"
-    );
-    // **The bar is crossed when the meter falls BELOW it**, so a meter sitting exactly on it is
-    // still a Field — walk the last turn or two rather than predicting which one it is.
-    for _ in 0..3 {
-        if !app
+    // **AND THE FIRST BLEEDING TURN *DOES* TAKE IT — that is the retention bar's deletion, and what
+    // makes it safe is the PAYOUT.** The bar was added because a completed meter sits exactly at its
+    // cost, so the first bleed of any size flipped the rung and cost the player the whole of it. The
+    // one-position ladder removes the cliff instead of patching it
+    // (`docs/plan_standing_upkeep.md` §2.8/§4.10): everything the rung is worth interpolates on the
+    // position, so a Field a hair below its top pays a hair under a whole Field.
+    //
+    // **Asserted as the PAIR** — the position AND what it pays there — because either alone is
+    // satisfiable by the model being wrong: a rung that never bled would satisfy the payout clause,
+    // and a rung that cliffed to nothing would satisfy the position clause.
+    // > #### ⛔ WHAT THIS TEST CANNOT ASSERT, AND WHY IT ASSERTS THE KEEPING INSTEAD
+    // >
+    // > The bar's deletion is justified by *"everything the rung is worth interpolates on the
+    // > position, so losing it at the boundary is a rounding"*. **That is true of the per-biomass
+    // > rates and NOT of the Field's food harvest.** A Field is paid through a binary `is_field()`
+    // > branch in `advance_labor_allocation` — a **managed rate on the whole standing crop**
+    // > (`field_provisions`, capped by collection, never drawn down) — while everything below it is
+    // > paid by an **MSY draw-down** (`forage_take`). Those are different *kinds* of harvest, not two
+    // > values of one rate, so the rung-2→3 boundary is still a cliff in food.
+    // >
+    // > So this asserts the interpolation on the quantity that genuinely does cross that boundary
+    // > continuously — **the keeping demand**, `2.0 → 4.0` across the Field's span — and the position
+    // > pair beside it. The food cliff is flagged for a decision rather than asserted away here.
+    let ladder = core_sim::LadderConfig::builtin();
+    let (field_base, field_width) =
+        core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    let billed_at = |app: &App, position: f32| -> f32 {
+        let mut probe = app
             .world
             .resource::<ForageRegistry>()
             .patch(coord)
-            .unwrap()
-            .is_field()
-        {
-            break;
-        }
-        run_turns_untended(&mut app, 1);
-    }
+            .expect("patch")
+            .clone();
+        probe.set_ladder_position(position, &ladder);
+        core_sim::patch_upkeep_demand(&probe, &ladder)
+    };
+
+    // **THE PRECONDITION.** A whole Field and the bare tended patch beneath it must owe materially
+    // different numbers, or every comparison below passes by both collapsing onto one value.
+    let whole_field = billed_at(&app, field_base + field_width);
+    let bare_tended = billed_at(&app, field_base);
+    assert!(
+        whole_field > bare_tended && bare_tended > 0.0,
+        "PRECONDITION: a whole Field must cost more to hold than the tended ground under it \
+         ({whole_field} against {bare_tended}), or this test cannot tell a rounding from a cliff"
+    );
+
+    // One bleeding turn past the grace and the rung is gone…
+    run_turns_untended(&mut app, 1);
+    let landed = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .unwrap()
+        .ladder_position();
     {
         let registry = app.world.resource::<ForageRegistry>();
         let patch = registry.patch(coord).unwrap();
         assert!(
             !patch.is_field(),
-            "crossing the retention bar takes a field feral: progress {}",
-            patch.field_progress
+            "the first bleeding turn past the grace takes the Field: position {landed}"
         );
         assert!(
-            !patch.is_cultivated(),
-            "it reverts to WILD, not to a free tended patch"
+            patch.is_cultivated(),
+            "…and it reverts to the TENDED ground it climbed through, not to wild — the position \
+             eats the Field's span first and reaches the tended rung's only once the Field is gone"
         );
         assert_eq!(
             registry.cultivated_count(FactionId(0)),
-            0,
-            "a feral field is no longer a plant improvement"
+            1,
+            "which is still a plant improvement, because the tended rung under it stands"
         );
     }
+    // …**and on the interpolated axis, what that loss cost is a fraction of a percent.** The position
+    // sits a single turn's rot below the Field's top, so the ground is still billed almost exactly
+    // what a whole Field is billed. That continuity is the shape the bar's deletion relies on; a
+    // re-introduced step drops this to `bare_tended` and fails by the whole span.
+    let lost_bill = billed_at(&app, landed);
+    /// How much of the step from tended to Field crossing the boundary may cost. One turn's rot
+    /// (`0.75`) against the Field's 75-unit span is 1%, so the bound is loose enough to survive a rot
+    /// retune and tight enough that a step — which gives up the whole difference — fails outright.
+    const A_ROUNDING_OF_THE_STEP: f32 = 0.05;
+    assert!(
+        lost_bill >= whole_field - A_ROUNDING_OF_THE_STEP * (whole_field - bare_tended),
+        "losing the Field at {landed} must be a rounding on the keeping, not a step: {lost_bill} \
+         against a whole Field's {whole_field} and the bare tended {bare_tended}"
+    );
 
-    // Left alone it bleeds all the way to nothing, and ownership lapses with it.
-    let lapse_turns = (field_cost(&app) / decay_per_turn).ceil() as u32 + 2;
-    run_turns_untended(&mut app, lapse_turns);
+    // **Left alone it bleeds all the way to nothing, and ownership lapses with it — and "nothing" is
+    // now the WHOLE BRANCH.** The source has one position, so it has to fall through the tended
+    // rung's span as well as the Field's before the ground is unstarted; running only the Field's own
+    // 75 units leaves it standing on tended ground with an owner, which is correct and is not the end
+    // state this asserts.
+    // **The rot rate CHANGES as the position falls between the rungs** — `plant:field` bleeds `0.75`
+    // and `plant:tended` `0.5` — so there is no single divisor that predicts the span. Run it until
+    // the ground is unstarted, under a bound generous enough for the slower rate and tight enough to
+    // catch a decay that has stopped.
+    let lapse_bound = ((field_base + field_width) / decay_per_turn).ceil() as u32 * 2 + 4;
+    for _ in 0..lapse_bound {
+        if app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .ladder_position()
+            <= core_sim::RUNG_UNSTARTED
+        {
+            break;
+        }
+        run_turns_untended(&mut app, 1);
+    }
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(coord).unwrap();
     assert_eq!(
-        patch.field_progress,
+        patch.ladder_position(),
         core_sim::RUNG_UNSTARTED,
-        "the investment fully lapses"
+        "the investment fully lapses — both rungs of it"
     );
     assert_eq!(patch.owner, None, "ownership lapses once nothing is left");
     // The patch itself survives — plants reseed, so the stand you planted stays on the map as wild
@@ -1333,8 +1685,14 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).expect("patch");
-        patch.field_progress = part_built_field;
-        patch.field_cost = sow_cost;
+        patch.set_ladder_position(
+            core_sim::plant_rung_span(
+                core_sim::RungKey::PlantField,
+                &core_sim::LadderConfig::builtin(),
+            )
+            .0 + (part_built_field),
+            &core_sim::LadderConfig::builtin(),
+        );
         patch.owner = Some(FactionId(0));
     }
 
@@ -1348,13 +1706,22 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
         let registry = app.world.resource::<ForageRegistry>();
         let patch = registry.patch(coord).expect("patch");
         assert!(
-            patch.field_progress < field_decay,
+            core_sim::patch_rung_work_done(
+                patch,
+                core_sim::RungKey::PlantField,
+                &core_sim::LadderConfig::builtin()
+            ) < field_decay,
             "the Field's own meter is spent (an `f32` subtracted turn by turn lands a few ULPs \
              above zero, which is still `> RUNG_UNSTARTED` — correctly, that is the guard): {}",
-            patch.field_progress
+            core_sim::patch_rung_work_done(
+                patch,
+                core_sim::RungKey::PlantField,
+                &core_sim::LadderConfig::builtin()
+            )
         );
         assert_eq!(
-            patch.cultivation_progress, tended_cost,
+            patch.ladder_position(),
+            tended_cost,
             "and the tended ground under it lost NOTHING while that was happening"
         );
         assert!(
@@ -1371,12 +1738,16 @@ fn an_unworked_patch_unwinds_its_newest_rung_first() {
     let patch_registry = app.world.resource::<ForageRegistry>();
     let patch = patch_registry.patch(coord).expect("patch");
     assert_eq!(
-        patch.field_progress,
+        core_sim::patch_rung_work_done(
+            patch,
+            core_sim::RungKey::PlantField,
+            &core_sim::LadderConfig::builtin()
+        ),
         core_sim::RUNG_UNSTARTED,
         "the Field is fully gone"
     );
     assert!(
-        patch.cultivation_progress < tended_cost,
+        patch.ladder_position() < tended_cost,
         "with the Field gone, the tended rung is the newest thing left and starts to bleed"
     );
 }
@@ -1414,10 +1785,11 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
         .resource::<ForageRegistry>()
         .patch(coord)
         .expect("patch")
-        .cultivation_progress;
-    assert_eq!(
-        stranded, tended_cost,
-        "cultivation cannot move while a Field meter still stands: {stranded}"
+        .ladder_position();
+    assert!(
+        stranded > tended_cost,
+        "the bleed ate the Sow's own progress and stopped at the ground beneath it: {stranded} \
+         against a tended rung that ends at {tended_cost}"
     );
     assert!(
         app.world
@@ -1427,10 +1799,51 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
             .is_cultivated(),
         "so the patch the player paid 25 turns for is still a tended patch"
     );
+
+    // **AND THE STRANDING IS NOT MERELY AVOIDED, IT IS UNREPRESENTABLE.** The state this test was
+    // filed against — a Field with progress above tended ground that had slipped below complete —
+    // needed two independent meters to write down. With one position the Field's range **begins**
+    // where the tended rung's ends, so no reachable position puts a Field over incomplete ground.
+    // Swept rather than spot-checked, and past the top, because the bug was a boundary fault.
+    let ladder = core_sim::LadderConfig::builtin();
+    let (field_base, field_width) =
+        core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    const SWEEP_STEPS: u32 = 400;
+    const PAST_THE_TOP: f32 = 1.25;
+    let mut probe = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .clone();
+    let (mut saw_field, mut saw_untended) = (false, false);
+    for step in 0..=SWEEP_STEPS {
+        let position =
+            (field_base + field_width) * PAST_THE_TOP * (step as f32 / SWEEP_STEPS as f32);
+        probe.set_ladder_position(position, &ladder);
+        assert!(
+            !probe.is_field() || probe.is_cultivated(),
+            "a Field over incomplete tended ground at position {position} — the very state one \
+             position exists to make unwritable"
+        );
+        saw_field |= probe.is_field();
+        saw_untended |= !probe.is_cultivated();
+    }
+    // The liveness half: a sweep that never reached a Field, or never left the wild rung, would
+    // satisfy the implication vacuously.
+    assert!(saw_field, "the sweep never reached a Field");
+    assert!(saw_untended, "the sweep never saw untended ground");
 }
 
-/// **Losing a Field is announced on the `sow` channel** — the rung-3 twin of the tended patch's feral
-/// line, and pushed on the same edge (the turn it crosses back below `1.0`), once.
+/// **Losing a Field is announced on the `sow` channel, ONCE** — the rung-3 twin of the tended patch's
+/// feral line, pushed on the edge the position falls out of the Field's span and never again.
+///
+/// **The bleed does not stop there, and the second announcement is CORRECT.** One position means the
+/// source goes on down through the tended rung's range and loses that rung too, on the `cultivate`
+/// channel — the ground really did revert through both, and each 25-turn investment is announced
+/// where it was lost. So this asserts the pair by channel rather than counting feral lines: exactly
+/// one Sow line for the Field, exactly one Cultivate line for the ground, neither repeated over the
+/// hundred bleeding turns between them.
 #[test]
 fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
     let mut app = spawn_world();
@@ -1444,20 +1857,41 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
     let grace = field_grace(&app);
     run_turns_untended(&mut app, grace);
     assert_eq!(
-        feral_lines(&app),
+        feral_lines_on(&app, "sow"),
         0,
         "nothing is lost, so nothing is announced, while the grace holds"
     );
 
-    // **The loss lands at the RETENTION BAR, not at the first bleed** — the arc's own fix
-    // (`docs/plan_standing_upkeep.md` §2.4). Run past it and then well past it: the announcement is
-    // still exactly one, because the long bleed to zero that follows is not news.
-    let survives = unmaintained_field_turns_before_loss(&app);
-    run_turns_untended(&mut app, survives - grace);
+    // **The Field goes on the FIRST bleeding turn past its grace** — the retention bar is deleted
+    // (`docs/plan_standing_upkeep.md` §2.8), and what makes that a rounding rather than a cliff is
+    // that the payout fades with the position.
+    run_turns_untended(&mut app, 1);
     assert_eq!(
-        feral_lines(&app),
+        feral_lines_on(&app, "sow"),
         1,
-        "the loss is announced once, on the turn it happens — not every turn of the bleed"
+        "the Field's loss is announced on the turn it happens"
+    );
+    assert_eq!(
+        feral_lines_on(&app, "cultivate"),
+        0,
+        "…and the ground beneath it is untouched — the position eats the Field first"
+    );
+
+    // **Then run it into the ground.** The source walks down through the tended rung's range and
+    // loses that too, once, on its own channel — and the Field's line is NOT repeated over the
+    // hundred bleeding turns in between, which is the thing this test exists to catch.
+    let survives = unmaintained_field_turns_before_loss(&app);
+    run_turns_untended(&mut app, survives);
+    assert_eq!(
+        feral_lines_on(&app, "sow"),
+        1,
+        "the Field's loss is announced once, not every turn of the bleed that follows"
+    );
+    assert_eq!(
+        feral_lines_on(&app, "cultivate"),
+        1,
+        "and the tended ground's loss is announced once too, on its own channel — the source really \
+         did revert through both rungs"
     );
     let detail = app
         .world
@@ -1475,11 +1909,25 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
 }
 
 /// Feed lines announcing a plant rung going feral.
-fn feral_lines(app: &App) -> usize {
+/// **Feral lines on ONE verb's channel** — `action=sow` for a lost Field, `action=cultivate` for the
+/// tended ground beneath it.
+///
+/// **The channel is not optional any more.** With one position a long bleed walks the source down
+/// through *both* plant rungs, so it genuinely loses two and genuinely announces two — a counter that
+/// matched only on `"gone feral"` reads `2` and looks like a double-fire on one rung. The rungs are
+/// distinguishable exactly where the feed already distinguishes them: the `action=` token.
+fn feral_lines_on(app: &App, action: &str) -> usize {
+    let token = format!("action={action}");
     app.world
         .resource::<CommandEventLog>()
         .iter()
         .filter(|entry| entry.label.contains("gone feral"))
+        .filter(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(&token))
+        })
         .count()
 }
 
@@ -1502,14 +1950,23 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
     }
     seat_completed_rung(&mut app, coord, RungKey::PlantField);
     let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    // **THE FIXTURE'S SHAPE MOVED, THE CLAIM DID NOT.** "A Field on ground that was never tended"
+    // was a two-meter state (`field_progress` full, `cultivation_progress` zero) and is now
+    // unwritable: the Field's span sits above the tended rung's, so a Field **is** tended. What the
+    // test is about is untouched — a `Cultivate` declared on a source with nothing left to cultivate
+    // must be handed back rather than stalling — and the position that fixes is the top of the branch.
     assert_eq!(
         app.world
             .resource::<ForageRegistry>()
             .patch(coord)
             .expect("patch")
-            .cultivation_progress,
-        0.0,
-        "the fixture is the reachable case: a Field on ground that was never tended"
+            .ladder_position(),
+        {
+            let ladder = core_sim::LadderConfig::builtin();
+            let (base, width) = core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+            base + width
+        },
+        "the fixture stands at the top of the plant branch, where a Cultivate has nothing to do"
     );
 
     run_turns_with_forage(&mut app, 1);
@@ -1529,8 +1986,14 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         "the crew drives nothing on a rung it can never build on this source"
     );
     assert_eq!(
-        patch.cultivation_progress, 0.0,
-        "…and the meter it named never moved"
+        patch.ladder_position(),
+        {
+            let ladder = core_sim::LadderConfig::builtin();
+            let (base, width) = core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+            base + width
+        },
+        "…and the position never moved — a handed-back verb banks nothing, and the source is still \
+         exactly where the fixture seated it"
     );
 }
 
