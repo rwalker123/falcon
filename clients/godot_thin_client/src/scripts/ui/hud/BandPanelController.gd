@@ -1621,7 +1621,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 
 ## Board capacity, derived ENTIRELY from the fixed zone box:
 ##   cols        = zone width / WORK_COLUMN_MIN_WIDTH, clamped to 1..WORK_MAX_COLUMNS
-##   rows_per_col = remaining height / WORK_ROW_HEIGHT, after the head, chips, inspector and (when it
+##   rows_per_col = remaining height / WORK_ROW_TWO_LINE_HEIGHT, after the head, chips, inspector and (when it
 ##                  is actually needed) the pager — each of which reserves the very height it draws at.
 ## The pager is circular (it only exists when one page cannot hold everything, but it costs a row), so
 ## it is resolved in two passes: measure without it, and if that still needs more than one page, remeasure.
@@ -1650,11 +1650,11 @@ func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, qu
         gaps += 1.0
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
         + queue_h + pools_h + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
-    var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_HEIGHT))
+    var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
     var cols := _declare_work_columns(count, rows)
     var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
     if pages > 1:
-        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_HEIGHT))
+        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
         cols = _declare_work_columns(count, rows)
         pages = ceili(float(count) / float(maxi(cols * rows, 1)))
     return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
@@ -2766,9 +2766,24 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
     chip.pressed.connect(func() -> void: _set_work_filter(filter))
     return chip
 
-## ONE-LINE source row: severity stripe · glyph · label (clipped) · rate · SOURCE-RUNG mark ·
-## policy/⚠ marks · the existing −/+ stepper. Clicking anywhere but the stepper opens the row in the
-## inspector strip.
+## TWO-LINE source row. **Line one is IDENTITY AND CONTROLS** — severity stripe · glyph · name ·
+## SOURCE-RUNG mark · the rung-on-offer slot · policy/⚠ marks · the −/+ stepper. **Line two is the
+## ACCOUNTS**, full width, indented onto the name's own column. Clicking anywhere but the stepper and
+## the rung-track button opens the row in the inspector strip.
+##
+## **THE ACCOUNTS LEFT LINE ONE BECAUSE 356px DOES NOT HOLD BOTH.** The row carries a name, a
+## VARIABLE-LENGTH account list, four affordances and a stepper, and everything but the name is
+## fixed-width — so the accounts' fixed 46px slot could state one material and count the rest
+## (`+0.24 fibre +3`) while the name it was taking pixels from ellipsised on any species longer than
+## `Hunt Red Deer`. On its own full-width line the list is stated IN FULL and the name column roughly
+## doubles, which is what puts `Hunt Woolly Mammoth` on the board whole. The elide survives on both
+## labels as a FLOOR — a `Label` with no overrun behaviour reports its whole text as its minimum
+## width, which in this clipping zone lays every row out past the box — but it should not be reachable
+## in normal play.
+##
+## **THE COST IS PAGING, AND IT IS ACCEPTED.** A page falls from 8 rows to 5, so nine sources is two
+## pages in most states; the pager already exists for it and the board must not shrink back to fit
+## more.
 ##
 ## The rung mark and the policy marks are TWO AXES and both are needed: the rung says what the source
 ## IS (wild / Tended Patch / Field, wild / pastoral / penned), the marks say what is being done to it
@@ -2776,7 +2791,7 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
 func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var open := String(model.get("key", "")) == _work_open_key
     var row := PanelContainer.new()
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT)
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.mouse_filter = Control.MOUSE_FILTER_STOP
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -2785,9 +2800,13 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     row.gui_input.connect(func(event: InputEvent) -> void:
         if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
             _toggle_work_inspector(String(model.get("key", ""))))
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    row.add_child(line)
+    # **THE STRIPE IS OUTSIDE BOTH LINES, which is what keeps it the ROW's mark.** It is an
+    # `EXPAND_FILL` sibling of the two-line column rather than a child of line one, so it runs the
+    # full height of the row; inside line one it would paint the top 28px of a 44px row and read as a
+    # mark on the name rather than on the source.
+    var body := HBoxContainer.new()
+    body.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(body)
     # Severity stripe: WARN when the source is overdrawing or overstaffed, SIGNAL while an edit is
     # still pending, transparent otherwise — so the eye finds trouble without reading a word.
     var stripe := ColorRect.new()
@@ -2795,7 +2814,17 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     stripe.size_flags_vertical = Control.SIZE_EXPAND_FILL
     stripe.color = _work_row_stripe_color(model)
     stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(stripe)
+    body.add_child(stripe)
+    # The two lines, stacked. `TWO_LINE_STEPPER_SEPARATION` is the gap `WORK_ROW_TWO_LINE_HEIGHT`
+    # reserves, so what the row draws at and what the capacity arithmetic paid for are one expression.
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
+    body.add_child(col)
+    var line := HBoxContainer.new()
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    col.add_child(line)
     # The SOURCE mark: bundled art where the client has it, the emoji where it does not. The column
     # is the same fixed `WORK_ROW_ICON_WIDTH` either way, so a board mixing art and emoji rows still
     # lines up down the icon column (issue #439).
@@ -2814,18 +2843,6 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(label)
-    var rate := Label.new()
-    # ONE COMPONENT in this fixed-width column (issue #337): a board row has a single narrow rate slot
-    # beside the marks and the stepper, so it shows the product the source actually PAYS — food when
-    # there is food (every forage patch and every edible quarry), else its FODDER rate. The inspector
-    # strip below states both components in full.
-    rate.text = _work_row_rate_text(model)
-    rate.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RATE_WIDTH, 0.0)
-    rate.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    rate.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    rate.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    rate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(rate)
     # THE SOURCE-RUNG MARK, in its own reserved slot left of the marks — what the source IS, beside
     # what the band is DOING to it. Tinted SIGNAL because a standing rung is a completed investment,
     # the same treatment `DetailFormat.cultivation_value_hex` / `field_value_hex` / `corral_value_hex`
@@ -2948,7 +2965,56 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(marks)
     HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
         func(n: int) -> void: _emit_work_assign(band, model, n), true)
+    col.add_child(_build_work_row_accounts(model))
     return row
+
+## LINE TWO — every account this source pays, in full, then the floor, indented onto the name's column.
+##
+## **IT CARRIES WHAT THE INSPECTOR'S RETIRED SENTENCE CARRIED**, through `_work_row_summary_text`:
+## the strip existed because the row could not show everything, and these are the parts it no longer
+## has to borrow. See that function for why the FLOOR came with the accounts rather than the accounts
+## moving alone.
+##
+## **IT STATES EVERY ACCOUNT, where the retired 46px slot fell through food → fodder → materials to
+## pick ONE.** The fall-through was a width compromise, not a reading: a hay meadow paying meat AND
+## feed had to pick, and a four-crop patch could name one material and count three. A full-width line
+## has no such choice to make, so it makes none.
+##
+## **THE ELIDE IS A FLOOR AND SHOULD NOT BE REACHABLE.** A `Label` with autowrap off reports its whole
+## text as its minimum width, and this zone's content is anchored full-rect into a host that
+## `clip_contents` — so one long line clamps the entire tab's column up to its own width and slices
+## the right edge off every row's stepper. `OVERRUN_TRIM_ELLIPSIS` drops that minimum to a pixel; what
+## keeps it from being SEEN is the width, which is now the whole row rather than 46px of it.
+##
+## **THE WHOLE LINE RIDES ITS OWN HOVER, and that is what keeps the elide honest.** The floor's ONLY
+## home is this line now — the inspector's sentence is retired and `HudFormat.floor_hint` carries the
+## zone's prose rather than the percentage — so a cut that reaches the trailing clause would put a
+## number nowhere else on the panel out of reach, which is the one thing an elide may not do. Measured:
+## the four-cash-crop worst case asks **332px of a 322px line** and the trim lands on the floor. Every
+## other elided line in this zone takes the same treatment (`HudWidgets.build_status_part(…, elide)`
+## → `set_label_tooltip`); what is different here is only that the hover is set unconditionally rather
+## than on a shortened-string test, since the row cannot know its own allocated width at build time.
+##
+## **PASS, not the STOP `set_label_tooltip` leaves behind** — the rung slot's rule: the whole row is a
+## click target, and STOP across the row's widest control would punch a full-width dead hole in it.
+## PASS shows the tooltip AND lets the press bubble to the row's `gui_input`. It does shadow the ROW's
+## own tooltip over this line, which is the accepted cost: line one is the row's identity and most of
+## its height, and a hover on the accounts that spells the accounts out is coherent on its own terms.
+func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
+    var margin := MarginContainer.new()
+    margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
+    var accounts := Label.new()
+    accounts.text = _work_row_summary_text(model)
+    accounts.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    accounts.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    accounts.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    HudWidgets.set_label_tooltip(accounts, accounts.text)
+    accounts.mouse_filter = Control.MOUSE_FILTER_PASS
+    accounts.set_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META, accounts.text)
+    margin.add_child(accounts)
+    return margin
 
 func _work_row_stripe_color(model: Dictionary) -> Color:
     if bool(model.get("warn", false)) or String(model.get("note", "")) != "":
@@ -3036,16 +3102,20 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
     head.add_child(close)
     col.add_child(head)
-    # **EVERY LINE IN THIS STRIP ELIDES, and that is a WIDTH decision the zone forces.** The zone's
+    # **RETIRED — THE ONE-SENTENCE READOUT.** It read *accounts · 50% left standing · ● Working ·
+    # 3 assigned*, and the ROW says all four now: the accounts and the floor on its own line two
+    # (`_work_row_summary_text`), the crew on its stepper, the pending state on its severity stripe and
+    # its name's amber ink. Deleting the whole `Label` is what freed the 20px the two-line row costs
+    # this zone — dropping only the accounts clause freed NOTHING, a line surviving three of its four
+    # clauses — and it is why the floor travelled with them rather than staying behind.
+    #
+    # **EVERY SURVIVING LINE STILL ELIDES, and that is a WIDTH decision the zone forces.** The zone's
     # box is reserved (`PANEL_WIDTH` less chrome, 356px on a side dock) and its content is anchored
     # full-rect into a host that clips — so a line reporting its whole text as a minimum width clamps
     # the entire tab's column up to that width, and the POOLS readout, the Builders card's `+`, the
     # BUILD QUEUE head's kit name and every board row's stepper are sliced off the right edge by a
-    # sentence none of them can see. `SourceForecast.yield_components` states EVERY account a source
-    # pays, so the sentence's length is a function of the ROSTER rather than of anything this panel
-    # controls: a deer paying meat, hide and bone measures 358px against that 356px box.
-    # `band_panel_work_inspector_width` is the frame, and `_assert_zone_content_width_fits` the claim.
-    col.add_child(HudWidgets.build_status_part(_work_inspector_sentence(model), HudStyle.INK_DIM, true))
+    # line none of them can see. `band_panel_work_inspector_width` is the frame, and
+    # `_assert_zone_content_width_fits` the claim.
     if bool(model.get("warn", false)):
         col.add_child(HudWidgets.build_status_part(HudWorkVocab.WORK_INSPECT_OVERDRAW_LINE, HudStyle.WARN, true))
     if String(model.get("note", "")) != "":
@@ -3116,57 +3186,41 @@ func _work_inspector_height(model: Dictionary) -> float:
         height += HudWorkVocab.WORK_INSPECTOR_POLICY_PICKER_HEIGHT
     return height
 
-## The board row's single-slot rate string — food when the source pays food, else its FODDER rate
-## spelled with the word (issue #449), and "" when the row carries no confirmed yield at all. One
-## definition, since the row and its severity reading must agree on which number is being shown.
+## **LINE TWO'S WHOLE STRING — every account this source pays, then the floor the player set it to.**
+## The accounts go through `SourceForecast.yield_components`, which already carries the
+## render-only-when-non-zero rule, the food-leads order, the fodder WORD (fodder has no glyph, and
+## borrowing another account's mark would say the wrong thing) and the per-material terms; a source
+## with no confirmed yield at all states no account clause rather than a zero.
 ##
-## Fodder wears the word rather than a glyph for the reason `SourceForecast.yield_components` gives:
-## fodder has none, and borrowing another account's mark would say the wrong thing. A sown hay Field
-## pays no food, so without this branch its row headlined `+0.00` while it fed the band's pens every
-## turn. (A trade branch sat between the two until arc #527 retired that account.)
-## **THE ONE-SLOT FALL-THROUGH: food → fodder → materials**, in the wire's own order. The column is
-## one fixed width, so it states the account the source actually PAYS rather than a food zero on a
-## source that pays no food.
+## **THE FLOOR IS HERE BECAUSE THE INSPECTOR'S SENTENCE IS GONE, AND IT IS WHAT PAID FOR THE ROW'S
+## SECOND LINE.** That sentence read *accounts · 50% left standing · ● Working · 3 assigned* on ONE
+## `Label`, so dropping the accounts clause alone freed nothing — a line survives three of its four
+## clauses. The floor was the only clause the row could not otherwise state (the stepper states the
+## crew, the stripe and the name's ink state pending), so it moved HERE and the whole sentence went,
+## which is the 20px the two-line row costs the zone. `HudComposeVocab.FLOOR_VALUE_FORMAT` is the
+## phrasing the floor presets' tooltips and the chart's caption use, so one number is never worded two
+## ways.
 ##
-## **THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE** (arc #527 follow-up). Picking one of
-## a vector would name a winner the sim does not name, and summing them is the retired trade axis
-## under a new name; a species pays few materials, and the column's width is a MINIMUM rather than a
-## clip, so the honest reading is the one that fits. The inspector strip beside the row states the
-## whole vector too, in full.
-func _work_row_rate_text(model: Dictionary) -> String:
-    if not bool(model.get("has_yield", false)):
-        return ""
-    var food := float(model.get("rate", 0.0))
-    var fodder := float(model.get("fodder_rate", 0.0))
-    if not SourceForecast.has_component(food) and SourceForecast.has_component(fodder):
-        return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % SourceForecast.format_signed(fodder)
-    if not SourceForecast.has_component(food) and not SourceForecast.has_component(fodder):
-        # `""` is "this source pays no material", so a source that genuinely produced nothing in
-        # every account still falls through to its honest food zero.
-        var materials := SourceForecast.signed_material_components(model.get("material_rows", []))
-        if materials != "":
-            return materials
-    return SourceForecast.format_signed(food)
-
-## The inspector's one-sentence readout: rate · the floor in WORDS · status · assigned workers.
-func _work_inspector_sentence(model: Dictionary) -> String:
+## **THE JOINER IS THE SENTENCE'S OWN** (`WORK_INSPECT_SENTENCE_SEPARATOR`), because what it joins is
+## a CLAUSE to a list rather than one account to another — the two consts hold the same glyph today
+## and mean different things, and the accounts' own separator is `SourceForecast.COMPONENT_SEPARATOR`
+## one layer down.
+##
+## **IT REPLACED A ONE-SLOT FALL-THROUGH — food → fodder → materials, picking exactly ONE** — and the
+## fall-through was a WIDTH compromise rather than a reading. A board row's accounts had a fixed 46px
+## slot beside the marks and the stepper, so a hay meadow paying meat AND feed had to choose, and a
+## four-cash-crop patch could name one material and count the other three (`+0.24 fibre +3`). Line two
+## is the row's whole width, so there is no choice left to make and none is made.
+func _work_row_summary_text(model: Dictionary) -> String:
     var parts: Array[String] = []
     if bool(model.get("has_yield", false)):
-        # Both products, each only when non-zero (issue #449): a hay Field's sentence leads with its
-        # fodder rate instead of asserting "+0.00 /turn".
+        # Both products, each only when non-zero (issue #449): a hay Field leads with its fodder rate
+        # instead of asserting "+0.00 /turn".
         parts.append(SourceForecast.yield_components(
             float(model.get("rate", 0.0)), float(model.get("fodder_rate", 0.0)),
             SourceForecast.YIELD_ACCOUNT_FOOD, model.get("material_rows", [])))
-    # The floor as the player set it — `50% left standing`, the same phrasing the picker's tooltips
-    # and the slider caption use, so one number is never worded two ways.
     parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
         float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
-    parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
-        else FoodIcons.STATUS_WORKING))
-    parts.append(HudWorkVocab.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
-    # **NO `N building` CLAUSE** (`docs/plan_standing_upkeep.md` §2.5). It named the source's own
-    # build crew, and a source has none: the builders are one band-level pool funding the head of the
-    # band's queue, so the count belongs to the QUEUE rather than to any row on this board.
     return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
 
 # ---- work-zone models + state ----------------------------------------------

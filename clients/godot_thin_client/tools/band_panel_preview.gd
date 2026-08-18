@@ -99,6 +99,48 @@ const TRADE_ONLY_HERD_ID := "game_wolf_03"
 ## picker's basket rows and the compose sheet's readout use, one reading for all three.
 const WORK_ROW_MATERIAL_ID := "hide"
 const WORK_ROW_MATERIAL_AMOUNT := 0.22
+## …AND ITS SECOND MATERIAL, which the SHIPPED wolf has paid since arc #527 and this fixture did not.
+## `fauna_config.json`'s `hunt_yield.materials` gives the wolf `hide` 0.016 and `bone` 0.0018 per
+## biomass, so a take crediting 0.22 hide credits ~0.02 bone off the same carcasses.
+##
+## **ONE material fitted the 46px rate slot with room to spare, so the row that SHIPS was the one no
+## fixture rendered** — `+0.22 hide · +0.02 bone` asks ~17px more than the zone box holds, which is
+## the same width defect the four-crop forage row carries at four times the size. It is above
+## `SourceForecast.COMPONENT_RENDER_MIN`, so it genuinely renders rather than being gated away.
+const WORK_ROW_MATERIAL_SECOND_ID := "bone"
+const WORK_ROW_MATERIAL_SECOND_AMOUNT := 0.02
+const WORK_ROW_MATERIAL_ROWS := [
+	{"material_id": WORK_ROW_MATERIAL_ID, "amount": WORK_ROW_MATERIAL_AMOUNT},
+	{"material_id": WORK_ROW_MATERIAL_SECOND_ID, "amount": WORK_ROW_MATERIAL_SECOND_AMOUNT},
+]
+
+## ---- THE MATERIALS-ONLY FORAGE ROW (the reported width defect) ---------------------------------
+## **NO FIXTURE ANYWHERE GAVE A FORAGE ASSIGNMENT A `material_yield`**, which is why
+## `_assert_zone_content_width_fits` — which recurses properly and scales off the live host — never
+## saw the row that overflows: the one two-material fixture sits on a herd that also pays FOOD, so it
+## takes the food branch and the material list never reaches a row at all.
+##
+## The reported case: a patch realizing cash crops alone pays no provisions and no fodder, so its row
+## falls all the way through to its materials and rendered `+0.24 fibre · +0.34 grape` with NO SOURCE
+## NAME beside it.
+const MATERIAL_FORAGE_X := 36
+const MATERIAL_FORAGE_Y := 22
+const MATERIAL_FORAGE_ROWS := [
+	{"material_id": "fibre", "amount": 0.24},
+	{"material_id": "grape", "amount": 0.34},
+]
+## THE MEASURED WORST CASE — a RollingHills-style tile realizing all FOUR field-ceiling cash crops
+## (`flora_config.json`: flax→fibre 0.06, grapevine→grape 0.07, tea→tea 0.06, tobacco→tobacco 0.07,
+## every one of them `provisions_per_biomass: 0.0`). Four terms joined unbounded put the row's own
+## minimum at ~583px against a 356px zone box.
+const MATERIAL_CROPS_X := 37
+const MATERIAL_CROPS_Y := 23
+const MATERIAL_CROPS_ROWS := [
+	{"material_id": "fibre", "amount": 0.06},
+	{"material_id": "grape", "amount": 0.07},
+	{"material_id": "tea", "amount": 0.06},
+	{"material_id": "tobacco", "amount": 0.07},
+]
 
 ## ---- THE FODDER FACE (issue #449) -------------------------------------------------------------
 ## The sown hay FIELD on the work board: a forage source paying feed and NO provisions, which is the
@@ -109,17 +151,22 @@ const FODDER_FIELD_Y := 18
 ## The feed it pays per turn. It has to be big enough to read at two decimals and unequal to every other
 ## rate on this band, so an assertion matching its face cannot be satisfied by a neighbouring row.
 const FODDER_FIELD_RATE := 0.40
-## That rate as the one-slot ROW and the header TOTAL both spell it — the word, never a glyph, because
-## fodder has none. Written out rather than composed through `SourceForecast`, since a needle built by
-## the code under test agrees with whatever that code emits.
+## That rate as the header TOTAL spells it — the word, never a glyph, because fodder has none. Written
+## out rather than composed through `SourceForecast`, since a needle built by the code under test
+## agrees with whatever that code emits.
 const FODDER_ROW_RATE_FACE := "+0.40 fodder"
-## The same account as the INSPECTOR sentence spells it. `yield_components` renders a fodder magnitude
-## unsigned (the #426 picker rule), so this is deliberately NOT the row's face with the sign stripped.
-const FODDER_INSPECTOR_CLAUSE := "0.40 fodder"
+## …and as the ROW's line two spells it, which is now the SAME STRING. It was the unsigned
+## `0.40 fodder` while `yield_components` signed its food arm and no other; every account on that line
+## is income and every one of them is signed now, so the head's sibling total and the row's own term
+## read alike. Kept as its own const because the two answer different questions and a future divergence
+## should show up as a changed constant rather than as a silently shared literal.
+const FODDER_INSPECTOR_CLAUSE := "+0.40 fodder"
 ## The CONTROL row's steady food rate — an ordinary deer hunt on the same band, so "a hunt is unchanged"
 ## is asserted against a row that is genuinely there rather than against an empty board.
 const FODDER_CONTROL_HUNT_RATE := 0.20
-const FODDER_CONTROL_HUNT_FACE := "+0.20"
+## …as the row's accounts line spells it. The `/turn` is `yield_components`' own, and its presence is
+## the visible half of the accounts line no longer being a 46px slot.
+const FODDER_CONTROL_HUNT_FACE := "+0.20 /turn"
 
 # ---- THE COMBAT GATE's two herd terms on the quarry (`docs/plan_hunt_through_combat.md` §4.2) -----
 ## `defense` is whether a hit counts at all — deliberately ABOVE the roster's bare-handed `attack`
@@ -2294,6 +2341,8 @@ func _ready() -> void:
 	await _render_repair_and_declare_states()
 
 	await _render_work_inspector_width_states()
+
+	await _render_work_material_width_states()
 
 	_assert_pending_assign_rollback()
 
@@ -9075,12 +9124,17 @@ func _assert_work_fodder_readouts() -> void:
 	if paying.is_empty():
 		return
 	var field: Dictionary = paying[0]
-	var field_rate := _hud._bandpanel._work_row_rate_text(field)
+	var field_rate := _hud._bandpanel._work_row_summary_text(field)
 	_assert_band_panel("fodder — the board row states the feed rate instead of +0.00 (got \"%s\")"
-		% field_rate, field_rate == FODDER_ROW_RATE_FACE)
-	var field_sentence := _hud._bandpanel._work_inspector_sentence(field)
-	_assert_band_panel("fodder — the inspector sentence names the account (got \"%s\")"
-		% field_sentence, field_sentence.contains(FODDER_INSPECTOR_CLAUSE))
+		% field_rate, _accounts_clause(field_rate) == FODDER_INSPECTOR_CLAUSE)
+	# …and the FLOOR rides that same line, which is the clause that moved there when the inspector's
+	# sentence was deleted. Without this the retirement is only half asserted: a line two that had
+	# dropped the floor would satisfy the accounts claim above and lose the one fact the row cannot
+	# otherwise state.
+	_assert_band_panel("fodder — …and line two carries the floor the retired sentence used to (got \"%s\")"
+		% field_rate, field_rate.contains(HudComposeVocab.FLOOR_VALUE_FORMAT
+			% SourceForecast.floor_percent(float(field.get("floor",
+				SourceForecast.DEFAULT_HARVEST_FLOOR)))))
 	var total := _work_head_fodder_total()
 	_assert_band_panel("fodder — the WORK head renders the feed total (got \"%s\")"
 		% ("<none>" if total == null else total.text),
@@ -9092,11 +9146,11 @@ func _assert_work_fodder_readouts() -> void:
 	if hunts.is_empty():
 		return
 	var hunt: Dictionary = hunts[0]
-	var hunt_rate := _hud._bandpanel._work_row_rate_text(hunt)
+	var hunt_rate := _hud._bandpanel._work_row_summary_text(hunt)
 	_assert_band_panel("fodder — a hunt row still headlines its food rate (got \"%s\")" % hunt_rate,
-		hunt_rate == FODDER_CONTROL_HUNT_FACE)
-	_assert_band_panel("fodder — no fodder term reaches a hunt row's sentence",
-		not _hud._bandpanel._work_inspector_sentence(hunt).contains("fodder"))
+		_accounts_clause(hunt_rate) == FODDER_CONTROL_HUNT_FACE)
+	_assert_band_panel("fodder — no fodder term reaches a hunt row's line two (got \"%s\")" % hunt_rate,
+		not hunt_rate.contains("fodder"))
 
 ## **THE INEDIBLE ROW STATES WHAT IT PAYS** (arc #527 follow-up) — the board half of closing the
 ## `+0.00`. Its subject is the RESOLVED `material_yield`, not a rate the compose sheet would project:
@@ -9116,13 +9170,11 @@ func _assert_work_material_readouts() -> void:
 	if paying.is_empty():
 		return
 	var wolf: Dictionary = paying[0]
-	var wolf_rate := _hud._bandpanel._work_row_rate_text(wolf)
+	var wolf_rate := _hud._bandpanel._work_row_summary_text(wolf)
 	_assert_band_panel(
 		"material — the inedible row states its hide instead of +0.00 (got \"%s\")" % wolf_rate,
 		wolf_rate.contains(WORK_ROW_MATERIAL_ID)
-			and wolf_rate.contains(SourceForecast.format_magnitude(WORK_ROW_MATERIAL_AMOUNT)))
-	_assert_band_panel("material — …and its inspector sentence names the material too",
-		_hud._bandpanel._work_inspector_sentence(wolf).contains(WORK_ROW_MATERIAL_ID))
+			and wolf_rate.contains(SourceForecast.format_signed(WORK_ROW_MATERIAL_AMOUNT)))
 	var deer: Array = models.filter(func(m):
 		return String(m.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
 			and String(m.get("key", "")) != String(wolf.get("key", "")))
@@ -9131,7 +9183,40 @@ func _assert_work_material_readouts() -> void:
 	if deer.is_empty():
 		return
 	_assert_band_panel("material — a food-paying hunt row is UNCHANGED, no material term on it",
-		not _hud._bandpanel._work_inspector_sentence(deer[0]).contains(WORK_ROW_MATERIAL_ID))
+		not _hud._bandpanel._work_row_summary_text(deer[0]).contains(WORK_ROW_MATERIAL_ID))
+
+## A board row's line two leads with its ACCOUNTS and closes with its FLOOR, so a claim about what the
+## row HEADLINES reads the leading clause. Split rather than `begins_with`, so a line that stated its
+## account and then stated it again cannot pass an equality claim about the first of them.
+##
+## **IT RETURNS THE FIRST ACCOUNT, NOT THE WHOLE ACCOUNT LIST, and that is exact rather than
+## approximate here.** The clause joiner and the accounts' own `SourceForecast.COMPONENT_SEPARATOR`
+## are the same glyph, so a multi-account line splits between its accounts too — both callers work a
+## source paying exactly ONE account, which is what makes the equality claim meaningful for them, and
+## a fixture that grew a second account would compare an account face against the first of two and
+## fail loudly rather than vacuously.
+##
+## A source with no confirmed yield states no account clause at all and its line two IS the floor,
+## which the same failure covers.
+func _accounts_clause(line_two: String) -> String:
+	return line_two.split(HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR)[0]
+
+## The width line two's ACCOUNTS need, in the label's own font at its own size — the whole line less
+## its trailing FLOOR clause. `rsplit` with a limit of one, because the clause joiner and the accounts'
+## own separator are the same glyph and the floor is the LAST clause; splitting forward would cut
+## after the first account instead.
+##
+## A line carrying no floor clause at all cannot arise (the floor is unconditional), so the one-part
+## case answers the whole line and any future line that lost its floor fails the reachability claim
+## beside this rather than passing quietly.
+func _accounts_clause_width(accounts: Label) -> float:
+	var font := accounts.get_theme_font("font")
+	if font == null:
+		return 0.0
+	var parts := accounts.text.rsplit(HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR, true, 1)
+	var accounts_only: String = String(parts[0]) if parts.size() > 1 else accounts.text
+	return font.get_string_size(accounts_only, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+		accounts.get_theme_font_size("font_size")).x
 
 ## The paired NEGATIVE: a band with no feed-paying source renders NO fodder sibling. Without it every
 ## claim above is satisfied by a head that renders the total unconditionally.
@@ -11359,7 +11444,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 		# RESOLVED take, what this source actually credited to the band's `MaterialStore` this turn.
 		# **It must still stay out of the Food line's Hunted total**: a material is not a meal.
 		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0,
-			"material_yield": [{"material_id": WORK_ROW_MATERIAL_ID, "amount": WORK_ROW_MATERIAL_AMOUNT}]},
+			"material_yield": WORK_ROW_MATERIAL_ROWS.duplicate(true)},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -13775,23 +13860,240 @@ func _render_work_inspector_width_states() -> void:
 	_assert_shell_is_wide(false, "band_panel_work_inspector_width")
 	_assert_band_panel("band_panel_work_inspector_width: a work inspector strip really is open",
 		_find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META) != null)
-	_assert_work_inspector_sentence_states_every_account("band_panel_work_inspector_width")
+	_assert_work_row_line_two_states_every_account("band_panel_work_inspector_width")
+	_assert_work_inspector_restates_no_accounts("band_panel_work_inspector_width")
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 	_push_bands([_band_fixture()])
 	await _settle()
 
-## GUARD: the open strip's sentence really names both materials — the fixture claim beneath the width
-## one. Asked of the RENDERED strip rather than of `_work_inspector_sentence`, because a builder that
-## composed the line correctly and mounted something else would satisfy a producer-side check.
-func _assert_work_inspector_sentence_states_every_account(state_name: String) -> void:
+## GUARD: the long line really is on the board, naming both materials — the fixture claim beneath the
+## width one. **It used to be asked of the STRIP's sentence and is asked of the ROW's line two now**:
+## that sentence is retired and the account list moved to the row, so the widest line in this tab is
+## the row's, and a fixture whose materials never reached the model would render a short one and pass
+## the width claim for the wrong reason.
+##
+## Asked of the RENDERED tab rather than of `_work_row_summary_text`, because a builder that composed
+## the line correctly and mounted something else would satisfy a producer-side check.
+func _assert_work_row_line_two_states_every_account(state_name: String) -> void:
+	var missing: Array[String] = []
+	for row in WIDE_SENTENCE_MATERIALS:
+		var material := String((row as Dictionary).get("material_id", ""))
+		if not _has_label_containing(_panel, material):
+			missing.append(material)
+	_assert_band_panel("%s: a board row's line two states every account it pays (missing %s)"
+		% [state_name, missing], missing.is_empty())
+
+## GUARD: **the strip does NOT restate what line two says.** That redundancy is what paid for the
+## two-line row — the strip's one-sentence readout was deleted outright, and its 20px is the row's
+## second line — so a strip that quietly grew the sentence back would put the work zone over its box
+## again on the one state that has zero spare (`band_panel_pools_wide_selected`).
+##
+## It is the NEGATIVE half of the claim above and they are asserted together: "line two says it" is
+## satisfied by a tab that says it twice, and "the strip does not" by a tab that lost the accounts
+## entirely.
+func _assert_work_inspector_restates_no_accounts(state_name: String) -> void:
 	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
 	if strip == null:
 		_fail("%s — no work inspector strip to read" % state_name)
 		return
-	var missing: Array[String] = []
+	var restated: Array[String] = []
 	for row in WIDE_SENTENCE_MATERIALS:
 		var material := String((row as Dictionary).get("material_id", ""))
-		if not _has_label_containing(strip, material):
+		if _has_label_containing(strip, material):
+			restated.append(material)
+	_assert_band_panel("%s: …and the strip beneath it restates none of them (found %s)"
+		% [state_name, restated], restated.is_empty())
+
+# ---- THE MATERIALS-ONLY WORK ROW (the reported clip) -------------------------------------------
+#
+# **THE ASSERTIONS WERE NOT BLIND; THE FIXTURES NEVER REACHED THE STATE.**
+# `_assert_zone_content_width_fits` recurses correctly and scales off the LIVE host size, and it has
+# ridden every `_assert_zone_content_fits` call site since the width defect first shipped. What it
+# never saw was a row that overflows: no fixture in this harness gave a FORAGE assignment a
+# `material_yield` at all, and the one two-material fixture (`WIDE_SENTENCE_MATERIALS`) sits on a herd
+# that ALSO pays food — so the row's retired one-slot fall-through took the food branch there and
+# never reaches a row.
+#
+# Reported from play: a row rendering `+0.24 fibre · +0.34 grape` with **no source name whatever**,
+# and every `+` stepper on the board sliced down its middle. One over-wide rate `Label` (no
+# `clip_text`, no `text_overrun_behavior`, so its combined minimum IS its whole text) set the ROW's
+# minimum past the 356px box; the name Label, the row's only expanding child, was allocated
+# `max(0, leftover)` = 0; and the zone `Control`, laid out at its own minimum inside a host that
+# `clip_contents`, took the right edge off everything.
+
+## The reported band: a forage patch paying MATERIALS ALONE, beside the ordinary deer hunt as the
+## control — a row that still pays food must be UNCHANGED, or "shorten the rate" would be satisfied by
+## a board that shortened every rate on it. The wolf is deliberately left off, so the forage row is the
+## only overflowing one and a failure names it rather than naming whichever row measured widest.
+func _material_forage_band_fixture(rows: Array, tile: Vector2i) -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": tile.x, "target_y": tile.y,
+			"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+			"material_yield": rows.duplicate(true)},
+		{"kind": "hunt", "workers": 2, "fauna_id": EXTRACTIVE_ROW_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
+			"realized_yield": 0.46},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+func _render_work_material_width_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+
+	# THE REPORTED ROW — two materials, no food, no fodder. The LEFT dock is the shipped default edge
+	# and the narrowest box the work zone is ever given; the same row on a bottom dock has 789px to sit
+	# in and says nothing.
+	_push_bands([_material_forage_band_fixture(
+		MATERIAL_FORAGE_ROWS, Vector2i(MATERIAL_FORAGE_X, MATERIAL_FORAGE_Y))])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_material_forage")
+	_assert_shell_is_wide(false, "band_panel_work_material_forage")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_material_forage")
+	_assert_work_row_states_its_materials("band_panel_work_material_forage",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_FORAGE_X, MATERIAL_FORAGE_Y],
+		MATERIAL_FORAGE_ROWS)
+
+	# THE MEASURED WORST CASE — four cash crops on one patch.
+	_push_bands([_material_forage_band_fixture(
+		MATERIAL_CROPS_ROWS, Vector2i(MATERIAL_CROPS_X, MATERIAL_CROPS_Y))])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_material_crops")
+	_assert_shell_is_wide(false, "band_panel_work_material_crops")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_material_crops")
+	_assert_work_row_states_its_materials("band_panel_work_material_crops",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
+		MATERIAL_CROPS_ROWS)
+	# The NARROWEST box the work zone is ever given, so the name column is measured where it binds.
+	_report_work_row_name_column("band_panel_work_material_crops",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
+
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## GUARD: **both lines of the row render WHOLE** — the identity on line one and the accounts on line
+## two — which is the half of this defect no width assertion can see. A zone whose content fits says
+## nothing about how the row SPENT the room: the name Label was allocated **1px** (Godot's floor, not
+## zero) and stayed a perfectly valid, perfectly findable node with its `text` intact, so every
+## text-based claim about it passed while it rendered as nothing at all.
+##
+## **BOTH CLAIMS ARE *IT IS NOT ELIDED*, measured against the label's OWN font at its OWN size** —
+## `_label_text_width`, the faction page's keyless-key scan one surface over, with its
+## `KEYLESS_KEY_WIDTH_TOLERANCE` for the sub-pixel disagreement between a container's rounded layout
+## and the text server's float. That is a stronger claim than the RELATION it replaced (the name gets
+## at least the retired 46px rate column's width), and it is the one the two-line row is FOR: the rate
+## slot is gone, so there is no longer a sibling column to state a relation against, and what the row
+## now promises is that neither line has to be cut at all.
+##
+## Two claims ride with them and the set is what makes any of them worth anything: the accounts line
+## really did state EVERY material (otherwise "the lines fit" is satisfied by a board that stopped
+## rendering the accounts), and it states them IN FULL rather than naming one and counting the rest —
+## the cap the 46px slot needed and a full-width line does not.
+func _assert_work_row_states_its_materials(state_name: String, row_name: String,
+		rows: Array) -> void:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	var name_label: Label = null
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text == row_name:
+			name_label = label
+			break
+	if name_label == null:
+		_fail("%s — no work row named \"%s\" to judge" % [state_name, row_name])
+		return
+	_assert_band_panel(
+		"%s: the row's NAME renders whole, un-elided (%.0f of the %.0f its own font needs)"
+			% [state_name, name_label.size.x, _label_text_width(name_label)],
+		name_label.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= _label_text_width(name_label))
+	# The accounts Label is reached from the NAME by walking up to the row and back down by META, so
+	# the pair is read off ONE row: a second text match over the panel is free to land on another.
+	var accounts := _work_row_accounts_label(name_label)
+	if accounts == null:
+		_fail("%s — the row has no accounts line to judge" % state_name)
+		return
+	var missing: Array[String] = []
+	for row in rows:
+		var material := String((row as Dictionary).get("material_id", ""))
+		if not accounts.text.contains(material):
 			missing.append(material)
-	_assert_band_panel("%s: the strip's sentence states every account it pays (missing %s)"
-		% [state_name, missing], missing.is_empty())
+	_assert_band_panel("%s: line two states EVERY material in full (missing %s of \"%s\")"
+		% [state_name, missing, accounts.text], missing.is_empty())
+	# **THE CLAIM IS ABOUT THE ACCOUNTS, NOT THE WHOLE LINE, and the difference is the FLOOR clause.**
+	# Line two closes with `50% left standing`, which costs ~96px, and the four-cash-crop worst case
+	# asks 332px of a 322px line WITH it — so the trim lands on the floor and asserting the whole line
+	# un-elided would fail on the one fixture built to be the widest. What the two-line row promises is
+	# that the ACCOUNTS never have to be cut, which is the reading the retired 46px slot could not give
+	# at any width, and the claim beneath restores the floor's reachability.
+	var accounts_width := _accounts_clause_width(accounts)
+	_assert_band_panel(
+		"%s: …and every account renders whole, un-elided (%.0f of the %.0f they need)"
+			% [state_name, accounts.size.x, accounts_width],
+		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width)
+	# GUARD: **nothing on this line is unreachable.** The floor's only home is line two — the
+	# inspector's sentence is retired and the row's own tooltip carries the floor's ZONE prose rather
+	# than its percentage — so where the trim reaches it the hover has to.
+	_assert_band_panel("%s: …and the WHOLE line, floor included, rides its hover (got \"%s\")"
+		% [state_name, accounts.tooltip_text], accounts.tooltip_text == accounts.text)
+
+## The widest row name the SHIPPED roster can produce. `fauna_config.json`'s longest `display_name` is
+## `Thunder Mammoths` (tied with `Snow Hare Warren`, one character each side of it in pixels), and
+## `WORK_ROW_HUNT_FORMAT` is what a board row wraps it in — so this is the string the name column has
+## to hold if a real board is never to elide. It is stated rather than scanned because the harness
+## pushes no fauna roster; re-derive it if the config's longest name moves.
+const WIDEST_SHIPPED_ROW_NAME := "Thunder Mammoths"
+
+## REPORT: **what the name column measures against the widest name the game can produce.** No fixture
+## on this board can make that claim for itself — every row here is named `Forage (nn, nn)` or a short
+## species, so the un-elided assertions above pass on a column half this wide — and the number is what
+## says whether the accounts leaving line one bought enough width to close the name-format question.
+##
+## **IT PRINTS RATHER THAN ASSERTS, DELIBERATELY.** Measured after the two-line row landed, the
+## narrow shell's column is **146px** and `Hunt Thunder Mammoths` needs **164** — so the longest
+## shipped name still elides by 18px in a side dock, and whether that is answered by a shorter row
+## format, a wider flank or nothing at all is a design decision rather than a defect this harness may
+## declare. A failing assertion would state one of those answers; a printed margin states the fact and
+## leaves the choice, the `_report_zone_content_extent` rule.
+func _report_work_row_name_column(state_name: String, row_name: String) -> void:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	var name_label: Label = null
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text == row_name:
+			name_label = label
+			break
+	if name_label == null:
+		_fail("%s — no work row named \"%s\" to measure the name column on" % [state_name, row_name])
+		return
+	var font := name_label.get_theme_font("font")
+	if font == null:
+		_fail("%s — the row's name Label resolves no font to measure with" % state_name)
+		return
+	var widest := font.get_string_size(HudWorkVocab.WORK_ROW_HUNT_FORMAT % WIDEST_SHIPPED_ROW_NAME,
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, name_label.get_theme_font_size("font_size")).x
+	print("band_panel_preview: %s — the name column is %.0fpx; the widest shipped row name (\"%s\") needs %.0f (%.0f spare)"
+		% [state_name, name_label.size.x, HudWorkVocab.WORK_ROW_HUNT_FORMAT % WIDEST_SHIPPED_ROW_NAME,
+			widest, name_label.size.x - widest])
+
+## A board row's ACCOUNTS line, reached from its NAME label. It walks up to the row's own
+## `PanelContainer` and back down by `WORK_ROW_ACCOUNTS_META`, because the two live on different
+## lines of one two-line row and nothing but the row encloses both.
+func _work_row_accounts_label(name_label: Label) -> Label:
+	var walk: Node = name_label
+	while walk != null and not (walk is PanelContainer):
+		walk = walk.get_parent()
+	if walk == null:
+		return null
+	return _find_meta_control(walk, HudWorkVocab.WORK_ROW_ACCOUNTS_META) as Label

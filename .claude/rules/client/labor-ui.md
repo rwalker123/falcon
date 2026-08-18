@@ -5463,13 +5463,23 @@ a material; fodder still beats a material).
   `+0.08 /turn · ⇄ +0.00 · 0.13 fodder`. **A gate finer than its formatter's resolution admits the very
   thing it exists to stop.** `FOOD_FLOW_MIN` keeps its own separate job — whether the BAND has a food
   flow at all is a question about the sim, not about how many decimals a label shows.
-- **`yield_components(food, fodder = 0)`** → `+0.31 /turn`, `+0.08 /turn · 0.13 fodder` — the ONE
+- **`yield_components(food, fodder = 0)`** → `+0.31 /turn`, `+0.08 /turn · +0.13 fodder` — the ONE
   joiner every per-turn readout goes through, so no two surfaces can word the vector differently. The
   fodder term wears the WORD (fodder has no glyph); every hunt-side caller leaves it defaulted.
+  **EVERY ACCOUNT IS SIGNED, and for a long time only the food arm was** — one list mixing
+  `+0.20 /turn` with a bare `0.40 fodder` and a bare `0.22 hide`, a difference a reader can only take
+  as meaningful. They are all per-turn credits to a store, so they all carry the sign that says so,
+  and the sign is what separates them from the standing COSTS this HUD also states (a pen's feed, a
+  rung's keeping). The tooltip half of the vocabulary (`POLICY_CAP_FODDER_FORMAT` → `+0.40
+  fodder/turn`) had been signing the same reading all along, so the FACE was the outlier. It surfaced
+  when the work board put a source's whole account list on a line of its own, where the mixture is
+  read at a glance.
 - **`magnitude_components(food, fodder = 0)`** → `0.40 fodder` — its COMPACT twin for a surface that
   supplies its own framing and states levels rather than deltas (the work zone's filter chips). Same
   rule, same food-leads order, bare magnitudes joined by `COMPACT_COMPONENT_SEPARATOR` (a space, since
-  those chips already spend their `·` separating a count from its total).
+  those chips already spend their `·` separating a count from its total). **It stays UNSIGNED, which
+  is what makes its sibling's sign a decision rather than an inconsistency**: a chip states a LEVEL,
+  and a `+` beside one would read as a change.
 - **`extractive_take_pair(food, fodder = 0)`** — the rung metric `{compact, full}` for ALL THREE
   pickers. The food-only `extractive_take` the forage picker used is **deleted**, not kept as an
   alias: one joiner is what keeps the three pickers wearing one face.
@@ -5546,27 +5556,55 @@ all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedi
   inedible species delivers 0 food at every party size, so the scan finds no
   plateau, which is the honest reading of a raid with nothing to bring home.
 
-### The one-slot surfaces show the product the species PAYS
+### The MAP's on-tile label is the one-slot surface — the board row stopped being one
 
-Two readouts have a single narrow slot and cannot carry a pair — the **work-board row's** fixed-width
-rate column (`BandPanelController._work_row_rate_text`) and the **map's** on-tile yield label
-(`BandOverlayRenderer._draw_yield_label`, whose choice is split out as `_yield_label_rate_text` so a
-harness can ask it — a draw call renders to a canvas and no assertion can read a glyph back off one).
-Both fall through **food → fodder → materials**, in the wire's own order: food when there is food (so
-every forage patch and edible quarry is unchanged), else the fodder rate spelled with the WORD
-(`+0.40 fodder`) — fodder has no glyph, and borrowing another account's would say the wrong thing —
-else the MATERIALS, each naming itself (`+0.22 hide`). A trade branch stood between food and fodder
-until arc #527; the material arm is what replaced it, one release later. The work **inspector strip**
-beside the row states the whole vector in full.
+**RETIRED — the work-board row's fall-through.** A board row had a fixed 46px rate column
+(`WORK_ROW_RATE_WIDTH`) beside its marks and its stepper, so it fell through **food → fodder →
+materials** picking exactly ONE account, and the material arm further named one material and counted
+the rest (`+0.24 fibre +3`). The row is TWO LINES now and the accounts have the second one to
+themselves, in full — `band-city-panel.md` → "THE ROW IS TWO LINES". What survives here is the MAP's
+label and the mechanism both surfaces were taught by.
 
-**THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE.** Naming one of a vector picks a winner
-the sim does not name, and summing them is the retired trade axis under a new name. A species pays
-few materials; the board column's width is a MINIMUM rather than a clip and the map plate sizes to
-its measured run, so a two-material label is wide rather than truncated — which is a legibility
-question for `map_band_label_overlap`, not a reason to state less than the truth. Both surfaces gate
-on `SourceForecast.signed_material_components` answering `""`, so "pays no material" is one call
-rather than a condition each re-derives, and a source that genuinely produced nothing in every
-account still falls through to its honest food zero.
+The **map's** on-tile yield label (`BandOverlayRenderer._draw_yield_label`, whose choice is split out
+as `_yield_label_rate_text` so a harness can ask it — a draw call renders to a canvas and no assertion
+can read a glyph back off one) still falls through **food → fodder → materials**, in the wire's own
+order: food when there is food (so every forage patch and edible quarry is unchanged), else the fodder
+rate spelled with the WORD (`+0.40 fodder`) — fodder has no glyph, and borrowing another account's
+would say the wrong thing — else the MATERIALS, each naming itself (`+0.22 hide`). A trade branch
+stood between food and fodder until arc #527; the material arm is what replaced it, one release later.
+
+**THE MAP STATES EVERY MATERIAL AND NEVER CAPS.** Naming one of a vector picks a winner the sim does
+not name and summing them is the retired trade axis under a new name — so the plate, which SIZES TO
+ITS MEASURED RUN, states the whole vector and a two-material label is wide rather than truncated (a
+legibility question for `map_band_label_overlap`, not a reason to state less than the truth).
+
+**WHAT THE BOARD ROW'S 46px SLOT TAUGHT, and the reason the elide survives on a line that no longer
+needs it.** A `Label` with no overrun behaviour reports its WHOLE text as its minimum width, so an
+unbounded join did not overflow its own slot — it set the ROW's minimum, and in a fixed-width zone
+Godot then lays the whole content column out at that minimum inside a host that `clip_contents`.
+Measured on a four-cash-crop patch: the zone asked **528px of a 356px box**, the row's NAME (its only
+expanding child, allocated `max(0, leftover)`) got **1px** — Godot's floor, not zero, so it stayed a
+perfectly findable node with its `text` intact — and the clip took the right edge off **every other
+row's stepper too**. Reported from play as a rate with no source name beside it.
+
+`SourceForecast.capped_material_components(rows, limit)` was the bounded joiner that answered it, and
+it is **RETIRED** with `ONE_SLOT_MATERIAL_LIMIT`, `MATERIAL_COMPONENTS_UNCAPPED` and
+`MATERIAL_OVERFLOW_FORMAT`: the board row's line two has the width and the map plate sizes to its
+measured run, so no caller had one fixed slot left, and an unreachable cap is a thing the next reader
+assumes is load-bearing. `signed_material_components` is the plain joiner again — every material,
+signed, `" · "`-joined, `""` when there is nothing to say.
+
+**THE NAME IS WHAT MAY NEVER YIELD.** A row the player cannot identify is useless whatever else it
+shows. Under the 46px slot the name measured **96px**; with the accounts on their own line it measures
+**146** and the zone still **354 of 356**. **That is still 18px short of the widest name the roster can
+produce** — `Hunt Thunder Mammoths` needs 164 — so the longest two species names elide legibly in a
+side dock; `band_panel_preview._report_work_row_name_column` PRINTS that margin rather than asserting
+it, a red line there being the harness picking between a shorter row format, a wider flank and doing
+nothing.
+
+Both surfaces still gate on `SourceForecast.signed_material_components` answering `""`, so "pays no
+material" is one call rather than a condition each re-derives, and a source that genuinely produced
+nothing in every account still falls through to its honest food zero.
 
 **The fodder rung is the one this pair was reported on** (issue #449): a sown hay Field pays no
 provisions, so with only one option both surfaces read `+0.00` on a tile that was filling the band's

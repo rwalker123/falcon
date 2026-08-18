@@ -586,6 +586,11 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
+##
+## **THIS IS ONE LINE, AND A SOURCE ROW ON THE BOARD IS TWO OF THEM** — see
+## `WORK_ROW_TWO_LINE_HEIGHT` below, which the capacity arithmetic divides by. What still draws at
+## exactly this height is the BUILD QUEUE's row, which is one line and stays one: the two lists read
+## at one line-height rather than at one row-height, and the queue has no accounts to state.
 const WORK_ROW_HEIGHT := 28.0
 
 ## The node name of the PARTIES zone's scrolling LIST — the party rows plus whichever inspector strip
@@ -659,8 +664,15 @@ const WORK_PAGER_HEIGHT := 24.0
 ## adequate by **2px** at the worst case a model can state (186 reserved against 184 drawn) — and every
 ## pixel of that cushion was charged to the ZONE, on every dock, whether or not a row was even
 ## selected. With the conditional terms stated on their own the base is measured as a base:
-## `band_panel_inspector` draws **78px** of head + sentence + links + gaps + card padding.
-const WORK_INSPECTOR_EXTENT := 78.0
+## `band_panel_inspector` draws **58px** of head + links + gaps + card padding.
+##
+## **IT WAS 78 UNTIL THE BOARD ROW GREW A SECOND LINE.** The base carried a one-sentence readout
+## (*accounts · 50% left standing · ● Working · 3 assigned*) whose every clause the ROW now states —
+## the accounts and the floor on line two, the crew on the stepper, the pending state on the stripe —
+## so the whole `Label` and its `ZONE_BLOCK_SEPARATION` went, which is the 20px that pays for the
+## taller row. **Re-measure this after touching the strip's base children**; the conditional terms
+## below are stated separately for exactly that reason and must not be folded back in.
+const WORK_INSPECTOR_EXTENT := 58.0
 
 ## The slack that base carries over its measurement. **A measurement tolerance, not padding** — the
 ## same statement `BandCityPanel.BAND_ZONE_TWO_COLUMN_SLACK` makes about the flank's extent, and the
@@ -677,6 +689,24 @@ const WORK_INSPECTOR_HEIGHT := WORK_INSPECTOR_EXTENT + WORK_INSPECTOR_SLACK
 const WORK_INSPECTOR_NOTE_LINE_HEIGHT := 14.0
 
 const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE_BLOCK_SEPARATION)
+
+## **WHAT ONE BOARD ROW COSTS, and it is TWO LINES.** A source row holds a name, a variable-length
+## ACCOUNT list, four affordances and a stepper, and 356px of narrow-shell zone does not hold them on
+## one line — the accounts either elide to a fragment or take the name's pixels, and the name is the
+## one thing a row may never yield. So the accounts get a line of their own, full width, and this is
+## what the pair reserves AND draws at: line one at `WORK_ROW_HEIGHT`, the two-line stepper's own gap,
+## and the accounts line.
+##
+## **THE SECOND LINE IS `HudWidgets.build_two_line_stepper`'S, TERM FOR TERM** — its
+## `TWO_LINE_STEPPER_SEPARATION` gap under a part at `ALLOC_SECTION_FONT_SIZE`, whose measured line
+## height is the one `WORK_INSPECTOR_NOTE_LINE_HEIGHT` already states. The board's own 13px type has
+## no measured line height anywhere in this file, and inventing one is how a row comes to draw taller
+## than the capacity arithmetic paid for.
+##
+## **IT IS DECLARED HERE RATHER THAN BESIDE `WORK_ROW_HEIGHT` BECAUSE A GDScript `const` MAY NOT READ
+## ONE DECLARED BELOW IT**, and the note line's height is declared on the line above this.
+const WORK_ROW_TWO_LINE_HEIGHT := WORK_ROW_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
+    + WORK_INSPECTOR_NOTE_LINE_HEIGHT
 
 ## …and what the `ArrivalStrip` costs when the model's schedule has a gap worth drawing.
 ##
@@ -740,7 +770,20 @@ const WORK_ROW_SEPARATION := 4
 
 const WORK_ROW_ICON_WIDTH := 16.0
 
-const WORK_ROW_RATE_WIDTH := 46.0
+## **THE ACCOUNTS LINE IS INDENTED ONTO THE NAME'S OWN COLUMN**, so the board reads as a column of
+## names with each row's products hanging under its own name rather than under the severity stripe.
+## It is exactly what line one spends before the name begins — the icon slot and its separation — and
+## it is DERIVED from those two rather than measured off a render, since the stripe lives outside both
+## lines' container and costs neither.
+const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
+
+## The stable handle on a row's ACCOUNTS line, the `WORK_ROW_RUNG_META` treatment one control down: it
+## is a `Label` in its own margin under line one, and a harness that found it by text would be
+## asserting the string it had already composed. **A RETIRED `WORK_ROW_RATE_WIDTH` (46px) IS WHAT IT
+## REPLACED** — the accounts used to be a fixed slot on line one, where a four-cash-crop patch's
+## `+0.06 fibre · +0.07 grape · +0.06 tea · +0.07 tobacco` measured 583px of a 356px zone and the row's
+## NAME, its only expanding child, was allocated Godot's 1px floor.
+const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
@@ -1230,8 +1273,10 @@ const BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT := WORK_INSPECTOR_HEIGHT
 ## two rows and is handed four entries shows ONE entry and the overflow — the drawn count is the same
 ## either way, and computing it here is what stops the reservation and the render disagreeing.
 static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int) -> int:
+    # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
+    # divides for are QUEUE rows, which are one line each.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
-        + ZONE_HEAD_HEIGHT + WORK_ROW_HEIGHT + WORK_PAGER_HEIGHT \
+        + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
         + BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT \
         + float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_ROOM_GAP_COUNT
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)

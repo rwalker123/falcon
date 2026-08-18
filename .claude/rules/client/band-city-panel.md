@@ -559,15 +559,18 @@ stretch, and widening it into that gap would put it over a live HUD column.
   beside the take's `N assigned` (`labor-ui.md` → "`effective_idle` SUMS `staffed_total`").
   **The chips ARE the summary and the filter** (All / 🌿 Foraging n · rate / 🦌 Hunting n · rate / ⚠ k,
   the last hidden at k = 0), replacing collapsible group headers. Both the header total and the chip
-  rates state BOTH products, each only when non-zero — see "Work rows and the two hunt products". Rows are ONE line at a fixed
-  `WORK_ROW_HEIGHT`: severity stripe (WARN overdrawing/overstaffed, SIGNAL pending) · glyph · clipped
-  label · rate · the SOURCE-RUNG mark · policy/⚠ marks · the existing `−/+`. The rung mark and the
+  rates state BOTH products, each only when non-zero — see "Work rows and the two hunt products".
+  **Rows are TWO lines at a fixed `WORK_ROW_TWO_LINE_HEIGHT`** (44 = `WORK_ROW_HEIGHT` + the two-line
+  stepper's own gap + one `WORK_INSPECTOR_NOTE_LINE_HEIGHT`): **line one is identity and controls** —
+  severity stripe (WARN overdrawing/overstaffed, SIGNAL pending) · glyph · name · the SOURCE-RUNG mark
+  · the rung-on-offer slot · policy/⚠ marks · the `−/+` — and **line two is the ACCOUNTS then the
+  FLOOR**, full width, indented onto the name's own column. See "THE ROW IS TWO LINES" below. The rung mark and the
   policy marks are TWO AXES — what the source IS against what is being done to it — and the row keeps
   both; the rung slot is reserved on every row, so the label's share of a
   `WORK_COLUMN_MIN_WIDTH` column is ~20px narrower than the marks column alone would suggest (spec in
   `labor-ui.md` → "The work row carries TWO axes"). **Capacity is derived ENTIRELY from
   `work_zone_size()`** (`_work_board_capacity`): `cols = clamp(w / WORK_COLUMN_MIN_WIDTH, 1,
-  WORK_MAX_COLUMNS)`, `rows = (h − head − chips − inspector − pager) / WORK_ROW_HEIGHT`, filled
+  WORK_MAX_COLUMNS)`, `rows = (h − head − chips − inspector − pager) / WORK_ROW_TWO_LINE_HEIGHT`, filled
   **column-major** with a hairline between columns; the pager is resolved in **two passes** because it
   only exists when one page cannot hold everything yet costs a row. **EVERY reserved height must be
   what the element actually draws at** — the default `HudStyle` button chrome pads 9px top and bottom,
@@ -2011,7 +2014,9 @@ lands at the window's own edge and reads as the panel running off the screen.
 **`WORK_INSPECTOR_HEIGHT` 118 → 84 and the floor picker 68 → 32.** The old pair carried ~40px of
 unexplained slack charged to the zone on every dock; removing it took the floor from 430 to **396** and
 is why the lever below is 456 rather than 490. Both are guarded by *reserved ≥ drawn* assertions now,
-the rule the pools and queue blocks already followed and this one never did.
+the rule the pools and queue blocks already followed and this one never did. **`WORK_INSPECTOR_EXTENT`
+has since fallen 78 → 58**, which is the strip's one-sentence readout being deleted outright to pay for
+the board row's second line — see "THE ROW IS TWO LINES" above.
 
 **`PANEL_HEIGHT_WIDE` 440 → 456**, a **396px** box, and the work zone reads **396 of 396 — zero spare**
 with a row selected. That is exact by intent: Ray took the minimal value (*"we don't want to make it
@@ -2023,6 +2028,11 @@ flank to TALL, and was declined as half the screen.
 > lever three times in one arc and is out of travel; the structural answer — the inspector replacing the
 > board rather than stacking under it, or the tab splitting — is unbuilt and is what the next addition
 > should force, not a fourth raise.
+>
+> **The two-line board row is the worked example of what "out of travel" costs.** It needed 16px, the
+> height could not give them, and what paid was DELETING A READOUT — the inspector's whole sentence,
+> possible only because the row had taken over every clause of it. The zone reads 396 of 396 again;
+> there is no second sentence to spend.
 
 **Why no harness caught it:** the worst-case zone frames were a BOTTOM dock with **nothing selected**,
 and every inspector-open frame was a TALL LEFT dock with room to spare. Two frame families, disjoint,
@@ -2488,25 +2498,85 @@ means — equal dates would pass a "the dates render" check while proving nothin
 PNG-less, driven through the real handler and read back off `Main.format_unqueue` on BOTH webs, since
 either alone passes on a builder that gets the grammar backwards.
 
-## Work rows carry ONE account, and the aggregates carry a SIBLING (issues #337 / #449 / #527)
+## THE ROW IS TWO LINES, AND THE INSPECTOR'S SENTENCE PAID FOR THE SECOND ONE
 
-A board row's rate column is a single fixed width, so it states the account the source actually PAYS,
-falling through **food → fodder → materials**: food when there is food (unchanged for every forage
-patch and edible quarry), else the fodder rate spelled with the WORD — `+0.40 fodder` on a sown hay
-Field — else the MATERIALS, each naming itself: `+0.22 hide` on a hunted wolf pack, never the `+0.00`
-that said the source was worth nothing. `_work_row_rate_text` is the one definition. The **inspector
-strip** has room for the whole vector and states all of it (`SourceForecast.yield_components`).
+**Line one is IDENTITY AND CONTROLS** — stripe · glyph · name · the SOURCE-RUNG mark · the
+rung-on-offer slot · policy/⚠ marks · the `−/+`. **Line two is the ACCOUNTS, then the FLOOR** —
+`+0.97 /turn · 50% left standing` — full width, indented onto the name's own column by
+`WORK_ROW_ACCOUNTS_INDENT` (the icon slot plus its separation, derived rather than measured, the
+stripe living outside both lines' container). One row is therefore `WORK_ROW_TWO_LINE_HEIGHT` — 44px,
+and its three terms are the ones `HudWidgets.build_two_line_stepper` already spends:
+`WORK_ROW_HEIGHT`, `TWO_LINE_STEPPER_SEPARATION`, and a part at `ALLOC_SECTION_FONT_SIZE`, whose
+measured line height is the one `WORK_INSPECTOR_NOTE_LINE_HEIGHT` states. **The board's own 13px type
+has no measured line height anywhere in this client**, which is why the second line takes the strip's
+10px register rather than the row's.
 
-**A TRADE branch stood between food and fodder until arc #527** — `⇄+0.22` on that same wolf, marked
-with the retired `FoodIcons.TRADE_GOODS_GLYPH` — and for one release after it the row read `+0.00`.
-The material arm reads the assignment's **RESOLVED `material_yield`**, what the source actually
+**THE ACCOUNTS LEFT LINE ONE BECAUSE 356px DOES NOT HOLD BOTH.** Everything on a row but the name is
+fixed-width, and the accounts had a 46px slot (`WORK_ROW_RATE_WIDTH`, retired): so the row fell
+through **food → fodder → materials** picking exactly ONE, and the material arm further named one
+material and counted the rest (`+0.24 fibre +3`). Both were WIDTH compromises rather than readings —
+a hay meadow paying meat AND feed had to choose — and the slot was still taking the name's pixels: at
+46px the name measured **96px** and ellipsised on any species longer than `Hunt Red Deer`. On its own
+line the list is stated **in full**, `SourceForecast.yield_components` like every other per-turn
+readout, and the name column measures **146px**.
+
+> ### THE 16px CAME OUT OF THE INSPECTOR, AND ONLY THE WHOLE SENTENCE WOULD PAY IT
+>
+> The taller row costs the work zone **16px**, in exactly one state — fund mode on, one queued build,
+> a row selected — where the board floors to a single row and that row grows. It is not a function of
+> source count: it is the same 16px at 9 sources and at 34, and `PANEL_HEIGHT_WIDE` is out of travel
+> (456 + 24 crosses `BAND_ZONE_TALL_MIN_HEIGHT` and flips the band flank's tier).
+>
+> **The strip's one-sentence readout is what paid, and dropping a CLAUSE of it would have freed
+> nothing.** It read *accounts · 50% left standing · ● Working · 3 assigned* on ONE `Label`, so
+> deleting the now-redundant accounts left a line surviving its other three clauses at exactly the
+> same height. The whole `Label` and its `ZONE_BLOCK_SEPARATION` went instead — 20px, which pays the
+> 16 — and `WORK_INSPECTOR_EXTENT` fell **78 → 58**.
+>
+> **So the FLOOR travelled to line two with the accounts.** Of the three surviving clauses it was the
+> only one the row could not otherwise state: the stepper's count IS `N assigned`, and *pending* is
+> the row's amber name and its SIGNAL stripe (`band_panel_build_queue_pending` renders both beside a
+> confirmed row). `HudComposeVocab.FLOOR_VALUE_FORMAT` is the phrasing the floor presets' tooltips and
+> the chart's caption use, so one number is never worded two ways.
+>
+> **What the strip still carries:** its head (icon + name + `✕`), the overdraw line, the under-kept
+> `note`, the `muted_note`, the `ArrivalStrip` when the schedule is gappy, the three links
+> (Jump to source / Change policy / **Unassign**) and the floor picker when open. Every one of those
+> is either a control or a warning the row has no room for.
+
+**A HUNT ROW'S FODDER IS A STRUCTURAL ZERO** (no animal is harvested for feed) and renders no term;
+the material terms read the assignment's **RESOLVED `material_yield`** — what the source actually
 credited this turn, never a rate the compose sheet would project (`labor-ui.md` → "AN INEDIBLE QUARRY
-QUOTES WHAT IT PAYS"). **A hunt row's fodder is a structural zero** (no animal is harvested for feed),
-so the fodder arm is one only the plant web can take.
+QUOTES WHAT IT PAYS"). A trade branch stood between food and fodder until arc #527 (`⇄+0.22`, the
+retired `FoodIcons.TRADE_GOODS_GLYPH`), and for one release after it the wolf's row read `+0.00`.
+**A row with no CONFIRMED yield states no account clause at all** and its line two is the floor alone,
+which is the pending row's ordinary face.
 
-**THE MATERIAL ARM STATES EVERY MATERIAL, NOT THE FIRST ONE.** Picking one of a vector names a winner
-the sim does not name; summing them is the retired axis under a new name. The column's width is a
-MINIMUM rather than a clip, so the honest reading is the one that fits.
+**THE ELIDE SURVIVES AS A FLOOR AND THE FOUR-CROP WORST CASE STILL REACHES IT — by 10px, and the cut
+lands on the FLOOR.** A `Label` with no overrun behaviour reports its whole text as its minimum width,
+so in this `clip_contents` zone one long line clamps the entire tab's column up to that width and
+slices the right edge off every row's stepper (measured at **528px of the 356px zone**, with the name
+allocated Godot's 1px floor). What the two-line row promises is that the ACCOUNTS never have to be
+cut: all four crops need **241px of a 322px line**, and it is the trailing `50% left standing` that
+takes the line to 332. **The floor's only home is that line** — the strip's sentence is gone and
+`HudFormat.floor_hint` carries the zone's prose rather than the percentage — so line two carries the
+WHOLE of itself on its own hover, `HudWidgets.set_label_tooltip` at `MOUSE_FILTER_PASS` (the rung
+slot's rule: STOP across the row's widest control would punch a full-width dead hole in a row that is
+one click target). **The name is still what may never yield** — a row the player cannot identify is
+useless whatever else it shows.
+
+**THE COST IS PAGING, AND IT IS ACCEPTED.** A page falls from 8 rows to 5, so nine sources is two
+pages in most states. The pager already exists for it; the board must not shrink back to fit more,
+and no new `ScrollContainer` may be added (the panel sanctions exactly two).
+
+**`SourceForecast.capped_material_components` IS RETIRED**, with `ONE_SLOT_MATERIAL_LIMIT`,
+`MATERIAL_COMPONENTS_UNCAPPED` and `MATERIAL_OVERFLOW_FORMAT` — line two has the width and the map's
+on-tile plate sizes to its measured run, so no caller had one fixed slot left and an unreachable cap
+is a thing the next reader assumes is load-bearing. `signed_material_components` is the plain joiner
+again. Frames: `band_panel_work_material_forage` / `band_panel_work_material_crops`, whose four-crop
+row reads `+0.06 fibre · +0.07 grape · +0.06 tea · +0.07 tobacco` whole.
+
+## The aggregates carry a SIBLING (issues #337 / #449 / #527)
 
 **THE AGGREGATES CARRY A SIBLING TOTAL, NEVER A FOLDED-IN ONE.** The header's food figure and each
 chip's food figure stay `actual_yield`-denominated — that is the sim's larder identity — but omitting

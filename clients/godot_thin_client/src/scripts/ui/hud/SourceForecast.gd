@@ -1824,18 +1824,31 @@ static func fodder_rate_of(source: Dictionary) -> float:
     return float(source.get("fodder_yield", 0.0))
 
 ## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn` (food only),
-## `+0.08 /turn · 0.40 fodder` (a hay meadow), `0.40 fodder` (a hay-only one). One definition, so
-## every surface that states a source's per-turn products states them the same way and none of them
-## can print a zero for a component the source does not produce. Food leads. When EVERY component is
-## absent the food zero survives ("+0.00 /turn"): a worked source that produced nothing this turn is
-## a fact worth reading.
+## `+0.08 /turn · +0.40 fodder` (a hay meadow), `+0.40 fodder` (a hay-only one), `+0.22 hide` (an
+## inedible quarry). One definition, so every surface that states a source's per-turn products states
+## them the same way and none of them can print a zero for a component the source does not produce.
+## Food leads. When EVERY component is absent the food zero survives ("+0.00 /turn"): a worked source
+## that produced nothing this turn is a fact worth reading.
+##
+## **EVERY ACCOUNT IS SIGNED, AND FOR A RELEASE ONLY THE FOOD ONE WAS.** Food read `+0.20 /turn`
+## beside a bare `0.40 fodder` and a bare `0.22 hide` — one list, one register, one account wearing a
+## `+` and the others not, which a reader can only take as meaningful. **They are all income**: every
+## one of them is a per-turn credit to a store, so they all carry the sign that says so, and the sign
+## is what separates them from the standing COSTS this HUD also states (a pen's feed, a rung's
+## keeping). The tooltip half of this vocabulary already signed the fodder
+## (`POLICY_CAP_FODDER_FORMAT` → `+0.40 fodder/turn`), so the face was the outlier rather than the
+## rule.
+##
+## **`magnitude_components` IS THE UNSIGNED TWIN AND STAYS UNSIGNED** — a filter chip states a LEVEL
+## rather than a change, and its own note gives the reason. That pair is what makes this one's sign a
+## decision rather than an inconsistency.
 ##
 ## The fodder term wears the WORD, not a glyph, because fodder has none — the same reason
 ## `picker_products` names its accounts. It is plant-only, so every hunt-side caller leaves it
 ## defaulted and reads exactly as it did.
 ##
 ## `zero_account` names the component whose zero survives an all-empty take (`zero_account_of`), so a
-## hay-only meadow reads `0.00 fodder` rather than the `+0.00 /turn` that says its hay is worth no
+## hay-only meadow reads `+0.00 fodder` rather than the `+0.00 /turn` that says its hay is worth no
 ## meals, and a source that pays nothing in either account renders no line at all.
 static func yield_components(food: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD, materials: Array = []) -> String:
@@ -1844,11 +1857,11 @@ static func yield_components(food: float, fodder: float = 0.0,
         var material_id := _row_material_id(row)
         if material_id != "":
             parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
-                format_magnitude(row[YIELD_ROW_VALUE]), material_id])
+                format_signed(row[YIELD_ROW_VALUE]), material_id])
         elif String(row[YIELD_ROW_ACCOUNT]) == YIELD_ACCOUNT_FOOD:
             parts.append(format_yield(row[YIELD_ROW_VALUE]))
         else:
-            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+            parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
     return COMPONENT_SEPARATOR.join(parts)
 
 ## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
@@ -5174,14 +5187,26 @@ static func material_payoff_rows(raw: Variant) -> Array[Dictionary]:
 static func material_rows_of(source: Dictionary) -> Array[Dictionary]:
     return material_payoff_rows(source.get(ASSIGNMENT_MATERIAL_YIELD_KEY, []))
 
-## **THE ONE-SLOT SURFACES' MATERIAL ARM** — every material this source pays, SIGNED, joined in the
+## **THE MATERIAL ARM OF A PER-TURN READOUT** — every material this source pays, SIGNED, joined in the
 ## sentence idiom (`+0.22 hide`), and `""` when there is nothing to say. The empty answer is the whole
 ## point: it is the gate a fall-through tests, so "this source pays no material" and "this source pays
 ## a material" are one call rather than a condition each caller re-derives.
 ##
-## **EVERY material, never the first one.** Picking one of a vector names a winner the sim does not
-## name; summing them is the retired trade axis under a new name. A species pays few materials, and
-## both callers size to their measured run rather than clipping.
+## **EVERY material, never the first one, and never a count of the rest.** Picking one of a vector
+## names a winner the sim does not name; summing them is the retired trade axis under a new name. Both
+## callers size to their measured run rather than clipping — the map's on-tile plate, whose pill is
+## drawn to the text's own width, and the work board row's ACCOUNTS LINE, which has the whole row.
+##
+## **A BOUNDED FORM (`+0.24 fibre +3`) EXISTED AND IS RETIRED, and the reason is worth keeping.** A
+## `Label` with no overrun behaviour reports its WHOLE text as its minimum width, so an unbounded join
+## does not merely run long — it sets the ROW's minimum, and in a fixed-width zone that lays every row
+## out past the box while the zone's `clip_contents` slices the right edge off all of them (measured:
+## 528px of a 356px box on a four-cash-crop patch, with the row's name allocated Godot's 1px floor).
+## The cap was what left a bounded, meaningful string behind the ellipsis in a **46px** rate column.
+## That column is gone — the board row's accounts moved to a full-width second line
+## (`band-city-panel.md` → "THE ROW IS TWO LINES") — so **no caller has one fixed slot any more**, and
+## the bound was deleted rather than left parameterised: an unreachable cap is a thing the next reader
+## assumes is load-bearing.
 static func signed_material_components(rows: Array) -> String:
     var parts: Array[String] = []
     for row in material_payoff_rows(rows):

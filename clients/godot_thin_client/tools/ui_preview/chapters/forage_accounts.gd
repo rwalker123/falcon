@@ -730,13 +730,18 @@ const FODDER_STANDING_RATE := 0.40
 const FODDER_STANDING_FORAGERS := 3
 ## The readout's whole `label_suffix`, spelled out rather than composed through `yield_components` —
 ## a needle built by the code under test agrees with whatever that code emits. The LEADING SPACE is the
-## readout's own (it joins the suffix to the crew clause), and the fodder magnitude is UNSIGNED, which
-## is `yield_components`' rule for this account and not an omission.
-const FODDER_STANDING_SUFFIX := " 0.40 fodder"
+## readout's own (it joins the suffix to the crew clause).
+##
+## **THE MAGNITUDE IS SIGNED, and it read `0.40 fodder` until the work board put a source's accounts on
+## a line of their own.** `yield_components` signed its FOOD arm and no other, so one list mixed
+## `+0.20 /turn` with a bare `0.40 fodder` — a difference a reader can only take as meaningful. Every
+## account on that line is per-turn income and every one of them carries the sign that says so; the
+## tooltip clause below had been signing this same reading all along.
+const FODDER_STANDING_SUFFIX := " +0.40 fodder"
 ## The same clause as the rendered drawer line carries it.
-const FODDER_STANDING_CLAUSE := "0.40 fodder"
+const FODDER_STANDING_CLAUSE := "+0.40 fodder"
 ## The tooltip's fodder clause, which reuses the rung tooltips' own wording rather than spelling the
-## account a third way — hence the sign and the unit that the compact face does without.
+## account a third way — hence the `/turn` unit the compact face does without.
 const FODDER_STANDING_TOOLTIP_CLAUSE := "+0.40 fodder/turn"
 
 ## THE ASSIGNMENT ITSELF, so the band fixture and the readout assertion cannot describe two different
