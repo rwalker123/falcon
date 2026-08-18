@@ -1891,7 +1891,8 @@ impl LaborAssignment {
 /// escapement the herd could have spared: an animal you didn't kill was never produced, it is still
 /// alive (`fauna::forecast_production_and_take`).
 ///
-/// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠, answered by the sim
+/// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠ ([`take_overdraws`]),
+/// answered by the sim
 /// rather than derived by the client from `actual > sustainable`. That comparison stopped working when
 /// the hunt began taking whole animals (slice 8): a Sustain hunt is **escapement to `K/2`**, so it
 /// lands the herd exactly on its most-productive biomass and is *sustainable by construction* — but it
@@ -1899,9 +1900,10 @@ impl LaborAssignment {
 /// every kill turn. A ⚠ on the turn you correctly harvest a mammoth trains the player to ignore the
 /// one signal that matters. So `sustainable` keeps reporting the honest **long-run MSY rate** ("this
 /// herd sustains ~0.78/turn on average"), `actual` swings — that swing is *true*, and it is the
-/// mechanic — and this flag says whether the policy overdraws at all. It is false for Sustain and the
-/// investment rungs (which sit on Sustain's escapement floor) and for every managed rung-3 source;
-/// true for Surplus/Deplete/Eradicate, which genuinely draw down toward the collapse threshold.
+/// mechanic — and this flag says whether the take overdraws at all. It is false at any floor on or
+/// above the food peak and for every managed rung-3 source; below the peak it is **also** a question
+/// about the crew, because a floor these hands cannot reach is a floor nothing is drawn below. See
+/// [`take_overdraws`], which is the only thing that may write this field.
 ///
 /// `realized` = **the steady headline yield**, a **FORWARD PROJECTION**: the average food/turn this
 /// source will deliver over the next `labor_config.yield_average_horizon_turns` turns, computed by
@@ -3536,18 +3538,52 @@ pub fn floor_is_valid(floor: f32) -> bool {
     floor.is_finite() && (0.0..=1.0).contains(&floor)
 }
 
-/// **Does a take at this floor draw the stock below what it sustains?** — THE ⚠ predicate
-/// ([`SourceYield::overdraws`]).
+/// **Is this floor set below the food peak?** — the INTENT half of the ⚠ predicate, and on its own
+/// **not** the ⚠: publish [`SourceYield::overdraws`] through [`take_overdraws`], never through this.
 ///
-/// It is `floor < MSY_BIOMASS_FRACTION`: *"you are drawing this below the food peak"*. The sustained
-/// take `r·fK·(1−f)` peaks at `f = 0.5`, so a floor at or above the peak cannot be an overdraw and a
-/// floor below it always is.
+/// It is `floor < MSY_BIOMASS_FRACTION`: *"you are asking to draw this below the food peak"*. The
+/// sustained take `r·fK·(1−f)` peaks at `f = 0.5`, so a floor at or above the peak cannot be an
+/// overdraw whatever the crew, and a floor below it is one the moment a crew can get there.
 ///
 /// **Deliberately NOT `actual > sustainable`.** A first harvest of a stocked source is its
 /// accumulated stock and exceeds one turn's regrowth under *every* floor, the peak included, so the
-/// comparison mis-fires exactly where the player most needs the ⚠ to be trustworthy.
+/// comparison mis-fires exactly where the player most needs the ⚠ to be trustworthy. That is why the
+/// ability half below is a question about the crew's **throughput**, not about the take it happened
+/// to land this turn.
 pub fn floor_overdraws(floor: f32) -> bool {
     floor < crate::fauna::MSY_BIOMASS_FRACTION
+}
+
+/// **Does this take draw the stock below what it sustains?** — THE ⚠ predicate
+/// ([`SourceYield::overdraws`]), and the **only** thing that may write that field.
+///
+/// Two conjuncts, and the ⚠ is a lie without either:
+///
+/// - **INTENT** — [`floor_overdraws`]: the dial is set below the food peak.
+/// - **ABILITY** — this crew can actually get the stock down there. It must out-take the biggest
+///   one-turn regrowth anywhere in the band it has to cross (`peak_regrowth_in_band`, from the
+///   source's own curve): while the crew's throughput is smaller than the regrowth at some stock in
+///   `floor·K ..= B`, the stock stalls at that stock and holds, and a floor it never reaches is a
+///   floor nothing is being overdrawn to.
+///
+/// Both terms are **biomass per turn**, so a caller must not hand one of them a provisions rate.
+///
+/// **The regrowth is floored at zero, and that is what keeps a crew of NOBODY out of the ⚠.** A herd
+/// past its Allee threshold regrows *negatively* — it declines whether or not anyone hunts it — so an
+/// unfloored comparison makes the empty crew's `0.0` "out-take" the decline and warn about a source
+/// nobody is touching. Floored, the statement reads *"a declining stock needs only a positive take to
+/// be drawn to the floor, and no take at all draws nothing"*, which is the honest one.
+///
+/// **Why ability is not "is the stock falling this turn".** The regrowth curve peaks at `K/2`, and an
+/// overdraw floor is by definition below it — so a crew descending from a full source has the peak
+/// still to cross, and one that merely out-takes today's regrowth can settle *at* the peak and hold
+/// there forever. Both surfaces used to disagree about that case ([reported from play] a herd at
+/// `81%` of `K` with four herders and a `39%` floor: the tile card said *overdrawing*, the compose
+/// sheet said *settles at 92%*). The whole point of stating the predicate here is that **every
+/// surface that says "overdrawing" reads one function** — the mark, the tooltip, the map badge and
+/// the compose sheet's verdict are readings of this, not four opinions about it.
+pub fn take_overdraws(floor: f32, crew_biomass_per_turn: f32, peak_regrowth_in_band: f32) -> bool {
+    floor_overdraws(floor) && crew_biomass_per_turn > peak_regrowth_in_band.max(0.0)
 }
 
 /// **Is a raid at this floor a SERIES of trips** — repeated full-cap runs to the band and back until
@@ -3862,6 +3898,54 @@ mod tests {
         assert!(
             !floor_overdraws(1.0),
             "and no floor above the peak overdraws: under-harvest is restraint too"
+        );
+    }
+
+    /// **THE ABILITY CONJUNCT, at its three interesting points.** The ⚠ needs both halves, so the
+    /// same below-peak floor answers differently for a crew that can make the descent and one that
+    /// cannot — and a floor at or above the peak stays dark at any crew size whatever.
+    #[test]
+    fn the_overdraw_needs_the_crew_to_reach_the_floor_as_well_as_the_dial() {
+        /// The biggest one-turn regrowth standing between a fixture's floor and its stock.
+        const PEAK_REGROWTH: f32 = 10.0;
+        let below_peak = crate::fauna::MSY_BIOMASS_FRACTION - 0.1;
+
+        assert!(
+            take_overdraws(below_peak, PEAK_REGROWTH + 1.0, PEAK_REGROWTH),
+            "a crew that out-takes the regrowth it has to cross reaches the floor — the ⚠"
+        );
+        assert!(
+            !take_overdraws(below_peak, PEAK_REGROWTH - 1.0, PEAK_REGROWTH),
+            "one that does not settles above the floor and overdraws nothing"
+        );
+        assert!(
+            !take_overdraws(
+                crate::fauna::MSY_BIOMASS_FRACTION,
+                PEAK_REGROWTH * 100.0,
+                PEAK_REGROWTH
+            ),
+            "and no crew makes a take AT the peak an overdraw — the first harvest rationale"
+        );
+    }
+
+    /// **A SOURCE NOBODY IS WORKING IS NEVER AN OVERDRAW, even one that is dying on its own.** Below
+    /// its Allee threshold a herd's one-turn regrowth is *negative*, so an unfloored ability test
+    /// would let an empty crew's `0.0` "out-take" the decline and warn about a herd it is not
+    /// touching. The regrowth is floored at zero for exactly this.
+    #[test]
+    fn a_collapsing_source_no_one_works_carries_no_warning() {
+        /// A herd past its Allee threshold, losing biomass every turn whether or not it is hunted.
+        const DECLINING: f32 = -4.0;
+        const NOBODY: f32 = 0.0;
+        let below_peak = crate::fauna::MSY_BIOMASS_FRACTION - 0.1;
+
+        assert!(
+            !take_overdraws(below_peak, NOBODY, DECLINING),
+            "an unstaffed row draws nothing, so it overdraws nothing"
+        );
+        assert!(
+            take_overdraws(below_peak, f32::EPSILON, DECLINING),
+            "…while any real take does reach a floor the stock is already falling toward"
         );
     }
 

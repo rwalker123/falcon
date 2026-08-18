@@ -2163,10 +2163,20 @@ pub fn advance_labor_allocation(
                             mult_f,
                         ),
                         workers_needed,
-                        // Plants stay flow-based (slice 8), so the wild/tended gather ⚠ is unchanged:
-                        // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Deplete/Eradicate
-                        // draw the patch down.
-                        overdraws: floor_overdraws(*floor),
+                        // **The ⚠ — intent AND ability**, through the plant web's one producer
+                        // ([`crate::forage::forage_take_overdraws`]). A floor below the food peak is
+                        // only an overdraw if these gatherers can actually get the stand down to it;
+                        // a crew that settles above the peak and holds there is drawing nothing
+                        // below what the patch sustains, whatever the dial says. Stock terms are the
+                        // **selected** share's and the pre-take biomass, matching `sustainable`.
+                        overdraws: crate::forage::forage_take_overdraws(
+                            patch,
+                            &labor.forage,
+                            biomass_before * selected_share,
+                            patch.carrying_capacity * selected_share,
+                            workers as f32 * per_worker_biomass,
+                            *floor,
+                        ),
                     };
                 }
                 LaborTarget::Hunt { fauna_id, floor } => {
@@ -3252,7 +3262,21 @@ pub fn advance_labor_allocation(
                         sustainable,
                         wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
                         workers_needed,
-                        overdraws: floor_overdraws(*floor),
+                        // **The ⚠ — intent AND ability**, through the animal web's one producer
+                        // ([`fauna::hunt_take_overdraws`]). A floor below the food peak is only an
+                        // overdraw if this party can actually get the herd down to it; four herders
+                        // whose take settles the herd above the peak are drawing nothing below what
+                        // it sustains, whatever the dial says. Pre-take biomass, matching
+                        // `sustainable` beside it.
+                        overdraws: fauna::hunt_take_overdraws(
+                            herd,
+                            &fauna,
+                            biomass_before,
+                            herd_carry_per_worker,
+                            &party_for(herd.body_mass),
+                            workers,
+                            *floor,
+                        ),
                         // The forward-projected steady headline (computed pre-take above): rate-based,
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized.provisions,

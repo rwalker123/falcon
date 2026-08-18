@@ -94,12 +94,21 @@ pub struct LaborAssignmentState {
     /// stock and regrows. Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub wasted_yield: f32,
-    /// **THE overhunting ⚠, answered by the sim** — `SourceYield::overdraws` (`!managed &&
-    /// policy.overdraws()`): does this take draw the stock below what it sustains? It replaces the
-    /// client-derived `actual_yield > sustainable_yield` test, which mis-fires on a hunt's lumpy
-    /// per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above the steady
-    /// sustainable rate even under Sustain). False for Sustain and the investment rungs
-    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Deplete/Eradicate.
+    /// **THE overhunting ⚠, answered by the sim** — core_sim's `components::take_overdraws`: does
+    /// this take draw the stock below what it sustains? **Intent AND ability** — the floor is below
+    /// the food peak *and* this crew's per-turn throughput out-takes the biggest one-turn regrowth
+    /// between that floor and the stock standing today. A crew that settles above the floor and
+    /// holds there reads `false`, whatever the dial says.
+    ///
+    /// It replaces the client-derived `actual_yield > sustainable_yield` test, which mis-fires on a
+    /// hunt's lumpy per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above
+    /// the steady sustainable rate even under Sustain). `false` for every managed rung-3 source (a
+    /// Field, a pen) whatever the floor and the crew.
+    ///
+    /// **Every surface that says "overdrawing" reads THIS field** — the mark, the tooltip's word,
+    /// the map badge, the compose sheet's verdict. Do not re-derive it and do not gate it: one
+    /// question, one answer.
+    ///
     /// A row with no yield (Scout/Warrior, or an unresolved [`SourceYield::ZERO`]) is `false`. Derived
     /// per-turn at capture. Appended (append-only).
     #[serde(default)]

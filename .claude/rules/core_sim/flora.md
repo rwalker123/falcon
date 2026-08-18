@@ -67,8 +67,10 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   output_multiplier` (MSY-based) into the yield telemetry as the **long-run reference line the player
   reads beside the take** — **not** as the ⚠ predicate. The first harvest of a stocked patch is its
   accumulated stock and legitimately exceeds one turn's regrowth under *every* stance, Sustain
-  included, so the over-forage ⚠ is `components::floor_overdraws` (`floor < K/2` — a fact about where
-  the crew stops), exactly as it is on the animal web.
+  included, so the over-forage ⚠ is `components::take_overdraws` — the floor below the food peak
+  (`floor < K/2`, a fact about where the crew stops) **and** the gatherers able to draw the stand down
+  to it (`forage::forage_take_overdraws`), exactly as it is on the animal web. See
+  `.claude/rules/core_sim/yield-forecast.md` → "THE ⚠ IS INTENT **AND** ABILITY".
 - **Config** (`labor_config.json` `forage`): **`capacity_by_biome`** (the per-biome capacity table —
   see "The two food webs"; **validated total** over every `TerrainType` by `LaborConfig::validate`),
   `per_worker_biomass_capacity`,

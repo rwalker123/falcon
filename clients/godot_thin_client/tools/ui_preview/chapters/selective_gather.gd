@@ -6,13 +6,14 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 ##
-## **THE THREE CHIP STATES ARE ONE SUBJECT, and two of them are one glance apart.** With nothing
-## ticked every plant is coming home, so every chip reads faintly INCLUDED; ticking one makes it
-## PICKED and every other chip EXCLUDED. A frame carrying only the narrowed state cannot say the
-## default reads differently from it, so the two are rendered as a PAIR and the chips' states are
-## asserted off `HudWidgets.SPECIES_CHIP_STATE_META` rather than off their ink — at the HUD's real
-## type size the difference between a faint check and a bright one is a few pixels, which is exactly
-## why the states carry a meta at all.
+## **THE CHIPS ARE PLAIN TOGGLES ON THE THING YOU CLICKED, and that is the regression this chapter
+## now guards.** A source with no explicit selection renders as EVERY plant selected, because that is
+## what an empty selection means; pressing a selected chip deselects THAT PLANT AND NOTHING ELSE.
+## Measured in play before the fix, a tile of Tobacco 57% + Wild Grapevine 43% drew both as selected
+## and pressing Tobacco turned Grapevine off — correct by the old model, indefensible on screen — so
+## `forage_take_only_pressed_moves` presses one chip on a two-plant basket and asserts the OTHER chip
+## is where it was. The two states are read off `HudWidgets.SPECIES_CHIP_STATE_META` rather than off
+## ink, a pill being a thing an assertion cannot measure.
 ##
 ## **THE OTHER SUBJECT IS THE PRICE, and no picture can judge it.** The sim publishes a per-species
 ## conversion rate for every plant in the basket, so ticking a chip moves the forecast exactly as
@@ -83,6 +84,10 @@ const SCARCE_SPECIES := "oak_mast"
 ## makes the whole selection unquotable — the composition is a weighted mean, so one missing term is
 ## not a term that can be left out of it.
 const UNQUOTED_SPECIES := "wild_emmer"
+
+## The basket's third plant. **NARROWING BY CLICK IS NOW A SUBTRACTION**, so reaching the scarce plant
+## alone means unticking the other two, and this is the second of them.
+const MIDDLE_SPECIES := "wild_tubers"
 
 ## The crew the priced states dial in. Above the mast-only selection's useful count and inside the
 ## whole basket's, so the tick has room to move the stepper DOWN — which is the useful-worker
@@ -459,8 +464,8 @@ func run(harness) -> void:
 
 	# ---- The DEFAULT state — nothing ticked anywhere, so everything is coming home ---------------
 	# The band's own row carries NO selection, which is what the sheet seeds from; the state exists to
-	# say that reads as every chip faintly INCLUDED rather than as every chip off. It is also the
-	# BASELINE every price claim below is a relation against.
+	# say that reads as every chip SELECTED, because that is what an empty selection means. It is also
+	# the BASELINE every price claim below is a relation against.
 	h._hud.update_band_alerts([_gather_band([], BASKET_WORKERS)])
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
@@ -473,9 +478,9 @@ func run(harness) -> void:
 	var default_states := _chip_states()
 	h._assert_hud("the chip row carries one chip per named plant in the basket",
 		default_states.size() == 3)
-	h._assert_hud("…and with nothing ticked every chip reads INCLUDED, never excluded",
+	h._assert_hud("…and with nothing ticked every chip reads SELECTED, never off",
 		default_states.values().all(func(state: String) -> bool:
-			return state == HudFloraVocab.TAKE_STATE_INCLUDED))
+			return state == HudFloraVocab.TAKE_STATE_SELECTED))
 	# The bracketed quantity is the WIRE's, and the fixture's numbers are deliberately not
 	# `share × biomass` — so a chip that re-derived the split renders a different bracket here.
 	h._assert_hud("…and each chip quotes the standing biomass the wire published",
@@ -490,18 +495,29 @@ func run(harness) -> void:
 			and int(whole_basket["crew"]) == BASKET_WORKERS)
 	_assert_bracket_follows_the_wire(tile)
 
-	# ---- TICKING A CHIP PRICES THE CREW, live, exactly as the stepper does -----------------------
+	# ---- UNTICKING A CHIP PRICES THE CREW, live, exactly as the stepper does ----------------------
 	# The reported asymmetry: the worker stepper moved this readout and the chips did not, which
-	# taught that narrowing was free when it is the whole decision. The scarce plant shrinks BOTH arms
-	# of the take — a quarter of the stand, an eighth of the conversion — so both the quoted food and
-	# the useful-worker count must fall, and the pair is the claim: a sheet that re-clamped the crew
-	# without re-pricing satisfies one of them.
-	var pressed := await _press_chip(SCARCE_SPECIES)
+	# taught that narrowing was free when it is the whole decision. **Narrowing is a SUBTRACTION now**
+	# — an empty selection is every plant, so reaching the scarce plant alone means unticking the
+	# other two, which is also the only shape in this chapter that presses a chip TWICE and so the one
+	# that can see a second press land on the first press's own answer.
+	#
+	# The scarce plant shrinks BOTH arms of the take — a quarter of the stand, an eighth of the
+	# conversion — so both the quoted food and the useful-worker count must fall, and the pair is the
+	# claim: a sheet that re-clamped the crew without re-pricing satisfies one of them.
+	var pressed := await _press_chip(UNQUOTED_SPECIES)
 	h._assert_hud("a species chip is a real button and a real press reaches it", pressed)
+	h._assert_hud("…and unticking one plant leaves the other two standing, never one alone",
+		_chip_states().get(UNQUOTED_SPECIES, "") == HudFloraVocab.TAKE_STATE_UNSELECTED
+			and _chip_states().get(MIDDLE_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED
+			and _chip_states().get(SCARCE_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED)
+	var pressed_middle := await _press_chip(MIDDLE_SPECIES)
+	h._assert_hud("…and a SECOND press lands on the first press's own answer", pressed_middle)
 	await h._save("forage_take_chip_priced")
 	var narrowed := _quote(SourceForecast.YIELD_ACCOUNT_FOOD)
-	h._assert_hud("…and the tick lit that chip and dimmed the rest",
-		_chip_states().get(SCARCE_SPECIES, "") == HudFloraVocab.TAKE_STATE_PICKED)
+	h._assert_hud("…leaving the scarce plant lit and the two unticked ones off",
+		_chip_states().get(SCARCE_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED
+			and _chip_states().get(MIDDLE_SPECIES, "") == HudFloraVocab.TAKE_STATE_UNSELECTED)
 	h._assert_hud("…and the quoted take MOVED with it, rather than sitting still",
 		narrowed["food"] != whole_basket["food"]
 			and narrowed["food"] != Readout.YIELDS_ACCOUNT_ABSENT)
@@ -531,9 +547,9 @@ func run(harness) -> void:
 	await h._save("forage_take_narrowed")
 	var narrowed_states := _chip_states()
 	h._assert_hud("the sheet opens on the selection the band's own row carries",
-		narrowed_states.get(SCARCE_SPECIES, "") == HudFloraVocab.TAKE_STATE_PICKED)
-	h._assert_hud("…and every other plant reads EXCLUDED, not merely unlit",
-		narrowed_states.get(UNQUOTED_SPECIES, "") == HudFloraVocab.TAKE_STATE_EXCLUDED)
+		narrowed_states.get(SCARCE_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED)
+	h._assert_hud("…and every other plant reads UNSELECTED, the pill gone entirely",
+		narrowed_states.get(UNQUOTED_SPECIES, "") == HudFloraVocab.TAKE_STATE_UNSELECTED)
 	h._assert_hud("…and a seeded narrowing is priced exactly as a ticked one is",
 		_quote(SourceForecast.YIELD_ACCOUNT_FOOD)["food"] == narrowed["food"])
 
@@ -579,10 +595,12 @@ func run(harness) -> void:
 	h._assert_hud("…and quotes no take at all, rather than the whole basket's",
 		_quote(SourceForecast.YIELD_ACCOUNT_FOOD)["food"] == Readout.YIELDS_ACCOUNT_ABSENT)
 
-	# ---- CULTIVATING takes ONE, and the mark is what says so -------------------------------------
+	# ---- CULTIVATING takes ONE, and the LIT COUNT is what says so ---------------------------------
 	# The same chips in the same place, doing a different thing: a Cultivate commits the ground to one
 	# crop, so the row is single-select and the consequence line says the rest is weeded out. The
-	# affordance has to carry that difference, and the MARK is where it is carried.
+	# chips carry that difference by never lighting more than one at a time — the row's own key
+	# (`Crop`) and the consequence line carry the rest of it, which is what the retired round marks
+	# were a third signal for.
 	h._hud._compose.reset_forage_source()
 	h._show_tile(tile)
 	_compose_selection(tile, PackedStringArray(), BASKET_WORKERS,
@@ -591,21 +609,28 @@ func run(harness) -> void:
 	await h._save("forage_take_cultivate")
 	var cultivate_states := _chip_states()
 	var lit := cultivate_states.values().filter(func(state: String) -> bool:
-		return state != HudFloraVocab.TAKE_STATE_EXCLUDED)
+		return state == HudFloraVocab.TAKE_STATE_SELECTED)
 	h._assert_hud("cultivating lights exactly ONE chip, whatever the take selection was",
 		lit.size() == 1)
 	h._assert_hud("…and with nothing picked the sheet NAMES the crop it would settle on",
 		_sheet_says(HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % "Wild Grain"))
 	# Ticking a crop is what turns the game's answer into the player's, and only then does the
 	# consequence line state what committing costs the rest of the stand.
+	#
+	# **IT PICKS THE OTHER LEGAL CROP, and the swap is what makes the claim a claim.** The chosen-vs-
+	# settled distinction is deliberately gone from the chips — it was the third state, and it existed
+	# only to paper over a model where a click moved a plant nobody pressed — so picking the crop the
+	# resolver had ALREADY settled on would light the pill that was already lit and assert nothing.
+	# `MIDDLE_SPECIES` is the basket's second `can_cultivate` member, so the pill genuinely moves.
 	_compose_selection(tile, PackedStringArray(), BASKET_WORKERS,
 		SourceForecast.IMPROVEMENT_CULTIVATE)
-	h._hud._compose.set_forage_species(UNQUOTED_SPECIES)
+	h._hud._compose.set_forage_species(MIDDLE_SPECIES)
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_take_cultivate_picked")
-	h._assert_hud("a picked crop reads PICKED rather than faintly included",
-		_chip_states().get(UNQUOTED_SPECIES, "") == HudFloraVocab.TAKE_STATE_PICKED)
+	h._assert_hud("picking a crop lights that chip and unlights the settled one",
+		_chip_states().get(MIDDLE_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED
+			and _chip_states().get(UNQUOTED_SPECIES, "") == HudFloraVocab.TAKE_STATE_UNSELECTED)
 	h._assert_hud("…and the consequence line says cultivating weeds the rest out",
 		_sheet_says(HudFloraVocab.TAKE_NOTE_CULTIVATE_NARROWED_FORMAT % String(
 			HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[SourceForecast.IMPROVEMENT_CULTIVATE])))
@@ -673,6 +698,59 @@ func run(harness) -> void:
 			and _quote(CASH_TOBACCO)["food"] == Readout.YIELDS_ACCOUNT_ABSENT)
 	h._assert_hud("…and still quotes the food it does pay",
 		_quote(SourceForecast.YIELD_ACCOUNT_FOOD)["food"] != Readout.YIELDS_ACCOUNT_ABSENT)
+
+	# ---- THE REPORTED BUG — pressing one chip moved a DIFFERENT chip ------------------------------
+	# Measured in play on a basket of two: Tobacco Fields 57% beside Wild Grapevine 43%, both drawn as
+	# selected, and pressing Tobacco turned Grapevine off. The old model made that inevitable — an
+	# empty selection rendered as every chip included, so the first press wrote the set `{pressed}` and
+	# everything else fell out of it — and it is the whole reason the third chip state existed.
+	#
+	# **A BASKET OF EXACTLY TWO IS WHAT THE CLAIM NEEDS**, since on three plants a set-writing toggle
+	# and a subtracting one can both leave a plausible-looking row; the hay meadow is this chapter's
+	# two-plant tile and its arithmetic already closes, so it is staged rather than a fourth fixture.
+	h._hud._compose.reset_forage_source()
+	h._show_tile(meadow)
+	h._compose_forage(meadow)
+	h._hud._compose.set_forage_count(BASKET_WORKERS)
+	h._compose_forage(meadow)
+	await h._settle()
+	var both_states := _chip_states()
+	h._assert_hud("the reported shape: a basket of two, both chips selected by default",
+		both_states.size() == 2 and both_states.values().all(func(state: String) -> bool:
+			return state == HudFloraVocab.TAKE_STATE_SELECTED))
+	var pressed_grain := await _press_chip(UNQUOTED_SPECIES)
+	h._assert_hud("a press reaches the chip on the two-plant basket too", pressed_grain)
+	await h._save("forage_take_only_pressed_moves")
+	var after_press := _chip_states()
+	h._assert_hud("pressing one chip deselects THAT plant",
+		after_press.get(UNQUOTED_SPECIES, "") == HudFloraVocab.TAKE_STATE_UNSELECTED)
+	h._assert_hud("…and the plant nobody pressed is exactly where it was",
+		after_press.get(HAY_SPECIES, "") == both_states.get(HAY_SPECIES, ""))
+
+	# ---- …AND THE LAST REMAINING PLANT CANNOT BE UNTICKED, WITH THE REASON ON SCREEN --------------
+	# Carrying nothing home says exactly what assigning zero gatherers already says, so the state is
+	# refused rather than allowed — and the refusal SPEAKS, in the consequence line's own slot, because
+	# a control that declines a click in silence is worse than one that permits the mistake. The claim
+	# is a TRIPLE: the chip did not move, the reason is on the sheet, and the line it replaced is not
+	# (without the last half, "states the reason" passes on a row printing both sentences at once).
+	#
+	# **THE PRESS IS DRIVEN AND ITS RETURN IS NOT THE WITNESS.** `_press_chip` answers whether it found
+	# a button and pushed a pointer at it, which it did — what is refused is the MODEL's edit, so the
+	# verdict is read off the rendered chip and the rendered sentence.
+	var pressed_last := await _press_chip(HAY_SPECIES)
+	h._assert_hud("the refusing press reaches a real chip", pressed_last)
+	await h._save("forage_take_last_plant_refused")
+	h._assert_hud("…and the last remaining plant is still selected, the click having changed nothing",
+		_chip_states().get(HAY_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED)
+	h._assert_hud("…and the row SAYS why, rather than appearing to ignore the press",
+		_sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_LAST_PLANT))
+	h._assert_hud("…in the consequence line's own slot, not beside it",
+		not _sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_NARROWED))
+	# And it is a ONE-TRANSACTION memory: the next landing toggle takes the sentence away, or the row
+	# would go on refusing in prose long after the selection it described.
+	await _press_chip(UNQUOTED_SPECIES)
+	h._assert_hud("the next landing toggle clears the refusal",
+		not _sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_LAST_PLANT))
 
 	# Hand the reference band back, so a chapter appended after this starts where every other one does.
 	h._hud._drawercompose.close_compose_sheet()

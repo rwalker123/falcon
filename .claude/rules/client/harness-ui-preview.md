@@ -1400,14 +1400,27 @@ were taken at different widths.
 
 ## `chapters/selective_gather.gd` — the species chips, and what they cost (the selective gather)
 
-**Appended LAST in `CHAPTERS`**, after `trade`, so no existing frame moves. Ten frames and
-forty-three `PASS`. It ends by closing the sheet, resetting the compose source and handing the
+**Appended LAST in `CHAPTERS`**, after `trade`, so no existing frame moves. Twelve frames and
+fifty-two `PASS`. It ends by closing the sheet, resetting the compose source and handing the
 reference band back, so a chapter appended after it starts where every other one does.
 
-**The three chip states are one subject, and two of them are one glance apart** — so the states are
-asserted off `HudWidgets.SPECIES_CHIP_STATE_META`, never off ink. At the HUD's real type size a faint
-check and an empty box differ by a couple of pixels; what carries the distinction on the FRAME is the
-face weight and the picked chip's filled pill, which is why the meta exists at all.
+**THERE ARE TWO CHIP STATES AND THEY ARE ASSERTED OFF `HudWidgets.SPECIES_CHIP_STATE_META`, never off
+ink** — a filled pill is a thing an assertion cannot measure, and the meta is what lets a claim be
+about the CONTROL. The retired third state (*default-included*) is why the meta existed at all; it is
+still the right instrument, because the frame now carries the distinction as a pill's PRESENCE and a
+scan cannot read that either.
+
+**THE PRESSED CHIP IS THE ONLY CHIP THAT MOVES, and that is the regression this chapter guards.**
+Measured in play on a basket of two — Tobacco Fields 57% beside Wild Grapevine 43%, both drawn as
+selected — pressing Tobacco turned Grapevine off. `forage_take_only_pressed_moves` presses one chip on
+a two-plant basket and asserts the OTHER chip is exactly where it was; **a basket of exactly TWO is
+what the claim needs**, since on three plants a set-writing toggle and a subtracting one both leave a
+plausible-looking row. The hay meadow is staged for it rather than a fourth fixture built, its
+arithmetic already closing.
+
+**AND NARROWING BY CLICK IS A SUBTRACTION NOW**, so `forage_take_chip_priced` reaches the scarce plant
+by unticking the other two — which makes it the one state in this chapter that presses a chip TWICE,
+and so the only one that can see a second press land on the first press's own answer.
 
 **The other subject is the PRICE, and no picture can judge it.** The defect this chapter is written
 against is a sheet SITTING STILL when a chip is ticked, which renders a perfectly ordinary readout —
@@ -1416,23 +1429,33 @@ compared against a constant the fixture also states.
 
 | frame | what only IT can say |
 |---|---|
-| `forage_take_default` | with nothing ticked every chip reads INCLUDED, the line says the whole basket comes home, and the whole basket's take + useful count are recorded as the baseline everything below is a relation against |
-| `forage_take_chip_priced` | a real press on a real chip moves BOTH the quoted food and the useful-worker count — `0.96 → 0.15 FOOD` at 3 hands becomes `0.05 → 0.01` at 1 |
+| `forage_take_default` | with nothing ticked every chip reads SELECTED, the line says the whole basket comes home, and the whole basket's take + useful count are recorded as the baseline everything below is a relation against |
+| `forage_take_chip_priced` | two real presses on real chips move BOTH the quoted food and the useful-worker count — `0.96 → 0.15 FOOD` at 3 hands becomes `0.05 → 0.01` at 1 |
 | `forage_take_narrowed` | the sheet OPENS on the selection the band's own row carries, and prices it IDENTICALLY to the ticked one |
 | `forage_take_zero_food` | a plant paying `0.0` food is PRICED — a live `1.22 → 0.18 FODDER`, no food row, no *not priced* aside |
 | `forage_take_unquoted` | a selection the WIRE priced no rate for quotes nothing, in words |
 | `forage_take_cultivate` | single-pick: exactly one chip lit, and the line NAMES the crop the game would settle on |
-| `forage_take_cultivate_picked` | a picked crop reads PICKED, and the line says cultivating weeds the rest out |
+| `forage_take_cultivate_picked` | picking a crop MOVES the lit pill — it picks the basket's OTHER `can_cultivate` member, since picking the crop the resolver had already settled on would light the pill that was already lit — and the line says cultivating weeds the rest out |
 | `forage_take_cash_narrowed` | **the case the feature was argued on** — tick cotton, see `3.55 FIBRE · 1.52 TOBACCO` where the *not priced* apology used to be, and no FOOD row |
 | `forage_take_cash_merged` | flax + cotton, both fibre payers, composing into ONE fibre row |
 | `forage_take_cash_grain` | the same basket narrowed to the grain: NO material row at all, and the food still quoted |
+| `forage_take_only_pressed_moves` | **the reported bug** — a basket of two, one chip pressed, the other exactly where it was |
+| `forage_take_last_plant_refused` | the last remaining plant cannot be unticked, and the row SAYS why in the consequence line's own slot |
 
 **THE TICK IS DRIVEN AS A POINTER GESTURE** (`_press_chip`, through `InputProbe`), because the tick
 is what broke: a state that wrote the selection into `ComposeState` and re-rendered would assert the
 harness's own write rather than the control's effect. A chip is a plain `Button` under a
-mouse-transparent face stack, so a press at its rect centre reaches it exactly as a player's does —
-and the press FREES that button (the compose block rebuilds), so the helper settles before anything
-is counted and the caller must not touch it after.
+mouse-transparent face, so a press at its rect centre reaches it exactly as a player's does — and the
+press FREES that button (the compose block rebuilds), so the helper settles before anything is counted
+and the caller must not touch it after.
+
+**`_press_chip`'s RETURN IS NOT THE REFUSAL'S WITNESS**, and reading it as one is the trap that state
+walked into first: it answers whether a button was found and a pointer pushed at it, which is TRUE of
+the refused press too. What is declined is the MODEL's edit, so the verdict is read off the rendered
+chip (still selected) and the rendered sentence — plus the NEGATIVE that the line it replaced is
+absent, without which "states the reason" passes on a row printing both sentences at once. A fourth
+claim presses another chip and requires the sentence to be GONE, which is what pins the flag as a
+one-transaction memory rather than something the row keeps saying.
 
 **THE SCARCE PLANT IS CHOSEN TO MOVE BOTH ARMS OF THE TAKE'S `min`** — the tile's smallest share AND
 its poorest converter — so a sheet that re-clamped the crew without re-pricing, or re-priced without
@@ -1498,4 +1521,72 @@ and asserted a chip-row idle warning that no longer exists: the crew stepper's o
 `max N useful here` note moves with the chips now, so a second sentence would be a second producer of
 one verdict. Its claim survives, sharper, as `forage_take_chip_priced`'s useful-count half.
 
-**A clean run is 344 frames / 1166 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+**A clean run is 346 frames / 1177 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+toggle fix added the two frames above and eleven claims net (four retired with the third chip state and
+the crop-picker distinction it carried, fifteen added across the subtraction, the regression and the
+refusal).
+
+## The ⚠'s one producer, and the biomass quantiser (this arc)
+
+Two PNG-less blocks appended to `chapters/hunt.gd`, one 2x2 re-pointed in
+`chapters/forage_accounts.gd`, and one claim retired from `chapters/herd_improve.gd`. The behaviour is
+`labor-ui.md`'s; what belongs here is the shape of the drive and what the sabotages fire.
+
+- **`_overdraw_is_the_wires_answer` swaps the acting band for a COPY carrying a standing row**, asserts
+  the three surfaces (`source_yield_readout`, `BandOverlayRenderer.yield_label_overdraw`, the compose
+  model) **and their AGREEMENT**, and hands the band back. The agreement is asserted separately from
+  the three readings, because three claims that each happen to coincide is not the same statement as
+  *these surfaces cannot disagree*. Its PRECONDITION is that the retired `actual > sustainable`
+  comparison answers the OPPOSITE of the wire on both halves of the A/B — an `actual` below its
+  `sustainable` where the wire says true (the first harvest the schema names), a kill turn's spike
+  where it says false — so neither claim can pass on a client that is still deriving.
+- **`_wolf_material_take_assertions` is the boar pair's claim on the inedible web**, with the same
+  vacuity guard: the retired crew-throughput line must really move across the crew range the reach arm
+  pins, or *"flat"* is a claim about a fixture rather than about the fix. The oracle is
+  `HerdFx.hunt_take_oracle` handed BIOMASS terms — that function names no account, so it is the same
+  cross-check the deer's food terms get rather than a second oracle.
+- **`_edible_take_is_unchanged_assertions` exists because nothing else could see the failure.**
+  Measured: pointing `SourceForecast.body_quantum` at the published `bodyMass` instead of the food pair
+  moved **forty-odd frames and failed not one assertion**. Every claim on those sheets is a relation, a
+  presence or a word, so a take quoting the wrong number renders a perfectly plausible readout. It
+  asserts the rendered FOOD account against the RETIRED food-keyed expression on the reference herd,
+  over a precondition that that fixture's two pairings genuinely disagree.
+- **The fixtures that grew terms did so rather than being worked around.** The wolf states
+  `body_mass` / `per_worker_biomass` / `engage_rate`; `_quantisation_boar_herd` and `_cadence_herd`
+  state `per_worker_biomass`, because two of the three blocks that read them do NOT floorify and a
+  fixture whose take depends on which caller reached it first can disagree with itself.
+- **`herd_improve.gd`'s *"the overdraw gate answers the same, build or no build"* is RETIRED**, not
+  restated: it was `X == X` over a helper that no longer exists.
+
+**`herd_overdraw_agrees` is the one FRAME this arc adds**, appended LAST in the hunt chapter so no
+earlier state moves: the herd drawer's standing summary (`💀 3 hunters · +0.63 /turn ⚠`) beside the
+compose sheet's readout (`1.23 → 0.00 FOOD · ⚠ OVERDRAWS THE HERD`) — the reported pair, agreeing, on
+one source, with the sheet's own take deliberately ABOVE the row's steady rate so the mark is visibly
+not a comparison of the two. **It is EVIDENCE, not the claim**: the third surface is painted into
+MapView's canvas and only the driven block can ask it.
+
+**TWELVE frames moved and every one is accounted for.** Nine lost a ⚠ the sheet used to invent (all
+nine are UNWORKED fixtures — see `labor-ui.md` → "THE CONSEQUENCE IS THAT THE SHEET REPORTS RATHER THAN
+PREVIEWS"), and `herd_hunt_pelts_only` / `herd_hunt_pelts_raid` are the wolf gaining a body: `0.40 HIDE`
+where it read `0.22`, an animal-counted floor flag, and a party cap the engagement crew now floors.
+**`herd_hunt_both_products` and `herd_hunt_material_take` moved for a tenth reason worth knowing**:
+each is identical to the pixel down to its commit button and its CARD is 13px / 3px taller — the
+documented `refit` fit sensitivity, tripped by a neighbouring sheet changing height. Every fit
+assertion stays green.
+
+**Sabotage-verified three ways, each failing a DISJOINT set.** A floor-keyed derivation restored in
+`_source_overdraws` fails **seven** (the forage 2x2, both build-crew claims, and the hunt block's
+compose-sheet and agreement halves). The crew-throughput line restored beside the delivered figure
+fails **thirteen** — every material claim on both quarries, each naming the crew-scaled number. And the
+quantum pointed at the published `bodyMass` fails **one**, the edible magnitude claim, at
+`0.1365 against 0.2093`.
+
+**A clean run is 348 frames / 1227 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. This
+arc added one frame and twenty-seven claims. The recorded figure before it was 346 / 1177, and the run
+MEASURED 347 / 1200 before a line of it was touched — one frame and twenty-three `PASS`es had
+accumulated un-recorded, which is this line's own instruction being earned yet again.
+
+> **`compose_band_switch_forage` FLAKED ONCE DURING THIS PASS AND PASSED CLEAN ON RE-RUN** — five
+> failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer
+> race (`labor-ui.md` → "THE SHEET DISMISSES ON PRESS **AND** RELEASE"). A run that fails only that
+> state's block is that race, not a regression; re-run before believing it.

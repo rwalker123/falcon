@@ -67,11 +67,11 @@ use std::{borrow::Cow, collections::HashMap};
 use bevy::prelude::*;
 
 use crate::{
-    components::{Improvement, SourceYield, TakeSelection, Tile},
+    components::{take_overdraws, Improvement, SourceYield, TakeSelection, Tile},
     fauna::{
-        classify_ecology_phase, escapement_ceiling, forecast_source_yield,
-        reseeding_logistic_regrowth, sustainable_yield, EcologyPhase, SourceYieldForecast,
-        NO_PASTORAL_YIELD,
+        classify_ecology_phase, escapement_ceiling, floor_reach_band, forecast_source_yield,
+        peak_regrowth_between, reseeding_logistic_regrowth, sustainable_yield, EcologyPhase,
+        SourceYieldForecast, NO_PASTORAL_YIELD,
     },
     fauna_config::{EcologyConfig, YieldAccounts},
     flora_config::{FloraConfig, FloraShare},
@@ -2850,6 +2850,44 @@ pub(crate) fn forage_escapement_ceiling(floor: f32, biomass: f32, carrying_capac
     escapement_ceiling(floor, biomass, carrying_capacity)
 }
 
+/// **Can a crew of `workers` gatherers draw THIS patch to `floor`, and is that floor below the food
+/// peak?** — the plant web's producer of [`SourceYield::overdraws`], and the only thing the Forage
+/// arms (resolved and seeded) publish that flag through. The animal twin is
+/// [`crate::fauna::hunt_take_overdraws`]; the predicate they share is
+/// [`crate::components::take_overdraws`].
+///
+/// **The stock terms are the SELECTED share's**, exactly as the row's `sustainable` is: a crew
+/// carrying one species out of a mixed stand is drawing down *that* stand, and the logistic curve is
+/// homogeneous in `(B, K)`, so scaling both is the same patch seen at the size the crew is working.
+/// `crew_biomass_per_turn` is **not** scaled — a gatherer carries what a gatherer carries, and the
+/// take is `min(crew, ceiling × share)`.
+///
+/// **There is no engagement bound on this web** — nothing is stalked and nothing breaks off — so the
+/// crew's throughput is simply what it can carry, which is where the animal twin's `min` comes from.
+pub fn forage_take_overdraws(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    biomass: f32,
+    carrying_capacity: f32,
+    crew_biomass_per_turn: f32,
+    floor: f32,
+) -> bool {
+    let ecology = patch_ecology(patch, forage);
+    let (low, high) = floor_reach_band(floor, biomass, carrying_capacity);
+    take_overdraws(
+        floor,
+        crew_biomass_per_turn,
+        peak_regrowth_between(carrying_capacity, low, high, |stock| {
+            reseeding_logistic_regrowth(
+                stock,
+                carrying_capacity,
+                ecology.regrowth_rate,
+                forage.reseed_floor_fraction,
+            ) - stock
+        }),
+    )
+}
+
 /// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
 /// per-worker throughput `forage_take`'s worker cap multiplies by the head-count, shared with the
 /// forecast. Hunting has no seasonal factor, so it has no counterpart helper.
@@ -3601,6 +3639,15 @@ pub fn forage_source_yield_preview(
         floor,
         realized,
         arrivals,
+        // The ⚠, off this patch's own curve and this crew's carry — see [`forage_take_overdraws`].
+        forage_take_overdraws(
+            patch,
+            forage,
+            patch.biomass * selected,
+            patch.carrying_capacity * selected,
+            workers as f32 * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
+            floor,
+        ),
         range_sigmas,
     )
 }

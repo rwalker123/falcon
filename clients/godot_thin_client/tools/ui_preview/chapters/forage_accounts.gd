@@ -556,10 +556,29 @@ func _wild_sown_field_tile_fixture() -> Dictionary:
 ## stripping the patch for sale, so its cell sat above Eradicate's. The harvest-floor arc retired that
 ## markup — a deeper floor earns more only because it takes more BIOMASS — so both accounts are one
 ## stock through fixed rates and no column can invert.
+## The hay meadow's own STANDING forage row, carrying the sim's verdict and nothing that could be
+## mistaken for a second one. `actual_yield` deliberately sits ABOVE `sustainable_yield` on BOTH
+## halves of the A/B: that pair is the retired client-side comparison's own inputs, so a row whose
+## flag disagrees with it is the one shape that can tell the field from the derivation.
+func _hay_standing_row(overdraws: bool) -> Dictionary:
+	return {
+		"kind": SourceForecast.LABOR_KIND_FORAGE,
+		"workers": HAY_OVERDRAW_FORAGERS,
+		"target_x": HAY_MEADOW_X, "target_y": HAY_MEADOW_Y,
+		"floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"actual_yield": 0.63, "sustainable_yield": 0.20, "realized_yield": 0.63,
+		"overdraws": overdraws,
+	}
+
+## The meadow's coordinates, named because the tile fixture and its standing row must agree on them —
+## `forage_assignment_of` matches by tile, so a row one hex out silently answers "nobody works this".
+const HAY_MEADOW_X := 65
+const HAY_MEADOW_Y := 9
+
 func _hay_meadow_tile_fixture() -> Dictionary:
 	var tile := ForageFx.fodder_basket_tile_fixture()
-	tile["x"] = 65
-	tile["y"] = 9
+	tile["x"] = HAY_MEADOW_X
+	tile["y"] = HAY_MEADOW_Y
 	tile["terrain_label"] = "Prairie Steppe"
 	tile["food_module"] = "savanna_grassland"
 	tile["food_module_label"] = "Savanna Grassland"
@@ -1045,15 +1064,17 @@ func run(harness) -> void:
 		h._hud._compose.forage_count() == build_clear)
 	h._hud._compose.set_forage_count(BUILD_DIP_CREW)
 	h._compose_forage(building_tile)
-	# (3) **THE ⚠ AND THE VERDICT NOW READ THE SAME PROJECTION.** The take is well past the food-peak
-	# ceiling (which is zero on a patch standing at the peak), so the per-account test still fires and
-	# the gate is the only thing suppressing it — and what the gate reads is the stock CLIMBING.
+	# (3) **THE ⚠ IS THE SIM'S, AND THIS PATCH IS WORKED BY NOBODY.** The sheet used to derive the flag
+	# here — a take against the food-peak ceiling (zero on a patch standing at the peak, so the test
+	# degenerated into "the floor is below 0.5") gated on a client-side drawdown walk. Both are gone:
+	# `LaborAssignment.overdraws` carries the whole verdict, and a patch with no standing row has no
+	# crew for the sim to have answered about, so the composed sheet claims no drawdown at either crew.
 	var build_walk := SourceForecast.project_stock(build_samples, BUILD_DIP_STOCK, BUILD_DIP_CAPACITY,
 		BUILD_DIP_FLOOR, float(BUILD_DIP_CREW) * build_carry)
 	h._assert_hud("the projection this crew produces RISES — there is nothing being overdrawn (%.3f → %.3f)"
 		% [BUILD_DIP_STOCK / BUILD_DIP_CAPACITY, float(build_walk["settled_fraction"])],
 		float(build_walk["settled_fraction"]) > BUILD_DIP_STOCK / BUILD_DIP_CAPACITY)
-	h._assert_hud("…so no overdraw flag fires beside a verdict saying the patch grows",
+	h._assert_hud("…and no overdraw flag fires on a patch nobody works",
 		not h._hud._drawercompose._local_forage_preview_bbcode(h._hud._band_labor.player_band(),
 			building_tile, BUILD_DIP_FLOOR, BUILD_DIP_CREW, "cultivate").contains(HudStyle.WARN_HEX))
 	# (4) **THE BUILD STATES NO CREW AT ALL** (`docs/plan_standing_upkeep.md` §2.5). The retired dip
@@ -1066,10 +1087,11 @@ func run(harness) -> void:
 	h._assert_hud("…and the take crew's row claims no carry penalty beside its label",
 		not Readout.crew_row_label(build_sheet).contains("%"))
 
-	# State forage_build_crew_decline — **THE OTHER HALF OF THE GATE, one hand apart.** Seven foragers
-	# out-carry the patch's fastest regrowth, so the same patch at the same floor now genuinely falls
-	# to the line — and the ⚠ must come back. Without this frame the assertion above passes vacuously
-	# on a gate that suppressed the flag everywhere.
+	# State forage_build_crew_decline — **THE PROJECTION'S OTHER HALF, one hand apart.** Seven foragers
+	# out-carry the patch's fastest regrowth, so the same patch at the same floor genuinely falls to
+	# the line. **The ⚠ must NOT come back**, and that is the claim now: the flag answers for the crew
+	# the sim resolved, not for the one being dialled, so a projection that has flipped between two
+	# renders of an UNWORKED patch may not move it. Sabotage that re-derives the flag fails HERE.
 	h._hud._compose.set_forage_count(BUILD_DIP_DECLINE_CREW)
 	h._compose_forage(building_tile)
 	await h._settle()
@@ -1079,8 +1101,8 @@ func run(harness) -> void:
 	h._assert_hud("one more hand out-carries the regrowth, and the projection FALLS (%.3f → %.3f)"
 		% [BUILD_DIP_STOCK / BUILD_DIP_CAPACITY, float(decline_walk["settled_fraction"])],
 		float(decline_walk["settled_fraction"]) < BUILD_DIP_STOCK / BUILD_DIP_CAPACITY)
-	h._assert_hud("…and the overdraw flag fires there, so the gate subtracts rather than silences",
-		h._hud._drawercompose._local_forage_preview_bbcode(h._hud._band_labor.player_band(),
+	h._assert_hud("…and the flag STILL does not fire — the projection is not one of its inputs",
+		not h._hud._drawercompose._local_forage_preview_bbcode(h._hud._band_labor.player_band(),
 			building_tile, BUILD_DIP_FLOOR, BUILD_DIP_DECLINE_CREW, "cultivate")
 			.contains(HudStyle.WARN_HEX))
 	h._assert_hud("…and the verdict agrees with it — this crew reaches the floor",
@@ -1292,23 +1314,39 @@ func run(harness) -> void:
 	# does. The `or` in the verdict is therefore inert on the plant web — kept because it costs
 	# nothing and the animal web's quantised take is not obliged to stay that way.
 	#
-	# What the frame still pins is that the verdict tracks the FLOOR: the same crew reads amber below
-	# the food peak and green at it. The crew size is load-bearing and deliberately not the auto-max —
-	# below ~7 foragers LABOR binds under every ceiling and the honest verdict is renewable at every
-	# floor, so a small-crew frame would pass this state's claim vacuously.
+	# **WHAT THE FRAME PINS IS THAT THE VERDICT IS THE WIRE'S, AND IT IS A 2x2.** It used to claim the
+	# verdict tracked the FLOOR — amber below the food peak, green at it — which was a claim about a
+	# predicate the client no longer owns and which was wrong in both directions: the food-peak ceiling
+	# is ZERO on a patch standing at the peak, so `take > ceiling` degenerated into "the dial is below
+	# 0.5", and the drawdown walk beside it was a private copy of curves the sim owns.
+	#
+	# `LaborAssignment.overdraws` carries the whole verdict now, so the flag must move with the FIELD
+	# and not with the dial. The four claims below are that, stated as a grid: the retired comparison
+	# fails the *warns at the peak too* claim, and the retired gate-and-comparison pair fails the *does
+	# not warn at floor 0* one. The crew size is load-bearing and deliberately not the auto-max — below
+	# ~7 foragers LABOR binds under every ceiling, so a small-crew frame would move no number at all.
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_MIN)
 	h._hud._compose.set_forage_count(HAY_OVERDRAW_FORAGERS)
 	h._compose_forage(hay_meadow)
 	await h._settle()
 	await h._save("forage_three_accounts_overdraw")
-	h._assert_hud("a crew past the food peak's room overdraws — the verdict tracks the floor",
-		h._hud._drawercompose._local_forage_preview_bbcode(
-			h._hud._band_labor.player_band(), hay_meadow, SourceForecast.FLOOR_MIN, HAY_OVERDRAW_FORAGERS)
-			.contains(HudStyle.WARN_HEX))
-	h._assert_hud("the same crew on the rung that protects the patch reads renewable",
-		not h._hud._drawercompose._local_forage_preview_bbcode(
-			h._hud._band_labor.player_band(), hay_meadow, SourceForecast.FLOOR_FOOD_PEAK, HAY_OVERDRAW_FORAGERS)
-			.contains(HudStyle.WARN_HEX))
+	# The band is swapped for a COPY carrying a standing row on this meadow, and handed back below, so
+	# the frame above and every state after it see the band they always saw.
+	var prior_meadow_band: Dictionary = h._hud._band_labor.player_band()
+	var prior_meadow_bands: Array = h._hud._band_labor._player_bands
+	for wire_answer in [true, false]:
+		var wire_band := prior_meadow_band.duplicate(true)
+		wire_band["labor_assignments"] = [_hay_standing_row(bool(wire_answer))]
+		h._hud._band_labor._player_band = wire_band
+		h._hud._band_labor._player_bands = [wire_band]
+		for floor_value in [SourceForecast.FLOOR_MIN, SourceForecast.FLOOR_FOOD_PEAK]:
+			var line: String = h._hud._drawercompose._local_forage_preview_bbcode(
+				wire_band, hay_meadow, float(floor_value), HAY_OVERDRAW_FORAGERS)
+			var flagged := line.contains(HudStyle.WARN_HEX)
+			h._assert_hud("the ⚠ is the wire's `overdraws` (%s) whatever the dial says (floor %.2f)"
+				% [str(wire_answer), float(floor_value)], flagged == bool(wire_answer))
+	h._hud._band_labor._player_band = prior_meadow_band
+	h._hud._band_labor._player_bands = prior_meadow_bands
 
 	# State forage_dead_season — THE STATE THE ISSUE IS NAMED FOR. A patch the wire fully DESCRIBES
 	# and whose every cell is zero: deep winter on the same meadow. It must not be confused with

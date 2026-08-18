@@ -820,6 +820,321 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
     );
 }
 
+// ---- THE ⚠ IS INTENT **AND** ABILITY (`components::take_overdraws`) -----------------------------
+//
+// The four tests below are one claim in four positions. A floor below the food peak is an overdraw
+// only if the crew can actually draw the source down to it; a crew that settles above the peak and
+// holds there is taking less than the source regrows, whatever the dial says. Reported from play as
+// a Wild Boar herd at 81% of `K` with four herders and a 39% floor, where the tile card read
+// *overdrawing* against a compose sheet reading *settles at 92%*.
+//
+// **The fixtures the ⚠ already had could not see this**, and that is why these are new rather than
+// tightened: every one of them staffs a crew that trivially out-takes its source's regrowth, so they
+// pass identically under the old floor-only predicate and under this one. `TINY_PER_WORKER_HAUL` /
+// `TINY_PER_WORKER_GATHER` are what make a fixture able to tell the two apart.
+
+/// **A floor below the peak that this crew cannot reach.** The reported case: four hands and a haul
+/// rate far under the herd's own regrowth, at a floor well below the food peak.
+const UNREACHABLE_FLOOR: f32 = 0.39;
+/// The stocked source both webs' fixtures start from — thriving, above the peak, with room to spare.
+const THRIVING_STOCK_FRACTION: f32 = 0.8;
+/// The crew the play report carried. Its size is not what makes the floor unreachable — the tiny
+/// per-worker rate is — but it is deliberately not `1`, so the test is about a *crew* falling short.
+const OUTMATCHED_CREW: u32 = 4;
+/// Staffed past every bound the source can put on it, so the floor is what binds and the descent is
+/// the crew's to make.
+const OVERWHELMING_CREW: u32 = 5_000;
+/// **A per-worker gather so small a whole crew cannot out-take a patch's regrowth** — the plant twin
+/// of [`TINY_PER_WORKER_HAUL`], and installed in the same two places for the same reason.
+const TINY_PER_WORKER_GATHER: f32 = 0.05;
+/// How long the "it never gets there" arms walk. Long enough for a descent to be well underway if
+/// there were one, short enough to stay a unit test.
+const SETTLING_TURNS: u32 = 12;
+
+/// The shipped item table with the baskets' tier re-tuned to `rate` — the plant twin of
+/// [`equipment_with_hunt_carry`], round-tripped through JSON for the same reason.
+fn equipment_with_forage_carry(rate: f32) -> Arc<core_sim::EquipmentConfig> {
+    let mut json = serde_json::to_value(&*core_sim::EquipmentConfig::builtin())
+        .expect("the shipped item table serializes");
+    json["items"]["baskets"]["tiers"][0]["effects"][0]["equipped"] = serde_json::json!(rate);
+    Arc::new(
+        core_sim::EquipmentConfig::from_json_str(&json.to_string())
+            .expect("a re-tuned gather rate is still a valid item table"),
+    )
+}
+
+/// Install `rate` as the band's per-worker hunt haul in **both** of its homes — the bare-handed
+/// baseline and the sled's tier — so a fixture cannot lower one and silently hunt at the other.
+fn set_hunt_haul_rate(app: &mut App, rate: f32) {
+    app.world
+        .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
+            config.hunt.per_worker_biomass_capacity = rate;
+        })));
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::new(
+            equipment_with_hunt_carry(rate),
+        ));
+}
+
+/// The plant twin of [`set_hunt_haul_rate`] — the gather baseline and the baskets' tier together.
+fn set_forage_gather_rate(app: &mut App, rate: f32) {
+    app.world
+        .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
+            config.forage.per_worker_biomass_capacity = rate;
+        })));
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::new(
+            equipment_with_forage_carry(rate),
+        ));
+}
+
+/// Seat a stationary short-range herd at `THRIVING_STOCK_FRACTION` of its capacity and return its
+/// id, its tile entity and its capacity.
+fn stocked_stationary_herd(app: &mut App) -> (String, bevy::prelude::Entity, f32) {
+    let id = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
+            .or_else(|| registry.herds.iter().find(|h| h.id.starts_with("game_")))
+            .map(|h| h.id.clone())
+            .expect("expected short-range game")
+    };
+    let capacity = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.biomass = (herd.carrying_capacity * THRIVING_STOCK_FRACTION).max(1.0);
+        herd.carrying_capacity
+    };
+    let pos = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .position();
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(pos.x, pos.y)
+        .expect("herd tile resolves");
+    (id, tile, capacity)
+}
+
+fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
+    LaborAllocation {
+        assignments: vec![LaborAssignment {
+            target: LaborTarget::Hunt {
+                fauna_id: fauna_id.to_string(),
+                floor,
+            },
+            workers,
+            kit: None,
+        }],
+        ..Default::default()
+    }
+}
+
+fn first_row(app: &App, band: bevy::prelude::Entity) -> core_sim::SourceYield {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("band allocation")
+        .last_yields[0]
+        .clone()
+}
+
+/// **THE REPORTED DEFECT — a floor this crew cannot reach is not an overdraw.** A thriving herd, four
+/// hands, and a floor well below the food peak: the take is a fraction of what the herd regrows, so
+/// the stock *rises* and settles far above the floor. Nothing is being drawn below what the herd
+/// sustains, and the ⚠ must stay dark on every turn of it.
+///
+/// **The pair is what makes the assertion mean anything.** The mark being off is only correct
+/// alongside the crew genuinely falling short, so both are asserted — plus the precondition that the
+/// floor really is below the peak, without which the test would pass on a floor that is simply
+/// legal.
+#[test]
+fn a_floor_this_crew_cannot_reach_is_not_an_overdraw() {
+    assert!(
+        core_sim::floor_overdraws(UNREACHABLE_FLOOR),
+        "fixture: the floor must be BELOW the food peak, or this test passes for the wrong reason \
+         — {UNREACHABLE_FLOOR} against {}",
+        core_sim::MSY_BIOMASS_FRACTION
+    );
+
+    let mut app = spawn_world();
+    set_hunt_haul_rate(&mut app, TINY_PER_WORKER_HAUL);
+    let (id, tile, capacity) = stocked_stationary_herd(&mut app);
+    let band = spawn_band(
+        &mut app,
+        tile,
+        OUTMATCHED_CREW,
+        hunt_alloc(&id, OUTMATCHED_CREW, UNREACHABLE_FLOOR),
+    );
+
+    for turn in 0..SETTLING_TURNS {
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_labor_allocation);
+        let row = first_row(&app, band);
+        assert!(
+            !row.overdraws,
+            "turn {turn}: a crew that cannot reach this floor overdraws nothing: {row:?}"
+        );
+    }
+
+    // …and the other half of the pair: the herd really did settle out of reach, above the food peak
+    // and therefore nowhere near the floor the dial names.
+    let settled = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .map(|h| h.biomass)
+        .expect("an under-hunted herd survives");
+    assert!(
+        settled > capacity * core_sim::MSY_BIOMASS_FRACTION,
+        "the crew cannot even hold the herd at the food peak, let alone the floor: {settled} \
+         against a peak of {} and a floor of {}",
+        capacity * core_sim::MSY_BIOMASS_FRACTION,
+        capacity * UNREACHABLE_FLOOR
+    );
+}
+
+/// **…AND A CREW THAT CAN REACH IT STILL WARNS, ON THE FIRST TURN.** The case the ⚠ exists for: the
+/// conjunct must not become a way to hide a real overdraw. Same herd, same below-peak floor, a crew
+/// big enough to make the descent — the mark is up immediately, before any of it has happened.
+#[test]
+fn a_crew_that_can_reach_a_below_peak_floor_warns_on_the_first_turn() {
+    let mut app = spawn_world();
+    let (id, tile, capacity) = stocked_stationary_herd(&mut app);
+    let band = spawn_band(
+        &mut app,
+        tile,
+        OVERWHELMING_CREW,
+        hunt_alloc(&id, OVERWHELMING_CREW, UNREACHABLE_FLOOR),
+    );
+
+    app.world.run_system_once(advance_labor_allocation);
+    let row = first_row(&app, band);
+    assert!(
+        row.overdraws,
+        "a crew that can draw this herd to a below-peak floor warns on turn one: {row:?}"
+    );
+
+    // The warning is earned: the herd really is taken to its floor.
+    for _ in 1..SETTLING_TURNS {
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_labor_allocation);
+    }
+    let settled = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .map(|h| h.biomass)
+        .unwrap_or(0.0);
+    assert!(
+        settled < capacity * core_sim::MSY_BIOMASS_FRACTION,
+        "…and the herd is drawn below the food peak, as the ⚠ said it would be: {settled} against \
+         {}",
+        capacity * core_sim::MSY_BIOMASS_FRACTION
+    );
+}
+
+/// **THE PLANT WEB ANSWERS THE SAME WAY, THROUGH THE SAME PREDICATE.** Both halves at once on one
+/// patch: a gathering crew whose carry is far under the stand's regrowth warns at nothing, and an
+/// overwhelming one at the same floor warns on its first turn.
+#[test]
+fn the_plant_web_warns_only_where_the_gatherers_can_reach_the_floor() {
+    let stock_a_patch = |app: &mut App, pos: UVec2| {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch on the food tile");
+        patch.biomass = patch.carrying_capacity * THRIVING_STOCK_FRACTION;
+        patch.carrying_capacity
+    };
+
+    // The crew that cannot reach — no ⚠, and the stand stays above the peak.
+    let mut app = spawn_world();
+    set_forage_gather_rate(&mut app, TINY_PER_WORKER_GATHER);
+    let (pos, tile) = food_tile(&mut app);
+    let capacity = stock_a_patch(&mut app, pos);
+    let band = spawn_band(
+        &mut app,
+        tile,
+        OUTMATCHED_CREW,
+        forage_alloc_policy(pos, OUTMATCHED_CREW, UNREACHABLE_FLOOR),
+    );
+    for turn in 0..SETTLING_TURNS {
+        app.world.run_system_once(advance_labor_allocation);
+        let row = first_row(&app, band);
+        assert!(
+            !row.overdraws,
+            "turn {turn}: gatherers who cannot reach this floor overdraw nothing: {row:?}"
+        );
+    }
+    let settled = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(pos)
+        .expect("patch present")
+        .biomass;
+    assert!(
+        settled > capacity * core_sim::MSY_BIOMASS_FRACTION,
+        "the stand settles above the food peak, out of the crew's reach: {settled} against {}",
+        capacity * core_sim::MSY_BIOMASS_FRACTION
+    );
+
+    // The crew that can — the ⚠ on turn one, at the very same floor.
+    let mut app = spawn_world();
+    let (pos, tile) = food_tile(&mut app);
+    stock_a_patch(&mut app, pos);
+    let band = spawn_band(
+        &mut app,
+        tile,
+        OVERWHELMING_CREW,
+        forage_alloc_policy(pos, OVERWHELMING_CREW, UNREACHABLE_FLOOR),
+    );
+    app.world.run_system_once(advance_labor_allocation);
+    let row = first_row(&app, band);
+    assert!(
+        row.overdraws,
+        "gatherers who can strip the stand to a below-peak floor warn on turn one: {row:?}"
+    );
+}
+
+/// **THE FIRST-HARVEST RATIONALE IS UNTOUCHED.** The ⚠ is deliberately not `actual > sustainable`,
+/// because the first harvest of a stocked source is *accumulated stock* and exceeds one turn's
+/// regrowth at every floor including the peak. Adding the ability conjunct changes only the
+/// below-peak half of the predicate, so this must still hold: a crew that could take this patch
+/// anywhere, gathering at the peak, out-takes the regrowth several times over and warns at nothing.
+#[test]
+fn a_stocked_source_taken_at_the_peak_out_takes_its_regrowth_without_warning() {
+    let mut app = spawn_world();
+    let (pos, tile) = food_tile(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch on the food tile");
+        patch.biomass = patch.carrying_capacity * THRIVING_STOCK_FRACTION;
+    }
+    let band = spawn_band(
+        &mut app,
+        tile,
+        OVERWHELMING_CREW,
+        forage_alloc_policy(pos, OVERWHELMING_CREW, core_sim::MSY_BIOMASS_FRACTION),
+    );
+    app.world.run_system_once(advance_labor_allocation);
+    let row = first_row(&app, band);
+
+    assert!(
+        row.actual > row.sustainable,
+        "fixture: the first harvest must genuinely exceed one turn's regrowth, or this test is \
+         about nothing — {} against {}",
+        row.actual,
+        row.sustainable
+    );
+    assert!(
+        !row.overdraws,
+        "a take AT the food peak is restraint however big its first haul: {row:?}"
+    );
+}
+
 /// **A DEEPER FLOOR PAYS MORE — because it takes more biomass, and for no other reason.**
 ///
 /// The retired `market.trade_goods_multiplier` paid a `Deplete`-depth draw a 4× *bonus*; §4 of

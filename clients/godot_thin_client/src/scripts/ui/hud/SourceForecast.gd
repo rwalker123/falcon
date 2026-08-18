@@ -339,6 +339,11 @@ static func picker_products(food: float, fodder: float = 0.0,
 const YIELD_ACCOUNT_FOOD := "food"
 const YIELD_ACCOUNT_FODDER := "fodder"
 const YIELD_ACCOUNT_NONE := ""
+## Where `rescaled_accounts` hands back the MATERIAL vector it crossed off the same carried biomass.
+## It is not an account name — the two above are, and a material's account IS its own id — so it is
+## spelled apart from them and is not a plausible `materials.json` id (the same disjointness argument
+## `yield_rows` already makes for `food` / `fodder`).
+const RESCALED_MATERIALS_KEY := "material_rows"
 
 ## **WHICH ACCOUNT'S ZERO IS A FACT ABOUT THIS SOURCE**, read off its per-biomass yield VECTOR — the
 ## structural statement of what the source pays, independent of what stands on it today.
@@ -528,17 +533,55 @@ static func _row_material_id(row: Dictionary) -> String:
 ##
 ## A source with no positive provisions rate pays nothing anywhere — the degenerate case the sim's
 ## `rescaled_to` answers `ZERO` for — so it answers zeros rather than dividing by it.
+##
+## **THE MATERIAL VECTOR CROSSES HERE TOO, OFF THE SAME `share`, AND THAT IS THE WHOLE OF WHY IT IS
+## HERE.** `systems/labor.rs` banks food at `hunt_yield.apply(take.carried, …)` and materials at
+## `credit_material_yield(…, take.carried, …)` — the identical local, one carried biomass — so a
+## client that composed the two accounts from two expressions could quote a payout the sim does not
+## make. It could and it did: `expected_materials` priced a hunt's materials as a pure crew-throughput
+## line (`min(workers × per_worker_material, escapement ceiling)`), skipping the engagement→retreat arm
+## and the whole-animal quantiser the food row applies, so a pastoral Wild Boar herd — `engage_rate`
+## 0.33, hence exactly ONE animal reached at every crew from one to six — quoted five herders five
+## times the bone and hide that one herder brings home, against a food row that (correctly) did not
+## move at all. `share` IS `take.carried`, so the two accounts are now one derivation and the drift is
+## unrepresentable rather than merely unlikely.
 static func rescaled_accounts(src: Dictionary, prefix: String, value: float) -> Dictionary:
     var food_rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
-    var fodder_rate := float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
     if food_rate <= 0.0:
-        return {YIELD_ACCOUNT_FOOD: 0.0, YIELD_ACCOUNT_FODDER: 0.0}
-    var share := value / food_rate
+        return {
+            YIELD_ACCOUNT_FOOD: 0.0,
+            YIELD_ACCOUNT_FODDER: 0.0,
+            RESCALED_MATERIALS_KEY: [] as Array[Dictionary],
+        }
+    var out := rescaled_from_biomass(src, prefix, value / food_rate)
+    # …and the counted account comes back BIT-IDENTICAL rather than through the divide-then-multiply
+    # round trip: this entry point was HANDED that number, so restating it is the one thing it can do
+    # that the biomass form cannot.
+    out[YIELD_ACCOUNT_FOOD] = value
+    return out
+
+## **THE SAME CROSSING, ENTERED FROM THE BIOMASS SIDE — which is the side the sim is actually on.**
+## `take.carried` is a BIOMASS, and `hunt_yield.apply` / `credit_material_yield` are two valuations of
+## it; the food-keyed entry point above divides by the per-biomass rate to recover exactly this
+## quantity, so it is written in terms of this one rather than beside it.
+##
+## **AND IT IS THE ONLY ONE AN INEDIBLE QUARRY CAN USE.** A wolf's `provisionsPerBiomass` is a
+## structural `0`, so the division above is undefined and the food-keyed form can only answer zeros —
+## which is what left a species hunted purely for its pelts with no crossing at all, and its material
+## rows quoted off a parallel crew-throughput line instead. Biomass is what a hunt takes whether or
+## not the species converts any of it to food.
+static func rescaled_from_biomass(src: Dictionary, prefix: String, carried: float) -> Dictionary:
     return {
-        YIELD_ACCOUNT_FOOD: value,
+        YIELD_ACCOUNT_FOOD: carried
+            * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0)),
         # No animal pays fodder, so a herd's second account rescales to a structural zero and renders
         # no row — the same answer the account had before this existed.
-        YIELD_ACCOUNT_FODDER: fodder_rate * share,
+        YIELD_ACCOUNT_FODDER: carried
+            * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0)),
+        # …and every material through the same one biomass. `scaled_material_rows` is the ONE
+        # vector-times-a-scalar helper, so a material scales exactly as the two scalars beside it do.
+        RESCALED_MATERIALS_KEY: scaled_material_rows(
+            src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), carried),
     }
 
 # PRE-COMMIT YIELD FORECAST. The overstaffing note above is POST-HOC — it tells you a turn later that
@@ -616,6 +659,12 @@ const FORECAST_ENGAGE_RATE_KEY := "engage_rate"
 # resolve, and the whole PLANT web, which never publishes the field at all. Read it as UNBOUNDED and
 # drop the term: that is what leaves forage and corrals byte-identical to before this arm existed.
 const NO_ENGAGEMENT_STAGE := 0.0
+# **THE ROOM A WHOLE-ANIMAL TAKE IS QUANTISED AGAINST, WHEN IT CANNOT BE STATED IN BIOMASS.** A
+# NEGATIVE, so it can never be mistaken for the real reading `0.0` — an empty room, which is a take of
+# nothing rather than a question with no answer. It reaches exactly one shape: a MANAGED source (a
+# built Pen), whose production is a payoff figure with no escapement room behind it, on a species that
+# also pays no food to read that payoff back through.
+const NO_ROOM_IN_BIOMASS := -1.0
 # The value the dropped term contributes to a `min()` / the crew `max()` — an unbounded reach cannot
 # be the binding arm, and `INF` says so without a branch at every call site.
 const ENGAGEMENT_UNBOUNDED := INF
@@ -2038,6 +2087,38 @@ static func source_is_managed(src: Dictionary, kind: String, prefix: String) -> 
 ## weight, so a dead-season patch honestly moves no biomass per worker. Callers must not divide by it
 ## (`can_price_crew` is that test), and must not read it as "the wire sent no forecast" — the stock,
 ## the capacity and the rate vector still describe the patch.
+## **ONE BODY, IN THE UNIT THE QUANTISER'S OTHER TWO ARMS ARE IN.** A whole-animal take is
+## `min(room, crew carry, what stays) ÷ one body`, and the sim states all four in BIOMASS
+## (`fauna::quantise_animal_take` takes a `body_mass` and a biomass ceiling). So does this client: the
+## room comes through `escapement_room`, the carry through `per_worker_biomass`, and this is the
+## quantum they are divided by.
+##
+## **IT IS RECOVERED FROM THE FOOD PAIR WHERE ONE EXISTS, AND READ OFF `bodyMass` WHERE IT DOES NOT** —
+## which is the same number twice on the wire, `food_per_animal` BEING `body_mass ×
+## provisionsPerBiomass` (`snapshot.fbs`). The recovery leads because the room and the carry both reach
+## the quantiser THROUGH `provisionsPerBiomass`, and three arms of one `min` must be in one unit: a
+## quantum taken from a different pairing than the two numerators makes the count wrong by whatever
+## the two pairings disagree by, rather than by a rounding.
+##
+## **A source that pays no food has no such pair — that is what an inedible quarry IS** — and it is
+## exactly the source this function exists for: a wolf's `food_per_animal` and `provisionsPerBiomass`
+## are both structural zeros, so the quantum can only be the published `bodyMass`, and without it the
+## whole quantiser had nothing to divide by and its material rows fell through to a crew-throughput
+## line that ignored the reach.
+##
+## > **The harness's fixtures are where the two pairings visibly part.** `ForageFx.floorify` derives a
+## > patch's / herd's `provisions_per_biomass` from the authored peak ceiling and the room, so a
+## > fixture that also states `body_mass` outright ends up with `body_mass × provisions_per_biomass !=
+## > food_per_animal` — a herd no server can publish. The recovery makes the take immune to it; the
+## > animal COUNTS beside it (`animal_count`, the floor flag, `crew_to_hold`'s rounding) still read the
+## > stated field, so those fixtures state one body two ways.
+static func body_quantum(src: Dictionary, prefix: String) -> float:
+    var per_animal := float(src.get(prefix + FORECAST_FOOD_PER_ANIMAL_KEY, 0.0))
+    var rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+    if per_animal > 0.0 and rate > 0.0:
+        return per_animal / rate
+    return maxf(0.0, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
+
 static func per_worker_biomass(src: Dictionary, prefix: String) -> float:
     return maxf(0.0, float(src.get(prefix + FORECAST_PER_WORKER_BIOMASS_KEY, 0.0)))
 
@@ -2519,48 +2600,6 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
             return need
         need += 1
     return NO_CREW_ANSWER
-
-## **IS THIS CREW ACTUALLY DRAWING THE SOURCE DOWN?** — the projection's own answer, and the gate on
-## the ⚠ overdraw flag both compose sheets carry.
-##
-## The flag's own test is a take against the **food-peak** ceiling, which on a source standing at or
-## below that peak is `take > 0` — i.e. a fact about the FLOOR, not about the stock. So a patch whose
-## projection climbs could render `⚠ overdraws the patch` directly above a verdict reading *it settles
-## at 53% and holds there*: the panel saying the stock falls and rises in the same breath. Reported
-## from play. Nothing is being overdrawn while the stock rises, whatever the floor is — and the
-## projection is the one instrument that already knows, so the two sentences are now readings of it.
-##
-## **`true` WHERE THERE IS NOTHING TO CONSULT**, which keeps this purely subtractive: a source with no
-## capacity, no published curve, or a rung-3 managed one has no drawdown projection at all, so the
-## flag is left exactly as it was rather than suppressed on the strength of a walk that was never
-## taken.
-##
-## **IT WALKS THE ENGAGEMENT-BOUND PROJECTION, THE SAME ONE THE VERDICT IS WRITTEN OFF.** The gate and
-## the sentence beneath it are two readings of ONE walk — that is the whole point of the gate — so a
-## carry-only walk here would fall where the verdict's rises and put `⚠ overdraws the herd` back above
-## *it settles at 84% and holds there*, in the one case the arm exists for: a party that cannot reach
-## what it could carry. It is not the safe direction either, however subtractive the gate is; a flag
-## kept by a projection the panel does not believe is the same contradiction the flag was gated to
-## remove. A source with no engagement stage resolves to `ENGAGEMENT_UNBOUNDED` and walks exactly the
-## carry-bound projection it always did.
-static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int) -> bool:
-    var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
-    var samples := regrowth_samples(src, prefix)
-    if capacity <= 0.0 or not has_growth_curve(samples) \
-            or source_is_managed(src, kind, prefix):
-        return true
-    var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
-    var carry := per_worker_biomass(src, prefix)
-    var crew := maxi(workers, 0)
-    var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
-        float(crew) * carry,
-        engaged_quantum(crew, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-            float(src.get(prefix + FORECAST_STAY_FRACTION_KEY,
-                STAY_FRACTION_NONE_BREAKS_OFF))))
-    return float(walk["settled_fraction"]) \
-        < clampf(biomass / capacity, 0.0, 1.0) - STOCK_FRACTION_EPSILON
 
 # ---- THE VERDICT (docs/plan_harvest_floor.md §7.1) ----------------------------------------------
 #
@@ -3126,6 +3165,15 @@ static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
         # take, and quoting the room reads `0.00` beside a work board quoting the regrowth.
         "next_ceiling": float(forecast["axis_next_ceiling"]),
         "per_animal": float(forecast["axis_per_animal"]),
+        # **THE QUANTISER'S OWN THREE TERMS, IN BIOMASS.** A take of whole animals is
+        # `min(room, crew carry, what stays) ÷ one body`, and every one of those is a BIOMASS — so
+        # stating them in food is a conversion the quantiser does not need and that an inedible quarry
+        # cannot make. `body_mass` is the quantum, `carry` the crew's throughput, and the two rooms the
+        # numerators; `DrawerComposeController._hunt_delivered_and_waste` is their one consumer.
+        "body_mass": body_quantum(herd, ""),
+        "carry": per_worker_biomass(herd, ""),
+        "hold_room": float(forecast["hold_room_biomass"]),
+        "next_room": float(forecast["next_room_biomass"]),
         # **THE ENGAGEMENT PAIR, so the delivered take can bound itself on the party's REACH.** The
         # quantised take (`DrawerComposeController._hunt_delivered_and_waste`) composes its own
         # `collection` rather than calling `expected_yield_account`, so the third arm has to reach it
@@ -3212,6 +3260,14 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     var next_ceiling := 0.0
     var next_ceiling_fodder := 0.0
     var next_ceiling_material: Array[Dictionary] = []
+    # …AND THE SAME TWO ROOMS IN **BIOMASS**, which is the unit a whole-animal take is quantised in.
+    # A body is a biomass and a take is a count of bodies, so the quantiser divides a room by a
+    # `body_mass` — and a room stated in FOOD can only answer that division for a species that pays
+    # food, which is precisely the species an inedible quarry is not. `NO_ROOM_IN_BIOMASS` is the one
+    # shape that has no such answer: a MANAGED source whose production is a payoff figure rather than
+    # an escapement room, on a species with no per-biomass food rate to state that payoff through.
+    var hold_room_biomass := NO_ROOM_IN_BIOMASS
+    var next_room_biomass := NO_ROOM_IN_BIOMASS
     if source_is_managed(src, kind, prefix):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
@@ -3235,6 +3291,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         next_ceiling = ceiling
         next_ceiling_fodder = ceiling_fodder
         next_ceiling_material = ceiling_material
+        # A pen's production has no escapement room behind it, so the only biomass expression of it is
+        # the payoff read back through the species' own per-biomass rate. A species that pays no food
+        # states none, and the quantiser declines rather than inventing one.
+        var managed_rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+        if managed_rate > 0.0:
+            hold_room_biomass = ceiling / managed_rate
+            next_room_biomass = hold_room_biomass
     else:
         # ONE composition, both webs — the terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
@@ -3264,6 +3327,9 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
             * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
         next_ceiling_material = scaled_material_rows(
             src.get(prefix + FORECAST_MATERIAL_PER_BIOMASS_KEY, []), next_room)
+        # The same two rooms, unconverted — the quantiser's own denominator-free readings.
+        hold_room_biomass = growth
+        next_room_biomass = next_room
     # ---- THE CREW'S THROUGHPUT, PER ACCOUNT, DIPPED ---------------------------------------------
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var per_worker_fodder := 0.0
@@ -3326,6 +3392,10 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         "next_ceiling": next_ceiling,
         "next_ceiling_fodder": next_ceiling_fodder,
         "next_material_ceiling": next_ceiling_material,
+        # …and the two of them in BIOMASS, for the whole-animal quantiser alone. See the declarations
+        # above for why the pair exists and what `NO_ROOM_IN_BIOMASS` means.
+        "hold_room_biomass": hold_room_biomass,
+        "next_room_biomass": next_room_biomass,
         # The QUANTISED-AXIS triple every divide-by-a-quantum consumer reads (`max_useful_workers` and
         # the local preview). **The axis is provisions and is no longer a choice** (arc #527): the
         # trade account it could otherwise resolve to is retired, so these are aliases of the food
@@ -5139,8 +5209,29 @@ static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary
     return out
 
 ## **WHAT A CREW OF `workers` TAKES, PER MATERIAL** — `min(workers × per_worker, material_ceiling)`
-## evaluated once per material, which is the food side's own clamp applied one account further out.
-## `forecast` is a `forecast_inputs` answer.
+## evaluated once per material. `forecast` is a `forecast_inputs` answer.
+##
+## > #### ⛔ IT IS THE FOOD SIDE'S OWN CLAMP **ON THE PLANT WEB ONLY** — the animal web has three more arms
+## >
+## > This docstring used to claim the clamp was "the food side's own clamp applied one account further
+## > out" without qualification, and that false premise WAS a defect. On a PATCH it holds: the food
+## > row is `min(workers × per_worker, ceiling)` against its own matching ceiling, there is no
+## > engagement stage and no whole-animal quantum, so both accounts are linear in workers and track by
+## > construction. On a HERD the food row is `min(room, crew carry, engagement→retreat) × the per-body
+## > carry clamp`, quantised to whole bodies — four bounds, of which this expression has one — so a
+## > pastoral Wild Boar herd (`engage_rate` 0.33, hence `floor(workers × 0.33)` pinned by its
+## > floor-of-one at exactly ONE animal reached for every crew from one to six) quoted five herders
+## > five times the bone and hide one herder brings home, beside a food row that correctly did not
+## > move. The sim credits BOTH accounts off one `take.carried` (`systems/labor.rs`), so quote and
+## > payout provably disagreed.
+## >
+## > **The animal web does not use this any more.** A hunt's material rows cross out of the delivered
+## > biomass through `rescaled_accounts`, beside the food and fodder ones. The one animal-web caller
+## > left is the INEDIBLE quarry, whose food axis is a structural zero — there is no carried biomass to
+## > cross from, and its `body_mass` is not a term any client-side quantiser here can reach — so it is
+## > still quoted on crew throughput alone and is still over-quoted at a crew the engagement bound
+## > pins. Closing that needs the quantiser expressed in BIOMASS, which needs a `body_mass` such a herd
+## > publishes and the harness fixtures do not derive.
 ##
 ## **IT TAKES NO CEILING SELECTOR, and that is deliberate.** It had one, mirroring the pair
 ## `expected_yield_account` chooses between — the ROOM and the every-turn regrowth — and the hold arm

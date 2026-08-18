@@ -14,7 +14,7 @@ use crate::{
         self, CombatStats, CombatTuning, Contingent, ContingentId, DamageLedger, FightPayload,
         Force, ForceId, Posture,
     },
-    components::{floor_overdraws, PopulationCohort, ResidentBand, SourceYield, Tile, YieldRange},
+    components::{take_overdraws, PopulationCohort, ResidentBand, SourceYield, Tile, YieldRange},
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
         HuntYield, HusbandryCeiling, SizeClass, SpeciesDef, YieldAccounts, YieldAxis,
@@ -5053,7 +5053,12 @@ fn forecast_production_and_take_at(
 ///   job on a source and the row had one number to give. **Each activity is staffed on its own row
 ///   now** — the take on the source, the keeping and the building on the band
 ///   (`docs/plan_standing_upkeep.md` §2.5) — so each answers in its own unit,
-/// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠ ([`SourceYield`]).
+/// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠
+///   ([`SourceYield`]). **The caller hands it in already answered**, because the answer needs the
+///   source's own growth curve and the two webs' curves are different functions: the animal web
+///   answers through [`hunt_take_overdraws`], the plant web through
+///   `forage::forage_take_overdraws`, and both of those are one call to
+///   [`crate::components::take_overdraws`]. This function only applies the `managed` veto below.
 ///
 /// **`managed` is rung 3 only** (slice 7): it marks "this source's harvest cannot overdraw", and only
 /// the rungs you own qualify. A *tended* patch is still a wild stand on a better curve — it draws
@@ -5070,6 +5075,10 @@ pub(crate) fn forecast_source_yield(
     floor: f32,
     realized: f32,
     arrivals: Vec<f32>,
+    // **THE ⚠, already answered** by the source's own web through
+    // [`crate::components::take_overdraws`] — intent *and* the crew's ability to get there. This
+    // function cannot re-derive it: the ability half reads a growth curve, and there are two of them.
+    overdraws: bool,
     // How wide a band to report around the expected take (`combat_config.forecast_range_sigmas`) —
     // a **readout width**: nothing the sim resolves reads it, so it cannot move an animal.
     range_sigmas: f32,
@@ -5171,7 +5180,9 @@ pub(crate) fn forecast_source_yield(
             // KEEP is a different question, answered per activity on the source's own row.
             None => NO_CREW_ON_THIS_ACTIVITY,
         },
-        overdraws: !managed && floor_overdraws(floor),
+        // A **managed** source (rung 3 — a Field, a pen) takes at most its escapement MSY, so it
+        // cannot overdraw whatever the dial and the crew say.
+        overdraws: !managed && overdraws,
     }
 }
 
@@ -5252,6 +5263,16 @@ pub fn hunt_source_yield_preview(
         floor,
         realized.provisions,
         arrivals,
+        // The ⚠, off this herd's own curve and this party's own reach — see [`hunt_take_overdraws`].
+        hunt_take_overdraws(
+            herd,
+            fauna,
+            herd.biomass,
+            per_worker_biomass_capacity,
+            party,
+            workers,
+            floor,
+        ),
         range_sigmas,
     )
 }
@@ -7169,6 +7190,97 @@ pub(crate) fn sustainable_yield(biomass: f32, cap: f32, ecology: &EcologyConfig)
 // **RETIRED: `peak_regrowth`** — the shared MSY-at-unit-capacity helper, whose last caller was the
 // plant ladder's config check (`labor_config::peak_regrowth_per_capacity`). That comparison no longer
 // needs it: see the gravestone there.
+
+/// **The biggest one-turn regrowth anywhere in a band of standing stock** — the rate a crew has to
+/// out-take to descend *through* that band, and the ability half of
+/// [`crate::components::take_overdraws`].
+///
+/// **It is exact, not sampled.** Both webs' curves are logistic above their low-stock branch, so the
+/// only interior maximum either can have is the food peak at `MSY_BIOMASS_FRACTION × cap`; every
+/// other piece is monotone (a herd's depensation decline falls with biomass, a patch's reseed lift
+/// falls with biomass, the logistic rises below the peak), so its maximum sits on an endpoint.
+/// Evaluating the three candidates therefore finds the true peak, without the interpolation error the
+/// wire's [`crate::snapshot::REGROWTH_CURVE_SAMPLES`] curve carries — that one is a *display*
+/// resolution and must not be what a verdict turns on.
+///
+/// `regrowth_at` is the source's own one-turn biomass delta at a given standing stock, which is why
+/// this takes a closure rather than an [`EcologyConfig`]: the plant curve and the animal curve are
+/// two different functions, exactly as `snapshot::patch_regrowth_samples` / `herd_regrowth_samples`
+/// are.
+pub(crate) fn peak_regrowth_between(
+    cap: f32,
+    low: f32,
+    high: f32,
+    regrowth_at: impl Fn(f32) -> f32,
+) -> f32 {
+    if !cap.is_finite() || cap <= 0.0 {
+        return 0.0;
+    }
+    let lo = low.min(high).clamp(0.0, cap);
+    let hi = low.max(high).clamp(0.0, cap);
+    let peak_stock = MSY_BIOMASS_FRACTION * cap;
+    let mut peak = regrowth_at(lo).max(regrowth_at(hi));
+    if (lo..=hi).contains(&peak_stock) {
+        peak = peak.max(regrowth_at(peak_stock));
+    }
+    peak
+}
+
+/// **The band a take has to cross to reach its floor** — `floor·K` up to the stock standing today,
+/// as `(low, high)` for [`peak_regrowth_between`].
+///
+/// **Anchored at the floor, never below it.** A source already sitting under its floor is handing
+/// over nothing; what decides whether the crew will *hold* it there once it grows back is the
+/// regrowth at the floor itself, so the band collapses onto `floor·K` rather than reaching down to a
+/// stock the crew is not taking from.
+pub(crate) fn floor_reach_band(floor: f32, biomass: f32, cap: f32) -> (f32, f32) {
+    let floor_stock = floor * cap;
+    (floor_stock, biomass.max(floor_stock))
+}
+
+/// **Can a crew of `workers` hunters draw THIS herd to `floor`, and is that floor below the food
+/// peak?** — the animal web's producer of [`SourceYield::overdraws`], and the only thing the Hunt
+/// arms (resolved and seeded) publish that flag through.
+///
+/// `biomass` is the herd's **pre-take** standing stock — what this turn's crew is facing, the same
+/// term `sustainable` on the row is computed at.
+///
+/// **The crew's throughput is `min(carry, reach)`**, the two bounds `hunt_take` itself pays: what the
+/// party can haul home ([`hunt_take_workers`]'s haul half) and what it can bring into contact in a
+/// turn ([`animals_engaged`] × the retreat's [`HuntingParty::stay_fraction`] × a body). Sizing on
+/// carry alone would call a two-hunter party capable of drawing down a herd of fowl it can barely
+/// touch — the same error [`hunt_engage_workers`] exists to keep out of the crew counts.
+///
+/// **The FIGHT is deliberately not a fourth bound.** Its damage accumulates across turns
+/// (`project_realized_hunt` resolves it *inside* the loop for exactly that reason), so it has no
+/// per-turn rate to compare a regrowth against. Leaving it out can only make the crew look *more*
+/// capable, which leaves the ⚠ lit in the cases a fight would have blocked — the same subtractive
+/// direction the rest of this predicate runs in.
+pub fn hunt_take_overdraws(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    biomass: f32,
+    per_worker_biomass_capacity: f32,
+    party: &HuntingParty,
+    workers: u32,
+    floor: f32,
+) -> bool {
+    let cap = herd_capacity(herd, fauna);
+    let ecology = herd_ecology(herd, fauna);
+    let carry = workers as f32 * per_worker_biomass_capacity.max(0.0);
+    // What the party puts on the ground in a turn: reached, less what breaks off, in biomass.
+    let reach = animals_engaged(workers, fauna.engage_rate_for(&herd.species))
+        * party.stay_fraction(fauna.wariness_for(&herd.species))
+        * herd.body_mass.max(0.0);
+    let (low, high) = floor_reach_band(floor, biomass, cap);
+    take_overdraws(
+        floor,
+        carry.min(reach),
+        peak_regrowth_between(cap, low, high, |stock| {
+            net_biomass_delta(stock, cap, &ecology)
+        }),
+    )
+}
 
 /// Apply one turn of critical-depensation dynamics toward the herd's carrying capacity
 /// and refresh its `ecology_phase`. A sub-threshold group declines instead of regrowing;

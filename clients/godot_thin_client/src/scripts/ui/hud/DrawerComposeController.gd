@@ -312,9 +312,24 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## in bodies per turn — and delivery is `killed × min(one body, the crew's carry)`, the pack's hold
 ## charged PER BODY. Fractional carry capacity is idle (NOT waste, no animal having been dropped); a
 ## body killed and left behind is. Returns
-## `{available, delivered, waste, waste_pct}` (all food/turn; `waste_pct` 0..1) or `{available=false}`
-## when a lever/ceiling is absent (caller degrades to the old food/turn line). NEVER re-derives the
-## ecology model — `food_per_animal` and the flow ceiling are sim exports.
+## `{available, delivered_biomass, body_mass, waste, waste_pct}` (`waste_pct` 0..1) or
+## `{available=false}` when a term is absent (caller degrades to the smoothed per-turn line). NEVER
+## re-derives the ecology model — `body_mass`, the curve and the room are sim exports.
+##
+## > #### ⛔ IT IS STATED IN **BIOMASS**, AND FOOD IS ONE VALUATION OF ITS ANSWER
+## >
+## > Every one of the three arms is a biomass: the room above the floor, the crew's carry, and the body
+## > the count is quantised to. It used to be written in FOOD — the same three arms multiplied through
+## > `provisionsPerBiomass` — which is arithmetically identical for a species that pays food and
+## > **undefined for one that does not**: an inedible quarry's per-animal food quantum is a structural
+## > `0`, so the guard below answered `available: false` for a wolf, both food paths bailed, and its
+## > material rows fell through to a parallel crew-throughput line that carried neither the engagement
+## > bound nor the whole-animal quantum. A wolf is exactly the quarry whose materials are the entire
+## > point of hunting it, so it was over-quoted at every crew the reach arm pinned.
+## >
+## > **The caller crosses this one carried biomass into every account**
+## > (`SourceForecast.rescaled_from_biomass`), which is the sim's own order — one `take.carried`, valued
+## > twice.
 ##
 ## **`holding` ASKS THE SAME QUESTION OF THE STEADY STATE** — the take once the herd sits at its floor
 ## and only regrowth is on offer. It swaps ONLY the ceiling (the room becomes one turn's regrowth) and
@@ -327,12 +342,9 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## and reaching for a raw dict instead would quote the equipped reference to a bare-handed crew.
 func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
         improvement: String, holding: bool = false) -> Dictionary:
-    # ON THE PROVISIONS AXIS, through `herd_axis_rates` — the single place the quantised take's terms
-    # are resolved, reading the HERD's species-aware per-worker rate rather than the cohort's
-    # species-blind `hunt_per_worker_provisions`, which is what would re-introduce phantom food here.
-    # An inedible quarry's per-animal food quantum is honestly `0`, so the guard below answers
-    # `available: false` for it rather than dividing by zero; the trade quantum that used to stand in
-    # went with the axis (arc #527).
+    # IN BIOMASS, through `herd_axis_rates` — the single place the quantised take's terms are resolved,
+    # reading the HERD's own body, carry and room rather than any cohort-level echo of them (the
+    # species-blind `hunt_per_worker_provisions` is what would re-introduce phantom food here).
     #
     # **THE DIP MULTIPLIES THE COLLECTION, AND THE QUANTISATION HAPPENS AFTER IT** — the sim's own
     # order (`hunt_take` composes `workers × per_worker`, THEN
@@ -343,20 +355,20 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # the delivered figure after quantisation, produces a number that is wrong in a way that still
     # looks plausible.
     var rates := SourceForecast.herd_axis_rates(herd, floor)
-    var fpa := float(rates["per_animal"])
-    var per_worker := float(rates["per_worker"])
+    var body := float(rates["body_mass"])
+    var carry := float(rates["carry"])
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     # **THE `now` READING IS NEXT TURN'S ROOM, NOT THE STANDING ONE** — the sim regrows before it
     # harvests (`advance_herds` / `advance_forage_regrowth` run a whole stage ahead of the labor
     # pass), so a herd held at its floor takes its regrowth rather than nothing, and the standing room
     # is what made this readout say `0.00` beside a work board quoting a live rate.
-    var ceiling := float(rates["hold_ceiling" if holding else "next_ceiling"])
-    if fpa <= 0.0 or per_worker <= 0.0 or ceiling < 0.0 or workers <= 0:
+    var room := float(rates["hold_room" if holding else "next_room"])
+    if body <= 0.0 or carry <= 0.0 or room < 0.0 or workers <= 0:
         return {"available": false}
-    ceiling *= output
-    var collection := float(workers) * per_worker * output   # crew's raw food throughput /turn
+    room *= output
+    var collection := float(workers) * carry * output   # crew's raw BIOMASS throughput /turn
     # THE KILL IS ONE EXPRESSION — the sim's own `fauna::quantise_animal_take`,
-    # `killed = affordable.min(carryable.max(1.0)).min(brought_down)`, restated in food. The three
+    # `killed = affordable.min(carryable.max(1.0)).min(brought_down)`, in bodies. The three
     # bounds are the stock above the floor, what the crew can HAUL, and what it brings down
     # (`docs/plan_hunt_through_combat.md` §2). The engagement arm was the one this sheet had never
     # had: one hunter's 40 biomass of carry read **307 Wild Fowl a turn** against a take of ten — the
@@ -373,8 +385,8 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # for a take of 0.18, then FELL to 0.36 at seven hunters, the readout dropping as the crew grew.
     #
     # **THE BOUND IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`**, and the two are the same
-    # arithmetic taken in different orders: `floor(min(carry, engaged × fpa) / fpa)` is
-    # `min(floor(carry / fpa), engaged)` — but the first divides a product of `fpa` BY `fpa` and can
+    # arithmetic taken in different orders: `floor(min(carry, engaged × body) / body)` is
+    # `min(floor(carry / body), engaged)` — but the first divides a product of `body` BY `body` and can
     # land a whole engagement one animal short on a rounding, while the second is exact.
     #
     # `animals_engaged` answers UNBOUNDED for a pen and for a species with no engagement stage, and
@@ -395,19 +407,19 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # 0.6-of-a-body cadence all coincide really lands `0.6 × collection` and wastes 40% of what it
     # kills, where the averaged-then-clamped form reads the full ceiling with no waste at all — 1.67×
     # too high, and silent about the meat left on the ground.
-    var haulable := maxf(floorf(collection / fpa), 1.0)
+    var haulable := maxf(floorf(collection / body), 1.0)
     var brought_down := SourceForecast.animals_stayed(
         SourceForecast.animals_engaged(workers, float(rates["engage_rate"])),
         float(rates["stay"]))
     # BODIES PER TURN — the herd's own offer, the crew's haul, and what the party puts on the ground,
     # whichever is least. Fractional below one: a body every `1/killed` turns.
-    var killed := minf(minf(ceiling / fpa, haulable), brought_down)
-    var delivered := killed * minf(fpa, collection)
-    var killed_food := killed * fpa
-    var waste := maxf(killed_food - delivered, 0.0)
-    var waste_pct := (waste / killed_food) if killed_food > 0.0 else 0.0
-    return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct,
-        "per_animal": fpa}
+    var killed := minf(minf(room / body, haulable), brought_down)
+    var delivered := killed * minf(body, collection)
+    var killed_biomass := killed * body
+    var waste := maxf(killed_biomass - delivered, 0.0)
+    var waste_pct := (waste / killed_biomass) if killed_biomass > 0.0 else 0.0
+    return {"available": true, "delivered_biomass": delivered, "waste": waste,
+        "waste_pct": waste_pct, "body_mass": body}
 
 ## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
 ## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
@@ -571,37 +583,28 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # below is off `herd`; the raw dict is not in scope again, which is the point of shadowing it here
     # rather than pricing at each `herd_axis_rates` call (this model makes three).
     var herd := _hunt_priced_herd(herd_raw, band)
-    # **WHAT THIS CREW BRINGS HOME IN MATERIALS, AT THIS FLOOR** — composed from the herd's two RATES
-    # rather than from the assignment's resolved `material_yield`, which a pre-commit sheet has not
-    # got: the sim seeds it empty by design because projecting materials needs the take in biomass
-    # while the forecast resolves in currency space. So this arm is `min(workers × per_worker,
-    # ceiling(floor))` per material — the food side's own clamp, one account further out.
+    # **WHAT THIS CREW BRINGS HOME IN MATERIALS COMES OFF THE DELIVERED BIOMASS, NOT OFF A SECOND
+    # CREW-THROUGHPUT LINE**, and it is composed at each of the three branches below rather than once
+    # here. The sim banks food at `hunt_yield.apply(take.carried, …)` and materials at
+    # `credit_material_yield(…, take.carried, …)` — the identical local — so the two accounts of one
+    # readout must read one quantity or they can provably disagree with the payout. They did: a
+    # `min(workers × per_worker_material, ceiling)` line skips the engagement→retreat arm and the
+    # whole-animal quantiser the food row applies, so a pastoral Wild Boar herd quoted five herders
+    # five times the bone and hide that one herder brings home while its FOOD row (correctly) sat
+    # still, both crews reaching the same single animal.
     #
-    # **IT IS INDEPENDENT OF THE FOOD AXIS, and that independence is the whole point.** Both food
-    # paths below bail on an inedible quarry (its per-animal quantum is honestly 0, so there is
-    # nothing to quantise and nothing to smooth), and a model that returned `{}` there is what left a
-    # wolf's sheet quoting no rate at all.
-    var materials := _hunt_material_rows(herd, band, floor, workers)
-    # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, in the same account the take is measured
-    # in. It is the floor at which the herd settles on its most productive biomass, so a take above it
-    # is one the herd cannot pay forever — which is exactly what the verdict claims.
-    #
-    # **AND IT IS RESOLVED AT `IMPROVEMENT_NONE` DELIBERATELY — the one call site where the undipped
-    # rates are the correct ones.** This is the LINE THE TAKE IS JUDGED AGAINST, not a take: it is the
-    # herd's own renewable yield, a fact about the animals rather than about the crew. Dipping it would
-    # move the bar down in step with the take it is compared to, the two dips would cancel, and a
-    # building crew could never trip the flag at all — the ⚠ would become vacuous exactly where a
-    # quarter-throughput crew is least able to explain itself.
-    var sustain_rates := SourceForecast.herd_axis_rates(herd, SourceForecast.FLOOR_FOOD_PEAK)
-    # **AND IT IS READ ON THE TAKE'S OWN BASIS, which is next turn's room.** The take includes the
-    # growth the sim banks a whole stage before it harvests; a bar read from the STANDING room would
-    # be short by exactly that growth, so a crew taking precisely what the source offers at the peak
-    # would trip the ⚠ for having taken it.
-    var sustain_ceiling := float(sustain_rates["next_ceiling"])
-    if sustain_ceiling < 0.0:
-        return {}
+    # **`SourceForecast.rescaled_from_biomass` IS THAT ONE CROSSING** — food, fodder and materials out
+    # of one carried biomass — so the material rows are a consequence of the delivered figure rather
+    # than a parallel derivation of it, on EVERY quarry. The inedible one used to be the branch that
+    # could not use it (its provisions rate is a structural zero, so a food-keyed crossing divides by
+    # nothing and both food paths bailed); the quantiser is stated in biomass now, which is the unit a
+    # take is taken in whether or not the species converts any of it to food.
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var sustainable := sustain_ceiling * output
+    # **THE ⚠ IS THE SIM'S ANSWER, READ OFF THE STANDING ROW** — intent AND ability, and the client
+    # neither re-derives it nor gates it (`snapshot.fbs` → `LaborAssignment.overdraws`). See
+    # `_source_overdraws`.
+    var overdraws := _source_overdraws(SourceForecast.LABOR_KIND_HUNT, -1, -1,
+        String(herd_raw.get("id", "")))
     var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement)
     if not bool(dw.get("available", false)):
         # Graceful degrade — the per-animal quantum (or a lever) is unknown, so fall back to the
@@ -611,9 +614,17 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         # different accounts for one herd is the defect one branch above records.
         var take := _hunt_take_rate(herd, floor, workers)
         if not bool(take.get("available", false)):
-            # **NO FOOD PATH AT ALL — but a material one may still stand.** An inedible quarry reaches
-            # here every time, and its materials are the whole of what the hunt pays; a `{}` model
-            # renders no readout, which is the `+0.00` this arm exists to close.
+            # **NO TAKE THIS CLIENT CAN QUANTISE AND NO FOOD RATE EITHER — but a material one may still
+            # stand.** A `{}` model renders no readout at all, which is the `+0.00` this arm exists to
+            # close.
+            #
+            # **AN INEDIBLE QUARRY NO LONGER REACHES IT.** It did, every time, and this crew-throughput
+            # line was then its only answer — carrying neither the engagement bound nor the whole-animal
+            # quantum, so a wolf was over-quoted at any crew the reach arm pinned. The quantiser is
+            # stated in BIOMASS now, so a pack that publishes a body and a carry is priced by the same
+            # `min` a deer is. What is left here is a herd the wire describes too thinly to quantise at
+            # all, where a crew-throughput rate is better than silence.
+            var materials := _hunt_material_rows(herd, band, floor, workers)
             if SourceForecast.signed_material_components(materials) == "":
                 return {}
             return {
@@ -622,16 +633,19 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
                 YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
                     SourceForecast.yield_components(
                         0.0, 0.0, SourceForecast.YIELD_ACCOUNT_NONE, materials)),
-                # **NO OVERDRAW VERDICT ON A MATERIAL-ONLY TAKE.** The sustainability bar is the food
-                # peak's ceiling in the account the take is measured in, and this take is measured in
-                # none of it — the drawdown a material take causes is real, but the client has no
-                # material sustainable-yield to judge it against and must not invent one.
-                YIELD_MODEL_OVERDRAW: false,
+                # The ⚠ is the wire's, on this branch as on every other: the sim answers it for the
+                # crew that is standing here, whatever account the take is measured in, and a client
+                # that suppressed it because IT could not judge the drawdown would be gating a field
+                # the contract says not to gate.
+                YIELD_MODEL_OVERDRAW: overdraws,
                 YIELD_MODEL_WASTE: "",
             }
         var actual := float(take["rate"]) * output
+        # **ONE CROSSING, EVERY ACCOUNT** — food, fodder AND materials out of this one smoothed take,
+        # so the degrade path cannot state a material rate its own food rate does not imply.
         var smooth := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
             actual)
+        var materials: Array = smooth[SourceForecast.RESCALED_MATERIALS_KEY]
         var account := SourceForecast.YIELD_ACCOUNT_FOOD
         var smooth_after := {}
         if _walks_to_the_floor(reaches, improvement):
@@ -639,6 +653,8 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
             if bool(smooth_hold.get("available", false)):
                 smooth_after = SourceForecast.rescaled_accounts(herd,
                     HudComposeVocab.BARE_FORECAST_PREFIX, float(smooth_hold["rate"]) * output)
+                # Scalars only — see the quantised branch's `after` for why a material states none.
+                smooth_after.erase(SourceForecast.RESCALED_MATERIALS_KEY)
         return {
             YIELD_MODEL_ROWS: SourceForecast.yield_rows(
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
@@ -651,29 +667,38 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
                 SourceForecast.yield_components(
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account, materials)),
-            YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
-                and _herd_take_draws_down(herd, floor, workers),
+            YIELD_MODEL_OVERDRAW: overdraws,
             YIELD_MODEL_WASTE: "",
         }
     # The crew's honest carry-aware delivered take. `delivered` is already carry-quantized, so this
     # credits no throughput the crew can't haul home — and it is a take in an ACCOUNT, which is what
     # the readout row states. The animal RATE derived beside it is the SENTENCE's (`YIELD_MODEL_TEXT`,
     # the one-line preview), where the whole-animal rhythm is the whole point of the line.
-    var fpa := float(dw["per_animal"])
-    var delivered := float(dw["delivered"])
-    var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
+    #
+    # **IT IS A BIOMASS, and the animal rate divides it by a BODY.** The quantiser counts bodies and
+    # hauls biomass; converting either into food first is a step only an edible species can take, and
+    # it is the step that left a wolf with no take at all.
+    var body := float(dw["body_mass"])
+    var delivered := float(dw["delivered_biomass"])
+    var animal_rate := delivered / body if body > 0.0 else 0.0
     var rate_text := _format_animal_rate(animal_rate)
     var quarry := SourceForecast.herd_display_name(herd)
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
     # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
     var waste_pct := float(dw["waste_pct"])
-    # **THE COUNT IS TAKEN ON THE PROVISIONS AXIS AND VALUED IN EVERY ACCOUNT** — the sim's own order
-    # (`forecast_production_and_take`: quantise, then `YieldPair::rescaled_to`). `yield_rows` is the
-    # one place the "render only where the vector pays" rule lives, so an inedible quarry — whose
-    # provisions rate is a structural 0 — rescales to a zero food component that renders NO row, and
-    # the zero account below keeps that answer for an all-zero take.
-    var take := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+    # **THE COUNT IS TAKEN IN BODIES, HAULED IN BIOMASS AND VALUED IN EVERY ACCOUNT** — the sim's own
+    # order (`forecast_production_and_take`: quantise, then `YieldPair::rescaled_to`, both off one
+    # `take.carried`). `yield_rows` is the one place the "render only where the vector pays" rule
+    # lives, so an inedible quarry — whose provisions rate is a structural 0 — crosses to a zero food
+    # component that renders NO row, and the zero account below keeps that answer for an all-zero take.
+    var take := SourceForecast.rescaled_from_biomass(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
         delivered)
+    # **AND THE MATERIALS ARE ROWS OF THAT SAME CROSSING** — one already-quantised `delivered`, so the
+    # bone and hide a herder brings home step with the animal count exactly as the meat does, and a
+    # crew the engagement bound pins cannot quote materials the sheet's own food row denies. Composing
+    # them from `min(workers × per_worker_material, ceiling)` beside this is what quoted a Wild Boar's
+    # five herders 5× the hide of one.
+    var materials: Array = take[SourceForecast.RESCALED_MATERIALS_KEY]
     # THE ZERO ACCOUNT IS THE ACCOUNT THE TAKE WAS MEASURED IN — the same choice the degrade branch
     # above makes, so one model's two paths can never state an empty take in two different accounts.
     var account := SourceForecast.YIELD_ACCOUNT_FOOD
@@ -682,27 +707,50 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # does — an arrowed row must key both accounts consistently, and a hold rate credited on one axis
     # beside a take credited on two would arrow only half the reading. `yield_rows` drops an `after`
     # equal to its take, which is the same "an arrow to itself is noise" test this used to make here.
+    #
+    # **THE MATERIAL HALF OF THE CROSSING IS DROPPED FROM IT, and that is the standing rule rather than
+    # an oversight** — the sheet's `now → after` is stated for food and fodder alone, so a material
+    # arrow would be a reading no surface asks for. Dropping it also keeps `yield_rows`' `after.has()`
+    # lookup facing scalars only, where a material id colliding with the key would otherwise be read
+    # as a number.
     var after := {}
     if _walks_to_the_floor(reaches, improvement):
         var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
         if bool(held.get("available", false)):
-            after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-                float(held["delivered"]))
+            after = SourceForecast.rescaled_from_biomass(herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, float(held["delivered_biomass"]))
+            after.erase(SourceForecast.RESCALED_MATERIALS_KEY)
     return {
         YIELD_MODEL_ROWS: SourceForecast.yield_rows(
             float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
             float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
             account, after, materials),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
-        YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
-            and _herd_take_draws_down(herd, floor, workers),
+        YIELD_MODEL_OVERDRAW: overdraws,
         YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
             if waste_pct > 0.0 else "",
     }
 
-## **THE CREW'S MATERIAL TAKE AT THIS FLOOR** — `min(workers × per_worker_material, material_ceiling)`
-## per material, then the band's output multiplier, which is the food side's own composition one
-## account further out (arc #527 follow-up).
+## **THE INEDIBLE QUARRY'S MATERIAL TAKE, AND NOTHING ELSE'S** —
+## `min(workers × per_worker_material, material_ceiling)` per material, then the band's output
+## multiplier (arc #527 follow-up).
+##
+## > #### ⛔ THIS IS THE CREW-THROUGHPUT LINE, AND IT IS ONLY HONEST WHERE THERE IS NO TAKE TO CROSS FROM
+## >
+## > It served every hunt until it was measured against the payout: it carries the escapement ceiling
+## > and NONE of the food row's other three bounds — the engagement→retreat arm and the whole-animal
+## > quantiser — so on a herd whose reach binds it scales with the CREW while the animals reached, and
+## > therefore the meat, do not. A pastoral Wild Boar herd (`engage_rate` 0.33, one animal reached at
+## > every crew from one to six) quoted five herders 0.40 bone / 2.80 hide against one herder's
+## > 0.08 / 0.56, beside a FOOD row correctly flat at 0.18 for both — while the sim banks both accounts
+## > off one `take.carried`.
+## >
+## > **The quantised and degrade paths cross out of that delivered biomass now**
+## > (`SourceForecast.rescaled_accounts`). What is left here is the branch where there is no food axis
+## > at all: an inedible quarry's provisions rate is a structural zero, so no delivered figure exists
+## > to cross from, and this remains the only answer the wire lets the client compose. It is therefore
+## > still over-quoted at a crew the reach arm pins — closing it needs the quantiser expressed in
+## > BIOMASS, i.e. a `body_mass` such a herd publishes and the harness fixtures do not derive.
 ##
 ## `herd` arrives ALREADY KIT-PRICED (`_hunt_yield_model` prices at its own top and is the only
 ## caller), so this reaches `SourceForecast.forecast_inputs` directly rather than through
@@ -726,17 +774,31 @@ func _hunt_material_rows(herd: Dictionary, band: Dictionary, floor: float, worke
             SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY),
         float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL)))
 
-## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd, asked at the
-## crew's LIVE improvement.
-##
-## **A GATE WALKS THE CREW THE TAKE IT GATES IS PRICED FOR, and with the dip retired that is simply
-## the take crew.** The verb used to be a term here, because the take carried the rung's build
-## fraction and an undipped projection would have walked a crew four times the one being quoted. It
-## carries none now — the builders are their own allocation — so the projection and the take divide by
-## one throughput with nothing to keep in step.
-func _herd_take_draws_down(herd: Dictionary, floor: float, workers: int) -> bool:
-    return SourceForecast.take_draws_down(herd, SourceForecast.SOURCE_KIND_HERD, "", floor,
-        workers)
+## > #### ⛔ THE ⚠ HAS ONE PRODUCER, AND IT IS THE SIM — this is the whole of the client's part
+## >
+## > `LaborAssignment.overdraws` carries the WHOLE verdict: the floor is below the food peak **AND**
+## > this crew can actually draw the source down to it. The contract says so in as many words — read
+## > this field, do not re-derive it, and do not gate it — so the compose sheet's answer is a lookup on
+## > the source's own standing row and nothing else.
+## >
+## > **It used to compute a fourth, different predicate**, and both halves of it were wrong. The
+## > comparison was `actual > sustainable`, which the schema forbids outright: a first harvest of a
+## > stocked source exceeds one turn's regrowth at EVERY floor, so it cried wolf exactly where the mark
+## > has to be trustworthy. Beside it sat a second, client-side reachability walk — a private copy of
+## > curves the sim owns. Reported from play as two surfaces disagreeing about one source: the tile
+## > card's tooltip read *"Sustainable +0.63/turn — overdrawing"* while the sheet three inches away read
+## > *"This crew can't draw it that low. It settles at 92%."*
+## >
+## > **The row is the FACTION's, not the acting band's** (`_standing_assignment`) — the same scan the
+## > drawer's standing summary and the map badge read, so a source worked by another of your bands
+## > still answers with the crew that is actually on it rather than with the one the picker happens to
+## > name.
+## >
+## > `false` on a source nobody works is the only reading available and is the right one: there is no
+## > crew, so nothing is being drawn down. The sheet is then composing a hypothetical, and a warning
+## > about a take that has not been ordered is a warning about nothing.
+func _source_overdraws(kind: String, x: int, y: int, herd_id: String) -> bool:
+    return bool(_standing_assignment(kind, x, y, herd_id).get("overdraws", false))
 
 ## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
 ## Forage is SMOOTH (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
@@ -750,26 +812,9 @@ func _herd_take_draws_down(herd: Dictionary, floor: float, workers: int) -> bool
 ## renewable` — "staff this and get nothing, sustainably" — for a rung that fills the band's fodder
 ## store every turn. `SourceForecast.yield_components` is the joiner the worked rows already use, so the composed preview and the row it becomes next turn word the vector alike.
 ##
-## **The overdraw verdict is likewise PER ACCOUNT, and ANY account overdrawing carries the line.** The
-## comparison used to be food-against-food, so a fodder crop's Eradicate rung — which strips the
-## meadow bare — read green: both sides of the test were 0. The accounts have independent ceilings and
-## a take can sit inside one while blowing through another, so a single scalar cannot answer this; ANY
-## rather than ALL, because the warning is about the patch, and one account drawn past its regrowth
-## draws down the same patch.
-##
-## **AND ALL OF IT IS GATED ON THE PROJECTION ACTUALLY FALLING** (`SourceForecast.take_draws_down`).
-## The per-account test above is a take against the FOOD-PEAK ceiling, which on a source standing at
-## or below that peak is just `take > 0` — a fact about the floor, not about the stock — so the ⚠
-## could sit two lines above a verdict reading *it settles at 53% and holds there*. Nothing is
-## overdrawn while the stock climbs, whatever the floor says. The gate is purely subtractive: a source
-## with no curve to walk keeps the flag it always had.
-##
-## **`improvement` IS THE CREW'S OWN DIP, and the two forecasts here take it DIFFERENTLY.** The take
-## must carry it — while a build runs the sim pays `min(crew × per_worker, ceiling × dip)`, and this
-## line quoting the undipped ceiling is what made it disagree with both the deal line's middle term and
-## the worked row it becomes next turn. The SUSTAIN reference must NOT: it is the patch's regrowth
-## rate, a property of the land, and dipping it would move the sustainability bar down in step with the
-## take and let a genuinely overdrawing build read green.
+## **The overdraw verdict is NOT this line's to compose** — it is `LaborAssignment.overdraws`, read off
+## the patch's own standing row. See `_source_overdraws` for what the client used to compute here and
+## why every account of it was wrong.
 func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, floor: float,
         workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> String:
     return _yield_preview_bbcode(_forage_yield_model(band, tile_info, floor, workers, improvement),
@@ -816,11 +861,12 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         # this client has the right to print — and the whole basket's take under a narrowed heading is
         # the quote-vs-payout defect wearing a heading.
         return _wordless_take_model(notes)
-    # The FOOD-PEAK ceiling is the patch's sustainable yield (what it will pay forever), so a take
-    # above it draws the patch down — the same bar the hunt version uses, for the same reason.
-    var sustain := _forage_forecast(tile_info, band, SourceForecast.FLOOR_FOOD_PEAK)
-    if not bool(sustain["known"]):
-        return _wordless_take_model(notes)
+    # **THE ⚠ IS THE SIM'S ANSWER, READ OFF THE STANDING ROW** — see `_source_overdraws`. There is no
+    # sustainability BAR composed here any more: the food-peak ceiling this model used to measure the
+    # take against was the client's own second opinion, and on a patch standing at or below that peak
+    # it degenerated into "something is being taken at a floor below 0.5".
+    var overdraws := _source_overdraws(SourceForecast.LABOR_KIND_FORAGE,
+        int(tile_info.get("x", -1)), int(tile_info.get("y", -1)), "")
     var forecast := _forage_forecast(tile_info, band, floor)
     if not bool(forecast["known"]):
         return _wordless_take_model(notes)
@@ -899,17 +945,9 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         # The joined sentence has no room for the reason, so it must not promise the account at all.
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
             actual, banked_fodder, zero_account, materials),
-        # **THE FODDER CEILING COMPARISON STAYS, LOCK OR NO LOCK, and deleting it is the plausible
-        # wrong move.** The take draws the same biomass down whether or not the crew banks the hay, so
-        # the drawdown is unchanged — and on a hay-only patch this comparison is the only drawdown
-        # signal there is.
-        # Both sides of the comparison are read at NEXT TURN's room — see `_hunt_yield_model`'s own
-        # note: a forward take judged against a standing bar flags a crew that took exactly what the
-        # patch offered.
-        YIELD_MODEL_OVERDRAW: (_is_overdraw(actual, float(sustain["next_ceiling"]) * output) \
-            or _is_overdraw(actual_fodder, float(sustain["next_ceiling_fodder"]) * output)) \
-            and SourceForecast.take_draws_down(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, workers),
+        # **THE FODDER LOCK DOES NOT REACH THE ⚠, AND IT NEVER SHOULD HAVE.** The take draws the same
+        # biomass down whether or not the crew banks the hay, and the drawdown is the sim's to state.
+        YIELD_MODEL_OVERDRAW: overdraws,
         YIELD_MODEL_WASTE: "",
         YIELD_MODEL_LOCKED_REASON: locked,
         YIELD_MODEL_NOTES: notes,
@@ -994,8 +1032,10 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
 ## control, mounted as one block so the row and the sentence explaining it cannot be composed apart.
 ##
 ## `single_pick` is the VERB: foraging takes several plants, cultivating commits the ground to one.
-## The two are the same chips in the same place, so the row's key, its marks and its consequence line
-## all fork on it — the label alone cannot carry a difference that changes what a click MEANS.
+## The two are the same chips in the same place, so the row's KEY and its consequence line fork on it.
+## **The chips themselves do not**: both modes draw one selected pill per chosen plant, because that
+## is the whole of what a chip has to say, and the difference between them — picking one clears the
+## other — is a thing the pills already show as it happens.
 func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
         selection: PackedStringArray, single_pick: bool,
         crop_is_default: bool, crop_rung: String, rebuild: Callable) -> void:
@@ -1007,18 +1047,17 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
     block.add_child(HudWidgets.alloc_section_label(
         HudFloraVocab.TAKE_ROW_LABEL_SINGLE if single_pick else HudFloraVocab.TAKE_ROW_LABEL))
     block.add_child(HudWidgets.build_species_chips(
-        _take_chip_entries(basket, selection, single_pick, crop_is_default, committed),
-        single_pick,
+        _take_chip_entries(basket, selection, single_pick, committed),
         func(species: String) -> void:
             if single_pick:
                 # A commit crop is one plant, so a chip WRITES it rather than toggling a set —
                 # re-picking the lit one is a no-op, exactly as re-picking a selected option is.
                 _compose.set_forage_species(species)
             else:
-                # `basket.size()` is what makes "every plant ticked" collapse back to the empty
-                # default: all of them and the whole basket are one instruction, and keeping them as
-                # two states would put a selection on the wire saying nothing the omission does not.
-                _compose.toggle_forage_take_species(species, basket.size())
+                # **THE BASKET'S KEYS, NOT ITS SIZE.** The model needs them at BOTH ends: to expand an
+                # implicit-all before removing the pressed plant (without which pressing one chip moves
+                # every other), and to collapse a fully-ticked selection back to the empty default.
+                _compose.toggle_forage_take_species(species, _take_basket_keys(basket))
             rebuild.call()))
     block.add_child(HudWidgets.alloc_hint_label(
         _take_consequence_note(selection, single_pick, crop_is_default, crop_rung, committed,
@@ -1036,7 +1075,7 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
 ## One chip per named plant, written EXACTLY as the tile card writes it — the card's own icon, share
 ## and biomass-clause consts, so the two surfaces cannot come to spell one stand two ways.
 func _take_chip_entries(basket: Array[Dictionary], selection: PackedStringArray, single_pick: bool,
-        crop_is_default: bool, committed: String) -> Array:
+        committed: String) -> Array:
     var entries: Array = []
     for entry in basket:
         var species := String(entry.get("species", ""))
@@ -1054,36 +1093,54 @@ func _take_chip_entries(basket: Array[Dictionary], selection: PackedStringArray,
                 float(entry.get("standing_biomass", 0.0))))
         else:
             face += HudFloraVocab.TAKE_CHIP_UNKNOWN_BIOMASS
+        # **NO TOOLTIP.** A hover that restates the chip verbatim earns nothing and costs the row it
+        # covers — measured in play, `Tobacco Fields 57% (117)` hovering over the row beneath itself.
+        # The face is already the whole of what this control knows.
         entries.append({
             "species": species,
             "face": face,
-            "state": _take_chip_state(species, selection, single_pick, crop_is_default, committed),
-            "tooltip": face,
+            "state": _take_chip_state(species, selection, single_pick, committed),
         })
     return entries
 
-## The three states, and the DEFAULT one is the point: with nothing ticked anywhere every plant is
-## coming home, so every chip reads faintly INCLUDED rather than off. On the single-pick side the
-## resolved crop reads faintly picked while it is the game's own answer and fully picked once the
-## player has chosen it — the same distinction, one axis over.
+## The take selection as the CHIPS render it, which is what the model toggles against — a `String`
+## key per named plant, in the basket's own order.
+func _take_basket_keys(basket: Array[Dictionary]) -> PackedStringArray:
+    var keys := PackedStringArray()
+    for entry in basket:
+        var species := String(entry.get("species", ""))
+        if species != "":
+            keys.append(species)
+    return keys
+
+## **TWO STATES, AND AN EMPTY SELECTION IS EVERY PLANT SELECTED** — that is what it means on the wire,
+## so that is what it draws. A third *default-included* state existed only while a click on one chip
+## could move another; the toggle no longer can, so a settled selection and a picked one are one
+## state. The single-pick side is the same rule with a set of at most one: the committed crop, whether
+## the player named it or the resolver settled it, and nothing else.
 func _take_chip_state(species: String, selection: PackedStringArray, single_pick: bool,
-        crop_is_default: bool, committed: String) -> String:
+        committed: String) -> String:
     if single_pick:
-        if species != committed:
-            return HudFloraVocab.TAKE_STATE_EXCLUDED
-        return HudFloraVocab.TAKE_STATE_INCLUDED if crop_is_default \
-            else HudFloraVocab.TAKE_STATE_PICKED
-    if selection.is_empty():
-        return HudFloraVocab.TAKE_STATE_INCLUDED
-    return HudFloraVocab.TAKE_STATE_PICKED if selection.has(species) \
-        else HudFloraVocab.TAKE_STATE_EXCLUDED
+        return HudFloraVocab.TAKE_STATE_SELECTED if species == committed \
+            else HudFloraVocab.TAKE_STATE_UNSELECTED
+    if selection.is_empty() or selection.has(species):
+        return HudFloraVocab.TAKE_STATE_SELECTED
+    return HudFloraVocab.TAKE_STATE_UNSELECTED
 
 ## What the selection COSTS, in one sentence, and it differs by VERB: a gatherer leaves the plants
 ## nobody picked standing, a cultivator weeds them out of the ground. The cultivate-with-nothing-picked
 ## line NAMES the crop the game would settle on, because silence there is the game choosing for the
 ## player without saying so.
+##
+## **A REFUSED CLICK TAKES THIS SLOT.** Unticking the last remaining plant is declined, and the whole
+## reason this line exists is to state a consequence — so on the render straight after that press it
+## states the refusal instead, which is the one consequence the player is actually asking about. The
+## flag is cleared by the next landing toggle, so the sentence lasts exactly as long as the state it
+## describes. It cannot arise on the single-pick side: picking a crop replaces rather than removes.
 func _take_consequence_note(selection: PackedStringArray, single_pick: bool, crop_is_default: bool,
         crop_rung: String, committed: String, basket: Array[Dictionary]) -> String:
+    if not single_pick and _compose.forage_take_refused():
+        return HudFloraVocab.TAKE_NOTE_FORAGE_LAST_PLANT
     if single_pick:
         if crop_is_default:
             return HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % _take_display_name(
@@ -1754,12 +1811,6 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
     return SourceForecast.picker_products(float(deal["payoff"]) * output,
         float(deal["payoff_fodder"]) * output, SourceForecast.YIELD_ACCOUNT_FOOD,
         SourceForecast.scaled_material_rows(deal.get("payoff_material", []), output))
-
-## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
-## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
-## (`SourceForecast.source_yield_readout`) and the local hunt's pre-assign yield preview.
-func _is_overdraw(actual: float, sustainable: float) -> bool:
-    return actual > sustainable + HudComposeVocab.OVERHUNT_EPSILON
 
 ## The Extend-pen affordance on a selected PENNED herd (Grazing 2d-γ). While no ring is in flight
 ## (`pen_extend_progress == 0`) it offers an "Extend pen" button that issues `extend_pen <faction>

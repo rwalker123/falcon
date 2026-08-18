@@ -578,6 +578,17 @@ func _pelt_only_wolf_herd() -> Dictionary:
 		"food_per_animal": 0.0,
 		"per_worker_yield": 0.0,
 		"provisions_per_biomass": 0.0,
+		# **THE THREE TERMS THE QUANTISER NEEDS, AND THE WHOLE OF WHAT THIS PACK WAS MISSING.** A take
+		# is `min(room, crew carry, what stays) ÷ one body` and every one of those is a BIOMASS, so a
+		# species that pays no food is quantised exactly as a deer is — once it states a body. The
+		# harness used to DERIVE `body_mass` from `food_per_animal ÷ provisions_per_biomass`, which is
+		# `0/0` here, so the wolf reached the sheet with no quantum, both food paths bailed, and its
+		# material rows fell through to a crew-throughput line that scaled with hands the pack never
+		# reached. The carry is stated too rather than left to the fixture default, since these three
+		# and `WOLF_ROOM_AT_PEAK` are one arithmetic and a defaulted term is one nobody can check.
+		"body_mass": WOLF_BODY_MASS,
+		"per_worker_biomass": WOLF_CARRY,
+		"engage_rate": WOLF_ENGAGE_RATE,
 		# **WHAT ONE UNIT OF THIS PACK IS MADE OF** — the material twin of `provisions_per_biomass`,
 		# and the term the floor presets scale by the room at whatever floor is dragged.
 		"material_per_biomass": [
@@ -644,7 +655,32 @@ const WOLF_CAPACITY := 400.0
 ## display word, exactly as `fibre` is on the crop picker's basket rows.
 const WOLF_MATERIAL_ID := "hide"
 const WOLF_MATERIAL_PER_BIOMASS := 0.02
+## The crew-throughput rate the RETIRED expression clamped against. It is still on the fixture and
+## still read by the LAST-DITCH arm (a herd the wire describes too thinly to quantise), and it is
+## deliberately NOT the rate the quantised take implies — a fixture whose two answers coincide cannot
+## tell the fix from the bug.
 const WOLF_MATERIAL_PER_WORKER := 0.11
+
+## ---- THE PACK'S OWN BIOMASS ARITHMETIC ---------------------------------------------------------
+## Stated so the assertions can be read by eye, and sized so the REACH is what binds across every crew
+## the sheet can compose — which is the regime the defect lived in.
+##
+##   room at the food peak = 240 − 0.5 × 400 = 40 biomass  ⇒  2 whole wolves affordable
+##   one hunter carries      40 biomass                    ⇒  2 bodies haulable per hunter
+##   one hunter REACHES      0.25 wolves                   ⇒  floor(w × 0.25), never below one body
+##
+## So `killed` is ONE body from 1 to 7 hunters and TWO at 8 — flat, then a step — while the crew term
+## grows sevenfold underneath it. That is the same shape the edible Wild Boar pair proved the food
+## side with, which is why the wolf's claim can be stated the same way.
+const WOLF_BODY_MASS := 20.0
+const WOLF_CARRY := 40.0
+const WOLF_ENGAGE_RATE := 0.25
+## The crew the reach arm pins to ONE animal, and the first crew it does not — the A/B's two halves.
+const WOLF_PINNED_CREW := 7
+const WOLF_STEPPED_CREW := 8
+## `max(0, B − f·K)` at the food peak, restated so the oracle below divides by a number this file owns
+## rather than by one it recomposes out of the client's own `escapement_room`.
+const WOLF_ROOM_AT_PEAK := WOLF_BIOMASS - 0.5 * WOLF_CAPACITY
 ## What each INVESTMENT rung pays once it stands, per turn, in hides. Ascending Tame < Corral, in the
 ## only account this species has, so the ladder reads as a ladder rather than as two equal offers.
 const WOLF_PASTORAL_HIDE := 0.34
@@ -655,9 +691,20 @@ const WOLF_CORRAL_HIDE := 0.52
 const WOLF_RAID_HIDE_PER_ANIMAL := 0.55
 
 ## What the frame must read, composed at assertion time from the crew the sheet actually landed on
-## (see above) times the per-worker rate, at the reference band's full output.
+## (see above): the QUANTISED delivery in biomass, valued through the pack's per-biomass hide rate.
+##
+## **THE ORACLE IS `HerdFx.hunt_take_oracle`, WHICH IS UNIT-FREE.** It restates the sim's
+## `quantise_animal_take`, and that arithmetic never mentions an account — it is a room, a carry, a
+## quantum and a reach, all in whatever unit its caller states them in. Passing the pack's biomass
+## terms is therefore the same cross-check the deer's food terms get, not a second oracle.
 func _wolf_material_take(crew: int) -> float:
-	return float(crew) * WOLF_MATERIAL_PER_WORKER
+	# The reach is FLOORED AT ONE BODY (`SourceForecast.ENGAGED_AT_LEAST`) — a party that exists brings
+	# something into contact — which at this pack's 0.25 is the difference between a take and a zero at
+	# every crew under four.
+	return float(HerdFx.hunt_take_oracle(float(crew) * WOLF_CARRY, WOLF_ROOM_AT_PEAK,
+		WOLF_BODY_MASS,
+		maxf(floorf(float(crew) * WOLF_ENGAGE_RATE), SourceForecast.ENGAGED_AT_LEAST))["delivered"]) \
+		* WOLF_MATERIAL_PER_BIOMASS
 
 ## The wolf's RAID table: `delivers_food = false` on every rung — an INEDIBLE quarry, not a denial
 ## POLICY. It read as a DENIAL MISSION for the release between the trade axis's retirement and
@@ -1328,35 +1375,11 @@ func run(harness) -> void:
 	# makes this a claim about the ARM rather than about the fixture.
 	h._assert_hud("the verdict is the crew's, not a promise of a floor one hunter cannot reach",
 		Readout.verdict_severity(reaching_sheet) == SourceForecast.VERDICT_SLOW)
-	# (3) **THE ⚠ GATE AND THE VERDICT ARE TWO READINGS OF ONE PROJECTION**, which is the invariant
-	# `take_draws_down` was introduced to hold and the one an engagement-blind gate quietly breaks:
-	# here the party reaches 1.3 biomass of bird a turn against ~2.5 of regrowth, so the stock RISES —
-	# nothing is being overdrawn — while the carry alone (40 a turn) says it falls. Left carry-only the
-	# sheet could fly `⚠ OVERDRAWS THE HERD` directly above *it settles at 84% and holds there*.
-	#
-	# Asserted as the EQUALITY of the two answers, never as the literal `false`: the pairing is the
-	# claim, so a fixture that stops rising fails nothing while a gate that stops agreeing fails here.
-	var bound_model := SourceForecast.floor_chart_model(fowl_reaching,
-		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, "hunters",
-		LESSON_NOT_YET_LEARNED)
-	var verdict_falls: bool = float(bound_model["settled_fraction"]) \
-		< float(bound_model["stock_fraction"]) - SourceForecast.STOCK_FRACTION_EPSILON
-	var gate_falls := SourceForecast.take_draws_down(fowl_reaching,
-		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS)
-	# The precondition, without which the equality is satisfied by two blind answers agreeing: the
-	# CARRY-ONLY walk (`project_stock`'s unbounded default — the pre-fix reading) must say the opposite.
-	var carry_only_walk := SourceForecast.project_stock(
-		SourceForecast.regrowth_samples(fowl_reaching, HudComposeVocab.BARE_FORECAST_PREFIX),
-		FOWL_BIOMASS, FOWL_CAPACITY, SourceForecast.FLOOR_FOOD_PEAK,
-		float(FOWL_HUNTERS) * fowl_carry_biomass)
-	h._assert_hud("precondition: carry alone would call this herd drawn down (%.3f → %.3f), so the pair is not vacuous"
-		% [FOWL_BIOMASS / FOWL_CAPACITY, float(carry_only_walk["settled_fraction"])],
-		float(carry_only_walk["settled_fraction"])
-			< FOWL_BIOMASS / FOWL_CAPACITY - SourceForecast.STOCK_FRACTION_EPSILON)
-	h._assert_hud("the ⚠ gate and the verdict read ONE projection — both say the stock %s"
-		% ("falls" if verdict_falls else "rises"), gate_falls == verdict_falls)
+	# (3) **THE CLIENT-SIDE ⚠ GATE IS RETIRED.** A pair of assertions stood here holding that the gate
+	# and the verdict read ONE projection — which was the right invariant while the client answered the
+	# ⚠ at all. `LaborAssignment.overdraws` carries the whole verdict now (intent AND ability), so the
+	# projection is no longer one of the flag's inputs and there is nothing left for it to agree with.
+	# The claim that replaced it is `_overdraw_is_the_wires_answer` at the end of this chapter.
 
 	# 3r-b — THE SAME BIRD WITH NO ENGAGEMENT STAGE. This is the pen's wire value and the plant web's
 	# silence, and it must read exactly as the sheet always did: carry-bound, and capped at the two
@@ -1803,8 +1826,23 @@ func run(harness) -> void:
 	# ---- THE QUANTISED TAKE IS ONE EXPRESSION, AND IT NEVER FALLS AS THE CREW GROWS ---------------
 	_engagement_quantisation_assertions()
 
+	# ---- …AND THE MATERIAL ROWS ARE ROWS OF THAT SAME DELIVERY ------------------------------------
+	_material_take_tracks_delivery_assertions()
+
+	# ---- …AND SO ARE AN INEDIBLE QUARRY'S, NOW THAT THE QUANTISER IS STATED IN BIOMASS ------------
+	_wolf_material_take_assertions()
+
+	# ---- …AND THE EDIBLE QUARRY LANDS EXACTLY WHAT IT LANDED IN FOOD -----------------------------
+	_edible_take_is_unchanged_assertions()
+
+	# ---- THE ⚠ HAS ONE PRODUCER, AND THREE SURFACES READ IT ---------------------------------------
+	_overdraw_is_the_wires_answer()
+
 	# ---- THE RETREAT PRICES THE CREW, NOT ONLY THE TAKE ------------------------------------------
 	_retreat_crew_assertions()
+
+	# ---- …AND ONE FRAME OF IT, SO THE THREE ACCOUNTS CAN BE READ TOGETHER -------------------------
+	await _material_take_state()
 
 
 # =====================================================================================
@@ -2369,6 +2407,9 @@ func _unkillable_quarry_states() -> void:
 	_assert_actor_band("compose_band_switch_hunt (back)", ACTOR_FIRST_WORKER_INDEX,
 		ACTOR_FIRST_WORKER_CREW, ACTOR_HUNT_VERB, ACTOR_HUNT_RUNG)
 
+	# ---- …AND ONE FRAME OF THE ⚠, SO THE TWO HUD SURFACES CAN BE READ TOGETHER --------------------
+	await _overdraw_agreement_state()
+
 	# Reset the roster, the panel band and BOTH compose spines for whatever renders after this chapter.
 	h._hud._band_labor.set_panel_band({})
 	h._hud._band_labor._player_bands = []
@@ -2378,6 +2419,35 @@ func _unkillable_quarry_states() -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(ComposeState.NO_BAND_ENTITY)
 	h._hud.clear_selection()
+
+## **THE PICTURE THE DRIVEN BLOCK CANNOT TAKE** — the herd drawer's standing summary and the compose
+## sheet floating beside it, on ONE source, both flying the ⚠ the sim answered. Appended LAST in this
+## chapter so no earlier frame moves, and it hands the roster back the way the block above it does.
+##
+## **It is EVIDENCE, not the claim.** `_overdraw_is_the_wires_answer` is where the agreement is
+## asserted, because the third surface — the map's on-tile label — is painted into MapView's canvas
+## and no assertion can read a glyph back off one. What this frame adds is that a reader can see the
+## two HUD surfaces saying it, which a list of `PASS` lines cannot show.
+func _overdraw_agreement_state() -> void:
+	var band := _delivered_oracle_band()
+	band["labor_assignments"] = [_overdraw_row(true)]
+	var herd := ForageFx.floorify(_delivered_oracle_herd())
+	herd["id"] = OVERDRAW_HERD_ID
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(ComposeState.NO_BAND_ENTITY)
+	h._show_herd(herd)
+	h._compose_herd(herd, OVERDRAW_ROW_CREW, SourceForecast.FLOOR_MIN)
+	await h._settle()
+	await h._save("herd_overdraw_agrees")
+	# The two surfaces, read back off the RENDER rather than off the model — the drawer's standing
+	# summary is the tile card's tooltip producer, and the sheet's is the compose model.
+	h._assert_hud("the drawer's standing summary flies the ⚠ on this source",
+		Q.has_label_containing(h._hud.herd_assign_controls, HudComposeVocab.OVERHUNT_FLAG))
+	h._assert_hud("…and so does the sheet beside it, on the same source",
+		Readout.yields_text(h._hud._drawercompose._compose_sheet)
+			.to_upper().contains(HudComposeVocab.LOCAL_HUNT_OVERDRAW_NOTE.to_upper()))
 
 
 ## The three surfaces that used to say "many turns", each asserted by EQUALITY against a sentence
@@ -2497,6 +2567,39 @@ const BOAR_SWEEP_MIN_CREW := 1
 
 const BOAR_SWEEP_MAX_CREW := 12
 
+## ---- WHAT THE SAME BOAR PAYS BESIDE THE MEAT ---------------------------------------------------
+## The reported defect's OTHER half. One herder against five, changing nothing else, read
+## `FOOD 0.18 · BONE 0.08 · HIDE 0.56` and `FOOD 0.18 · BONE 0.40 · HIDE 2.80`: the food was the
+## model working — `floor(workers × 0.33)` with its floor of one pins every crew from 1 to 6 at
+## exactly ONE animal reached — and the materials were a pure crew-throughput line
+## (`min(workers × per_worker_material, escapement ceiling)`) that had met neither the
+## engagement→retreat arm nor the whole-animal quantiser, promising ~5× the truth at five herders.
+##
+## **THE PER-WORKER TERMS ARE COMPOSED, NEVER RESTATED.** One hunter moves
+## `per_worker_yield ÷ provisions_per_biomass` = 40 biomass a turn, so what they bring home in a
+## material is that throughput times the material's own per-biomass rate. A fixture that typed both
+## halves could describe a boar whose hide and whose mass disagree — which is exactly the
+## disagreement this readout exists to make visible.
+const BOAR_PER_WORKER_BIOMASS := BOAR_PER_WORKER_YIELD / BOAR_PROVISIONS_PER_BIOMASS
+
+## TWO materials, not one, at deliberately unequal rates: a one-material fixture passes just as well
+## against a producer that summed the vector into a single materials/turn figure — the retired trade
+## axis under a new name. Both are real `materials.json` ids, and the catalogue ships no display
+## name, so the id IS the display word.
+const BOAR_BONE_ID := "bone"
+
+const BOAR_HIDE_ID := "hide"
+
+const BOAR_BONE_PER_BIOMASS := 0.01
+
+const BOAR_HIDE_PER_BIOMASS := 0.05
+
+## The reported pair. Both crews reach ONE animal (`max(floor(1 × 0.33), 1)` and `floor(5 × 0.33)`),
+## so every account they bring home must read the SAME — while the retired crew line moved 5×.
+const BOAR_MATERIAL_LEAN_CREW := 1
+
+const BOAR_MATERIAL_FULL_CREW := 5
+
 ## The engagement-bound Wild Boar of the played report: wild, un-penned and food-paying, so the axis
 ## is provisions and the whole-animal quantum is real.
 func _quantisation_boar_herd() -> Dictionary:
@@ -2513,6 +2616,24 @@ func _quantisation_boar_herd() -> Dictionary:
 		"food_per_animal": BOAR_BODY_MASS * BOAR_PROVISIONS_PER_BIOMASS,
 		"provisions_per_biomass": BOAR_PROVISIONS_PER_BIOMASS,
 		"per_worker_yield": BOAR_PER_WORKER_YIELD,
+		# **THE CARRY IN BIOMASS, which is the unit the quantiser divides by.** Stated rather than left
+		# to `ForageFx.seed_growth_terms` because two of the three blocks that read this herd do NOT
+		# floorify it, and a fixture whose take depends on which caller reached it first is a fixture
+		# that can disagree with itself. It is the same identity the seeder would apply.
+		"per_worker_biomass": BOAR_PER_WORKER_BIOMASS,
+		# **WHAT ONE UNIT OF THIS BOAR IS MADE OF, and what one hunter therefore hauls of it.** The
+		# per-worker vector is the throughput times the per-biomass one, so the two halves of the
+		# pair cannot describe different animals.
+		"material_per_biomass": [
+			{"material_id": BOAR_BONE_ID, "amount": BOAR_BONE_PER_BIOMASS},
+			{"material_id": BOAR_HIDE_ID, "amount": BOAR_HIDE_PER_BIOMASS},
+		],
+		"per_worker_material": [
+			{"material_id": BOAR_BONE_ID,
+				"amount": BOAR_PER_WORKER_BIOMASS * BOAR_BONE_PER_BIOMASS},
+			{"material_id": BOAR_HIDE_ID,
+				"amount": BOAR_PER_WORKER_BIOMASS * BOAR_HIDE_PER_BIOMASS},
+		],
 		"engage_rate": BOAR_ENGAGE_RATE,
 		"stay_fraction": BOAR_STAY_FRACTION,
 		"tile_info": HerdFx.compact_herd_tile_fixture(),
@@ -2531,6 +2652,10 @@ const CADENCE_BODY_MASS := 10.0
 const CADENCE_PROVISIONS_PER_BIOMASS := 0.02
 
 const CADENCE_PER_WORKER_YIELD := 0.12
+
+## …and the same carry in BIOMASS, the unit the quantiser divides by. Composed from the pair above
+## rather than written down, so a re-dial of either cannot leave the two describing different hunters.
+const CADENCE_PER_WORKER_BIOMASS := CADENCE_PER_WORKER_YIELD / CADENCE_PROVISIONS_PER_BIOMASS
 
 const CADENCE_CAPACITY := 100.0
 
@@ -2562,6 +2687,8 @@ func _cadence_herd() -> Dictionary:
 		"food_per_animal": CADENCE_BODY_MASS * CADENCE_PROVISIONS_PER_BIOMASS,
 		"provisions_per_biomass": CADENCE_PROVISIONS_PER_BIOMASS,
 		"per_worker_yield": CADENCE_PER_WORKER_YIELD,
+		# The quantiser's carry, in its own unit — the boar fixture's note, for the same reason.
+		"per_worker_biomass": CADENCE_PER_WORKER_BIOMASS,
 		"tile_info": HerdFx.compact_herd_tile_fixture(),
 	}
 
@@ -2572,13 +2699,16 @@ func _boar_brought_down(workers: int) -> float:
 		SourceForecast.animals_engaged(workers, BOAR_ENGAGE_RATE),
 		BOAR_STAY_FRACTION)
 
-## The producer's delivered take for one crew, at the food peak with no build in flight.
+## The producer's delivered take for one crew, at the food peak with no build in flight — **read in
+## BIOMASS and stated in FOOD**, which is the unit every claim below is written in. The quantiser
+## answers in the unit a take is actually taken in; the species' own per-biomass rate is what values
+## it, and it is one published number rather than a second derivation.
 func _boar_delivered(band: Dictionary, herd: Dictionary, workers: int) -> float:
 	var take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
 		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE)
 	if not bool(take.get("available", false)):
 		return -1.0
-	return float(take["delivered"])
+	return float(take["delivered_biomass"]) * BOAR_PROVISIONS_PER_BIOMASS
 
 func _engagement_quantisation_assertions() -> void:
 	var band := _delivered_oracle_band()   # output_multiplier 1.0, so no morale factor muddies it
@@ -2656,13 +2786,414 @@ func _engagement_quantisation_assertions() -> void:
 		is_equal_approx(cadence_collection, CADENCE_BODIES_PER_TURN * cadence_fpa)
 			and is_equal_approx(cadence_ceiling, CADENCE_BODIES_PER_TURN * cadence_fpa))
 	var want_cadence := CADENCE_BODIES_PER_TURN * CADENCE_BODIES_PER_TURN * cadence_fpa
+	# The producer answers in BIOMASS — see `_boar_delivered` — so the claim is valued through the
+	# species' own per-biomass rate rather than restated in a second unit.
+	var cadence_delivered := float(cadence_take["delivered_biomass"]) \
+		* CADENCE_PROVISIONS_PER_BIOMASS
 	h._assert_hud("a crew that cannot carry a whole body lands %.4f food/turn, not the room's %.4f — got %.4f"
-			% [want_cadence, cadence_ceiling, float(cadence_take["delivered"])],
-		is_equal_approx(float(cadence_take["delivered"]), want_cadence))
+			% [want_cadence, cadence_ceiling, cadence_delivered],
+		is_equal_approx(cadence_delivered, want_cadence))
 	h._assert_hud("…and the body it cannot finish carrying is WASTE — %d%%, got %d%%"
 			% [int(round(CADENCE_WASTE_FRACTION * 100.0)),
 				int(round(float(cadence_take["waste_pct"]) * 100.0))],
 		is_equal_approx(float(cadence_take["waste_pct"]), CADENCE_WASTE_FRACTION))
+
+
+# =====================================================================================
+#  THE MATERIAL ROWS ARE ROWS OF THE SAME DELIVERY
+# =====================================================================================
+# Reported from play on the SAME Wild Boar herd, one herder against five with nothing else moved:
+#
+#   herders │ FOOD │ BONE │ HIDE
+#         1 │ 0.18 │ 0.08 │ 0.56
+#         5 │ 0.18 │ 0.40 │ 2.80
+#
+# **The food was the model working.** `floor(workers × 0.33)` with its floor of one pins every crew
+# from one to six at exactly ONE animal reached, so one boar comes home at both sizes and the take
+# steps only at seven. **The materials were a second expression** —
+# `min(workers × per_worker_material, escapement ceiling)`, a pure crew-throughput line that had met
+# neither the engagement→retreat arm nor the whole-animal quantiser — so the sheet promised roughly
+# 5× the truth at five herders while quoting the honest meat one line above it.
+#
+# The sim banks both accounts off ONE quantity (`systems/labor.rs`: `hunt_yield.apply(take.carried,
+# …)` beside `credit_material_yield(…, take.carried, …)`), so quote and payout provably disagreed.
+# The material rows are composed off the delivered biomass now — `SourceForecast.rescaled_accounts`,
+# the same crossing the fodder account already took — and the drift is unrepresentable rather than
+# merely unlikely.
+#
+# PNG-LESS AND DRIVEN, for the block above's reason: these are numbers, and a sheet quoting the wrong
+# ones renders a perfectly plausible readout.
+
+## The one FORAGE control this block needs — two foragers on the cash-crop patch, whose materials must
+## go on scaling LINEARLY with the crew. The plant web has no engagement stage and no whole-animal
+## quantum, so its food row and its material rows are both `min(workers × rate, ceiling)` against
+## matching ceilings and already track; the animal web's food row has three more arms, which is the
+## whole of why the shared expression was right there and wrong here.
+const FORAGE_LINEARITY_LEAN_CREW := 1
+
+const FORAGE_LINEARITY_FULL_CREW := 2
+
+## A yield model's rows, read back as `account -> per-turn value`. `yield_rows` keys a material row by
+## the material's own id, so one reader answers for all three accounts.
+func _model_accounts(model: Dictionary) -> Dictionary:
+	var out := {}
+	for row_variant in model.get(h._hud._drawercompose.YIELD_MODEL_ROWS, []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		out[String(row[SourceForecast.YIELD_ROW_ACCOUNT])] = float(row[SourceForecast.YIELD_ROW_VALUE])
+	return out
+
+## A per-material vector, read back the same way — for the RETIRED expression, which is still the
+## plant web's and is what the vacuity guard below quotes.
+func _material_amounts(rows: Array) -> Dictionary:
+	var out := {}
+	for row_variant in rows:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		out[String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY])] = \
+			float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY])
+	return out
+
+## Every account this crew brings home off the herd, through the REAL producer — so the claim is about
+## the sheet's own wiring rather than about a helper called in isolation.
+func _boar_accounts(band: Dictionary, herd: Dictionary, workers: int) -> Dictionary:
+	return _model_accounts(h._hud._drawercompose._hunt_yield_model(
+		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE))
+
+## …and its plant twin.
+func _forage_accounts(band: Dictionary, tile: Dictionary, workers: int) -> Dictionary:
+	return _model_accounts(h._hud._drawercompose._forage_yield_model(
+		band, tile, SourceForecast.FLOOR_FOOD_PEAK, workers))
+
+## **THE ONE FRAME OF THE REPORTED SHEET** — the engagement-bound Wild Boar at the crew the report
+## names, so the three accounts can be read beside each other rather than only asserted apart. It is
+## the corrected reading: `0.18 FOOD · 0.09 BONE · 0.45 HIDE` at five herders, the same three numbers
+## one herder brings home, because both crews reach the same single animal.
+##
+## **A FRAME CANNOT CARRY THE CLAIM** — a sheet quoting 5× the hide renders a perfectly plausible
+## readout, which is why the block above is PNG-less and driven — but it can carry the SHAPE, and a
+## reader who has never seen the three accounts on one hunt sheet has no picture to check against.
+func _material_take_state() -> void:
+	var band := _delivered_oracle_band()
+	h._hud._band_labor._player_bands = [band]
+	h._hud._band_labor._player_band = band
+	var herd := _quantisation_boar_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(herd)
+	h._compose_herd(herd, BOAR_MATERIAL_FULL_CREW, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_material_take")
+	h._assert_compose_sheet_fits("herd_hunt_material_take")
+
+func _material_take_tracks_delivery_assertions() -> void:
+	var band := _delivered_oracle_band()   # output_multiplier 1.0, so no morale factor muddies it
+	var herd := ForageFx.floorify(_quantisation_boar_herd())
+	var fpa := BOAR_BODY_MASS * BOAR_PROVISIONS_PER_BIOMASS
+	var accounts: Array[String] = [SourceForecast.YIELD_ACCOUNT_FOOD, BOAR_BONE_ID, BOAR_HIDE_ID]
+	# The producer prices its own herd at the composed kit, and every claim below is a RELATION
+	# between rendered numbers — but a repricing that moved `per_worker_yield` under the fixture's
+	# `food_per_animal` would put the lean crew's carry below one body and break the equality for a
+	# reason that has nothing to do with materials. So the no-op is asserted rather than assumed.
+	h._hud._compose.reset_hunt_source()
+	var priced: Dictionary = h._hud._drawercompose._hunt_priced_herd(herd, band)
+	h._assert_hud("the kit prices this fixture as-is, so the crews below are the fixture's own",
+		is_equal_approx(float(priced["per_worker_yield"]), BOAR_PER_WORKER_YIELD)
+			and is_equal_approx(float(priced["stay_fraction"]), BOAR_STAY_FRACTION))
+
+	# (0) THE PRECONDITION THE WHOLE PAIR RESTS ON — the ENGAGEMENT arm is what binds at BOTH crews,
+	#     and both therefore reach the SAME single animal. Without it the equality below is satisfied
+	#     by every account collapsing to zero, or by a herd whose arms happen to coincide.
+	var room_bodies := (BOAR_BIOMASS - SourceForecast.FLOOR_FOOD_PEAK * BOAR_CAPACITY) \
+		/ BOAR_BODY_MASS
+	for workers in [BOAR_MATERIAL_LEAN_CREW, BOAR_MATERIAL_FULL_CREW]:
+		var stayed := _boar_brought_down(workers)
+		var haulable := maxf(floorf(float(workers) * BOAR_PER_WORKER_YIELD / fpa), 1.0)
+		h._assert_hud(("the engagement arm is what binds at %d herders — %.2f brought down against"
+				+ " %d haulable and %.2f affordable") % [workers, stayed, int(haulable), room_bodies],
+			stayed < haulable and stayed < room_bodies)
+	h._assert_hud("…and both crews reach the SAME one animal, which is why the meat does not move",
+		is_equal_approx(_boar_brought_down(BOAR_MATERIAL_LEAN_CREW),
+			_boar_brought_down(BOAR_MATERIAL_FULL_CREW)))
+
+	# (0b) VACUITY GUARD — the RETIRED expression really did move between these two crews, so the
+	#      equality below is a claim about the fix rather than about a fixture that cannot tell them
+	#      apart. It is the real `expected_materials`, still the plant web's, asked of this herd.
+	var boar_forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	var lean_crew_line := _material_amounts(SourceForecast.expected_materials(
+		float(BOAR_MATERIAL_LEAN_CREW), boar_forecast,
+		SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
+	var full_crew_line := _material_amounts(SourceForecast.expected_materials(
+		float(BOAR_MATERIAL_FULL_CREW), boar_forecast,
+		SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
+	h._assert_hud(("the retired crew-throughput line DID move between these crews (%.2f → %.2f hide),"
+			+ " so this fixture can tell the two expressions apart")
+			% [float(lean_crew_line[BOAR_HIDE_ID]), float(full_crew_line[BOAR_HIDE_ID])],
+		not is_equal_approx(float(lean_crew_line[BOAR_HIDE_ID]),
+			float(full_crew_line[BOAR_HIDE_ID])))
+
+	# (1) THE REPORTED PAIR — food AND materials flat across a five-fold crew, because the crew
+	#     reaches one boar either way.
+	var lean := _boar_accounts(band, herd, BOAR_MATERIAL_LEAN_CREW)
+	var full := _boar_accounts(band, herd, BOAR_MATERIAL_FULL_CREW)
+	for account in accounts:
+		h._assert_hud("%s is a live reading at %d herders (got %.4f) — not a collapse to zero"
+				% [account, BOAR_MATERIAL_LEAN_CREW, float(lean.get(account, 0.0))],
+			float(lean.get(account, 0.0)) > 0.0)
+		h._assert_hud("%s reads the same at %d and %d herders — %.4f against %.4f"
+				% [account, BOAR_MATERIAL_LEAN_CREW, BOAR_MATERIAL_FULL_CREW,
+					float(lean.get(account, 0.0)), float(full.get(account, 0.0))],
+			is_equal_approx(float(lean.get(account, 0.0)), float(full.get(account, 0.0))))
+
+	# (2) THE SEVENTH HUNTER STEPS THE ANIMAL COUNT, AND ALL THREE ACCOUNTS STEP WITH IT. This is the
+	#     half that proves they are COUPLED rather than both frozen — an equality claim alone passes
+	#     on a readout that has stopped moving at all.
+	var stepped := _boar_accounts(band, herd, BOAR_CREW_ONE_ANIMAL)
+	var step := _boar_brought_down(BOAR_CREW_ONE_ANIMAL) \
+		/ _boar_brought_down(BOAR_MATERIAL_FULL_CREW)
+	h._assert_hud("the %dth hunter really steps the animal count (×%.2f)"
+			% [BOAR_CREW_ONE_ANIMAL, step], is_equal_approx(step, 2.0))
+	for account in accounts:
+		h._assert_hud("%s doubles with the animal count — %.4f against %.4f"
+				% [account, float(stepped.get(account, 0.0)), float(full.get(account, 0.0)) * step],
+			is_equal_approx(float(stepped.get(account, 0.0)), float(full.get(account, 0.0)) * step))
+
+	# (3) THE PLANT WEB MUST NOT HAVE MOVED, and the claim is made in two ways because either alone
+	#     is weak. Its materials are still `expected_materials`' own answer to the digit — the shared
+	#     clamp is right there, where the food row is the same linear `min` against a matching
+	#     ceiling — and they still scale LINEARLY with the crew, which is the property the animal
+	#     web's engagement bound is what breaks.
+	var tile := ForageFx.floorify(ForageFx.cash_crop_gather_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var patch_materials: Array[String] = [ForageFx.CASH_PATCH_FIBRE_ID,
+		ForageFx.CASH_PATCH_TOBACCO_ID]
+	var patch_forecast := SourceForecast.forecast_inputs(tile, SourceForecast.SOURCE_KIND_FORAGE,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	var lean_patch := _forage_accounts(band, tile, FORAGE_LINEARITY_LEAN_CREW)
+	var full_patch := _forage_accounts(band, tile, FORAGE_LINEARITY_FULL_CREW)
+	var lean_clamp := _material_amounts(SourceForecast.expected_materials(
+		float(FORAGE_LINEARITY_LEAN_CREW), patch_forecast,
+		SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
+	for material in patch_materials:
+		h._assert_hud("the patch's %s is a live reading (got %.4f)"
+				% [material, float(lean_patch.get(material, 0.0))],
+			float(lean_patch.get(material, 0.0)) > 0.0)
+		h._assert_hud("…and it is still the crew-throughput clamp to the digit — %.4f against %.4f"
+				% [float(lean_patch.get(material, 0.0)), float(lean_clamp.get(material, 0.0))],
+			is_equal_approx(float(lean_patch.get(material, 0.0)),
+				float(lean_clamp.get(material, 0.0))))
+		h._assert_hud("…and it still scales LINEARLY with the crew — %.4f against %.4f at %d foragers"
+				% [float(full_patch.get(material, 0.0)),
+					float(lean_patch.get(material, 0.0)) * 2.0, FORAGE_LINEARITY_FULL_CREW],
+			is_equal_approx(float(full_patch.get(material, 0.0)),
+				float(lean_patch.get(material, 0.0)) * 2.0))
+
+
+# =====================================================================================
+#  AN INEDIBLE QUARRY'S MATERIALS ARE ROWS OF THE SAME DELIVERY
+# =====================================================================================
+# The half of the arc above the boar pair could not reach. A wolf's provisions rate is a structural
+# `0`, so the FOOD-keyed quantiser divided by nothing, both food paths bailed, and its material rows
+# fell through to `min(workers × per_worker_material, ceiling)` — a pure crew-throughput line carrying
+# ONE of the take's four bounds. It was therefore over-quoted at every crew the reach arm pinned, on
+# the one quarry whose materials are the entire point of hunting it.
+#
+# The quantiser is stated in BIOMASS now (`min(room, carry, what stays) ÷ one body`, every term a
+# biomass), so a pack that publishes a body is priced by exactly the `min` a deer is.
+#
+# PNG-LESS AND DRIVEN, for the boar block's reason: a sheet quoting seven times the hide renders a
+# perfectly plausible readout, and only a relation between two crews' numbers can say otherwise.
+func _wolf_material_take_assertions() -> void:
+	var band := _delivered_oracle_band()   # output_multiplier 1.0, so no morale factor muddies it
+	var wolf := ForageFx.floorify(_pelt_only_wolf_herd())
+	# (0) THE PRECONDITION — the REACH is what binds at both crews, and both therefore reach the SAME
+	#     single animal. Without it the equality below is satisfied by a pack whose arms coincide.
+	var haulable := maxf(floorf(float(WOLF_PINNED_CREW) * WOLF_CARRY / WOLF_BODY_MASS), 1.0)
+	var affordable := WOLF_ROOM_AT_PEAK / WOLF_BODY_MASS
+	h._assert_hud(("the reach arm binds at %d hunters — 1 brought down against %d haulable and"
+			+ " %.1f affordable") % [WOLF_PINNED_CREW, int(haulable), affordable],
+		SourceForecast.ENGAGED_AT_LEAST < haulable and SourceForecast.ENGAGED_AT_LEAST < affordable)
+	# (0b) VACUITY GUARD — the RETIRED expression really did move across this crew range, so the
+	#      equality below is a claim about the fix rather than about a pack that cannot tell the two
+	#      expressions apart. It is the real `expected_materials`, still the plant web's.
+	var wolf_forecast := SourceForecast.forecast_inputs(wolf, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	var retired_one := _material_amounts(SourceForecast.expected_materials(
+		1.0, wolf_forecast, SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
+	var retired_many := _material_amounts(SourceForecast.expected_materials(
+		float(WOLF_PINNED_CREW), wolf_forecast, SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
+	h._assert_hud(("the retired crew-throughput line DID move across this range (%.2f → %.2f hide),"
+			+ " so the pack can tell the two expressions apart")
+			% [float(retired_one[WOLF_MATERIAL_ID]), float(retired_many[WOLF_MATERIAL_ID])],
+		not is_equal_approx(float(retired_one[WOLF_MATERIAL_ID]),
+			float(retired_many[WOLF_MATERIAL_ID])))
+	# (1) FLAT ACROSS EVERY CREW THE REACH ARM PINS, and equal to the harness's own quantiser oracle
+	#     — so the claim is a cross-check against the sim's arithmetic rather than a restatement of
+	#     the client's.
+	var pinned_take := _wolf_material_take(1)
+	h._assert_hud("the pinned take is a live reading (got %.4f hide) — not a collapse to zero"
+		% pinned_take, pinned_take > 0.0)
+	for crew in range(1, WOLF_PINNED_CREW + 1):
+		var quoted := float(_wolf_accounts(band, wolf, crew).get(WOLF_MATERIAL_ID, 0.0))
+		h._assert_hud("%d hunter(s) bring home the one animal's %.4f hide, not %.4f — got %.4f"
+				% [crew, pinned_take, float(crew) * WOLF_MATERIAL_PER_WORKER, float(quoted)],
+			is_equal_approx(float(quoted), pinned_take))
+	# (2) …AND IT STEPS WHEN THE ANIMAL COUNT DOES. The half that proves the row is COUPLED to the
+	#     delivery rather than merely frozen — an equality claim alone passes on a readout that has
+	#     stopped moving at all.
+	var stepped_take := _wolf_material_take(WOLF_STEPPED_CREW)
+	h._assert_hud("the %dth hunter really steps the animal count (×%.2f)"
+			% [WOLF_STEPPED_CREW, stepped_take / pinned_take],
+		is_equal_approx(stepped_take / pinned_take, 2.0))
+	h._assert_hud("…and the hide steps with it — %.4f against %.4f"
+			% [float(_wolf_accounts(band, wolf, WOLF_STEPPED_CREW).get(WOLF_MATERIAL_ID, 0.0)),
+				stepped_take],
+		is_equal_approx(float(_wolf_accounts(band, wolf, WOLF_STEPPED_CREW)
+			.get(WOLF_MATERIAL_ID, 0.0)), stepped_take))
+	# (3) AND IT STILL STATES NO FOOD. The crossing is stated in biomass now, so the plausible wrong
+	#     fix is one that credits every account from it — which would put `0.00 FOOD` back on a wolf.
+	h._assert_hud("…and the pack still pays into no food account at all",
+		not _wolf_accounts(band, wolf, WOLF_PINNED_CREW).has(SourceForecast.YIELD_ACCOUNT_FOOD))
+
+## Every account this crew brings home off the pack, through the REAL producer — the wolf twin of
+## `_boar_accounts`, so the two quarries' claims are made about the same seam.
+func _wolf_accounts(band: Dictionary, herd: Dictionary, workers: int) -> Dictionary:
+	return _model_accounts(h._hud._drawercompose._hunt_yield_model(
+		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE))
+
+## **AN EDIBLE QUARRY'S TAKE IS UNCHANGED BY THE BIOMASS RE-EXPRESSION, AND NOTHING ELSE IN THE CORPUS
+## SAYS SO.** Measured: pointing the quantiser's quantum at a DIFFERENT pairing of the wire's own
+## fields moved FORTY-ODD frames and failed not one assertion — every claim on those sheets is a
+## relation, a presence or a word, so a take quietly quoting the wrong number renders a perfectly
+## plausible readout. This is the magnitude claim that closes it.
+##
+## **The expectation is the RETIRED expression, in the RETIRED units** — the food-keyed quantiser this
+## arc replaced, restated here — because the whole claim is that the two forms are one answer. The
+## ceiling it divides is the composed one (`herd_axis_rates`), which is not what is under test; the
+## quantum and the crew term are the FIXTURE's own published food pair.
+##
+## **THE FIXTURE IS THE REFERENCE HERD FOR A REASON**: `ForageFx.floorify` rewrites
+## `provisions_per_biomass` from the authored peak ceiling, and this herd also STATES `body_mass`
+## outright, so the two pairings genuinely disagree on it — which is the one shape that can tell the
+## quantum's two candidate readings apart. That disagreement is asserted first, or the claim below is
+## satisfied by any herd whose fixture happens to close.
+func _edible_take_is_unchanged_assertions() -> void:
+	var band := _delivered_oracle_band()   # output_multiplier 1.0
+	var herd := ForageFx.floorify(HerdFx.herd_fixture())
+	var fpa := float(herd["food_per_animal"])
+	var rate := float(herd["provisions_per_biomass"])
+	var per_worker := float(herd["per_worker_yield"])
+	var stated_body := float(herd[SourceForecast.FORECAST_BODY_MASS_KEY])
+	h._assert_hud(("precondition: this fixture's two pairings disagree — stated body %.1f against the"
+			+ " food pair's %.1f") % [stated_body, fpa / rate],
+		not is_equal_approx(stated_body, fpa / rate))
+	var ceiling := float(SourceForecast.herd_axis_rates(herd,
+		SourceForecast.FLOOR_FOOD_PEAK)["next_ceiling"])
+	for crew in [EDIBLE_UNCHANGED_LEAN_CREW, EDIBLE_UNCHANGED_FULL_CREW]:
+		var collection := float(crew) * per_worker
+		# The retired form: `killed = min(room ÷ one body, whole bodies haulable)` — this herd states
+		# no engagement stage, so the third arm is unbounded and drops out — then
+		# `delivered = killed × min(one body, the crew's carry)`, the pack's hold charged PER BODY.
+		var killed := minf(ceiling / fpa, maxf(floorf(collection / fpa), 1.0))
+		var want := killed * minf(fpa, collection)
+		var got := float(_wolf_accounts(band, herd, crew).get(
+			SourceForecast.YIELD_ACCOUNT_FOOD, 0.0))
+		h._assert_hud("%d hunter(s) land the food-keyed quantiser's own %.4f — got %.4f"
+			% [crew, want, got], is_equal_approx(got, want))
+
+## Two crews on opposite sides of one body of carry, so the claim covers the `min(one body, the crew's
+## carry)` clamp in BOTH directions rather than only the arm that happens to bind.
+const EDIBLE_UNCHANGED_LEAN_CREW := 1
+const EDIBLE_UNCHANGED_FULL_CREW := 8
+
+
+# =====================================================================================
+#  THE ⚠ HAS ONE PRODUCER, AND THREE SURFACES READ IT
+# =====================================================================================
+# Reported from play as two surfaces disagreeing about ONE source: the tile card's tooltip read
+# *"Sustainable +0.63/turn — overdrawing"* while the compose sheet three inches away read *"This crew
+# can't draw it that low. It settles at 92%."* The tooltip read the wire; the sheet computed a fourth
+# predicate of its own — `actual > sustainable` (the comparison `snapshot.fbs` forbids outright, since
+# a first harvest of a stocked source exceeds one turn's regrowth at EVERY floor) gated on a
+# client-side reachability walk.
+#
+# `LaborAssignment.overdraws` carries the whole verdict — intent AND ability — so the claim here is
+# that every surface flying the mark reads that one field and nothing else.
+#
+# PNG-LESS AND DRIVEN: a sheet flying the wrong ⚠ renders a perfectly ordinary readout, and the map
+# badge is painted into a canvas no assertion can read a glyph back off.
+
+## The reported shape, stated as a row rather than derived: a crew the sim says IS drawing the herd
+## down, whose `actual` sits BELOW its `sustainable` — the first-turn reading the retired comparison
+## would have called clean — and, on the other half of the A/B, a kill turn's spike with the sim
+## saying nothing is being overdrawn, which is what that comparison cried wolf on.
+const OVERDRAW_ROW_ACTUAL_UNDER := 0.63
+const OVERDRAW_ROW_SUSTAINABLE := 1.40
+const OVERDRAW_ROW_ACTUAL_SPIKE := 4.10
+const OVERDRAW_ROW_CREW := 3
+
+func _overdraw_row(overdraws: bool) -> Dictionary:
+	return {
+		"kind": SourceForecast.LABOR_KIND_HUNT,
+		"workers": OVERDRAW_ROW_CREW,
+		"fauna_id": OVERDRAW_HERD_ID,
+		"floor": SourceForecast.FLOOR_MIN,
+		"has_yield": true,
+		"actual_yield": OVERDRAW_ROW_ACTUAL_UNDER if overdraws else OVERDRAW_ROW_ACTUAL_SPIKE,
+		"realized_yield": OVERDRAW_ROW_ACTUAL_UNDER if overdraws else OVERDRAW_ROW_ACTUAL_SPIKE,
+		"sustainable_yield": OVERDRAW_ROW_SUSTAINABLE,
+		"overdraws": overdraws,
+	}
+
+## The reported herd — the oracle deer under another id, so the sheet composes a real take over it and
+## the ⚠ is the only thing the A/B moves.
+const OVERDRAW_HERD_ID := "game_deer_63"
+
+func _overdraw_is_the_wires_answer() -> void:
+	var band := _delivered_oracle_band()
+	var herd := ForageFx.floorify(_delivered_oracle_herd())
+	herd["id"] = OVERDRAW_HERD_ID
+	var prior_band: Dictionary = h._hud._band_labor.player_band()
+	var prior_bands: Array = h._hud._band_labor._player_bands
+	for wire_answer in [true, false]:
+		var row := _overdraw_row(bool(wire_answer))
+		var worked_band := band.duplicate(true)
+		worked_band["labor_assignments"] = [row]
+		h._hud._band_labor._player_band = worked_band
+		h._hud._band_labor._player_bands = [worked_band]
+		# (0) THE PRECONDITION — on BOTH halves the retired comparison disagrees with the wire, so
+		#     neither claim below can pass on a client that is still deriving. `true` rides an actual
+		#     BELOW its sustainable (the first harvest the schema names) and `false` a kill turn's
+		#     spike above it.
+		var derived: bool = float(row["actual_yield"]) > float(row["sustainable_yield"])
+		h._assert_hud("precondition: `actual > sustainable` says %s where the wire says %s"
+				% [str(derived), str(wire_answer)], derived != bool(wire_answer))
+		# (1) THE TILE CARD'S TOOLTIP AND THE DRAWER'S STANDING SUMMARY — one producer, the one the
+		#     reported tooltip came out of.
+		var readout := SourceForecast.source_yield_readout(row, SourceForecast.LABOR_KIND_HUNT)
+		h._assert_hud("the worked-row readout flies the wire's ⚠ (%s)" % str(wire_answer),
+			bool(readout["warn"]) == bool(wire_answer))
+		# (2) THE MAP BADGE — the same row, through the renderer's own reader, since a plate is drawn
+		#     to a canvas and cannot be read back.
+		h._assert_hud("…and so does the map's on-tile yield label (%s)" % str(wire_answer),
+			BandOverlayRenderer.yield_label_overdraw(row) == bool(wire_answer))
+		# (3) THE COMPOSE SHEET — the surface that used to disagree, asked through the real producer.
+		var model: Dictionary = h._hud._drawercompose._hunt_yield_model(worked_band, herd,
+			SourceForecast.FLOOR_MIN, OVERDRAW_ROW_CREW, SourceForecast.IMPROVEMENT_NONE)
+		h._assert_hud("…and so does the compose sheet, which is where the two surfaces parted (%s)"
+			% str(wire_answer),
+			bool(model[DrawerComposeController.YIELD_MODEL_OVERDRAW]) == bool(wire_answer))
+		# (4) THE AGREEMENT ITSELF — the pairing IS the claim, so it is asserted rather than left to
+		#     three separate readings that happen to coincide.
+		h._assert_hud("…and all three surfaces say the SAME thing about this one source",
+			bool(readout["warn"]) == BandOverlayRenderer.yield_label_overdraw(row)
+				and bool(readout["warn"])
+					== bool(model[DrawerComposeController.YIELD_MODEL_OVERDRAW]))
+	h._hud._band_labor._player_band = prior_band
+	h._hud._band_labor._player_bands = prior_bands
 
 
 # =====================================================================================

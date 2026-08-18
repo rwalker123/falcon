@@ -221,6 +221,38 @@ static func apply_pill_button(button: Button, selected: bool = false) -> void:
 	focus.draw_center = false
 	button.add_theme_stylebox_override("focus", focus)
 
+## How much of a QUIET pill's fill and border survive while it is unselected: none of it. Named rather
+## than written as a bare `0.0` so the rest state reads as a deliberate suppression of the chrome
+## `apply_pill_button` draws, rather than as a colour somebody forgot to fill in.
+const PILL_QUIET_ALPHA := 0.0
+
+## A pill that says SELECTED and nothing else — the forage sheet's species chips. Selected is
+## `apply_pill_button`'s own filled, bordered pill, so *which one am I on?* keeps ONE answer across
+## this HUD; UNSELECTED draws no fill and no border at all, i.e. plain text sitting in the row.
+##
+## **THE GEOMETRY IS IDENTICAL IN BOTH STATES, which is why the quiet box is drawn TRANSPARENT rather
+## than not drawn at all.** A `StyleBoxEmpty` carries no content margins, so a chip would lose its
+## padding the moment it was deselected and the whole row would jump on every toggle.
+##
+## **THE HOVER KEEPS THE RESTING PILL'S CHROME, and that is the one thing a bare label cannot do.** A
+## control with no decoration at rest says nothing about being pressable, so the box comes back under
+## the pointer — an AFFORDANCE, not a state, gone again the moment the pointer leaves.
+static func apply_pill_toggle(button: Button, selected: bool = false) -> void:
+	if button == null:
+		return
+	if selected:
+		apply_pill_button(button, true)
+		return
+	var quiet := _pill_stylebox(
+		Color(CHIP_BG, PILL_QUIET_ALPHA), Color(LINE_SOFT, PILL_QUIET_ALPHA))
+	button.add_theme_stylebox_override("normal", quiet)
+	button.add_theme_stylebox_override("disabled", quiet)
+	button.add_theme_stylebox_override("hover", _pill_stylebox(CHIP_BG, SIGNAL_DEEP))
+	button.add_theme_stylebox_override("pressed", _pill_stylebox(CHIP_BG, SIGNAL_DEEP))
+	var focus := _pill_stylebox(CHIP_BG, SIGNAL)
+	focus.draw_center = false
+	button.add_theme_stylebox_override("focus", focus)
+
 ## Header treatment: transparent fill with a hairline divider under the title,
 ## giving each card its "title bar" separation from the body.
 static func header_stylebox() -> StyleBoxFlat:

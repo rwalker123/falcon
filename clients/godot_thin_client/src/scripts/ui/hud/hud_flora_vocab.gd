@@ -484,31 +484,28 @@ const STOCK_PHASE_CLAUSE_FORMAT := "%s · %s"
 # take. A plant the wire quotes no biomass for renders NO clause rather than a `(0)`.
 const TAKE_CHIP_UNKNOWN_BIOMASS := ""
 
-# **THREE STATES, AND THE THIRD IS THE POINT.** With nothing ticked anywhere every plant is coming
-# home, so every chip reads faintly INCLUDED; ticking one makes it PICKED and makes every other chip
-# EXCLUDED. Ticking every species collapses back to the default rather than being a separate state,
-# since the two mean the same thing — and the commit sends an EMPTY selection there, which is what the
-# sim reads as "the whole basket".
-const TAKE_STATE_INCLUDED := "included"
-const TAKE_STATE_PICKED := "picked"
-const TAKE_STATE_EXCLUDED := "excluded"
+# **TWO STATES, AND THE PILL IS THE WHOLE OF THE AFFORDANCE.** A chip is either selected — the filled,
+# bordered pill — or it is not, in which case it is plain text with no decoration at all. A source with
+# no explicit selection renders as EVERY plant selected, because that is what it means: the crew carries
+# the whole basket home.
+#
+# **THERE WAS A THIRD STATE AND IT ONLY EXISTED TO PAPER OVER THE MODEL.** With the empty selection
+# rendered as *faintly included*, clicking one chip made the set exactly `{that plant}` and every other
+# chip changed with it — correct by the model and indefensible on screen, since the player pressed one
+# thing and a different thing moved. The chips are plain toggles on the thing you clicked now
+# (`ComposeState.toggle_forage_take_species` expands the implicit-all before it removes), so a
+# default-included chip and a picked one are the same state and there is nothing for a third to say.
+#
+# **THE CHECKBOX GLYPHS WENT WITH IT.** A tick mark beside a filled pill is a second signal for one
+# fact, and the pill is the one the eye reads first. What still tells the two MODES apart is the row's
+# own key (`Carry home` against `Crop`), the consequence line beneath it, and the fact that a
+# single-pick row never lights more than one chip.
+const TAKE_STATE_SELECTED := "selected"
+const TAKE_STATE_UNSELECTED := "unselected"
 
-# **THE MARK CARRIES MULTI-VS-SINGLE, BECAUSE THE LABEL WILL NOT.** Foraging takes several plants;
-# cultivating commits the ground to exactly one — the same chips in the same place doing two different
-# things, and a player who reads the row as multi-select on a Cultivate has been told the wrong thing
-# about a ~25-turn commitment. So the SHAPE says how many may be lit (a square box takes several, a
-# round one takes one), and the COLOUR reinforces it.
-const TAKE_MARK_MULTI_ON := "☑"
-const TAKE_MARK_MULTI_OFF := "☐"
-const TAKE_MARK_SINGLE_ON := "◉"
-const TAKE_MARK_SINGLE_OFF := "○"
-
-# The chip's own type sizes — the work row's, like every other compact list on this sheet, with the
-# mark one step up so it stays legible at the HUD's real scale.
+# The chip's own type size — the work row's, like every other compact list on this sheet.
 const TAKE_CHIP_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE
-const TAKE_CHIP_MARK_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE + 1
 const TAKE_CHIP_SEPARATION := 4
-const TAKE_CHIP_MARK_GAP := 4
 
 # The row's own key, in the compose sheet's field-row idiom.
 const TAKE_ROW_LABEL := "Carry home"
@@ -516,14 +513,24 @@ const TAKE_ROW_LABEL_SINGLE := "Crop"
 
 # ---- THE CONSEQUENCE LINE — one sentence under the row, and it differs by VERB -------------------
 #
-# The row states what is ticked; this states what that COSTS. Four sentences, because foraging and
-# cultivating do opposite things to the plants nobody picked: a gatherer leaves them standing, a
-# cultivator weeds them out. The cultivate-with-nothing-picked line names the crop the sim would
-# settle on, because silence there is the game choosing for the player without saying so.
+# The row states what is ticked; this states what that COSTS. Foraging and cultivating do opposite
+# things to the plants nobody picked: a gatherer leaves them standing, a cultivator weeds them out. The
+# cultivate-with-nothing-picked line names the crop the sim would settle on, because silence there is
+# the game choosing for the player without saying so.
 const TAKE_NOTE_FORAGE_ALL := "The whole basket comes home."
 const TAKE_NOTE_FORAGE_NARROWED := "Everything else is left standing."
 const TAKE_NOTE_CULTIVATE_NARROWED_FORMAT := "%s weeds the rest out of the ground."
 const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground would be committed to %s."
+
+# **THE REFUSAL, AND IT TAKES THE CONSEQUENCE LINE'S OWN SLOT.** Unticking the last remaining plant is
+# refused: a crew that carries nothing home says exactly what assigning zero gatherers already says, so
+# it is a useless state rather than a meaningful one. **A control that refuses without explaining is
+# worse than one that allows the mistake**, so the refusal SPEAKS — it replaces the line that would
+# otherwise say what the selection costs, because in that moment what the player needs is why their
+# click did nothing. It names the equivalent act rather than merely forbidding, the same
+# what's-missing-plus-the-remedy shape every gate reason on this sheet takes.
+const TAKE_NOTE_FORAGE_LAST_PLANT := \
+	"A gather must carry something home — set the gatherers to none instead."
 
 # **THE NUMBERS FOR A NARROWED CREW ARE COMPOSED FROM THE WIRE'S PER-SPECIES RATES.**
 # `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet once sat still

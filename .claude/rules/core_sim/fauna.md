@@ -474,8 +474,11 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > **Consequences worth stating, because they surprise:**
 > - **The first harvest of an untouched source is its accumulated stock, not a rate**, so `actual`
 >   legitimately exceeds `sustainable` at *every* floor, the peak included. The overdraw ⚠ is
->   `components::floor_overdraws` (`floor < K/2`) — a fact about where you stop — never
->   `actual > sustainable`.
+>   `components::take_overdraws` — a floor below the food peak (`floor < K/2`, where you stop)
+>   **and** a party that can actually draw the herd down to it (`fauna::hunt_take_overdraws`) — never
+>   `actual > sustainable`. See `.claude/rules/core_sim/yield-forecast.md` → "THE ⚠ IS INTENT **AND**
+>   ABILITY" for why the second conjunct is a question about throughput rather than about this turn's
+>   take.
 > - **A single turn cannot see the husbandry ladder.** At `B = K` the ceiling at the peak is `K/2` on
 >   every rung, because `r` cancels. See the callout in `husbandry.md`, which has said this about the
 >   pen since the pen was constant escapement; it is now true of the wild hunt too.

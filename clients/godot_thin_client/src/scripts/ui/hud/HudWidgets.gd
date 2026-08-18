@@ -1746,33 +1746,38 @@ static func build_dashed_rule() -> Control:
 
 # ---- THE SPECIES CHIPS — which plants a forage crew carries home ---------------------------------
 #
-# `HudFloraVocab` owns the words, the marks and the three states; this owns the CONTROL. One chip per
-# named plant in the tile's basket, in a wrapping flow so a five-plant basket costs a second line
-# rather than a horizontal scroll.
+# `HudFloraVocab` owns the words and the two states; this owns the CONTROL. One chip per named plant in
+# the tile's basket, in a wrapping flow so a five-plant basket costs a second line rather than a
+# horizontal scroll.
 #
 # **A CHIP IS A `MarginContainer` CELL, NOT A `Button`, and for the policy rung's structural reason**:
-# two font sizes and two colours cannot live in one `Button.text`, and a `Button` is not a `Container`
-# so it will not grow to fit children. The Button underneath keeps the box, the click, the focus and
-# the disabled state; the mark + face stack is painted over it at `MOUSE_FILTER_IGNORE` so the press
-# reaches through.
+# a `Button` is not a `Container`, so it will not grow to fit a child, and the face is a child here
+# because its type size and its ink are set independently of the box's. The Button underneath keeps the
+# box, the click, the focus and the disabled state; the face is painted over it at
+# `MOUSE_FILTER_IGNORE` so the press reaches through.
 #
-# **THE MARK'S SHAPE SAYS HOW MANY MAY BE LIT** — a square box takes several (foraging), a round one
-# takes exactly one (cultivating) — because the two modes are the SAME chips in the SAME place doing
-# different things, and the row's label is not enough to carry that. The colour reinforces the shape
-# rather than replacing it: `SIGNAL` is this HUD's "live selection" everywhere else, and the single
-# pick takes `HEALTHY` so a player who glances at the mark alone still sees a different control.
+# **THE PILL IS THE WHOLE AFFORDANCE — there is no mark.** A filled, bordered pill says *selected* and
+# plain text says *not*, which is one signal for one fact; a checkbox glyph beside it was a second
+# saying the same thing, and it went with the third state it was drawn to distinguish
+# (`HudFloraVocab` → `TAKE_STATE_SELECTED`). The unselected chip draws NO box at rest —
+# `HudStyle.apply_pill_toggle`, not `apply_pill_button`, whose resting chrome would leave every chip
+# in a box and make the selection a fill difference rather than a presence one.
+#
+# **THE FACE IS INSET BY THE PILL'S OWN PADDING**, read off `HudStyle` rather than named again here.
+# The Button's stylebox content margins apply to `Button.text`, which is empty — so the drawn pill is
+# sized by the overlay's minimum, and an unpadded overlay put the pill's right edge exactly on the
+# face's closing parenthesis.
 const SPECIES_CHIP_META := "species_chip"
-## The chip's state (`HudFloraVocab.TAKE_STATE_*`), for a harness that must tell the DEFAULT
-## faintly-included chip from an explicitly PICKED one — a distinction the frame carries only in ink.
+## The chip's state (`HudFloraVocab.TAKE_STATE_*`), so a harness reads the selection off the CONTROL
+## rather than off ink it cannot measure.
 const SPECIES_CHIP_STATE_META := "species_chip_state"
 ## The row itself, so an assertion can find it without matching a plant's display name.
 const SPECIES_CHIP_ROW_META := "species_chip_row"
 
-## Build the chip row. Each `entries` element is `{species, face, state, tooltip}`; `on_toggle` fires
-## with the species key. `single_pick` chooses the mark family and nothing else — WHICH chips are lit
-## is the caller's answer, since only it knows whether the ground is being committed.
-static func build_species_chips(entries: Array, single_pick: bool,
-        on_toggle: Callable) -> HFlowContainer:
+## Build the chip row. Each `entries` element is `{species, face, state}`; `on_toggle` fires with the
+## species key. WHICH chips are lit is the caller's answer, since only it knows whether the ground is
+## being committed — and a chip carries no tooltip, its face already being the whole of what it knows.
+static func build_species_chips(entries: Array, on_toggle: Callable) -> HFlowContainer:
     var row := HFlowContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.set_meta(SPECIES_CHIP_ROW_META, true)
@@ -1785,58 +1790,33 @@ static func build_species_chips(entries: Array, single_pick: bool,
         var species := String(entry.get("species", ""))
         if species == "":
             continue
-        row.add_child(_species_chip(entry, species, single_pick, on_toggle))
+        row.add_child(_species_chip(entry, species, on_toggle))
     return row
 
-static func _species_chip(entry: Dictionary, species: String, single_pick: bool,
+static func _species_chip(entry: Dictionary, species: String,
         on_toggle: Callable) -> MarginContainer:
-    var state := String(entry.get("state", HudFloraVocab.TAKE_STATE_INCLUDED))
-    var picked := state == HudFloraVocab.TAKE_STATE_PICKED
+    var state := String(entry.get("state", HudFloraVocab.TAKE_STATE_SELECTED))
+    var selected := state == HudFloraVocab.TAKE_STATE_SELECTED
     var btn := Button.new()
     btn.text = ""
-    btn.tooltip_text = String(entry.get("tooltip", ""))
     btn.set_meta(SPECIES_CHIP_META, species)
     btn.set_meta(SPECIES_CHIP_STATE_META, state)
-    HudStyle.apply_pill_button(btn, picked)
+    HudStyle.apply_pill_toggle(btn, selected)
     btn.pressed.connect(func() -> void: on_toggle.call(species))
-    var mark := HudFloraVocab.TAKE_MARK_SINGLE_ON if single_pick else HudFloraVocab.TAKE_MARK_MULTI_ON
-    if state == HudFloraVocab.TAKE_STATE_EXCLUDED:
-        mark = HudFloraVocab.TAKE_MARK_SINGLE_OFF if single_pick \
-            else HudFloraVocab.TAKE_MARK_MULTI_OFF
-    # The three inks, and the DEFAULT state is the one that has to read as *faintly included* rather
-    # than as *off*: with nothing ticked anywhere every plant really is coming home, so the mark is
-    # the ON shape at the aside's own faint weight — an OFF shape there would say the opposite.
-    #
-    # **THE MARK MOVES A STEP WITH THE FACE, and that is what makes the DEFAULT and EXCLUDED chips
-    # tell apart at the HUD's real type size.** The two differ in shape by ~2px of a 13px glyph, so on
-    # the frame the distinction is carried by WEIGHT: default reads `INK_DIM` on both, excluded reads
-    # `INK_FAINT` on both. Leaving the two marks at one ink halves that gap for nothing.
-    var mark_tint := HudStyle.INK_DIM
-    var face_tint := HudStyle.INK_DIM
-    if picked:
-        mark_tint = HudStyle.HEALTHY if single_pick else HudStyle.SIGNAL
-        face_tint = HudStyle.INK
-    elif state == HudFloraVocab.TAKE_STATE_EXCLUDED:
-        mark_tint = HudStyle.INK_FAINT
-        face_tint = HudStyle.INK_FAINT
-    var cell := MarginContainer.new()
-    cell.add_child(btn)
+    var face := Label.new()
+    face.text = String(entry.get("face", ""))
+    face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    face.add_theme_color_override("font_color",
+        HudStyle.INK if selected else HudStyle.INK_DIM)
+    face.add_theme_font_size_override("font_size", HudFloraVocab.TAKE_CHIP_FONT_SIZE)
     var pad := MarginContainer.new()
     pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    var stack := HBoxContainer.new()
-    stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    stack.add_theme_constant_override("separation", HudFloraVocab.TAKE_CHIP_MARK_GAP)
-    stack.add_child(_species_chip_line(mark, mark_tint, HudFloraVocab.TAKE_CHIP_MARK_FONT_SIZE))
-    stack.add_child(_species_chip_line(String(entry.get("face", "")), face_tint,
-        HudFloraVocab.TAKE_CHIP_FONT_SIZE))
-    pad.add_child(stack)
+    pad.add_theme_constant_override("margin_left", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_right", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_top", HudStyle.PILL_PADDING_V)
+    pad.add_theme_constant_override("margin_bottom", HudStyle.PILL_PADDING_V)
+    pad.add_child(face)
+    var cell := MarginContainer.new()
+    cell.add_child(btn)
     cell.add_child(pad)
     return cell
-
-static func _species_chip_line(text: String, tint: Color, font_size: int) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    label.add_theme_color_override("font_color", tint)
-    label.add_theme_font_size_override("font_size", font_size)
-    return label
