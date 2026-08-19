@@ -443,6 +443,28 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > `fauna::hunt_escapement_ceiling` is the one source, and it is one expression parameterised by a
 > **floor**: `escapement_ceiling(floor, B, K)` — `max(0, B − floor·K)`, and **nothing else**. The herd
 > hands over the stock standing above the floor; the crew's throughput is the only other term.
+>
+> > **⛔ THE CEILING IS NO LONGER THE WHOLE TAKE — a GROWTH SHARE sits under it** (`§4.11`). The take is
+> > `max(the room above the floor, growth × (1 − floor))`, and **the build's eligibility gate reads the
+> > same expression** so a legal build target that yields nothing is unrepresentable. `escapement_ceiling`
+> > itself is untouched — the backstop is a `max` *around* it, on both webs.
+> >
+> > **Why it exists.** The floor is `floor · K` and a rung RAISES `K`, so a rung raises the floor while
+> > the herd stays the same size. Measured on aurochs begun exactly on its floor, the room reached zero
+> > at turn 6 with one herder, 3 with four and 2 with eight — *building faster starved you sooner* — and
+> > because the gate read that same room, **the tame then never completed at any crew size**. Five of the
+> > eleven tameable species are on the losing side of that race.
+> >
+> > **`(1 − floor)` is the scaling and there is deliberately NO new dial.** The player's own floor governs
+> > it: *you keep the share of the growth you were willing to take.* At `floor = 1.0` it pays **nothing**,
+> > so *leave the whole herd standing* keeps meaning exactly that — at the take **and** at the gate, with
+> > no special case. A flat share would have made a full floor cull every turn.
+> >
+> > **THE ESCAPEMENT PREDICATE WAS SPLIT, and the half that did NOT move is the point.** It fed two
+> > seams. The **lesson** keeps the pure room, because `learn_multiplier`'s self-limit is load-bearing —
+> > a floor just under `1.0` deliberately learns at nearly ×2 while taking almost nothing, and its doc
+> > forbids clamping it. Widening that seam would have made a full floor free ×2 learning for ever. Only
+> > the **build's** gate reads the backstop.
 > **THE BUILD IS NOT IN IT AT ALL** (`docs/plan_standing_upkeep.md` §2.2): a build has its own crew,
 > so neither the ceiling nor the hunters' throughput carries a build term — `hunt_escapement_ceiling`
 > takes no `improvement` and no ladder, and nothing beside it does either. (It carried none even while

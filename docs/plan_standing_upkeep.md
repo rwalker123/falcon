@@ -1041,6 +1041,24 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   `0.5` would give ~53, which reads as *"never lost"* while a rung's benefit is still binary. **It
   becomes much less load-bearing once §4's symmetric partial credit lands**, because a rung sliding
   back turns into a fading payout rather than a status you lose — so it is not worth over-tuning now.
+- **ANSWERED in §4.11 — a RUNG RAISING THE CEILING RAISES THE FLOOR WITH IT, and that was fatal.**
+  The escapement floor is `floor_fraction × K` and a rung multiplies `K`, so the floor climbs while the
+  herd stays the size it was. It is not a slow squeeze: because the build's own eligibility gate read
+  the room above the floor, room reaching zero **closed the gate**, and a tame begun on its floor
+  **never completed at any crew size** — turn 6 at one herder, turn 3 at four, turn 2 at eight, so
+  *building faster starved you sooner*. Five of the eleven tameable species are on the losing side of
+  that race; only the fast breeders clear it comfortably.
+  > **The take is now `max(room above the floor, growth × (1 − floor))`, and the build gate reads the
+  > same expression**, which makes *a legal build target that yields nothing* unrepresentable rather
+  > than merely avoided. **No new dial**: the player's own floor scales it — *you keep the share of the
+  > growth you were willing to take* — so `floor = 1.0` still pays nothing at both seams with no special
+  > case. A flat share would have made *leave the whole herd standing* cull every turn.
+  >
+  > **The escapement predicate fed TWO seams and only one moved.** The lesson keeps the pure room:
+  > `learn_multiplier`'s self-limit is deliberate — a floor just under `1.0` learns at nearly ×2 while
+  > taking almost nothing, and its doc forbids clamping it — so widening that seam would have made a
+  > full floor free ×2 learning for ever. Global across both webs, because a build-scoped rule would be
+  > a rung changing the draw.
 - **ANSWERED in §4.11 — the scale primitives' bounded set is ONE primitive with a per-branch
   reading.** `SourceLoad` is the only variant: the animal branch reads keeper-loads
   (`head count / animals_per_herder`), the plant branch tender-loads
