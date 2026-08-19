@@ -28,9 +28,15 @@ class_name ForecastQuery
 ## listener re-reads through `view()` and cannot render a reply the seam has already superseded.
 signal answered(subject: String)
 
-# ---- the two questions, spelled as `bridge/query.rs` matches them ---------------------------------
+# ---- the three questions, spelled as `bridge/query.rs` matches them -------------------------------
 const KIND_HUNT_TRIP := "hunt_trip_forecast"
 const KIND_DENIAL_RAID := "denial_raid_forecast"
+## **THE RESIDENT CREW'S TAKE CURVE** — one row per crew size, each row the WHOLE crew's animals per
+## turn with the engagement, the retreat and the FIGHT already resolved. It is the Assign Herders
+## panel's question, and it is not the trip sheet's: a raid is priced at
+## `combat_config.expedition_danger_multiplier` and a band hunting its own range is not, so the two
+## replies differ by half again in the fight term and neither may borrow the other's rows.
+const KIND_HUNT_CREW_TAKE := "hunt_crew_take"
 
 # ---- what a sheet gets back -----------------------------------------------------------------------
 
@@ -100,6 +106,12 @@ static func subject_of(kind: String, band_id: int, herd_id: String) -> String:
 
 ## …and the exact key, which adds everything the answer actually depends on. Two renders with the same
 ## key ask nothing new; any difference is a fresh question.
+##
+## **A CURVE KEYS ON ITS CAP, NOT ON THE COMPOSED CREW** (`KIND_HUNT_CREW_TAKE`). That reply carries
+## one row per crew from 1 to `max_workers`, so stepping the stepper does not change the question —
+## and keying it on the stepper would put a fresh round trip behind every `+` press for an answer the
+## seam is already holding. The parameter is the crew term either way, which is why there is one
+## `key_of` rather than a second spelling of it.
 static func key_of(subject: String, kit_id: String, party_workers: int, floor: float) -> String:
 	return "%s:%s:%d:%f" % [subject, kit_id, party_workers, floor]
 

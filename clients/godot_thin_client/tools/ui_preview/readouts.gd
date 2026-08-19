@@ -219,6 +219,16 @@ static func verdict_severity(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.VERDICT_META)
 	return String((node as Control).get_meta(HudWidgets.VERDICT_META, "")) if node != null else ""
 
+## **THE READOUT'S TAKE ESTIMATE** — `≈0.75 Wild Boar/turn`, plus its band where the sim published
+## one. `""` where the model states none, which is the whole plant web and the hunt web's degrade
+## branch, so an absence claim and a magnitude claim are both sayable off one reader.
+##
+## By `HudWidgets.TAKE_ESTIMATE_META`, never by face: the line is a plain section Label beside several
+## others, and its face is the live number a claim is usually about.
+static func take_estimate_text(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.TAKE_ESTIMATE_META)
+	return (node as Label).text if node is Label else ""
+
 ## Every Label text under `root`, in tree order — the rung face's lines as they are stacked.
 static func face_lines(root: Node) -> Array[String]:
 	var lines: Array[String] = []

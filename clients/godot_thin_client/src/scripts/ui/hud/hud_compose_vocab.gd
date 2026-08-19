@@ -1463,3 +1463,59 @@ const HUNT_WINDOW_MAX_TURNS := 12
 # Animals-per-turn rate formatting: up to 2 decimals, trailing zeros/dot stripped (1.90→"1.9", 1.00→"1",
 # 0.65→"0.65"). `String.num` already trims (unlike the padded food-rate formatter).
 const HUNT_ANIMAL_RATE_DECIMALS := 2
+
+# ---- THE PRE-COMMIT TAKE ESTIMATE (`ForecastQuery.KIND_HUNT_CREW_TAKE`) -------------------------
+# **ONE LINE ABOVE THE YIELDS, and it is the only reading on this sheet that carries a BAND.** The
+# panel lets the player move the crew before committing, so the take has to be re-answered as the
+# stepper moves — and the client cannot answer it: the fight is damage over durability against the
+# quarry's defense and the wound ledger it is standing there with, and `combat_config.hit_chance` is
+# deliberately unpublished. Composed here without it, the sheet read **1.92 food** where a Wild
+# Aurochs paid **0.84** to four hunters, and bone, fibre and hide were over by the same 2.3×.
+
+## The figure. `≈0.35 Wild Boar/turn` — the same `≈`-on-the-number split
+## `HUNT_ANIMAL_RATE_FACE_FORMAT` already makes, so the take and the delivered rate beside it cannot
+## qualify their numbers two different ways.
+const HUNT_TAKE_ESTIMATE_FORMAT := HUNT_ANIMAL_RATE_FACE_FORMAT + " " + HUNT_ANIMAL_RATE_UNIT_FORMAT
+
+## …and the band, appended. **IT IS OMITTED ENTIRELY WHERE THE BAND IS DEGENERATE** — which is every
+## reading at the shipped tuning (`combat_config.hit_chance = 1.0`), both stochastic stages answering
+## their degenerate identity at any quantile. Range chrome that always renders manufactures doubt the
+## model does not have, so `SourceForecast.hunt_take_band_is_degenerate` decides whether it appears at
+## all rather than the numbers being printed equal to each other.
+const HUNT_TAKE_BAND_FORMAT := " · %s – %s"
+
+## **WHILE THE ANSWER IS IN FLIGHT** — the local hunt's twin of `RAID_FORECAST_PENDING`, and separate
+## for that constant's own reason: the two sheets are waiting on different questions, and a shared
+## "waiting…" would be the only word on either that did not name what it was waiting for. It stands in
+## place of the readout's numbers; the chart, the crew targets and the combat gate above it are
+## composed from wire terms and stay.
+const HUNT_TAKE_PENDING := "Costing what this crew brings down…"
+
+# ---- WHICH LIMIT IS BINDING, AND ITS REMEDY ----------------------------------------------------
+# **IT REPLACES THE `settles at N%` ADVISORY ON THIS WEB.** That sentence is composed from the
+# projection walk, which carries the engagement and the retreat and NOT the fight — so on the one web
+# where the fight is half the answer it named the wrong remedy at the wrong size ("12 herders would
+# reach the floor"). The three limits below are all the take actually has, and the smallest of them is
+# the one worth stating.
+
+## **THE HERD IS UNDER THE FLOOR THE PLAYER SET** (`biomass < floor × carryingCapacity`). The same
+## slot, never an extra block: a herd cannot be below its floor and limited by something else at the
+## same time, so the player is never in both states.
+const HUNT_LIMIT_BELOW_FLOOR := "Below your breeding floor — taking the surplus only."
+
+## THE HERD BINDS — the take already equals what grows back, so hands added past it eat the stock.
+const HUNT_LIMIT_SUSTAINABLE_FORMAT := "The herd breeds back ≈%s %s a turn — more hands would take from the stock, not the surplus."
+
+## THE FLOOR BINDS — there is little standing above it to take, and the floor is the player's own dial.
+const HUNT_LIMIT_ROOM_FORMAT := "Only ≈%s %s stand above your floor — lower it, or let the herd grow."
+
+## THE CREW BINDS — the one limit with hands as its remedy, and the one the ⚠-amber severity is for.
+## It names the crew NOUN the stepper above it uses (`hunters` / `herders`), so the remedy points at a
+## control on this sheet rather than at an abstraction.
+const HUNT_LIMIT_CREW_FORMAT := "These %s bring down ≈%s %s a turn — add hands to take more."
+
+## **THE CAPTION OVER THE YIELDS SAYS WHICH POINT OF THE BAND THEY ARE QUOTED AT.** They are single
+## numbers by decision — four bands would assert four independent rolls, and the four accounts are
+## fixed conversions of ONE carried biomass — so the caption is what keeps them honest beside a take
+## line that does carry a range.
+const YIELD_HEADER_AT_LIKELY_SUFFIX := " · at the likely take"

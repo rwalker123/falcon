@@ -15,6 +15,10 @@ extends RefCounted
 ## It ends by CLOSING the panel and handing the reference band back, so a chapter appended after it
 ## starts where every other one does.
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 116
+
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
 ## `Main`'s reservation rules, borrowed rather than restated — see `_push_band_dock`. `Main` itself is

@@ -1190,6 +1190,56 @@ static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary
         return
     ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind)
 
+## **WHAT TAMING IS BUYING, ON THE HUSBANDRY ROW ITSELF** — the ceiling, the best breeding rate and the
+## sustainable yield, the three things a rung on this ladder actually moves.
+##
+## **IT BELONGS HERE AND NOT ON THE ASSIGN-HERDERS SHEET.** That panel answers *how many hands, at what
+## floor, for what this turn*; what the LADDER buys is a property of the herd, true whether or not
+## anybody is composing an assignment against it, and the sheet's Work zone has neither the height nor
+## the width to carry three more readings. Collapsed into the row's hover it costs the card nothing.
+##
+## **ALL THREE CLIMB WHILE THE TAME RUNS**, which is the point of stating them together: the take falls
+## during a build because the floor beneath it is rising, and a player reading the take alone reads
+## that as the herd being poor. The rising CLAUSE is stated only while `buildTurnsRemaining` says the
+## climb is under way; no magnitude, the wire publishing no next-turn capacity to quote.
+##
+## `""` — and no hover — for a herd whose curve or body the wire did not describe, which is the same
+## silence every other derived reading on this card keeps.
+const HUSBANDRY_PAYOFF_HEADING := "What taming is buying"
+const HUSBANDRY_PAYOFF_CEILING_FORMAT := "Ceiling %s"
+const HUSBANDRY_PAYOFF_BREEDING_FORMAT := "Breeds back up to ≈%s a turn"
+const HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT := "Sustainable %s a turn at the best-harvest floor"
+const HUSBANDRY_PAYOFF_CLIMBING := "All three are climbing while the taming runs."
+static func husbandry_payoff_hover(herd_data: Dictionary, prefix: String) -> String:
+    var body_mass := float(herd_data.get(prefix + SourceForecast.FORECAST_BODY_MASS_KEY, 0.0))
+    var capacity := float(herd_data.get(prefix + SourceForecast.FORECAST_CAPACITY_KEY, 0.0))
+    var samples := SourceForecast.regrowth_samples(herd_data, prefix)
+    if body_mass <= 0.0 or capacity <= 0.0 or not SourceForecast.has_growth_curve(samples):
+        return ""
+    var quarry := SourceForecast.herd_display_name(herd_data)
+    # The BEST the curve ever pays, at the stock fraction it pays it at — the herd's own peak, not the
+    # rate at whatever floor a sheet happens to be composing. That is what a rung raises.
+    var peak_biomass := maxf(SourceForecast.regrowth_at(samples,
+        SourceForecast.growth_peak_fraction(samples)), 0.0)
+    var lines: Array[String] = [
+        HUSBANDRY_PAYOFF_HEADING,
+        HUSBANDRY_PAYOFF_CEILING_FORMAT % SourceForecast.stock_face(capacity, body_mass, quarry),
+        HUSBANDRY_PAYOFF_BREEDING_FORMAT % SourceForecast.stock_face(peak_biomass, body_mass,
+            quarry),
+    ]
+    # …and what that regrowth is worth in the store, at the floor the ladder is actually run at. A
+    # species that pays no food states no such line rather than a zero.
+    var provisions := float(herd_data.get(
+        prefix + SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+    if provisions > 0.0:
+        lines.append(HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT % SourceForecast.format_yield(
+            maxf(SourceForecast.regrowth_at(samples, SourceForecast.FLOOR_FOOD_PEAK), 0.0)
+                * provisions))
+    if int(herd_data.get(prefix + SourceForecast.FORECAST_BUILD_TURNS_KEY,
+            SourceForecast.BUILD_TURNS_NONE_TO_STATE)) > SourceForecast.BUILD_TURNS_NONE_TO_STATE:
+        lines.append(HUSBANDRY_PAYOFF_CLIMBING)
+    return "\n".join(lines)
+
 ## **WHAT AN UNDER-KEPT RUNG IS DOING, IN ONE WORD, PER WEB** — the state that rides the built row's
 ## `⚠`. The pair is the work board's two notes reduced to their verb (`WORK_ROW_UNDER_KEPT_NOTE` says
 ## *this ground is slipping*, `WORK_ROW_UNDER_HERDED_NOTE` *animals drifting off*), so the card's word
@@ -2433,6 +2483,13 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build)])
             note_under_kept_hover(ctx, HUSBANDRY_ROW, herd_data, herd_prefix,
                 SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_TAME)
+            # …and, on a row with no REMEDY to state, what the ladder is buying. The remedy wins the
+            # slot outright when both apply: a herd shedding animals is not asking what a finished
+            # Tame would be worth.
+            if ctx != null and not ctx.row_tooltips.has(HUSBANDRY_ROW):
+                var payoff := husbandry_payoff_hover(herd_data, herd_prefix)
+                if payoff != "":
+                    ctx.row_tooltips[HUSBANDRY_ROW] = payoff
             if not tamed:
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
                 # …and, on a BLOCKED queue alone, what frees it. This is the web the measured case

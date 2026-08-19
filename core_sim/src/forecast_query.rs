@@ -44,8 +44,9 @@
 
 use bevy::prelude::World;
 use sim_runtime::commands::{
-    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow,
-    HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow, QueryPayload, QueryReply,
+    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, HuntCrewTakeQuery,
+    HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow,
+    QueryPayload, QueryReply,
 };
 
 use crate::combat_config::CombatConfigHandle;
@@ -53,7 +54,7 @@ use crate::components::{floor_is_valid, BandEquipment, BandId};
 use crate::creatures_config::CreaturesConfigHandle;
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle, KitJob};
 use crate::expedition_config::{ExpeditionConfig, ExpeditionConfigHandle};
-use crate::fauna::{Herd, HerdRegistry, HuntingParty};
+use crate::fauna::{Herd, HerdRegistry, HuntDraw, HuntingParty};
 use crate::fauna_config::{FaunaConfig, FaunaConfigHandle};
 use crate::labor_config::LaborConfigHandle;
 use crate::orders::FactionId;
@@ -67,6 +68,7 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
     match query {
         QueryPayload::HuntTripForecast(ask) => answer_hunt_trip_forecast(world, ask),
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
+        QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
     }
 }
 
@@ -99,7 +101,36 @@ fn resolve_ask(
     if party_workers == 0 {
         return Err(query_failure(query_error::INVALID_PARTY));
     }
+    let (herd, wear, kit) = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
 
+    // **How this band's gear divides the party it is asking about** — resolved once and read by
+    // both halves below, so the fight it is quoted and the haul it is quoted describe the same
+    // people (`equipment.md` → "the partly-equipped party").
+    let coverage = equipment.coverage(&kit, party_workers as f32, &wear);
+    let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
+    let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
+    Ok(ResolvedAsk {
+        herd,
+        party,
+        per_worker_haul,
+    })
+}
+
+/// **The three things every query names before a party can be built** — the quarry, the asking
+/// band's live wear ledger, and the kit it is carrying — or the token that says which one failed.
+///
+/// Shared by the two party-priced verbs and by the crew-take curve, so *"which band is asking"* and
+/// *"is that a hunt kit"* cannot come to be answered two ways. It deliberately stops short of
+/// building the party: the curve resolves one **per crew size** (coverage depends on how many people
+/// the kit has to stretch over) and at the **base** tuning rather than the expedition's.
+fn resolve_quarry_and_kit(
+    world: &mut World,
+    faction_id: u32,
+    band_id: u64,
+    herd_id: &str,
+    kit_id: &str,
+) -> Result<(Herd, BandEquipment, crate::equipment_config::KitChoice), QueryReply> {
     // The herd, cloned: the projections run on a private copy of the quarry anyway, and holding a
     // borrow of the registry across the resource reads below would fight the borrow checker for
     // nothing.
@@ -127,18 +158,7 @@ fn resolve_ask(
             return Err(query_failure(query_error::KIT_WRONG_JOB))
         }
     };
-
-    // **How this band's gear divides the party it is asking about** — resolved once and read by
-    // both halves below, so the fight it is quoted and the haul it is quoted describe the same
-    // people (`equipment.md` → "the partly-equipped party").
-    let coverage = equipment.coverage(&kit, party_workers as f32, &wear);
-    let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
-    let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
-    Ok(ResolvedAsk {
-        herd,
-        party,
-        per_worker_haul,
-    })
+    Ok((herd, wear, kit))
 }
 
 /// The asking band's live wear ledger — `None` if no band of `faction` carries `band_id`.
@@ -471,6 +491,107 @@ fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery)
         },
         party_needed,
     })
+}
+
+/// **THE HUNT TAKE CURVE** — one row per crew size, answering *"if I put N herders on this herd,
+/// how many animals do they bring down next turn?"* for every N the panel's stepper can reach.
+///
+/// # Why a curve and not a per-hunter rate
+///
+/// Because the take is **not linear in crew size**, and measuring the shipped roster is what
+/// established that rather than an argument about it. The take is
+/// `min(w × fight_rate, max(floor(w × engage_rate), 1) × stay_fraction)`: the fight half is exactly
+/// linear in the crew, the engagement half is a **staircase** that is flat across whole runs of crew
+/// sizes and steps at integer boundaries, and which of the two binds changes *within* the stepper's
+/// own range. On the shipped Wild Boar (`engage_rate 0.33`) crews of 1 through 6 all bring down
+/// `0.75` animals/turn — a per-hunter reading spanning 6× across six adjacent stepper positions. On
+/// Wild Aurochs the binding term flips from the fight to the engagement between crews 8 and 11 and
+/// back at 12, so even sampling the endpoints would miss a 28% error sitting between them.
+///
+/// A scalar cannot carry that, and the **band** cannot be carried by one either: both stochastic
+/// stages are binomials, so the spread is `O(√w)` and *shrinks* per hunter as the crew grows. At the
+/// shipped `hit_chance = 1.0` it collapses to a point and no test would notice the difference — which
+/// is exactly why it must not be published in a shape that is only correct at today's tuning.
+///
+/// # It is the RESIDENT band's answer, at the base tuning
+///
+/// [`answer_hunt_trip_forecast`] prices a **detached** party at
+/// [`crate::combat_config::CombatConfig::expedition_tuning`] (1.5× lethality as shipped), because a
+/// raid far from home is bloodier. A band hunting its own range is not on a raid, so the party here
+/// resolves at the base tuning — the same one `advance_labor_allocation`'s Hunt arm fights at. The
+/// two differ by half again in the fight term; borrowing the trip sheet's rows for this panel would
+/// have been wrong by that much.
+///
+/// # The party is re-resolved per crew size, and that is a term rather than an accident
+///
+/// [`crate::equipment_config::EquipmentConfig::coverage`] divides the kit the band actually holds
+/// across the people sent, so a band with five spears fields a different *mix* at four hunters than
+/// at twelve — a third source of curvature, and it lands in the curve for free because each row
+/// builds its own party.
+fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryReply {
+    if !floor_is_valid(ask.floor) {
+        return query_failure(query_error::INVALID_FLOOR);
+    }
+    let (herd, wear, kit) = match resolve_quarry_and_kit(
+        world,
+        ask.faction_id,
+        ask.band_id,
+        &ask.herd_id,
+        &ask.kit_id,
+    ) {
+        Ok(resolved) => resolved,
+        Err(failure) => return failure,
+    };
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let fauna = world.resource::<FaunaConfigHandle>().get();
+    let combat = world.resource::<CombatConfigHandle>().get();
+    let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+    // The reported band's width — the same readout lever every other quantile pair on this channel
+    // is drawn at (`combat_config.forecast_range_sigmas`).
+    let sigmas = combat.forecast_range_sigmas;
+    let per_crew = (1..=ask.max_workers)
+        .map(|workers| {
+            let coverage = equipment.coverage(&kit, workers as f32, &wear);
+            let party = crate::fauna::PartyResolution {
+                equipment: &equipment,
+                coverage: &coverage,
+                wear: &wear,
+                intrinsic,
+                // **BASE, not `expedition_tuning`** — see this function's doc.
+                tuning: combat.tuning(),
+                hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+            }
+            .party_against(crate::equipment_config::Quarry::Mass(herd.body_mass));
+            // **The take's own three stages** ([`crate::fauna::resolve_hunt_engagement`]), which is
+            // literally the function `systems::hunt_take` runs — not a second reading of it. The
+            // wound ledger it hands back is dropped: a query resolves the fight the turn will and
+            // mutates nothing.
+            let brought_down = |draw_sigmas: f32| {
+                crate::fauna::resolve_hunt_engagement(
+                    &herd,
+                    &fauna,
+                    &party,
+                    workers,
+                    ask.floor,
+                    HuntDraw::Quantile {
+                        sigmas: draw_sigmas,
+                    },
+                )
+                .fight
+                .brought_down
+            };
+            HuntCrewTakeRow {
+                workers,
+                // Monotone non-decreasing in the quantile at every stage, so `low <= likely <= high`
+                // is a property of the arithmetic rather than a clamp applied afterwards — the same
+                // invariant `fauna::forecast_take_range` holds.
+                animals_low: brought_down(-sigmas.abs()),
+                animals_likely: brought_down(crate::combat::EXPECTED_STRIKES),
+                animals_high: brought_down(sigmas.abs()),
+            }
+        })
+        .collect();
+    QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew })
 }
 
 /// A refusal, as its token. One constructor so the reply shape cannot drift between the seven
@@ -1049,6 +1170,676 @@ mod tests {
              bloodier than a resident hunt — if this fails the test fixture has stopped \
              distinguishing the two cases at all"
         );
+    }
+
+    // --- THE HUNT TAKE CURVE ------------------------------------------------------------------
+
+    /// The fight-bound quarry: `defense 6`, `durability 150`, `engage_rate 0.17`, `body 120`. A
+    /// speared party's `w x (20 - 6) / 150` sits below its reach over most of the stepper's range,
+    /// so this is where the FIGHT decides the take — and where the client's fight-blind arithmetic
+    /// over-quoted by 2.3x.
+    const AUROCHS: &str = "Wild Aurochs";
+    /// The engagement-bound quarry, and the module's default fixture: `engage_rate 0.33` floors to
+    /// **one** animal for every crew from 1 to 6, so six adjacent stepper positions all take the
+    /// same 0.75 animals a turn. That flat run is `animals_engaged`'s `max(.., 1)`.
+    const BOAR: &str = "Wild Boar";
+    /// Far past every flat run and every binding flip on both fixtures, so a sweep sees the shape
+    /// rather than one arm of it.
+    const SWEEP_CREW: u32 = 24;
+
+    /// A herd of `species` fat enough that the escapement room never binds at the swept floors —
+    /// the point of these fixtures is the engagement and the fight, and a starved herd would hide
+    /// both behind the room.
+    /// Standing stock far above anything a party can take, so the escapement room never binds and
+    /// the take is decided by the engagement and the fight — which is what most of these fixtures
+    /// are about.
+    const FAT_HERD: f32 = 90_000.0;
+
+    /// A herd of `species` at a stated standing stock — [`FAT_HERD`] for the fixtures that want the
+    /// engagement and the fight to decide the take, and a thin one for the fixture that wants the
+    /// escapement room to.
+    fn herd_of_biomass(species: &str, body_mass: f32, biomass: f32) -> Herd {
+        Herd::new(
+            HERD.to_string(),
+            species.to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            biomass,
+            100_000.0,
+            0.0,
+            0.4,
+            body_mass,
+        )
+    }
+
+    /// **The largest crew any fixture here fields**, and the size the band is stocked for.
+    ///
+    /// [`BandEquipment::start_stocked`] is *one unit of everything*, and
+    /// [`EquipmentConfig::coverage`] spreads a kit over the party — so at a crew of six it arms one
+    /// hunter and sends five out bare-handed, and bare hands (`attack 1`) cannot clear a Wild Boar's
+    /// `defense 2`. A curve read off that band is all zeroes at every crew, and every assertion in
+    /// this section would pass on them. Stocking for the whole sweep is what makes the fixtures say
+    /// something.
+    const FULLY_ARMED_CREW: u32 = 200;
+
+    /// The fixture band's ledger — stocked for [`FULLY_ARMED_CREW`], so the kit reaches everybody at
+    /// every crew size swept. Read by the world builder *and* by the two direct-call helpers, so the
+    /// curve and the take it is compared against are quoted for the same gear.
+    fn fixture_wear(equipment: &EquipmentConfig) -> BandEquipment {
+        BandEquipment::start_stocked_for(equipment, FULLY_ARMED_CREW as f32)
+    }
+
+    /// A world with the fixture band (armed for the whole sweep) and one FAT herd of `species`.
+    fn world_hunting(species: &str, body_mass: f32) -> World {
+        world_hunting_biomass(species, body_mass, FAT_HERD)
+    }
+
+    /// [`world_hunting`] at a stated standing stock.
+    fn world_hunting_biomass(species: &str, body_mass: f32, biomass: f32) -> World {
+        let mut world = test_world();
+        let band = spawn_band(&mut world, FACTION, BAND);
+        let equipment = world.resource::<EquipmentConfigHandle>().get();
+        world.entity_mut(band).insert(fixture_wear(&equipment));
+        world.insert_resource(HerdRegistry {
+            herds: vec![herd_of_biomass(species, body_mass, biomass)],
+        });
+        world
+    }
+
+    fn crew_ask(max_workers: u32, floor: f32) -> HuntCrewTakeQuery {
+        HuntCrewTakeQuery {
+            faction_id: FACTION.0,
+            band_id: BAND,
+            herd_id: HERD.to_string(),
+            kit_id: DEFAULT_HUNT_KIT.to_string(),
+            floor,
+            max_workers,
+        }
+    }
+
+    fn crew_curve(world: &mut World, ask: &HuntCrewTakeQuery) -> Vec<HuntCrewTakeRow> {
+        match answer_hunt_crew_take(world, ask) {
+            QueryReply::HuntCrewTake(reply) => reply.per_crew,
+            other => panic!("expected a crew-take curve, got {other:?}"),
+        }
+    }
+
+    /// **What the sim itself pays this crew** — `systems::hunt_take` on a private clone of the
+    /// fixture herd, at the same floor and the same party, read at the take's own expectation.
+    ///
+    /// It is the *whole* take (`AnimalTake::killed`), quantiser and all, so the comparison below is
+    /// against the number the turn actually credits rather than against an intermediate the curve
+    /// could trivially echo.
+    fn sim_take(
+        world: &World,
+        species: &str,
+        body_mass: f32,
+        biomass: f32,
+        workers: u32,
+        floor: f32,
+    ) -> u32 {
+        let equipment = world.resource::<EquipmentConfigHandle>().get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let combat = world.resource::<CombatConfigHandle>().get();
+        let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+        let kit = equipment
+            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
+            .expect("the shipped default hunt kit resolves");
+        let wear = fixture_wear(&equipment);
+        let coverage = equipment.coverage(&kit, workers as f32, &wear);
+        let party = crate::fauna::PartyResolution {
+            equipment: &equipment,
+            coverage: &coverage,
+            wear: &wear,
+            intrinsic,
+            // The RESIDENT band's tuning — the same one the curve is answered at, and deliberately
+            // not `expedition_tuning`.
+            tuning: combat.tuning(),
+            hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        }
+        .party_against(crate::equipment_config::Quarry::Mass(body_mass));
+        let mut herd = herd_of_biomass(species, body_mass, biomass);
+        crate::systems::hunt_take(
+            &mut herd,
+            workers,
+            floor,
+            RESIDENT_CARRY_PER_WORKER,
+            &party,
+            &fauna,
+            // A resident band banks its whole take — the same `f32::INFINITY` the Hunt arm passes.
+            f32::INFINITY,
+            HuntDraw::EXPECTED,
+        )
+        .take
+        .killed
+    }
+
+    /// A resident hunter's shipped haul tier, so `carryable` is a real bound rather than a
+    /// convenient infinity — the curve has to survive the client's other two `min` arms being live.
+    const RESIDENT_CARRY_PER_WORKER: f32 = 40.0;
+
+    /// **THE CURVE REPRODUCES THE SIM'S OWN TAKE AT EVERY CREW IN ITS RANGE.**
+    ///
+    /// Swept, never sampled. On Wild Aurochs the binding term flips from the fight to the engagement
+    /// and back *between* crews 8 and 12, so a spot-check at either end passes while a 28% error
+    /// sits in the middle — which is exactly how this arc shipped a green suite over a broken take
+    /// before.
+    ///
+    /// The client's remaining arithmetic is written out in full here (`affordable`, `carryable`,
+    /// then the published row) because that composition **is** the contract: if the row needed any
+    /// other treatment to land on the sim's number, this is where it would show.
+    fn the_curve_reproduces_the_take(species: &str, body_mass: f32, biomass: f32, floor: f32) {
+        let mut world = world_hunting_biomass(species, body_mass, biomass);
+        let rows = crew_curve(&mut world, &crew_ask(SWEEP_CREW, floor));
+        assert_eq!(
+            rows.len(),
+            SWEEP_CREW as usize,
+            "one row per crew size, `1..=max_workers`"
+        );
+        let ceiling = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            crate::fauna::herd_take_room(
+                &herd_of_biomass(species, body_mass, biomass),
+                floor,
+                &fauna,
+            )
+        };
+        let mut saw_a_kill = false;
+        for (index, row) in rows.iter().enumerate() {
+            let workers = index as u32 + 1;
+            assert_eq!(
+                row.workers, workers,
+                "rows ascend from 1 and echo their crew"
+            );
+            // The client's whole job: two caps it already holds, and the published row.
+            let affordable = (ceiling / body_mass).floor();
+            let carryable = ((workers as f32 * RESIDENT_CARRY_PER_WORKER) / body_mass)
+                .floor()
+                .max(1.0);
+            let composed = affordable.min(carryable).min(row.animals_likely) as u32;
+            assert_eq!(
+                composed,
+                sim_take(&world, species, body_mass, biomass, workers, floor),
+                "a crew of {workers} on {species}: the published curve, min'd against the two caps \
+                 the client already derives, must land on the number `hunt_take` pays"
+            );
+            saw_a_kill |= composed > 0;
+        }
+        assert!(
+            saw_a_kill,
+            "{species} must actually be killable somewhere in `1..={SWEEP_CREW}`, or every row \
+             compared zero to zero and a broken curve would pass"
+        );
+    }
+
+    #[test]
+    fn the_curve_reproduces_the_take_where_the_fight_binds() {
+        let world = world_hunting(AUROCHS, AUROCHS_BODY);
+        // **THE PRECONDITION.** Without it the pair could pass with both sides collapsing onto the
+        // engagement bound and the fight — the whole subject of this test — never entering.
+        let (killed, stayed) = binding_terms(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1);
+        assert!(
+            fight_binds(&world, AUROCHS, AUROCHS_BODY, 1),
+            "the aurochs fixture must be FIGHT-bound at a crew of one ({killed} killed per turn \
+             against {stayed} standing), or this test is not about the fight at all"
+        );
+        the_curve_reproduces_the_take(AUROCHS, AUROCHS_BODY, FAT_HERD, STRIP_IT_BARE);
+    }
+
+    #[test]
+    fn the_curve_reproduces_the_take_where_engagement_binds() {
+        let world = world_hunting(BOAR, BOAR_BODY);
+        // **THE PRECONDITION** — the engagement really is the binding term on this fixture, and it
+        // really is FLAT across a run of crews, which is `animals_engaged`'s `max(.., 1)` floor.
+        assert!(
+            !fight_binds(&world, BOAR, BOAR_BODY, 6),
+            "the boar fixture must be ENGAGEMENT-bound at a crew of six, or this test is not about \
+             the engagement"
+        );
+        let flat: Vec<f32> = (1..=6)
+            .map(|workers| binding_terms(&world, BOAR, BOAR_BODY, FAT_HERD, workers).0)
+            .collect();
+        assert!(
+            flat.windows(2).all(|pair| pair[0] == pair[1]) && flat[0] > 0.0,
+            "crews of 1 through 6 must all take the SAME non-zero number of boar ({flat:?}) — that \
+             flat run is the `max(.., 1)` floor, and it is what makes a per-hunter rate span 6x \
+             across six adjacent stepper positions"
+        );
+        the_curve_reproduces_the_take(BOAR, BOAR_BODY, FAT_HERD, STRIP_IT_BARE);
+    }
+
+    /// **THE ROOM CLAMPS THE ENGAGEMENT, NOT THE OUTCOME** — the third regime, and the one whose
+    /// *order* is easy to get wrong in a way no fat-herd fixture can see.
+    ///
+    /// The escapement room bounds what the party goes after **before** the retreat
+    /// (`fauna::animals_affordable`), because restraint is free: a crew at its floor does not corner
+    /// animals it will decline to kill. Clamping after the retreat instead would retreat a *bigger*
+    /// party than the take does and over-quote every turn the room binds — a whole extra
+    /// `1 / stay_fraction` of animals on a wary quarry.
+    ///
+    /// It needs a thin herd. On the fat fixtures above the room never binds at any crew, so this
+    /// regime is invisible there and a mis-ordered clamp passes them all.
+    #[test]
+    fn the_curve_reproduces_the_take_where_the_room_binds() {
+        /// Thin enough that the stock standing above the floor covers fewer deer than the crew can
+        /// reach — the only condition under which the clamp's *position* is observable at all.
+        const THIN_HERD: f32 = 70.0;
+
+        let world = world_hunting_biomass(DEER, DEER_BODY, THIN_HERD);
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        // **THE PRECONDITIONS, and there are two**, because the mis-ordered clamp is only visible
+        // where the room is the tightest term *and* the retreat is strong enough for the difference
+        // between retreating four animals and retreating twenty-four to survive the whole-animal
+        // floor. A calm quarry hides the defect; a fat herd hides it; the aurochs fixture above
+        // hides it twice over, which is why this one is a Red Deer.
+        let room = crate::fauna::herd_take_room(
+            &herd_of_biomass(DEER, DEER_BODY, THIN_HERD),
+            STRIP_IT_BARE,
+            &fauna,
+        );
+        let affordable = crate::fauna::animals_affordable(room, DEER_BODY);
+        let reach = crate::fauna::animals_engaged(SWEEP_CREW, fauna.engage_rate_for(DEER));
+        assert!(
+            affordable > 0.0 && affordable < reach,
+            "the thin fixture must let the ROOM bind at a crew of {SWEEP_CREW} ({affordable} \
+             animals affordable against a reach of {reach}) while still affording a kill, or this \
+             test is not about the room at all"
+        );
+        let stay = crate::fauna::stay_fraction(fauna.wariness_for(DEER), NEUTRAL_DISPERSION);
+        assert!(
+            stay < MOSTLY_BOLTS,
+            "the fixture quarry must be WARY ({stay} stays), or clamping the room after the retreat \
+             instead of before it moves nothing and this test cannot see the difference"
+        );
+        drop(fauna);
+
+        // **AND THE ORDER ITSELF, asserted directly.** The reproduction sweep below compares the
+        // curve against `hunt_take`, and the two share [`crate::fauna::resolve_hunt_engagement`] —
+        // so a clamp moved on that seam moves *both* sides and the sweep cannot see it. This is the
+        // half that can: clamping the room before the retreat means what stands can never exceed
+        // `affordable x stay_fraction`, where clamping it after would leave the whole `affordable`
+        // standing. The shipped suite guarded neither.
+        let stayed = binding_terms(&world, DEER, DEER_BODY, THIN_HERD, SWEEP_CREW).1;
+        assert!(
+            stayed <= affordable * stay + LEDGER_AVERAGE_EPSILON,
+            "{stayed} deer stood against {affordable} affordable at a {stay} stay — the escapement \
+             room must clamp the ENGAGEMENT, before the retreat, or the party retreats a bigger \
+             crowd than the take does and every room-bound turn is over-quoted"
+        );
+
+        the_curve_reproduces_the_take(DEER, DEER_BODY, THIN_HERD, STRIP_IT_BARE);
+    }
+
+    /// **THE BINDING TERM FLIPS INSIDE THE STEPPER'S OWN RANGE**, which is why the sweep above is a
+    /// sweep. Asserted directly so a retune that flattened the curve into something a scalar *could*
+    /// carry fails here, loudly, rather than leaving the curve looking like over-engineering.
+    #[test]
+    fn the_binding_term_changes_within_one_stepper_range() {
+        let world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let mut saw_fight = false;
+        let mut saw_engagement = false;
+        for workers in 1..=SWEEP_CREW {
+            if fight_binds(&world, AUROCHS, AUROCHS_BODY, workers) {
+                saw_fight = true;
+            } else {
+                saw_engagement = true;
+            }
+        }
+        assert!(
+            saw_fight && saw_engagement,
+            "the aurochs curve must be fight-bound at some crews and engagement-bound at others \
+             within `1..={SWEEP_CREW}` — a single per-hunter rate cannot express that, which is the \
+             whole reason this reply is a curve"
+        );
+    }
+
+    /// **THE CREW OF ONE**, which is where [`crate::fauna::animals_engaged`]'s `max(.., 1)` lives:
+    /// a lone hunter reaches ONE aurochs where `1 x 0.17` reads `0.17`. Pinned on its own because a
+    /// sweep that started at two would never see it, and because a scalar per-hunter rate derived
+    /// from any larger crew is wrong here by exactly that floor.
+    #[test]
+    fn a_crew_of_one_reaches_one_animal_and_the_curve_says_so() {
+        let world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let rate = fauna.engage_rate_for(AUROCHS);
+        let stay = crate::fauna::stay_fraction(fauna.wariness_for(AUROCHS), NEUTRAL_DISPERSION);
+        assert!(
+            rate < 1.0,
+            "the fixture must have a FRACTIONAL engage_rate ({rate}) or the `max(.., 1)` floor is \
+             not exercised and this test asserts nothing"
+        );
+        assert_eq!(
+            crate::fauna::animals_engaged(1, rate),
+            1.0,
+            "one hunter reaches one animal — the floor itself"
+        );
+        drop(fauna);
+
+        let mut world = world;
+        let rows = crew_curve(&mut world, &crew_ask(1, STRIP_IT_BARE));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].workers, 1);
+
+        // **THE FLOOR IS LOAD-BEARING, stated as the difference it makes.** What stands in front of
+        // a lone hunter is a whole animal's worth of retreat, not `0.17` of one — so `stayed` is the
+        // species' `stay_fraction`, and a curve derived from the un-floored `w × engage_rate` would
+        // quote a sixth of that.
+        let (killed, stayed) = binding_terms(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1);
+        let unfloored = rate * stay;
+        assert_eq!(
+            stayed, stay,
+            "one hunter corners a WHOLE animal and keeps `stay_fraction` of it"
+        );
+        assert!(
+            stayed > unfloored,
+            "the floor must actually raise the reach ({stayed} vs the un-floored {unfloored}), or \
+             this fixture does not exercise it"
+        );
+
+        // **AND THE LONE HUNTER REALLY DOES GET ONE.** A single turn reads `0` here — a
+        // 150-durability aurochs takes about sixteen hunter-turns and the damage is banked, not lost
+        // — so asserting on turn one alone would be asserting on the pulse rather than on the reach.
+        assert!(
+            killed > 0.0,
+            "a crew of one must bring an aurochs down eventually ({killed}/turn sustained); that is \
+             what the `max(.., 1)` floor exists to allow, and a `floor()` to zero would forbid"
+        );
+        assert_eq!(
+            rows[0].animals_likely,
+            sim_take(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1, STRIP_IT_BARE) as f32,
+            "and the published crew-of-one row is still exactly what the turn pays"
+        );
+    }
+
+    /// **`(sustained kills per turn, animals standing to be killed)` for one crew** — the pair whose
+    /// comparison says which term is binding, read off the production seam
+    /// ([`crate::fauna::resolve_hunt_engagement`]) rather than restated, so a precondition cannot
+    /// quietly assert the thing it is guarding.
+    ///
+    /// **Averaged over [`LEDGER_TURNS`], because a single turn cannot answer the question.**
+    /// `HuntFight::brought_down` is floored to WHOLE animals and the unfinished damage is banked on
+    /// the quarry (`combat::DamageLedger`), so a party working a 150-durability aurochs reads `0` for
+    /// several turns and then `1`. Reading turn one would call every big-game party fight-bound at a
+    /// rate of zero. The average over a run with the ledger carrying is the party's real capacity —
+    /// and, because the ledger also clamps each blow to what is standing, it is exactly
+    /// `min(fight_rate, stayed)`, which is what makes the comparison below a decision procedure.
+    fn binding_terms(
+        world: &World,
+        species: &str,
+        body_mass: f32,
+        biomass: f32,
+        workers: u32,
+    ) -> (f32, f32) {
+        let equipment = world.resource::<EquipmentConfigHandle>().get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let combat = world.resource::<CombatConfigHandle>().get();
+        let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+        let kit = equipment
+            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
+            .expect("the shipped default hunt kit resolves");
+        let wear = fixture_wear(&equipment);
+        let coverage = equipment.coverage(&kit, workers as f32, &wear);
+        let party = crate::fauna::PartyResolution {
+            equipment: &equipment,
+            coverage: &coverage,
+            wear: &wear,
+            intrinsic,
+            tuning: combat.tuning(),
+            hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        }
+        .party_against(crate::equipment_config::Quarry::Mass(body_mass));
+        let mut herd = herd_of_biomass(species, body_mass, biomass);
+        let mut killed = 0.0_f32;
+        let mut stayed = 0.0_f32;
+        for _ in 0..LEDGER_TURNS {
+            let resolved = crate::fauna::resolve_hunt_engagement(
+                &herd,
+                &fauna,
+                &party,
+                workers,
+                STRIP_IT_BARE,
+                HuntDraw::EXPECTED,
+            );
+            // The wounds carry, exactly as `hunt_take` carries them. The herd's biomass is left
+            // alone: these fixtures stand far above every floor, so the room is constant and the
+            // only thing moving between turns is the damage banked on the quarry.
+            herd.wounds = resolved.fight.wounds;
+            killed += resolved.fight.brought_down;
+            stayed = resolved.stayed;
+        }
+        (killed / LEDGER_TURNS as f32, stayed)
+    }
+
+    /// Long enough that the slowest fixture kill (a 150-durability aurochs under one hunter, ~16
+    /// turns a body) is averaged over many completed animals rather than over the accident of where
+    /// the window ended.
+    const LEDGER_TURNS: u32 = 400;
+
+    /// **Does the FIGHT bind for this crew, or the engagement?**
+    ///
+    /// The ledger clamps each turn's blow to what is standing, so the sustained kill rate is exactly
+    /// `min(fight_rate, stayed)`: strictly below what stood means the party could not finish what it
+    /// cornered (the fight binds); level with it means it killed everything that stayed and wanted
+    /// more animals (the engagement binds).
+    fn fight_binds(world: &World, species: &str, body_mass: f32, workers: u32) -> bool {
+        let (killed, stayed) = binding_terms(world, species, body_mass, FAT_HERD, workers);
+        killed < stayed - LEDGER_AVERAGE_EPSILON
+    }
+
+    /// Slack for the float accumulation in [`binding_terms`]'s sum — an engagement-bound crew kills
+    /// *exactly* what stands, so anything short of it by more than a rounding error is the fight.
+    const LEDGER_AVERAGE_EPSILON: f32 = 1e-4;
+
+    /// Take everything the herd can spare: these fixtures are about the engagement and the fight, so
+    /// the floor is deliberately not a term in them.
+    const STRIP_IT_BARE: f32 = 0.0;
+    /// The shipped Wild Aurochs body — stated so `herd_of` and the client-side `affordable` /
+    /// `carryable` arithmetic in the sweep divide by the same number the roster does.
+    const AUROCHS_BODY: f32 = 120.0;
+    /// The shipped Wild Boar body.
+    const BOAR_BODY: f32 = 12.0;
+    /// The shipped mid-game quarry, and the *wary* one: `wariness 0.65`, so a party keeps barely a
+    /// third of what it corners. That is what makes the room-clamp's position observable.
+    const DEER: &str = "Red Deer";
+    /// The shipped Red Deer body.
+    const DEER_BODY: f32 = 15.0;
+    /// A quarry that keeps less than half of what a party reaches — "wary enough that where the
+    /// retreat sits in the order actually matters".
+    const MOSTLY_BOLTS: f32 = 0.5;
+    /// A kit that neither quietens nor advertises the party — the identity on the retreat, so the
+    /// species' own `wariness` is the whole of it. The shipped spear kit declares no `dispersion`.
+    const NEUTRAL_DISPERSION: f32 = 1.0;
+
+    /// **THE BAND COLLAPSES TO A POINT, BIT-FOR-BIT, WHERE NOTHING IS STOCHASTIC** — the
+    /// `actualYield*` invariant, on the curve.
+    ///
+    /// Both stochastic stages answer a *degenerate* distribution here: the retreat is held at
+    /// `wariness 0` and the shipped `hit_chance` is `1.0`, so `attacks_landed_at` and
+    /// `animals_that_stay` return their identities whatever quantile is asked for. `assert_eq!` on
+    /// floats is therefore the correct assertion and not a tolerance waiting to be widened.
+    #[test]
+    fn the_band_collapses_to_a_point_when_nothing_is_stochastic() {
+        let mut world = world_hunting(AUROCHS, AUROCHS_BODY);
+        // **THE PRECONDITIONS**, both of them: a band that is open on either stage would make this
+        // pass for the wrong reason, and a `forecast_range_sigmas` of zero would make it pass for no
+        // reason at all.
+        let combat = world.resource::<CombatConfigHandle>().get();
+        assert_eq!(
+            combat.tuning().hit_chance,
+            1.0,
+            "the shipped tuning must be certain, or the fight's binomial has real spread and this \
+             is not the degenerate case"
+        );
+        assert!(
+            combat.forecast_range_sigmas > 0.0,
+            "a zero band width would collapse every quantile trivially and assert nothing"
+        );
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        assert!(
+            fauna.wariness_for(AUROCHS) > 0.0,
+            "the shipped roster must be wary here, so holding it at zero below is a real change"
+        );
+        world.insert_resource(FaunaConfigHandle::new(std::sync::Arc::new(
+            fauna.without_retreat(),
+        )));
+
+        let rows = crew_curve(&mut world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+        let mut saw_a_kill = false;
+        for row in &rows {
+            assert_eq!(
+                (row.animals_low, row.animals_high),
+                (row.animals_likely, row.animals_likely),
+                "with no randomness in either stage, low/likely/high must be the SAME NUMBER at a \
+                 crew of {} — not merely close",
+                row.workers
+            );
+            saw_a_kill |= row.animals_likely > 0.0;
+        }
+        assert!(
+            saw_a_kill,
+            "the collapsed curve must still kill something, or three zeroes proved the invariant"
+        );
+    }
+
+    /// **THE BAND IS `O(sqrt(w))`, AND A PER-HUNTER BAND WOULD BE `O(w)`** — the error a scalar
+    /// shape would have shipped invisibly, because at the shipped `hit_chance = 1.0` the band is a
+    /// point and no fixture would ever have caught it.
+    ///
+    /// Staged at a sub-certain `hit_chance` so the fight's binomial is genuinely open, then asserted
+    /// on the shape rather than on a number: quadrupling the crew must **less than double** the
+    /// per-hunter spread away — under a linear band it would hold it exactly constant, and under any
+    /// super-linear one it would grow.
+    #[test]
+    fn the_band_narrows_per_hunter_as_the_crew_grows() {
+        /// Open enough that the binomial has real variance at every crew below, and far enough from
+        /// `1.0` that the degenerate short-circuit in `attacks_landed_at` cannot be reached.
+        const OPEN_HIT_CHANCE: f32 = 0.5;
+        /// Big enough that the whole-animal floor is not the dominant term in the spread — a crew
+        /// whose whole band rounds into one body says nothing about its width.
+        const SMALL_CREW: u32 = 40;
+        const BIG_CREW: u32 = 160;
+
+        let mut world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let mut combat = (*world.resource::<CombatConfigHandle>().get()).clone();
+        combat.hit_chance = OPEN_HIT_CHANCE;
+        world.insert_resource(CombatConfigHandle::new(std::sync::Arc::new(combat)));
+
+        let rows = crew_curve(&mut world, &crew_ask(BIG_CREW, STRIP_IT_BARE));
+        let spread = |workers: u32| {
+            let row = &rows[workers as usize - 1];
+            assert_eq!(row.workers, workers);
+            row.animals_high - row.animals_low
+        };
+        let small = spread(SMALL_CREW);
+        let big = spread(BIG_CREW);
+        // **LIVENESS FIRST.** "The band narrows" is trivially true of two zeroes, and a fixture that
+        // closed the band would assert exactly nothing.
+        assert!(
+            small > 0.0 && big > 0.0,
+            "the staged `hit_chance` must leave the band OPEN at both crews ({small} / {big}), or \
+             this test proves nothing about its shape"
+        );
+        let ratio = big / small;
+        assert!(
+            ratio < 2.5,
+            "quadrupling the crew widened the band {ratio}x. A `sqrt` band widens ~2x; a PER-HUNTER \
+             band multiplied by the crew would widen 4x — which is the shape this reply refuses to \
+             publish"
+        );
+        let per_hunter_big = big / BIG_CREW as f32;
+        let per_hunter_small = small / SMALL_CREW as f32;
+        assert!(
+            per_hunter_big < per_hunter_small,
+            "the per-hunter spread must NARROW as the crew grows ({} at {BIG_CREW} vs {} at \
+             {SMALL_CREW}) — that is what makes the band unpublishable as a per-hunter scalar",
+            per_hunter_big,
+            per_hunter_small
+        );
+    }
+
+    /// **A curve is answered at the RESIDENT tuning, never the expedition's.** The trip sheet beside
+    /// it prices a detached raid at `expedition_danger_multiplier` (1.5x lethality as shipped), and
+    /// borrowing those rows for the Assign Herders panel would over-quote the fight by half again.
+    #[test]
+    fn the_crew_curve_fights_at_resident_lethality_not_the_expeditions() {
+        let mut world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let combat = world.resource::<CombatConfigHandle>().get();
+        assert!(
+            combat.expedition_danger_multiplier > 1.0,
+            "the shipped multiplier must actually differ, or the two tunings are the same fixture"
+        );
+        let resident = crew_curve(&mut world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+
+        // The same curve with the danger multiplier folded into the BASE tuning — i.e. what the rows
+        // would read if the answer had been priced as a raid.
+        let mut world_as_a_raid = world_hunting(AUROCHS, AUROCHS_BODY);
+        let mut bloodier = (*combat).clone();
+        bloodier.lethality *= combat.expedition_danger_multiplier;
+        world_as_a_raid.insert_resource(CombatConfigHandle::new(std::sync::Arc::new(bloodier)));
+        let as_a_raid = crew_curve(&mut world_as_a_raid, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+
+        assert!(
+            resident
+                .iter()
+                .zip(&as_a_raid)
+                .any(|(here, raid)| here.animals_likely < raid.animals_likely),
+            "a resident crew must be quoted a SMALLER take than the same crew priced at expedition \
+             lethality somewhere on the sweep — if the two curves are identical this test has \
+             stopped distinguishing them"
+        );
+    }
+
+    /// A crew cap of zero asks for nothing, and is answered with nothing — the same "0 scans
+    /// nothing" contract `max_party_workers` already carries, so a panel with no assignable workers
+    /// gets an empty curve rather than a refusal.
+    #[test]
+    fn a_band_that_can_field_nobody_gets_an_empty_curve() {
+        let mut world = world_hunting(BOAR, BOAR_BODY);
+        assert!(crew_curve(&mut world, &crew_ask(0, STRIP_IT_BARE)).is_empty());
+    }
+
+    /// The curve refuses on the same tokens the two older verbs do — it resolves the band, the herd
+    /// and the kit through the one shared seam, and a floor outside `0..=1` is rejected rather than
+    /// clamped.
+    /// One refusal case's edit to an otherwise-valid crew-take query — the curve's twin of
+    /// [`Perturbation`], named for the same reason: the boxed closure's type is what a `Vec` of
+    /// these needs, and spelling it at the binding buries the only thing the table is about.
+    type CrewPerturbation = Box<dyn Fn(&mut HuntCrewTakeQuery)>;
+
+    #[test]
+    fn the_crew_curve_refuses_on_the_shared_tokens() {
+        let mut world = world_hunting(BOAR, BOAR_BODY);
+        let cases: Vec<(&str, CrewPerturbation)> = vec![
+            (
+                query_error::UNKNOWN_HERD,
+                Box::new(|ask: &mut HuntCrewTakeQuery| ask.herd_id = "no_such_herd".into()),
+            ),
+            (
+                query_error::UNKNOWN_BAND,
+                Box::new(|ask: &mut HuntCrewTakeQuery| ask.band_id = BAND + 1),
+            ),
+            (
+                query_error::UNKNOWN_KIT,
+                Box::new(|ask: &mut HuntCrewTakeQuery| ask.kit_id = "no_such_kit".into()),
+            ),
+            (
+                query_error::KIT_WRONG_JOB,
+                Box::new(|ask: &mut HuntCrewTakeQuery| ask.kit_id = FORAGE_ONLY_KIT.into()),
+            ),
+            (
+                query_error::INVALID_FLOOR,
+                Box::new(|ask: &mut HuntCrewTakeQuery| ask.floor = 1.5),
+            ),
+        ];
+        for (token, perturb) in cases {
+            let mut ask = crew_ask(4, A_FLOOR);
+            perturb(&mut ask);
+            assert_eq!(
+                error_token(&answer_hunt_crew_take(&mut world, &ask)),
+                token,
+                "the curve must refuse with its own token"
+            );
+        }
     }
 
     // --- the denial seed ---------------------------------------------------------------------

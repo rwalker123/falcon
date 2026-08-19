@@ -42,9 +42,48 @@ static func install(hud: Node) -> void:
 		query.deliver.call_deferred([answer(hud, request_id, ask)])
 		return true)
 
+## **THE STAND-IN FOR THE SIM'S OWN FIGHT.** The crew-take reply is the one answer on this channel a
+## harness cannot borrow from a fixture TABLE — the herd fixtures carry raid tables and no take curve
+## — so this composes one from the quarry's own published engagement and retreat.
+##
+## **IT IS THE FIXTURE THAT COMPOSES IT NOW, AND THAT IS THE POINT OF THE ARC.** The identical
+## `animals_stayed(animals_engaged(w, rate), stay)` used to run inside
+## `DrawerComposeController._hunt_delivered_and_waste`, where it was a CLIENT re-derivation of a take
+## the sim resolves in three stages; here it is a stand-in server answering a question, which is a
+## fixture's business. It is deliberately the same arithmetic so every magnitude the hunt chapter
+## already pins survives the move — what changed is who says it.
+##
+## **THE BAND IS DEGENERATE**, matching the shipped tuning (`combat_config.hit_chance = 1.0`), so the
+## readout renders its bare figure and no range. A chapter wanting the range stages a curve of its own.
+static func crew_take_rows(herd: Dictionary, max_workers: int) -> Array:
+	var engage_rate := float(herd.get(SourceForecastRef.FORECAST_ENGAGE_RATE_KEY,
+		SourceForecastRef.NO_ENGAGEMENT_STAGE))
+	var stay := float(herd.get(SourceForecastRef.FORECAST_STAY_FRACTION_KEY,
+		SourceForecastRef.STAY_FRACTION_NONE_BREAKS_OFF))
+	var rows: Array = []
+	for workers in range(1, max_workers + 1):
+		# **A SPECIES WITH NO ENGAGEMENT STAGE ANSWERS AN UNBOUNDED REACH** (a pen, and the whole plant
+		# web), which the client used to drop from its `min` outright. A reply row carries a NUMBER, so
+		# the unbounded case travels as one that cannot bind — `INF`, which `animals_engaged` already
+		# answers — and every pen and managed-herd frame stays byte-identical to the pre-query era.
+		var brought_down := SourceForecastRef.animals_stayed(
+			SourceForecastRef.animals_engaged(workers, engage_rate), stay)
+		rows.append({
+			SourceForecastRef.CREW_TAKE_WORKERS_KEY: workers,
+			SourceForecastRef.CREW_TAKE_LOW_KEY: brought_down,
+			SourceForecastRef.CREW_TAKE_LIKELY_KEY: brought_down,
+			SourceForecastRef.CREW_TAKE_HIGH_KEY: brought_down,
+		})
+	return rows
+
 ## One canned reply, in the shape `native/src/bridge/query.rs` decodes.
 static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
-	var is_denial := String(ask.get("kind", "")) == ForecastQuery.KIND_DENIAL_RAID
+	var kind := String(ask.get("kind", ""))
+	if kind == ForecastQuery.KIND_HUNT_CREW_TAKE:
+		return {"request_id": request_id, "ok": true, "kind": kind,
+			"per_crew": crew_take_rows(_quarry_for_id(hud, String(ask.get("herd_id", ""))),
+				int(ask.get("max_workers", 0)))}
+	var is_denial := kind == ForecastQuery.KIND_DENIAL_RAID
 	var herd := _herd_for_id(hud, String(ask.get("herd_id", "")),
 		HERD_DENIAL_TABLE_KEY if is_denial else HERD_RAID_TABLE_KEY)
 	var reply := {"request_id": request_id, "ok": true,
@@ -120,6 +159,22 @@ static func _party_needed(rows: Array) -> int:
 		if workers > 0 and (best == SourceForecastRef.DENIAL_PARTY_NEEDED_NONE or workers < best):
 			best = workers
 	return best
+
+## **THE HERD A CREW-TAKE ANSWER IS ABOUT — AND THE SELECTION WINS.** `_herd_for_id` picks between
+## the roster and the selection by which of them carries the TABLE the ask needs, and a curve needs
+## none: it is composed from the quarry's own `engageRate` / `stayFraction`, which both sources carry.
+## So that fork cannot decide this one, and the tie has to be broken on which source is the herd the
+## SHEET is composing about — which is the selection.
+##
+## **A CHAPTER RESTAGES ONE QUARRY ID WITH DIFFERENT TERMS, and that is not a hypothetical**:
+## `chapters/hunt.gd` renders one Wild Fowl twice, engagement-bound and then unbounded, under one id,
+## pushing each through `_show_herd`. Preferring the roster answered the FIRST herd's curve on the
+## SECOND herd's sheet — a take of `≈10 Wild Fowl` where the frame is about a bird nothing stalks.
+static func _quarry_for_id(hud: Node, herd_id: String) -> Dictionary:
+	var selected: Dictionary = hud._selection.herd()
+	if String(selected.get("id", "")) == herd_id:
+		return selected
+	return _herd_for_id(hud, herd_id, "")
 
 static func _nearest_floor(table: Dictionary, want: float) -> float:
 	var best := INF

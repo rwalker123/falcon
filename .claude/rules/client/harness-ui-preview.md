@@ -1581,10 +1581,40 @@ fails **thirteen** — every material claim on both quarries, each naming the cr
 quantum pointed at the published `bodyMass` fails **one**, the edible magnitude claim, at
 `0.1365 against 0.2093`.
 
-**A clean run is 348 frames / 1227 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. This
-arc added one frame and twenty-seven claims. The recorded figure before it was 346 / 1177, and the run
-MEASURED 347 / 1200 before a line of it was touched — one frame and twenty-three `PASS`es had
-accumulated un-recorded, which is this line's own instruction being earned yet again.
+**A clean run is 348 frames / 1246 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+recorded figure before this arc was 346 / 1177, the run MEASURED 347 / 1200 before a line of it was
+touched, and 348 / 1227 was recorded mid-arc — un-recorded drift accumulating every time, which is this
+line's own instruction being earned again.
+
+> #### ⛔ AND THE COUNT IS MACHINE-CHECKED NOW, BECAUSE `EXIT=0` WAS NOT ENOUGH
+>
+> **A GDScript `assert` that fails inside a chapter aborts that chapter and the harness still exited
+> `0`.** It was caught only by comparing the `PASS` count against a run from earlier the same session:
+> a stale-closure regression killed `compose_rungs` partway, **67 claims never ran** — the forage-drawer
+> restate, the herd restate and the whole kit/equipment-tier block — and every other gate was green
+> (build, clippy, `decode-guard`, 1799 Rust tests, and this harness's own exit status).
+>
+> **Godot cannot surface the abort**: nothing in the process can read its own stderr, and an aborted
+> coroutine returns exactly as a finished one does. So the harness asserts **its own work** instead —
+> each chapter declares `const EXPECTED_CHECKPOINTS`, and `ui_preview.gd` samples a counter around
+> `chapter.run(self)` and fails the run if the chapter falls short.
+>
+> - **Checkpoints, not assertions** — `_assert_hud` *and* `_save` both count, because `docks_legend`
+>   makes **zero** assertions and renders ten frames; an assertion-only floor would be `0` there and
+>   leave the one chapter an abort truncates entirely unguarded.
+> - **A floor, not an equality** — adding claims must never fail the run; losing them is the failure.
+> - **A chapter that declares nothing FAILS**, which is what makes it un-bypassable: were a missing
+>   const merely unguarded, deleting it would be the silent bypass and every new chapter would start
+>   unguarded.
+> - **The number lives on the chapter**, never in a roster in `ui_preview.gd` — a table of 22 counts in
+>   the harness is exactly the shared-edit surface the chapter split exists to remove. Read through
+>   `get_script_constant_map()`; a `var` is deliberately not accepted, since the run could move it.
+>
+> Falsified twice, disjointly: the real regression restored, and a planted `assert(false)` at the top of
+> `crafting_bench.run()`. Both `EXIT=1`, each naming the chapter and the count it reached.
+>
+> **So `$?` now covers a chapter dying mid-run.** It still does not cover a claim that is *present and
+> wrong* — that is what the sabotage discipline is for.
 
 > **`compose_band_switch_forage` FLAKED ONCE DURING THIS PASS AND PASSED CLEAN ON RE-RUN** — five
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer

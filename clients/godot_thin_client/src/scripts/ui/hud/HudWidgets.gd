@@ -767,6 +767,11 @@ const CREW_ROW_LABEL_META := "crew_row_label"
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
 const VERDICT_META := "verdict"
+## **THE TAKE ESTIMATE'S IDENTITY** — the readout's own first line, the animals this crew brings down
+## per turn with its band where it has one. It is a plain section Label like several others in the
+## box, so a harness looking for it by FACE would be matching a live number; the meta is what makes a
+## claim about the LINE rather than about a string that happens to appear on the sheet.
+const TAKE_ESTIMATE_META := "take_estimate"
 
 ## **THE PRE-LAUNCH FIGHT'S ONE REMAINING LINE** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5), with
 ## a meta because it must be assertable by ABSENCE as well as by presence — a pen and the whole plant
@@ -1548,15 +1553,20 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## take whether or not a rung is going up. `has_after` is the only fact left that can key the caption,
 ## and it is read from the ROWS here — the one place that knows — so the caption and the marks under
 ## it cannot be composed separately.
+## `header_suffix` QUALIFIES the resolved caption instead of replacing it — which `header` cannot do,
+## the two states it forks on (`now → after` or not) being resolved in here off the rows. The hunt
+## sheet's *" · at the likely take"* is what wants it: those readings are single numbers under a take
+## line that carries a band, and the caption is the only thing that can say which point of it they are
+## quoted at. It is appended to a caller-supplied `header` too, so the two never fight.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String, header: String = "") -> VBoxContainer:
+        waste: String, header: String = "", header_suffix: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
     var has_after := rows.any(func(row: Dictionary) -> bool:
         return row.has(SourceForecast.YIELD_ROW_AFTER))
-    var caption := header if header != "" \
-        else SourceForecast.yield_row_header(has_after)
+    var caption := (header if header != "" \
+        else SourceForecast.yield_row_header(has_after)) + header_suffix
     block.add_child(alloc_section_label(caption))
     var flow := HFlowContainer.new()
     flow.set_meta(YIELDS_ROW_META, true)

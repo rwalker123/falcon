@@ -2438,6 +2438,62 @@ static func animals_stayed(engaged: float, stay: float) -> float:
         return engaged
     return engaged * clampf(stay, 0.0, STAY_FRACTION_NONE_BREAKS_OFF)
 
+# ---- THE SIM'S OWN ANSWER TO "WHAT DOES THIS CREW BRING DOWN" -----------------------------------
+#
+# > #### ⛔ THE TWO FUNCTIONS ABOVE ARE NOT THAT ANSWER, AND A COMPOSE SHEET MAY NOT USE THEM AS ONE
+# >
+# > `animals_stayed(animals_engaged(w, rate), stay)` is the engagement and the retreat — the first two
+# > of the take's THREE stages. The third is the FIGHT, damage over durability against the quarry's
+# > defense and the multi-turn wound ledger it is standing there with, and the client cannot compute
+# > it: `combat_config.hit_chance` is deliberately unpublished and the schema names that division as
+# > one of the non-linear halves that stay the sim's answer. Measured on a Wild Aurochs with four
+# > hunters, the two-stage form read **1.92 food** where the herd paid **0.84** — and every yield
+# > beside it was over by the same 2.3×, all four being fixed conversions of one biomass.
+# >
+# > They survive because the two stages ARE the honest bound on the client's other readings — the
+# > projection walk, the crew targets, the stepper's cap — which are statements about how fast a stock
+# > can be drawn down rather than about what lands in the stores. The pre-commit TAKE asks
+# > (`ForecastQuery.KIND_HUNT_CREW_TAKE`).
+#
+# **AND NO PER-HUNTER RATE COULD HAVE REPLACED THE CURVE.** On the shipped Wild Boar the per-hunter
+# take spans 6× across crews of 1 to 6 (the engagement is a staircase, flat across whole runs and
+# stepping at integer boundaries); on Wild Aurochs the binding term flips from the fight to the
+# engagement inside the stepper's own range and back again. A row is the WHOLE crew's take per turn:
+# **never multiply it by the crew size.**
+const CREW_TAKE_WORKERS_KEY := "workers"
+const CREW_TAKE_LOW_KEY := "animals_low"
+const CREW_TAKE_LIKELY_KEY := "animals_likely"
+const CREW_TAKE_HIGH_KEY := "animals_high"
+
+## **THIS CREW'S ROW OUT OF THE CURVE**, or `{}` when the answer does not cover it — a reply that has
+## not landed, a crew past the cap the question was asked with, or a crew of none.
+##
+## The reply is one row per crew from `1`, so the row is at `workers - 1`; the row's own echoed
+## `workers` is then CHECKED rather than trusted, which is what the sim echoes it for. A curve whose
+## index and echo disagree is a desynchronised answer, and quoting the wrong crew's take off it is
+## precisely the class of error this whole channel exists to remove.
+static func hunt_crew_take_row(per_crew: Array, workers: int) -> Dictionary:
+    if workers <= 0 or workers > per_crew.size():
+        return {}
+    var row_variant: Variant = per_crew[workers - 1]
+    if not (row_variant is Dictionary):
+        return {}
+    var row: Dictionary = row_variant
+    if int(row.get(CREW_TAKE_WORKERS_KEY, 0)) != workers:
+        return {}
+    return row
+
+## **IS THE BAND DEGENERATE?** — `low == likely == high`, which is what both stochastic stages answer
+## at the shipped tuning (`combat_config.hit_chance = 1.0`, a species at `wariness 0`): the two
+## binomials return their degenerate identity whatever quantile is asked for, so the three quantiles
+## are bit-identical rather than merely close.
+##
+## **RANGE CHROME THAT ALWAYS RENDERS MANUFACTURES DOUBT THE MODEL DOES NOT HAVE**, so the readout
+## prints the bare figure here and the range only where there is one. `is_equal_approx` rather than
+## `==`, because the numbers arrive through a `f32` → `f64` widening on the wire.
+static func hunt_take_band_is_degenerate(low: float, likely: float, high: float) -> bool:
+    return is_equal_approx(low, likely) and is_equal_approx(likely, high)
+
 ## ***CLEAR IT NOW*** — the crew that takes everything standing above the floor in ONE turn:
 ## `room ÷ (perWorkerBiomass × dip)`, a closed form in terms already on the wire. Deliberately NOT
 ## rounded to whole animals: this is the number of hands, and a crew that over-carries simply finishes
@@ -3127,6 +3183,25 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # FORAGE flag reading in biomass while a herd's reads in the unit the rest of its sheet uses.
         "body_mass": body_mass,
         "quarry": quarry,
+        # **IS THE FLOOR ITSELF MOVING?** The flag states the floor in ANIMALS — `floor × K` divided
+        # by a body — and a build in flight raises `K` every turn, so that count climbs while the
+        # percentage beside it sits still. A player who cannot see it move reads the take falling as
+        # the herd being poor rather than as the threshold rising under it, which is the reading a
+        # gentling herd produces for as long as the build runs.
+        #
+        # **A DIRECTION, NEVER A MAGNITUDE.** Nothing on the wire says what next turn's capacity is —
+        # `buildTurnsRemaining` says only how much longer the climb has to run — so the flag marks that
+        # the number is in motion and declines to guess how far.
+        #
+        # **BOTH TERMS, AND NEITHER ALONE.** A COUNTDOWN without a rung in flight is a fixture's (and
+        # the wire's) idle figure on a source nobody is building — the healthy grazing herd publishes
+        # one at a meter of zero — so it would mark every ordinary sheet. A RUNG in flight without a
+        # countdown is a build that is parked, held or blocked (`BUILD_TURNS_*` are all negative), and
+        # nothing is rising there either. `build_verb` is the same newest-meter-first walk the rung
+        # rows read, so the flag and the card cannot disagree about whether a build is running.
+        "floor_climbing": build_verb(src, prefix, kind) != IMPROVEMENT_NONE
+            and int(src.get(prefix + FORECAST_BUILD_TURNS_KEY,
+                BUILD_TURNS_NONE_TO_STATE)) > BUILD_TURNS_NONE_TO_STATE,
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay),

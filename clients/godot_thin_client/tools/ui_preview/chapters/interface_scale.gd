@@ -18,6 +18,10 @@ extends RefCounted
 ## no picture can: that the MAP is genuinely immune rather than merely plausible-looking, which is the
 ## half the deleted `content_scale_factor` widget got wrong (`.claude/rules/client/interface-scale.md`).
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 15
+
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.

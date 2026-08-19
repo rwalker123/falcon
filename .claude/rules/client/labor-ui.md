@@ -462,6 +462,40 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
+> #### ⛔ THE CLIENT NO LONGER DERIVES THE HUNT TAKE — the third arm was a lie by 2.3×
+>
+> `_hunt_delivered_and_waste`'s third bound was `animals_stayed(animals_engaged(workers, rate), stay)`
+> — **engagement and retreat only, no fight.** Measured on a Wild Aurochs at four hunters, the panel
+> printed **1.92 food** where the herd paid **0.84**, and the bone, fibre and hide beside it were over
+> by the same factor, all four being fixed conversions of one biomass. The ratio **is** the fight:
+> `4 × (attack 20 − defense 6) ÷ durability 150`, nothing else.
+>
+> **The client could not have computed it.** `combat_config.hit_chance` is unpublished by design and
+> the schema names the damage-over-durability division as one of the non-linear halves that stay the
+> sim's answer. So the sim publishes a **crew-take curve** (`HuntCrewTakeQuery`, on the command socket,
+> **not** the snapshot): one row per crew size, each the *whole crew's* take with engagement, retreat
+> and fight already resolved. The client's remaining job is a lookup and a `min`.
+>
+> **TWO MEASUREMENTS RULED OUT THE OBVIOUS SHAPE, and both are worth keeping.** A single per-hunter
+> rate cannot represent the curve: on Wild Boar it spans **6×** across crews of one to six, and on
+> Wild Aurochs the binding term flips *inside the stepper's own range* — clean at 1–8, a 28% dip at
+> **11** where `floor(11 × 0.17)` caps reach at one animal, recovered at 12. And the uncertainty band
+> is **`O(√w)`, not `O(w)`**: both stochastic stages are binomials, so the spread *shrinks* per hunter
+> as the crew grows, and a per-hunter band multiplied by crew overstates it by exactly `√w`. At the
+> shipped `hit_chance = 1.0` the band collapses to a point, so that error would have been invisible
+> until someone tuned it.
+>
+> **A degenerate band prints the bare figure with no range.** Range chrome that always renders
+> manufactures doubt the model does not have.
+>
+> **⛔ AND A QUERY ANSWER MUST NEVER CLOSE A COMPOSE SHEET.** `refresh_compose_sheet` is the shared
+> *re-render in place, close only if the subject is gone* path, and it decided *gone* by comparing the
+> sheet's subject against `_selection`. Only the **expedition** branch rode `ForecastQuery.answered`,
+> and an expedition sheet is always opened from the selection, so the two could never disagree. Putting
+> every **local** hunt sheet on that channel made the answer **tear the sheet down** wherever the sheet
+> had been built for a subject that is not the selection. It now takes `may_close`, and the `answered`
+> lambda passes `false`: **a query answers a question the sheet composed and carries no news about
+> whether the subject still exists — only a snapshot can retire a subject.**
 - **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
   mins `animals_stayed` into its own kill count; `floor(min(carry, engaged × fpa) / fpa)` is the same
   arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short

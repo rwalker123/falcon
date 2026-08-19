@@ -341,7 +341,19 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## top. Pricing again here would apply the ratio twice (`KitRoster.repriced_source` is not idempotent),
 ## and reaching for a raw dict instead would quote the equipped reference to a bare-handed crew.
 func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
-        improvement: String, holding: bool = false) -> Dictionary:
+        improvement: String, per_crew: Array, holding: bool = false) -> Dictionary:
+    # **WHAT THE CREW BRINGS DOWN IS THE SIM'S ANSWER, LOOKED UP** — one row per crew size off
+    # `ForecastQuery.KIND_HUNT_CREW_TAKE`, with the engagement, the retreat and the FIGHT already
+    # resolved. It is the WHOLE crew's animals per turn: **never multiplied by `workers`.**
+    #
+    # **NO ROW MEANS NO NUMBER, and that is why this refusal is spelled apart from the one below.** A
+    # reply that has not landed is not a herd the wire describes too thinly — the degrade path under
+    # it composes a SMOOTH crew-throughput rate with no fight and no engagement at all, which is a
+    # bigger overstatement than the one this channel exists to remove. `_hunt_yield_model` states
+    # nothing rather than reaching for it.
+    var crew_row := SourceForecast.hunt_crew_take_row(per_crew, workers)
+    if crew_row.is_empty():
+        return {"available": false, CREW_TAKE_UNANSWERED: true}
     # IN BIOMASS, through `herd_axis_rates` — the single place the quantised take's terms are resolved,
     # reading the HERD's own body, carry and room rather than any cohort-level echo of them (the
     # species-blind `hunt_per_worker_provisions` is what would re-introduce phantom food here).
@@ -393,11 +405,12 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # `animals_stayed` passes an unbounded reach straight through — so the `min` is a no-op and every
     # managed-herd and plant-web frame reads exactly what the carry quotient alone gave it.
     #
-    # **AND THE ARM IS WHAT STAYS, NOT WHAT IS REACHED.** The sim runs engage → retreat → fight and
-    # hands the SURVIVOR count to the quantiser, so the bound here is `animals_stayed` — which is also
-    # the ONE thing the kit's `dispersion` moves on this line. A trapping party is not there to be seen
-    # and keeps everything it reaches; a spear party on the same warren keeps one animal in four. Read
-    # off `engage_rate` instead, Big-game and Trapping quote the identical hunt.
+    # **AND THE ARM IS THE SIM'S WHOLE THREE-STAGE ANSWER, NOT THE TWO STAGES THE CLIENT CAN SEE.**
+    # It was `animals_stayed(animals_engaged(w, rate), stay)` — engagement and retreat, no fight — and
+    # on a Wild Aurochs with four hunters that read **1.92 food** against the herd's **0.84**, with
+    # bone, fibre and hide over by the same 2.3× because all four are fixed conversions of one
+    # biomass. The client cannot close that gap: `combat_config.hit_chance` is unpublished and the
+    # damage-over-durability division is one of the halves the schema keeps as the sim's answer.
     #
     # **AND THE CARRY CLAMP IS PER BODY, NOT PER TURN** — which is the other half of why one expression
     # replaces two branches. A body lands WHOLE on the turn it drops and the crew hauls `collection`
@@ -408,18 +421,114 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # kills, where the averaged-then-clamped form reads the full ceiling with no waste at all — 1.67×
     # too high, and silent about the meat left on the ground.
     var haulable := maxf(floorf(collection / body), 1.0)
-    var brought_down := SourceForecast.animals_stayed(
-        SourceForecast.animals_engaged(workers, float(rates["engage_rate"])),
-        float(rates["stay"]))
+    var brought_down := float(crew_row[SourceForecast.CREW_TAKE_LIKELY_KEY])
     # BODIES PER TURN — the herd's own offer, the crew's haul, and what the party puts on the ground,
     # whichever is least. Fractional below one: a body every `1/killed` turns.
-    var killed := minf(minf(room / body, haulable), brought_down)
+    #
+    # **THE FIRST TWO ARMS ARE BOUND ONCE**, because the BAND below is the same take asked at two more
+    # quantiles: only the sim's arm differs between the three readings, so a second spelling of the
+    # room-and-haul pair is all it would take for the band to stop bracketing the figure it brackets.
+    var room_and_haul := minf(room / body, haulable)
+    var killed := minf(room_and_haul, brought_down)
     var delivered := killed * minf(body, collection)
     var killed_biomass := killed * body
     var waste := maxf(killed_biomass - delivered, 0.0)
     var waste_pct := (waste / killed_biomass) if killed_biomass > 0.0 else 0.0
     return {"available": true, "delivered_biomass": delivered, "waste": waste,
-        "waste_pct": waste_pct, "body_mass": body}
+        "waste_pct": waste_pct, "body_mass": body,
+        # **THE TAKE AND ITS BAND, IN ANIMALS** — the readout's own line. The two client-side arms are
+        # the caller's and are not stochastic, so they apply to every quantile unchanged; the spread
+        # that survives them is the sim's.
+        CREW_TAKE_ANIMALS: killed,
+        CREW_TAKE_ANIMALS_LOW: minf(room_and_haul,
+            float(crew_row[SourceForecast.CREW_TAKE_LOW_KEY])),
+        CREW_TAKE_ANIMALS_HIGH: minf(room_and_haul,
+            float(crew_row[SourceForecast.CREW_TAKE_HIGH_KEY])),
+        # …and the sim's arm UNCLAMPED, which is what the binding-limit line compares the other two
+        # against. Clamped, it could never be the smallest and the line could never name the crew.
+        CREW_TAKE_BROUGHT_DOWN: brought_down}
+
+## **THE TAKE ESTIMATE AND ITS BAND, AS ONE LINE** — `≈0.35 Wild Boar/turn`, plus ` · 0.21 – 0.48`
+## only where the band is genuinely a band.
+##
+## **A DEGENERATE BAND PRINTS NO RANGE**, which is every reading at the shipped tuning: both stochastic
+## stages (`combat::attacks_landed_at`, `fauna::animals_that_stay`) are binomials that answer their
+## degenerate identity at any quantile when `hit_chance` is 1 and the quarry's wariness is 0, so the
+## three quantiles arrive bit-identical. Chrome that renders `0.35 – 0.35` would manufacture doubt the
+## model does not have — and doing it by printing equal numbers rather than by suppressing the clause
+## is the same lie with extra ink.
+func _hunt_take_estimate_line(dw: Dictionary, quarry: String) -> String:
+    var likely := float(dw[CREW_TAKE_ANIMALS])
+    var low := float(dw[CREW_TAKE_ANIMALS_LOW])
+    var high := float(dw[CREW_TAKE_ANIMALS_HIGH])
+    var line: String = HudComposeVocab.HUNT_TAKE_ESTIMATE_FORMAT % [
+        _format_animal_rate(likely), quarry]
+    if SourceForecast.hunt_take_band_is_degenerate(low, likely, high):
+        return line
+    return line + HudComposeVocab.HUNT_TAKE_BAND_FORMAT % [
+        _format_animal_rate(low), _format_animal_rate(high)]
+
+## The crew NOUN this sheet calls these hands, lower-cased for a sentence — the same fork the stepper's
+## row label makes (`SourceForecast.is_managed_hunt_source`), so the remedy line and the control it
+## points at cannot call one crew two things.
+func _hunt_crew_noun(herd: Dictionary, improvement: String) -> String:
+    return (HudComposeVocab.HERD_CREW_LABEL \
+        if SourceForecast.is_managed_hunt_source(herd, improvement) \
+        else HudComposeVocab.HUNT_CREW_LABEL).to_lower()
+
+## **WHICH OF THE THREE LIMITS ON THIS TAKE IS THE SMALLEST, AND WHAT TO DO ABOUT IT** — the herd's
+## own regrowth, the room standing above the floor, and what the crew brings down. `{severity, text}`
+## in the shared verdict's shape; `{}` when the herd publishes too little to compare them, which
+## leaves the shared verdict standing.
+##
+## **THE THREE ARE COMPARED IN ONE UNIT — ANIMALS PER TURN — and every one of them is a term this
+## panel already reads.** The regrowth is the growth curve sampled AT the floor
+## (`HerdTelemetryState.regrowthSamples`); the room is the same forward room the take's first arm is
+## quantised against; the crew's arm is the sim's own reply, UNCLAMPED, since the clamped figure is by
+## construction never larger than the other two and could never be named.
+##
+## **THE BELOW-FLOOR STATE TAKES THE SLOT RATHER THAN ADDING A LINE.** A herd under
+## `floor × carryingCapacity` has no room above the floor at all, so the room arm would win and say
+## *"only ≈0 stand above your floor"* — true, and the wrong sentence: the player set that floor, and
+## what they need to know is that the take is now the surplus alone.
+func _hunt_binding_limit(herd: Dictionary, band: Dictionary, floor: float, dw: Dictionary,
+        crew_noun: String) -> Dictionary:
+    var prefix := HudComposeVocab.BARE_FORECAST_PREFIX
+    var body := float(dw["body_mass"])
+    var capacity := float(herd.get(prefix + SourceForecast.FORECAST_CAPACITY_KEY, 0.0))
+    var biomass := float(herd.get(prefix + SourceForecast.FORECAST_BIOMASS_KEY, 0.0))
+    if body <= 0.0 or capacity <= 0.0:
+        return {}
+    var quarry := SourceForecast.herd_display_name(herd)
+    if biomass < SourceForecast.clamp_floor(floor) * capacity:
+        return {"severity": SourceForecast.VERDICT_OK,
+            "text": HudComposeVocab.HUNT_LIMIT_BELOW_FLOOR}
+    # The band's productivity rides the herd-side arms exactly as it rides the take itself
+    # (`_hunt_delivered_and_waste` scales the room by it), or the comparison would weigh a full-rate
+    # regrowth against a discounted crew.
+    var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    var rates := SourceForecast.herd_axis_rates(herd, floor)
+    var room_animals := maxf(float(rates["next_room"]), 0.0) * output / body
+    var crew_animals := float(dw[CREW_TAKE_BROUGHT_DOWN])
+    # **THE REGROWTH ARM IS DROPPED WHERE THERE IS NO CURVE TO SAMPLE**, rather than read as zero: a
+    # herd the wire published no `regrowthSamples` for would otherwise bind at nothing and this line
+    # would tell every such player their herd breeds back none.
+    var samples := SourceForecast.regrowth_samples(herd, prefix)
+    var sustainable := INF
+    if SourceForecast.has_growth_curve(samples):
+        sustainable = maxf(SourceForecast.regrowth_at(samples,
+            SourceForecast.clamp_floor(floor)), 0.0) * output / body
+    if crew_animals <= minf(room_animals, sustainable):
+        return {"severity": SourceForecast.VERDICT_SLOW,
+            "text": HudComposeVocab.HUNT_LIMIT_CREW_FORMAT % [
+                crew_noun, _format_animal_rate(crew_animals), quarry]}
+    if sustainable <= room_animals:
+        return {"severity": SourceForecast.VERDICT_OK,
+            "text": HudComposeVocab.HUNT_LIMIT_SUSTAINABLE_FORMAT % [
+                _format_animal_rate(sustainable), quarry]}
+    return {"severity": SourceForecast.VERDICT_OK,
+        "text": HudComposeVocab.HUNT_LIMIT_ROOM_FORMAT % [
+            _format_animal_rate(room_animals), quarry]}
 
 ## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
 ## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
@@ -484,10 +593,13 @@ func _hunt_floor_takes(herd: Dictionary, band: Dictionary, improvement: String) 
 ## `output_multiplier` (morale/discontent productivity) at payout, so the preview is the take rate
 ## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
 ## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
+## `per_crew` is the crew-take reply's rows — required, not optional: the hunt yield model states
+## nothing at all without them, so a caller that omitted them would render a blank line rather than a
+## preview and nothing would say why.
 func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float, workers: int,
-        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> String:
-    return _yield_preview_bbcode(_hunt_yield_model(band, herd, floor, workers, improvement),
-        HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX)
+        per_crew: Array, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> String:
+    return _yield_preview_bbcode(_hunt_yield_model(band, herd, floor, workers, improvement, false,
+        per_crew), HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX)
 
 ## The hunt web's yield model — the animal twin of `_forage_yield_model`, in the same shape.
 ##
@@ -576,8 +688,14 @@ func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: 
 func _walks_to_the_floor(reaches: bool, improvement: String) -> bool:
     return reaches and improvement == SourceForecast.IMPROVEMENT_NONE
 
+## `per_crew` is the sim's answer to *"what does a crew of N bring down off this herd per turn"* —
+## `ForecastQuery.KIND_HUNT_CREW_TAKE`'s reply, one row per crew size, threaded in as a PARAMETER
+## rather than looked up here because this producer is PURE and is called three times per refresh
+## (`_mount_readout`'s emptiness probe, its yields host and its aside) plus once more for the holding
+## rate. A lookup at each of those would be four asks for one answer, and the seam's idempotence would
+## hide the fact that the sheet was composing four questions.
 func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
-        improvement: String, reaches: bool = false) -> Dictionary:
+        improvement: String, reaches: bool = false, per_crew: Array = []) -> Dictionary:
     # **PRICED AT THE KIT THE CREW WILL BE SENT WITH, ONCE, BEFORE A SINGLE TERM IS READ** — so the
     # sustainability bar, the take, the waste and the degrade path are all one kit's story. Every read
     # below is off `herd`; the raw dict is not in scope again, which is the point of shadowing it here
@@ -605,7 +723,14 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # `_source_overdraws`.
     var overdraws := _source_overdraws(SourceForecast.LABOR_KIND_HUNT, -1, -1,
         String(herd_raw.get("id", "")))
-    var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement)
+    var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, per_crew)
+    # **THE ANSWER HAS NOT LANDED — SO THIS SHEET STATES NO TAKE AT ALL.** Falling through to the
+    # degrade branch below would answer with `_hunt_take_rate`, a smoothed `min(crew × per_worker,
+    # ceiling)` carrying neither the engagement, the retreat nor the fight — a bigger overstatement
+    # than the 2.3× this channel exists to remove, and one wearing an ordinary readout's face. The
+    # sheet says it is waiting instead (`HudComposeVocab.HUNT_TAKE_PENDING`, mounted by the builder).
+    if bool(dw.get(CREW_TAKE_UNANSWERED, false)):
+        return {}
     if not bool(dw.get("available", false)):
         # Graceful degrade — the per-animal quantum (or a lever) is unknown, so fall back to the
         # smoothed per-turn line rather than regress the readout. **It credits the SAME account set
@@ -715,7 +840,8 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # as a number.
     var after := {}
     if _walks_to_the_floor(reaches, improvement):
-        var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
+        var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, per_crew,
+            true)
         if bool(held.get("available", false)):
             after = SourceForecast.rescaled_from_biomass(herd,
                 HudComposeVocab.BARE_FORECAST_PREFIX, float(held["delivered_biomass"]))
@@ -726,6 +852,13 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
             float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
             account, after, materials),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
+        # **THE TAKE ESTIMATE, ABOVE THE YIELDS** — the one reading on this sheet that carries the
+        # sim's uncertainty, and the reason the four accounts below it may stay single numbers.
+        YIELD_MODEL_TAKE: _hunt_take_estimate_line(dw, quarry),
+        # …and the sentence under them, which names the SMALLEST of the three limits rather than
+        # re-walking a projection the fight is missing from.
+        YIELD_MODEL_LIMIT: _hunt_binding_limit(herd, band, floor, dw,
+            _hunt_crew_noun(herd, improvement)),
         YIELD_MODEL_OVERDRAW: overdraws,
         YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
             if waste_pct > 0.0 else "",
@@ -841,6 +974,36 @@ const YIELD_MODEL_LOCKED_REASON := "locked_reason"
 ## this client does not have). They ride the MODEL for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
 ## evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
 const YIELD_MODEL_NOTES := "notes"
+## **THE TAKE ESTIMATE AND ITS BAND, above the yields** — `≈0.35 Wild Boar · 0.21 – 0.48`, or the
+## bare figure where the band is degenerate. `""` on every model that has no such answer (the plant
+## web, and the hunt web's degrade branch, whose smoothed rate is not a quantised take at all).
+##
+## **THE YIELDS UNDER IT STAY SINGLE NUMBERS.** Four bands would assert four independent rolls, which
+## is false: the food, the bone, the fibre and the hide are fixed conversions of ONE carried biomass,
+## so they move together and their spread is this line's, stated once. The row's caption says which
+## point of the band they are quoted at.
+const YIELD_MODEL_TAKE := "take_estimate"
+## **WHICH OF THE THREE LIMITS IS BINDING, AND ITS REMEDY** — `{severity, text}` in the verdict's own
+## shape, so the readout's third register renders it through `HudWidgets.build_verdict_line` exactly
+## as it renders the shared harvest verdict. `{}` means "this model names no limit", which is the
+## caller's cue to fall back to that shared verdict.
+##
+## **IT REPLACES THE SHARED VERDICT ON THE HUNT WEB, IT DOES NOT JOIN IT.** *"This crew can't draw it
+## that low — 12 herders would reach the floor"* is composed from the projection walk, which carries
+## the engagement and the retreat and NOT the fight; on the web where the fight is half the answer
+## that sentence names the wrong remedy at the wrong size. The plant web has no fight and keeps it.
+const YIELD_MODEL_LIMIT := "binding_limit"
+
+# ---- WHAT `_hunt_delivered_and_waste` ANSWERS BESIDE THE DELIVERED BIOMASS ----------------------
+## **THE REPLY HAS NOT LANDED**, told apart from an unavailable take so the caller can state nothing
+## instead of degrading to a smoothed rate composed without the fight. See that function's guard.
+const CREW_TAKE_UNANSWERED := "crew_take_unanswered"
+## The quantised take and its band, in ANIMALS per turn — the sim's row through the caller's own two
+## arms. `CREW_TAKE_BROUGHT_DOWN` is the sim's arm alone, unclamped, for the binding-limit comparison.
+const CREW_TAKE_ANIMALS := "animals"
+const CREW_TAKE_ANIMALS_LOW := "animals_low"
+const CREW_TAKE_ANIMALS_HIGH := "animals_high"
+const CREW_TAKE_BROUGHT_DOWN := "brought_down"
 ## **`tile_info` IS THE SOURCE THIS TAKE IS COMPOSED FROM, AND FOR A NARROWED CREW THE CALLER HAS
 ## ALREADY NARROWED IT** (`SourceForecast.narrowed_source`). That is the whole shape of the selective
 ## gather on this sheet: the stand, the rates and the crew throughput are substituted ONCE, upstream,
@@ -2010,9 +2173,24 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         column.add_child(verdict_host)
+        # **THE HUNT WEB SUPPLIES ITS OWN SENTENCE HERE, AND IT REPLACES THE SHARED ONE.** The chart
+        # model's verdict is composed from the projection walk, which carries the engagement and the
+        # retreat but NOT the fight — so on the animal web *"this crew can't draw it that low, 12
+        # herders would reach the floor"* is a remedy sized without half the arithmetic. The yield
+        # model names the smallest of the take's three real limits instead
+        # (`YIELD_MODEL_LIMIT`); the plant web has no fight, publishes no such key, and keeps the
+        # walk's answer unchanged.
+        #
+        # **READ OFF THE SAME `yields_at` ANSWER THE ROWS ARE BUILT FROM**, at this floor and this
+        # crew — the aside's locked-account line's rule, and for its reason: the models are PURE and
+        # both calls pass identical arguments, so the sentence and the numbers it explains cannot be
+        # composed at two different points on the dial.
         _register_live(hosts, verdict_host, model, workers,
-            func(host: Container, live: Dictionary, _crew: int) -> void:
-                host.add_child(HudWidgets.build_verdict_line(live.get("verdict", {}))))
+            func(host: Container, live: Dictionary, crew: int) -> void:
+                var limit: Dictionary = (yields_at.call(_live_floor(live), crew,
+                    _live_reaches(live)) as Dictionary).get(YIELD_MODEL_LIMIT, {})
+                host.add_child(HudWidgets.build_verdict_line(
+                    limit if not limit.is_empty() else live.get("verdict", {}))))
     var aside_host := VBoxContainer.new()
     aside_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(aside_host)
@@ -2106,6 +2284,16 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         for line in notes:
             host.add_child(HudWidgets.alloc_hint_label(String(line)))
         return
+    # **THE TAKE ESTIMATE LEADS THE BLOCK** — the animals this crew brings down per turn, and the only
+    # reading in the box that carries the sim's uncertainty. The four accounts under it are fixed
+    # conversions of ONE carried biomass, so they are single numbers and the caption says which point
+    # of this band they are quoted at. A model with no such answer (the whole plant web) renders no
+    # line and no caption suffix, exactly as before.
+    var take_line := String(model.get(YIELD_MODEL_TAKE, ""))
+    if take_line != "":
+        var take_label := HudWidgets.alloc_section_label(take_line)
+        take_label.set_meta(HudWidgets.TAKE_ESTIMATE_META, true)
+        host.add_child(take_label)
     var overdraws := bool(model[YIELD_MODEL_OVERDRAW])
     var note := HudComposeVocab.OVERHUNT_FLAG + " " + String(
         HudComposeVocab.LOCAL_OVERDRAW_NOTES.get(labor_kind, "")) if overdraws         else SourceForecast.YIELD_RENEWABLE_NOTE
@@ -2114,7 +2302,9 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         HudStyle.WARN if overdraws else HudStyle.INK,
         note,
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
-        String(model[YIELD_MODEL_WASTE])))
+        String(model[YIELD_MODEL_WASTE]),
+        "",
+        HudComposeVocab.YIELD_HEADER_AT_LIKELY_SUFFIX if take_line != "" else ""))
 
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
@@ -2221,6 +2411,21 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             _compose.hunt_floor(), SourceForecast.expedition_party_cap(band))
     var raid_answer: Dictionary = raid_view["answer"]
     var raid_ready := String(raid_view["state"]) == ForecastQuery.STATE_READY
+    # **AND THE LOCAL BRANCH'S OWN QUESTION — what each crew size actually BRINGS DOWN.** The sheet
+    # lets the player move the stepper before committing, so the take has to be re-answered as they
+    # move it, and the fight is not the client's to compute: composed here from the engagement and the
+    # retreat alone it read 1.92 food against a Wild Aurochs' 0.84 at four hunters, with every yield
+    # beside it over by the same 2.3×.
+    #
+    # **ONE ASK COVERS THE WHOLE STEPPER**, which is why the reply is a CURVE: it is keyed on the
+    # band's pool rather than on the composed crew, so a `+` press reads a row out of an answer the
+    # seam already holds instead of putting a fresh question on the socket. It is asked at the
+    # COMMITTED floor — a live drag recomposes the two client-side arms around these rows and settles
+    # onto a fresh answer when the drag lands, the same compromise the expedition branch makes.
+    var crew_take_view := {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
+    if not is_expedition:
+        crew_take_view = _crew_take_view(band, herd_id, kit_id, _compose.hunt_floor(), assignable)
+    var crew_take: Array = (crew_take_view["answer"] as Dictionary).get("per_crew", [])
     # **THE HARVEST ROW IS THE SAME CONTROL ON BOTH BRANCHES** — three floor presets plus the slider
     # between them, since a floor is a number and there is no per-branch option list left to differ
     # about. Corral being local-only is still true: it is an IMPROVEMENT, and the improvement control
@@ -2433,6 +2638,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **A STALE ANSWER COUNTS AS READY**, the seam's own rule: within `STALE_AFTER_MSEC` the previous
+    # crew's row stands while the new one flies, because blanking the readout on every stepper tick
+    # reads as a hunt with no forecast at all.
+    var crew_ready := ForecastQuery.STATE_READY == String(crew_take_view["state"])
     # **THE KIT ROW, directly under the crew stepper and above every forecast** — a kit describes the
     # crew, and it moves the fight (the attack tier) and the haul (the carry tier) alike. Both branches
     # get it: a local hunt sends `assign_labor … kit <id>` exactly as a raid sends
@@ -2624,10 +2833,19 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # independent statements is binding, the crew or the floor), then the idle-crew note (§7.2 —
         # reported, never acted on) and the teaching line. The take is recomposed from the LIVE floor,
         # so the numbers the player is dragging toward move while the drag runs.
+        # **NO ANSWER YET, OR NONE COMING** — the expedition branch's rule on the local one, and for
+        # the same reason: the numbers are the sim's, so the sheet says it is waiting rather than
+        # composing a take out of the two stages it can see. Everything above this line is client
+        # arithmetic over wire terms (the chart, the crew targets, the combat gate) and stands.
+        if not crew_ready:
+            target.add_child(HudWidgets.alloc_hint_label(
+                HudComposeVocab.HUNT_TAKE_PENDING \
+                if String(crew_take_view["state"]) == ForecastQuery.STATE_PENDING \
+                else HudComposeVocab.FORECAST_FAILED_FORMAT % String(crew_take_view["error"])))
         _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
             func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
                 return _hunt_yield_model(band, herd, floor_value, crew,
-                    composed_improvement, reaches),
+                    composed_improvement, reaches, crew_take),
             SourceForecast.LABOR_KIND_HUNT,
             _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
                 HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
@@ -3509,6 +3727,34 @@ func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, part
         })
     return _forecast_query.view(subject, key)
 
+## **THE CREW-TAKE QUESTION, COMPOSED AND ASKED** — the resident twin of `_raid_forecast_view`, one
+## place so the ask and the read cannot describe two different herds.
+##
+## **`max_workers` IS THE KEY'S CREW TERM, NOT THE COMPOSED CREW.** The reply is one row per crew from
+## 1 to that cap, so the whole stepper is answered by one round trip and stepping it asks nothing
+## new — see `ForecastQuery.key_of`. It is the band's own pool (`source_crew_pool_hunt`), which is
+## also the ceiling the stepper is clamped to, so no reachable crew is off the end of the curve.
+##
+## **A CREW OF 0 IS STILL ASKED**, unlike the raid: the sheet is composing a curve rather than one
+## party, the stepper is about to be filled from it, and a pool of zero is what answers nothing.
+func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: float,
+        max_workers: int) -> Dictionary:
+    if _forecast_query == null:
+        return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
+    var key := ForecastQuery.key_of(subject, kit_id, max_workers, floor)
+    if max_workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
+        _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
+            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": band_id,
+            "herd_id": herd_id,
+            "kit_id": kit_id,
+            "floor": floor,
+            "max_workers": max_workers,
+        })
+    return _forecast_query.view(subject, key)
+
 ## **THE OPTIMISTIC DECLARATION'S UNDO, ON THE ONE SURFACE `_after_pending_change()` CANNOT REACH.**
 ## `Hud.drop_pending_assign` is the rollback for a verb the server refused, and the write path it
 ## undoes (`_on_work_row_improvement_requested`) refreshes this sheet explicitly — so the rollback
@@ -3547,24 +3793,46 @@ func withdraw_declaration(kind: String, x: int, y: int, herd_id: String,
                     _compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
     refresh_compose_sheet()
 
-func refresh_compose_sheet() -> void:
+## > #### ⛔ `may_close` IS FALSE FOR A FORECAST ANSWER, AND THAT IS A CORRECTNESS RULE
+## >
+## > This is the shared *"re-render in place, close only if the subject is gone"* path, and it decides
+## > *gone* by comparing the sheet's subject against the SELECTION. That is the right authority for the
+## > SNAPSHOT path — a herd can die, a patch can stop offering the compose — and it is no authority at
+## > all for a QUERY REPLY: an answer says nothing about whether the subject still exists, it says what
+## > the sheet asked about the subject it is already holding.
+## >
+## > **It became reachable the day the LOCAL branch started asking.** Only the expedition branch used
+## > the query channel, and an expedition sheet is always opened from the selection, so the two could
+## > not disagree; the crew-take question put every local hunt sheet on that channel, and an answer
+## > landing on a sheet whose subject the drawer is not showing then TORE THE SHEET DOWN — measured in
+## > `ui_preview`, where the drawer-actions path is driven directly and the selection is deliberately
+## > another herd. Opening a sheet must not depend on a reply, and neither must keeping it open.
+## >
+## > **A mismatch under `may_close = false` re-renders NOTHING** rather than rebuilding against the
+## > selection: the builders take the subject from `_selection`, so a rebuild there would compose the
+## > sheet for the wrong herd — or, on an empty selection, for no herd at all. The sheet keeps the
+## > frame it has, which is the honest answer to an answer it cannot place.
+func refresh_compose_sheet(may_close: bool = true) -> void:
     if not is_compose_sheet_open():
         return
     match _compose.kind():
         ComposeState.KIND_FORAGE:
             if _forage_source_key(_selection.tile_info()) != _compose.subject() \
                     or not _forage_compose_available(_selection.tile_info()):
-                close_compose_sheet()
+                if may_close:
+                    close_compose_sheet()
                 return
             _build_forage_assign_controls(_selection.tile_info(), _compose_sheet.content())
         ComposeState.KIND_HERD:
             if String(_selection.herd().get("id", "")) != _compose.subject() \
                     or not _herd_compose_available(_selection.herd()):
-                close_compose_sheet()
+                if may_close:
+                    close_compose_sheet()
                 return
             _build_herd_assign_controls(_selection.herd(), _compose_sheet.content())
         _:
-            close_compose_sheet()
+            if may_close:
+                close_compose_sheet()
 
 ## Re-render whichever subject's drawer actions are showing (the standing summary + the `Assign … ▸`
 ## button), so a turn's staffing change lands in the read state as well as in the open sheet.

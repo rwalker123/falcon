@@ -586,8 +586,11 @@ func _ready() -> void:
     # (`_drawer` is built below, after the controllers it dispatches into), and it re-renders only when
     # the answer is about the party it is showing — a full drawer rebuild on every stepper tick's reply
     # would reflow the card under the player while a compose sheet is being answered.
+    # **AN ANSWER MAY RE-RENDER A SHEET AND MAY NEVER CLOSE ONE** (`may_close = false`). A reply is
+    # about a question the sheet composed; only a SNAPSHOT can retire a subject, so the teardown
+    # belongs to that path alone. See `DrawerComposeController.refresh_compose_sheet`.
     _forecast_query.answered.connect(func(subject: String) -> void:
-        _drawercompose.refresh_compose_sheet()
+        _drawercompose.refresh_compose_sheet(false)
         _bandpanel.rerender()
         _drawer.on_forecast_answered(subject))
     _turnorb.focus_requested.connect(_attention.on_turn_orb_focus)

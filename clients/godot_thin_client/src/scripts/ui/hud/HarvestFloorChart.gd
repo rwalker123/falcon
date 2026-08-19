@@ -96,6 +96,11 @@ const FLOOR_ARROW_HALF_HEIGHT := 5.0
 ## `SourceForecast.stock_face`'s business, never this script's: nothing here branches on the web.
 const FLOOR_FLAG_FORMAT := "leave %d%% · %s"
 const FLOOR_FLAG_STRIP := "leave nothing"
+## **THE FLOOR IS CLIMBING** — appended while a build is raising this source's capacity, so the animal
+## count in the flag is a number in motion rather than a standing one. It marks the DIRECTION and
+## nothing else: the wire states no next-turn capacity, so a magnitude here would be invented. The
+## STRIP face never takes it — a floor of nothing has no count to move.
+const FLOOR_FLAG_CLIMBING_SUFFIX := " ↑"
 const FLOOR_FLAG_FONT_SIZE := 10
 const FLOOR_FLAG_PAD := 3.0
 const FLOOR_FLAG_INSET := 5.0
@@ -313,9 +318,10 @@ func _draw_floor(plot: Rect2) -> void:
 ## comes from `stock_face`, which the at-floor verdict under this chart also reads, so the two can
 ## only ever name the threshold identically. See `FLOOR_FLAG_FORMAT` for why the percent leads.
 func _floor_flag_text(floor_value: float, floor_stock: float) -> String:
-	return FLOOR_FLAG_FORMAT % [SourceForecast.floor_percent(floor_value),
+	var text := FLOOR_FLAG_FORMAT % [SourceForecast.floor_percent(floor_value),
 		SourceForecast.stock_face(floor_stock, float(_model.get("body_mass", 0.0)),
 			String(_model.get("quarry", "")))]
+	return text + FLOOR_FLAG_CLIMBING_SUFFIX if bool(_model.get("floor_climbing", false)) else text
 
 ## THE LEARNING RAIL — `learn_multiplier` as a gradient, brightest where the most is left standing,
 ## with a marker at the floor. It answers "are these people, on this ground, contributing to the

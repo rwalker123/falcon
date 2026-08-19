@@ -1750,7 +1750,18 @@ pub fn hunt_take(
     // escapement room: a source pushed below its own floor by the `K` its improvement raised still
     // hands over the share of this turn's growth the player's floor left takeable. At `floor = 1.0`
     // the share is `x 0`, so "leave the whole herd standing" is unchanged.
-    let ceiling = fauna::herd_take_room(herd, floor, fauna);
+    // **Engagement, retreat, fight — through the ONE seam that defines them**
+    // ([`fauna::resolve_hunt_engagement`]), so the pre-commit crew-take curve the Assign Herders
+    // panel reads resolves the very stages this take runs rather than a client-side echo of two of
+    // them. The escapement room the engagement is clamped by comes back on the same value, because
+    // the quantiser below needs the identical number.
+    let engagement = fauna::resolve_hunt_engagement(herd, fauna, party, workers, floor, draw);
+    let fauna::HuntEngagement {
+        ceiling,
+        engaged,
+        stayed,
+        fight,
+    } = engagement;
     // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the *bank* can
     // afford, bounded by what it can haul but never below one — so a party that cannot carry a whole
     // animal still takes one and wastes the rest, and a bank that cannot yet spare one leaves the herd
@@ -1768,35 +1779,9 @@ pub fn hunt_take(
     // mission type cannot even name one.
     let collection =
         (workers as f32 * per_worker_biomass_capacity).min(carry_room_biomass.max(0.0));
-    // **Engagement, then retreat, then the quantiser** — stages 1 and 2 of
-    // `docs/plan_hunt_through_combat.md` §1. Wariness `0` makes the retreat an exact identity that
-    // consumes no randomness, so this is byte-identical until values are authored.
-    let engaged = fauna::animals_engaged(workers, fauna.engage_rate_for(&herd.species));
-    // **Restraint is FREE, and the floor is what makes it so** (`docs/plan_hunt_through_combat.md`
-    // §1): the escapement floor bounds what the party *goes after*, not what it declines to kill
-    // afterwards. A crew at its floor that engaged normally would take casualties and wear its kit
-    // and then hand nothing back — and killing without taking is denial, not restraint.
-    let engaged = engaged.min(fauna::animals_affordable(ceiling, herd.body_mass));
-    // **Through the PARTY, so the kit's `dispersion` reaches the retreat** — `HuntingParty::stayers`,
-    // never the bare `animals_that_stay`. The forecast this take must match resolves it that way
-    // (`forecast_production_and_take_at`), the kit picker prices it that way
-    // (`per_hunter_take_biomass`), and since the retreat also sizes the crew
-    // (`fauna::hunt_engage_workers`) a bare-wariness take here would put all three at odds with the
-    // one number the row reports. The visible cost was the trap line: `dispersion 0` is the whole of
-    // what a passive device buys, and this path charged a trapping party the full retreat anyway.
-    let stayed = party.stayers(engaged, fauna.wariness_for(&herd.species), draw);
-    // **The fight decides the kill** — stage 3, and the arm that used to be a bespoke hunt formula.
-    // The quarry comes in carrying **this herd's** accumulated wounds (`fauna::herd_quarry_fight`),
-    // so a party below the one-turn threshold wears the animal down over several turns instead of
-    // bouncing off it forever (`docs/plan_hunt_through_combat.md` §4.2).
-    let fight = fauna::resolve_hunt_fight(
-        stayed,
-        workers as f32,
-        party,
-        &fauna::herd_quarry_fight(herd, fauna),
-        draw,
-    );
-    // ...and the ledger goes straight back onto the herd, before anything can early-return past it.
+    // **The ledger goes straight back onto the herd**, before anything can early-return past it. The
+    // seam above returns it by value rather than mutating, so a forecast can resolve the same fight
+    // and drop it; a live take is the caller that keeps it.
     herd.wounds = fight.wounds;
     let take = fauna::quantise_animal_take(
         ceiling,

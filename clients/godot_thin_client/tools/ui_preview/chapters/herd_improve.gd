@@ -6,6 +6,10 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 30
+
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
@@ -109,8 +113,12 @@ func _building_herd_fixture() -> Dictionary:
 ## The band gentling it: standing ON the herd (distance 0 ≤ reach → the LOCAL branch, the only one
 ## that carries an improvement), `output_multiplier` 1.0 so the rendered numbers ARE the model's, and
 ## idle hands well clear of the composed crew so the frame measures the dip and not the labor ceiling.
+## **STAMPED WITH A `band_id`** (`BandFx.with_band_id`) — a band holding `NO_BAND_ID` asks NOTHING on
+## the query channel, so a sheet composed over one renders the crew-take PENDING line in place of its
+## whole readout, on a HUD that is behaving correctly. It was the raid forecasts' rule and it is the
+## resident take's now, which is what brought this locally-authored band under it.
 func _building_herd_band_fixture() -> Dictionary:
-	return {
+	return BandFx.with_band_id({
 		"id": "Band 1", "entity": 846, "faction": 0, "size": 90,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 30, "idle_workers": HERD_DIP_IDLE_WORKERS,
@@ -118,7 +126,7 @@ func _building_herd_band_fixture() -> Dictionary:
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 1.0,
 		"activity": "hunt", "labor_assignments": [],
-	}
+	})
 
 ## The band STANDING on Tame on that herd — the fixture the re-admission frame turns on. Everything
 ## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
@@ -200,9 +208,16 @@ func run(harness) -> void:
 	# code the plant model shares none of — a gate added to one web only would leave this sheet
 	# stacking the floor walk under the `ONCE TAMED` row exactly as the reported plant frame did.
 	# Caption AND readings, for the reason the plant twin states.
+	# **THE HUNT WEB'S CAPTION CARRIES ONE MORE CLAUSE, AND IT IS NOT THE DIP'S.** The take estimate
+	# above these readings states a BAND; the readings themselves are single numbers, being fixed
+	# conversions of one carried biomass, so the caption is what says which point of that band they are
+	# quoted at (`HudComposeVocab.YIELD_HEADER_AT_LIKELY_SUFFIX`). The retired third state — *per turn ·
+	# while building* — is still absent, which is what this claim is about, and the equality is what
+	# keeps it a claim: a caption that grew the dip clause back would fail it as loudly as ever.
 	h._assert_hud("a composed Tame's caption states the plain per-turn unit — there is no dip left to key",
 		Readout.yields_header(h._hud._drawercompose._compose_sheet)
-			== SourceForecast.YIELD_ROW_HEADER.to_upper())
+			== (SourceForecast.YIELD_ROW_HEADER
+				+ HudComposeVocab.YIELD_HEADER_AT_LIKELY_SUFFIX).to_upper())
 	h._assert_hud("…over readings that draw no arrow either",
 		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
 	# **THE HERD FORM, which is the one a shared branch gets wrong.** `unqueue` names a SOURCE, and its

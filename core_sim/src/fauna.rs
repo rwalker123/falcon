@@ -7322,6 +7322,82 @@ pub fn herd_quarry_fight(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
         .with_wounds(herd.wounds)
 }
 
+/// **The take's first three stages, resolved together** — engagement, retreat, fight — and the ONE
+/// definition of them.
+///
+/// [`crate::systems::hunt_take`] is this plus the quantiser and the herd mutation; the crew-take
+/// query's curve is this and nothing else. They call the same function because a curve that answers
+/// a *different* three stages from the ones the turn runs is precisely the defect the curve exists
+/// to close: the client used to compose `animals_that_stay(animals_engaged(..))` itself, which is
+/// stages one and two with **the fight missing**, and quoted a Wild Aurochs party 2.3× what the sim
+/// pays.
+///
+/// # The order is load-bearing, and so is where the room clamp sits
+///
+/// ```text
+/// ceiling = herd_take_room(floor)                                   // the escapement room
+/// engaged = animals_engaged(workers).min(animals_affordable(ceiling))
+/// stayed  = party.stayers(engaged, wariness)                        // the retreat
+/// fight   = resolve_hunt_fight(stayed, workers, party, quarry)      // damage over durability
+/// ```
+///
+/// **The room clamps the engagement, not the outcome.** Restraint is free
+/// (`docs/plan_hunt_through_combat.md` §1): the floor bounds what the party *goes after*, and since
+/// the retreat keeps a fraction of whatever it is handed, clamping afterwards would retreat a bigger
+/// party than the take does and over-quote every turn the room binds. That is why a curve answered
+/// at one floor cannot be reused at another.
+///
+/// # It does not touch the herd
+///
+/// The wound ledger arrives on [`HuntFight::wounds`] and the caller decides whether to store it —
+/// which is what lets a query resolve exactly the fight the turn will and simply drop it, the same
+/// contract [`resolve_hunt_fight`] already keeps.
+pub fn resolve_hunt_engagement(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    party: &HuntingParty,
+    workers: u32,
+    floor: f32,
+    // **Live or forecast** — a live take draws both stochastic stages from its per-event seed; a
+    // curve reads their quantiles. See [`HuntDraw`].
+    draw: HuntDraw,
+) -> HuntEngagement {
+    let ceiling = herd_take_room(herd, floor, fauna);
+    let engaged = animals_engaged(workers, fauna.engage_rate_for(&herd.species))
+        .min(animals_affordable(ceiling, herd.body_mass));
+    let stayed = party.stayers(engaged, fauna.wariness_for(&herd.species), draw);
+    let fight = resolve_hunt_fight(
+        stayed,
+        workers as f32,
+        party,
+        &herd_quarry_fight(herd, fauna),
+        draw,
+    );
+    HuntEngagement {
+        ceiling,
+        engaged,
+        stayed,
+        fight,
+    }
+}
+
+/// What [`resolve_hunt_engagement`] worked out — every intermediate the take reports on, so a caller
+/// reads them rather than recomputing any one of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntEngagement {
+    /// The escapement room at the caller's floor, in **biomass** ([`herd_take_room`]).
+    pub ceiling: f32,
+    /// Animals the party brought into contact — the reach, already clamped by what the herd can
+    /// spare.
+    pub engaged: f32,
+    /// Of those, how many stayed to be fought.
+    pub stayed: f32,
+    /// The fight. [`HuntFight::brought_down`] is **whole animals on the ground this turn** and is
+    /// the third arm [`quantise_animal_take`] `min`s — the term a pre-commit reading cannot derive
+    /// and must be told.
+    pub fight: HuntFight,
+}
+
 // **RETIRED: `corral_yield`** — the gross managed yield a penned herd handed its keeper each turn.
 // It was `pen_yield_biomass` through the species vector, with no floor term, no drawdown and no
 // engagement bound. A pen takes the ordinary escapement draw now: **a rung may change production, no
