@@ -37,7 +37,7 @@
 //! only that nothing is unaccounted for, which is the half that was missing.
 
 use bevy::prelude::*;
-use core_sim::{build_headless_app, run_turn};
+use core_sim::{build_test_app, run_turn};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
@@ -418,7 +418,7 @@ fn classification_tables_are_disjoint() {
 
 #[test]
 fn every_runtime_resource_is_classified() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     run_turn(&mut app);
     let world = &app.world;
 
@@ -472,7 +472,7 @@ fn every_runtime_resource_is_classified() {
 
 #[test]
 fn every_registered_component_is_classified() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     run_turn(&mut app);
     let world = &app.world;
 
@@ -539,7 +539,7 @@ fn every_registered_component_is_classified() {
 fn every_band_has_a_unique_durable_id() {
     use core_sim::{BandId, BandIdAllocator, PopulationCohort};
 
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     run_turn(&mut app);
 
     let mut query = app.world.query::<(&PopulationCohort, Option<&BandId>)>();
@@ -593,7 +593,7 @@ fn capture_sees_every_sim_state_entity() {
     use core_sim::sim_state::capture_sim_state;
     use core_sim::{BandId, PopulationCohort, PowerNode, Settlement, Tile};
 
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     run_turn(&mut app);
 
     let tiles = app.world.query::<&Tile>().iter(&app.world).count();

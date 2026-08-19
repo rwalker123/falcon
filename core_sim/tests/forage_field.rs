@@ -78,7 +78,13 @@ const NEAR_ZERO_PROVISIONS: f32 = 1e-3;
 /// young stand it is seeding *grows* under it instead of being held at its floor — and a bigger
 /// standing crop means a bigger dipped take. The share moved because the fixture's staffing did, not
 /// because the rung got cheaper.
-const BUILD_TRICKLE_FRACTION: f32 = 0.2;
+/// **It moved again — to 0.25 — when the take gained its growth-share backstop** (§4.14). A stand
+/// held near its floor while it is being sown now hands over the share of the turn's growth the
+/// player's floor left takeable, instead of nothing; measured, the build's trickle went from ~19% of
+/// the standing Field's yield to ~22.6%. That is the backstop working, not the rung getting cheaper,
+/// and the claim this bounds — *"the build is a trickle beside what it buys"* — is unchanged at a
+/// quarter.
+const BUILD_TRICKLE_FRACTION: f32 = 0.25;
 
 /// The **mechanic fixture's** grid — pinned *here*, deliberately not read from
 /// `simulation_config.json`.

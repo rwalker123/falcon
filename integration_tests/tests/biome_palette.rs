@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use bevy::math::UVec2;
 use core_sim::{
-    build_headless_app, BiomePalette, SimulationConfig, SimulationConfigMetadata, SnapshotHistory,
+    build_test_app, BiomePalette, SimulationConfig, SimulationConfigMetadata, SnapshotHistory,
 };
 use sim_runtime::{TerrainType, WorldSnapshot};
 
@@ -16,7 +16,7 @@ use sim_runtime::{TerrainType, WorldSnapshot};
 /// actually computed and enforced for it.
 fn generate(width: u32, height: u32, seed: u64) -> (WorldSnapshot, BiomePalette) {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     if let Some(mut md) = app.world.get_resource_mut::<SimulationConfigMetadata>() {
         md.set_seed_random(false);
     }

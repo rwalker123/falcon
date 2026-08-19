@@ -23,7 +23,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -119,7 +119,7 @@ fn domesticate(app: &mut App, faction: FactionId, count: usize) {
         .take(count);
     let mut tamed = 0;
     for herd in tameable {
-        herd.tame_outright(faction);
+        herd.tame_outright(faction, &core_sim::LadderConfig::builtin());
         tamed += 1;
     }
     assert_eq!(

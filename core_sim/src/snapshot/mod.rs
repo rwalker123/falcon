@@ -2282,7 +2282,10 @@ mod tests {
             SNAPSHOT_BODY_MASS,
         );
         assert!(
-            penned.corral_at(UVec2::new(4, 4)),
+            penned.corral_at(
+                UVec2::new(4, 4),
+                &crate::intensification::LadderConfig::builtin()
+            ),
             "the fixture species must be pennable"
         );
         registry.herds.push(penned);
@@ -2346,8 +2349,15 @@ mod tests {
         untameable.husbandry_ceiling = HusbandryCeiling::Wild;
         registry.herds.push(untameable);
         // (3) A herd already managed (owned).
+        // **Tamed through the real accrual**, not by setting `owner` alone: with one position per
+        // herd, ownership is not a rung — a herd nobody has banked work into stands on `animal:wild`
+        // and owes nothing, which is a state the sim cannot otherwise reach (the first accrual is
+        // what records the owner).
         let mut managed = herd("herd_managed");
-        managed.owner = Some(FactionId(0));
+        assert!(managed.tame_outright(
+            FactionId(0),
+            &crate::intensification::LadderConfig::builtin()
+        ));
         registry.herds.push(managed);
 
         let states = export_with(&registry, &all_seeing_ledger(64));
@@ -2455,7 +2465,7 @@ mod tests {
         let mut registry = HerdRegistry::default();
         let mut mine = herd_at("herd_mine", UVec2::new(40, 40));
         // The real accrual path, so the fixture cannot fabricate an ownership the sim would refuse.
-        mine.tame_outright(VIEWER);
+        mine.tame_outright(VIEWER, &crate::intensification::LadderConfig::builtin());
         assert_eq!(
             mine.owner,
             Some(VIEWER),
@@ -2782,7 +2792,10 @@ mod tests {
             SNAPSHOT_BODY_MASS,
         );
         assert!(
-            penned.corral_at(UVec2::new(4, 4)),
+            penned.corral_at(
+                UVec2::new(4, 4),
+                &crate::intensification::LadderConfig::builtin()
+            ),
             "the fixture species must be pennable"
         );
         // The keeper could only pay half the feed last turn → the herd is starving.
@@ -2861,7 +2874,10 @@ mod tests {
             0.05,
             SNAPSHOT_BODY_MASS,
         );
-        mobile.tame_outright(FactionId(0));
+        mobile.tame_outright(
+            FactionId(0),
+            &crate::intensification::LadderConfig::builtin(),
+        );
         registry.herds.push(mobile);
         // The same herd, penned — its upkeep must read the same at the same biomass.
         let mut penned = Herd::new(
@@ -2875,9 +2891,15 @@ mod tests {
             0.05,
             SNAPSHOT_BODY_MASS,
         );
-        penned.tame_outright(FactionId(0));
+        penned.tame_outright(
+            FactionId(0),
+            &crate::intensification::LadderConfig::builtin(),
+        );
         assert!(
-            penned.corral_at(UVec2::new(3, 3)),
+            penned.corral_at(
+                UVec2::new(3, 3),
+                &crate::intensification::LadderConfig::builtin()
+            ),
             "the fixture species must be pennable"
         );
         registry.herds.push(penned);

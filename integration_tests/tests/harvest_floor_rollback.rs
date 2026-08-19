@@ -4,7 +4,7 @@ use bevy::prelude::{Entity, UVec2};
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::TakeSelection;
 use core_sim::{
-    build_headless_app, scalar_from_f32, scalar_one, scalar_zero, BandId, FactionId, GenerationId,
+    build_test_app, scalar_from_f32, scalar_one, scalar_zero, BandId, FactionId, GenerationId,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
     ResidentBand, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
@@ -40,7 +40,7 @@ const CAPTURED_SPECIES: &str = "Checkpointed Quarry";
 #[test]
 fn a_rollback_rewinds_the_harvest_floor_on_both_webs() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     let band = spawn_band_with_floors(&mut app, CAPTURED_FLOOR);
@@ -225,7 +225,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
     use core_sim::{Expedition, ExpeditionMission, ExpeditionPhase};
 
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     let tile = *app

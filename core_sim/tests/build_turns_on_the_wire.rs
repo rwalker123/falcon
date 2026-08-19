@@ -56,7 +56,7 @@ use bevy::math::UVec2;
 
 use core_sim::TakeSelection;
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
+    build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
     LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
@@ -240,7 +240,7 @@ fn world_with_a_patch_knowing(
     knows_cultivation: bool,
     gatherers: u32,
 ) -> (App, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // One `update()` runs the Startup worldgen chain, which seeds the tile registry and the patches.
     app.update();
     let source = a_cultivable_site(&mut app);
@@ -522,7 +522,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
 /// rung's own grace, with nobody on the pool.
 #[test]
 fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let source = a_sowable_site(&mut app);
     let tile = app

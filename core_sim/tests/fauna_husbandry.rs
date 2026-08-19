@@ -40,7 +40,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -111,6 +111,147 @@ const FIXTURE_SPECIES: &str = "Rabbit Warren";
 
 /// A stationary [`FIXTURE_SPECIES`] herd (route length 1) primed to half its cap → Thriving and a
 /// clean domestication candidate. Returns its id.
+/// **⛔ AN UNKEPT HERD STILL GROWS AT ITS LAND'S RATE — the growth freeze is deleted.**
+///
+/// `regrow_biomass` used to zero the growth of an owned herd whose keeping went wholly unmet. It is
+/// gone: *a herd's growth is a fact about the land it stands on, not about who is watching it.* The
+/// price of not keeping a herd is that it **leaves**, and that is the whole of it — a second penalty
+/// on the same trigger made neglect cost twice and made the two impossible to tune apart.
+///
+/// **The pair is the test.** *"It still grows"* alone would pass on a herd that grew and never shed,
+/// which would delete the neglect penalty altogether; *"it still sheds"* alone was already true.
+/// Asserted on ONE turn's regrowth, in isolation from the shed, so the growth term is read directly
+/// rather than inferred from a net movement the shed also touches.
+#[test]
+fn an_unkept_herd_still_grows_at_its_lands_rate_and_still_sheds() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+
+    // Seat it below capacity so there is real growth to see, with NOBODY keeping it.
+    const ROOM_TO_GROW: f32 = 0.5;
+    let (before, cap) = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.biomass = herd.carrying_capacity * ROOM_TO_GROW;
+        herd.upkeep_supplied = 0.0;
+        (herd.biomass, herd.carrying_capacity)
+    };
+    assert!(
+        herd_of(&app, &id).owner.is_some(),
+        "fixture: the herd must be OWNED, or the retired gate would never have fired on it"
+    );
+
+    // **Logistics regrowth alone**, without the shed — `advance_herds` runs `regrow_biomass`.
+    app.world.run_system_once(advance_herds);
+    let grown = herd_of(&app, &id).biomass;
+    assert!(
+        grown > before,
+        "an unkept herd still grows at the land's rate: {before} -> {grown} (cap {cap})"
+    );
+
+    // …and it still pays the real price: the shed takes animals every turn past the grace.
+    let before_shed = herd_of(&app, &id).biomass;
+    run_turns_untended(&mut app, TURNS_PAST_THE_SHEDS_GRACE);
+    let after = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .map_or(0.0, |herd| herd.biomass);
+    assert!(
+        after < before_shed,
+        "…and it still SHEDS, which is now the only penalty for not keeping it: \
+         {before_shed} -> {after}"
+    );
+}
+
+/// Enough turns for the pastoral rung's neglect grace to be spent and the shed to have bitten
+/// several times, so the comparison is not reading a forgiven turn.
+const TURNS_PAST_THE_SHEDS_GRACE: u32 = 8;
+
+/// **⛔ WHAT BECOMES OF AN ABANDONED HERD, now that its growth is no longer frozen.**
+///
+/// The retired `abandoned_pastoral` gate in `regrow_biomass` zeroed the growth of an owned herd whose
+/// keeping went wholly unmet, and its own comment claimed that freeze was what made such a herd go
+/// **fully feral** *"instead of persisting at a leaky ~0.6·K equilibrium"*. Deleting it therefore has
+/// to be measured rather than argued: if the shed no longer outruns the growth, abandonment stops
+/// ending in a wild herd and starts ending in a permanent half-sized tame one.
+///
+/// Reports, for a fully domesticated herd and for a penned one, both with **zero** keeping staffed:
+/// the biomass curve as a fraction of `K`, whether ownership clears, and — if it settles instead —
+/// the equilibrium.
+///
+/// Run with `cargo test -p core_sim --test fauna_husbandry probe_the_abandoned_herds_fate --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "measurement harness — run with --ignored --nocapture"]
+fn probe_the_abandoned_herds_fate() {
+    /// Long enough for either outcome to be unambiguous: a 25%/turn shed empties a herd in well
+    /// under this, and an equilibrium is flat long before it.
+    const TURNS: u32 = 120;
+
+    for penned in [false, true] {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+        if penned {
+            corral_herd(&mut app, &id);
+        }
+        let cap = herd_of(&app, &id).carrying_capacity.max(1.0);
+        let mut curve: Vec<String> = Vec::new();
+        let mut cleared_on = None;
+
+        for turn in 1..=TURNS {
+            // **NOBODY KEEPING IT** — `advance_husbandry` clears `upkeep_supplied` each turn and the
+            // fixture never restaffs it, so the herd is short by its whole demand every turn.
+            run_turns_untended(&mut app, 1);
+            let gone = app.world.resource::<HerdRegistry>().find(&id).is_none();
+            let owned = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .and_then(|herd| herd.owner)
+                .is_some();
+            let fraction = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .map_or(0.0, |herd| herd.biomass / cap);
+            if turn <= 40 {
+                curve.push(format!("{fraction:.3}"));
+            }
+            if (gone || !owned) && cleared_on.is_none() {
+                cleared_on = Some(turn);
+            }
+            if gone {
+                break;
+            }
+        }
+
+        let end = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .map(|herd| (herd.biomass / cap, herd.owner.is_some()));
+        println!(
+            "\n=== {} herd, ZERO keeping ===",
+            if penned { "PENNED" } else { "PASTORAL" }
+        );
+        println!(
+            "  ownership/herd cleared on: {}",
+            cleared_on.map_or("NEVER".to_string(), |t| format!("turn {t}"))
+        );
+        match end {
+            None => println!("  ended: herd despawned (fully feral / gone)"),
+            Some((f, owned)) => println!(
+                "  ended: B/K = {f:.4}, still owned = {owned} -> EQUILIBRIUM at {:.1}% of K",
+                f * 100.0
+            ),
+        }
+        println!("  B/K per turn: {}", curve.join(" "));
+    }
+}
+
 fn prime_thriving_herd(app: &mut App) -> String {
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -403,12 +544,7 @@ const NOT_HERDED_FIXTURE: f32 = 0.0;
 fn keeping_demand(app: &App, id: &str) -> f32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    core_sim::herd_upkeep_demand(
-        &herd_of(app, id),
-        core_sim::NOTHING_IN_FLIGHT,
-        &fauna,
-        &ladder,
-    )
+    core_sim::herd_upkeep_demand(&herd_of(app, id), &fauna, &ladder)
 }
 
 /// **Seat the herd's keeping at `fraction` of what it owes** — the fixture's stand-in for
@@ -487,7 +623,7 @@ fn wild_herds_of(app: &App, species: &str) -> Vec<Herd> {
         .filter(|h| {
             h.owner.is_none()
                 && !h.is_corralled()
-                && h.domestication_progress == 0.0
+                && h.ladder_position() == 0.0
                 && h.species == species
         })
         .cloned()
@@ -557,7 +693,7 @@ fn domesticate(app: &mut App, id: &str) {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     }
     seat_keeping(app, id, FULLY_HERDED);
 }
@@ -606,7 +742,12 @@ fn progress_of(app: &App, id: &str) -> f32 {
     app.world
         .resource::<HerdRegistry>()
         .find(id)
-        .map(|h| h.domestication_progress)
+        .map(|h| {
+            h.rung_work_done(
+                core_sim::RungKey::AnimalPastoral,
+                &core_sim::LadderConfig::builtin(),
+            )
+        })
         .unwrap_or(0.0)
 }
 
@@ -665,7 +806,10 @@ fn tame_policy_domesticates_thriving_herd() {
     assert!(
         herd.is_domesticated(),
         "sustained Tame work should domesticate: progress {}",
-        herd.domestication_progress
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
     assert_eq!(herd.owner, Some(FactionId(0)), "the tamer owns the herd");
     assert_eq!(registry.domesticated_count(FactionId(0)), 1);
@@ -689,7 +833,11 @@ fn sustain_hunt_no_longer_tames_it_only_teaches_herding() {
 
     let herd = herd_of(&app, &id);
     assert_eq!(
-        herd.domestication_progress, 0.0,
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        ),
+        0.0,
         "a Sustain hunt must never tame — Tame is the taming verb"
     );
     assert_eq!(
@@ -812,7 +960,10 @@ fn a_deep_floor_beside_a_tame_build_buys_nothing_now_and_finishes_later() {
     assert!(
         sustain_herd.is_domesticated(),
         "control: a food-peak builder tames the herd within {TURNS} turns (progress {})",
-        sustain_herd.domestication_progress
+        sustain_herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
 
     // (2) And the floor it named still catches up with it: the herd ends the span out of Thriving.
@@ -836,13 +987,28 @@ fn a_deep_floor_beside_a_tame_build_buys_nothing_now_and_finishes_later() {
         deplete_herd.is_domesticated(),
         "the floor paces the LESSON, not the build — a deep-floor Tame finishes with the rest \
          (progress {})",
-        deplete_herd.domestication_progress
+        deplete_herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
     assert!(
-        deplete_herd.domestication_progress <= sustain_herd.domestication_progress,
+        deplete_herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        ) <= sustain_herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        ),
         "the Deplete builder banks strictly less progress over the same span: {} vs {}",
-        deplete_herd.domestication_progress,
-        sustain_herd.domestication_progress
+        deplete_herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        ),
+        sustain_herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
 }
 
@@ -1107,9 +1273,16 @@ fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
         run_turns_untended(&mut app, 1);
         match app.world.resource::<HerdRegistry>().find(&id) {
             Some(herd) => assert_eq!(
-                herd.domestication_progress, built,
+                herd.rung_work_done(
+                    core_sim::RungKey::AnimalPastoral,
+                    &core_sim::LadderConfig::builtin()
+                ),
+                built,
                 "tameness is never decayed by neglect: {built} -> {}",
-                herd.domestication_progress
+                herd.rung_work_done(
+                    core_sim::RungKey::AnimalPastoral,
+                    &core_sim::LadderConfig::builtin()
+                )
             ),
             None => {
                 despawned = true;
@@ -1117,11 +1290,28 @@ fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
             }
         }
     }
+    // **⛔ THIS NO LONGER HOLDS, AND THE CHANGE IS DELIBERATE — the ruling is Ray's.**
+    //
+    // A fully-abandoned pastoral herd used to bleed out and despawn, and what drove it there was
+    // `regrow_biomass`'s `abandoned_pastoral` gate: an unkept managed herd's growth was **frozen to
+    // zero**, so the shed had nothing working against it. That freeze is deleted — *a herd's growth
+    // is a fact about the land it stands on, not about who is watching it* — and the shed alone does
+    // **not** outrun the pastoral curve.
+    //
+    // Measured (`probe_the_abandoned_herds_fate`): an abandoned pastoral herd settles at **~0.64·K**
+    // and keeps its owner indefinitely. That is the *"leaky equilibrium"* the retired gate's comment
+    // named, and it is now the shipped behaviour rather than a state the sim engineered away. A
+    // **penned** herd still goes fully feral (despawns around turn 72), because its growth is gated
+    // separately by `pen_fed_fraction` — an unfed pen does not grow, and that gate is untouched.
+    //
+    // So this asserts what the sim now does, and the pen arm below is what still pins going feral.
     assert!(
-        despawned,
-        "a fully-abandoned pastoral herd eventually bleeds out entirely and despawns"
+        !despawned,
+        "an abandoned pastoral herd now settles rather than bleeding out — the growth freeze that \
+         drove it to zero is deleted, and only the shed is left"
     );
-    // Its animals went to the wild web, not into thin air.
+    // Its escapees went to the wild web, not into thin air — still true, and still the point of the
+    // shed: what changed is only that the herd it leaves behind keeps replacing them.
     let wild_after: f32 = wild_herds_of(&app, &species)
         .iter()
         .map(|h| h.biomass)
@@ -1147,8 +1337,8 @@ fn domesticated_herd_is_collapse_immune() {
     let low = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0)); // sets owner + progress = 1.0 → domesticated
-                                          // Below the 15% collapse threshold — a wild herd here would crash.
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin()); // sets owner + progress = 1.0 → domesticated
+                                                                              // Below the 15% collapse threshold — a wild herd here would crash.
         let low = herd.carrying_capacity * 0.10;
         herd.biomass = low;
         low
@@ -1402,7 +1592,12 @@ fn corral_progress_of(app: &App, id: &str) -> f32 {
     app.world
         .resource::<HerdRegistry>()
         .find(id)
-        .map(|h| h.corral_progress)
+        .map(|h| {
+            h.rung_work_done(
+                core_sim::RungKey::AnimalPen,
+                &core_sim::LadderConfig::builtin(),
+            )
+        })
         .unwrap_or(0.0)
 }
 
@@ -1412,11 +1607,14 @@ fn corral_herd(app: &mut App, id: &str) -> UVec2 {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
     herd.biomass = herd.carrying_capacity;
-    herd.tame_outright(FactionId(0));
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     // A freshly-penned herd has a crew (`corral_at` grants the tending grace for the same reason) —
     // see `domesticate` for why the meter alone is not enough.
     let tile = herd.position();
-    assert!(herd.corral_at(tile), "the fixture species must be pennable");
+    assert!(
+        herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
+        "the fixture species must be pennable"
+    );
     tile
 }
 
@@ -1556,7 +1754,7 @@ fn the_re_expressed_pen_lands_where_the_managed_rate_did() {
             1 => {
                 let mut registry = app.world.resource_mut::<HerdRegistry>();
                 let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-                herd.tame_outright(FactionId(0));
+                herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             }
             _ => {
                 corral_herd(&mut app, &id);
@@ -2056,8 +2254,13 @@ fn freshly_penned_herd_survives_its_grace_turn() {
         herd.is_corralled(),
         "the grace turn spares a freshly-penned herd"
     );
+    // **A completed rung reads its own cost, not a normalized `1.0`.** The retired `corral_at`
+    // fabricated a one-unit job when nobody had banked the work; the position is seated at the
+    // rung's real top now, so the honest statement of *"still complete"* is done == cost.
+    let ladder = core_sim::LadderConfig::builtin();
     assert_eq!(
-        herd.corral_progress, 1.0,
+        herd.rung_work_done(core_sim::RungKey::AnimalPen, &ladder),
+        herd.rung_cost(core_sim::RungKey::AnimalPen, &ladder),
         "a spared pen keeps its completed progress"
     );
     assert!(
@@ -2174,7 +2377,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     }
     grant_penning(&mut app);
     let band = spawn_builder(&mut app, &id, Improvement::Corral);
@@ -2196,7 +2399,11 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
         "a half-built pen never penned the herd"
     );
     assert_eq!(
-        herd.corral_progress, half_built,
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPen,
+            &core_sim::LadderConfig::builtin()
+        ),
+        half_built,
         "a mid-build lapse keeps its progress"
     );
 }
@@ -2572,7 +2779,7 @@ fn probe_the_price_of_holding_a_herd() {
             herd.species = species.display_name.clone();
             herd.body_mass = species.body_mass;
             herd.biomass = heads * species.body_mass;
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             herd.herders_needed = 0;
             counts.push(core_sim::herd_herders_needed(&herd, &fauna, &ladder));
         }
@@ -2633,7 +2840,7 @@ fn every_species_asks_for_the_keepers_it_asked_for_before() {
             herd.species = species.display_name.clone();
             herd.body_mass = body_mass;
             herd.biomass = heads * body_mass;
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             herd.herders_needed = 0; // unstabilized, so the raw reading is what answers
             assert_eq!(
                 core_sim::herd_herders_needed(&herd, &fauna, &ladder),
@@ -2666,7 +2873,7 @@ fn the_shed_is_continuous_in_the_keeping_shortfall() {
         {
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             herd.biomass = herd.carrying_capacity;
         }
         let before = herd_of(&app, &id).biomass;
@@ -2710,8 +2917,7 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.owner = Some(FactionId(0));
-        herd.domestication_cost = 50.0;
-        herd.domestication_progress = 25.0;
+        herd.set_ladder_position(25.0, &core_sim::LadderConfig::builtin());
     }
     let herd = herd_of(&app, &id);
     assert_eq!(
@@ -2735,7 +2941,7 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     }
     let herd = herd_of(&app, &id);
     assert_eq!(
@@ -2746,9 +2952,7 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     // And the maintain activity's published count follows the same rate.
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    assert!(
-        core_sim::herd_upkeep_demand(&herd, core_sim::NOTHING_IN_FLIGHT, &fauna, &ladder) > 0.0
-    );
+    assert!(core_sim::herd_upkeep_demand(&herd, &fauna, &ladder) > 0.0);
     // **AND NOTHING EATS AN ANIMAL BUILD** — neither animal rung declares a `meter_decay`, so a
     // wholly unkept herd's meter rot is `0` and the shed is what its shortfall costs.
     let unkept = herd_of(&app, &id);
@@ -2792,14 +2996,14 @@ fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         Kept {
             supplied: herd.upkeep_supplied,
-            // Read as the capture reads it — after the accrual, with no verb in hand.
-            demand: core_sim::herd_upkeep_demand(
-                &herd,
-                core_sim::NOTHING_IN_FLIGHT,
-                &fauna,
-                &ladder,
+            // **Read as the capture reads it** — `herd_keeping_basis`, the bill the keepers were
+            // HANDED when the pool was split, not the live demand the same turn's accrual has since
+            // raised. The two came apart when the animal demand began interpolating on the position.
+            demand: core_sim::herd_keeping_basis(&herd, &fauna, &ladder),
+            progress: herd.rung_work_done(
+                core_sim::RungKey::AnimalPastoral,
+                &core_sim::LadderConfig::builtin(),
             ),
-            progress: herd.domestication_progress,
         }
     };
 
@@ -2836,17 +3040,29 @@ fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
         "fixture: the Tame must bank work on this very turn, or nothing about the ordering is \
          under test"
     );
+    // **THE CLAIM MUST NOT BE SHORT OF THE BILL IT WAS HANDED**, which is the invariant this arm has
+    // always been about — and it is now stated against the bill rather than against a bare `> 0`.
+    //
+    // The demand **interpolates on the herd's position** since the animal web got its one-position
+    // ladder, so on the turn a Tame banks its *first* work the pool is split against a position of
+    // zero and a supply of zero is the correct answer, not a missed claim. What would still be the
+    // defect is a **staffed** role publishing less than the bill the same turn stamped
+    // (`Herd::upkeep_demanded`), which is what the ordering guarantees.
     assert!(
-        taming.supplied > 0.0,
-        "the turn a Tame banks its first work, the husbandry pool must supply something — got {} \
-         against a demand of {}",
+        taming.supplied + 1e-4 >= taming.demand,
+        "a staffed husbandry role must cover the bill its keepers were handed — supplied {} \
+         against a stamped demand of {}",
         taming.supplied,
         taming.demand
     );
+    // **AND THE TAME REALLY DID BANK**, so the arm above is about a herd the pool was split for
+    // rather than one nothing happened to. What it does **not** assert is a positive bill on turn
+    // one: the demand interpolates on the position, and the position is `0` when the shares are
+    // struck, so *"owes nothing yet"* is the honest reading of a Tame's first turn — and it is the
+    // whole of the front-loading fix.
     assert!(
-        taming.demand > 0.0,
-        "fixture: the herd must actually owe a keeping once it is owned, or the arm above is \
-         asserting against nothing"
+        taming.progress > 0.0,
+        "fixture: the Tame must have banked work, or the claim it is about never happened"
     );
 
     // **The pair.** A wild herd is nobody's to keep and nothing is being started on it, so the pool
@@ -2994,7 +3210,7 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         herd.carrying_capacity = start_animals * body_mass * 2.0; // K well above the stock
         herd.biomass = start_animals * body_mass;
     }
@@ -3025,7 +3241,10 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
     assert!(
         herd.is_domesticated(),
         "and its tameness is untouched by the shedding: {}",
-        herd.domestication_progress
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
 }
 
@@ -3049,7 +3268,7 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         herd.carrying_capacity = current_animals * body_mass * 4.0;
         herd.biomass = current_animals * body_mass;
     }
@@ -3097,7 +3316,7 @@ fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
     let cap = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         // Ecological K modestly above the labor capacity, over-stocked to full K.
         let cap = capacity_animals * body_mass * 1.5;
         herd.carrying_capacity = cap;
@@ -3130,7 +3349,10 @@ fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
     assert!(
         herd.is_domesticated(),
         "and its tameness is untouched: {}",
-        herd.domestication_progress
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
     assert!(
         herd.biomass > floor * 4.0,
@@ -3166,7 +3388,7 @@ fn neglect_never_un_tames_a_herd() {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.owner = Some(FactionId(0));
-        herd.domestication_progress = partial;
+        herd.set_ladder_position(partial, &core_sim::LadderConfig::builtin());
     }
     seat_keeping(&mut app, &id, NOT_HERDED_FIXTURE); // nobody herding — maximum shed pressure
 
@@ -3177,9 +3399,16 @@ fn neglect_never_un_tames_a_herd() {
         app.world.run_system_once(advance_husbandry);
         match app.world.resource::<HerdRegistry>().find(&id) {
             Some(herd) => assert_eq!(
-                herd.domestication_progress, partial,
+                herd.rung_work_done(
+                    core_sim::RungKey::AnimalPastoral,
+                    &core_sim::LadderConfig::builtin()
+                ),
+                partial,
                 "neglect sheds animals, it never touches tameness: {}",
-                herd.domestication_progress
+                herd.rung_work_done(
+                    core_sim::RungKey::AnimalPastoral,
+                    &core_sim::LadderConfig::builtin()
+                )
             ),
             None => {
                 despawned = true;
@@ -3204,7 +3433,7 @@ fn a_pen_sheds_slower_than_a_pastoral_herd() {
         {
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             herd.biomass = herd.carrying_capacity;
         }
         if corral {
@@ -3212,7 +3441,7 @@ fn a_pen_sheds_slower_than_a_pastoral_herd() {
             {
                 let mut registry = app.world.resource_mut::<HerdRegistry>();
                 let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-                assert!(herd.corral_at(tile));
+                assert!(herd.corral_at(tile, &core_sim::LadderConfig::builtin()));
                 // Skip the one-turn penning grace so both start shedding on turn 1.
                 herd.corralled_tended_this_turn = false;
             }
@@ -3281,7 +3510,7 @@ fn shed_animals_appear_in_the_wild_web() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         herd.biomass = herd.carrying_capacity;
     }
     // Fully under-contained ⇒ a real shed, once the grace is spent.
@@ -3304,7 +3533,14 @@ fn shed_animals_appear_in_the_wild_web() {
     );
     for h in &wild {
         assert!(h.owner.is_none(), "a wild carrier is unowned");
-        assert_eq!(h.domestication_progress, 0.0, "and undomesticated");
+        assert_eq!(
+            h.rung_work_done(
+                core_sim::RungKey::AnimalPastoral,
+                &core_sim::LadderConfig::builtin()
+            ),
+            0.0,
+            "and undomesticated"
+        );
     }
 }
 
@@ -3349,7 +3585,7 @@ fn under_herded_lines(app: &App) -> Vec<CommandEventEntry> {
 fn seat_over_stocked_managed(app: &mut App, id: &str, herders: f32, aph: f32, body_mass: f32) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    herd.tame_outright(FactionId(0));
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     let capacity_animals = herders * aph;
     herd.carrying_capacity = capacity_animals * body_mass * 8.0;
     herd.biomass = capacity_animals * body_mass * 4.0; // 4× the labor capacity
@@ -3503,7 +3739,7 @@ fn the_shed_starts_exactly_one_turn_past_the_grace() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         herd.biomass = herd.carrying_capacity;
     }
     let start = herd_of(&app, &id).biomass;
@@ -3538,7 +3774,7 @@ fn holding_a_herd_resets_its_neglect_counter() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         herd.biomass = herd.carrying_capacity;
     }
     let start = herd_of(&app, &id).biomass;
@@ -3574,7 +3810,7 @@ fn the_under_herded_notice_fires_inside_the_grace() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         herd.biomass = herd.carrying_capacity;
     }
     let start = herd_of(&app, &id).biomass;
@@ -3618,8 +3854,7 @@ fn a_half_tamed_herd_sheds_only_when_its_keeping_is_short() {
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
             herd.owner = Some(FactionId(0));
-            herd.domestication_cost = A_REAL_TAMING_JOB;
-            herd.domestication_progress = A_REAL_TAMING_JOB / 2.0;
+            herd.set_ladder_position(A_REAL_TAMING_JOB / 2.0, &core_sim::LadderConfig::builtin());
         }
         assert!(
             !herd_of(&app, &id).is_domesticated(),
@@ -3685,8 +3920,7 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.owner = Some(FactionId(0));
-        herd.domestication_cost = cost;
-        herd.domestication_progress = cost / 2.0;
+        herd.set_ladder_position(cost / 2.0, &core_sim::LadderConfig::builtin());
     }
     let part = herd_of(&app, &id);
     assert_eq!(
@@ -3697,13 +3931,19 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
 
     // **And it stays that way across turns nobody staffs** — monotone means it cannot slip back, so
     // this is a stable read rather than a flapping one.
-    let before = herd_of(&app, &id).domestication_progress;
+    let before = herd_of(&app, &id).ladder_position();
     run_turns_untended(&mut app, 8);
     let after = herd_of(&app, &id);
     assert!(
-        after.domestication_progress >= before,
+        after.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        ) >= before,
         "monotone: an animal build meter never bleeds ({before} -> {})",
-        after.domestication_progress
+        after.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        )
     );
     assert_eq!(
         core_sim::herd_build_verb(&after, None),
@@ -3715,7 +3955,7 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.domestication_progress = cost;
+        herd.set_ladder_position(cost, &core_sim::LadderConfig::builtin());
     }
     let tamed = herd_of(&app, &id);
     assert_eq!(
@@ -3811,7 +4051,11 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
         blocked_reason: String,
     }
 
-    let run = |standing_crop: f32| -> Turn {
+    /// **One turn, both arms.** This fixture is about what a Tame's *first* turn does: the blocked
+    /// head banks nothing and the open one banks its first work, and neither owes a keeping yet.
+    const ONE_TURN: u32 = 1;
+
+    let run = |standing_crop: f32, turns: u32| -> Turn {
         let mut app = spawn_world();
         grant_herding(&mut app);
         let build = prime_thriving_herd(&mut app);
@@ -3832,7 +4076,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 .iter_mut()
                 .find(|herd| herd.id == holding)
                 .expect("the holding herd exists");
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             // **This turn's supply, cleared.** `Herd::upkeep_supplied` accumulates across the bands
             // working a source and is zeroed by the Logistics decay pass; this fixture runs the
             // labor arm alone, so a seeded value would be added to rather than replaced.
@@ -3842,22 +4086,21 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
         // distinguishable outcomes on one fixture. Sized off the shipped seams rather than a
         // literal, because an animal rung's demand rides the flock's own keeper load.
         let holding_demand = keeping_demand(&app, &holding);
-        let build_demand_if_claimed = {
-            let fauna = app.world.resource::<FaunaConfigHandle>().get();
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
-            core_sim::herd_upkeep_demand(
-                &herd_of(&app, &build),
-                Some(Improvement::Tame),
-                &fauna,
-                &ladder,
-            )
-        };
+        // **The pool covers the holding**, which is what makes "paid in full" a real outcome rather
+        // than a pool that could not have short-changed anyone.
+        //
+        // It used to also require the pool to be **too small for both**, so that a dilution would be
+        // visible. That precondition is unsatisfiable now, and the reason is the fix itself: the
+        // keeping demand **interpolates on the herd's position**, and a blocked head has banked
+        // nothing — so what it would claim is `0`, and there is no second bill for the pool to fall
+        // short of. The blocked head is guarded twice over now (the claim gate refuses it, and its
+        // bill is zero besides); the arm that can still tell a live claim from a dead one is the
+        // **unblocked** one below, where the same herd banks work and does draw.
         let keepers = (holding_demand / animal_keeper_supply(1)).ceil().max(1.0) as u32;
         let pool = animal_keeper_supply(keepers);
         assert!(
-            pool >= holding_demand && pool < holding_demand + build_demand_if_claimed,
-            "fixture: the pool must cover the holding alone and not both — {pool} against \
-             {holding_demand} + {build_demand_if_claimed}"
+            pool >= holding_demand,
+            "fixture: the pool must cover the holding — {pool} against {holding_demand}"
         );
 
         let pos = app
@@ -3925,7 +4168,26 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             },
             ResidentBand,
         ));
-        app.world.run_system_once(advance_labor_allocation);
+        // **TWO passes, because a Tame's first turn owes nothing.** The keeping demand interpolates
+        // on the herd's position, and that position is `0` when the first turn's pool is split — so
+        // an unblocked build draws nothing on turn one and dilutes nothing, and the liveness half of
+        // this test would be measuring the very state the blocked arm is about. The second pass
+        // reads a build genuinely part-way up its rung. `advance_husbandry` between them is what
+        // clears the per-turn keeping scratch, so turn two is judged on turn two's bill.
+        for turn in 0..turns {
+            if turn > 0 {
+                // **The per-turn keeping scratch, cleared by hand between passes.** In a real turn
+                // `advance_husbandry` does this in Logistics; running that whole system here would
+                // also regrow the flock, which lifts the blocked arm off its floor and opens the
+                // very gate it exists to hold shut. What the second pass needs is only that the
+                // bill and the supply describe *its own* turn.
+                for herd in app.world.resource_mut::<HerdRegistry>().herds.iter_mut() {
+                    herd.upkeep_supplied = 0.0;
+                    herd.upkeep_demanded = None;
+                }
+            }
+            app.world.run_system_once(advance_labor_allocation);
+        }
 
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
@@ -3934,7 +4196,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             (
                 herd.upkeep_supplied,
                 // **Read the way the CAPTURE reads it** — after the accrual, with no verb in hand.
-                core_sim::herd_upkeep_demand(&herd, core_sim::NOTHING_IN_FLIGHT, &fauna, &ladder),
+                core_sim::herd_upkeep_demand(&herd, &fauna, &ladder),
             )
         };
         let (holding_supplied, holding_demand) = read(&holding);
@@ -3945,13 +4207,16 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             holding_demand,
             build_supplied,
             build_demand,
-            build_progress: built.domestication_progress,
+            build_progress: built.rung_work_done(
+                core_sim::RungKey::AnimalPastoral,
+                &core_sim::LadderConfig::builtin(),
+            ),
             blocked_reason: built.build_blocked_reason.key().to_string(),
         }
     };
 
     // --- (a) THE BLOCKED HEAD ------------------------------------------------------------------
-    let blocked = run(AT_THE_FLOOR);
+    let blocked = run(AT_THE_FLOOR, ONE_TURN);
     assert_eq!(
         blocked.blocked_reason, "escapement",
         "fixture: the head must be blocked, and by the escapement gate — got '{}'",
@@ -3986,7 +4251,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
     );
 
     // --- (b) THE SAME HEAD, UNBLOCKED ----------------------------------------------------------
-    let open = run(ABOVE_THE_FLOOR);
+    let open = run(ABOVE_THE_FLOOR, ONE_TURN);
     assert_eq!(
         open.blocked_reason, "",
         "fixture: standing the flock above the floor must open the gate — still blocked on '{}'",
@@ -3997,15 +4262,23 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
         "fixture: the unblocked Tame must bank its first work this turn, or the verb term is never \
          exercised"
     );
-    assert!(
-        open.build_supplied > 0.0,
-        "the turn a Tame banks its first work, its keeping pool must supply something ({})",
+    // **AND ON ITS FIRST TURN IT STILL DILUTES NOTHING**, which is not the old answer and is the
+    // whole of the front-loading fix. A Tame's claim is its *position*, and the position is `0` when
+    // the pool is split — so an unblocked head that banks its first work this turn owes nothing this
+    // turn, exactly as the blocked one does. What separates the two arms is `build_progress` above.
+    //
+    // **The claim then GROWS with the rung**, which is where the dilution actually lives now; that
+    // ordering is pinned by `a_half_tamed_herd_owes_about_half_the_pastoral_rate` and
+    // `the_cost_and_the_benefit_move_together`, on fixtures that can seat a real position rather
+    // than having to reach one through the build.
+    assert_eq!(
+        open.build_supplied, 0.0,
+        "a Tame owes nothing on the turn it banks its first work ({})",
         open.build_supplied
     );
     assert!(
-        open.holding_supplied < open.holding_demand - 1e-4,
-        "…and the flock beside it is legitimately diluted by a build that IS being raised — {} of \
-         {}",
+        (open.holding_supplied - open.holding_demand).abs() < 1e-4,
+        "…so the flock beside it is still paid in full — {} of {}",
         open.holding_supplied,
         open.holding_demand
     );

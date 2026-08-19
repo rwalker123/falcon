@@ -30,13 +30,12 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_labor_allocation, build_headless_app, patch_material_yields,
-    patch_provisions_per_biomass, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
-    scalar_zero, selected_biomass_share, tile_flora_composition, FactionId, FloraConfigHandle,
-    FloraShare, ForagePatch, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment,
-    LaborConfigHandle, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SimulationConfig, SnapshotHistory, StartingUnit, TakeSelection, Tile, TileRegistry,
-    WHOLE_BASKET,
+    advance_labor_allocation, build_test_app, patch_material_yields, patch_provisions_per_biomass,
+    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, selected_biomass_share,
+    tile_flora_composition, FactionId, FloraConfigHandle, FloraShare, ForagePatch, ForageRegistry,
+    GenerationId, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore,
+    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, StartingUnit,
+    TakeSelection, Tile, TileRegistry, WHOLE_BASKET,
 };
 
 /// The map every fixture here stands on — the standard seed the flora suites are quoted against, so
@@ -699,7 +698,7 @@ fn the_same_selection_publishes_the_same_row_however_it_was_typed() {
 /// The standard world, through the real Startup chain — worldgen, hydrology and the forage seeding
 /// all as shipped, because a hand-rolled partial chain measures a map the sim cannot produce.
 fn world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_seed = STANDARD_SEED;
     app.world.insert_resource(config);

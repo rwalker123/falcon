@@ -43,7 +43,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    animals_affordable, animals_engaged, build_headless_app, herd_capacity, herd_hunt_yield,
+    animals_affordable, animals_engaged, build_test_app, herd_capacity, herd_hunt_yield,
     hunt_escapement_ceiling, hunt_take, recapture_snapshot_in_place, retreat_seed, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_herds, CombatConfig, CombatConfigHandle, FactionId,
     FaunaConfig, FaunaConfigHandle, GenerationId, Herd, HerdRegistry, HuntDraw, HuntingParty,
@@ -178,7 +178,7 @@ const SEED: u64 = 119_304_647;
 /// Re-speciating an existing herd keeps the placement/graze plumbing real while pinning the one
 /// variable under test — the `hunt_forecast_range` pattern.
 fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world
         .resource_mut::<core_sim::SimulationConfig>()
         .map_seed = SEED;

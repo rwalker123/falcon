@@ -35,7 +35,7 @@ use core_sim::{
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
 /// `TileRegistry` + a seeded `GrazeRegistry`; the pen under test is placed by hand.
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 /// Turns per run — well past where the fast pen `r` settles.
 const TURNS: u32 = 200;
 /// The tail-window whose spread proves convergence.
@@ -152,8 +152,11 @@ fn seat_pen(
         r,
         body_mass,
     );
-    herd.tame_outright(FactionId(0));
-    assert!(herd.corral_at(tile), "the fixture species must be pennable");
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+    assert!(
+        herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
+        "the fixture species must be pennable"
+    );
     herd.pen_radius = radius;
     registry.herds.push(herd);
     "pen_0".to_string()
@@ -696,12 +699,12 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         match rung {
             Rung::Wild => {}
             Rung::Pastoral => {
-                herd.tame_outright(FactionId(0));
+                herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             }
             Rung::Pen => {
-                herd.tame_outright(FactionId(0));
+                herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
                 assert!(
-                    herd.corral_at(tile),
+                    herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
                     "the fixture herd defaults to the full ladder"
                 );
             }

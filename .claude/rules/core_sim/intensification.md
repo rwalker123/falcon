@@ -1067,8 +1067,15 @@ other row (§2.5).
   the completion hand-off that was its only caller.)
 - **The band's demand is the SUM** over everything it holds on that web, and **every meter carrying
   work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
-  through **`forage::patch_keeping_meter(patch, improvement)`** / **`fauna::herd_keeping_meter`** — one
-  function, three callers each: the claim gate, `*_upkeep_demand` and `*_upkeep_supply`.
+  through **`forage::patch_claims_keeping`** / **`fauna::herd_claims_keeping`** — one function per web,
+  answering *does this source claim at all*.
+  > **BOTH WEBS' `*_keeping_meter` ARE RETIRED, and the demand takes NO VERB on either.** The meter
+  > resolver existed because the demand **stepped** when a verb started on a finished rung, so the claim
+  > and the payment seams had to agree which meter they meant across the Population→Logistics carry.
+  > Interpolation removed the step — first on plants (§4.10), then on animals (§4.11) — so there is
+  > nothing left for that carry to straddle. **What survives is the CLAIM's verb term**, which answers a
+  > different question: `maintenance_shares` runs *before* the accrual and the capture *after* it, so a
+  > source about to bank its first work must still claim on the turn it has banked nothing.
 
   > **⛔ IT USED TO BE `source_has_a_meter_at_risk`, AND THAT WAS A SECOND DEFINITION THAT DRIFTED.**
   > That seam is **progress-only**; the payment side (`patch_upkeep_supply` → `patch_keeping_meter`) is

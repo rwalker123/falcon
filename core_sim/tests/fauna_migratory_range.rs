@@ -105,7 +105,7 @@ fn land_host_fraction(app: &App, width: u32, height: u32, host_biomes: &[String]
 /// tiles, and that fraction is clearly better than the biome-blind random-placement baseline.
 #[test]
 fn migratory_anchors_land_predominantly_in_host_biomes() {
-    const SEEDS: [u64; 6] = [119304647, 11, 4242, 90210, 7, 13];
+    const SEEDS: [u64; 6] = [core_sim::HARNESS_MAP_SEED, 11, 4242, 90210, 7, 13];
 
     let mut in_biome = 0u64;
     let mut total_anchors = 0u64;
@@ -172,7 +172,7 @@ fn migratory_anchors_land_predominantly_in_host_biomes() {
 /// reindeer, then assert their anchors sit predominantly on `boreal_arctic`/`montane_highland`.
 #[test]
 fn reindeer_anchors_are_predominantly_boreal_or_montane() {
-    const SEED: u64 = 119304647;
+    const SEED: u64 = core_sim::HARNESS_MAP_SEED;
     let mut fauna = builtin_fauna();
     // Keep reindeer + every non-migratory row; drop the other migratory species.
     fauna
@@ -226,7 +226,7 @@ fn reindeer_anchors_are_predominantly_boreal_or_montane() {
 /// of them, forcing the `build_route(base, ..)` fallback.
 #[test]
 fn a_migratory_species_with_no_host_tiles_falls_back_to_a_valid_route() {
-    const SEED: u64 = 119304647;
+    const SEED: u64 = core_sim::HARNESS_MAP_SEED;
     let mut fauna = builtin_fauna();
     for def in fauna.species.values_mut() {
         if def.migratory {

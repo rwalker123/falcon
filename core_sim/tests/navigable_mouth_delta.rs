@@ -19,7 +19,7 @@
 
 use bevy::prelude::UVec2;
 
-use core_sim::{build_headless_app, SimulationConfig, Tile, TileRegistry};
+use core_sim::{build_test_app, SimulationConfig, Tile, TileRegistry};
 use sim_runtime::TerrainType;
 
 /// The census seeds `hydrology_earthlike.rs` sweeps its structural river invariants across, at that
@@ -38,7 +38,7 @@ fn channel_bit_allows(terrain: TerrainType) -> bool {
 /// list of `(x, y, terrain)` violations — hexes with a `river_channel` bit but non-navigable,
 /// non-delta terrain.
 fn channel_on_land_violations(seed: u64, w: u32, h: u32) -> Vec<(u32, u32, TerrainType)> {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Override the env-loaded config with the case under test, before the Startup chain reads it.
     let mut config = app.world.resource::<SimulationConfig>().clone();

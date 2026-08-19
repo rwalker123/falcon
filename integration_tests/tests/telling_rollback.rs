@@ -1,7 +1,7 @@
 mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
-use core_sim::{build_headless_app, BeatCatalogHandle, BeatLedger, FactionId, Scalar};
+use core_sim::{build_test_app, BeatCatalogHandle, BeatLedger, FactionId, Scalar};
 
 /// Regression: The Telling's `BeatLedger` must round-trip through the rollback snapshot
 /// **including restore**. A ledger that is captured but never restored (the `SedentarizationScore`
@@ -11,7 +11,7 @@ use core_sim::{build_headless_app, BeatCatalogHandle, BeatLedger, FactionId, Sca
 #[test]
 fn beat_ledger_rewinds_on_rollback_so_a_beat_can_fire_again() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Turn 1: the pipeline runs `telling_tick` and `capture_snapshot` records the ring entry.
     app.update();
@@ -86,7 +86,7 @@ fn beat_ledger_rewinds_on_rollback_so_a_beat_can_fire_again() {
 #[test]
 fn answering_a_fork_after_the_rollback_point_is_rewound_by_the_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     const FORK: &str = "sedentarization.soft_drift";
@@ -194,7 +194,7 @@ fn answering_a_fork_after_the_rollback_point_is_rewound_by_the_rollback() {
 #[test]
 fn threads_and_the_attained_medium_rewind_with_the_ledger() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     // The checkpoint, taken the way the server's rollback path takes it.

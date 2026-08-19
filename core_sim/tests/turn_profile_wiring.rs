@@ -6,7 +6,7 @@
 //! edit, would silently drop that stage from every operator's `turn.profile` line with nothing
 //! failing.
 
-use core_sim::{build_headless_app, run_turn, turn_profile, SnapshotHistory};
+use core_sim::{build_test_app, run_turn, turn_profile, SnapshotHistory};
 
 /// Every `TurnStage`, in `configure_sets` order. A new stage belongs here and in the marker block
 /// in `lib.rs`.
@@ -105,7 +105,7 @@ const RETIRED_CAPTURE_PHASES: [&str; 7] = [
 
 #[test]
 fn a_resolved_turn_profiles_every_stage_in_order() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // Warm turn first: the profile under test must be a steady-state turn, not first-capture.
     run_turn(&mut app);
 

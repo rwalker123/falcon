@@ -35,7 +35,7 @@ const STANDARD_SEED: u64 = 119_304_647;
 const SWEPT_STOCK_FRACTIONS: [f32; 6] = [0.02, 0.12, 0.28, 0.45, 0.75, 1.0];
 
 fn headless_app() -> App {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_seed = STANDARD_SEED;
     app.world.insert_resource(config);
@@ -150,7 +150,7 @@ fn a_herds_published_bands_bracket_its_published_phase_at_every_rung() {
                 .iter_mut()
                 .find(|herd| herd.id == id)
                 .expect("the fixture herd");
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             assert!(herd.is_domesticated(), "the herd stands on rung 2");
         }
         for fraction in SWEPT_STOCK_FRACTIONS {
@@ -281,7 +281,7 @@ fn a_herds_published_phase_and_cuts_describe_the_same_rung_on_the_turn_it_is_tam
             .find(|herd| herd.id == id)
             .expect("the fixture herd survived the Logistics pass");
         assert!(
-            herd.tame_outright(viewer),
+            herd.tame_outright(viewer, &core_sim::LadderConfig::builtin()),
             "the fixture herd must actually complete its Tame — a herd that never changed rung \
              cannot exercise a rung transition"
         );

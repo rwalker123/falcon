@@ -11,11 +11,11 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_labor_allocation, balance_supply_networks, build_headless_app, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world, BandId, BandKey,
-    CommandEventLog, ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    advance_labor_allocation, balance_supply_networks, build_test_app, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_herds, spawn_initial_world, BandId, BandKey, CommandEventLog,
+    ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
+    FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MaterialsConfigHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
@@ -90,7 +90,7 @@ fn base_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -416,7 +416,7 @@ fn pooling_a_material_between_bands_preserves_its_characteristics() {
 fn material_batches_survive_a_checkpoint_round_trip() {
     use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     core_sim::run_turn(&mut app);
 
     let band = app
@@ -494,7 +494,7 @@ fn material_batches_survive_a_checkpoint_round_trip() {
 fn equipment_batches_survive_a_checkpoint_round_trip() {
     use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     core_sim::run_turn(&mut app);
 
     let band = app

@@ -2,7 +2,7 @@ mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_headless_app, FactionId, FactionRegistry, PopulationCohort, Settlement, SnapshotHistory,
+    build_test_app, FactionId, FactionRegistry, PopulationCohort, Settlement, SnapshotHistory,
     StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
@@ -11,7 +11,7 @@ use core_sim::{
 #[test]
 fn multi_faction_visibility_isolation() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Set up two factions
     {
@@ -78,7 +78,7 @@ fn multi_faction_visibility_isolation() {
 #[test]
 fn visibility_decay_over_turns() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     app.update();
 
@@ -142,7 +142,7 @@ fn visibility_decay_over_turns() {
 #[test]
 fn settlement_provides_visibility() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     app.update();
 
@@ -191,7 +191,7 @@ fn settlement_provides_visibility() {
 #[test]
 fn visibility_persists_across_snapshots() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     app.update();
 
@@ -225,7 +225,7 @@ fn visibility_persists_across_snapshots() {
 
     // Create a new app and restore from snapshot
     let checkpoint = capture_sim_state(&app.world);
-    let mut restored_app = build_headless_app();
+    let mut restored_app = build_test_app();
     restored_app.update();
     restore_sim_state(&mut restored_app.world, &checkpoint);
 
@@ -242,7 +242,7 @@ fn visibility_persists_across_snapshots() {
 #[test]
 fn viewer_faction_controls_snapshot_visibility() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Set up two factions
     {
@@ -281,7 +281,7 @@ fn viewer_faction_controls_snapshot_visibility() {
 #[test]
 fn visibility_state_transitions() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     app.update();
 

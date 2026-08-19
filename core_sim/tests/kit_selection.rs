@@ -17,7 +17,7 @@ use bevy::math::UVec2;
 
 use core_sim::TakeSelection;
 use core_sim::{
-    advance_expeditions, advance_herds, advance_labor_allocation, advance_tick, build_headless_app,
+    advance_expeditions, advance_herds, advance_labor_allocation, advance_tick, build_test_app,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
     EffectTier, EquipmentConfig, EquipmentConfigHandle, EquipmentStat, Expedition,
     ExpeditionMission, ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
@@ -63,7 +63,7 @@ const HERD_CAPACITY: f32 = 4000.0;
 /// A world with the roster's authored wariness held at `0`, so a two-arm comparison measures the
 /// kit rather than two different draws.
 fn placid_world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
@@ -79,7 +79,7 @@ fn placid_world() -> App {
 /// for the tests whose whole subject is the retreat the trap avoids. Holding wariness at `0` there
 /// would delete the term the per-quarry default turns on.
 fn wary_world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
     app.update();
     app
@@ -1103,7 +1103,7 @@ fn a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_d
             .expect("the pen fixture herd is in the registry");
         let anchor = herd.current_pos;
         assert!(
-            herd.corral_at(anchor),
+            herd.corral_at(anchor, &core_sim::LadderConfig::builtin()),
             "the warren's husbandry ceiling allows a pen — `corral_at` refusing means the fixture \
              re-badged a species that cannot be penned"
         );

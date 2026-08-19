@@ -12,6 +12,56 @@ paths:
 
 # Husbandry — the yield ladder, the `Tame` verb, Corral
 
+## ⛔ THE ANIMAL WEB IS ONE POSITION TOO — read this before any `domestication_progress` reference below
+
+**A herd has ONE number: `Herd::ladder_position`, how far up the animal branch it has been worked, in
+cumulative work units** — the exact twin of `ForagePatch::ladder_position` (`cultivation.md` → "THE
+PLANT WEB IS ONE POSITION"; `docs/plan_standing_upkeep.md` §2.8, landed for plants in §4.10 and for
+animals in §4.11). `domestication_progress` / `domestication_cost` and `corral_progress` /
+`corral_cost` — **four fields, two unconnected meters** — are gone. Prose below that names them is
+describing the retired shape; the seam it points at is `fauna::rung_work_done`, the position clamped
+into a rung's own span, which is what the wire's `domestication` and `corralProgress` meters are still
+published from (**the raw meter fraction** — `partial_credit` governs what a half-built pen is *worth*,
+never what its progress bar reads).
+
+- **`Herd::standing` is derived and re-stamped on every write**, and `set_ladder_position` is the only
+  mutator, so the pair cannot drift. `is_domesticated()` and `is_corralled()` keep their signatures and
+  their call sites.
+- **THE PAYOUTS AND THE COST NOW INTERPOLATE, and that is the whole of §4.11's animal half.**
+  `herd_density_gain` (the `K` multiplier) and `herd_ecology`'s `regrowth_rate` climb continuously with
+  the position, as does `herd_upkeep_demand`. **Before this they were step functions on
+  `is_domesticated()`** — a completion predicate — so a herd paid the *whole* pastoral keeping bill from
+  the first turn of work and received *none* of the benefit until the last: 100% of the cost on day one,
+  0% of the payout until day N, the §2.8 asymmetry inverted.
+- **`herd_keeping_meter` IS RETIRED** (gravestone at its old site). `herd_claims_keeping` answers *does
+  this source claim at all*, and `herd_keeping_rung` reads the standing. The demand takes **no verb**,
+  exactly as `patch_upkeep_demand` stopped taking one — there is no step left for the
+  Population→Logistics carry to straddle. The verb survives only on the *claim*, which is the one-turn
+  carry.
+- **`Herd::upkeep_demanded` is the stamped BILL**, the animal twin of `ForagePatch::upkeep_demanded` and
+  present for the identical reason: an interpolated demand moves *within* the turn, so a fully-staffed
+  keeping would otherwise read permanently short. `herd_keeping_basis` is its one reader.
+- **THE PEN STILL STEPS, and it does so for free.** `animal:pen` declares `partial_credit:
+  on_completion`, and `RungStanding::at` already zeroes `credit` for such a rung — so a herd raising a
+  fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
+  No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
+  Field, where half a sown field genuinely has half a crop in the ground.
+- **The ecology's PHASE BANDS deliberately do not interpolate.** `r` is a payout and slides;
+  `collapse_fraction` / `stressed_fraction` / `extinction_floor` are the classifier's cut points and are
+  taken from the rung the herd **holds** — blending two definitions of *Collapsing* would invent a third.
+
+> **⛔ AND THE MEASUREMENT THAT CAME OUT OF IT, because it is the reason the escapement floor is being
+> changed.** The floor is `floor_fraction × K` and `K` is the density-boosted ceiling, so raising a
+> rung raises the floor while the herd stays the same size. Measured on aurochs starting **exactly on**
+> its floor, through a full `Tame`: the room above the floor reaches zero at turn **6** with one herder,
+> turn **3** with four and turn **2** with eight — *the faster you build, the sooner you starve* — and
+> because `eligible` reads that same room, **the tame then never completes at any crew size**. It is the
+> `-4` escapement stall reached by the floor climbing rather than by over-hunting. Five of the eleven
+> tameable species sit on the losing side of that race (aurochs, marsh grazer, reindeer, steppe runner,
+> wild horse); only the fast breeders clear it comfortably. Interpolating turned the cliff into a slide
+> and did not remove it.
+
+
 ## The husbandry yield ladder — every rung pays MSY
 
 Authoritative design: `docs/plan_corral_managed_population.md`. **Management buys a *growth rate*, not
@@ -96,6 +146,18 @@ invariant.
   inversion (pastoral `r` = `wild_r × 2.0 > wild_r` for every species). `fauna::herd_ecology` folds the per-species
   rate in; `pen_ecology_for` / `pastoral_ecology_for` are the seams, `managed_regrowth_rate` the `wild_r ×
   gain → capped` map.
+  > **THE CAP IS A PEN-ONLY EFFECT, AND IT SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.**
+  > Any species whose wild `r` exceeds `cap / pen_gain` = **0.25** cannot receive the whole pen bonus.
+  > Of the six **pennable** species, three lose some of it: **fowl** and **rabbit** forfeit **29%**
+  > (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
+  > `forest_grouse` and `river_fish` are also cap-bound but are `wild`-ceiling, so nothing can pen them
+  > and the loss is unreachable. **The cap never binds at PASTORAL** — the fastest pastoral rate on the
+  > roster is `0.70` — which is why the effect reads in play as the pen underperforming rather than as a
+  > clamp. **It is also a retune trap**: raising `pen_gain` moves those three species not at all, so a
+  > spread tuned on the big-game rows would silently fail to reach the small ones. The mechanism is
+  > right — `r = 1.0` already doubles a herd every turn and an uncapped `1.4` is a discrete-logistic
+  > oscillation — but the roster and the cap were authored against different assumptions. Recorded in
+  > `docs/plan_standing_upkeep.md` §4.14 as a dial that arc measured but does not own.
 - **A penned herd's `K` is its FENCED FOOTPRINT's graze flow** (`hex_range_tiles(corralled_at,
   pen_radius)`), recomputed each turn — penned herds are no longer frozen and `pen.capacity_fraction` /
   `pen_capacity` are **deleted** (a penned herd's `K` is just `herd.carrying_capacity`, so
@@ -137,11 +199,17 @@ invariant.
   roaming and nothing about them has changed. A half-sown Field genuinely has half a crop in the
   ground, which is why `plant:field` is `continuous`; the two are different facts, not an
   inconsistency.
-- **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). `herd_keeping_meter` billed the
-  **pen** rung's upkeep from the first fencing work banked, while every benefit above waited for the
-  fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and it
-  was in the shipped game. The bill is the **pastoral** rate until `is_corralled()`, then the pen's:
-  cost and benefit move together or not at all.
+- **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). The retired `herd_keeping_meter`
+  billed the **pen** rung's upkeep from the first fencing work banked, while every benefit above waited
+  for the fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and
+  it was in the shipped game.
+  > **§4.11 CLOSED THE SECOND HALF OF THE SAME ASYMMETRY, on the rung below.** Fixing the pen left
+  > `pastoral` still stepping: `owner` is set by the **first** `Tame` accrual, so a herd owed the whole
+  > pastoral rate from turn one while `is_domesticated()` — a completion predicate — withheld every
+  > payout until the last. `herd_upkeep_demand` now interpolates on the position like everything else,
+  > so a herd a tenth of the way up owes a tenth. **The pen's step survives on its own merits**, through
+  > `partial_credit: on_completion` rather than through a hand-written predicate: cost and benefit still
+  > move together, and at the fence they both move at once.
 - **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
   passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
   worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under

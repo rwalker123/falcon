@@ -620,7 +620,7 @@ fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
 /// tests above and what is at stake here is the *published artifact*.
 #[test]
 fn the_published_composition_is_the_patchs_effective_basket() {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_seed = STANDARD_SEED;
     app.world.insert_resource(config);
@@ -711,7 +711,7 @@ fn the_published_composition_is_the_patchs_effective_basket() {
 /// the defect was actually reachable.
 #[test]
 fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_seed = STANDARD_SEED;
     app.world.insert_resource(config);

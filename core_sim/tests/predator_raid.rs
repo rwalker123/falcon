@@ -46,7 +46,7 @@ fn arena() -> (App, UVec2, Entity) {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world

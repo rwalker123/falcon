@@ -36,7 +36,7 @@ use core_sim::{
     FODDERING_DISCOVERY_ID, FOOD,
 };
 
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 /// Turns per run — well past where the fast pen `r` settles.
 const TURNS: u32 = 200;
 /// The tail-window whose spread proves convergence.
@@ -165,8 +165,11 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
         WILD_R,
         PEN_BODY_MASS,
     );
-    herd.tame_outright(FactionId(0));
-    assert!(herd.corral_at(tile), "the fixture species must be pennable");
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+    assert!(
+        herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
+        "the fixture species must be pennable"
+    );
     registry.herds.push(herd);
     "pen_0".to_string()
 }

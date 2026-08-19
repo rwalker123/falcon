@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use bevy::prelude::UVec2;
 
 use core_sim::{
-    build_headless_app, classify_food_module, FoodModule, FoodModuleTag, ForageRegistry,
+    build_test_app, classify_food_module, FoodModule, FoodModuleTag, ForageRegistry,
     SimulationConfig, Tile, TileRegistry,
 };
 use sim_runtime::TerrainType;
@@ -48,7 +48,7 @@ struct Violation {
 
 /// Build the real app and run the shipped Startup chain once for `(seed, grid)`.
 fn generated_world(seed: u64, grid: UVec2) -> bevy::app::App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Override the env-loaded config with the case under test, before the Startup chain reads it.
     let mut config = app.world.resource::<SimulationConfig>().clone();

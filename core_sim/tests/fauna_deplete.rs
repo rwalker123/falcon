@@ -33,7 +33,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -422,7 +422,12 @@ fn deplete_hunt_does_not_domesticate() {
         .world
         .resource::<HerdRegistry>()
         .find(&herd)
-        .map(|h| h.domestication_progress)
+        .map(|h| {
+            h.rung_work_done(
+                core_sim::RungKey::AnimalPastoral,
+                &core_sim::LadderConfig::builtin(),
+            )
+        })
         .unwrap_or(0.0);
     assert_eq!(
         progress, 0.0,

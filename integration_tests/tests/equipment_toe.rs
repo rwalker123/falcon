@@ -23,11 +23,11 @@
 use bevy::{math::UVec2, prelude::Entity};
 use core_sim::TakeSelection;
 use core_sim::{
-    available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
-    CommandEventLog, CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat,
-    FaunaConfigHandle, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
-    LaborConfig, LaborTarget, MaterialsConfig, PopulationCohort, RecipesConfig, SimulationConfig,
-    SizeClass, SnapshotHistory, Tile,
+    available_workers, build_test_app, run_turn, BandEquipment, CommandEventKind, CommandEventLog,
+    CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat, FaunaConfigHandle, ForageRegistry,
+    Herd, HerdRegistry, LaborAllocation, LaborAssignment, LaborConfig, LaborTarget,
+    MaterialsConfig, PopulationCohort, RecipesConfig, SimulationConfig, SizeClass, SnapshotHistory,
+    Tile,
 };
 use sim_schema::state::PopulationCohortState;
 
@@ -173,7 +173,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
 
 /// `(app, band, available workers, band tile position)` — the shared opening of every fixture above.
 fn booted_band() -> (bevy::prelude::App, Entity, u32, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     // **This suite pins the KIT, so the retreat stage is held at its identity.** Its hunt cases
     // compare two worlds that differ only in equipment; slice 7's authored `combat.wariness`
@@ -1924,7 +1924,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
     // roster's `wariness` at zero so the retreat cannot make a comparison turn on a draw; this one
     // must not, because the retreat is exactly what decides how much of the party's blow lands in a
     // body — and the band keeps its **own** spawn stock rather than the outsized fixture ledger.
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
     let (band, tile_entity, workers) = {

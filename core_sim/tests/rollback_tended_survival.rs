@@ -24,7 +24,7 @@ use bevy::math::UVec2;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::TakeSelection;
 use core_sim::{
-    available_workers, build_headless_app, run_turn, FactionId, ForageRegistry, HerdRegistry,
+    available_workers, build_test_app, run_turn, FactionId, ForageRegistry, HerdRegistry,
     LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
 };
 
@@ -32,10 +32,10 @@ use core_sim::{
 /// `spawn_initial_herds` / `spawn_initial_forage` — and resolves turn 1), pinned to a deterministic
 /// earthlike map so the registries are populated the same way every run.
 fn spawn_world() -> bevy::app::App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
     app.update();
     app
@@ -123,13 +123,17 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         // *checkpoint* carries a finished rung. A completed meter is `progress >= cost > 0`, so both
         // halves are set: the fabricated one-worker-turn job (`FABRICATED_BUILD_COST`) says "this
         // rung is paid for" without pretending to the ladder's own price.
-        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST;
-        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
+        herd.set_ladder_position(
+            core_sim::FABRICATED_BUILD_COST,
+            &core_sim::LadderConfig::builtin(),
+        );
         herd.owner = Some(faction);
         herd.corralled_at = Some(tile);
         herd.pen_radius = 1;
-        herd.corral_progress = core_sim::FABRICATED_BUILD_COST;
-        herd.corral_cost = core_sim::FABRICATED_BUILD_COST;
+        herd.set_ladder_position(
+            core_sim::FABRICATED_BUILD_COST,
+            &core_sim::LadderConfig::builtin(),
+        );
         herd.biomass = herd.carrying_capacity;
         // The one-turn "keeper tended it" grace the restore drops:
         herd.corralled_tended_this_turn = true;
@@ -225,7 +229,10 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
          corral_progress = {}",
         herd.corralled_at,
         herd.pen_radius,
-        herd.corral_progress
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPen,
+            &core_sim::LadderConfig::builtin()
+        )
     );
     assert_eq!(
         herd.pen_radius, 1,

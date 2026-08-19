@@ -808,7 +808,14 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    *"is this worth it"* does not move — but the payoff starts on turn one, which softens the
    commitment considerably. That may be right, given this arc has been about removing cliffs; it
    should be a deliberate smoothing rather than a discovered one.
-   > **LANDED — in full, and it diverged from this plan in three ways worth recording.**
+   > **LANDED ON THE PLANT WEB ONLY — this block said "in full" and that was wrong.** The animal web
+   > kept its two unconnected meters (`domestication_progress`, `corral_progress`), and both its
+   > payouts plus its keeping bill stayed **step functions on a completion predicate**. The claim went
+   > unchecked for a whole slice and was found in §4.11's playtest, so **the failure was the claim, not
+   > the code**: "in full" is a thing to write once both branches are measured, never once one is.
+   > §4.11 completed it — see its own LANDED block. What follows describes the plant half, accurately.
+   >
+   > **It diverged from this plan in three ways worth recording.**
    > A source carries one `ladder_position` in cumulative work units; `RungStanding` is the one
    > producer of "where is this source", stamped on every write so no call site re-derives it;
    > `interpolate` states the delta form once, for the payout and the keeping demand alike. The
@@ -907,6 +914,27 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > **Every fix was falsified** — the defect restored, the failing assertion named, the fix put
     > back — including the interpolation test, which had to catch the measure being applied twice
     > (`3.479` against the correct `3.231`).
+    >
+    > **⑤ AND IT FINISHED §4.10, WHICH HAD ONLY LANDED ON THE PLANT WEB.** A herd now carries one
+    > `ladder_position` like a patch; `herd_density_gain`, `herd_ecology`'s `regrowth_rate` and
+    > `herd_upkeep_demand` interpolate on it; `herd_keeping_meter` is retired and the demand takes no
+    > verb. **The asymmetry this removed was the inverted one:** `owner` is set by the *first* `Tame`
+    > accrual, so a herd owed the **whole** pastoral keeping rate from turn one while `is_domesticated()`
+    > withheld **every** payout until the last — 100% of the cost on day one against 0% of the benefit.
+    > The pen keeps its step through `partial_credit: on_completion` rather than a hand-written
+    > predicate.
+    >
+    > **⛔ AND IT MEASURED THE FLOOR TRAP, WHICH IS WORSE THAN "TAKES NOTHING".** The escapement floor is
+    > `floor_fraction × K` against the density-boosted ceiling, so a rung raises the floor while the herd
+    > stays put. On aurochs starting **exactly on** its floor: the room reaches zero at turn **6** with
+    > one herder, **3** with four, **2** with eight — *building faster starves you sooner* — and because
+    > `eligible` reads that same room, **the tame then never completes at any crew size**. It is the `-4`
+    > escapement stall reached by the floor climbing rather than by over-hunting. **Five of the eleven
+    > tameable species** are on the losing side of that race (aurochs, marsh grazer, reindeer, steppe
+    > runner, wild horse); three clear it only barely; only the fast breeders are safe. Interpolating
+    > turned the cliff into a slide without removing it, which is why the floor gets its own fix: **the
+    > take is the room above the floor OR a share of the turn's growth, whichever is larger**, and the
+    > build's eligibility gate moves with it.
 12. **The RESOURCE HALF of upkeep** (§2.7). Designed and **not built**: upkeep currently costs work
     and nothing else, while the pen's feed runs as its own separate mechanism, deliberately untouched
     so that moving it would not risk the pen-food ledger identity for no behaviour change.
@@ -948,7 +976,21 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     >   rate is an opening value rather than a re-minted one, because the quantum never existed
     >   before. It is the one number in the arc with no prior to be neutral against.
     >
-    > #### AND ONE THAT IS **NOT THIS ARC'S DIAL**, recorded because it was measured here
+    > #### AND TWO THAT ARE **NOT THIS ARC'S DIALS**, recorded because they were measured here
+    >
+    > - **`husbandry_regrowth_cap` SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.** The cap
+    >   is `1.0` and `pen_gain` is `4.0`, so a species whose wild `r` exceeds `0.25` cannot receive the
+    >   whole pen bonus. Of the six **pennable** species, three lose some of it: **fowl** and **rabbit**
+    >   forfeit **29%** (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
+    >   **The cap never binds at the pastoral rung** — the fastest pastoral rate on the roster is `0.70`
+    >   — so it is a pen-only effect, which is why it reads as the pen underperforming rather than as a
+    >   cap. **It is also a tuning trap for this section**: raising `pen_gain` moves nothing at all for
+    >   those three, so a spread tuned on the big-game rows would silently fail to reach the small ones.
+    >   The mechanism is correct — a breeding rate of `1.0` per turn is already a doubling every turn,
+    >   and an uncapped `1.4` is a discrete-logistic oscillation — but the roster and the cap were
+    >   authored against different assumptions. It is the **fauna** arc's dial, not this one's, and it
+    >   is the same shape as the `engage_rate` finding below: one global number that bites exactly one
+    >   end of the roster.
     >
     > - **`fauna_config.json`'s `engage_rate` INVERTS THE ECONOMY OF SCALE ON BIG GAME.** Wild Boar
     >   sits at **0.33**, and a party that exists always reaches at least one animal, so **every crew

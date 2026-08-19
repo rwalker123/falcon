@@ -21,7 +21,7 @@ mod common;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use bevy::math::UVec2;
-use core_sim::{build_headless_app, SimulationConfig, SimulationConfigMetadata, SnapshotHistory};
+use core_sim::{build_test_app, SimulationConfig, SimulationConfigMetadata, SnapshotHistory};
 use sim_runtime::{TerrainTags, WorldSnapshot};
 
 /// Seeds sampled so the measurement is a *distribution*, not one lucky map.
@@ -54,7 +54,7 @@ const TARGET_ISLAND_LAND_FRACTION: f64 = 0.05;
 
 fn generate(width: u32, height: u32, seed: u64) -> WorldSnapshot {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     if let Some(mut md) = app.world.get_resource_mut::<SimulationConfigMetadata>() {
         md.set_seed_random(false);
     }

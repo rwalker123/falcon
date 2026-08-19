@@ -436,14 +436,26 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // field here.
                 domestication: herd
                     .map(|herd| {
-                        build_fraction(herd.domestication_progress, herd.domestication_cost)
+                        build_fraction(
+                            herd.rung_work_done(RungKey::AnimalPastoral, ladder),
+                            herd.rung_cost(RungKey::AnimalPastoral, ladder),
+                        )
                     })
                     .unwrap_or(entry.domestication),
                 corralled: herd
                     .map(|herd| herd.is_corralled())
                     .unwrap_or(entry.corralled),
+                // **THE RAW METER, not the standing's credit.** `animal:pen` is `on_completion`, so
+                // its credit is `0` until the fence closes — that rule governs what a half-built pen
+                // is *worth*, never what its progress bar reads. A player fencing a range watches it
+                // fill, exactly as the plant web publishes `cultivationProgress`.
                 corral_progress: herd
-                    .map(|herd| build_fraction(herd.corral_progress, herd.corral_cost))
+                    .map(|herd| {
+                        build_fraction(
+                            herd.rung_work_done(RungKey::AnimalPen, ladder),
+                            herd.rung_cost(RungKey::AnimalPen, ladder),
+                        )
+                    })
                     .unwrap_or(entry.corral_progress),
                 per_worker_yield: forecast.per_worker_yield.provisions,
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
@@ -691,12 +703,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `advance_husbandry` sheds through and the grace below counts down against, so a row
                 // cannot bill one rung's demand while the sim judges another's.
                 upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
-                    crate::fauna::herd_upkeep_demand(
-                        herd,
-                        crate::intensification::NOTHING_IN_FLIGHT,
-                        fauna,
-                        ladder,
-                    )
+                    crate::fauna::herd_keeping_basis(herd, fauna, ladder)
                 }),
                 upkeep_supplied: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_supplied),
                 // **Derived, so the three always describe one turn and one rung** — a stored
@@ -732,12 +739,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // published **whether or not a build is in flight** — the compose sheet has to quote
                 // the price before the player commits, and the herd's *stamped* cost is `0` until
                 // someone starts. Penning takes no species multiplier: a fence is a fence.
-                tame_work_done: herd.map(|herd| herd.domestication_progress).unwrap_or(0.0),
+                tame_work_done: herd
+                    .map(|herd| herd.rung_work_done(RungKey::AnimalPastoral, ladder))
+                    .unwrap_or(0.0),
                 tame_work_cost: ladder
                     .rung(RungKey::AnimalPastoral)
                     .build_cost(fauna.taming_cost_multiplier_for(&entry.species))
                     .unwrap_or(0.0),
-                corral_work_done: herd.map(|herd| herd.corral_progress).unwrap_or(0.0),
+                corral_work_done: herd
+                    .map(|herd| herd.rung_work_done(RungKey::AnimalPen, ladder))
+                    .unwrap_or(0.0),
                 corral_work_cost: ladder
                     .rung(RungKey::AnimalPen)
                     .build_cost(RUNG_COST_UNSCALED)

@@ -28,7 +28,7 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, advance_labor_allocation,
-    build_headless_app, hunt_engage_workers, hunt_haul_workers, hunt_source_yield_preview,
+    build_test_app, hunt_engage_workers, hunt_haul_workers, hunt_source_yield_preview,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
     spawn_initial_herds, spawn_initial_world, CombatConfigHandle, CommandEventLog,
     CreaturesConfigHandle, CultureManager, Diet, DiscoveryProgressLedger, Expedition,
@@ -102,7 +102,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -561,7 +561,7 @@ const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 /// `build_headless_app` + `recapture_snapshot_in_place` — the same path
 /// `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` uses.
 fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // **This suite measures the yield VECTOR, so the retreat stage is held at its identity** — the
     // same move [`steady_quarry`] makes for `engage_rate` and `defense`, one field further along.
     // Slice 7 authored a non-zero `combat.wariness` roster-wide
@@ -2196,7 +2196,10 @@ fn a_penned_herd_publishes_no_engagement_stage() {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.husbandry_ceiling = ceiling;
-        assert!(herd.corral_at(pos), "the fixture herd pens");
+        assert!(
+            herd.corral_at(pos, &core_sim::LadderConfig::builtin()),
+            "the fixture herd pens"
+        );
     }
     app.world.run_system_once(spawn_initial_herds);
     recapture_snapshot_in_place(&mut app.world);

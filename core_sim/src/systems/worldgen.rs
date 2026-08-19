@@ -3755,7 +3755,7 @@ mod terrain_tag_tests {
 
         let mut config = SimulationConfig::builtin();
         config.map_preset_id = "earthlike".to_string();
-        config.map_seed = 119304647;
+        config.map_seed = crate::HARNESS_MAP_SEED;
         // The shipped hydrology config — the map a player actually gets. With a real drainage
         // network there is no override set that manufactures a different river count.
 

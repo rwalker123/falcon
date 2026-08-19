@@ -19,7 +19,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 
 use core_sim::{
-    advance_crafting, build_headless_app, recapture_snapshot_in_place, scalar_from_f32, BandBench,
+    advance_crafting, build_test_app, recapture_snapshot_in_place, scalar_from_f32, BandBench,
     BandEquipment, BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
     LadderConfigHandle, MaterialsConfig, MaterialsConfigHandle, PopulationCohort,
     RecipesConfigHandle, ResidentBand, SnapshotHistory,
@@ -79,7 +79,7 @@ const SCALAR_TOLERANCE: f32 = 1e-4;
 
 /// A world with a resident band, captured once so the fixtures have a frame to read.
 fn world() -> (App, Entity) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let band = app
         .world

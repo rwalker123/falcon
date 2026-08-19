@@ -19,7 +19,7 @@ mod common;
 
 use bevy::math::UVec2;
 use core_sim::grid_utils::hex_neighbors_wrapped;
-use core_sim::{build_headless_app, SimulationConfig, SimulationConfigMetadata, SnapshotHistory};
+use core_sim::{build_test_app, SimulationConfig, SimulationConfigMetadata, SnapshotHistory};
 use sim_runtime::{TerrainType, WorldSnapshot};
 
 /// Earthlike coast-height gate (normalized rise above sea level). Matches
@@ -52,7 +52,7 @@ const SAMPLE_MAX: f64 = 0.50;
 /// match the sim exactly (the test fixture config may leave the map non-wrapping).
 fn generate(width: u32, height: u32, seed: u64) -> (WorldSnapshot, bool) {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     if let Some(mut md) = app.world.get_resource_mut::<SimulationConfigMetadata>() {
         md.set_seed_random(false);
     }

@@ -323,6 +323,10 @@ pub struct ForagePatch {
     /// survives a rollback for the same reason (the checkpoint clones the whole `ForageRegistry`), so
     /// the first post-restore decay pass does not bleed a patch whose keepers are still on it.
     pub upkeep_supplied: f32,
+    /// **WHAT THE STAND WAS BEFORE THIS TURN'S REGROWTH** — the plant twin of
+    /// `Herd::biomass_before_regrowth`, re-stamped at the top of every `regrow_patch` so it is never
+    /// more than one turn old. Sim-side only; the take's growth-share backstop is its one reader.
+    pub biomass_before_regrowth: f32,
     /// **THE BILL THIS PATCH'S KEEPERS WERE HANDED** — the demand [`patch_upkeep_demand`] answered
     /// when [`Self::upkeep_supplied`] was stamped, and `None` on a turn nobody answered for the
     /// source at all.
@@ -491,6 +495,8 @@ impl ForagePatch {
         Self {
             tile,
             biomass: carrying_capacity,
+            // A stand that has never regrown reads a sane pre-regrowth value, the herd's rule.
+            biomass_before_regrowth: carrying_capacity,
             carrying_capacity,
             ecology_phase: EcologyPhase::Thriving,
             ladder_position: RUNG_UNSTARTED,
@@ -544,6 +550,13 @@ impl ForagePatch {
 
     /// **HOW FAR UP ITS BRANCH THIS PATCH HAS BEEN WORKED**, in cumulative work units. Read-only:
     /// [`Self::set_ladder_position`] is the only writer, and it writes [`Self::standing`] with it.
+    /// **WHAT THIS PATCH GREW THIS TURN**, in biomass — `biomass − biomass_before_regrowth`, floored
+    /// at zero. The plant twin of [`crate::fauna::Herd::growth_this_turn`], and realized rather than
+    /// projected for the same reason: Logistics regrows before Population gathers.
+    pub fn growth_this_turn(&self) -> f32 {
+        (self.biomass - self.biomass_before_regrowth).max(0.0)
+    }
+
     pub fn ladder_position(&self) -> f32 {
         self.ladder_position
     }
@@ -2822,6 +2835,10 @@ fn announce_rung_lost(
 /// harvest the land can actually sustain rather than a promise the stock cannot keep. The animal
 /// mirror is `fauna::regrow_biomass`, which resolves `herd_ecology` for exactly this reason.
 fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
+    // **What the stand WAS**, so the take's growth-share backstop has a realized growth to share
+    // (`ForagePatch::growth_this_turn` — the plant twin of `Herd::biomass_before_regrowth`).
+    // Logistics regrows before Population gathers, so by take time this is a measurement.
+    patch.biomass_before_regrowth = patch.biomass;
     let ecology = patch_ecology(patch, forage);
     // The reseed lift + logistic step is the shared plant curve (`fauna::reseeding_logistic_regrowth`),
     // so the human-edible forage stock and the animal-edible graze stock can never drift apart.
@@ -2907,8 +2924,11 @@ pub(crate) fn forage_take(
         &patch_composition(patch, tile_composition, forage),
         take_species,
     );
-    let take_ceiling =
-        forage_escapement_ceiling(floor, patch.biomass, patch.carrying_capacity) * selected;
+    // **THE ROOM *OR* THE GROWTH SHARE** ([`patch_take_room`]), not the raw escapement room: a stand
+    // pushed below its own floor by the `K` its Sow raised still hands over the share of this turn's
+    // growth the player's floor left takeable. At `floor = 1.0` the share is `× 0`, so "leave the
+    // whole stand standing" is unchanged.
+    let take_ceiling = patch_take_room(patch, floor) * selected;
     // **`workers` IS THE TAKE CREW, and it is the only crew in this expression**
     // (`docs/plan_standing_upkeep.md` §2.2). A build and a keeping on this same patch are their own
     // allocations with their own hands; nothing they do scales what these gatherers carry. The
@@ -2963,6 +2983,38 @@ pub(crate) fn forage_take(
 /// the dip's depended on whether the patch's standing stock happened to be binding.
 pub(crate) fn forage_escapement_ceiling(floor: f32, biomass: f32, carrying_capacity: f32) -> f32 {
     escapement_ceiling(floor, biomass, carrying_capacity)
+}
+
+/// **WHAT A GATHERING CREW MAY ACTUALLY TAKE FROM THIS PATCH THIS TURN** — the plant web's
+/// [`crate::fauna::take_room`]: the escapement room, or the share of the turn's growth this floor
+/// leaves takeable, whichever is larger.
+///
+/// # ⛔ THE SAME SPLIT THE ANIMAL WEB MAKES, AND FOR THE SAME REASON
+///
+/// A rung raises `K` — `cultivation.field_capacity_gain` is 2.53 — so `floor · K` climbs while the
+/// stand does not, and a patch standing *exactly* on its floor when a `Sow` starts is pushed **below**
+/// it by its own improvement. This bounds the take and gates the **build**;
+/// [`forage_escapement_ceiling`] stays the pure escapement room and gates the **lesson**, where
+/// `intensification::learn_multiplier`'s *"watching teaches nothing"* self-limit lives.
+///
+/// **The rule is why this is here, not the magnitude.** The backstop is global by construction — that
+/// is the property that keeps it from being a rung changing the draw — and applying it to one web
+/// only would give back exactly that. Measured, the plant squeeze costs one turn at zero room rather
+/// than the animal web's permanent stall (`r` 0.25 against 0.09, and `field_regrowth_gain` lifts `r`
+/// in step with `K`), so this is symmetry rather than a rescue.
+pub fn forage_take_room(floor: f32, biomass: f32, carrying_capacity: f32, growth: f32) -> f32 {
+    crate::fauna::take_room(floor, biomass, carrying_capacity, growth)
+}
+
+/// [`forage_take_room`] for a patch, reading its own realized growth — the form callers holding a
+/// `&ForagePatch` should use so none of them re-derives the growth term.
+pub fn patch_take_room(patch: &ForagePatch, floor: f32) -> f32 {
+    forage_take_room(
+        floor,
+        patch.biomass,
+        patch.carrying_capacity,
+        patch.growth_this_turn(),
+    )
 }
 
 /// **Can a crew of `workers` gatherers draw THIS patch to `floor`, and is that floor below the food
@@ -4489,6 +4541,109 @@ mod tests {
     /// **A THIN TILE** — `PrairieSteppe`'s `K` of 70, well under the reference 195, so a patch on it
     /// owes materially LESS than the rung's declared rate. The other end of the same claim.
     const THIN_TILE_BIOME: TerrainType = TerrainType::PrairieSteppe;
+
+    // ---------------------------------------------------------------------------------------------
+    // THE FLOOR SQUEEZE, PLANT SIDE — the same growth-share backstop, mirrored (section 4.14)
+    // ---------------------------------------------------------------------------------------------
+
+    /// A stand seated below its own floor and **grown one turn**, so its realized growth is a
+    /// measurement rather than a guess — the fixture the tests below share.
+    fn patch_below_its_floor() -> (ForagePatch, ForageLaborConfig) {
+        const WELL_BELOW_CAPACITY: f32 = 0.4;
+        let forage = test_forage_config();
+        let cap = forage.capacity_for(TEST_BIOME);
+        let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
+        patch.biomass = cap * WELL_BELOW_CAPACITY;
+        regrow_patch(&mut patch, &forage);
+        (patch, forage)
+    }
+
+    /// **⛔ `floor = 1.0` TAKES NOTHING AND REFUSES THE BUILD, on the plant web too.** The escapement
+    /// room reading `0` **by construction** is what makes *"leave the whole stand standing"* mean
+    /// that, and a floor-blind share would have made it harvest every turn. `growth × (1 − floor)`
+    /// preserves it with no special case.
+    ///
+    /// Run on a stand **below `K` and growing**, the only fixture that can tell a `× 0` from a
+    /// `× anything`.
+    #[test]
+    fn a_full_floor_takes_nothing_from_a_patch_and_refuses_its_build() {
+        const LEAVE_IT_ALL_STANDING: f32 = 1.0;
+        let (patch, _forage) = patch_below_its_floor();
+        assert!(
+            patch.growth_this_turn() > 0.0,
+            "fixture: the stand must be growing, or the whole point of the backstop is untested"
+        );
+        assert!(
+            patch.biomass < patch.carrying_capacity,
+            "fixture: which means it is below its own capacity"
+        );
+        assert_eq!(
+            patch_take_room(&patch, LEAVE_IT_ALL_STANDING),
+            0.0,
+            "a floor that leaves the whole stand standing takes nothing — which is what it MEANS"
+        );
+    }
+
+    /// **THE BACKSTOP PAYS WHERE THE ROOM CANNOT** — a stand pushed below its floor by the `K` its
+    /// Sow raised still hands over the share of the turn's growth its floor left takeable.
+    #[test]
+    fn a_patch_below_its_climbing_floor_still_hands_over_the_growth_share() {
+        const HALF_THE_STAND: f32 = 0.5;
+        let (patch, _forage) = patch_below_its_floor();
+        let room =
+            forage_escapement_ceiling(HALF_THE_STAND, patch.biomass, patch.carrying_capacity);
+        assert_eq!(
+            room, 0.0,
+            "fixture: the stand must be BELOW its floor, or the escapement room is what pays and \
+             the backstop is untested ({room})"
+        );
+        let growth = patch.growth_this_turn();
+        assert!(growth > 0.0, "fixture: and it must be growing");
+        let take = patch_take_room(&patch, HALF_THE_STAND);
+        assert!(
+            (take - growth * HALF_THE_STAND).abs() < 1e-3,
+            "it hands over the share of the growth the floor left takeable: {take} against {}",
+            growth * HALF_THE_STAND
+        );
+    }
+
+    /// **⛔ THE PLANT BUILD'S GATE WIDENED AND THE PLANT LESSON'S DID NOT** — the animal web's split,
+    /// mirrored, and pinned the same way: this fails if the two are merged in **either** direction.
+    #[test]
+    fn the_plant_build_gate_widened_and_the_lessons_gate_did_not() {
+        const HALF_THE_STAND: f32 = 0.5;
+        let (patch, _forage) = patch_below_its_floor();
+        assert!(
+            patch.growth_this_turn() > 0.0,
+            "fixture: the stand must be growing, or the two seams agree for a boring reason"
+        );
+        let lesson_seam =
+            forage_escapement_ceiling(HALF_THE_STAND, patch.biomass, patch.carrying_capacity);
+        let build_seam = patch_take_room(&patch, HALF_THE_STAND);
+        assert_eq!(
+            lesson_seam, 0.0,
+            "the LESSON's gate stays the pure escapement room, and it is empty here"
+        );
+        assert!(
+            build_seam > 0.0,
+            "while the BUILD's gate reads what the take will pay ({build_seam})"
+        );
+    }
+
+    // **RETIRED BEFORE IT SHIPPED: `a_sow_begun_on_the_floor_completes_at_every_crew_size`** — the
+    // plant twin of the animal web's floor regression, which **could not be made to fail**.
+    //
+    // At the shipped numbers the plant stand simply out-grows its own climbing floor: `r` is 0.25
+    // against the aurochs' 0.09, `field_regrowth_gain` lifts `r` in step with `field_capacity_gain`,
+    // and Logistics regrows before Population gathers — so a `Sow` begun exactly on the floor
+    // completes at every crew size with zero starved turns **whether or not the backstop is there**.
+    // Removing the backstop left it green, which makes it a test that cannot distinguish the defect
+    // from the fix, and this arc has shipped five of those.
+    //
+    // What still pins the plant backstop is the pair below, both of which fail when it is removed:
+    // `a_patch_below_its_climbing_floor_still_hands_over_the_growth_share` and
+    // `the_plant_build_gate_widened_and_the_lessons_gate_did_not`. The plant web carries the backstop
+    // for the **rule** — it is global by construction — not because a measurement demanded it.
 
     /// **THE BILL IS THE SIZE OF THE LAND** — two patches at the *same* ladder position on tiles of
     /// different `K` owe in exactly the ratio of those `K`s, because both plant rungs quote their rate

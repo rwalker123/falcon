@@ -8726,7 +8726,7 @@ mod tests {
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
-        build_headless_app, default_species_for_rung, EcologyPhase, FoodModule, FoodSiteEntry,
+        build_test_app, default_species_for_rung, EcologyPhase, FoodModule, FoodSiteEntry,
         ForagePatch, CULTIVATION_DISCOVERY_ID, FABRICATED_BUILD_COST, HERDING_DISCOVERY_ID,
         PENNING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
@@ -8874,7 +8874,7 @@ mod tests {
     /// plant arms answer permissively instead and leave the labor arm as the authority.
     #[test]
     fn plant_site_gates_do_not_panic_before_a_world_exists() {
-        let app = build_headless_app();
+        let app = build_test_app();
         assert!(
             app.world.get_resource::<TileRegistry>().is_none(),
             "idle boot carries no world"
@@ -8918,7 +8918,7 @@ mod tests {
     /// one on demand, an unknown profile is rejected without building, and zero dimensions are rejected.
     #[test]
     fn new_game_builds_a_world_and_rejects_bad_input() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.world
             .insert_resource(CommandSenderResource(unbounded::<Command>().0));
         // Idle boot: Startup never ran, so the worldgen-inserted `TileRegistry` does not exist yet.
@@ -9080,7 +9080,7 @@ mod tests {
     /// band's Forage policy is left untouched.
     #[test]
     fn cultivate_rejected_when_cultivation_unknown() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9133,7 +9133,7 @@ mod tests {
     /// command-driven in the first place.
     #[test]
     fn a_build_verb_queues_the_source_and_stands_nobody_on_it() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9171,7 +9171,7 @@ mod tests {
     /// **A RING IS A QUEUE ENTRY LIKE EVERY OTHER BUILD**, under its own kind.
     #[test]
     fn extend_pen_queues_the_ring_under_its_own_kind() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
@@ -9255,7 +9255,7 @@ mod tests {
     /// they had protected their Field.
     #[test]
     fn upkeep_mode_sets_the_bands_fund_mode_and_refuses_an_unknown_one() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = starting_band_id(&mut app, faction);
@@ -9292,7 +9292,7 @@ mod tests {
     /// maintaining that web, exactly as `0` unassigns any other row.
     #[test]
     fn assign_labor_staffs_the_two_keeping_roles() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = starting_band_id(&mut app, faction);
@@ -9396,7 +9396,7 @@ mod tests {
     /// rather than deleted, because a re-added phase check would be silent otherwise.
     #[test]
     fn cultivate_is_accepted_on_a_stressed_patch() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9435,7 +9435,7 @@ mod tests {
     /// must still be worked off).
     #[test]
     fn cultivate_sets_the_cultivate_policy_on_the_working_band() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9477,7 +9477,7 @@ mod tests {
     /// tells the player to staff the patch first.
     #[test]
     fn cultivate_rejected_when_no_band_is_foraging_the_patch() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9544,7 +9544,7 @@ mod tests {
     /// *"already cultivated"* message exists for.
     #[test]
     fn an_eroded_tended_patch_is_re_tendable_and_a_full_one_is_not() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9589,7 +9589,7 @@ mod tests {
 
         // The other half, in its own world so the first half's (absent) failure cannot be read for
         // this one's.
-        let mut full = build_headless_app();
+        let mut full = build_test_app();
         seed_thriving_patch(&mut full, coord);
         grant_cultivation(&mut full, faction);
         spawn_working_band(
@@ -9694,7 +9694,7 @@ mod tests {
     /// the refusal survives, so the shape can be made uniform without moving play.
     #[test]
     fn a_full_pen_and_a_tamed_herd_are_both_still_refused() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
@@ -9717,7 +9717,10 @@ mod tests {
                 .iter_mut()
                 .find(|herd| herd.id == id)
                 .expect("the fixture herd is there");
-            assert!(herd.corral_at(coord), "the fixture herd can be penned");
+            assert!(
+                herd.corral_at(coord, &core_sim::LadderConfig::builtin()),
+                "the fixture herd can be penned"
+            );
             assert!(
                 herd.is_corralled() && herd.corral_meter_full(),
                 "the fence flag and the meter agree on every herd the sim can reach"
@@ -9765,16 +9768,13 @@ mod tests {
     /// mid-rung is the *ladder's* answer. [`PART_PREPARED_JOB`] survives for the **animal** web,
     /// whose two meters still carry their own stamped costs.
     const PART_PREPARED_WORK: f32 = FABRICATED_BUILD_COST / 2.0;
-    /// See [`PART_PREPARED_WORK`] — the animal web's stamped companion cost.
-    const PART_PREPARED_JOB: f32 = FABRICATED_BUILD_COST;
-
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers
     /// off* and let the patch regrow. Doubly true since `docs/plan_harvest_floor.md` §3.2: easing
     /// off is now also how you *speed the build up*, because a shallower draw is a faster meter.
     #[test]
     fn a_paused_cultivation_can_still_be_re_crewed() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -9884,7 +9884,7 @@ mod tests {
             take_species: TakeSelection::EVERYTHING,
         };
 
-        let mut thriving = build_headless_app();
+        let mut thriving = build_test_app();
         seed_thriving_patch(&mut thriving, coord);
         {
             let ladder = thriving.world.resource::<LadderConfigHandle>().get();
@@ -9903,7 +9903,7 @@ mod tests {
         );
 
         // …and the same rule fires whatever the ground's health, now that health gates nothing.
-        let mut stressed = build_headless_app();
+        let mut stressed = build_test_app();
         seed_thriving_patch(&mut stressed, coord);
         seed_paused_build(&mut stressed, coord, Some(rival));
         grant_cultivation(&mut stressed, faction);
@@ -9961,7 +9961,7 @@ mod tests {
         coord: UVec2,
         crop: Option<&str>,
     ) -> bevy::prelude::App {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         seed_grid_with_baskets(&mut app, PHASE_GATE_GRID);
         seed_thriving_patch(&mut app, coord);
         seed_paused_build(&mut app, coord, Some(faction));
@@ -10168,7 +10168,7 @@ mod tests {
 
     /// Ground with a real basket and a band already foraging it — the state `assign_labor` edits.
     fn forage_ground_with_baskets(faction: FactionId, coord: UVec2) -> bevy::prelude::App {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         seed_grid_with_baskets(&mut app, PHASE_GATE_GRID);
         seed_thriving_patch(&mut app, coord);
         spawn_resident_working_band(
@@ -10256,7 +10256,7 @@ mod tests {
     /// The map every `sow` test stands on. The shipped `map_seed` is **0 = entropy**, so a test that
     /// wants a reproducible map must pin one — otherwise "is there hospitable ground here?" is a
     /// coin flip per run.
-    const SOW_TEST_MAP_SEED: u64 = 119304647;
+    const SOW_TEST_MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 
     /// A **real world** — `build_headless_app` builds the app, `update` runs the Startup chain, so
     /// the map, its `Tile`s and its seeded forage patches all exist. `sow` needs them: its defining
@@ -10318,7 +10318,7 @@ mod tests {
     /// something" was never the symptom.
     #[test]
     fn recalling_an_expedition_by_band_id_actually_recalls_it() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.world
             .insert_resource(CommandSenderResource(unbounded::<Command>().0));
         let faction = FactionId(0);
@@ -10918,7 +10918,7 @@ mod tests {
     }
 
     fn build_world_app() -> bevy::prelude::App {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.world.resource_mut::<SimulationConfig>().map_seed = SOW_TEST_MAP_SEED;
         app.update();
         app
@@ -11705,7 +11705,7 @@ mod tests {
             CORRAL_TEST_BODY_MASS,
         );
         if let Some(faction) = owner {
-            herd.tame_outright(faction);
+            herd.tame_outright(faction, &core_sim::LadderConfig::builtin());
         }
         let id = herd.id.clone();
         app.world.resource_mut::<HerdRegistry>().herds.push(herd);
@@ -11754,7 +11754,7 @@ mod tests {
     /// happily against the old Herding gate, and so would not pin the reshuffle at all.
     #[test]
     fn corral_rejected_when_penning_unknown_even_knowing_herding() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
@@ -11776,7 +11776,7 @@ mod tests {
     /// faction knows Herding.
     #[test]
     fn corral_rejected_when_not_domesticated() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, None);
@@ -11794,7 +11794,7 @@ mod tests {
     /// `corral` is rejected for a faction that doesn't own the domesticated herd.
     #[test]
     fn corral_rejected_for_non_owner() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let owner = FactionId(0);
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
@@ -11815,7 +11815,7 @@ mod tests {
     /// costs `work_cost / the keeper crew's output` turns of the reduced Corral take.
     #[test]
     fn corral_sets_the_corral_policy_on_the_working_band() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
@@ -11845,7 +11845,7 @@ mod tests {
     /// With nobody hunting the herd there is no assignment to re-point: `corral` is rejected.
     #[test]
     fn corral_rejected_when_no_band_is_hunting_the_herd() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_herd(&mut app, coord, Some(faction));
@@ -11862,7 +11862,7 @@ mod tests {
     /// to be ungated (a free side effect of Sustain); it is now paced by practice.
     #[test]
     fn tame_rejected_when_herding_unknown() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         // Owner `None` — a wild, untamed herd, which is what `tame` targets.
@@ -11894,7 +11894,7 @@ mod tests {
     /// exactly what the retired `domesticate` early-claim let the player skip).
     #[test]
     fn tame_sets_the_tame_policy_on_the_working_band() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, None);
@@ -11928,7 +11928,7 @@ mod tests {
     /// An already-domesticated herd has climbed this rung — `corral` is the next verb, not `tame`.
     #[test]
     fn tame_rejected_when_already_domesticated() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_herd(&mut app, coord, Some(faction));
@@ -11950,7 +11950,7 @@ mod tests {
     /// You cannot tame a herd another people are already taming.
     #[test]
     fn tame_rejected_for_another_factions_herd() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let owner = FactionId(0);
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
@@ -11962,7 +11962,12 @@ mod tests {
             .iter_mut()
             .find(|h| h.id == id)
             .unwrap()
-            .accrue_domestication(owner, PART_PREPARED_WORK, PART_PREPARED_JOB);
+            .accrue_domestication(
+                owner,
+                PART_PREPARED_WORK,
+                core_sim::RUNG_COST_UNSCALED,
+                &core_sim::LadderConfig::builtin(),
+            );
         grant_herding(&mut app, intruder);
         spawn_working_band(
             &mut app,
@@ -11984,7 +11989,7 @@ mod tests {
     /// `tame` is a policy switch, so it needs someone to switch: staff the herd first.
     #[test]
     fn tame_rejected_when_no_band_is_hunting_the_herd() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let id = seed_herd(&mut app, UVec2::new(1, 1), None);
         grant_herding(&mut app, faction);
@@ -11997,7 +12002,7 @@ mod tests {
     /// An unknown herd id is rejected by name.
     #[test]
     fn tame_rejected_for_an_unknown_herd() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         grant_herding(&mut app, faction);
 
@@ -12018,7 +12023,7 @@ mod tests {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         assert!(
-            herd.corral_at(coord),
+            herd.corral_at(coord, &core_sim::LadderConfig::builtin()),
             "the fixture species must be pennable"
         );
         id
@@ -12033,7 +12038,7 @@ mod tests {
     /// gate: **Penning**, not Herding (which is granted here to prove it is not sufficient).
     #[test]
     fn extend_pen_rejected_when_penning_unknown_even_knowing_herding() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
@@ -12048,7 +12053,7 @@ mod tests {
     /// `extend_pen` targets the fixed pen anchor: an unpenned (mobile) herd at the tile is "no pen".
     #[test]
     fn extend_pen_rejected_when_no_pen_at_tile() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         // A domesticated but NOT-penned herd standing on the tile.
@@ -12064,7 +12069,7 @@ mod tests {
     /// `extend_pen` is rejected for a faction that doesn't own the pen.
     #[test]
     fn extend_pen_rejected_for_non_owner() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let owner = FactionId(0);
         let intruder = FactionId(1);
         let coord = UVec2::new(1, 1);
@@ -12080,7 +12085,7 @@ mod tests {
     /// A pen already at `pen_radius_max` refuses to extend further.
     #[test]
     fn extend_pen_rejected_at_max_radius() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let radius_max = app
@@ -12116,7 +12121,7 @@ mod tests {
     /// With nobody keeping the pen the ring could never accrue: `extend_pen` says to staff it first.
     #[test]
     fn extend_pen_rejected_when_no_band_is_keeping_it() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
@@ -12131,7 +12136,7 @@ mod tests {
     /// The happy path: an owned, kept, Penning-known pen below the max enters the extending state.
     #[test]
     fn extend_pen_sets_the_extending_state() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
@@ -12176,7 +12181,7 @@ mod tests {
     /// species can never be tamed") is unchanged — only the verb that must enforce it moved.
     #[test]
     fn tame_rejects_a_wild_species() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         // Owner `None` so `seed_herd` doesn't auto-domesticate it (the ceiling check is what matters).
         let id = seed_herd(&mut app, UVec2::new(1, 1), None);
@@ -12221,7 +12226,7 @@ mod tests {
             core_sim::HusbandryCeiling::Wild,
             core_sim::HusbandryCeiling::Pastoral,
         ] {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             let faction = FactionId(0);
             let coord = UVec2::new(1, 1);
             let id = seed_herd(&mut app, coord, Some(faction));
@@ -12250,7 +12255,7 @@ mod tests {
     /// refused before it can grow a ring.
     #[test]
     fn extend_pen_rejects_a_non_pennable_species() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let id = seed_penned_herd(&mut app, coord, Some(faction));
@@ -12285,7 +12290,7 @@ mod tests {
     #[test]
     fn send_hunt_expedition_rejects_a_floor_outside_the_dial() {
         for bad in [-0.5_f32, 1.5, f32::NAN] {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
 
@@ -12325,7 +12330,7 @@ mod tests {
     fn a_raiding_verb_refuses_an_unknown_or_wrong_job_kit_rather_than_defaulting() {
         for bad_kit in ["spear_of_destiny", "gathering"] {
             for verb in [RaidVerb::Hunt, RaidVerb::Deny] {
-                let mut app = build_headless_app();
+                let mut app = build_test_app();
                 let faction = FactionId(0);
                 let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
                 match verb {
@@ -12377,7 +12382,7 @@ mod tests {
     #[test]
     fn assign_labor_refuses_an_unknown_or_wrong_job_kit_rather_than_defaulting() {
         for (role, bad_kit) in [("hunt", "gathering"), ("forage", "big_game")] {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
             handle_assign_labor(
@@ -12436,7 +12441,7 @@ mod tests {
         /// like to a command composed against the old roster.
         const RETIRED_KIT: &str = "obsidian_spears";
 
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
         spawn_addressable_band(&mut app, faction, &herd_id);
@@ -12510,7 +12515,7 @@ mod tests {
         /// web takes an `assign_labor … builders` carrying `named`, and the kit the pool ends up
         /// working with is read back through the one seam the turn and the wire both resolve through.
         fn resolved_builders_kit(animal_head: bool, named: Option<&str>) -> String {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
             let patch = UVec2::new(2, 2);
@@ -12655,7 +12660,7 @@ mod tests {
     fn a_raiding_party_is_bounded_by_the_band_and_not_by_the_sampling_lever() {
         // 1 + 2. Both raiding verbs launch whatever party the band can field.
         for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             // Startup, so the world carries the tile registry every launch path resolves against.
             app.update();
             let faction = FactionId(0);
@@ -12696,7 +12701,7 @@ mod tests {
 
         // 3. The bound MOVED, it did not vanish: a party past the band is still refused, both verbs.
         for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             app.update();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), None);
@@ -12809,7 +12814,7 @@ mod tests {
     /// `fauna_husbandry::a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later`.
     #[test]
     fn a_deep_floor_accepts_a_cultivate_improvement_beside_it() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -12862,7 +12867,7 @@ mod tests {
     /// outright by `validate_improvement` (the guard each build command routes through).
     #[test]
     fn cross_web_improvements_are_rejected() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
@@ -13084,7 +13089,7 @@ mod tests {
     /// advanced — and that seed is exactly what the pre-commit forecast promises.
     #[test]
     fn assigning_forage_workers_seeds_the_expected_yield_before_the_turn() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13139,7 +13144,7 @@ mod tests {
     /// invariant): the displayed yield does not move when the turn lands.
     #[test]
     fn resolved_forage_yield_equals_the_seeded_yield() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13164,7 +13169,7 @@ mod tests {
     /// the command-path seed matches it.
     #[test]
     fn assigning_hunt_workers_seeds_the_expected_yield_before_the_turn() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13294,7 +13299,7 @@ mod tests {
         // The REAL campaign world, because the assertion reads a captured snapshot and the capture
         // wants every worldgen resource. `fog_enabled = false` so the pinned herd reaches the wire
         // wherever it stands rather than the test asserting about visibility.
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
         app.update();
         let faction = FactionId(0);
@@ -13339,7 +13344,7 @@ mod tests {
     /// the job default, a verb that ignored the herd entirely would still pass the first assertion.
     #[test]
     fn a_raid_with_no_kit_named_launches_on_the_kit_the_wire_published_for_that_herd() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
         app.update();
         let faction = FactionId(0);
@@ -13393,7 +13398,7 @@ mod tests {
     /// load-bearing).
     #[test]
     fn resolved_hunt_yield_equals_the_seeded_yield() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13425,7 +13430,7 @@ mod tests {
     /// no-jump restored by the forward-projection definition.
     #[test]
     fn resolved_hunt_realized_equals_the_seeded_realized() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13457,7 +13462,7 @@ mod tests {
     /// path that only fired at the four values the retired stances named would fail here.
     #[test]
     fn changing_the_floor_reseeds_the_expected_yield() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13490,7 +13495,7 @@ mod tests {
     /// biomass yields nothing, so `+0.00` stays reachable — and correct — there.
     #[test]
     fn a_barren_source_seeds_zero() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13516,7 +13521,7 @@ mod tests {
     #[test]
     fn an_out_of_range_floor_is_rejected_and_leaves_the_assignment_alone() {
         for bad in [-0.01_f32, 1.5, f32::NAN, f32::INFINITY] {
-            let mut app = build_headless_app();
+            let mut app = build_test_app();
             let faction = FactionId(0);
             let coord = UVec2::new(1, 1);
             let tile = seed_tile_grid(&mut app, coord);
@@ -13558,7 +13563,7 @@ mod tests {
     /// zips the two by index — a stale row would be attributed to another source).
     #[test]
     fn unassigning_a_source_drops_its_yield_row() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -13658,7 +13663,7 @@ mod tests {
     /// the source workers.
     #[test]
     fn cancel_order_work_clears_the_sources_and_keeps_the_roles() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let (band, _) = spawn_band_working_every_target(&mut app, faction);
         let idle_before = idle_workers(&app, band);
@@ -13686,7 +13691,7 @@ mod tests {
     /// `roles` is the mirror: the standing roles go, the worked sources stay.
     #[test]
     fn cancel_order_roles_clears_the_roles_and_keeps_the_sources() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let (band, _) = spawn_band_working_every_target(&mut app, faction);
         let idle_before = idle_workers(&app, band);
@@ -13714,7 +13719,7 @@ mod tests {
     /// `all` is the historical behaviour: everything goes, travel included.
     #[test]
     fn cancel_order_all_clears_everything_and_stops_the_move() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let (band, _) = spawn_band_working_every_target(&mut app, faction);
         handle_move_band(&mut app, faction, None, 2, 2);
@@ -13738,7 +13743,7 @@ mod tests {
     /// Moving is not working: a `work` clear must leave an in-progress `move_band` running.
     #[test]
     fn cancel_order_work_leaves_an_in_progress_move_alone() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let (band, _) = spawn_band_working_every_target(&mut app, faction);
         handle_move_band(&mut app, faction, None, 2, 2);
@@ -13755,7 +13760,7 @@ mod tests {
     /// `roles`, rather than reporting itself idle.
     #[test]
     fn cancel_order_rejects_only_the_scope_that_has_nothing_to_clear() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
@@ -14086,7 +14091,7 @@ mod tests {
     /// readout in the game counted the bench's hands as free, in the *reassuring* direction.
     #[test]
     fn a_bench_crew_is_missing_from_the_published_idle_count() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
@@ -14132,7 +14137,7 @@ mod tests {
     /// other assignments, which is the same arithmetic `idle()` reports.
     #[test]
     fn the_published_idle_count_is_what_assign_labor_will_staff() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
@@ -14195,7 +14200,7 @@ mod tests {
     /// meaning *"a named crew is ignored too"*.
     #[test]
     fn a_set_bench_with_no_crew_named_recruits_nobody() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
@@ -14241,7 +14246,7 @@ mod tests {
     /// − assigned, deliberately *not* netting the bench) exists to preserve.
     #[test]
     fn swapping_the_job_on_a_running_bench_keeps_its_crew() {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);

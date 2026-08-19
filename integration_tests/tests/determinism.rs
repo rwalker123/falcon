@@ -1,19 +1,18 @@
 mod common;
 
-use core_sim::{build_headless_app, SimulationConfig, SimulationConfigMetadata, SnapshotHistory};
+use core_sim::{build_test_app, SimulationConfigMetadata, SnapshotHistory};
 use sim_runtime::WorldSnapshot;
 
 fn run_simulation(ticks: usize) -> WorldSnapshot {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     if let Some(mut metadata) = app.world.get_resource_mut::<SimulationConfigMetadata>() {
         metadata.set_seed_random(false);
     }
-    if let Some(mut config) = app.world.get_resource_mut::<SimulationConfig>() {
-        if config.map_seed == 0 {
-            config.map_seed = 0x5EED_F00D;
-        }
-    }
+    // **THE SEED IS THE HARNESS BUILDER'S** (`core_sim::HARNESS_MAP_SEED`). This used to carry an
+    // `if config.map_seed == 0 { … }` fallback of its own, because the shipped config leaves the seed
+    // random and a reproducible run needs a number; `build_test_app` pins one for every test now, so
+    // that branch was unreachable and its constant was a value nothing could read.
     for _ in 0..ticks {
         app.update();
     }

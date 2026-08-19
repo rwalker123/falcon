@@ -291,15 +291,18 @@ fn most_hunted_species(ctx: &NounContext<'_>) -> Option<String> {
         .map(|(species, _)| species)
 }
 
-/// The species with the highest `domestication_progress` among herds this faction owns.
+/// The species this faction has sunk the most work into — the highest **ladder position** among the
+/// herds it owns. It was `domestication_progress`, which the one-position model collapsed into the
+/// same number and then some: a penned herd now ranks above a merely tamed one, which is the reading
+/// this noun always meant.
 fn most_domesticated_species(ctx: &NounContext<'_>) -> Option<String> {
     ctx.herds
         .entries()
         .iter()
         .filter(|herd| herd.owner == Some(ctx.faction))
         .max_by(|a, b| {
-            a.domestication_progress
-                .total_cmp(&b.domestication_progress)
+            a.ladder_position()
+                .total_cmp(&b.ladder_position())
                 .then(b.species.cmp(&a.species))
         })
         .map(|herd| herd.species.clone())

@@ -380,6 +380,208 @@ struct HerdOutcome {
 const FULL_HERD: f32 = 1.0;
 const HALF_K_HERD: f32 = 0.5;
 
+/// **⛔ THE REGRESSION FOR THE WHOLE FLOOR PROBLEM** — a tame begun **exactly on** the escapement
+/// floor completes at every crew size, and never spends a turn with nothing to take.
+///
+/// # What it is guarding
+///
+/// The floor is a fraction of `K`, and taming **raises `K`** (`pastoral_density`). So `floor · K`
+/// climbs while the stock does not, and a herd standing exactly on its floor when the tame starts is
+/// pushed **below** it by its own improvement. Because the build's eligibility read that same
+/// escapement room, the gate then refused the very job that had moved it — and the tame stalled
+/// **forever, at every crew size**, with *more herders making it worse*: the room hit zero on turn 6
+/// at one, turn 3 at four and turn 2 at eight.
+///
+/// `fauna::take_room`'s growth share is what fixed it, and this is the assertion form of the harness
+/// that found it ([`probe_the_tame_floor_squeeze`], which prints the whole curve).
+///
+/// # The two facts, and both are needed
+///
+/// **Completion alone is not enough** — a tame that finished while the herd sat at zero room for
+/// most of it would be the food failure with the build failure papered over. **Zero-room turns alone
+/// are not enough either** — a herd that never reached the floor would trivially have none. The pair
+/// is the claim.
+#[test]
+fn a_tame_begun_on_the_floor_completes_at_every_crew_size() {
+    let fauna = probe_fauna();
+    let ladder = LadderConfig::builtin();
+    let pastoral = ladder.rung(RungKey::AnimalPastoral);
+
+    for crew in FLOOR_SQUEEZE_CREWS {
+        let mut herd = probe_herd(&fauna, FLOOR_SQUEEZE_SPECIES, ON_THE_FLOOR);
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(&herd.species);
+        let range_capacity = herd.carrying_capacity;
+        let mut turns_at_zero = 0usize;
+        let mut finished_on = None;
+
+        for turn in 1..=FLOOR_SQUEEZE_HORIZON {
+            // The band is keeping the herd — see `probe_the_tame_floor_squeeze` for why a fixture
+            // that omits this measures `regrow_biomass`'s abandonment gate instead of the floor.
+            herd.upkeep_supplied = crate::fauna::herd_upkeep_demand(&herd, &fauna, &ladder);
+            herd.carrying_capacity =
+                range_capacity * crate::fauna::herd_density_gain(&herd, &fauna);
+            regrow_biomass(&mut herd, &fauna);
+            let room = crate::fauna::herd_take_room(&herd, ON_THE_FLOOR, &fauna);
+            if room <= 0.0 {
+                turns_at_zero += 1;
+            }
+            let accrual = pastoral.build_accrual(
+                Some(Improvement::Tame),
+                room > 0.0,
+                crew,
+                crate::intensification::NO_BUILD_GEAR,
+            );
+            if accrual > 0.0
+                && herd.accrue_domestication(
+                    PROBE_FACTION,
+                    accrual,
+                    herd.taming_cost_multiplier,
+                    &ladder,
+                )
+            {
+                finished_on = Some(turn);
+                break;
+            }
+        }
+
+        assert!(
+            finished_on.is_some(),
+            "{crew} herder(s): a tame begun on the floor must COMPLETE — it stalled forever at \
+             every crew size before the growth share backstopped the take"
+        );
+        assert_eq!(
+            turns_at_zero, 0,
+            "{crew} herder(s): …and must never spend a turn with nothing to take, or the herd is \
+             being taken below its own floor's promise"
+        );
+    }
+}
+
+/// The species the floor measurement is quoted on — the one §4.14's playtest used.
+const FLOOR_SQUEEZE_SPECIES: &str = "aurochs";
+/// The herd starts **exactly on** its escapement floor, which is the case the whole problem is about.
+const ON_THE_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+/// The crews compared. The middle one is the playtest's; the outer two are what showed the
+/// incentive was **perverse** — more hands used to reach zero room sooner.
+const FLOOR_SQUEEZE_CREWS: [u32; 3] = [1, 4, 8];
+/// Long enough for the slowest of those crews to finish a 100-unit tame with room to spare, short
+/// enough that the assertion form stays cheap beside the 600-turn printing harness.
+const FLOOR_SQUEEZE_HORIZON: u32 = 200;
+
+/// **⛔ WHAT A TAME LEAVES A HERD STANDING ON, TURN BY TURN** — the measurement
+/// `docs/plan_standing_upkeep.md` §4.14 wants for the escapement-floor decision, and the reason it
+/// is a probe rather than an assertion: the number is the *output*, and a bound on it would be a
+/// guess dressed as an invariant.
+///
+/// # The question
+///
+/// The escapement floor is `floor × K`, and `K` is the **density-boosted** ceiling — so a rung that
+/// raises `K` raises the floor with it while the herd does not follow. A herd that starts exactly on
+/// its floor can therefore end up **below** it for most of a build and take nothing, and the more
+/// herders are on the build the sooner the floor climbs. That is the perverse incentive the arc has
+/// to answer: **more hands → faster build → faster-climbing floor → longer taking nothing.**
+///
+/// Interpolating the rung's gains — which this file's arc did — **spreads** that climb over the
+/// build rather than jumping it at completion. It does not remove it, and this probe is what shows
+/// by how much.
+///
+/// # What it reports
+///
+/// Room above the floor, in **animals**, every turn of a full aurochs tame (`pastoral_density` 2.0,
+/// wild `r` 0.09 → pastoral 0.18, `work_cost × taming_cost_multiplier` = 100 work units), at 1, 4 and
+/// 8 herders — plus the count of turns spent at **zero** room, which is the figure the incentive
+/// lives in.
+///
+/// Run with `cargo test -p core_sim --lib probe_the_tame_floor_squeeze -- --ignored --nocapture`.
+#[test]
+#[ignore = "measurement harness — run with --ignored --nocapture"]
+fn probe_the_tame_floor_squeeze() {
+    let fauna = probe_fauna();
+    let ladder = LadderConfig::builtin();
+    let pastoral = ladder.rung(RungKey::AnimalPastoral);
+
+    println!(
+        "\n=== A TAME FROM EXACTLY ON THE FLOOR — room above it, in animals, per turn ===\n\
+         (aurochs, floor {ON_THE_FLOOR}·K, tame cost {} work units)",
+        pastoral
+            .build_cost(fauna.taming_cost_multiplier_for("Wild Aurochs"))
+            .unwrap_or(0.0)
+    );
+
+    for crew in FLOOR_SQUEEZE_CREWS {
+        let mut herd = probe_herd(&fauna, FLOOR_SQUEEZE_SPECIES, ON_THE_FLOOR);
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(&herd.species);
+        let body = herd.body_mass.max(1.0);
+        // **THE RANGE'S OWN K, before any rung touches it.** The density gain multiplies this at the
+        // one `K` write (`ecological_carrying_capacity`, in the grazing pass), which this probe does
+        // not run — so it is replayed below, every turn. **Without it the floor never climbs and the
+        // whole measurement is vacuous**: `herd_capacity` reads the stored field, so a probe that
+        // forgot this would report a flat, comfortable room and answer the opposite question.
+        let range_capacity = herd.carrying_capacity;
+        let mut room_per_turn: Vec<f32> = Vec::new();
+        let mut turns_at_zero = 0usize;
+        let mut turns_to_finish = None;
+
+        for turn in 1..=PROBE_TURNS {
+            // **⛔ THE BAND IS KEEPING THIS HERD, and without this line the probe measures a
+            // different failure.** `regrow_biomass`'s `abandoned_pastoral` gate zeroes the growth of
+            // an **owned** herd whose keeping was wholly unmet last turn — and
+            // `accrue_domestication` records the owner on the *first* work banked. So an unkept tame
+            // freezes its herd's biomass from turn two, which starves the growth-share backstop of
+            // the very growth it shares out. That is a real trap, but it is *"you did not staff
+            // husbandry"* rather than the floor — a separate trap with its own diagnosis, and one
+            // this probe must hold constant to measure the floor at all.
+            herd.upkeep_supplied = crate::fauna::herd_upkeep_demand(&herd, &fauna, &ladder);
+            // **The rung's density gain, re-applied from the range's own K** — idempotent, exactly
+            // as the sim's one write is, and it is what makes the floor climb as the herd tames.
+            herd.carrying_capacity =
+                range_capacity * crate::fauna::herd_density_gain(&herd, &fauna);
+            regrow_biomass(&mut herd, &fauna);
+            // **The room the take reads**, pre-quantisation and pre-crew — the herd's own offer.
+            // **What the take will actually pay, and what the build's gate reads** — the escapement
+            // room OR the share of this turn's growth the floor leaves takeable
+            // (`fauna::take_room`). Reading the raw room here would measure the seam the fix
+            // replaced.
+            let room = crate::fauna::herd_take_room(&herd, ON_THE_FLOOR, &fauna);
+            let animals = room / body;
+            if turns_to_finish.is_none() {
+                room_per_turn.push(animals);
+                if animals <= 0.0 {
+                    turns_at_zero += 1;
+                }
+                let accrual = pastoral.build_accrual(
+                    Some(Improvement::Tame),
+                    room > 0.0,
+                    crew,
+                    crate::intensification::NO_BUILD_GEAR,
+                );
+                if accrual > 0.0
+                    && herd.accrue_domestication(
+                        PROBE_FACTION,
+                        accrual,
+                        herd.taming_cost_multiplier,
+                        &ladder,
+                    )
+                {
+                    turns_to_finish = Some(turn);
+                }
+            } else {
+                break;
+            }
+        }
+
+        let curve: Vec<String> = room_per_turn.iter().map(|a| format!("{a:.2}")).collect();
+        println!(
+            "\n  {crew} herder(s): finished in {} turn(s); {turns_at_zero} of {} turns at ZERO room",
+            turns_to_finish
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| format!("never (>{PROBE_TURNS})")),
+            room_per_turn.len()
+        );
+        println!("    room/turn (animals): {}", curve.join(" "));
+    }
+}
+
 fn probe_herd(fauna: &FaunaConfig, species_key: &str, start_fraction: f32) -> Herd {
     let def = fauna
         .species
@@ -510,7 +712,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
     let pen = ladder.rung(RungKey::AnimalPen);
     let improvement = Some(Improvement::Corral);
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
-    herd.tame_outright(PROBE_FACTION);
+    herd.tame_outright(PROBE_FACTION, &ladder);
     let cap = herd_capacity(&herd, &fauna);
     let hunt_yield = fauna.hunt_yield_for(&herd.species);
 
@@ -544,12 +746,9 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
                 full_crew(pen, pen_load),
                 crate::intensification::NO_BUILD_GEAR,
             );
-            let cost = pen
-                .build_cost(RUNG_COST_UNSCALED)
-                .expect("the pen rung has a build meter");
             if accrual > 0.0 {
                 let tile = herd.position();
-                if herd.accrue_corral(PROBE_FACTION, accrual, cost, tile) {
+                if herd.accrue_corral(PROBE_FACTION, accrual, &ladder, tile) {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
                 }
@@ -560,7 +759,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
     HerdBuildOutcome {
         turns_to_complete,
         provisions_over_build,
-        progress_at_horizon: herd.corral_progress,
+        progress_at_horizon: herd.rung_work_done(RungKey::AnimalPen, &ladder),
         fraction_at_completion,
     }
 }
@@ -577,9 +776,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
     let cap = herd_capacity(&herd, &fauna);
     let hunt_yield = fauna.hunt_yield_for(&herd.species);
-    let tame_cost = pastoral
-        .build_cost(fauna.taming_cost_multiplier_for(&herd.species))
-        .expect("the pastoral rung has a build meter");
+    let tame_multiplier = fauna.taming_cost_multiplier_for(&herd.species);
 
     let mut provisions_over_build = 0.0;
     let mut turns_to_complete = None;
@@ -618,7 +815,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
                 crate::intensification::NO_BUILD_GEAR,
             );
             if accrual > 0.0 {
-                herd.accrue_domestication(PROBE_FACTION, accrual, tame_cost);
+                herd.accrue_domestication(PROBE_FACTION, accrual, tame_multiplier, &ladder);
                 if herd.is_domesticated() {
                     turns_to_complete = Some(turn);
                     fraction_at_completion = herd.biomass / cap;
@@ -630,7 +827,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
     HerdBuildOutcome {
         turns_to_complete,
         provisions_over_build,
-        progress_at_horizon: herd.domestication_progress,
+        progress_at_horizon: herd.rung_work_done(RungKey::AnimalPastoral, &ladder),
         fraction_at_completion,
     }
 }

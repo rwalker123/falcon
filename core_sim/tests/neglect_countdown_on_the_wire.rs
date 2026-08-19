@@ -20,8 +20,8 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 
 use core_sim::{
-    advance_husbandry, build_headless_app, recapture_snapshot_in_place, FaunaConfigHandle,
-    HerdRegistry, LadderConfigHandle, RungKey, SnapshotHistory, NOTHING_IN_FLIGHT,
+    advance_husbandry, build_test_app, recapture_snapshot_in_place, FaunaConfigHandle,
+    HerdRegistry, LadderConfigHandle, RungKey, SnapshotHistory,
 };
 
 /// **The species the fixture reshapes its herd into** — a roster row that will actually tame
@@ -48,7 +48,7 @@ const HELD_TURNS: u32 = 4;
 /// capacity** because the shed is measured in *whole animals* (`MIN_ESCAPE_ANIMALS`) — a thin flock's
 /// overage can round away and the second arm would never see its penalty bite.
 fn world_with_a_kept_pastoral_herd() -> (App, String) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     let id = {
@@ -79,7 +79,7 @@ fn world_with_a_kept_pastoral_herd() -> (App, String) {
         herd.body_mass = species.body_mass;
         herd.husbandry_ceiling = species.husbandry_ceiling;
         assert!(
-            herd.tame_outright(viewer),
+            herd.tame_outright(viewer, &core_sim::LadderConfig::builtin()),
             "the fixture species must actually tame"
         );
         herd.biomass = herd.carrying_capacity;
@@ -107,7 +107,7 @@ fn seat_keeping(app: &mut App, id: &str, fraction: f32) {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
         let herd = registry.find(id).expect("the fixture herd survives");
-        fraction * core_sim::herd_upkeep_demand(herd, NOTHING_IN_FLIGHT, &fauna, &ladder)
+        fraction * core_sim::herd_upkeep_demand(herd, &fauna, &ladder)
     };
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     registry

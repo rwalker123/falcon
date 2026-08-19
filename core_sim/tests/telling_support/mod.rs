@@ -154,7 +154,7 @@ pub fn domesticate(app: &mut App, faction: FactionId, count: usize) {
         .filter(|herd| herd.can_domesticate())
         .take(count);
     for herd in tameable {
-        herd.tame_outright(faction);
+        herd.tame_outright(faction, &core_sim::LadderConfig::builtin());
     }
 }
 
@@ -201,7 +201,7 @@ fn events_of(app: &App, kind: CommandEventKind) -> Vec<CommandEventEntry> {
 pub fn undomesticate_all(app: &mut App) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     for herd in registry.herds.iter_mut() {
-        herd.domestication_progress = 0.0;
+        herd.set_ladder_position(0.0, &core_sim::LadderConfig::builtin());
         herd.owner = None;
     }
 }

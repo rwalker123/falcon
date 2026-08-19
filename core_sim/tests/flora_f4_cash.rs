@@ -290,6 +290,11 @@ fn seat_field(app: &mut App, coord: UVec2, species: &str, tile_capacity: f32) {
         * patch.carrying_capacity
         / 4.0;
     patch.biomass = patch.carrying_capacity * FIXTURE_FLOOR + msy;
+    // **A SEATED STAND HAS NOT JUST GROWN.** `biomass_before_regrowth` is re-stamped at the top of
+    // every `regrow_patch`, so writing `biomass` directly leaves it describing a turn that never
+    // happened — and the take's growth-share backstop would read that phantom as this turn's growth.
+    // A settled stand grew into the state this fixture seats, which is exactly no growth *this* turn.
+    patch.biomass_before_regrowth = patch.biomass;
 }
 
 /// The escapement floor every forager in this file works at — Sustain. Named because the seated

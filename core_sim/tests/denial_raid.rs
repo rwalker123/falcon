@@ -28,7 +28,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_expeditions, advance_herds, advance_tick, build_headless_app, denial_forecast,
+    advance_expeditions, advance_herds, advance_tick, build_test_app, denial_forecast,
     herd_capacity, herd_ecology, herd_hunt_yield, recapture_snapshot_in_place, scalar_from_f32,
     scalar_one, scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome,
     EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
@@ -163,7 +163,7 @@ const BANDED_PARTY_WORKERS: u32 = 8;
 /// (`docs/plan_hunt_through_combat.md` §6.1) — the deterministic net every pin below but the
 /// wariness fixtures runs on. The stochastic surface lives in the two tests that are *about* it.
 fn placid_world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
@@ -173,7 +173,7 @@ fn placid_world() -> App {
 
 /// The shipped roster with its authored wariness intact — the world the retreat stage is real in.
 fn wary_world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     app
 }

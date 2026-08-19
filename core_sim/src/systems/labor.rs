@@ -36,6 +36,35 @@ fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
 /// boundary `max(0, B − floor·K)` is clamped at.
 const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
 
+/// **"Is there anything here for this crew to work with?"** — THE eligibility term a **build** is
+/// gated on, asked of [`crate::fauna::take_room`]: the escapement room **or** the share of this
+/// turn's growth the player's own floor left takeable, whichever is larger.
+///
+/// # ⛔ IT IS A DIFFERENT QUESTION FROM [`crew_is_working_the_source`], AND THE SPLIT IS THE POINT
+///
+/// The two were one bool, and that is what stalled a tame forever. **A rung raises `K`** — a tamed
+/// herd's `pastoral_density`, a sown field's `field_capacity_gain` — so `floor · K` climbs while the
+/// stock does not, and a source standing *exactly* on its floor when a build starts is pushed
+/// **below** it by its own improvement. The build's gate then read that empty room and refused the
+/// very job that had moved it. Measured on an aurochs tame begun on the floor
+/// (`forage::stance_probe`'s `probe_the_tame_floor_squeeze`): the room hit zero on turn 6 at one
+/// herder, turn 3 at four and turn 2 at eight — **more hands made it worse** — and the tame never
+/// completed at any crew size.
+///
+/// **Only this one widened.** [`crew_is_working_the_source`] still gates the **lesson** on the raw
+/// escapement room, because `intensification::learn_multiplier`'s self-limit lives there: *"watching
+/// teaches nothing"* at `floor = 1.0` is what stops a near-`1.0` floor farming knowledge at ×2 for
+/// free, and its own doc forbids clamping it. Widening the shared predicate would have opened that;
+/// widening this one cannot reach it.
+///
+/// **A legal build target that yields nothing is now unrepresentable**, not merely avoided: this
+/// reads the *same* number the take is bounded by, so the two cannot drift apart when either is
+/// retuned. At `floor = 1.0` the growth share is `× 0` and the room is `0`, so this refuses — which
+/// is *"leave the whole source standing"* meaning exactly that, with no special case.
+fn source_is_workable(take_room: f32) -> bool {
+    take_room > NOTHING_STANDS_ABOVE_THE_FLOOR
+}
+
 /// **Credit the lesson the source's rung teaches, at the rate its crew's floor earns.** The caller
 /// side of [`RungDef::knowledge_accrual`]: the rung says *what* is learned and *how much*, this
 /// applies it to the ledger.
@@ -602,11 +631,8 @@ fn head_rung_gate(
                         return BuildGate::Unworked;
                     };
                     let rung = ladder.rung(RungKey::PlantTended);
-                    let working_the_patch = crew_is_working_the_source(forage_escapement_ceiling(
-                        *floor,
-                        patch.biomass,
-                        patch.carrying_capacity,
-                    ));
+                    let working_the_patch =
+                        source_is_workable(crate::forage::patch_take_room(patch, *floor));
                     let has_crop = patch.species.is_some()
                         || resolve_committed_species(
                             species.as_deref(),
@@ -667,13 +693,12 @@ fn head_rung_gate(
             match improvement {
                 Improvement::Tame => {
                     let rung = ladder.rung(RungKey::AnimalPastoral);
-                    let working_the_herd =
-                        crew_is_working_the_source(fauna::hunt_escapement_ceiling(
-                            *floor,
-                            herd.biomass,
-                            herd_capacity(herd, fauna),
-                        ));
-                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), working_the_herd)
+                    // **THE BUILD'S GATE READS WHAT THE TAKE WILL PAY** ([`source_is_workable`]),
+                    // never the raw escapement room: taming raises the herd's `K`, so the floor
+                    // climbs out from under a herd that started on it and the gate would refuse the
+                    // very build that moved it.
+                    let workable = source_is_workable(fauna::herd_take_room(herd, *floor, fauna));
+                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), workable)
                 }
                 Improvement::Corral => {
                     let rung = ladder.rung(RungKey::AnimalPen);
@@ -768,12 +793,16 @@ fn maintenance_shares(
                     continue;
                 };
                 let verb = fauna::herd_build_verb(herd, declared);
-                if fauna::herd_keeping_meter(herd, verb).is_none() {
+                if !fauna::herd_claims_keeping(herd, verb) {
                     continue;
                 }
                 animal.push(Claim {
                     index,
-                    demand: fauna::herd_upkeep_demand(herd, verb, fauna, ladder),
+                    // **The DEMAND takes no verb any more** — it interpolates on the herd's own
+                    // position, so there is no step for the one-turn carry to straddle. The verb
+                    // survives one line up, where it still answers *does this source claim at all
+                    // on the turn its first work is about to land*.
+                    demand: fauna::herd_upkeep_demand(herd, fauna, ladder),
                     invested: fauna::herd_at_risk_cost(herd),
                     tiebreak: herd.id.clone(),
                 });
@@ -1058,6 +1087,36 @@ pub fn advance_labor_allocation(
             &ladder,
             &keeping_gear,
         );
+        // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
+        //
+        // The animal keeping demand **interpolates on the herd's position** since the animal web got
+        // its one-position ladder, and the position moves *later this turn* — the band's `builders`
+        // pool is spent below, and a `Tame` banking its first work takes the demand from `0` to a
+        // real number. Judged a turn later against the risen demand, a fully-staffed keeping reads
+        // permanently short.
+        //
+        // **It cannot be stamped inside the per-assignment arm**, unlike the plant web's: the animal
+        // build accrual runs in the build-queue pass *above* that arm, so by the time the arm is
+        // reached the position has already moved. Here — between the split and the first accrual —
+        // is the one point where the bill and the share describe the same position.
+        //
+        // **First write wins**, so several bands working one herd all judge the same bill.
+        for assignment in &allocation.assignments {
+            let LaborTarget::Hunt { fauna_id, .. } = &assignment.target else {
+                continue;
+            };
+            let Some(herd) = registry.herds.iter_mut().find(|herd| &herd.id == fauna_id) else {
+                continue;
+            };
+            if herd.upkeep_demanded.is_some() {
+                continue;
+            }
+            // **Stamped for every worked herd, claiming or not.** The bill is *"what this source owed
+            // at the position its share was struck against"*, and a herd that owed nothing owed
+            // exactly `0` — recording that is what makes `supplied == demand` on the turn a Tame
+            // banks its first work, where the live demand read a turn later is already positive.
+            herd.upkeep_demanded = Some(fauna::herd_upkeep_demand(herd, &fauna, &ladder));
+        }
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
         // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
@@ -1705,7 +1764,16 @@ pub fn advance_labor_allocation(
                     // the live one keep answering the same question.
                     let stand_above_floor =
                         forage_escapement_ceiling(*floor, biomass_before, patch.carrying_capacity);
-                    let ground_is_workable = crew_is_working_the_source(stand_above_floor);
+                    // **THE BUILD'S GATE READS WHAT THE TAKE WILL PAY** ([`source_is_workable`]), the
+                    // animal web's rule mirrored: a `Sow` raises the patch's `K` by
+                    // `field_capacity_gain`, so the floor climbs out from under a stand that started
+                    // on it and the raw escapement room would refuse the very job that moved it.
+                    let ground_is_workable = source_is_workable(crate::forage::forage_take_room(
+                        *floor,
+                        biomass_before,
+                        patch.carrying_capacity,
+                        patch.growth_this_turn(),
+                    ));
                     // **AND THE CREW'S OWN ROOM — what the TAKE is measured against**: the whole
                     // stand narrowed to the plants these gatherers came for. It answers the
                     // production the row reports as offered, and the lesson: you learn by working
@@ -2503,11 +2571,10 @@ pub fn advance_labor_allocation(
                         // one draw model means one basis too, or the pen would be harvesting this
                         // turn's regrowth on top of the standing surplus while the range take does
                         // not.
-                        let production = fauna::hunt_escapement_ceiling(
-                            *floor,
-                            herd.biomass,
-                            fauna::herd_capacity(herd, &fauna),
-                        );
+                        // **One draw model means one basis** — the same [`fauna::take_room`] the
+                        // range take is bounded by, growth share and all, so a penned herd below its
+                        // own climbing floor is not quietly harvested on a different rule.
+                        let production = fauna::herd_take_room(herd, *floor, &fauna);
                         // **Collection** (slice 7 — the Field's twin): the keeper still has to carry
                         // the meat home, so the take is capped by the crew's own throughput — the
                         // *same* `per_worker_biomass_capacity` a wild hunt is capped by. The pen
@@ -2835,7 +2902,17 @@ pub fn advance_labor_allocation(
                         biomass_before,
                         herd_capacity(herd, &fauna),
                     );
+                    // **THE LESSON'S GATE — the pure escapement room, deliberately unwidened.**
+                    // `learn_multiplier`'s self-limit lives here: *"watching teaches nothing"* at
+                    // `floor = 1.0` is what stops a near-`1.0` floor farming knowledge at x2 for
+                    // free, and it holds only because the source must stand above the floor.
                     let working_the_herd = crew_is_working_the_source(standing_above_floor);
+                    // **THE BUILD'S GATE — what the take will actually pay.** A herd pushed below
+                    // its floor by the `K` its own taming raised is still a herd, still growing, and
+                    // still a legal thing to gentle. Same number `hunt_take` is bounded by, so a
+                    // legal build target that yields nothing is unrepresentable.
+                    let herd_is_workable =
+                        source_is_workable(fauna::herd_take_room(herd, *floor, &fauna));
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
                     let outcome = hunt_take(
@@ -2941,7 +3018,7 @@ pub fn advance_labor_allocation(
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }),
                             herd.can_domesticate(),
-                            working_the_herd,
+                            herd_is_workable,
                         );
                         let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes, and it
@@ -2979,6 +3056,10 @@ pub fn advance_labor_allocation(
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
                         // the species prices it. A Steppe Runner is five times the work, not a crew
                         // five times worse at their job.
+                        // **The species' own price multiplier**, which the herd stamps so it can
+                        // place its own rung boundaries; the work-unit `tame_cost` beside it is what
+                        // the build quote is denominated in.
+                        let tame_multiplier = fauna.taming_cost_multiplier_for(&herd.species);
                         let tame_cost = pastoral_rung
                             .build_cost(fauna.taming_cost_multiplier_for(&herd.species))
                             .expect("a rung a verb builds has a build meter");
@@ -2998,9 +3079,14 @@ pub fn advance_labor_allocation(
                         // offered amount would bleed its gear dry against a meter that never moves.
                         // Its verb is never cleared either (`hunt_rung_already_built` reads
                         // `is_domesticated`), so it would bleed forever.
-                        let progress_before = herd.domestication_progress;
-                        let tamed =
-                            accrual > 0.0 && herd.accrue_domestication(faction, accrual, tame_cost);
+                        let progress_before = herd.ladder_position();
+                        let tamed = accrual > 0.0
+                            && herd.accrue_domestication(
+                                faction,
+                                accrual,
+                                tame_multiplier,
+                                &ladder,
+                            );
                         // Recorded for the band's chain pass, which dates it at its place in the
                         // queue — see the Cultivate arm.
                         // **Only for a source that carries an entry** — see
@@ -3010,7 +3096,7 @@ pub fn advance_labor_allocation(
                                 BuildSource::Herd(herd.id.clone()),
                                 BuildQuote {
                                     cost: tame_cost,
-                                    banked: herd.domestication_progress,
+                                    banked: herd.rung_work_done(RungKey::AnimalPastoral, &ladder),
                                     // The animal web still carries per-rung meters — see the ring's
                                     // note above.
                                     legs: Vec::new(),
@@ -3023,7 +3109,7 @@ pub fn advance_labor_allocation(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &builders_gear.animal.wear_kit,
-                            herd.domestication_progress - progress_before,
+                            herd.ladder_position() - progress_before,
                         );
                         if tamed {
                             completed.push((
@@ -3098,9 +3184,9 @@ pub fn advance_labor_allocation(
                         // owner-lock lives in `accrue_corral`, so a keeper the herd refuses spends
                         // nothing structurally rather than by this site re-checking the gate.
                         let pen_tile = herd.position();
-                        let progress_before = herd.corral_progress;
+                        let progress_before = herd.ladder_position();
                         let penned = accrual > 0.0
-                            && herd.accrue_corral(faction, accrual, pen_cost, pen_tile);
+                            && herd.accrue_corral(faction, accrual, &ladder, pen_tile);
                         // **Only for a source that carries an entry** — see
                         // `entry_declares_a_rung`.
                         if entry_declares_a_rung {
@@ -3108,7 +3194,7 @@ pub fn advance_labor_allocation(
                                 BuildSource::Herd(herd.id.clone()),
                                 BuildQuote {
                                     cost: pen_cost,
-                                    banked: herd.corral_progress,
+                                    banked: herd.rung_work_done(RungKey::AnimalPen, &ladder),
                                     // The animal web still carries per-rung meters — see the ring's
                                     // note above.
                                     legs: Vec::new(),
@@ -3121,7 +3207,7 @@ pub fn advance_labor_allocation(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &builders_gear.animal.wear_kit,
-                            herd.corral_progress - progress_before,
+                            herd.ladder_position() - progress_before,
                         );
                         if penned {
                             completed.push((
@@ -3162,7 +3248,7 @@ pub fn advance_labor_allocation(
                                         (herd.is_domesticated(), BuildGate::RungBelow),
                                         (herd.owner == Some(faction), BuildGate::OwnedByOther),
                                     ]),
-                                    herd.corral_progress,
+                                    herd.rung_work_done(RungKey::AnimalPen, &ladder),
                                     // Penning is a flat job for every species — a fence is a
                                     // fence; only taming varies.
                                     RUNG_COST_UNSCALED,
@@ -3170,13 +3256,16 @@ pub fn advance_labor_allocation(
                                 _ => (
                                     BuildGate::first_refusal(&[
                                         (herd.can_domesticate(), BuildGate::SpeciesCeiling),
-                                        (working_the_herd, BuildGate::Escapement),
+                                        // **The build's own question**, so the wire's blocked reason
+                                        // and the accrual's gate cannot disagree about whether this
+                                        // herd is workable.
+                                        (herd_is_workable, BuildGate::Escapement),
                                         (
                                             herd.owner.is_none_or(|owner| owner == faction),
                                             BuildGate::OwnedByOther,
                                         ),
                                     ]),
-                                    herd.domestication_progress,
+                                    herd.rung_work_done(RungKey::AnimalPastoral, &ladder),
                                     fauna.taming_cost_multiplier_for(&herd.species),
                                 ),
                             };
@@ -5958,7 +6047,10 @@ mod labor_yield_tests {
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             assert!(
-                registry.herds[0].corral_at(UVec2::new(0, 0)),
+                registry.herds[0].corral_at(
+                    UVec2::new(0, 0),
+                    &crate::intensification::LadderConfig::builtin()
+                ),
                 "the fixture species must be pennable"
             );
         }
@@ -6680,7 +6772,10 @@ mod labor_yield_tests {
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             let herd = &mut registry.herds[0];
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(
+                FactionId(0),
+                &crate::intensification::LadderConfig::builtin(),
+            );
             assert!(herd.is_domesticated(), "the fixture herd must be tamed");
         }
         let assigned = 3;
@@ -7038,7 +7133,8 @@ mod labor_yield_tests {
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             assert!(
-                registry.herds[0].corral_at(SOURCE),
+                registry.herds[0]
+                    .corral_at(SOURCE, &crate::intensification::LadderConfig::builtin()),
                 "the fixture species must be pennable"
             );
         }
@@ -7277,7 +7373,7 @@ mod labor_yield_tests {
             let herd = &mut registry.herds[0];
             herd.body_mass = UNSEATABLE_BODY_MASS;
             assert!(
-                herd.corral_at(SOURCE),
+                herd.corral_at(SOURCE, &crate::intensification::LadderConfig::builtin()),
                 "the fixture species must be pennable"
             );
         }
@@ -7961,7 +8057,10 @@ mod labor_yield_tests {
         );
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let sustain_band = spawn_band(
             &mut world,
@@ -7993,7 +8092,10 @@ mod labor_yield_tests {
         grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let builders = animal_builders(&world, RungKey::AnimalPen);
         let band = spawn_band(
@@ -8058,7 +8160,10 @@ mod labor_yield_tests {
             grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
             {
                 let mut registry = world.resource_mut::<HerdRegistry>();
-                registry.herds[0].tame_outright(BAND_FACTION);
+                registry.herds[0].tame_outright(
+                    BAND_FACTION,
+                    &crate::intensification::LadderConfig::builtin(),
+                );
             }
             let band = spawn_band(
                 &mut world,
@@ -8601,7 +8706,7 @@ mod labor_yield_tests {
             .resource::<HerdRegistry>()
             .find(HERD_ID)
             .expect("the fixture herd survives the turn")
-            .domestication_progress;
+            .ladder_position();
         let gear_wear = world
             .get::<crate::components::BandEquipment>(band)
             .expect("the band's ledger survives the turn")
@@ -8923,7 +9028,10 @@ mod labor_yield_tests {
         grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let turns_to_build = {
             let ladder = world.resource::<LadderConfigHandle>().get();
@@ -9038,7 +9146,10 @@ mod labor_yield_tests {
         let (mut world, tile) = world_with_source(CAP);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let builders = animal_builders(&world, RungKey::AnimalPen);
         let band = spawn_band(
@@ -9057,7 +9168,8 @@ mod labor_yield_tests {
         world.run_system_once(advance_labor_allocation);
         let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
         assert_eq!(
-            herd.corral_progress, 0.0,
+            herd.rung_work_done(RungKey::AnimalPen, &LadderConfig::builtin()),
+            0.0,
             "Corral without PENNING knowledge builds nothing (the §4.3 gate reshuffle — Herding \
              is no longer enough)"
         );
@@ -9086,7 +9198,8 @@ mod labor_yield_tests {
         world.run_system_once(advance_labor_allocation);
         let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
         assert_eq!(
-            herd.corral_progress, 0.0,
+            herd.rung_work_done(RungKey::AnimalPen, &LadderConfig::builtin()),
+            0.0,
             "a wild herd cannot be penned — tame it first"
         );
     }
@@ -9175,7 +9288,10 @@ mod labor_yield_tests {
         reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
             assert!(
                 registry.herds[0].is_domesticated(),
                 "the herd stands on rung 2"
@@ -9240,7 +9356,10 @@ mod labor_yield_tests {
             let (mut world, tile) = world_with_source(CAP);
             reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
             if tamed {
-                world.resource_mut::<HerdRegistry>().herds[0].tame_outright(BAND_FACTION);
+                world.resource_mut::<HerdRegistry>().herds[0].tame_outright(
+                    BAND_FACTION,
+                    &crate::intensification::LadderConfig::builtin(),
+                );
             }
             hunt_one_turn(&mut world, tile, floor);
             let lesson = if tamed {

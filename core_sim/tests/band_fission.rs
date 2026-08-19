@@ -37,10 +37,10 @@ const WORN_CONDITION: f32 = 37.0;
 /// Build a headless world on a pinned earthlike map — one `update()` runs the whole Startup worldgen
 /// chain and resolves turn 1, so there is a real resident band standing on real terrain.
 fn spawn_world() -> App {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
     app.update();
     app

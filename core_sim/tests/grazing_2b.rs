@@ -18,7 +18,7 @@ use core_sim::{
 
 /// A pinned earthlike map (the same seed the husbandry integration test uses, so it is known to
 /// spawn a healthy fauna population).
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 
 fn spawn_world() -> App {
     let mut app = App::new();

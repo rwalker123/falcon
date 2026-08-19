@@ -54,7 +54,7 @@ fn spawn_world_with_herds(seed: u64) -> App {
 /// (retiring `game_trail`). Big/small game groups get short routes and sit on land.
 #[test]
 fn short_range_game_spawns_on_land_biomes() {
-    const SEED: u64 = 119304647; // deterministic land-rich map
+    const SEED: u64 = core_sim::HARNESS_MAP_SEED; // deterministic land-rich map
     let app = spawn_world_with_herds(SEED);
     let (width, height) = {
         let config = app.world.resource::<SimulationConfig>();
@@ -144,7 +144,7 @@ fn pennable_grazers_are_wired_to_real_biomes_and_spawn() {
     }
 
     // --- Real spawn: on the pinned land-rich map both actually place at least one group. ---
-    const SEED: u64 = 119304647;
+    const SEED: u64 = core_sim::HARNESS_MAP_SEED;
     let app = spawn_world_with_herds(SEED);
     let registry = app.world.resource::<HerdRegistry>();
     let count = |display: &str| {

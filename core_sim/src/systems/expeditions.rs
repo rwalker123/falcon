@@ -1746,7 +1746,11 @@ pub fn hunt_take(
     // own biomass climbing back over one `body_mass` above the floor, which pays the same
     // wait-then-one pulse for a slow breeder.
     //
-    let ceiling = fauna::hunt_escapement_ceiling(floor, herd.biomass, herd_capacity(herd, fauna));
+    // **THE TAKE'S BOUND IS THE ROOM *OR* THE GROWTH SHARE** (`fauna::take_room`), not the raw
+    // escapement room: a source pushed below its own floor by the `K` its improvement raised still
+    // hands over the share of this turn's growth the player's floor left takeable. At `floor = 1.0`
+    // the share is `x 0`, so "leave the whole herd standing" is unchanged.
+    let ceiling = fauna::herd_take_room(herd, floor, fauna);
     // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the *bank* can
     // afford, bounded by what it can haul but never below one — so a party that cannot carry a whole
     // animal still takes one and wastes the rest, and a bank that cannot yet spare one leaves the herd

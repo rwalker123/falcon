@@ -13,15 +13,14 @@ use bevy::MinimalPlugins;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_herds, advance_labor_allocation, advance_predation, build_headless_app,
-    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
-    spawn_initial_world, CombatConfig, CommandEventLog, CreaturesConfig, CultureManager, Diet,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle,
-    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_labor_allocation, advance_predation, build_test_app, scalar_from_f32,
+    scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world,
+    CombatConfig, CommandEventLog, CreaturesConfig, CultureManager, Diet, DiscoveryProgressLedger,
+    FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SizeClass,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle,
 };
 
@@ -31,7 +30,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -886,7 +885,7 @@ struct PredCensus {
 /// driven **once, by hand** (the `fauna_wet_biome_roster::survey` idiom — `app.update()` would
 /// double-run worldgen).
 fn predator_census(seed: u64) -> PredCensus {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = seed;

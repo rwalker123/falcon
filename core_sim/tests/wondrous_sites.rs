@@ -19,7 +19,7 @@ use core_sim::{
 };
 
 /// Deterministic land-rich map seed (shared with the fauna/sedentarization suites).
-const TEST_SEED: u64 = 119304647;
+const TEST_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 
 fn spawn_world() -> App {
     let mut app = App::new();

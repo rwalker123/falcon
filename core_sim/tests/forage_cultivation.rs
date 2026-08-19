@@ -67,7 +67,10 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    // **THE SHARED HARNESS MAP.** This file pinned the seed by hand long before there was a name for
+    // it; the literal is now `core_sim::HARNESS_MAP_SEED`, so the repo has one harness map and not
+    // two that happen to agree.
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -2827,7 +2830,7 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
 /// remaining reads `0` is the **first** turn the meter moves — so the two cannot drift.
 #[test]
 fn the_published_neglect_countdown_hits_zero_on_the_turn_the_meter_moves() {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     app.update(); // the real Startup chain: worldgen, patch seeding, one capture.
 
     // Any seeded patch will do — the grace is the rung's, not the tile's.
@@ -3590,7 +3593,7 @@ fn the_maintenance_split_survives_a_checkpoint_under_both_modes() {
     ] {
         // **The FULL app**, not this file's minimal harness: `capture_sim_state` reads every
         // resource a checkpoint carries, and a partial world panics on the first one it lacks.
-        let mut app = core_sim::build_headless_app();
+        let mut app = core_sim::build_test_app();
         app.update();
         let (tile, first) = prime_thriving_patch(&mut app);
         seat_tended_patch(&mut app, first);

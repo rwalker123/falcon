@@ -59,7 +59,7 @@ use bevy::math::UVec2;
 
 use core_sim::TakeSelection;
 use core_sim::{
-    advance_labor_allocation, build_headless_app, herd_hunt_yield, hunt_take,
+    advance_labor_allocation, build_test_app, herd_hunt_yield, hunt_take,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds,
     CombatConfig, CombatConfigHandle, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
     HuntDraw, HuntingParty, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
@@ -105,7 +105,7 @@ const YIELD_EPSILON: f32 = 1e-3;
 const SEED: u64 = 119_304_647;
 
 fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world
         .resource_mut::<core_sim::SimulationConfig>()
         .map_seed = SEED;
@@ -810,7 +810,7 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
 /// `server::seed_source_yield` does, read the **exported** band, resolve a real turn, and compare.
 #[test]
 fn a_gather_reports_a_point_and_pays_it() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     // A live patch with standing crop **that actually pays FOOD**, and the tile it sits on.

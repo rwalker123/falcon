@@ -34,13 +34,13 @@ use bevy::math::UVec2;
 
 use core_sim::TakeSelection;
 use core_sim::{
-    advance_cultivation, advance_herds, advance_labor_allocation, build_fraction,
-    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BandEquipment, DiscoveryProgressLedger, EquipmentConfig, FactionId, FaunaConfigHandle,
-    ForageRegistry, GenerationId, HerdRegistry, Improvement, LaborAllocation, LaborAssignment,
-    LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    RungKey, SimulationConfig, SnapshotHistory, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    advance_cultivation, advance_herds, advance_husbandry, advance_labor_allocation,
+    build_fraction, build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
+    scalar_zero, BandEquipment, DiscoveryProgressLedger, EquipmentConfig, FactionId,
+    FaunaConfigHandle, ForageRegistry, GenerationId, HerdRegistry, Improvement, LaborAllocation,
+    LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
+    ResidentBand, RungKey, SimulationConfig, SnapshotHistory, TileRegistry,
+    DEFAULT_ESCAPEMENT_FLOOR, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
 /// **The species the fixture reshapes its herd into** — a `pen`-ceiling row, so `can_domesticate()`
@@ -111,7 +111,7 @@ fn world_with_a_tameable_herd() -> (App, String, UVec2) {
 /// whether a crew's gear can cover the whole job is decided by that species'
 /// `taming_cost_multiplier`.
 fn world_with_a_herd_of(species_display: &str) -> (App, String, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -491,6 +491,11 @@ fn client_turns_estimate(
 /// the saturation is inert and a naive `workers × worth` would pass.
 #[test]
 fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew() {
+    /// **Two turns, because a herd is only MID-build from its second.** The keeping demand
+    /// interpolates on the herd's position, and that position is `0` when the first turn's pool is
+    /// split — so a herd read after one pass is billed the honest `0` of ground nobody has climbed,
+    /// and (1b) below would be ordering a quote against nothing.
+    const TURNS_TO_REACH_MID_BUILD: u32 = 2;
     let mut saw_saturated = false;
     let mut saw_linear = false;
 
@@ -499,8 +504,14 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
         // The build's own crew, smaller than the party beside it — the gear stamp reads the
         // BUILD's crew now, so this is the count both halves of the form are judged at.
         let keepers = spawn_taming_keepers(&mut app, pos, &id, gear, THE_BUILD_CREW);
-        app.world.run_system_once(advance_herds);
-        app.world.run_system_once(advance_labor_allocation);
+        for _ in 0..TURNS_TO_REACH_MID_BUILD {
+            // **Stage order, and `advance_husbandry` is load-bearing here.** It is what clears the
+            // per-turn keeping scratch (`Herd::upkeep_supplied` / `upkeep_demanded`), so a chain
+            // that skipped it would keep turn one's bill — struck at a position of zero — for ever.
+            app.world.run_system_once(advance_herds);
+            app.world.run_system_once(advance_husbandry);
+            app.world.run_system_once(advance_labor_allocation);
+        }
         recapture_snapshot_in_place(&mut app.world);
 
         let snapshot = app
@@ -560,17 +571,26 @@ fn the_published_terms_reproduce_the_published_build_turns_at_the_committed_crew
             herd.build_work_from_gear
         );
 
-        // (1b) **AND THE TWO UPKEEP READOUTS ARE ONE NUMBER ON A SOURCE MID-BUILD.** They answer
-        // different questions — what this herd is *billed* now, and what the rung being *quoted*
-        // costs to hold — and here those are the same rung, so a drift between the two seams would
-        // show up as a disagreement the client's form below would silently inherit.
+        // (1b) **AND THE BILL IS A SHARE OF THE QUOTE ON A SOURCE MID-BUILD.** They answer different
+        // questions — what this herd is *billed* now, and what the rung being *quoted* would cost to
+        // hold once it is held — and since the animal web got its one-position ladder the bill
+        // **interpolates**: a herd part-way up the pastoral rung owes part of that rung's rate.
+        //
+        // They used to be asserted **equal**, which was the shipped defect stated as an invariant:
+        // `accrue_domestication` recorded an owner on the first work banked and the herd was billed
+        // the whole rate from that turn on — 100% of the cost for 0% of the benefit, §2.8's asymmetry
+        // inverted. The ordering below is what replaced it, and it is the same shape the plant web's
+        // `an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_zero` pins.
         assert!(
-            herd.upkeep_demand > 0.0,
-            "fixture: a mid-Tame herd owes its rung's rate, or this equality is vacuous"
+            herd.tame_upkeep_demand > 0.0,
+            "fixture: the pastoral rung must cost something to hold, or the ordering is vacuous"
         );
-        assert_eq!(
-            herd.tame_upkeep_demand, herd.upkeep_demand,
-            "a herd raising the pastoral rung is billed exactly what that rung is quoted at"
+        assert!(
+            herd.upkeep_demand > 0.0 && herd.upkeep_demand <= herd.tame_upkeep_demand,
+            "a herd raising the pastoral rung is billed a SHARE of what that rung is quoted at — \
+             billed {} against a quote of {}",
+            herd.upkeep_demand,
+            herd.tame_upkeep_demand
         );
         // **AND NEITHER OF THEM IS WHAT THE FORM NETS.** The rot is its own published number and,
         // on the animal web, an honest `0`: no animal rung declares a `meter_decay`, so nothing
@@ -1112,7 +1132,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     /// Well above the escapement floor, so `crew_is_working_the_source` stays true every turn.
     const STOCKED: f32 = 0.8;
 
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     // A curated gathering site whose basket the tended rung can commit to — the Cultivate gate wants
