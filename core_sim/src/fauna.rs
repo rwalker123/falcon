@@ -1503,6 +1503,24 @@ pub fn herd_keeper_load(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 /// `owner.is_some()` is exactly "somebody's herd" — a **wild** herd (no owner, no pen) reads `0` and is
 /// untouched. `corral_at` does **not** require domestication (it gates on `can_pen()` only), so the
 /// `is_corralled()` half keeps a penned-but-untamed fixture staffed.
+///
+/// # ⛔ IT DOES NOT INTERPOLATE, AND IT IS NOT THE KEEPING BILL'S CREW
+///
+/// This is the **standing requirement**: how many keepers a flock of this species and this size wants,
+/// read off the rung's own rate at the herd's keeper load. It is a function of *head count*, not of how
+/// far up a rung the herd has been worked — deliberately, because everything downstream of it needs it
+/// that way. The hysteresis ([`Herd::stabilize_herders_needed`], seeded from [`raw_herders_needed`])
+/// exists to damp the **head count** breathing across an `animals_per_herder` multiple, and a term
+/// sliding with a build meter underneath it would be a second, undamped source of the same flicker.
+/// [`would_be_herders_needed`] must state a crew for
+/// a herd at position **zero**, where an interpolated answer is `0` — the whole startup lag it was
+/// written to close. And the wire's `herdersNeeded` is read by the client as *"is this a managed herd
+/// that owes keepers at all"*, with `herdersNeededIfManaged == herdersNeeded` pinned on every managed
+/// herd; interpolating here would break that on every herd mid-`Tame`.
+///
+/// **The hands the bill takes is [`herd_upkeep_workers_needed`]** (`ceil` of [`herd_keeping_basis`]),
+/// which is what `upkeepWorkersNeeded` publishes and what the compose sheet's `KEEPERS` row quotes.
+/// The two agree at the top of a rung and diverge below it.
 pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> u32 {
     if !(herd.is_corralled() || herd.owner.is_some()) {
         return 0;
@@ -4236,6 +4254,37 @@ pub fn herd_upkeep_shortfall(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderCo
 pub fn herd_keeping_basis(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> f32 {
     herd.upkeep_demanded
         .unwrap_or_else(|| herd_upkeep_demand(herd, fauna, ladder))
+}
+
+/// **HANDS TO MEET THIS HERD'S KEEPING BILL** — `ceil` of [`herd_keeping_basis`], and the animal twin
+/// of [`crate::forage::patch_upkeep_workers_needed`], seam for seam.
+///
+/// # ⛔ IT IS NOT [`herd_herders_needed`], AND THE TWO ANSWER DIFFERENT QUESTIONS
+///
+/// This one asks *"how many hands does the bill this herd was handed take?"* — so it **moves with the
+/// herd's ladder position**, because the bill does ([`herd_upkeep_demand`] interpolates on the
+/// standing). [`herd_herders_needed`] asks *"how many keepers does a flock of this species and this
+/// size want?"* — the head-count requirement at the rung's own rate, which is position-**independent**
+/// by construction and is what the hysteresis stabilizes and what a pre-commit quote
+/// ([`would_be_herders_needed`]) has to state before any position exists.
+///
+/// **Publishing the second one as the first is what this exists to stop.** The wire states the
+/// identity `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)` and tells the client to do
+/// no arithmetic of its own; `herd_herders_needed` reads the rung's **bare** rate, so a herd a tenth of
+/// the way up a Tame was billed `0.185` work and told to staff **two** keepers — the card asking for a
+/// crew twice the size of the bill for the whole middle of a Tame, and the player staffing it, because
+/// the panel said so. The two agree again at the top of the rung, where the interpolation reaches the
+/// rate; they diverge everywhere below it.
+///
+/// The `ceil` rounds **up**, so any live bill at all asks for at least one keeper: you cannot send a
+/// fiftieth of a person. [`NO_CREW_ON_THIS_ACTIVITY`] on a herd that owes nothing — wild, or standing
+/// on a rung that declares no upkeep.
+pub fn herd_upkeep_workers_needed(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> u32 {
+    let demand = herd_keeping_basis(herd, fauna, ladder);
+    if demand <= NO_UPKEEP_DEMAND {
+        return NO_CREW_ON_THIS_ACTIVITY;
+    }
+    (demand / crate::intensification::PER_WORKER_OUTPUT).ceil() as u32
 }
 
 /// **HOW WELL THIS HERD IS KEPT** — `min(1, supplied / demand)`, the ratio the wire publishes and the

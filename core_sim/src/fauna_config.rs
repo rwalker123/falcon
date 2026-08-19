@@ -1434,8 +1434,18 @@ const DEFAULT_ESCAPE_FRACTION_JITTER: f32 = 0.25;
 ///
 /// **Chosen by criterion, not by feel** (`docs/plan_standing_upkeep.md` §4.14): the smallest round
 /// value at which a wholly unkept pastoral herd goes from full to **nothing within ~30 turns of its
-/// grace expiring**, at the shipped `pastoral_escape_fraction` 0.25. Measured: `0.02` takes 64 turns
-/// past the grace, **`0.05` takes 30**, `0.10` takes 17. A **playtest dial**.
+/// grace expiring**, at the shipped `pastoral_escape_fraction` 0.25.
+///
+/// **Measured, and quoted as TURNS PAST THE GRACE** — the pastoral grace is 2 turns, so add 2 for the
+/// turn number: `0.02` takes **59**, **`0.05` takes 29**, `0.10` takes **15**. Stating the basis is
+/// not pedantry: an earlier revision of this comment quoted the two bases interchangeably and drifted
+/// from the measurement by four turns.
+///
+/// **The fence does NOT slow the end-to-end death, and that is worth knowing before retuning it.** A
+/// penned herd at the same `0.05` is gone **28** turns past its own grace — a hair *faster* than the
+/// open-range 29 — because an unfed pen does not regrow at all (`pen_fed_fraction`), so it has no
+/// growth fighting the shed to offset its slower `pen_escape_fraction`. What the fence actually buys
+/// is its **6-turn grace against the pastoral 2**: 34 turns to die against 31. A **playtest dial**.
 const DEFAULT_ESCAPE_ACCELERATION: f32 = 0.05;
 
 /// **HOW FAST GOOD KEEPING WORKS OFF ACCUMULATED NEGLECT** — see

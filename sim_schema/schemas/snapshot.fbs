@@ -2314,15 +2314,15 @@ table ForagePatchState {
   //                     the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
   //                     wants).
   //
-  //                     ONE FIELD NAME, TWO DOCUMENTED MEANINGS - the HERD table's own
-  //                     upkeepDemand below still reads "what the rung demands this turn", and that
-  //                     wording is still CORRECT there. On a PATCH the demand INTERPOLATES on the
-  //                     position, so the live cost moves between the moment the keepers are billed
-  //                     (before the turn's build accrual) and the moment the next Logistics pass
-  //                     judges what they paid. Judged against the risen number a correctly-staffed
-  //                     keeping reads permanently short - so what ships here is the STAMPED bill,
-  //                     which is what makes `demand - supplied == shortfall` hold and what
-  //                     upkeepWorkersNeeded is the ceil of.
+  //                     ONE FIELD NAME, ONE MEANING ON BOTH WEBS - the HERD table's own
+  //                     upkeepDemand below is the same STAMPED bill, and says so. On BOTH webs the
+  //                     demand INTERPOLATES on the position, so the live cost moves between the
+  //                     moment the keepers are billed (before the turn's build accrual) and the
+  //                     moment the next Logistics pass judges what they paid. Judged against the
+  //                     risen number a correctly-staffed keeping reads permanently short - so what
+  //                     ships here is the STAMPED bill, which is what makes
+  //                     `demand - supplied == shortfall` hold and what upkeepWorkersNeeded is the
+  //                     ceil of.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -3182,12 +3182,14 @@ table HerdTelemetryState {
   // sustainableYield` — both in provisions, so dimensionally clean — and it doubles as a "a mammoth is
   // ~16 food" display. 0 if unknown.
   foodPerAnimal:float = 0;
-  // --- Herd staffing (appended last) --- how many herders a MANAGED herd owes this turn to hold its
-  // tameness (`fauna::herd_herders_needed` = ceil((biomass / bodyMass) / animals_per_herder)), and how
-  // well it is currently staffed. Together they let the client show an honest "herders 1 / 6": the
-  // labor assignment's `workersNeeded` blends this with the take crew (`max(herdersNeeded, haulers)`),
-  // so it cannot distinguish an under-HERDING shortfall (tameness bleeds, the herd goes feral) from an
-  // under-CARRYING one (wasted food). `herdersNeeded` is 0 for a wild/unmanaged herd (nobody to staff).
+  // --- Herd staffing (appended last) --- how many keepers a flock of this species and this size WANTS
+  // to hold its tameness (`fauna::herd_herders_needed` = ceil((biomass / bodyMass) /
+  // animals_per_herder)) - the HEAD-COUNT requirement, position-INDEPENDENT, NOT the hands the keeping
+  // bill takes (that is `upkeepWorkersNeeded`) - and how well it is currently staffed. Together they
+  // let the client show an honest "herders 1 / 6": the labor assignment's `workersNeeded` blends this
+  // with the take crew (`max(herdersNeeded, haulers)`), so it cannot distinguish an under-HERDING
+  // shortfall (tameness bleeds, the herd goes feral) from an under-CARRYING one (wasted food).
+  // `herdersNeeded` is 0 for a wild/unmanaged herd (nobody to staff).
   herdersNeeded:uint = 0;
   // `herdedFraction` = `min(1, assigned / herdersNeeded)` — the share of the needed herders present.
   // 1.0 = fully staffed (also the value for a herd that needs nobody); < 1 = under-herded, so
@@ -3655,11 +3657,19 @@ table HerdTelemetryState {
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
   // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
   //
-  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
-  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
-  //                     honestly 0. It resolves through the rung this source STANDS ON or is
-  //                     RAISING, so a source nobody has started reads 0 - see the
-  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
+  //   upkeepDemand    = THE BILL THIS HERD'S KEEPERS WERE HANDED this turn. Follows penUpkeep's
+  //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
+  //                     no upkeep it is honestly 0, and a herd nobody has started taming reads 0
+  //                     (see the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
+  //                     wants).
+  //
+  //                     THE SAME STAMPED BILL THE PATCH TABLE'S upkeepDemand IS, for the same
+  //                     reason: the animal demand INTERPOLATES on the herd's position too, so the
+  //                     live cost moves between the moment the keepers are billed (before the turn's
+  //                     build accrual) and the moment the next Logistics pass judges what they paid.
+  //                     What ships is the stamped number, which is what makes
+  //                     `demand - supplied == shortfall` hold and what upkeepWorkersNeeded is the
+  //                     ceil of.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -3671,6 +3681,14 @@ table HerdTelemetryState {
   //                     (SourceYield.workersNeeded = hands to haul the offer). A blended count across
   //                     units is what a single worker allocation forced; each activity answers for
   //                     itself now.
+  //
+  //                     IT IS NOT `herdersNeeded`, AND THE TWO ANSWER DIFFERENT QUESTIONS. This is
+  //                     the ceil of the bill directly above, so it MOVES WITH THE HERD'S POSITION up
+  //                     its rung; `herdersNeeded` is the HEAD-COUNT requirement at the rung's bare
+  //                     rate (ceil(animals / animals_per_herder)) and is position-INDEPENDENT. They
+  //                     agree at the top of a rung and diverge below it - a herd a tenth of the way
+  //                     up a Tame is billed 0.185 work, which is one keeper, while its head count
+  //                     wants two. Read THIS one for "staff N to pay the keeping".
   //
   // THERE IS NO `maintain` FLAG. "Stop maintaining this" is ASSIGNING ZERO WORKERS
   // (maintain <faction> <source...> 0) - a boolean beside a crew count would be a second way to say

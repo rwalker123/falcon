@@ -247,11 +247,18 @@ pub struct HerdTelemetryState {
     // **RETIRED: `trade_per_animal`** (arc #527). The wire slot `tradePerAnimal` is `(deprecated)`
     // in place. A kill rhythm on an inedible species divides body mass by the herd's own biomass
     // terms, never by a currency that may be zero.
-    /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
-    /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
+    /// **How many keepers a flock of this species and this size WANTS** (`fauna::herd_herders_needed`
+    /// = `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
     /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
     /// honest "herders 1 / 6" readout the labor assignment's blended `workers_needed`
     /// (`max(herders_needed, haulers)`) cannot give. Appended last (append-only). `0` if unknown.
+    ///
+    /// **⛔ IT IS THE HEAD-COUNT REQUIREMENT, NOT [`Self::upkeep_workers_needed`].** This one is
+    /// position-**independent** — it does not slide while a `Tame` fills — because
+    /// [`Self::herders_needed_if_managed`] must quote a crew for a herd at position zero, and because
+    /// `herdersNeededIfManaged == herdersNeeded` is pinned on every managed herd. The hands the herd's
+    /// *bill* takes is `upkeepWorkersNeeded`, which is the `ceil` of [`Self::upkeep_demand`] and does
+    /// move with the position. The two agree at the top of a rung and diverge below it.
     #[serde(default)]
     pub herders_needed: u32,
     /// **How well the herd is staffed** — `min(1, assigned / herders_needed)` (`Herd::herded_fraction`).
@@ -346,7 +353,10 @@ pub struct HerdTelemetryState {
     /// left as `demand − supplied` because the sim answers and the client does zero arithmetic.
     #[serde(default)]
     pub upkeep_shortfall: f32,
-    /// **HANDS TO MEET THE DEMAND** — the plant twin's doc has the reasoning.
+    /// **HANDS TO MEET THE DEMAND** — `ceil(upkeep_demand / PER_WORKER_OUTPUT)`
+    /// (`fauna::herd_upkeep_workers_needed`); the plant twin's doc has the reasoning. **Not**
+    /// [`Self::herders_needed`], which answers the head-count question at the rung's bare rate and
+    /// therefore contradicted this identity for most of a `Tame`.
     #[serde(default)]
     pub upkeep_workers_needed: u32,
     /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it

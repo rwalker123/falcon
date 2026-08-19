@@ -534,6 +534,98 @@ fn keeping_restores_condition_but_never_the_animals_that_left() {
     );
 }
 
+/// **⛔ THE TWO KEEPER QUESTIONS, SIDE BY SIDE, UP A RUNG** — the harness that found the defect and
+/// the one that now shows the shape of the fix.
+///
+/// The wire states `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)` and tells the
+/// client to do no arithmetic of its own. It was false for most of a `Tame`: the bill interpolates on
+/// the herd's position and `upkeepWorkersNeeded` was published from `herd_herders_needed`, which reads
+/// the rung's **bare** rate — 0.185 work billed against two keepers demanded, at a tenth of the way up.
+///
+/// What this prints now is the settled model: **`workersNeeded` is `ceil` of the bill and climbs with
+/// the position; `herdersNeeded` is the HEAD-COUNT requirement and is flat.** They meet at the top of
+/// the rung. The identity column is the guard's subject — `snapshot::tests::
+/// the_published_upkeep_crew_is_the_ceil_of_the_published_bill_all_the_way_up_a_rung` asserts it swept,
+/// on both webs, against the exported rows.
+///
+/// Run with `cargo test -p core_sim --test fauna_husbandry probe_the_herd_rows_self_consistency --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "measurement harness — run with --ignored --nocapture"]
+fn probe_the_herd_rows_self_consistency() {
+    let ladder = core_sim::LadderConfig::builtin();
+    let fauna = core_sim::FaunaConfig::builtin();
+    println!("\n=== the herd row's stated identity: workersNeeded == ceil(demand) ===");
+    for fraction in [0.0f32, 0.1, 0.25, 0.5, 0.9, 1.0] {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            let cost = herd.rung_cost(core_sim::RungKey::AnimalPastoral, &ladder);
+            herd.set_ladder_position(cost * fraction, &ladder);
+        }
+        let herd = herd_of(&app, &id);
+        let demand = core_sim::herd_keeping_basis(&herd, &fauna, &ladder);
+        // **The published pair, each from its own seam** — the bill's crew and the head-count
+        // requirement, which is the whole point of printing them in one row.
+        let needed = core_sim::herd_upkeep_workers_needed(&herd, &fauna, &ladder);
+        let heads = core_sim::herd_herders_needed(&herd, &fauna, &ladder);
+        let implied = (demand / core_sim::PER_WORKER_OUTPUT).ceil() as u32;
+        println!(
+            "  {fraction:>4} up the rung: demand {demand:6.3}  workersNeeded {needed}  ceil(demand) {implied}  herdersNeeded {heads}  {}",
+            if needed == implied { "agree" } else { "*** DISAGREE ***" }
+        );
+    }
+}
+
+/// **⛔ DOES `advance_labor_allocation` DO ANYTHING ON A SECOND CONSECUTIVE CALL?** — the sweep item
+/// from task 1. If it does not, every two-turn test driver in the suite that drives the labor system
+/// twice without a Logistics pass between is quietly measuring **one** turn.
+///
+/// Run with `cargo test -p core_sim --test fauna_husbandry probe_the_double_labor_pass --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "measurement harness — run with --ignored --nocapture"]
+fn probe_the_double_labor_pass() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    grant_herding(&mut app);
+    let (tile, coord) = (herd_of(&app, &id).position(), herd_of(&app, &id).position());
+    let _ = (tile, coord);
+    domesticate(&mut app, &id);
+    let keepers = keeper_crew(&app, &id);
+    spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+
+    println!("\n=== advance_labor_allocation, called repeatedly with NO Logistics between ===");
+    for pass in 1..=4 {
+        app.world.run_system_once(advance_labor_allocation);
+        let herd = herd_of(&app, &id);
+        println!(
+            "  pass {pass}: upkeep_supplied = {:8.4}   upkeep_demanded = {:?}   biomass = {:8.2}",
+            herd.upkeep_supplied, herd.upkeep_demanded, herd.biomass
+        );
+    }
+    println!("\n=== the same, with advance_husbandry between (the real stage order) ===");
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    grant_herding(&mut app);
+    domesticate(&mut app, &id);
+    let keepers = keeper_crew(&app, &id);
+    spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+    for pass in 1..=4 {
+        app.world.run_system_once(advance_labor_allocation);
+        let herd = herd_of(&app, &id);
+        println!(
+            "  pass {pass}: upkeep_supplied = {:8.4}   biomass = {:8.2}",
+            herd.upkeep_supplied, herd.biomass
+        );
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_husbandry);
+    }
+}
+
 /// **⛔ WHAT ONE TENDED TURN BUYS, AND WHAT FULL RECOVERY COSTS** — the pair §4.14 tunes
 /// `husbandry.neglect_recovery_rate` against.
 ///
@@ -676,6 +768,18 @@ fn probe_the_abandoned_herds_fate() {
         let cap = herd_of(&app, &id).carrying_capacity.max(1.0);
         let mut curve: Vec<String> = Vec::new();
         let mut cleared_on = None;
+        // **Both bases, printed together and labelled.** A figure quoted as "turns" without saying
+        // *which* turns is what let the report and the shipped config comment drift apart: one was
+        // counting from turn 1, the other from the end of the grace.
+        let grace = {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let key = if penned {
+                core_sim::RungKey::AnimalPen
+            } else {
+                core_sim::RungKey::AnimalPastoral
+            };
+            ladder.rung(key).upkeep_grace_turns()
+        };
 
         for turn in 1..=TURNS {
             // **NOBODY KEEPING IT** — `advance_husbandry` clears `upkeep_supplied` each turn and the
@@ -722,8 +826,11 @@ fn probe_the_abandoned_herds_fate() {
             if penned { "PENNED" } else { "PASTORAL" }
         );
         println!(
-            "  ownership/herd cleared on: {}",
-            cleared_on.map_or("NEVER".to_string(), |t| format!("turn {t}"))
+            "  gone on: {}",
+            cleared_on.map_or("NEVER".to_string(), |t| format!(
+                "TURN {t} (= {} turns past the {grace}-turn grace)",
+                t.saturating_sub(grace)
+            ))
         );
         match end {
             None => println!("  ended: herd despawned (fully feral / gone)"),

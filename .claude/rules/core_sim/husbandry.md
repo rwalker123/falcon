@@ -46,6 +46,30 @@ never what its progress bar reads).
   fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
   No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
   Field, where half a sown field genuinely has half a crop in the ground.
+- **⛔ THERE ARE TWO KEEPER COUNTS ON THE ANIMAL WEB, and the wire keeps them apart.** They answer
+  different questions and one of them must never interpolate:
+  - **`fauna::herd_upkeep_workers_needed`** — *how many hands does this herd's KEEPING BILL take*, =
+    `ceil(herd_keeping_basis / PER_WORKER_OUTPUT)`. It **does** slide with the ladder position, because
+    the bill does. It is what `upkeepWorkersNeeded` publishes and what the panel's keeper figure prints.
+    The plant twin is `forage::patch_upkeep_workers_needed`; the identity is stated on the wire and the
+    client is told to consume it **without arithmetic**, so a producer that lands between the two breaks
+    a published contract rather than merely a number.
+  - **`fauna::herd_herders_needed`** — *how many keepers does a herd of this species and this size want*,
+    from head count over `animals_per_herder`. It is **not** a function of ladder position and must not
+    become one. Three things pin that: `would_be_herders_needed` has to quote a crew at position **zero**
+    (an interpolated answer there is `0`, the startup-lag bug it was written to close);
+    `stabilize_herders_needed`'s hysteresis damps a **head count**, and a term also sliding with a build
+    meter would be a second undamped flicker source in the same field; and the client's preview harnesses
+    pin `herdersNeededIfManaged == herdersNeeded` on every managed herd, which interpolation breaks on
+    every herd mid-`Tame`.
+
+  > **One function used to answer both**, and §4.11 made that visible: once the demand interpolated and
+  > the crew count did not, the herd card told the player to staff **2** keepers against a bill **1**
+  > covered, at every position from 10% to 90% up the rung. The fix was to **separate them**, not to make
+  > one impersonate the other — collapsing two real questions to satisfy an identity would have traded a
+  > wrong number for a wrong model. **Every client reader of `herdersNeeded` is a boolean gate**
+  > (`> 0` ⇒ *this herd is managed and owes keepers*); the count the panel prints comes from
+  > `upkeepWorkersNeeded`, so the card corrected itself with no GDScript change.
 - **The ecology's PHASE BANDS deliberately do not interpolate.** `r` is a payout and slides;
   `collapse_fraction` / `stressed_fraction` / `extinction_floor` are the classifier's cut points and are
   taken from the rung the herd **holds** — blending two definitions of *Collapsing* would invent a third.

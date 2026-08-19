@@ -2391,6 +2391,179 @@ mod tests {
         );
     }
 
+    /// **⛔ THE ROW MUST AGREE WITH ITSELF ALL THE WAY UP A RUNG, ON BOTH WEBS** — the wire states
+    /// `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)` on the herd row and on the
+    /// patch row alike, and tells the client to do no arithmetic of its own
+    /// (`sim_schema/schemas/snapshot.fbs`).
+    ///
+    /// **IT IS SWEPT, NOT SPOT-CHECKED, AND THAT IS THE POINT.** The demand *interpolates* on the
+    /// source's ladder position on both webs, so the two terms agreed at the ends of the rung and
+    /// came apart across the middle: the herd row published the bill through `herd_keeping_basis`
+    /// (interpolated) and the crew through `herd_herders_needed` (the rung's **bare** rate), so a herd
+    /// a tenth of the way up a `Tame` was billed `0.185` work and told to staff **two** keepers — and
+    /// the player staffs two, because the panel says so. Checking `0.0` and `1.0` alone sees none of
+    /// it. One guard covers both webs so a fix to one cannot regress the other.
+    ///
+    /// The two preconditions below are what stop it passing vacuously: a fixture whose bill happens
+    /// to be a whole number at every sample satisfies the identity for free, and one whose head-count
+    /// crew never differs from its bill's crew cannot tell the defect from the fix.
+    #[test]
+    fn the_published_upkeep_crew_is_the_ceil_of_the_published_bill_all_the_way_up_a_rung() {
+        use crate::intensification::PER_WORKER_OUTPUT;
+
+        /// **The sweep** — fractions of the rung being climbed, dense enough to land inside every
+        /// whole-hand band a 1.5-load source crosses. It starts *above* zero deliberately: a source
+        /// at `RUNG_UNSTARTED` stands on no keeping rung at all and both terms are honestly `0`,
+        /// which is the one place the old reading was accidentally right.
+        const UP_THE_RUNG: [f32; 11] = [0.05, 0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.75, 0.9, 1.0];
+
+        /// **How much keeping the source owes at the TOP of its rung, in worker-loads.** Chosen at
+        /// `1.5` because it makes the two questions visibly different numbers: the head-count crew is
+        /// `ceil(1.5) = 2` for the whole climb, while the interpolated bill only passes `1.0` past
+        /// two-thirds of the way up — so most of the sweep sits where the defect lived, and the
+        /// fractional-bill precondition is met by construction rather than by luck.
+        const LOADS_AT_THE_TOP: f32 = 1.5;
+
+        /// A tameable roster species with a small `animals_per_herder`, so the fixture's head count
+        /// stays a plausible flock rather than an artifact.
+        const SWEPT_SPECIES: &str = "Wild Aurochs";
+
+        /// Slack on a published `f32` when asking whether a sample's bill is genuinely *fractional*.
+        /// It is a tolerance on the **precondition** only — the identity itself is asserted exactly.
+        const WHOLE_NUMBER_SLACK: f32 = 1e-4;
+
+        /// Does `demand` sit strictly between two whole hands? The sweep is worthless without it.
+        fn is_fractional(demand: f32) -> bool {
+            (demand - demand.round()).abs() > WHOLE_NUMBER_SLACK
+        }
+
+        let ladder = LadderConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        let labor = LaborConfig::builtin();
+
+        // ---- THE ANIMAL WEB -----------------------------------------------------------------
+        // A herd sized so its keeper load at the top of the pastoral rung is `LOADS_AT_THE_TOP`,
+        // derived from the config rather than stated, so a roster retune moves the fixture with it.
+        let aurochs_per_herder = fauna.animals_per_herder_for(SWEPT_SPECIES);
+        let herd_biomass = LOADS_AT_THE_TOP * aurochs_per_herder * SNAPSHOT_BODY_MASS;
+        let mut herd_crews: Vec<u32> = Vec::new();
+        let mut herd_head_counts: Vec<u32> = Vec::new();
+        let mut a_herd_bill_was_fractional = false;
+        for fraction in UP_THE_RUNG {
+            let mut herd = Herd::new(
+                "herd_swept".to_string(),
+                SWEPT_SPECIES.to_string(),
+                crate::fauna_config::SizeClass::Big,
+                vec![UVec2::new(2, 2)],
+                herd_biomass,
+                herd_biomass * 2.0,
+                0.0,
+                0.05,
+                SNAPSHOT_BODY_MASS,
+            );
+            // **Tamed through the real accrual, then walked back down the rung** — ownership is
+            // recorded by the accrual and `set_ladder_position` deliberately does not reconcile it,
+            // so this is a genuinely *owned* herd part-way up its `Tame`, which is the state the
+            // defect lived in.
+            assert!(
+                herd.tame_outright(VIEWER, &ladder),
+                "the swept species must be tameable, or this fixture stands on no keeping rung"
+            );
+            let rung = herd.rung_cost(RungKey::AnimalPastoral, &ladder);
+            herd.set_ladder_position(rung * fraction, &ladder);
+
+            let mut registry = HerdRegistry::default();
+            registry.herds.push(herd);
+            let states = export_with(&registry, &all_seeing_ledger(64));
+            let row = states.iter().find(|h| h.id == "herd_swept").unwrap();
+
+            assert_eq!(
+                row.upkeep_workers_needed,
+                (row.upkeep_demand / PER_WORKER_OUTPUT).ceil() as u32,
+                "HERD ROW at {fraction} up the pastoral rung: the wire promises \
+                 upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT), and the row states \
+                 a bill of {} against a crew of {}",
+                row.upkeep_demand,
+                row.upkeep_workers_needed
+            );
+            a_herd_bill_was_fractional |= is_fractional(row.upkeep_demand);
+            herd_crews.push(row.upkeep_workers_needed);
+            herd_head_counts.push(row.herders_needed);
+        }
+        assert!(
+            a_herd_bill_was_fractional,
+            "PRECONDITION: no sample billed the herd a fractional number of hands, so the identity \
+             held for free — resize the fixture, this proves nothing: {herd_crews:?}"
+        );
+
+        // **`herdersNeeded` IS THE OTHER QUESTION, AND IT MUST NOT FOLLOW THE BILL.** It is the
+        // head-count requirement — how many keepers a flock of this species and this size wants —
+        // which is why `herdersNeededIfManaged` can quote it before a herd has any position at all
+        // and why the hysteresis has one thing to damp. Interpolating it "so the row agrees" is the
+        // fix this pins against.
+        assert!(
+            herd_head_counts.windows(2).all(|pair| pair[0] == pair[1]),
+            "herdersNeeded must not slide with the ladder position — it is the head-count \
+             requirement, not the bill's crew: {herd_head_counts:?}"
+        );
+        assert!(
+            herd_crews
+                .iter()
+                .zip(&herd_head_counts)
+                .any(|(bill, heads)| bill != heads),
+            "PRECONDITION: the fixture's bill-crew and head-count never differ, so this sweep \
+             cannot tell the two questions apart — bills {herd_crews:?} against heads \
+             {herd_head_counts:?}"
+        );
+
+        // ---- THE PLANT WEB, THROUGH THE SAME GUARD ------------------------------------------
+        // Already correct before this fix; here so a repair to one web cannot regress the other.
+        let tile = UVec2::new(0, 3);
+        let tile_capacity = LOADS_AT_THE_TOP * labor.forage.cultivation.capacity_per_tender;
+        let tile_capacities = HashMap::from([(tile, tile_capacity)]);
+        let tended_cost = ladder
+            .rung(RungKey::PlantTended)
+            .build_cost(crate::intensification::RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
+        let mut a_patch_bill_was_fractional = false;
+        for fraction in UP_THE_RUNG {
+            let mut patch = ForagePatch::new(tile, tile_capacity);
+            patch.set_ladder_position(tended_cost * fraction, &ladder);
+            let mut registry = ForageRegistry::default();
+            registry.patches.insert(patch.tile, patch);
+
+            let rows = snapshot_forage_patches(
+                &registry,
+                &labor.forage,
+                crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                    crate::equipment_config::EquipmentStat::ForageCarry,
+                    labor.forage.per_worker_biomass_capacity,
+                ),
+                &FloraConfig::builtin(),
+                &ladder,
+                &HashMap::new(),
+                &HashMap::new(),
+                &tile_capacities,
+                &FloraQuoteCache::default(),
+            );
+            let row = &rows[0];
+            assert_eq!(
+                row.upkeep_workers_needed,
+                (row.upkeep_demand / PER_WORKER_OUTPUT).ceil() as u32,
+                "PATCH ROW at {fraction} up the tended rung: the wire promises the same identity, \
+                 and the row states a bill of {} against a crew of {}",
+                row.upkeep_demand,
+                row.upkeep_workers_needed
+            );
+            a_patch_bill_was_fractional |= is_fractional(row.upkeep_demand);
+        }
+        assert!(
+            a_patch_bill_was_fractional,
+            "PRECONDITION: no sample billed the patch a fractional number of hands, so the plant \
+             half of this guard held for free"
+        );
+    }
+
     /// A ledger in which [`VIEWER`] sees exactly `visible` and nothing else — the fog fixtures below.
     fn ledger_seeing(size: u32, visible: &[UVec2]) -> crate::visibility::VisibilityLedger {
         let mut ledger = crate::visibility::VisibilityLedger::default();

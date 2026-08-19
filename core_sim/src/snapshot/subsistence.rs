@@ -598,12 +598,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
                 food_per_animal: forecast.body_mass_yield.provisions,
-                // Herd staffing — the keepers a MANAGED herd owes this turn (0 for a wild/unmanaged
-                // one, per `herd_herders_needed`) and how well it is kept. Both resolve through the
-                // ladder's `upkeep` now (`docs/plan_standing_upkeep.md` §2.4): the count is the
-                // rung's `upkeep_crew_needed` at this herd's keeper load, and the ratio is derived
-                // from the one stored supply, so the published pair and the shed the sim applies can
-                // never describe different staffings.
+                // Herd staffing — the keepers a flock of this species and this size WANTS (0 for a
+                // wild/unmanaged one, per `herd_herders_needed`) and how well it is kept. Both
+                // resolve through the ladder's `upkeep` now (`docs/plan_standing_upkeep.md` §2.4):
+                // the count is the rung's `upkeep_crew_needed` at this herd's keeper load, and the
+                // ratio is derived from the one stored supply, so the published pair and the shed the
+                // sim applies can never describe different staffings.
+                //
+                // **It is the HEAD-COUNT requirement, not the bill's crew** — position-independent,
+                // so it does not slide while a `Tame` fills. `upkeepWorkersNeeded` below is the hands
+                // the *bill* takes; the two agree at the top of a rung and diverge below it. See
+                // `fauna::herd_herders_needed` for why this one must not interpolate.
                 herders_needed: herd
                     .map(|herd| herd_herders_needed(herd, fauna, ladder))
                     .unwrap_or(0),
@@ -712,16 +717,25 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
                     crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
                 }),
-                // **HANDS TO MEET THE DEMAND** — the same number as `herders_needed` above, and
-                // published while the rung is still being **built** too, where it means exactly the
-                // same thing: the keeping pool owes the rate from the first work banked, so these
-                // are the hands that hold a half-tamed herd as much as a finished one
-                // (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a minimum viable build crew
-                // — a build crew supplies nothing toward the rate — and it read `0` mid-build on the
-                // older premise that an unfinished meter owed no keeping. The take activity's answer
-                // rides `SourceYield::workers_needed`.
+                // **HANDS TO MEET THE DEMAND** — and published while the rung is still being
+                // **built** too, where it means exactly the same thing: the keeping pool owes the
+                // rate from the first work banked, so these are the hands that hold a half-tamed herd
+                // as much as a finished one (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a
+                // minimum viable build crew — a build crew supplies nothing toward the rate — and it
+                // read `0` mid-build on the older premise that an unfinished meter owed no keeping.
+                // The take activity's answer rides `SourceYield::workers_needed`.
+                //
+                // **⛔ IT IS THE `ceil` OF THE BILL DIRECTLY ABOVE, NOT OF `herders_needed`.** The wire
+                // states the identity `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)`
+                // and tells the client to do no arithmetic of its own, so the two terms must come off
+                // one number. This line used to read `herd_herders_needed`, which answers a different
+                // question — the *head-count* requirement at the rung's bare rate — and stopped
+                // agreeing the moment the animal keeping demand began **interpolating on the herd's
+                // position**: a herd a tenth of the way up a Tame was billed `0.185` work and told to
+                // staff **two** keepers. The plant row was already `ceil` of its own basis; this is
+                // the same seam (`fauna::herd_upkeep_workers_needed`).
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
-                    herd_herders_needed(herd, fauna, ladder)
+                    crate::fauna::herd_upkeep_workers_needed(herd, fauna, ladder)
                 }),
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace
@@ -763,10 +777,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // keeping owes it whatever the builders do, so `work_cost / crew` really is the
                 // pace. What a build's closed form nets is `meter_rot_per_turn`, published below.
                 //
-                // **`upkeep_demand` above cannot answer this**, and deliberately: it resolves
-                // through the **keeping** rung (`fauna::herd_keeping_rung`), which is what this herd
-                // is *billed* today — `0` on a herd nobody has started, which is exactly the herd a
-                // compose sheet is looking at. The two coincide the moment a build is in flight.
+                // **`upkeep_demand` above cannot answer this**, and deliberately: it is what this
+                // herd is *billed* today — `0` on a herd nobody has started, which is exactly the
+                // herd a compose sheet is looking at.
+                //
+                // **⛔ THE TWO NO LONGER COINCIDE ONCE A BUILD IS IN FLIGHT.** This line used to say
+                // they did, and that stopped being true when the animal keeping demand began
+                // **interpolating on the herd's position**: a herd part-way up the pastoral rung is
+                // billed a *fraction* of that rung's rate, so the bill sits strictly below this quote
+                // for the whole build and meets it only at the rung's top. That is the plant web's
+                // shape exactly, and `build_turns_closed_form` pins it as the ordering
+                // `0 < billed <= quoted` rather than as an equality.
                 //
                 // **At this herd's own keeper load**, because both animal rungs quote their rate per
                 // keeper-load (`scaled_by: source_load`), and the load is ownership-independent —
