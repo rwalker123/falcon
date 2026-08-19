@@ -1341,6 +1341,13 @@ pub fn selected_biomass_share(composition: &[FloraShare], take: &TakeSelection) 
 fn favored_conversion_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
     match rung {
         RungKey::PlantTended => forage.cultivation.tended_conversion_gain,
+        // **A FIELD KEEPS WHAT TENDING TAUGHT YOU.** This arm used to fall through to
+        // [`NO_CONVERSION_GAIN`], so a Field converted each unit of biomass at *half* the tended
+        // patch beneath it — a rung paying less than the rung it was built on, reported from play as
+        // 2.00 food/turn dropping to 1.33 on the same tile with the same crew. Rung 3 was designed
+        // with its own rate (`field_provisions_per_biomass`), that dial was retired with the
+        // managed-harvest model, and nothing replaced it until `field_conversion_gain`.
+        RungKey::PlantField => forage.cultivation.field_conversion_gain,
         _ => NO_CONVERSION_GAIN,
     }
 }
@@ -3847,6 +3854,194 @@ mod tests {
     /// The **shipped** forage config (the per-biome capacity table lives only in the JSON — the
     /// struct default is deliberately empty, so `ForageLaborConfig::default()` would read every
     /// biome as barren). Mirrors `graze::tests::test_graze_config`.
+    /// **⛔ A FIELD NEVER PAYS LESS PER UNIT THAN THE TENDED PATCH BENEATH IT** — the reported bug,
+    /// at the staffing it was reported at.
+    ///
+    /// `favored_conversion_gain` fell through to the identity at `plant:field`, so a Field converted
+    /// each unit of biomass at **half** the rung below. Play saw a completed tended patch pay 2.00
+    /// food/turn and the same tile sown to a Field pay 1.33, at the same two tenders.
+    ///
+    /// # THE CREW MUST BE CARRY-LIMITED, AND THAT IS ASSERTED
+    ///
+    /// The Field's compensating gains are capacity ×2.53 and regrowth ×2.53 — **both of which only
+    /// pay if you can carry more**. On a crew whose take is bounded by the escapement floor rather
+    /// than by its own arms, the bigger stand pays for the lost conversion and the inversion never
+    /// shows. So the precondition is load-bearing: without it this passes on a fixture where the bug
+    /// could not appear.
+    #[test]
+    fn a_field_never_pays_less_per_unit_than_a_tended_patch() {
+        const TENDERS: u32 = 2;
+        let forage = test_forage_config();
+        let flora = crate::flora_config::FloraConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let cap = forage.capacity_for(TEST_BIOME);
+        let composition = flora.realized_composition(TEST_BIOME, REF_TILE, REF_SEED);
+
+        let seat_and_take = |rung: RungKey| -> (f32, f32, f32) {
+            let (base, width) = plant_rung_span(rung, &ladder);
+            let mut patch = ForagePatch::new(REF_TILE, cap);
+            patch.set_ladder_position(base + width, &ladder);
+            patch.commit_species(REF_CROP);
+            patch.carrying_capacity = patch_carrying_capacity(cap, &patch, &forage);
+            patch.biomass = patch.carrying_capacity;
+            patch.biomass_before_regrowth = patch.biomass;
+            let room = forage_escapement_ceiling(
+                crate::fauna::MSY_BIOMASS_FRACTION,
+                patch.biomass,
+                patch.carrying_capacity,
+            );
+            let carry = TENDERS as f32 * forage.per_worker_biomass_capacity;
+            let food = forage_take(
+                &mut patch,
+                &composition,
+                TENDERS,
+                crate::fauna::MSY_BIOMASS_FRACTION,
+                &TakeSelection::EVERYTHING,
+                &forage,
+                &flora,
+                1.0,
+                forage.per_worker_biomass_capacity,
+                1.0,
+            );
+            (food.to_f32(), room, carry)
+        };
+
+        let (tended_food, tended_room, carry) = seat_and_take(RungKey::PlantTended);
+        let (field_food, field_room, _) = seat_and_take(RungKey::PlantField);
+
+        // **THE PRECONDITION** — both crews are bounded by their ARMS, not by the ground. If the
+        // floor were binding, the Field's bigger stand would pay for the lost conversion and this
+        // test would pass on a fixture the bug could never have appeared in.
+        assert!(
+            carry < tended_room && carry < field_room,
+            "PRECONDITION: the crew must be CARRY-limited on both rungs — carry {carry} against \
+             rooms {tended_room} (tended) and {field_room} (field)"
+        );
+        assert!(
+            tended_food > 0.0,
+            "PRECONDITION: the tended patch must pay something, or the ratio is 0/0"
+        );
+
+        assert!(
+            field_food >= tended_food,
+            "a Field must never pay less than the tended patch beneath it: {field_food} against \
+             {tended_food} at {TENDERS} tenders"
+        );
+    }
+
+    /// **THE CONVERSION IS FLAT ACROSS THE TENDED→FIELD SPAN, NOT SLIDING.** Every rung quantity
+    /// interpolates on the position, so with rung 3's gain missing the conversion *slid down* from
+    /// 2.0 to 1.0 as a Sow was raised — the player watched their food fall while they built. With
+    /// both rungs at 2.0 the interpolation is flat, which is what makes the fix continuous rather
+    /// than a step at completion.
+    ///
+    /// Swept across the span rather than checked at the ends, because a slide is a *shape*: the two
+    /// endpoints agree under the bug too.
+    #[test]
+    fn the_conversion_gain_is_flat_across_the_sow() {
+        let forage = test_forage_config();
+        let ladder = LadderConfig::builtin();
+        let (base, width) = plant_rung_span(RungKey::PlantField, &ladder);
+        let tended_gain = forage.cultivation.tended_conversion_gain;
+        assert!(
+            tended_gain > NO_CONVERSION_GAIN,
+            "fixture: the tended rung must convert above the identity, or 'flat' is trivially true"
+        );
+
+        for step in 0..=10 {
+            let fraction = step as f32 / 10.0;
+            let mut patch = ForagePatch::new(REF_TILE, forage.capacity_for(TEST_BIOME));
+            patch.set_ladder_position(base + width * fraction, &ladder);
+            let gain = patch_interpolate(&patch, |rung| favored_conversion_gain(rung, &forage));
+            assert!(
+                (gain - tended_gain).abs() < 1e-4,
+                "at {fraction} up the Sow the conversion is {gain}, not the flat {tended_gain} — a \
+                 slide here is the player's food falling while they build"
+            );
+        }
+    }
+
+    /// **The reference basket every yield figure in this arc is quoted on** — `AlluvialPlain`,
+    /// `K = 195`, tile `(0,0)` under the shipped `sweep_tiles` seed, staple `wild_emmer`.
+    const REF_SEED: u64 = 0x_F10A_5EED_C011_0010;
+    const REF_TILE: UVec2 = UVec2::new(0, 0);
+    const REF_CROP: &str = "wild_emmer";
+
+    /// **⛔ WHAT EACH RUNG PAYS, AND THE HUMAN'S OWN CASE** — one tile, two tenders, tended against
+    /// Field. That comparison is the bug: a completed tended patch paid 2.00 food/turn and the same
+    /// tile sown to a Field paid 1.33, a rung paying *less* than the rung beneath it.
+    ///
+    /// Run with `cargo test -p core_sim --lib probe_the_rung_yields -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "measurement harness — run with --ignored --nocapture"]
+    fn probe_the_rung_yields() {
+        let forage = test_forage_config();
+        let flora = crate::flora_config::FloraConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let cap = forage.capacity_for(TEST_BIOME);
+        let composition = flora.realized_composition(TEST_BIOME, REF_TILE, REF_SEED);
+
+        println!("\n=== REFERENCE BASKET: {TEST_BIOME:?}, K={cap}, crop {REF_CROP} ===");
+        println!("  quote basis (unbounded crew), provisions/turn:");
+        println!(
+            "    wild   = {:.4}",
+            wild_payoff(REF_TILE, cap, &composition, &flora, &forage, 1.0)
+        );
+        for (label, rung) in [
+            ("tended", RungKey::PlantTended),
+            ("field ", RungKey::PlantField),
+        ] {
+            let paid = commit_payoff(
+                REF_TILE,
+                cap,
+                REF_CROP,
+                &composition,
+                &flora,
+                &forage,
+                1.0,
+                rung,
+            );
+            println!("    {label} = {:.4}", paid);
+        }
+
+        // **THE REPORTED CASE.** A real patch on each rung, drawn by the same two tenders at the
+        // same Sustain floor — carry-capped, which is why the Field's capacity gain cannot pay for
+        // the conversion it lost.
+        const TENDERS: u32 = 2;
+        let carry = TENDERS as f32 * forage.per_worker_biomass_capacity;
+        println!("\n  two tenders, carry-capped at {carry} biomass/turn:");
+        for (label, rung) in [
+            ("tended", RungKey::PlantTended),
+            ("field ", RungKey::PlantField),
+        ] {
+            let (base, width) = plant_rung_span(rung, &ladder);
+            let mut patch = ForagePatch::new(REF_TILE, cap);
+            patch.set_ladder_position(base + width, &ladder);
+            patch.commit_species(REF_CROP);
+            patch.carrying_capacity = patch_carrying_capacity(cap, &patch, &forage);
+            patch.biomass = patch.carrying_capacity;
+            patch.biomass_before_regrowth = patch.biomass;
+            let paid = forage_take(
+                &mut patch,
+                &composition,
+                TENDERS,
+                crate::fauna::MSY_BIOMASS_FRACTION,
+                &TakeSelection::EVERYTHING,
+                &forage,
+                &flora,
+                1.0,
+                forage.per_worker_biomass_capacity,
+                1.0,
+            );
+            println!(
+                "    {label}: K={:8.2}  conversion x{:.2}  food/turn = {:.4}",
+                patch.carrying_capacity,
+                favored_conversion_gain(rung, &forage),
+                paid.to_f32()
+            );
+        }
+    }
+
     fn test_forage_config() -> ForageLaborConfig {
         LaborConfig::builtin().forage.clone()
     }

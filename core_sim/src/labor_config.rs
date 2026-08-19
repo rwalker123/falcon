@@ -132,6 +132,31 @@ const DEFAULT_CULTIVATION_TENDED_WEEDING_GAIN: f32 = 1.5;
 /// `tended_regrowth_gain` to a neutral 1.0 with nothing in its place. A **playtest dial**.
 const DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN: f32 = 2.0;
 
+/// **THE FIELD'S CONVERSION GAIN** — the multiplier on the favored crop's whole yield vector once the
+/// patch is a sown Field, and the twin of [`DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN`] one rung up.
+///
+/// # ⛔ IT SHIPS EQUAL TO THE TENDED RUNG'S BECAUSE RUNG 3 HAD NONE AT ALL
+///
+/// `forage::favored_conversion_gain` returned the tended gain at `plant:tended` and the **identity**
+/// at every other rung, Field included — so a Field converted each unit of biomass at *half* what the
+/// tended patch beneath it did. Reported from play: a completed tended patch paid **2.00 food/turn**
+/// and the same tile sown to a Field paid **1.33**, at the same two tenders. A rung paying less than
+/// the rung below it.
+///
+/// It was not a regression so much as an amputation: rung 3 was designed with its own conversion rate
+/// (`field_provisions_per_biomass`), that dial was retired with the managed-harvest model in §4.10,
+/// and nothing replaced it. The Field's compensating gains — capacity ×2.53, regrowth ×2.53 — only
+/// pay if you can **carry** more, and a fixed, carry-capped crew cannot.
+///
+/// **Equality is the minimum that restores the invariant, and that is deliberately all it is.**
+/// Anything above it is tuning, which `docs/plan_standing_upkeep.md` §4.14 owns. It reads as *a Field
+/// keeps what tending taught you*: the crop knowledge does not evaporate when you sow it.
+///
+/// Validated `>= tended_conversion_gain` (see `validate_plant_ladder_payoffs`), which makes the
+/// human's rule — **a rung may never pay less per unit than the rung beneath it** — a load-time
+/// rejection rather than a number someone has to remember. A **playtest dial**.
+const DEFAULT_CULTIVATION_FIELD_CONVERSION_GAIN: f32 = 2.0;
+
 /// **HOW MUCH STANDING CROP ONE TENDER CAN LOOK AFTER** — the divisor that turns a tile's own forage
 /// capacity into the *tender-loads* the plant rungs quote their upkeep rate per
 /// ([`CultivationConfig::capacity_per_tender`], read through `forage::patch_tender_loads`).
@@ -214,10 +239,23 @@ pub struct CultivationConfig {
     /// **The tended rung's CONVERSION gain** — the multiplier on the favored crop's whole yield
     /// vector once the patch is tended. See [`DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN`].
     ///
-    /// **There is no `field_conversion_gain` twin**, and no surviving `field_*_gain` at all: a Field
-    /// forces the favored share to `1.0` (nothing left to weed) and converts at its own dial,
-    /// `field_provisions_per_biomass`.
+    /// **The Field's twin is [`Self::field_conversion_gain`]**, and it had to be *added*: this line
+    /// used to say there was none, because a Field *"converts at its own dial,
+    /// `field_provisions_per_biomass`"* — a dial retired with the managed-harvest model, leaving rung
+    /// 3 converting at the identity and therefore paying **less per unit** than the rung beneath it.
+    /// A warning that outlived its mechanism, and the bug it hid.
+    ///
+    /// A Field still forces the favored share to `1.0` (nothing left to weed), so weeding has no
+    /// rung-3 twin — that asymmetry is real and stays.
     pub tended_conversion_gain: f32,
+    /// **THE FIELD'S CONVERSION GAIN** — the rung-3 twin of [`Self::tended_conversion_gain`], on the
+    /// same favored-species-only term. See [`DEFAULT_CULTIVATION_FIELD_CONVERSION_GAIN`] for why it
+    /// exists at all: rung 3 had **no** conversion gain, so a Field converted at half the tended
+    /// patch beneath it and paid less per unit than the rung it was built on.
+    ///
+    /// Validated finite and **`>= tended_conversion_gain`**: a rung may never pay less per unit than
+    /// the rung beneath it, and a retune must not be able to break that silently.
+    pub field_conversion_gain: f32,
     /// **THE PLANT WEB'S SCALE MEASURE** — how much standing crop one tender can look after, so a
     /// tile's own forage capacity divided by this is the **tender-loads** both plant rungs quote
     /// their `upkeep.work_per_turn` per (`forage::patch_tender_loads`, the twin of
@@ -242,6 +280,7 @@ impl Default for CultivationConfig {
             field_regrowth_gain: DEFAULT_CULTIVATION_FIELD_REGROWTH_GAIN,
             tended_weeding_gain: DEFAULT_CULTIVATION_TENDED_WEEDING_GAIN,
             tended_conversion_gain: DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN,
+            field_conversion_gain: DEFAULT_CULTIVATION_FIELD_CONVERSION_GAIN,
             capacity_per_tender: DEFAULT_CULTIVATION_CAPACITY_PER_TENDER,
         }
     }
@@ -686,6 +725,30 @@ fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), Labor
             });
         }
     }
+    // **⛔ A RUNG MAY NEVER PAY LESS PER UNIT THAN THE RUNG BENEATH IT.** The Field's conversion gain
+    // is the term rung 3 was missing entirely — it converted at the identity while the tended patch
+    // below it converted at 2.0 — so a player who paid 75 work units to sow a tended patch got
+    // **half** the food per unit of biomass out of it. Reported from play at 2.00/turn dropping to
+    // 1.33/turn on the same tile with the same crew.
+    //
+    // Stated as a **load-time rejection** rather than left to the shipped value, because the failure
+    // it guards is silent: the Field's capacity and regrowth gains still read like a better rung, so
+    // an inverted conversion looks like a working ladder right up until someone counts the food.
+    if !cultivation.field_conversion_gain.is_finite()
+        || cultivation.field_conversion_gain < cultivation.tended_conversion_gain
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.field_conversion_gain",
+            constraint: format!(
+                "be finite and at least the tended rung's own {} — a Field converts the crop it was \
+                 sown with, so it may not pay LESS per unit of biomass than the tended patch it was \
+                 built on. Rung 3 carried no conversion gain at all until this dial existed, which \
+                 made sowing a tended patch a downgrade at any crew the carry limit binds",
+                cultivation.tended_conversion_gain
+            ),
+            value: cultivation.field_conversion_gain.to_string(),
+        });
+    }
     // **THE PLANT WEB'S SCALE DIVISOR** — how much standing crop one tender minds
     // (`forage::patch_tender_loads`). A `0` divides by zero and a negative one inverts the load, so a
     // rich tile would cost *less* to hold than a thin one; both are silent nonsense rather than
@@ -947,6 +1010,24 @@ mod tests {
             LaborConfig::from_json_str(&json.to_string()).is_ok(),
             "a neutral tended_regrowth_gain of 1.0 must be accepted"
         );
+    }
+
+    /// **⛔ A RUNG MAY NEVER PAY LESS PER UNIT THAN THE RUNG BENEATH IT** — the human's rule, as a
+    /// load-time rejection.
+    ///
+    /// Rung 3 carried **no** conversion gain at all until `field_conversion_gain` existed, so a Field
+    /// converted at half the tended patch below it: 2.00 food/turn became 1.33 on the same tile with
+    /// the same crew. The failure is silent — the Field's capacity and regrowth gains still read like
+    /// a better rung — so the guard has to be at load, not in someone's memory.
+    #[test]
+    fn validate_rejects_a_field_that_converts_worse_than_the_tended_patch() {
+        let err = reject(|json| {
+            let cultivation = &mut json["forage"]["cultivation"];
+            cultivation["tended_conversion_gain"] = (2.0).into();
+            // The identity — exactly what the missing arm used to return.
+            cultivation["field_conversion_gain"] = (1.0).into();
+        });
+        assert_rejects_field(err, "forage.cultivation.field_conversion_gain");
     }
 
     /// **THE LADDER MUST CLIMB**, and since the rung-3 managed rate retired the claim is made of the

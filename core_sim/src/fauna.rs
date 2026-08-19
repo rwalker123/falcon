@@ -643,6 +643,30 @@ pub struct Herd {
     /// Rides the checkpoint with the rest of the registry, so a rollback rewinds a spent grace rather
     /// than handing the herd a fresh one.
     pub neglect_turns: u16,
+    /// **HOW FRAYED THIS HERD'S ATTACHMENT HAS BECOME** — the herd's *condition*, and the meter the
+    /// escape rate accelerates on. **Not** a count of turns, and deliberately not
+    /// [`Self::neglect_turns`].
+    ///
+    /// # ⛔ THE THREE QUANTITIES ARE DIFFERENT AND ONLY THIS ONE DECAYS
+    ///
+    /// - **Damage** — animals lost, rung lost — is *gone*, and keeping never repairs it. Only work
+    ///   does: re-breeding, re-taming, re-queueing the build.
+    /// - **The grace** ([`Self::neglect_turns`]) is a *forgiveness window* — how long before the
+    ///   penalty starts — and it **resets outright** when the bill is met. You tended, you earned the
+    ///   window back. Unchanged, on both webs.
+    /// - **This** is what makes the shed accelerate, and it **decays slowly rather than resetting**.
+    ///
+    /// If the acceleration keyed off the grace, one tended turn in every N would erase it completely
+    /// and a herd could be held for ever on token attention — measured before this meter existed, a
+    /// herd survived indefinitely on **one tended turn in fourteen**, at *above* its starting size.
+    ///
+    /// **Rises by the SHORTFALL FRACTION**, so half-staffed keeping frays it at half speed — the
+    /// *"I tend it, but not enough"* case, and the same proportionality the shed and the plant rot
+    /// already use. **Falls by `husbandry.neglect_recovery_rate`** on any turn the bill is met, and
+    /// deliberately slower than it rose: that asymmetry **is** the cost of neglect.
+    ///
+    /// Sim-side only; floored at zero and never negative.
+    pub neglect_pressure: f32,
     /// **WHAT THE AT-RISK METER'S OWN CREW SUPPLIED THIS TURN**, in work units — the **keepers**
     /// once that rung is built and the **builders** while it is not
     /// ([`herd_upkeep_supply`], `docs/plan_standing_upkeep.md` §2.4), summed over every band working
@@ -761,6 +785,7 @@ impl Herd {
             // Nobody has laid a hand on it yet.
             wounds: DamageLedger::default(),
             neglect_turns: NEGLECT_NONE,
+            neglect_pressure: NO_NEGLECT_PRESSURE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_demanded: None,
         }
@@ -1427,6 +1452,16 @@ pub fn herd_keeper_loads(biomass: f32, body_mass: f32, animals_per_herder: f32) 
     }
     (biomass / body_mass) / animals_per_herder
 }
+
+/// **AN UNFRAYED HERD** — the floor of [`Herd::neglect_pressure`], and the reading of a herd whose
+/// keeping has been met long enough to work off every turn of neglect. Named rather than a bare `0.0`
+/// because "no pressure" is a state the recovery rate is *aimed* at, not merely an initial value.
+pub const NO_NEGLECT_PRESSURE: f32 = 0.0;
+
+/// **THE WHOLE HERD** — the ceiling on a shed fraction: you cannot lose more animals than are
+/// standing there. Named because the accelerating rate reaches it quickly by design, so the clamp is
+/// a reachable state rather than a defensive rail.
+const WHOLE_HERD: f32 = 1.0;
 
 /// **A herd that presents nothing to mind** — an empty herd, or one whose species declares no
 /// `animals_per_herder`. Named because a bare `0.0` in a load position reads as a missing value
@@ -3579,6 +3614,14 @@ pub fn advance_husbandry(
         let supplied_last_turn = herd.upkeep_supplied;
         let shortfall_last_turn = herd_upkeep_shortfall(herd, &fauna, &ladder);
         let overage_last_turn = uncontained_overage(herd, &fauna, &ladder);
+        // **HOW SHORT THE KEEPING FELL, CAPTURED BEFORE THE FIELDS THAT SAY SO ARE CLEARED.** The
+        // neglect pressure below rides this, and `upkeep_supplied` / `upkeep_demanded` are both wiped
+        // a few lines down — reading it after would score every turn as wholly unkept and the
+        // pressure could never fall.
+        let shortfall_fraction_last_turn = crate::intensification::upkeep_shortfall_fraction(
+            herd_keeping_basis(herd, &fauna, &ladder),
+            herd.upkeep_supplied,
+        );
         // **And the field is cleared now**, on the one-turn cycle the plant twin runs: it describes
         // the keepers that held the herd, so a herd whose keepers have gone must stop reporting what
         // they paid. Clearing it is what re-arms the shed — next turn's shortfall is the whole demand
@@ -3636,15 +3679,36 @@ pub fn advance_husbandry(
         } else {
             herd.neglect_turns = NEGLECT_NONE;
         }
+        // **THE PRESSURE — a different quantity from the grace above, and the only one that decays.**
+        // The grace is *forgiveness* and resets outright; this is the herd's **condition**, and it is
+        // what the escape rate accelerates on. Keying the acceleration off the grace would let one
+        // tended turn in every N erase it completely — measured, a herd survived indefinitely on one
+        // tended turn in fourteen, at above its starting size.
+        //
+        // **It rises by the SHORTFALL FRACTION**, so half-staffed keeping frays it at half speed (the
+        // *"I tend it, but not enough"* case), and **falls by the recovery rate** — slower than it
+        // rose, which is the cost of neglect — on any turn the bill is met. It never resets on one
+        // good turn.
+        herd.neglect_pressure = if shortfall_fraction_last_turn > 0.0 {
+            herd.neglect_pressure + shortfall_fraction_last_turn
+        } else {
+            (herd.neglect_pressure - fauna.husbandry.neglect_recovery_rate.max(0.0))
+                .max(NO_NEGLECT_PRESSURE)
+        };
         // The rung whose keeping obligation this herd is under, through the one seam the wire's
         // countdown reads too ([`herd_keeping_rung`]).
         let grace = herd_keeping_rung(herd, &ladder)
             .map_or(NO_NEGLECT_GRACE, |rung| rung.upkeep_grace_turns());
         if u32::from(herd.neglect_turns) > grace {
             if let Some(overage) = overage_last_turn {
-                if let Some(event) =
-                    shed_uncontained_animals(herd, source_index, overage, &fauna, &mut rng)
-                {
+                if let Some(event) = shed_uncontained_animals(
+                    herd,
+                    source_index,
+                    overage,
+                    herd.neglect_pressure,
+                    &fauna,
+                    &mut rng,
+                ) {
                     shed_events.push(event);
                 }
             }
@@ -3781,6 +3845,10 @@ fn shed_uncontained_animals(
     herd: &mut Herd,
     source_index: usize,
     overage_animals: f32,
+    // **The herd's accumulated neglect pressure** ([`Herd::neglect_pressure`]) — its *condition*, not
+    // a count of turns. The rate compounds on this, which is what makes an abandoned herd terminate
+    // rather than settle, and what one tended turn cannot erase.
+    pressure: f32,
     fauna: &FaunaConfig,
     rng: &mut SmallRng,
 ) -> Option<ShedEvent> {
@@ -3791,13 +3859,33 @@ fn shed_uncontained_animals(
     } else {
         husbandry.pastoral_escape_fraction
     };
+    // **⛔ THE RATE ACCELERATES, AND WITHOUT THAT THE HERD NEVER LEAVES.** A constant fraction of the
+    // overage balances against the growth curve — measured, a wholly unkept pastoral aurochs herd
+    // settled at **64% of `K`, still owned, for ever**. The design is that it terminates: *"if no
+    // herders are present, eventually, the entire herd leaves and you are left with nothing. The
+    // longer you don't tend it, the quicker the remaining herd leaves, meaning it isn't linear."*
+    //
+    // **Compounding rather than a linear ramp**, because the ruling is about the *rate*: the overage
+    // this multiplies is itself shrinking with the herd, so a linear ramp leaves a shallow tail that
+    // a fast breeder can still out-run. `(1 + accel)^turns` cannot be out-run by any `r`.
+    //
+    // **The fence still buys time** — a pen starts from its own slower `pen_escape_fraction` and
+    // accelerates from there, so it arrives at nothing *later*, not never.
+    let rate = rate * (1.0 + husbandry.escape_acceleration.max(0.0)).powf(pressure.max(0.0));
     let jitter_band = husbandry.escape_fraction_jitter;
     let jitter = if jitter_band > 0.0 {
         rng.gen_range(-jitter_band..=jitter_band)
     } else {
         0.0
     };
-    let jittered = (rate * (1.0 + jitter)).max(0.0);
+    // **Clamped at the whole herd**: you cannot shed a larger share than is standing there, and an
+    // accelerating rate reaches `1.0` quickly by design.
+    //
+    // **It is belt-and-braces, not load-bearing** — `escaped_biomass` below already takes
+    // `.min(herd.biomass)`, so removing this changes no observable number and no test fails. It is
+    // kept because an unclamped *fraction* is a nonsense reading for anything that later reads the
+    // rate, and because the downstream `min` is a clamp on the wrong quantity to rely on.
+    let jittered = (rate * (1.0 + jitter)).clamp(0.0, WHOLE_HERD);
     // Whole animals, min-1 floor (the overage is `>= 1` here, so at least one head always clears).
     let leaving = (jittered * overage_animals).floor().max(MIN_ESCAPE_ANIMALS);
     let escaped_biomass = (leaving * body_mass).min(herd.biomass);

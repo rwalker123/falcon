@@ -169,6 +169,468 @@ fn an_unkept_herd_still_grows_at_its_lands_rate_and_still_sheds() {
 /// several times, so the comparison is not reading a forgiven turn.
 const TURNS_PAST_THE_SHEDS_GRACE: u32 = 8;
 
+/// **Set the escape acceleration for one fixture**, so the off-switch and the shipped value can be
+/// measured on the same world.
+fn set_escape_acceleration(app: &mut App, accel: f32) {
+    let mut fauna = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+    fauna.husbandry.escape_acceleration = accel;
+    app.world
+        .insert_resource(FaunaConfigHandle::new(std::sync::Arc::new(fauna)));
+}
+
+/// Turns to run a wholly unkept herd out — comfortably past the ~30 the shipped acceleration needs.
+const TURNS_TO_RUN_A_HERD_OUT: u32 = 120;
+
+/// **⛔ A WHOLLY UNKEPT HERD ENDS AT NOTHING** — the design, restored. *"If no herders are present,
+/// eventually, the entire herd leaves and you are left with nothing."*
+///
+/// Before `escape_acceleration`, a constant shed fraction balanced against the growth curve and the
+/// herd settled at ~0.64·K, **still owned, for ever**. Both halves are asserted: the animals go, and
+/// the claim on them goes with them.
+///
+/// **The preconditions are load-bearing** — a herd that was never owned, or that started empty, ends
+/// at nothing for reasons that have nothing to do with the shed.
+#[test]
+fn a_wholly_unkept_herd_ends_at_nothing_and_loses_its_owner() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+
+    let started_full = herd_of(&app, &id).biomass;
+    assert!(
+        started_full > 0.0,
+        "PRECONDITION: the herd must start with animals in it"
+    );
+    assert!(
+        herd_of(&app, &id).owner.is_some(),
+        "PRECONDITION: and it must be OWNED, or 'loses its owner' is vacuous"
+    );
+
+    run_turns_untended(&mut app, TURNS_TO_RUN_A_HERD_OUT);
+
+    match app.world.resource::<HerdRegistry>().find(&id) {
+        None => {} // despawned on shed-to-zero — the whole of "you are left with nothing"
+        Some(herd) => panic!(
+            "an unkept herd must end at nothing, not settle: {} biomass left, owner {:?}",
+            herd.biomass, herd.owner
+        ),
+    }
+}
+
+/// **⛔ THE DEPARTURE ACCELERATES** — *"the longer you don't tend it, the quicker the remaining herd
+/// leaves, meaning it isn't linear."*
+///
+/// # It is asserted on the RATE, and the raw head count is the wrong statistic
+///
+/// The shed takes a *fraction* of the overage, and the overage shrinks with the herd — so a rising
+/// rate and a falling stock fight each other in the raw count, and the count can be flat or even
+/// falling while the rate doubles. Measured at the shipped `0.05`, the per-turn losses run
+/// `…6 6 5 6 6 6 7 7 6 8 7…`: the acceleration is real and the count barely shows it. Asserting the
+/// count would therefore be asserting noise, and would pass on a **constant** rate about as often as
+/// not. The fraction of the standing herd that leaves is what "quicker" means, and it is monotone.
+#[test]
+fn the_departure_accelerates_rather_than_holding_a_constant_rate() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    // **No jitter**, so the shape under test is the acceleration and not the seeded ±25% band.
+    {
+        let mut fauna = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+        fauna.husbandry.escape_fraction_jitter = 0.0;
+        app.world
+            .insert_resource(FaunaConfigHandle::new(std::sync::Arc::new(fauna)));
+    }
+
+    let mut shed_fractions: Vec<f32> = Vec::new();
+    for _ in 0..12 {
+        let before = match app.world.resource::<HerdRegistry>().find(&id) {
+            Some(herd) => herd.biomass,
+            None => break,
+        };
+        run_turns_untended(&mut app, 1);
+        let after = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .map_or(0.0, |herd| herd.biomass);
+        if after < before && before > 0.0 {
+            shed_fractions.push((before - after) / before);
+        }
+    }
+
+    assert!(
+        shed_fractions.len() >= 3,
+        "PRECONDITION: the herd must actually shed on several turns, or there is no shape to read \
+         ({} shedding turns)",
+        shed_fractions.len()
+    );
+    // **THE TAIL, NOT THE WHOLE SEQUENCE.** The opening turns are dominated by the herd's own
+    // regrowth — it is still climbing toward `K` while the shed starts, so the share-of-standing-herd
+    // ratio *falls* for a few turns before the acceleration takes over. Measured, the sequence runs
+    // `0.159 0.106 0.083 0.076 0.0735 0.0756 0.079 0.084 0.094 0.104`: a trough, then a strict climb.
+    // The claim is about the climb, so the assertion reads the tail.
+    const TAIL: usize = 5;
+    assert!(
+        shed_fractions.len() >= TAIL,
+        "PRECONDITION: not enough shedding turns to read a tail ({shed_fractions:?})"
+    );
+    let tail = &shed_fractions[shed_fractions.len() - TAIL..];
+    for pair in tail.windows(2) {
+        assert!(
+            pair[1] > pair[0],
+            "each turn must take a LARGER share of what is left than the one before it — that is \
+             what 'the longer you don't tend it, the quicker it goes' means, and a CONSTANT rate \
+             would read flat here: {pair:?} within {shed_fractions:?}"
+        );
+    }
+}
+
+/// **THE OFF-SWITCH IS HONEST** — `escape_acceleration = 0` reproduces the constant-rate behaviour
+/// exactly, which is the state that settled at an equilibrium. Asserted because a dial documented as
+/// having a legible "off" must actually have one.
+#[test]
+fn a_zero_escape_acceleration_reproduces_the_constant_rate() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    set_escape_acceleration(&mut app, 0.0);
+    domesticate(&mut app, &id);
+
+    run_turns_untended(&mut app, TURNS_TO_RUN_A_HERD_OUT);
+
+    let herd =
+        app.world.resource::<HerdRegistry>().find(&id).expect(
+            "with no acceleration the shed balances the growth curve and the herd SURVIVES",
+        );
+    assert!(
+        herd.biomass > 0.0 && herd.owner.is_some(),
+        "…at an equilibrium, still owned — which is exactly the defect the acceleration fixes"
+    );
+}
+
+/// **A PENNED HERD STILL TERMINATES, AND THE FENCE IS WORTH TIME RATHER THAN IMMUNITY.** It starts
+/// from the slower `pen_escape_fraction` and accelerates from there, so it arrives at nothing later.
+///
+/// **Both halves matter**: "terminates" alone would pass on a fence that bought nothing, and "slower"
+/// alone would pass on a fence that saved the herd outright — which is what the pen used to do, by
+/// accident, because a separate unfed-pen gate stopped its growth.
+#[test]
+fn a_penned_herd_still_terminates_but_the_fence_buys_time() {
+    let run = |penned: bool| -> Option<u32> {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+        if penned {
+            corral_herd(&mut app, &id);
+        }
+        for turn in 1..=TURNS_TO_RUN_A_HERD_OUT {
+            run_turns_untended(&mut app, 1);
+            if app.world.resource::<HerdRegistry>().find(&id).is_none() {
+                return Some(turn);
+            }
+        }
+        None
+    };
+
+    let open_range = run(false).expect("an unfenced herd ends at nothing");
+    let penned = run(true).expect("and so does a penned one — the fence delays, it does not save");
+    assert!(
+        penned > open_range,
+        "the fence must buy TIME: penned ended on turn {penned}, open range on turn {open_range}"
+    );
+}
+
+/// Enough consecutive unkept turns to put real pressure on a herd without killing it.
+const TURNS_TO_FRAY_A_HERD: u32 = 4;
+
+/// **⛔ ONE GOOD TURN DOES NOT ERASE ACCUMULATED NEGLECT — the test this whole amendment exists for.**
+///
+/// The escape acceleration used to key off `neglect_turns`, which **resets outright** when the bill is
+/// met. Measured, that let a herd survive indefinitely on **one tended turn in fourteen**, at *above*
+/// its starting size: every good turn wiped the entire acceleration. `Herd::neglect_pressure` is a
+/// separate meter that **decays** instead, so attention helps and does not absolve.
+///
+/// **Lower AND non-zero are both asserted**, with the precondition that the pressure was substantially
+/// above zero first — a herd that was barely frayed would read "non-zero" for a rounding.
+#[test]
+fn one_tended_turn_lowers_the_neglect_pressure_without_erasing_it() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    run_turns_untended(&mut app, TURNS_TO_FRAY_A_HERD);
+
+    let frayed = herd_of(&app, &id).neglect_pressure;
+    // **THE PRECONDITION** — really frayed, not a rounding away from zero.
+    assert!(
+        frayed > 1.0,
+        "PRECONDITION: {TURNS_TO_FRAY_A_HERD} unkept turns must build real pressure, got {frayed}"
+    );
+
+    keep_herd_for_a_turn(&mut app, &id);
+    run_turns_untended(&mut app, 1);
+    let after = herd_of(&app, &id).neglect_pressure;
+
+    assert!(
+        after < frayed,
+        "one tended turn must LOWER the pressure — attention has to count for something: \
+         {frayed} -> {after}"
+    );
+    assert!(
+        after > 0.0,
+        "…and must NOT erase it: {frayed} -> {after}. A full reset is what let a herd be held for \
+         ever on one tended turn in fourteen"
+    );
+}
+
+/// **PARTIAL KEEPING FRAYS A HERD MORE SLOWLY THAN NONE** — the *"I tend it, but not enough"* case.
+/// The pressure rises by the **shortfall fraction**, so half-staffed keeping raises it at half speed,
+/// the same proportionality the shed and the plant rot already use.
+///
+/// **Both arms must actually be rising**, or "slower" would pass on a pair where one of them was flat.
+#[test]
+fn partial_keeping_frays_a_herd_more_slowly_than_none() {
+    let pressure_after = |share: f32| -> f32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+        for _ in 0..TURNS_TO_FRAY_A_HERD {
+            if share > 0.0 {
+                let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let part =
+                    core_sim::herd_upkeep_demand(&herd_of(&app, &id), &fauna, &ladder) * share;
+                if let Some(herd) = app
+                    .world
+                    .resource_mut::<HerdRegistry>()
+                    .herds
+                    .iter_mut()
+                    .find(|herd| herd.id == id)
+                {
+                    herd.upkeep_supplied = part;
+                }
+            }
+            run_turns_untended(&mut app, 1);
+        }
+        herd_of(&app, &id).neglect_pressure
+    };
+
+    const HALF_STAFFED: f32 = 0.5;
+    let none = pressure_after(0.0);
+    let half = pressure_after(HALF_STAFFED);
+
+    // **THE PRECONDITION** — both are rising, so "slower" is a comparison of two climbs.
+    assert!(
+        none > 0.0 && half > 0.0,
+        "PRECONDITION: both arms must accumulate pressure — none {none}, half {half}"
+    );
+    assert!(
+        half < none,
+        "half-staffed keeping must fray the herd more slowly than none at all: {half} against {none}"
+    );
+}
+
+/// **SUSTAINED KEEPING WORKS THE PRESSURE BACK TO ZERO** — recovery is real, not merely a slowdown.
+/// Without this the meter would be a ratchet, and a herd once neglected could never be made whole.
+#[test]
+fn sustained_keeping_works_the_neglect_pressure_back_to_zero() {
+    /// Comfortably more than the `4:1` the shipped recovery rate implies for this much fraying.
+    const KEPT_TURNS: u32 = 40;
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    run_turns_untended(&mut app, TURNS_TO_FRAY_A_HERD);
+    assert!(
+        herd_of(&app, &id).neglect_pressure > 1.0,
+        "PRECONDITION: there must be real pressure to work off"
+    );
+
+    for _ in 0..KEPT_TURNS {
+        keep_herd_for_a_turn(&mut app, &id);
+        run_turns_untended(&mut app, 1);
+    }
+    assert_eq!(
+        herd_of(&app, &id).neglect_pressure,
+        0.0,
+        "sustained keeping must bring the pressure all the way back — a meter that only slowed \
+         would make one bad season permanent"
+    );
+}
+
+/// **THE GRACE STILL RESETS OUTRIGHT** — it is a *different quantity* from the pressure and this
+/// change must not have caught it.
+///
+/// `neglect_turns` is a **forgiveness window**: how long before the penalty starts. Resetting it is
+/// correct — you tended, you earned the window back — and its own comment says it measures
+/// *consecutive* shortfall "rather than a lifetime budget". Only the herd's **condition** decays.
+#[test]
+fn the_grace_still_resets_outright_while_the_pressure_only_decays() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    run_turns_untended(&mut app, TURNS_TO_FRAY_A_HERD);
+    assert!(
+        herd_of(&app, &id).neglect_turns > 0,
+        "PRECONDITION: the grace counter must have advanced"
+    );
+
+    keep_herd_for_a_turn(&mut app, &id);
+    run_turns_untended(&mut app, 1);
+
+    assert_eq!(
+        herd_of(&app, &id).neglect_turns,
+        0,
+        "the grace resets OUTRIGHT on a tended turn — it is forgiveness, not condition"
+    );
+    assert!(
+        herd_of(&app, &id).neglect_pressure > 0.0,
+        "…while the pressure beside it does not: the two are different quantities, and only one of \
+         them is erasable"
+    );
+}
+
+/// **⛔ KEEPING NEVER REPAIRS DAMAGE.** Animals that left are gone; only *work* — re-breeding, and on
+/// the build side re-taming and re-queueing — brings a herd back. Tending a herd restores its
+/// *condition*, never its losses.
+///
+/// This guards a rule the acceleration work came close to breaking: it is the shipped rule on both
+/// webs (`a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it` is its plant twin), and a
+/// recovery meter that also handed animals back would quietly make neglect free.
+#[test]
+fn keeping_restores_condition_but_never_the_animals_that_left() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    domesticate(&mut app, &id);
+    let before = herd_of(&app, &id).biomass;
+
+    // Long enough past the grace that the shed has actually taken animals — the herd regrows
+    // toward `K` at first, so a short window measures growth rather than loss.
+    run_turns_untended(&mut app, 14);
+    let after_shedding = herd_of(&app, &id).biomass;
+    assert!(
+        after_shedding < before,
+        "PRECONDITION: the herd must actually have LOST animals: {before} -> {after_shedding}"
+    );
+
+    // Now keep it perfectly. Its condition recovers; its losses do not come back.
+    // At the shipped 4:1 recovery, 14 unkept turns need ~56 kept ones — this is comfortably past it.
+    const KEPT_TURNS_TO_CLEAR: u32 = 80;
+    let mut best = after_shedding;
+    for _ in 0..KEPT_TURNS_TO_CLEAR {
+        keep_herd_for_a_turn(&mut app, &id);
+        run_turns_untended(&mut app, 1);
+        best = best.max(herd_of(&app, &id).biomass);
+    }
+    assert_eq!(
+        herd_of(&app, &id).neglect_pressure,
+        0.0,
+        "keeping restores CONDITION — the pressure comes back to zero"
+    );
+    // The herd may re-*breed* toward its capacity, which is growth and not repair. What must never
+    // happen is the shed handing anything back: the animals went to the wild web.
+    assert!(
+        best <= herd_of(&app, &id).carrying_capacity + 1e-3,
+        "…but nothing is ever handed BACK — a herd only regrows within its own capacity: {best} \
+         against K {}",
+        herd_of(&app, &id).carrying_capacity
+    );
+}
+
+/// **⛔ WHAT ONE TENDED TURN BUYS, AND WHAT FULL RECOVERY COSTS** — the pair §4.14 tunes
+/// `husbandry.neglect_recovery_rate` against.
+///
+/// The pressure rises by the shortfall fraction (`1.0` a turn on a wholly unkept herd) and falls by
+/// the recovery rate, so the asymmetry is the whole design: **N turns of neglect take more than N
+/// turns of good keeping to work off.** This reports both ends of it — how long a frayed herd takes
+/// to come back to zero under sustained keeping, and how much delay a *single* tended turn buys.
+///
+/// It replaces the token-attention measurement: with the acceleration keyed to the grace, a herd
+/// survived indefinitely on one tended turn in fourteen, at above its starting size. The pressure
+/// meter is what closed that, and these are the numbers that say whether it closed it by the right
+/// amount.
+///
+/// Run with `cargo test -p core_sim --test fauna_husbandry probe_the_price_of_recovery --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "measurement harness — run with --ignored --nocapture"]
+fn probe_the_price_of_recovery() {
+    println!("\n=== THE PRICE OF RECOVERY ===");
+    let rate = core_sim::FaunaConfig::builtin()
+        .husbandry
+        .neglect_recovery_rate;
+    println!("  neglect_recovery_rate = {rate} (pressure rises 1.0 per wholly-unkept turn)");
+
+    println!("\n  (a) sustained keeping — kept turns to bring the pressure back to zero:");
+    for neglected in [2u32, 4, 8, 12] {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+        run_turns_untended(&mut app, neglected);
+        let peak = herd_of(&app, &id).neglect_pressure;
+        let mut kept = 0u32;
+        while herd_of(&app, &id).neglect_pressure > 0.0 && kept < 200 {
+            keep_herd_for_a_turn(&mut app, &id);
+            run_turns_untended(&mut app, 1);
+            kept += 1;
+        }
+        println!(
+            "    {neglected:2} unkept turns -> pressure {peak:5.2}; {kept:3} kept turns to clear it \
+             ({:.1} kept per unkept)",
+            kept as f32 / neglected as f32
+        );
+    }
+
+    println!("\n  (b) ONE tended turn — the delay it buys against dying:");
+    let died_on = |tended_at: Option<u32>| -> Option<u32> {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+        for turn in 1..=200u32 {
+            if Some(turn) == tended_at {
+                keep_herd_for_a_turn(&mut app, &id);
+            }
+            run_turns_untended(&mut app, 1);
+            if app.world.resource::<HerdRegistry>().find(&id).is_none() {
+                return Some(turn);
+            }
+        }
+        None
+    };
+    let baseline = died_on(None);
+    println!("    never tended:        died on turn {baseline:?}");
+    for at in [5u32, 10, 15] {
+        let with = died_on(Some(at));
+        println!(
+            "    one tended turn @{at:2}: died on turn {with:?} (buys {} turns)",
+            match (with, baseline) {
+                (Some(w), Some(b)) => format!("{}", w as i64 - b as i64),
+                _ => "n/a".to_string(),
+            }
+        );
+    }
+}
+
+/// **Meet this herd's keeping bill for one turn**, exactly as a staffed `husbandry` role would — the
+/// fixture's stand-in, and the only way to exercise the pressure's *fall*.
+fn keep_herd_for_a_turn(app: &mut App, id: &str) {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    // **Comfortably above the bill, which is what a fully staffed pool is.** `advance_herds` regrows
+    // the herd between this stamp and the turn that reads it, which raises the keeper load and hence
+    // the demand — stamping the bill exactly would leave the herd fractionally short every turn and
+    // the pressure could never fall.
+    const A_FULLY_STAFFED_POOL: f32 = 4.0;
+    let demand =
+        core_sim::herd_upkeep_demand(&herd_of(app, id), &fauna, &ladder) * A_FULLY_STAFFED_POOL;
+    if let Some(herd) = app
+        .world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == id)
+    {
+        herd.upkeep_supplied = demand;
+    }
+}
+
 /// **⛔ WHAT BECOMES OF AN ABANDONED HERD, now that its growth is no longer frozen.**
 ///
 /// The retired `abandoned_pastoral` gate in `regrow_biomass` zeroed the growth of an owned herd whose
@@ -190,13 +652,27 @@ fn probe_the_abandoned_herds_fate() {
     /// under this, and an equilibrium is flat long before it.
     const TURNS: u32 = 120;
 
-    for penned in [false, true] {
+    for (penned, accel) in [
+        (false, 0.02),
+        (false, 0.05),
+        (false, 0.10),
+        (true, 0.05),
+        (false, 0.0),
+    ] {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
+        {
+            // The dial under measurement, overridden per arm.
+            let mut fauna = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+            fauna.husbandry.escape_acceleration = accel;
+            app.world
+                .insert_resource(FaunaConfigHandle::new(std::sync::Arc::new(fauna)));
+        }
         domesticate(&mut app, &id);
         if penned {
             corral_herd(&mut app, &id);
         }
+        let body = herd_of(&app, &id).body_mass.max(1.0);
         let cap = herd_of(&app, &id).carrying_capacity.max(1.0);
         let mut curve: Vec<String> = Vec::new();
         let mut cleared_on = None;
@@ -218,8 +694,16 @@ fn probe_the_abandoned_herds_fate() {
                 .find(&id)
                 .map_or(0.0, |herd| herd.biomass / cap);
             if turn <= 40 {
-                curve.push(format!("{fraction:.3}"));
+                // **HEAD COUNT**, not a fraction of `K`: the ruling is about animals leaving, and a
+                // fraction of a capacity that is itself moving hides the shape.
+                let heads = app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .find(&id)
+                    .map_or(0.0, |herd| herd.biomass / body);
+                curve.push(format!("{heads:.0}"));
             }
+            let _ = fraction;
             if (gone || !owned) && cleared_on.is_none() {
                 cleared_on = Some(turn);
             }
@@ -234,7 +718,7 @@ fn probe_the_abandoned_herds_fate() {
             .find(&id)
             .map(|herd| (herd.biomass / cap, herd.owner.is_some()));
         println!(
-            "\n=== {} herd, ZERO keeping ===",
+            "\n=== {} herd, ZERO keeping, escape_acceleration = {accel} ===",
             if penned { "PENNED" } else { "PASTORAL" }
         );
         println!(
@@ -248,7 +732,7 @@ fn probe_the_abandoned_herds_fate() {
                 f * 100.0
             ),
         }
-        println!("  B/K per turn: {}", curve.join(" "));
+        println!("  head count per turn: {}", curve.join(" "));
     }
 }
 
@@ -1290,25 +1774,24 @@ fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
             }
         }
     }
-    // **⛔ THIS NO LONGER HOLDS, AND THE CHANGE IS DELIBERATE — the ruling is Ray's.**
+    // **⛔ IT GOES FERAL AGAIN, AND THIS ASSERTION HAS BEEN ROUND THE LOOP ONCE — do not re-derive it.**
     //
-    // A fully-abandoned pastoral herd used to bleed out and despawn, and what drove it there was
-    // `regrow_biomass`'s `abandoned_pastoral` gate: an unkept managed herd's growth was **frozen to
-    // zero**, so the shed had nothing working against it. That freeze is deleted — *a herd's growth
-    // is a fact about the land it stands on, not about who is watching it* — and the shed alone does
-    // **not** outrun the pastoral curve.
+    // §2b deleted `regrow_biomass`'s growth freeze (*a herd's growth is a fact about the land it
+    // stands on, not about who is watching it*) and this test had to be restated: with a **constant**
+    // escape rate the shed no longer out-ran the pastoral growth curve, and an abandoned herd settled
+    // at ~0.64·K, still owned, for ever.
     //
-    // Measured (`probe_the_abandoned_herds_fate`): an abandoned pastoral herd settles at **~0.64·K**
-    // and keeps its owner indefinitely. That is the *"leaky equilibrium"* the retired gate's comment
-    // named, and it is now the shipped behaviour rather than a state the sim engineered away. A
-    // **penned** herd still goes fully feral (despawns around turn 72), because its growth is gated
-    // separately by `pen_fed_fraction` — an unfed pen does not grow, and that gate is untouched.
+    // That equilibrium was a **defect**, not a number to tune. The design has always been that a herd
+    // nobody tends terminates — *"if no herders are present, eventually, the entire herd leaves and
+    // you are left with nothing"* — so §2d made the escape rate **accelerate** with consecutive
+    // unkept turns (`husbandry.escape_acceleration`). The shed now out-runs any growth curve, and
+    // going feral is the behaviour again.
     //
-    // So this asserts what the sim now does, and the pen arm below is what still pins going feral.
+    // The freeze is still deleted and is not what does this: the *shed* does.
     assert!(
-        !despawned,
-        "an abandoned pastoral herd now settles rather than bleeding out — the growth freeze that \
-         drove it to zero is deleted, and only the shed is left"
+        despawned,
+        "a fully-abandoned pastoral herd bleeds out entirely and despawns — the accelerating escape \
+         rate is what makes that certain, not a growth freeze"
     );
     // Its escapees went to the wild web, not into thin air — still true, and still the point of the
     // shed: what changed is only that the herd it leaves behind keeps replacing them.
@@ -2887,10 +3370,27 @@ fn the_shed_is_continuous_in_the_keeping_shortfall() {
     let fully_kept = lost_at(FULLY_HERDED_FIXTURE);
 
     assert!(unkept > 0.0, "fixture: an unkept herd must actually shed");
+    // **⛔ PROPORTIONAL PER TURN, NOT CUMULATIVELY — and that is the acceleration, not a drift.**
+    //
+    // The *overage* is still exactly `shortfall × head count`, so on any single turn half the keepers
+    // leave half the flock uncontained. What is no longer linear across several turns is the **rate**
+    // it sheds at: `Herd::neglect_pressure` rises by the shortfall fraction, so a wholly unkept herd
+    // frays at `1.0` a turn and a half-kept one at `0.5`, and the wholly unkept herd's escape rate
+    // therefore compounds **faster**. Over `grace + 1` turns that makes the unkept loss more than
+    // twice the half-kept one, which is the design: *the longer you don't tend it, the quicker the
+    // remainder goes*, and half-tending is a slower fraying as well as a smaller overage.
+    //
+    // So the claim asserted here is the **ordering with a floor**: half-staffing must leave
+    // materially less than half the loss of no staffing at all — never more, and not a rounding.
     assert!(
-        (unkept - half_kept * 2.0).abs() < 0.06 * unkept,
-        "half the keepers must leave half the flock uncontained: {unkept} unkept vs {half_kept} \
-         half-kept"
+        half_kept < unkept * 0.5 + 1e-3,
+        "half the keepers must leave AT MOST half the flock uncontained: {unkept} unkept vs \
+         {half_kept} half-kept"
+    );
+    assert!(
+        half_kept > unkept * 0.25,
+        "…and materially more than nothing, or the two arms are not on the same curve: {unkept} \
+         unkept vs {half_kept} half-kept"
     );
     assert_eq!(
         fully_kept, 0.0,
