@@ -6441,6 +6441,20 @@ pub struct HuntFight {
     /// **Whole animals brought down** — the bound [`quantise_animal_take`] takes as its fight arm.
     /// [`f32::INFINITY`] for a source with no fight stage at all (a pen).
     pub brought_down: f32,
+    /// **Animals a turn, UN-floored** — [`Self::brought_down`]'s rate
+    /// ([`crate::combat::StruckBlow::expected_units_down`]), and what every *per-turn* readout must
+    /// publish.
+    ///
+    /// `brought_down` is whole bodies completed **this** turn, so a party below one body per turn
+    /// reads `0` on most turns and `1` on the rest — a Wild Aurochs crew of eight reads `0` forever
+    /// while genuinely taking ~0.75 a turn. Because the ledger keeps every remainder, this is
+    /// exactly the average `brought_down` converges to under a stationary fight, which is what makes
+    /// it the honest answer to *"how many next turn"*.
+    ///
+    /// It carries the same clamps `brought_down` does — the retreat's `stayed` and, through it, the
+    /// escapement room — because both are computed from the same absorbed blow; only the whole-animal
+    /// quantiser is missing, and that is a timing effect (`project_realized_hunt`'s doc).
+    pub expected_brought_down: f32,
     /// What the party lost.
     pub casualties: FightCasualties,
     /// **Was this a real fight** — `false` for the one-sided engagement of §4.5 (the animal side
@@ -6572,6 +6586,10 @@ pub fn resolve_hunt_fight(
     if !stayed.is_finite() || stayed <= 0.0 || hunters <= 0.0 {
         return HuntFight {
             brought_down: stayed,
+            // No fight ran, so the rate is the bound itself: [`f32::INFINITY`] for a pen (no fight
+            // stage at all) and `<= 0` for an empty engagement. Quantising nothing and rating
+            // nothing are the same answer here.
+            expected_brought_down: stayed,
             casualties: FightCasualties::default(),
             fought: false,
             wounds: quarry.wounds,
@@ -6616,6 +6634,7 @@ pub fn resolve_hunt_fight(
         let blow = wounds.strike_blow(damage * tuning.lethality, &quarry.profile, stayed);
         return HuntFight {
             brought_down: blow.units_down,
+            expected_brought_down: blow.expected_units_down,
             casualties: injuries,
             fought: false,
             wounds,
@@ -6690,6 +6709,9 @@ pub fn resolve_hunt_fight(
         // un-floored would let `killed_biomass` and the reported `killed` count disagree, so the
         // ledger hands back only completed bodies and keeps the remainder.
         brought_down: blow.units_down,
+        // …and the same blow before the floor, for the readouts that must answer *per turn* — see
+        // the field.
+        expected_brought_down: blow.expected_units_down,
         casualties,
         fought: true,
         wounds,
@@ -7394,7 +7416,9 @@ pub struct HuntEngagement {
     pub stayed: f32,
     /// The fight. [`HuntFight::brought_down`] is **whole animals on the ground this turn** and is
     /// the third arm [`quantise_animal_take`] `min`s — the term a pre-commit reading cannot derive
-    /// and must be told.
+    /// and must be told. A readout answering *"per turn"* wants
+    /// [`HuntFight::expected_brought_down`] instead, which is the same fight without the
+    /// whole-animal quantiser.
     pub fight: HuntFight,
 }
 

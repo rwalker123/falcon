@@ -494,7 +494,45 @@ fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery)
 }
 
 /// **THE HUNT TAKE CURVE** — one row per crew size, answering *"if I put N herders on this herd,
-/// how many animals do they bring down next turn?"* for every N the panel's stepper can reach.
+/// how many animals a turn do they bring down?"* for every N the panel's stepper can reach.
+///
+/// # The rows are a RATE — animals per turn, not bodies next turn
+///
+/// [`crate::fauna::HuntFight::expected_brought_down`], never `brought_down`. The distinction is the
+/// whole-animal quantiser, and publishing the quantised side of it is a defect rather than a
+/// rounding preference: a Wild Aurochs (`defense 6`, `durability 150`, `engage_rate 0.17`) is
+/// engaged one animal at a time by every crew from 1 to 11, so `stayed` is `0.8` and the blow is
+/// capped at `120` damage against a `150`-durability body — `floor(damage / durability)` is **`0`
+/// for every one of them**, and the panel printed *"≈0 animals/turn"* for a crew genuinely taking
+/// `0.75`. It is a plateau, not a near-miss: no equipment level moves it, because the cap is the
+/// body in front of the party rather than the party's damage.
+///
+/// **The sim already knew.** [`crate::fauna::project_realized_hunt`] resolves the fight *inside* its
+/// forward loop and carries the wound ledger between turns for exactly this reason — *"a
+/// sub-threshold party brings down nothing for several turns and then a whole animal, and a
+/// projection that froze the first turn's answer would quote zero forever"*. A curve is one frozen
+/// turn by construction, so it must publish the rate the ledger integrates rather than the turn's
+/// floored count.
+///
+/// # How it relates to `SourceYield::realized`, and why they are not the same number
+///
+/// Both are per-turn expectations of the same take and they agree closely, but they are **not**
+/// interchangeable and neither is derivable from the other:
+///
+/// - **This curve** is the *instantaneous* rate at the herd's **current** stock —
+///   `min(w × (attack − defense) × lethality / durability, stayed)`, where `stayed` already carries
+///   the retreat and the escapement room. One turn, evaluated at three quantiles, for every crew.
+/// - **[`crate::fauna::project_realized_hunt`]** is a *forward average over a changing stock*: it
+///   walks `hunt.forecast_horizon_turns` turns of regrow → take, so the herd it is quoting is not
+///   the herd it started from, and it additionally caps each turn by the crew's carry throughput.
+///   It also sums the **quantised** kills, so up to one unfinished body sits on the ledger when the
+///   horizon ends and is never counted.
+///
+/// So `realized` runs **at or below** the curve on a stock the take is drawing down, and trails it
+/// by up to `1 / horizon` animals a turn from the unfinished body alone. `the_curve_and_realized_
+/// agree_on_a_stable_stock` pins that relationship on a fixture where the drawdown is negligible;
+/// it is a documented, tested gap rather than a coincidence, and the two must never be published as
+/// one figure.
 ///
 /// # Why a curve and not a per-hunter rate
 ///
@@ -566,7 +604,10 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             // literally the function `systems::hunt_take` runs — not a second reading of it. The
             // wound ledger it hands back is dropped: a query resolves the fight the turn will and
             // mutates nothing.
-            let brought_down = |draw_sigmas: f32| {
+            //
+            // **The RATE, not the turn's floored body count** — see this function's doc. Reading
+            // `fight.brought_down` here is what published `0` for every aurochs crew from 1 to 11.
+            let take_rate = |draw_sigmas: f32| {
                 crate::fauna::resolve_hunt_engagement(
                     &herd,
                     &fauna,
@@ -578,16 +619,16 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                     },
                 )
                 .fight
-                .brought_down
+                .expected_brought_down
             };
             HuntCrewTakeRow {
                 workers,
                 // Monotone non-decreasing in the quantile at every stage, so `low <= likely <= high`
                 // is a property of the arithmetic rather than a clamp applied afterwards — the same
                 // invariant `fauna::forecast_take_range` holds.
-                animals_low: brought_down(-sigmas.abs()),
-                animals_likely: brought_down(crate::combat::EXPECTED_STRIKES),
-                animals_high: brought_down(sigmas.abs()),
+                animals_low: take_rate(-sigmas.abs()),
+                animals_likely: take_rate(crate::combat::EXPECTED_STRIKES),
+                animals_high: take_rate(sigmas.abs()),
             }
         })
         .collect();
@@ -1246,6 +1287,19 @@ mod tests {
         world
     }
 
+    /// [`world_hunting`] with an **UNSTOCKED** band — an empty [`BandEquipment`] ledger, so
+    /// [`EquipmentConfig::coverage`] arms nobody and the whole party fights at the intrinsic
+    /// `attack 1`. The fixture for a crew that genuinely cannot hurt its quarry.
+    fn world_hunting_bare_handed(species: &str, body_mass: f32) -> World {
+        let mut world = test_world();
+        let band = spawn_band(&mut world, FACTION, BAND);
+        world.entity_mut(band).insert(BandEquipment::default());
+        world.insert_resource(HerdRegistry {
+            herds: vec![herd_of_biomass(species, body_mass, FAT_HERD)],
+        });
+        world
+    }
+
     fn crew_ask(max_workers: u32, floor: f32) -> HuntCrewTakeQuery {
         HuntCrewTakeQuery {
             faction_id: FACTION.0,
@@ -1264,12 +1318,67 @@ mod tests {
         }
     }
 
-    /// **What the sim itself pays this crew** — `systems::hunt_take` on a private clone of the
-    /// fixture herd, at the same floor and the same party, read at the take's own expectation.
+    /// **The fixture band's party at a stated crew size**, resolved exactly as
+    /// [`answer_hunt_crew_take`] resolves each row's: the shipped default hunt kit, this module's
+    /// [`fixture_wear`] ledger, and the **resident** tuning rather than `expedition_tuning`.
+    ///
+    /// One helper, because every direct-call comparison below has to be quoted for the same gear the
+    /// curve is or it compares two different parties and calls the difference a defect.
+    ///
+    /// `wear` is taken by the caller when it wants a bare-handed band ([`fixture_party_with_wear`]);
+    /// this arm is the armed one every fixture but that test uses.
+    fn fixture_party(world: &World, body_mass: f32, workers: u32) -> HuntingParty {
+        let equipment = world.resource::<EquipmentConfigHandle>().get();
+        fixture_party_with_wear(world, &fixture_wear(&equipment), body_mass, workers)
+    }
+
+    /// [`fixture_party`] over a **stated** wear ledger — the seam the bare-handed fixture needs, and
+    /// the reason the two are split.
+    fn fixture_party_with_wear(
+        world: &World,
+        wear: &BandEquipment,
+        body_mass: f32,
+        workers: u32,
+    ) -> HuntingParty {
+        let equipment = world.resource::<EquipmentConfigHandle>().get();
+        let combat = world.resource::<CombatConfigHandle>().get();
+        let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+        let kit = equipment
+            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
+            .expect("the shipped default hunt kit resolves");
+        let coverage = equipment.coverage(&kit, workers as f32, wear);
+        crate::fauna::PartyResolution {
+            equipment: &equipment,
+            coverage: &coverage,
+            wear,
+            intrinsic,
+            // The RESIDENT band's tuning — the same one the curve is answered at, and deliberately
+            // not `expedition_tuning`.
+            tuning: combat.tuning(),
+            hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        }
+        .party_against(crate::equipment_config::Quarry::Mass(body_mass))
+    }
+
+    /// **What the sim itself pays this crew, PER TURN OVER A RUN** — `systems::hunt_take` on a
+    /// private clone of the fixture herd, at the same floor and the same party, read at the take's
+    /// own expectation and averaged over [`LEDGER_TURNS`].
     ///
     /// It is the *whole* take (`AnimalTake::killed`), quantiser and all, so the comparison below is
     /// against the number the turn actually credits rather than against an intermediate the curve
     /// could trivially echo.
+    ///
+    /// # ⛔ It must be a RUN, and that is the whole defect this suite failed to catch
+    ///
+    /// A single turn's `killed` is floored to whole animals with the remainder **banked** on the
+    /// quarry, so an aurochs crew of eight reads `0` on a turn while genuinely taking `0.75` a turn.
+    /// Comparing the published curve against one turn compared zero to zero at eleven of the
+    /// thirteen crews a stepper can reach, and passed on a curve that quoted the player nothing.
+    ///
+    /// **The stock is held level** between turns — the wound ledger carries (`hunt_take` writes it
+    /// back), the biomass does not. These fixtures are about the engagement and the fight, so a herd
+    /// that visibly drew down would be measuring the drawdown instead; the thin-herd fixture wants
+    /// its escapement room *constant* for the same reason.
     fn sim_take(
         world: &World,
         species: &str,
@@ -1277,41 +1386,29 @@ mod tests {
         biomass: f32,
         workers: u32,
         floor: f32,
-    ) -> u32 {
-        let equipment = world.resource::<EquipmentConfigHandle>().get();
+    ) -> f32 {
         let fauna = world.resource::<FaunaConfigHandle>().get();
-        let combat = world.resource::<CombatConfigHandle>().get();
-        let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
-        let kit = equipment
-            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
-            .expect("the shipped default hunt kit resolves");
-        let wear = fixture_wear(&equipment);
-        let coverage = equipment.coverage(&kit, workers as f32, &wear);
-        let party = crate::fauna::PartyResolution {
-            equipment: &equipment,
-            coverage: &coverage,
-            wear: &wear,
-            intrinsic,
-            // The RESIDENT band's tuning — the same one the curve is answered at, and deliberately
-            // not `expedition_tuning`.
-            tuning: combat.tuning(),
-            hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
-        }
-        .party_against(crate::equipment_config::Quarry::Mass(body_mass));
+        let party = fixture_party(world, body_mass, workers);
         let mut herd = herd_of_biomass(species, body_mass, biomass);
-        crate::systems::hunt_take(
-            &mut herd,
-            workers,
-            floor,
-            RESIDENT_CARRY_PER_WORKER,
-            &party,
-            &fauna,
-            // A resident band banks its whole take — the same `f32::INFINITY` the Hunt arm passes.
-            f32::INFINITY,
-            HuntDraw::EXPECTED,
-        )
-        .take
-        .killed
+        let mut killed = 0.0_f32;
+        for _ in 0..LEDGER_TURNS {
+            killed += crate::systems::hunt_take(
+                &mut herd,
+                workers,
+                floor,
+                RESIDENT_CARRY_PER_WORKER,
+                &party,
+                &fauna,
+                // A resident band banks its whole take — the same `f32::INFINITY` the Hunt arm
+                // passes.
+                f32::INFINITY,
+                HuntDraw::EXPECTED,
+            )
+            .take
+            .killed as f32;
+            herd.biomass = biomass;
+        }
+        killed / LEDGER_TURNS as f32
     }
 
     /// A resident hunter's shipped haul tier, so `carryable` is a real bound rather than a
@@ -1328,6 +1425,11 @@ mod tests {
     /// The client's remaining arithmetic is written out in full here (`affordable`, `carryable`,
     /// then the published row) because that composition **is** the contract: if the row needed any
     /// other treatment to land on the sim's number, this is where it would show.
+    ///
+    /// **Compared against the SUSTAINED take** ([`sim_take`]), not one turn's. The row is a rate, and
+    /// one turn of the sim is a floored count that is `0` for most crews on most fixtures — so the
+    /// single-turn form of this comparison passed identically on the curve that quoted every aurochs
+    /// crew from 1 to 11 a flat zero.
     fn the_curve_reproduces_the_take(species: &str, body_mass: f32, biomass: f32, floor: f32) {
         let mut world = world_hunting_biomass(species, body_mass, biomass);
         let rows = crew_curve(&mut world, &crew_ask(SWEEP_CREW, floor));
@@ -1356,14 +1458,15 @@ mod tests {
             let carryable = ((workers as f32 * RESIDENT_CARRY_PER_WORKER) / body_mass)
                 .floor()
                 .max(1.0);
-            let composed = affordable.min(carryable).min(row.animals_likely) as u32;
-            assert_eq!(
-                composed,
-                sim_take(&world, species, body_mass, biomass, workers, floor),
+            let composed = affordable.min(carryable).min(row.animals_likely);
+            let paid = sim_take(&world, species, body_mass, biomass, workers, floor);
+            assert!(
+                (composed - paid).abs() <= SUSTAINED_RATE_EPSILON,
                 "a crew of {workers} on {species}: the published curve, min'd against the two caps \
-                 the client already derives, must land on the number `hunt_take` pays"
+                 the client already derives, reads {composed}/turn where `hunt_take` sustains \
+                 {paid}/turn"
             );
-            saw_a_kill |= composed > 0;
+            saw_a_kill |= composed > 0.0;
         }
         assert!(
             saw_a_kill,
@@ -1544,10 +1647,17 @@ mod tests {
             "a crew of one must bring an aurochs down eventually ({killed}/turn sustained); that is \
              what the `max(.., 1)` floor exists to allow, and a `floor()` to zero would forbid"
         );
-        assert_eq!(
-            rows[0].animals_likely,
-            sim_take(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1, STRIP_IT_BARE) as f32,
-            "and the published crew-of-one row is still exactly what the turn pays"
+        let paid = sim_take(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1, STRIP_IT_BARE);
+        assert!(
+            (rows[0].animals_likely - paid).abs() <= SUSTAINED_RATE_EPSILON,
+            "and the published crew-of-one row ({}) is still what the turn pays, sustained \
+             ({paid}/turn) — the row is a RATE, so it says `one aurochs about every eleven turns` \
+             rather than the `0` a single floored turn reports",
+            rows[0].animals_likely
+        );
+        assert!(
+            rows[0].animals_likely > 0.0,
+            "…and it is not zero, which is the answer the floored count gave the player"
         );
     }
 
@@ -1570,24 +1680,8 @@ mod tests {
         biomass: f32,
         workers: u32,
     ) -> (f32, f32) {
-        let equipment = world.resource::<EquipmentConfigHandle>().get();
         let fauna = world.resource::<FaunaConfigHandle>().get();
-        let combat = world.resource::<CombatConfigHandle>().get();
-        let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
-        let kit = equipment
-            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
-            .expect("the shipped default hunt kit resolves");
-        let wear = fixture_wear(&equipment);
-        let coverage = equipment.coverage(&kit, workers as f32, &wear);
-        let party = crate::fauna::PartyResolution {
-            equipment: &equipment,
-            coverage: &coverage,
-            wear: &wear,
-            intrinsic,
-            tuning: combat.tuning(),
-            hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
-        }
-        .party_against(crate::equipment_config::Quarry::Mass(body_mass));
+        let party = fixture_party(world, body_mass, workers);
         let mut herd = herd_of_biomass(species, body_mass, biomass);
         let mut killed = 0.0_f32;
         let mut stayed = 0.0_f32;
@@ -1629,6 +1723,15 @@ mod tests {
     /// Slack for the float accumulation in [`binding_terms`]'s sum — an engagement-bound crew kills
     /// *exactly* what stands, so anything short of it by more than a rounding error is the fight.
     const LEDGER_AVERAGE_EPSILON: f32 = 1e-4;
+
+    /// **The gap a FINITE run leaves between the published rate and a measured average**, and it is
+    /// derived rather than tuned.
+    ///
+    /// At most one unfinished body is sitting on the quarry's wound ledger when the window closes,
+    /// and it is never counted — so a [`LEDGER_TURNS`]-turn average of the floored take runs up to
+    /// `1 / LEDGER_TURNS` animals a turn *below* the rate. Widening the window tightens the bound on
+    /// its own, which is what stops this from becoming a number somebody nudges.
+    const SUSTAINED_RATE_EPSILON: f32 = 1.0 / LEDGER_TURNS as f32;
 
     /// Take everything the herd can spare: these fixtures are about the engagement and the fight, so
     /// the floor is deliberately not a term in them.
@@ -1796,6 +1899,272 @@ mod tests {
     fn a_band_that_can_field_nobody_gets_an_empty_curve() {
         let mut world = world_hunting(BOAR, BOAR_BODY);
         assert!(crew_curve(&mut world, &crew_ask(0, STRIP_IT_BARE)).is_empty());
+    }
+
+    // --- THE CURVE IS A RATE ---------------------------------------------------------------------
+
+    /// **THE DEFECT, PINNED: a crew whose whole turn floors to zero must still read its rate.**
+    ///
+    /// Eight speared hunters on a Wild Aurochs deal `8 × (20 − 6) = 112` damage into a body worth
+    /// `150`, and the `engage_rate 0.17` lets them corner exactly one animal of which `0.8` stays —
+    /// so the blow is capped at `0.8 × 150 = 120` and `floor(112 / 150)` is **`0`**. The published
+    /// curve read `0` there, and the panel printed *"≈0 WILD AUROCHS/TURN · 0.00 FOOD"* beside a work
+    /// row quoting food from the very same take.
+    ///
+    /// The expectation is asserted against the **continuous form, rebuilt from the party and the
+    /// quarry** rather than read back off `HuntFight` — a curve that echoed its own intermediate
+    /// would satisfy any comparison against itself.
+    #[test]
+    fn a_crew_whose_turn_floors_to_zero_still_reads_its_rate() {
+        /// The crew the defect was measured at: past the point where the fight binds, and far below
+        /// the twelfth hunter where the engagement staircase finally steps.
+        const ZERO_READING_CREW: u32 = 8;
+
+        let mut world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let party = fixture_party(&world, AUROCHS_BODY, ZERO_READING_CREW);
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let quarry = fauna.quarry_fight_for(AUROCHS);
+        let engagement = crate::fauna::resolve_hunt_engagement(
+            &herd_of_biomass(AUROCHS, AUROCHS_BODY, FAT_HERD),
+            &fauna,
+            &party,
+            ZERO_READING_CREW,
+            STRIP_IT_BARE,
+            HuntDraw::EXPECTED,
+        );
+
+        // **THE PRECONDITION, and without it this test cannot tell the defect from the fix.** The
+        // single-turn floored count really must be zero here — on an un-hunted herd, which is the
+        // state a query always answers from.
+        assert_eq!(
+            engagement.fight.brought_down, 0.0,
+            "a crew of {ZERO_READING_CREW} must bring down NO whole aurochs in one turn, or the \
+             fixture has stopped reproducing the defect and this test asserts nothing"
+        );
+
+        // The continuous form, rebuilt: every crew's landed damage over the quarry's durability,
+        // capped by what stood there. At the shipped `hit_chance = 1.0` every hunter's strike lands,
+        // so the crew's damage is its head count times the gate.
+        assert_eq!(
+            party.tuning.hit_chance, 1.0,
+            "this closed form assumes every strike lands; a sub-certain tuning needs the binomial \
+             here instead"
+        );
+        let damage: f32 = party
+            .crews
+            .iter()
+            .map(|crew| {
+                ZERO_READING_CREW as f32
+                    * crew.share
+                    * crate::combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
+                    * party.tuning.lethality
+            })
+            .sum();
+        let continuous = (damage / quarry.profile.durability).min(engagement.stayed);
+        assert!(
+            continuous > 0.0,
+            "the fixture crew must actually be able to hurt the quarry, or `0 == 0` would pass"
+        );
+        drop(fauna);
+
+        let rows = crew_curve(&mut world, &crew_ask(ZERO_READING_CREW, STRIP_IT_BARE));
+        let published = rows[ZERO_READING_CREW as usize - 1].animals_likely;
+        assert!(
+            (published - continuous).abs() <= LEDGER_AVERAGE_EPSILON,
+            "the curve published {published} aurochs/turn for a crew of {ZERO_READING_CREW} where \
+             the fight's own arithmetic says {continuous} — the row is the RATE, not the turn's \
+             floored body count"
+        );
+    }
+
+    /// **THE PLATEAU, SWEPT** — the eleven adjacent stepper positions the floored curve read `0` at.
+    ///
+    /// Two claims over `1..=STEPPER_CREW`, and each catches a different way of getting this wrong:
+    /// **non-zero wherever the crew can damage the quarry at all** (the defect), and **monotone
+    /// non-decreasing** (a "fix" that divided by the crew, or one that let the engagement staircase
+    /// and the fight cross the wrong way, would break this and not the first).
+    #[test]
+    fn the_curve_is_non_zero_and_rises_across_the_whole_plateau() {
+        /// The stepper the panel that reported this actually shows — a thirteen-worker band.
+        const STEPPER_CREW: u32 = 13;
+
+        let mut world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let quarry = fauna.quarry_fight_for(AUROCHS);
+        // **Can this crew hurt the quarry at all** — the resolver's own gate, per crew, so a genuine
+        // zero (no gear that clears `defense`) is never demanded to be non-zero below.
+        let can_damage: Vec<bool> = (1..=STEPPER_CREW)
+            .map(|workers| {
+                fixture_party(&world, AUROCHS_BODY, workers)
+                    .crews
+                    .iter()
+                    .any(|crew| {
+                        crate::combat::strike_damage(crew.hunter.attack, quarry.profile.defense)
+                            > 0.0
+                    })
+            })
+            .collect();
+        assert!(
+            can_damage.iter().all(|able| *able),
+            "the fully-armed fixture must clear the aurochs' defence at every crew in \
+             `1..={STEPPER_CREW}` ({can_damage:?}), or the sweep below is asserting on a fixture \
+             that cannot kill"
+        );
+        drop(fauna);
+
+        let rows = crew_curve(&mut world, &crew_ask(STEPPER_CREW, STRIP_IT_BARE));
+        for row in &rows {
+            assert!(
+                row.animals_likely > 0.0,
+                "a crew of {} clears the quarry's defence, so it takes a NON-ZERO number of aurochs \
+                 a turn — the whole curve read `0` across this plateau, at every equipment level",
+                row.workers
+            );
+        }
+        for pair in rows.windows(2) {
+            assert!(
+                pair[1].animals_likely >= pair[0].animals_likely,
+                "adding a hunter must never lower the take ({} at {} vs {} at {})",
+                pair[1].animals_likely,
+                pair[1].workers,
+                pair[0].animals_likely,
+                pair[0].workers
+            );
+        }
+    }
+
+    /// **THE CURVE AND `realized` ARE THE SAME TAKE, AND THE GAP BETWEEN THEM IS STATED.**
+    ///
+    /// The bug was two shipped surfaces disagreeing on one screen: the work row published a
+    /// `SourceYield::realized` of ~`0.84` food while the compose panel, quoting the curve, said
+    /// `0.00`. They are computed by genuinely different routes — the curve is one turn's expected
+    /// rate at the herd's current stock, `project_realized_hunt` is a forward average over
+    /// `forecast_horizon_turns` turns of regrow → take — so they cannot be asserted equal, and this
+    /// pins the relationship instead.
+    ///
+    /// **`realized` runs at or below the curve**, by one unfinished body spread over the horizon
+    /// plus [`REALIZED_DRAWDOWN_SLACK`]: it sums the *quantised* kills, so up to one body's damage is
+    /// still on the wound ledger when the horizon ends and is never counted. The fixture is
+    /// deliberately a fat herd at a near-stable stock, so that residual body is the whole of the
+    /// difference — as shipped, `realized` trails by 1.8% against a 2.2% ledger bound.
+    #[test]
+    fn the_curve_and_realized_agree_on_a_stable_stock() {
+        /// The crew the defect was reported at, and the one whose two surfaces disagreed.
+        const REPORTED_CREW: u32 = 8;
+
+        let mut world = world_hunting(AUROCHS, AUROCHS_BODY);
+        let horizon = world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .hunt
+            .forecast_horizon_turns;
+        let rows = crew_curve(&mut world, &crew_ask(REPORTED_CREW, STRIP_IT_BARE));
+        let published = rows[REPORTED_CREW as usize - 1].animals_likely;
+
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let herd = herd_of_biomass(AUROCHS, AUROCHS_BODY, FAT_HERD);
+        let party = fixture_party(&world, AUROCHS_BODY, REPORTED_CREW);
+        let realized = crate::fauna::project_realized_hunt(
+            &herd,
+            &fauna,
+            RESIDENT_CARRY_PER_WORKER,
+            &party,
+            NEUTRAL_OUTPUT,
+            REPORTED_CREW,
+            STRIP_IT_BARE,
+            horizon,
+        );
+        // The curve is in animals; `realized` is in food. One conversion, the species' own
+        // (`HuntYield::apply`), so the comparison is not two different readings of the roster.
+        let curve_food = crate::fauna::herd_hunt_yield(&herd, &fauna)
+            .apply(published * AUROCHS_BODY, NEUTRAL_OUTPUT)
+            .provisions;
+
+        // **LIVENESS FIRST** — two zeroes would satisfy every bound below, and two zeroes is exactly
+        // what the defect published on one of the two sides.
+        assert!(
+            curve_food > 0.0 && realized.provisions > 0.0,
+            "both surfaces must quote a real take ({curve_food} food from the curve, {} from \
+             `realized`), or this test cannot see the disagreement it exists for",
+            realized.provisions
+        );
+        assert!(
+            realized.provisions <= curve_food + LEDGER_AVERAGE_EPSILON,
+            "`realized` ({}) must not exceed the curve ({curve_food}): it sums the quantised kills \
+             over a stock the crew is drawing down, so it can only lag",
+            realized.provisions
+        );
+        let shortfall = (curve_food - realized.provisions) / curve_food;
+        // **The bound is DERIVED, not tuned.** `project_realized_hunt` sums whole animals, so at
+        // most one body's worth of damage is still banked on the quarry when the window closes and
+        // is never counted — `1 / (rate × horizon)` of the total. Lengthening the horizon or arming
+        // the crew tightens this on its own, which is what keeps it from becoming a number somebody
+        // nudges whenever a retune moves the roster.
+        let unfinished_body = 1.0 / (published * horizon as f32);
+        assert!(
+            shortfall <= unfinished_body + REALIZED_DRAWDOWN_SLACK,
+            "`realized` ({}) trails the curve ({curve_food}) by {:.1}% — more than the one \
+             unfinished body a {horizon}-turn window can leave on the ledger ({:.1}%) plus the \
+             fixture's own drawdown, so the two have stopped being the same take",
+            realized.provisions,
+            shortfall * 100.0,
+            unfinished_body * 100.0
+        );
+    }
+
+    /// **What the herd itself moves under the crew across a `realized` window**, on top of the
+    /// unfinished body the horizon leaves on the ledger.
+    ///
+    /// The fixture is deliberately a fat herd — the run takes a few percent of the standing stock
+    /// and logistic regrowth returns most of it — so this is a small allowance rather than the term
+    /// that dominates. On a herd the crew genuinely strips, the gap *is* the drawdown and no
+    /// tolerance would make the two numbers agree; that is why [`answer_hunt_crew_take`]'s doc states
+    /// them as two quantities rather than one.
+    const REALIZED_DRAWDOWN_SLACK: f32 = 0.01;
+
+    /// A band with no productivity bonus — the identity on `HuntYield::apply`, so the comparison
+    /// above is about the take rather than about a multiplier.
+    const NEUTRAL_OUTPUT: f32 = 1.0;
+
+    /// **A GENUINE ZERO SURVIVES.** Bare hands are `attack 1` and a Wild Aurochs is `defense 6`, so
+    /// `strike_damage` is *exactly* `0` — no head count and no horizon accumulates that into a kill
+    /// (`combat::resolve_fight`'s gate, and `DamageLedger`'s "banking zero forever is still zero").
+    ///
+    /// The rate must report it as `0`, not as a small number. This is the assertion that stops the
+    /// fix from becoming "never publish zero".
+    #[test]
+    fn a_crew_that_cannot_hurt_the_quarry_still_reads_zero() {
+        let mut world = world_hunting_bare_handed(AUROCHS, AUROCHS_BODY);
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let quarry = fauna.quarry_fight_for(AUROCHS);
+        // **THE PRECONDITION**: the fixture band really is holding nothing that clears the gate at
+        // any crew on the sweep. Without it a stocked band would pass this by taking zero for some
+        // *other* reason.
+        let bare = BandEquipment::default();
+        for workers in 1..=SWEEP_CREW {
+            let party = fixture_party_with_wear(&world, &bare, AUROCHS_BODY, workers);
+            assert!(
+                party.crews.iter().all(|crew| crate::combat::strike_damage(
+                    crew.hunter.attack,
+                    quarry.profile.defense
+                ) <= 0.0),
+                "a crew of {workers} from an unstocked band must land NOTHING on a `defense {}` \
+                 aurochs, or this fixture is not the incapable one",
+                quarry.profile.defense
+            );
+        }
+        drop(fauna);
+
+        let rows = crew_curve(&mut world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+        for row in &rows {
+            assert_eq!(
+                (row.animals_low, row.animals_likely, row.animals_high),
+                (0.0, 0.0, 0.0),
+                "a crew of {} that cannot clear the quarry's defence takes EXACTLY nothing — a rate \
+                 must not smear that into a small number",
+                row.workers
+            );
+        }
     }
 
     /// The curve refuses on the same tokens the two older verbs do — it resolves the band, the herd

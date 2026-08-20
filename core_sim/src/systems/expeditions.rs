@@ -1464,6 +1464,7 @@ fn expedition_take_biomass(
             take: AnimalTake::default(),
             fight: fauna::HuntFight {
                 brought_down: 0.0,
+                expected_brought_down: 0.0,
                 casualties: fauna::FightCasualties::default(),
                 fought: false,
                 wounds: quarry.wounds,

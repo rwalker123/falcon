@@ -1464,6 +1464,34 @@ const HUNT_WINDOW_MAX_TURNS := 12
 # 0.65→"0.65"). `String.num` already trims (unlike the padded food-rate formatter).
 const HUNT_ANIMAL_RATE_DECIMALS := 2
 
+# **THE SMALLEST RATE TWO DECIMALS CAN STATE, AND THE FACE FOR EVERYTHING UNDER IT.** A positive take
+# rounded to `0` is the one thing this readout may never print: a party that cannot finish a body this
+# turn still finishes one eventually — the wound ledger carries the damage between turns — so `≈0`
+# says *"hunting this is pointless"* about a crew that is genuinely feeding the band. `<0.01` is the
+# honest face; the cadence clause beside it then says how long the wait actually is.
+const HUNT_ANIMAL_RATE_MIN_SHOWN := 0.01
+const HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT := "<%s"
+
+# ---- A FRACTIONAL ANIMAL IS THE NORMAL CASE, SO THE LINE SAYS WHAT IT MEANS --------------------
+# **THE WHOLE-ANIMAL QUANTUM IS A TIMING EFFECT, NOT A CEILING.** A Wild Aurochs (`durability 150`) is
+# engaged one animal at a time by every crew from one hunter to eleven, and the blow such a crew lands
+# is capped by the body in front of it — so `floor(damage / durability)` is `0` for all of them while
+# the expected rate is `0.75` a turn. The sim publishes the rate and carries the remainder on its wound
+# ledger; the panel's job is to make the WAIT legible rather than to round it to nothing.
+#
+# **A DECIMAL ALONE DOES NOT DO THAT.** `≈0.75 Wild Aurochs/turn` is exact and still reads as "not
+# quite one", which a player converts to "nothing happens" — the very reading the `≈0` bug produced.
+# So a take under one animal a turn states its CADENCE too, in the unit the player waits in. Above one
+# a turn nothing is appended: the decimal is self-explanatory there and the line does not grow for the
+# ordinary case.
+const HUNT_TAKE_CADENCE_THRESHOLD := 1.0
+const HUNT_TAKE_CADENCE_FORMAT := " · about one every %s turns"
+
+# The cadence's own precision — ONE decimal, trimmed like the rate beside it (1.34→"1.3", 2.00→"2").
+# Two would assert a precision the quantile band underneath it does not have; zero would round a
+# 1.3-turn wait to "every 1 turns", which is the same lie as `≈0` wearing different clothes.
+const HUNT_CADENCE_DECIMALS := 1
+
 # ---- THE PRE-COMMIT TAKE ESTIMATE (`ForecastQuery.KIND_HUNT_CREW_TAKE`) -------------------------
 # **ONE LINE ABOVE THE YIELDS, and it is the only reading on this sheet that carries a BAND.** The
 # panel lets the player move the crew before committing, so the take has to be re-answered as the

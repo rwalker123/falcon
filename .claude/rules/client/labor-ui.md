@@ -462,6 +462,41 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
+> #### ⛔ EVERY CREW QUESTION ON THE HUNT SHEET IS A SEARCH OF THE CURVE
+>
+> Once the sim answers *what does a crew of N take*, every other crew question on that panel is a
+> **lookup in the same table**, not arithmetic beside it: *clear it now* is the smallest crew whose
+> row covers the room, *hold it after* the smallest whose row covers the regrowth at the floor,
+> `max_useful_workers` is where the curve stops rising, and the stock projection walks at the curve's
+> row × body.
+>
+> **It shipped for one slice with only the take line converted, and the panel contradicted itself on
+> screen.** Reported from play: `≈0 WILD AUROCHS/TURN · 0.00 FOOD` sitting two lines under
+> `32 clear it now` and `13 of 37 useful`. The pills were still on `engagement_carry` —
+> `body_mass × animals_stayed(engage_rate, stay)`, with **no attack, defense or durability** — so they
+> were answering *how fast could this stock be drawn down* while never asking **whether the animals can
+> be killed at all**. The client's only fight-awareness was a binary gate (`KitRoster.hunt_gate_closes`,
+> `attack <= defense`), which cannot express `damage ÷ durability` and does not fire at 20 against 6.
+>
+> **THE DOMAIN RULE, because the curve does not cover every crew the panel can name.** It is asked for
+> `1..=the band's pool`, and two readings are deliberately about crews the band *cannot* field
+> (*"free up idle workers to send more"*, and a *clear it now* naming more hands than the band holds).
+> So: **inside the asked range the curve is the only authority; past its last row the closed forms
+> answer.** A curve that **plateaued** below a target has answered — no crew at any size — and the pill
+> declines to render; a curve still **climbing** when the rows ran out has said nothing.
+>
+> **A SUB-ONE RATE IS THE NORMAL CASE AND MUST NOT ROUND TO ZERO.** The whole-animal quantum is a
+> *timing* effect — the wound ledger carries damage between turns, so a party that cannot finish a body
+> this turn still finishes one eventually. The line states the decimal **and**, below one a turn, the
+> wait: `≈0.75 Wild Aurochs/turn · about one every 1.3 turns`. Decimal alone reads as *"not quite one,
+> so nothing happens"* — the same conclusion the `≈0` produced. The clause is suppressed at or above
+> one a turn and sits after the quantile band, so the line reads figure → spread → wait.
+>
+> **The Work board's row `+` gate stays on the closed form** — it prices a worked row with no reply in
+> hand. Both cap twins divide through the one `max_useful_workers` and the curve rides the forecast
+> dict rather than being a parameter only one twin passes, so they cannot come apart by omission — but
+> on a fight-bound quarry the row quotes a smaller ceiling than the sheet until it is given a reply.
+
 > #### ⛔ THE CLIENT NO LONGER DERIVES THE HUNT TAKE — the third arm was a lie by 2.3×
 >
 > `_hunt_delivered_and_waste`'s third bound was `animals_stayed(animals_engaged(workers, rate), stay)`

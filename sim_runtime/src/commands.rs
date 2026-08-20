@@ -623,9 +623,27 @@ pub struct DenialRaidForecastReply {
 
 /// **One crew size's answer on the hunt take curve.**
 ///
-/// `animals_*` is **whole animals THIS CREW brings down per turn** — the take's third bound
-/// (`fauna::quantise_animal_take`'s `brought_down` arm), for this crew, at the queried floor,
-/// against this herd's current wound ledger.
+/// `animals_*` is **animals a turn, as an EXPECTED RATE and deliberately not a whole number** —
+/// `fauna::HuntFight::expected_brought_down` for this crew, at the queried floor, against this
+/// herd's current wound ledger. `0.75` is a real and common answer, and it means *three animals
+/// every four turns*.
+///
+/// # It is a rate because the quantised count is a lie on most of the stepper
+///
+/// The sim's take is floored to whole animals and the unfinished damage is **banked** on the quarry
+/// (`combat::DamageLedger`), so a crew below one body a turn genuinely takes `0` on most turns and
+/// `1` on the rest. Publishing that floored count made a Wild Aurochs read `0` for every crew from
+/// **1 to 11** — a plateau no equipment level moves, because the quarry's `durability 150` is capped
+/// against the `0.8` animals its `engage_rate` lets a crew corner. The panel printed *"≈0
+/// animals/turn"* beside a work row quoting `0.84` food from the very same take.
+///
+/// # It is NOT `SourceYield::realized`, and the two are not interchangeable
+///
+/// This is the **instantaneous** rate at the herd's current stock. `realized` is a *forward average*
+/// over `hunt.forecast_horizon_turns` turns of regrow → take, so it prices a herd that moves under
+/// the crew and it sums the quantised kills — which leaves up to one unfinished body uncounted at
+/// the horizon. `realized` therefore sits at or slightly below this curve, and the gap widens with
+/// drawdown. Show one or the other; never present them as one figure.
 ///
 /// # It is NOT a per-hunter rate, and must never be multiplied by a crew size
 ///
@@ -653,7 +671,8 @@ pub struct DenialRaidForecastReply {
 /// The crew's **carry** throughput (`workers × per-worker yield`) and the whole-animal room
 /// `floor(ceiling / body_mass)`. The sim's own take is `min(affordable, carryable, brought_down)`
 /// (`fauna::quantise_animal_take`), so a client that `min`s this row against those two lands on the
-/// number the turn pays.
+/// **sustained** number the turn pays — still as a rate. Rounding it for display is a presentation
+/// choice; rounding it to `0` and calling that the answer is the defect above.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HuntCrewTakeRow {
     /// Echoed so the row is self-describing — a client asserts the answer is for the crew it asked

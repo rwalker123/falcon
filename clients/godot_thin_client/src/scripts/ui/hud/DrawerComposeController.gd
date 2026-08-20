@@ -448,8 +448,15 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
         # against. Clamped, it could never be the smallest and the line could never name the crew.
         CREW_TAKE_BROUGHT_DOWN: brought_down}
 
-## **THE TAKE ESTIMATE AND ITS BAND, AS ONE LINE** — `≈0.35 Wild Boar/turn`, plus ` · 0.21 – 0.48`
-## only where the band is genuinely a band.
+## **THE TAKE ESTIMATE, ITS BAND AND ITS CADENCE, AS ONE LINE** — `≈0.35 Wild Boar/turn`, plus
+## ` · 0.21 – 0.48` only where the band is genuinely a band, plus ` · about one every 2.9 turns` only
+## where a body takes more than a turn to drop.
+##
+## **THE CADENCE IS NOT CHROME.** On this web a fractional animal is the ORDINARY reading, not an edge
+## case: the whole-animal quantum is a timing effect the sim's wound ledger carries between turns, so
+## a party that cannot finish a body this turn still finishes one eventually. `≈0.75 Wild Aurochs/turn`
+## is exact and a player still reads it as "not quite one, so nothing happens" — the same conclusion
+## the reported `≈0` produced. Stating the wait in turns is what makes the fraction mean something.
 ##
 ## **A DEGENERATE BAND PRINTS NO RANGE**, which is every reading at the shipped tuning: both stochastic
 ## stages (`combat::attacks_landed_at`, `fauna::animals_that_stay`) are binomials that answer their
@@ -463,10 +470,13 @@ func _hunt_take_estimate_line(dw: Dictionary, quarry: String) -> String:
     var high := float(dw[CREW_TAKE_ANIMALS_HIGH])
     var line: String = HudComposeVocab.HUNT_TAKE_ESTIMATE_FORMAT % [
         _format_animal_rate(likely), quarry]
-    if SourceForecast.hunt_take_band_is_degenerate(low, likely, high):
-        return line
-    return line + HudComposeVocab.HUNT_TAKE_BAND_FORMAT % [
-        _format_animal_rate(low), _format_animal_rate(high)]
+    if not SourceForecast.hunt_take_band_is_degenerate(low, likely, high):
+        line += HudComposeVocab.HUNT_TAKE_BAND_FORMAT % [
+            _format_animal_rate(low), _format_animal_rate(high)]
+    # **AND THE CADENCE, WHERE A BODY TAKES MORE THAN A TURN TO DROP.** It rides the LIKELY take and
+    # comes last, after the band, so the line reads figure → spread → wait: the number, how sure it is,
+    # and what it feels like. See `HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT`.
+    return line + _hunt_take_cadence(likely)
 
 ## The crew NOUN this sheet calls these hands, lower-cased for a sentence — the same fork the stepper's
 ## row label makes (`SourceForecast.is_managed_hunt_source`), so the remedy line and the control it
@@ -531,10 +541,35 @@ func _hunt_binding_limit(herd: Dictionary, band: Dictionary, floor: float, dw: D
             _format_animal_rate(room_animals), quarry]}
 
 ## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
-## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
-## strip the tail ourselves (rstrip stops at the first non-matching char, so integer zeros survive).
+## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15").
+##
+## **A POSITIVE RATE NEVER COMES BACK AS `0`** (`HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN`). Two
+## decimals cannot state a take of `0.004`, and printing the rounded figure told a player that a crew
+## which does eventually bring an animal down brings down none — the reported `≈0 WILD AUROCHS/TURN`
+## in its remaining form. Under the floor the face becomes `<0.01`, which is a small number rather
+## than an absence.
 func _format_animal_rate(value: float) -> String:
-    var text := ("%." + str(HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS) + "f") % value
+    if value > 0.0 and value < HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN:
+        return HudComposeVocab.HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT % _format_trimmed(
+            HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN,
+            HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
+    return _format_trimmed(value, HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
+
+## **HOW OFTEN A BODY ACTUALLY DROPS**, for a take under one animal a turn — `1 ÷ rate`, the cadence
+## the wound ledger integrates the fractional take into. `""` at or above one a turn and for a rate of
+## none, which is what keeps the clause off every ordinary line (see
+## `HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT`).
+func _hunt_take_cadence(rate: float) -> String:
+    if rate <= 0.0 or rate >= HudComposeVocab.HUNT_TAKE_CADENCE_THRESHOLD:
+        return ""
+    return HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT % _format_trimmed(1.0 / rate,
+        HudComposeVocab.HUNT_CADENCE_DECIMALS)
+
+## Fixed-decimal, then trailing zeros AND a trailing dot stripped. `String.num` keeps a lone ".0", so
+## format fixed and strip the tail ourselves (rstrip stops at the first non-matching char, so integer
+## zeros survive).
+func _format_trimmed(value: float, decimals: int) -> String:
+    var text := ("%." + str(decimals) + "f") % value
     if "." in text:
         text = text.rstrip("0")
         if text.ends_with("."):
@@ -653,9 +688,15 @@ func _forage_priced_patch(tile_info: Dictionary, band: Dictionary) -> Dictionary
 ## The hunt forecast, priced — and the ONLY way this sheet builds one. Pairing the repricing with the
 ## construction is what makes "some call sites were missed" unrepresentable rather than a thing to
 ## remember.
-func _hunt_forecast(herd: Dictionary, band: Dictionary, floor: float) -> Dictionary:
+## **`per_crew` IS THE SIM'S TAKE CURVE, AND IT IS ONLY EVER PASSED AT THE COMMITTED FLOOR.** The
+## reply is keyed on the floor it was asked at (`_crew_take_view`), so the per-PRESET forecasts
+## `_hunt_floor_takes` builds deliberately pass none — quoting one floor's curve against another
+## floor's room is the kind of borrowed answer this whole channel exists to stop. Their readings are
+## worker-independent ceilings, which the curve does not enter anyway.
+func _hunt_forecast(herd: Dictionary, band: Dictionary, floor: float,
+        per_crew: Array = []) -> Dictionary:
     return SourceForecast.forecast_inputs(_hunt_priced_herd(herd, band),
-        SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, floor)
+        SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, floor, per_crew)
 
 ## …and the plant one.
 func _forage_forecast(tile_info: Dictionary, band: Dictionary, floor: float) -> Dictionary:
@@ -2460,7 +2501,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 _compose.hunt_improvement()))
     if not is_expedition and composed_improvement != _compose.hunt_improvement():
         _compose.set_hunt_improvement(composed_improvement)
-    var forecast := _hunt_forecast(herd, band, _compose.hunt_floor())
+    # **THE CURVE RIDES THE FORECAST, so the stepper's cap is a search of the same rows the take line
+    # reads.** `max_useful_workers` was `take_workers` — reach the peak drop, carry it home — with no
+    # fight in it, which is what printed `13 of 37 useful` on a herd whose 14th hunter was still
+    # buying take.
+    var forecast := _hunt_forecast(herd, band, _compose.hunt_floor(), crew_take)
     # The party stepper caps at the max-useful count on BOTH branches — a raid's haul (`animals_taken`)
     # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
     # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
@@ -2558,7 +2603,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # the `+` refuses, which is the panel arguing with itself.
     chart_model = SourceForecast.floor_chart_model(_hunt_priced_herd(herd, band),
         SourceForecast.SOURCE_KIND_HERD,
-        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(), crew_label.to_lower(), lesson_known)
+        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(), crew_label.to_lower(), lesson_known,
+        crew_take)
     if bool(chart_model.get("known", false)):
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
@@ -2573,10 +2619,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     # raid's numbers are a lookup into a table SAMPLED at five floors, so most of a
                     # drag moves nothing, and the release rebuilds the sheet against the sample the
                     # player landed on. The drag itself still survives, which is the contract.
+                    # **THE DRAG RECOMPOSES AROUND THE COMMITTED FLOOR'S CURVE**, the same
+                    # compromise the take line already makes: the rows are keyed on the floor they
+                    # were asked at, the release rebuilds the sheet, and a fresh answer lands then.
                     _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
                         _hunt_priced_herd(_live_herd(herd_id, herd), band),
                         SourceForecast.SOURCE_KIND_HERD,
-                        HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(), crew_label.to_lower(), lesson_known),
+                        HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(), crew_label.to_lower(), lesson_known,
+                        crew_take),
                         _compose.hunt_count())))
     # The expedition branch spends this slot on the distance refusal — it is that branch's answer to
     # "why is this a party rather than a hunt?" — and the local branch on what the floor means for the

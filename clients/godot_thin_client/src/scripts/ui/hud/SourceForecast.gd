@@ -2494,6 +2494,132 @@ static func hunt_crew_take_row(per_crew: Array, workers: int) -> Dictionary:
 static func hunt_take_band_is_degenerate(low: float, likely: float, high: float) -> bool:
     return is_equal_approx(low, likely) and is_equal_approx(likely, high)
 
+# ---- READING THE CURVE AS A TABLE, WHICH IS THE WHOLE POINT OF IT ------------------------------
+#
+# > #### ⛔ EVERY CREW QUESTION ON A HUNT SHEET IS A SEARCH OF THESE ROWS, NOT ARITHMETIC
+# >
+# > *"How many hunters clear the room this turn"*, *"how many hold it once it is at the floor"*, *"how
+# > many draw it down at all"* and *"where do extra hands stop helping"* are four questions about ONE
+# > function — the take as a function of crew size — and the sim publishes that function. Inverting it
+# > on the client is what produced the 2.3× the take line has already paid for: the closed forms below
+# > this section divide a room by `min(carry, engagement_carry)`, and `engagement_carry` is the
+# > engagement and the retreat with **no attack, no defense and no durability** in it. A panel whose
+# > take came off the curve while its crew pills came off that quotient was two models on one sheet,
+# > and it read `13 of 37 useful` two lines above a take of nothing.
+# >
+# > So the pills are LOOKUPS. `crew_take_reaching` walks the rows for the first crew that meets a
+# > target, `crew_take_plateau` walks them for where they stop rising; neither divides anything.
+#
+# **THE CLOSED FORMS SURVIVE AS THE NO-CURVE PATH**, and they have one caller left: a surface with no
+# reply in hand. The Work board's `+` gate (`source_worker_cap_state`) prices a worked row without
+# ever asking the socket, and the compose sheet itself renders one frame before its answer lands. Both
+# want the honest two-stage bound rather than silence, so every function below takes the curve as an
+# OPTIONAL trailing argument and falls back where there is none.
+
+## A curve row's take is unusable as a number — no reply, or a row the fixture/wire left non-finite.
+## `animals_engaged` answers `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage (a pen, the
+## whole plant web), so an INF row is a real shape on this channel and NOT a curve: "every crew takes
+## infinitely many" plateaus at one worker and would cap a pen's stepper at one hand.
+const CREW_TAKE_NO_ROW := -1.0
+
+## **HOW CLOSE COUNTS AS REACHING A TARGET.** The curve's own top row is `min(fight, stayed)` and
+## `stayed` is itself clamped by the room, so *"the crew that clears the room"* is a search for a row
+## that lands ON its ceiling rather than past it — and the two sides of that comparison have travelled
+## through a `f32` wire widening and a body-mass division. Relative, not absolute, because the targets
+## span a Wild Fowl's hundreds of animals a turn and a mammoth's hundredths.
+const CREW_TAKE_REACH_TOLERANCE := 0.001
+
+## **IS THERE A CURVE TO READ?** — non-empty, and every row a finite take. Asked before any of the
+## searches below, so a caller gets the pre-curve closed form rather than an answer composed out of
+## `INF` or out of a half-decoded reply.
+static func has_crew_take_curve(per_crew: Array) -> bool:
+    if per_crew.is_empty():
+        return false
+    for row_variant in per_crew:
+        if not (row_variant is Dictionary):
+            return false
+        var row: Dictionary = row_variant
+        if not is_finite(float(row.get(CREW_TAKE_LIKELY_KEY, INF))):
+            return false
+    return true
+
+## The whole crew's likely take at `workers`, in ANIMALS per turn, or `CREW_TAKE_NO_ROW` where the
+## curve does not cover it. **Never multiplied by the crew size** — see `hunt_crew_take_row`.
+static func crew_take_likely(per_crew: Array, workers: int) -> float:
+    var row := hunt_crew_take_row(per_crew, workers)
+    return CREW_TAKE_NO_ROW if row.is_empty() else float(row[CREW_TAKE_LIKELY_KEY])
+
+## **THAT TAKE IN BIOMASS** — the unit the projection walks and the crew targets compare in, so the
+## chart's drawdown descends at the rate the sim would actually pay rather than at the rate the crew
+## could reach. `ENGAGEMENT_UNBOUNDED` where there is no row or no body, which is exactly what
+## `engaged_quantum` answers in the same states: the caller's `min()` drops the arm and the plant web
+## and the pens are unmoved.
+static func crew_take_biomass(per_crew: Array, workers: int, body_mass: float) -> float:
+    if body_mass <= 0.0:
+        return ENGAGEMENT_UNBOUNDED
+    var animals := crew_take_likely(per_crew, workers)
+    return ENGAGEMENT_UNBOUNDED if animals <= CREW_TAKE_NO_ROW else animals * body_mass
+
+## **THE SMALLEST CREW IN THE CURVE WHOSE TAKE REACHES `animals` A TURN**, or `NO_CREW_ANSWER` when no
+## crew the question was asked about gets there.
+##
+## **`NO_CREW_ANSWER` IS A REAL AND USEFUL ANSWER HERE, and the pill declines to render on it**
+## (`HudWidgets.build_crew_targets`). The curve is asked for crews 1..the band's own pool, so "no row
+## reaches it" means *this band cannot do it at any size it can field* — and the retreat makes that
+## permanent rather than a matter of pool size, since `stayed` caps at `room × stayFraction` and a
+## quarry that scatters can never be cleared in one turn by anybody. Naming a count nobody can staff
+## would be the §7.6 failure in its purest form: a target the stepper beside it refuses to reach.
+static func crew_take_reaching(per_crew: Array, animals: float) -> int:
+    if not has_crew_take_curve(per_crew) or animals <= 0.0:
+        return NO_CREW_ANSWER
+    var target := animals * (1.0 - CREW_TAKE_REACH_TOLERANCE)
+    for workers in range(1, per_crew.size() + 1):
+        if crew_take_likely(per_crew, workers) >= target:
+            return workers
+    return NO_CREW_ANSWER
+
+## **WHERE THE CURVE STOPS RISING** — the smallest crew no larger crew out-takes, which is what
+## *"max N workers useful here"* has always meant and what the closed form could only guess at.
+##
+## **IT IS THE LAST RISE, NOT THE FIRST FLAT.** The engagement is a staircase — `floor(w × engageRate)`
+## is flat across whole runs and steps at integer boundaries — so a scan that stopped at the first crew
+## whose take equalled its predecessor's would report the bottom of a tread as the top of the stairs.
+## Reported on the shipped Wild Boar, where crews one through six all bring the same single animal to
+## bay and the seventh brings two.
+##
+## `NO_CREW_ANSWER` where there is no curve; a curve that rises to its own last row plateaus AT that
+## row, which is the honest answer to a question asked about a bounded pool — every hand the band has
+## is still buying take.
+static func crew_take_plateau(per_crew: Array) -> int:
+    if not has_crew_take_curve(per_crew):
+        return NO_CREW_ANSWER
+    var plateau := 1
+    var best := crew_take_likely(per_crew, 1)
+    for workers in range(2, per_crew.size() + 1):
+        var take := crew_take_likely(per_crew, workers)
+        if take > best * (1.0 + CREW_TAKE_REACH_TOLERANCE):
+            best = take
+            plateau = workers
+    return plateau
+
+## > #### ⛔ A CURVE STILL RISING AT ITS LAST ROW HAS NOT ANSWERED — IT HAS RUN OUT OF DOMAIN
+##
+## The question is asked for crews `1..the band's own pool` (`DrawerComposeController._crew_take_view`),
+## because that is every crew the stepper beside it can reach. But two readings on this sheet are about
+## crews the band CANNOT field: *"26 of 47 useful — free up idle workers to send more"* names the
+## demand-side ceiling as the thing to work toward, and the *clear it now* pill on a Wild Fowl herd
+## named 47 hands to a band holding 26. Truncating those at the pool does not make them honest, it
+## deletes them.
+##
+## So the rule is a domain rule, and it is the same one `expedition_useful_cap` already runs on the
+## raid branch: **inside the asked range the curve is the only authority; past it, where the panel can
+## neither staff nor promise anything, the closed forms answer.** A curve that PLATEAUED below a target
+## has answered — no crew reaches it, at any size — and the closed form does not get to overrule that.
+## A curve still climbing when the rows ran out has said nothing about the crews past its edge.
+static func crew_take_curve_settled(per_crew: Array) -> bool:
+    var plateau := crew_take_plateau(per_crew)
+    return plateau != NO_CREW_ANSWER and plateau < per_crew.size()
+
 ## ***CLEAR IT NOW*** — the crew that takes everything standing above the floor in ONE turn:
 ## `room ÷ (perWorkerBiomass × dip)`, a closed form in terms already on the wire. Deliberately NOT
 ## rounded to whole animals: this is the number of hands, and a crew that over-carries simply finishes
@@ -2518,11 +2644,23 @@ static func hunt_take_band_is_degenerate(low: float, likely: float, high: float)
 ## `ENGAGEMENT_UNBOUNDED`, so the `min` collapses to the carry and forage and pens are unmoved.
 static func crew_to_clear(room: float, carry: float, reaching: int,
         body_mass: float, engage_rate: float,
-        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> int:
+        stay: float = STAY_FRACTION_NONE_BREAKS_OFF, per_crew: Array = []) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     if room <= 0.0:
         return 0
+    # **WITH A CURVE IN HAND THIS IS A SEARCH, NOT A QUOTIENT** — the first crew whose published take
+    # covers the room. The quotient below it inverts `engagement_carry`, which has no fight in it, so
+    # on a quarry the party can reach but cannot kill it named a crew that clears nothing; the curve
+    # simply never reaches the room there and the pill declines to render (`crew_take_reaching`).
+    if has_crew_take_curve(per_crew) and body_mass > 0.0:
+        var found := crew_take_reaching(per_crew, room / body_mass)
+        if found != NO_CREW_ANSWER:
+            return maxi(found, maxi(reaching, 0))
+        if crew_take_curve_settled(per_crew):
+            # The curve levelled off below the room: nobody clears this herd in a turn, at any size.
+            return NO_CREW_ANSWER
+        # …still rising when the rows ran out — see `crew_take_curve_settled`.
     var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, stay))
     return maxi(maxi(1, ceili(room / per_worker)), maxi(reaching, 0))
 
@@ -2541,12 +2679,20 @@ static func crew_to_clear(room: float, carry: float, reaching: int,
 ## engagement half answers 0 for a pen and for a species with no engagement stage, so the `max`
 ## collapses back to the haul crew and neither web moves.
 static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float,
-        body_mass: float, engage_rate: float, stay: float) -> int:
+        body_mass: float, engage_rate: float, stay: float, per_crew: Array = []) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     var growth := regrowth_at(samples, clamp_floor(floor))
     if growth <= 0.0:
         return 0
+    # **THE CURVE ANSWERS IT DIRECTLY** — the first crew whose take covers what grows back. The
+    # `take_workers` form below is the sim's `max(haul, engage)`, which sizes the crew that REACHES
+    # and CARRIES the regrowth and never asks whether it can kill what it reaches.
+    if has_crew_take_curve(per_crew) and body_mass > 0.0:
+        var found := crew_take_reaching(per_crew, growth / body_mass)
+        if found != NO_CREW_ANSWER or crew_take_curve_settled(per_crew):
+            return found
+        # …still rising when the rows ran out — see `crew_take_curve_settled`.
     if body_mass > 0.0:
         return take_workers(growth, body_mass, carry, engage_rate, stay)
     return maxi(1, ceili(growth / carry))
@@ -2560,14 +2706,16 @@ static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float
 ## Field or a built Pen down, so "the crew that takes what grows back" is not a question its wire
 ## curve answers — its cap is `production / per_worker`, and flooring that on a wild-drawdown number
 ## would staff a source against a projection it does not follow.
-static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float) -> int:
+static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float,
+        per_crew: Array = []) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
         per_worker_biomass(src, prefix),
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
         float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-        float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
+        float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)),
+        per_crew)
     return maxi(crew, 0)
 
 ## The *reaching* crew — `crew_that_reaches` resolved straight from a SOURCE, in the form
@@ -2584,7 +2732,8 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
 ##
 ## A RUNG-3 MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a
 ## Field or a built Pen down, so a drawdown projection says nothing about how many hands it can use.
-static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float) -> int:
+static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float,
+        per_crew: Array = []) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
     var crew := crew_that_reaches(regrowth_samples(src, prefix),
@@ -2593,7 +2742,8 @@ static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: flo
         per_worker_biomass(src, prefix),
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
         float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-        float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
+        float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)),
+        per_crew)
     return maxi(crew, 0)
 
 ## **THE PROJECTION** — the stock's trajectory under this crew at this floor, one turn at a time:
@@ -2659,7 +2809,7 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
 ## answer and the probe spends its budget climbing back to it.
 static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capacity: float,
         floor: float, carry: float, body_mass: float, engage_rate: float,
-        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> int:
+        stay: float = STAY_FRACTION_NONE_BREAKS_OFF, per_crew: Array = []) -> int:
     if not can_price_crew(carry) or capacity <= 0.0:
         return NO_CREW_ANSWER
     var start_fraction := clampf(biomass / capacity, 0.0, 1.0)
@@ -2667,11 +2817,34 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
     if start_fraction <= floor_fraction:
         return 0
     var peak := peak_regrowth_between(samples, floor_fraction, start_fraction)
-    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, stay))
-    var need := maxi(1, floori(maxf(peak, 0.0) / per_worker) + 1)
+    # **THE SEED IS THE CURVE'S OWN ANSWER TO "WHO OUT-TAKES THE REGROWTH"**, where there is a curve:
+    # the smallest crew whose published take covers the largest regrowth on the way down. Seeding off
+    # the fightless quotient instead put the probe BELOW the answer on any quarry the fight binds, and
+    # the probe's eight steps are a horizon check rather than a search — they cannot climb far.
+    var curved := has_crew_take_curve(per_crew) and body_mass > 0.0
+    var need := 0
+    if curved:
+        need = crew_take_reaching(per_crew, maxf(peak, 0.0) / body_mass)
+        if need == NO_CREW_ANSWER and crew_take_curve_settled(per_crew):
+            # The curve levelled off below the regrowth, so no crew out-takes it at any size and none
+            # of them draws the stock down — the verdict's "can't draw it that low" with no remedy.
+            return NO_CREW_ANSWER
+        if need == NO_CREW_ANSWER:
+            # …still rising when the rows ran out — see `crew_take_curve_settled`.
+            curved = false
+    if not curved:
+        var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, stay))
+        need = maxi(1, floori(maxf(peak, 0.0) / per_worker) + 1)
     for _step in range(CREW_PROBE_STEPS):
+        # **THE PROBE MAY NOT STEP OFF THE END OF THE CURVE.** `crew_take_biomass` answers
+        # `ENGAGEMENT_UNBOUNDED` for a crew it has no row for — the honest reading of "the arm says
+        # nothing" everywhere else in this file, and a walk given it would descend at its carry alone
+        # and report that an unaskable crew reaches the floor.
+        if curved and need > per_crew.size():
+            return NO_CREW_ANSWER
         var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry,
-            engaged_quantum(need, body_mass, engage_rate, stay))
+            crew_take_biomass(per_crew, need, body_mass) if curved \
+                else engaged_quantum(need, body_mass, engage_rate, stay))
         if int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
             return need
         need += 1
@@ -3114,8 +3287,14 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## `lesson_known` is the faction's answer to "have we already learned what this source teaches?"
 ## (`rung_lesson_known`), and it is a PARAMETER because this layer is all-`static` and holds no
 ## snapshot: knowledge belongs to the faction, not to the source, so nothing here can look it up.
+## **`per_crew` IS THE SIM'S TAKE CURVE, AND EVERY CREW ANSWER ON THIS MODEL IS A SEARCH OF IT** —
+## the walk's take arm, both pills, the reaching crew and therefore the verdict's *"settles at N%"*
+## and the count it offers as the remedy. Empty on the plant web, on the raid branch and for the one
+## frame before the reply lands, where every one of them falls back to the closed forms. See the
+## curve-reading section above for why leaving them there was the panel being two models at once.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int, crew_noun: String, lesson_known: bool) -> Dictionary:
+        workers: int, crew_noun: String, lesson_known: bool,
+        per_crew: Array = []) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
@@ -3140,17 +3319,23 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # visible on a sheet whose every other figure is an estimate-table lookup quoted at ONE kit: the
     # curve, the settle point and the verdict are composed here, from the herd's own wire terms.
     var stay := float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF))
+    # **THE WALK DESCENDS AT WHAT THE PARTY PUTS ON THE GROUND**, which is the curve's row where there
+    # is one and the fightless engagement quantum where there is not. Both are the take's arm in
+    # biomass, so the picture is the same picture — only its third bound got the fight.
+    var curve_take := crew_take_biomass(per_crew, workers, body_mass) \
+        if has_crew_take_curve(per_crew) else ENGAGEMENT_UNBOUNDED
     var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
-        engaged_quantum(workers, body_mass, engage_rate, stay))
+        curve_take if is_finite(curve_take) \
+            else engaged_quantum(workers, body_mass, engage_rate, stay))
     # **ALL THREE CREW ANSWERS CARRY THE RETREAT.** They ask different questions about different stocks
     # — hold the regrowth, clear the room this turn, draw the stock down at all — and they may disagree
     # on that account, but they may not disagree about how many animals a hand lands. `crew_to_hold`
     # was the last one sized on the RAW reach, on the grounds that it is the sim's `hunt_take_workers`
     # and the stepper cap floors on it; the consequence was a cap BELOW the *clear it now* pill on the
     # same sheet (82 against 108), naming a crew the panel then refused to let the player assign.
-    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, stay)
+    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, stay, per_crew)
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
-        engage_rate, stay)
+        engage_rate, stay, per_crew)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
@@ -3204,7 +3389,7 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
                 BUILD_TURNS_NONE_TO_STATE)) > BUILD_TURNS_NONE_TO_STATE,
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
-            body_mass, engage_rate, stay),
+            body_mass, engage_rate, stay, per_crew),
         "crew_to_hold": hold,
         # `regrows` from the SAME samples the projection walks and `crew_to_hold` divides — so the
         # verdict's promise of an aftermath, the `hold it after` count and the readout's `after`
@@ -3329,7 +3514,12 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
 ##
 ## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the wire keys (the two are
 ## independent — a herd and a raw wire patch share the empty prefix).
-static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor: float) -> Dictionary:
+## **`per_crew` IS THE SIM'S TAKE CURVE** — carried through to the two projection-derived crews and
+## back out on the dict, so `max_useful_workers` reads the same answer the chart's pills were drawn
+## from. Empty everywhere there is no reply to hand (the plant web, the Work board's row gate), where
+## the closed forms answer exactly as they did before the channel existed.
+static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor: float,
+        per_crew: Array = []) -> Dictionary:
     # ---- THE CEILING, PER ACCOUNT ---------------------------------------------------------------
     # A rung-3 MANAGED source (a Field, a built Pen) is never drawn down: it pays its managed
     # production at every floor, so it reads the rung's own payoff fields instead of composing an
@@ -3531,11 +3721,17 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # the same number the chart's second crew target offers — the hands that take exactly what
         # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
         # count. See there for why the cap, not the target, was the wrong number.
-        "hold_crew": hold_crew(src, kind, prefix, floor),
+        "hold_crew": hold_crew(src, kind, prefix, floor, per_crew),
         # **AND THE CREW THAT REACHES THE FLOOR**, the cap's second projection-derived floor. See
         # `reach_crew`: the *clear it now* target is floored on it, and a target the stepper cannot
         # reach is the panel arguing with itself.
-        "reach_crew": reach_crew(src, kind, prefix, floor),
+        "reach_crew": reach_crew(src, kind, prefix, floor, per_crew),
+        # **THE CURVE ITSELF, so the worker cap is a search of the same rows the pills were.** It rides
+        # the forecast rather than reaching `max_useful_workers` as a second argument because the cap
+        # has TWO twins (`source_worker_cap_state` and `DrawerComposeController._forecast_worker_cap`)
+        # and they must keep dividing through one function — a parameter only one of them knew to pass
+        # is how they would come apart.
+        "per_crew": per_crew,
         # **A PRESENCE test, not a rate test** (#426). It used to be `per_worker >= ε`, which conflated
         # "the wire carried no forecast" with "the rate is genuinely zero" — and its own docstring said
         # it meant the former. A zero-conversion crop makes the latter real, so the two came apart and
@@ -4575,6 +4771,12 @@ static func off_axis_useful_workers(forecast: Dictionary) -> int:
 ##   which is the fix: unbounded here let a worthless source absorb the whole idle crew (measured at
 ##   7 workers on a source that can use 1), because both cap twins read unbounded as "no ceiling".
 ## - a real `ceil(ceiling / per_worker)`, on the axis if the axis pays and off it if it does not.
+## The take curve a forecast was composed with, in the shape the searches above want. `[]` — i.e. no
+## curve, i.e. the closed forms — for every forecast built without one.
+static func per_crew_of(forecast: Dictionary) -> Array:
+    var rows: Variant = forecast.get("per_crew", [])
+    return rows if rows is Array else []
+
 static func max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
@@ -4596,6 +4798,21 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     # are denominated in BIOMASS, so they answer for a hay meadow exactly as they do for a wheat one.
     var hold := maxi(maxi(int(forecast.get("hold_crew", 0)), 0),
         maxi(int(forecast.get("reach_crew", 0)), 0))
+    # **WHERE THE SIM'S CURVE STOPS RISING**, bound once for both branches below. It REPLACES the
+    # account quotient rather than joining it in a `max`: the quotient's answer is "the hands that
+    # carry and reach this ceiling" and the curve's is "the hands past which nothing more is taken",
+    # and where they differ the curve is the one that has resolved the fight. `NO_CREW_ANSWER` on
+    # every surface with no reply in hand, which is where the quotients keep their job.
+    var per_crew := per_crew_of(forecast)
+    var plateau := crew_take_plateau(per_crew)
+    if plateau != NO_CREW_ANSWER and not crew_take_curve_settled(per_crew):
+        # **THE CURVE RAN OUT OF ROWS WHILE STILL CLIMBING**, so it has proved that every crew it was
+        # asked about is still buying take and has said nothing about the ones past that. The closed
+        # form answers the tail, exactly as it does with no reply at all — with the curve's own last
+        # row as a FLOOR under it, so the cap can never land below a crew the rows showed to be useful.
+        # `expedition_useful_cap` runs the identical shape on the raid branch.
+        hold = maxi(hold, per_crew.size())
+        plateau = NO_CREW_ANSWER
     if per_worker < FORECAST_MIN_PER_WORKER:
         # **THE AXIS IS SILENT — ASK THE OTHER ACCOUNTS BEFORE CALLING THE SOURCE BARREN.** Reported
         # from play on a wild patch of 56% tobacco + 44% hay grass: it pays no food by construction
@@ -4615,6 +4832,12 @@ static func max_useful_workers(forecast: Dictionary) -> int:
             # all; flooring the barren cap on those targets would staff hands against a take of zero,
             # which is the very parking this constant exists to refuse.
             return MAX_USEFUL_BARREN
+        # **A CURVE BINDS THE OFF-AXIS CAP TOO**, and it has to: every account a quarry pays is a
+        # conversion of the ONE biomass the party puts on the ground, so a wolf's pelt cap and a
+        # deer's food cap are the same crew question asked in two currencies. Below the barren test,
+        # which is a statement about the source rather than about the crew and still wins.
+        if plateau != NO_CREW_ANSWER:
+            return maxi(plateau, hold)
         return maxi(off_axis, hold)
     # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
     # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
@@ -4638,6 +4861,13 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # The retreat is the source's own effective one, `repriced_source` having already folded the
         # kit's `dispersion` into it, and it reaches here through the forecast rather than off the
         # herd so the cap and the two pills cannot resolve one kit's dispersion two ways.
+        # **WHERE THE CURVE STOPS RISING IS WHAT "USEFUL" MEANS**, and the curve is the only thing
+        # that knows. `take_workers` is `max(haul, engage)` — the crew that REACHES the peak drop and
+        # CARRIES it home — and it never asks whether that crew can kill what it reaches, so on a Wild
+        # Aurochs it declared 13 of 37 hunters useful while the 14th, the 20th and the 30th were all
+        # still buying take. `crew_take_plateau` answers the question the note actually poses.
+        if plateau != NO_CREW_ANSWER:
+            return maxi(plateau, hold)
         return maxi(take_workers(ceiling, per_animal, per_worker,
             float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
             float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF))), hold)

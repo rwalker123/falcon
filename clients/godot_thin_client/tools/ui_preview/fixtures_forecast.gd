@@ -32,6 +32,13 @@ const HERD_DENIAL_TABLE_KEY := "denial_estimates"
 ## non-huntable quarry) and renders as the sheet's own "no forecast" branch.
 const NO_ROW := {}
 
+## **WHAT ONE HUNTER LANDS ON A QUARRY PER TURN, BEFORE ITS DURABILITY DIVIDES IT** — the stand-in's
+## whole fight model, since `combat_config.hit_chance` and the resolver's tuning are the sim's and are
+## deliberately unpublished. It is calibrated to the ONE measurement this arc has from play: eight
+## hunters on a Wild Aurochs (`durability 150`) take `0.747` animals a turn, i.e. `0.0934` a hunter,
+## i.e. `14.0` of damage a hunter. A fixture herd that states no `durability` resolves no fight.
+const FIGHT_DAMAGE_PER_HUNTER := 14.0
+
 ## Install the answerer on a HUD's `ForecastQuery`. Idempotent per HUD: a second install replaces the
 ## sender with an equivalent one.
 static func install(hud: Node) -> void:
@@ -55,19 +62,54 @@ static func install(hud: Node) -> void:
 ##
 ## **THE BAND IS DEGENERATE**, matching the shipped tuning (`combat_config.hit_chance = 1.0`), so the
 ## readout renders its bare figure and no range. A chapter wanting the range stages a curve of its own.
-static func crew_take_rows(herd: Dictionary, max_workers: int) -> Array:
+##
+## **AND IT RESOLVES A FIGHT, because a curve with no fight in it cannot plateau anywhere useful.**
+## Both stages above are staircases that flatten the moment the room or the engagement binds — a
+## Woolly Mammoth (`engageRate 0.05`, under a body of room above its floor) reads the SAME take at one
+## hunter and at twenty — so a stand-in stopping there tells every crew search that one hand is all a
+## big-bodied quarry can use. That is the exact reading this arc exists to remove, and a harness
+## asserting it would be blind to the fix. The fight is the only term that rises with the crew on such
+## a quarry, and the sim publishes it: `min(stayed, w × damage ÷ durability)`.
+## **THE ROOM CLAMP IS PART OF THE ANSWER, NOT A REFINEMENT OF IT** (`fauna::resolve_hunt_engagement`
+## — `animals_engaged(...).min(animals_affordable(ceiling, body_mass))`). Without it this stand-in
+## rises forever, so the curve has no plateau and every crew search over it — the worker cap, both
+## pills — reports that the whole band is still buying take off a herd with one animal above its
+## floor. It is the FORWARD room (`escapement_room_next_turn`), the sim regrowing a whole stage before
+## it harvests; a species with no body publishes no such bound and passes straight through.
+static func crew_take_rows(herd: Dictionary, max_workers: int, floor: float) -> Array:
 	var engage_rate := float(herd.get(SourceForecastRef.FORECAST_ENGAGE_RATE_KEY,
 		SourceForecastRef.NO_ENGAGEMENT_STAGE))
 	var stay := float(herd.get(SourceForecastRef.FORECAST_STAY_FRACTION_KEY,
 		SourceForecastRef.STAY_FRACTION_NONE_BREAKS_OFF))
+	var body := float(herd.get(SourceForecastRef.FORECAST_BODY_MASS_KEY, 0.0))
+	var durability := float(herd.get(SourceForecastRef.HERD_DURABILITY_KEY, 0.0))
+	var affordable := SourceForecastRef.ENGAGEMENT_UNBOUNDED
+	if body > 0.0:
+		affordable = SourceForecastRef.escapement_room_next_turn(herd, "", floor) / body
 	var rows: Array = []
 	for workers in range(1, max_workers + 1):
 		# **A SPECIES WITH NO ENGAGEMENT STAGE ANSWERS AN UNBOUNDED REACH** (a pen, and the whole plant
 		# web), which the client used to drop from its `min` outright. A reply row carries a NUMBER, so
 		# the unbounded case travels as one that cannot bind — `INF`, which `animals_engaged` already
 		# answers — and every pen and managed-herd frame stays byte-identical to the pre-query era.
-		var brought_down := SourceForecastRef.animals_stayed(
-			SourceForecastRef.animals_engaged(workers, engage_rate), stay)
+		# **AN UNBOUNDED REACH STAYS UNBOUNDED, and the room clamp may not quietly bound it.** `minf`
+		# against a finite room turns `INF` into a number, which would hand a pen and the plant web a
+		# real curve — and every crew search over it would then answer for a source that has no
+		# engagement stage to answer about.
+		var engaged := SourceForecastRef.animals_engaged(workers, engage_rate)
+		if not is_inf(engaged):
+			engaged = minf(engaged, affordable)
+		var brought_down := SourceForecastRef.animals_stayed(engaged, stay)
+		# **THE FIGHT, ON THE QUARRY THAT STATES ONE.** `durability` is the wire field the sim divides
+		# the party's damage by; a fixture herd that publishes none is one this stand-in has nothing to
+		# resolve a fight for, and its rows are the two stages alone exactly as they were.
+		#
+		# **AN UNBOUNDED REACH IS EXEMPT**, on the same grounds the room clamp is: a pen carrying a
+		# real `durability` (`hunt.gd`'s `_combat_gate_pen`) is not fought, and a finite row there
+		# would hand the whole plant web's shape a curve.
+		if durability > 0.0 and not is_inf(brought_down):
+			brought_down = minf(brought_down,
+				float(workers) * FIGHT_DAMAGE_PER_HUNTER / durability)
 		rows.append({
 			SourceForecastRef.CREW_TAKE_WORKERS_KEY: workers,
 			SourceForecastRef.CREW_TAKE_LOW_KEY: brought_down,
@@ -82,7 +124,7 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 	if kind == ForecastQuery.KIND_HUNT_CREW_TAKE:
 		return {"request_id": request_id, "ok": true, "kind": kind,
 			"per_crew": crew_take_rows(_quarry_for_id(hud, String(ask.get("herd_id", ""))),
-				int(ask.get("max_workers", 0)))}
+				int(ask.get("max_workers", 0)), float(ask.get("floor", 0.0)))}
 	var is_denial := kind == ForecastQuery.KIND_DENIAL_RAID
 	var herd := _herd_for_id(hud, String(ask.get("herd_id", "")),
 		HERD_DENIAL_TABLE_KEY if is_denial else HERD_RAID_TABLE_KEY)
