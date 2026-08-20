@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 319
+const EXPECTED_CHECKPOINTS := 332
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1887,6 +1887,9 @@ func run(harness) -> void:
 
 	# ---- …AND SO IS EVERY CREW ANSWER BESIDE IT, DOWN TO A FRACTION OF AN ANIMAL -----------------
 	await _subone_take_assertions()
+
+	# ---- …AND IT IS RE-ASKED AS THE HARVEST FLOOR MOVES, RATE-LIMITED -----------------------------
+	await _crew_take_follows_the_drag_assertions()
 
 
 # =====================================================================================
@@ -4311,3 +4314,292 @@ func _subone_take_assertions() -> void:
 	h._hud._compose.reset_hunt_source()
 	h._hud._band_labor._player_band = prior_band
 	h._hud._band_labor._player_bands = prior_bands
+
+
+# =====================================================================================
+#  THE CURVE IS RE-ASKED AS THE FLOOR MOVES (`ForecastQuery.KIND_HUNT_CREW_TAKE`)
+# =====================================================================================
+# **PNG-LESS AND DRIVEN, because the defect renders a perfectly ordinary readout** — the take for a
+# floor the player has already dragged past, in the sheet's ordinary type, beside a chart drawn at the
+# floor they are actually on. The curve is FLOOR-DEPENDENT (every row is bounded by the room standing
+# above the escapement floor) and the sheet asked at the COMMITTED floor alone, so the number settled
+# onto the dragged floor a frame after the drag was RELEASED. Nothing about that frame looks wrong.
+#
+# **THE STAND-IN MAKES THE FLOOR THE ONLY THING THAT CAN MOVE THE TAKE.** Its rows are the harness's
+# ordinary two-stage-plus-fight curve scaled by a factor read off the ASKED floor — a stand-in for the
+# sim's own floor-dependence, and deliberately one the client cannot reproduce: the room clamps the
+# ENGAGEMENT, before the retreat and before the fight, so a floor-shifted row cannot be recovered from
+# a row already in hand by scaling it. The herd is staged so that NEITHER client-side arm binds at
+# either floor (asserted below), which is what makes the figure on screen the curve's answer and
+# nothing else — without that precondition every claim here would pass on a sheet whose own room arm
+# was quietly doing the work.
+
+## The quarry. Three quarters of its capacity stands, so the room is ample at every floor these claims
+## touch and the ROOM never becomes the binding arm; the fight does, at
+## `workers × ForecastFx.FIGHT_DAMAGE_PER_HUNTER ÷ durability`.
+const DRAG_CAPACITY := 400.0
+
+const DRAG_BIOMASS := 300.0
+
+const DRAG_BODY_MASS := 6.0
+
+const DRAG_PROVISIONS_PER_BIOMASS := 0.4
+
+## One hunter's food throughput: `4.0 ÷ 0.4 = 10` biomass, well over one body, so the CARRY arm never
+## binds either and the two client-side bounds are both out of the way at once.
+const DRAG_PER_WORKER_YIELD := 4.0
+
+const DRAG_ENGAGE_RATE := 0.17
+
+const DRAG_DURABILITY := 150.0
+
+## The crew every figure below is quoted at.
+const DRAG_HUNTERS := 8
+
+## Where the sheet opens, and the floor the defect would go on quoting for the whole drag.
+const DRAG_COMMITTED_FLOOR := SourceForecast.FLOOR_FOOD_PEAK
+
+## Where the drag goes. Above the peak (so it is a floor a player reaches by pulling the line UP, the
+## direction that shrinks the room) and stated as a whole percent, which is the resolution
+## `HarvestFloorChart` quantises a drag to — a fixture floor finer than the control could emit would be
+## testing a gesture that cannot happen.
+const DRAG_LIVE_FLOOR := 0.62
+
+## **THE FIGHT'S SURVIVAL AS A FUNCTION OF THE FLOOR** — `1 − floor`, a stand-in for the sim's own
+## floor-dependence. The SHAPE is not the claim; what matters is that it is monotone, that it separates
+## the two floors at the resolution the take line renders at, and that the client holds no term it
+## could be reconstructed from. See the block header.
+const DRAG_SURVIVAL_AT_FLOOR_ZERO := 1.0
+
+## A sweep of the plot, as the chart would emit it: a run of DISTINCT quantised floors delivered in one
+## burst with no frame between them. Twelve because the claim is a RATIO — a rate limit that suppresses
+## is visible against a dozen steps and unfalsifiable against two.
+const DRAG_SWEEP_STEPS := 12
+
+const DRAG_SWEEP_FIRST_FLOOR := 0.63
+
+const DRAG_SWEEP_FLOOR_STEP := 0.01
+
+## What that burst is allowed to put on the socket. ONE, and only because the leading edge is allowed
+## to fire if the interval happened to have elapsed before the sweep began: the burst itself runs in
+## microseconds, so no second interval can pass inside it. Restore the defect and this reads twelve.
+const DRAG_SWEEP_ASK_CEILING := 1
+
+## The floor the drag moves to once the rate limit's interval has passed — the other half of the
+## suppression pair, since a limiter that never asks again satisfies the ceiling above on its own.
+const DRAG_REOPEN_FLOOR := 0.55
+
+## …and the one it moves to with the answerer WITHHOLDING, where the sheet must say it is waiting
+## rather than state the figure it still holds for another floor.
+const DRAG_PENDING_FLOOR := 0.58
+
+## Every floor this block's stand-in has been ASKED at, in order — the debounce claim's evidence, and
+## the reason it is a count rather than a "did it eventually ask".
+var _drag_asked_floors: Array = []
+
+## Whether the stand-in answers at all. Flipped for the pending claim: the question reaches the socket
+## and no reply is composed, which is exactly *an ask is outstanding*.
+var _drag_withhold := false
+
+## The fixture, made ONCE and reused. `_show_herd` / `_compose_herd` floorify in place (the regrowth
+## curve, the phase cuts), and the stand-in reads the same terms the sheet does — so a fresh dict per
+## call would answer for an un-floorified twin of the herd on screen.
+var _drag_herd_fixture: Dictionary = {}
+
+func _drag_herd() -> Dictionary:
+	if _drag_herd_fixture.is_empty():
+		_drag_herd_fixture = {
+			"id": "game_aurochs_44", "label": "Wild Aurochs (game_aurochs_44)",
+			"species": "Wild Aurochs",
+			"size_class": "large", "huntable": true, "ecology_phase": "thriving",
+			"x": 66, "y": 10,
+			"husbandry_ceiling": "wild",
+			"biomass": DRAG_BIOMASS,
+			"carrying_capacity": DRAG_CAPACITY,
+			"body_mass": DRAG_BODY_MASS,
+			"food_per_animal": DRAG_BODY_MASS * DRAG_PROVISIONS_PER_BIOMASS,
+			"provisions_per_biomass": DRAG_PROVISIONS_PER_BIOMASS,
+			"per_worker_yield": DRAG_PER_WORKER_YIELD,
+			"engage_rate": DRAG_ENGAGE_RATE,
+			"defense": AUROCHS_DEFENSE,
+			"durability": DRAG_DURABILITY,
+			"tile_info": HerdFx.compact_herd_tile_fixture(),
+		}
+	return _drag_herd_fixture
+
+func _drag_survival(floor_value: float) -> float:
+	return DRAG_SURVIVAL_AT_FLOOR_ZERO - floor_value
+
+## The curve this block answers with, and the one every expectation below is READ OUT OF. One
+## definition serving both is the point: an expectation written against a second copy of the stand-in's
+## arithmetic could only ever agree with itself.
+func _drag_rows(max_workers: int, floor_value: float) -> Array:
+	var survival := _drag_survival(floor_value)
+	var scaled: Array = []
+	for row in ForecastFx.crew_take_rows(_drag_herd(), max_workers, floor_value):
+		var scaled_row: Dictionary = (row as Dictionary).duplicate()
+		for key in [SourceForecast.CREW_TAKE_LOW_KEY, SourceForecast.CREW_TAKE_LIKELY_KEY,
+				SourceForecast.CREW_TAKE_HIGH_KEY]:
+			scaled_row[key] = float(scaled_row[key]) * survival
+		scaled.append(scaled_row)
+	return scaled
+
+## The needle the take line states a rate with — the whole `≈N` clause rather than the bare digits, so
+## a figure that merely APPEARS somewhere on the sheet (a crew pill, the stepper) cannot satisfy it.
+func _drag_take_needle(animals: float) -> String:
+	return HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _animal_face(animals)
+
+func _crew_take_follows_the_drag_assertions() -> void:
+	var prior_band = h._hud._band_labor.player_band()
+	var prior_bands: Array = h._hud._band_labor._player_bands
+	var band := _delivered_oracle_band()
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	var query: ForecastQuery = h._hud.forecast_query()
+	_drag_asked_floors = []
+	_drag_withhold = false
+	query.reset()
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		# Anything that is not the crew take falls through to the harness's ordinary answerer, so this
+		# block cannot silently starve another readout of its reply.
+		if String(ask.get("kind", "")) != ForecastQuery.KIND_HUNT_CREW_TAKE:
+			query.deliver.call_deferred([ForecastFx.answer(h._hud, request_id, ask)])
+			return true
+		_drag_asked_floors.append(float(ask.get("floor", 0.0)))
+		# **`true` EVEN WHEN WITHHOLDING**, deliberately: the question reached the socket, and
+		# answering `false` would be a TRANSPORT failure, which is a different sentence on the sheet
+		# from the one under test.
+		if not _drag_withhold:
+			query.deliver.call_deferred([{"request_id": request_id, "ok": true,
+				"kind": ForecastQuery.KIND_HUNT_CREW_TAKE,
+				"per_crew": _drag_rows(int(ask.get("max_workers", 0)),
+					float(ask.get("floor", 0.0)))}])
+		return true)
+
+	var herd := _drag_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(herd)
+	h._compose_herd(herd, DRAG_HUNTERS, DRAG_COMMITTED_FLOOR)
+	await h._settle()
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var pool: int = h._hud._band_labor.source_crew_pool_hunt(band, String(herd["id"]))
+	var committed_take := SourceForecast.crew_take_likely(
+		_drag_rows(pool, DRAG_COMMITTED_FLOOR), DRAG_HUNTERS)
+	var dragged_take := SourceForecast.crew_take_likely(
+		_drag_rows(pool, DRAG_LIVE_FLOOR), DRAG_HUNTERS)
+
+	# (0) THE PRECONDITION EVERY CLAIM BELOW RESTS ON — the two floors really do produce different
+	#     curve rows, at the resolution the take line renders them at. Without it the whole block
+	#     passes on a herd whose floor does not bind, which is the shape a re-ask test fails silently
+	#     in.
+	h._assert_hud("precondition: the two floors' curve rows read differently (%s at %d%%, %s at %d%%)"
+			% [_animal_face(committed_take), SourceForecast.floor_percent(DRAG_COMMITTED_FLOOR),
+				_animal_face(dragged_take), SourceForecast.floor_percent(DRAG_LIVE_FLOOR)],
+		_animal_face(committed_take) != _animal_face(dragged_take))
+	# …and the sheet composed the crew those two figures are for.
+	h._assert_hud("precondition: the sheet composes %d hunters" % DRAG_HUNTERS,
+		Readout.stepper_value(sheet) == DRAG_HUNTERS)
+	# …and NEITHER client-side arm binds at the dragged floor, so the only thing that can move the
+	#     number on screen is the curve. This is what makes the block blind-proof: with the room arm
+	#     binding, a sheet still quoting the committed floor's rows would print the right answer for
+	#     the wrong reason and every claim below would pass against the defect.
+	var priced: Dictionary = h._hud._drawercompose._hunt_priced_herd(herd, band)
+	var carry := SourceForecast.per_worker_biomass(priced, "")
+	var room_animals := SourceForecast.escapement_room(herd, "", DRAG_LIVE_FLOOR) / DRAG_BODY_MASS
+	h._assert_hud(("precondition: at %d%% neither the room (%.2f animals) nor the carry (%.2f bodies)"
+			+ " binds on a take of %s") % [SourceForecast.floor_percent(DRAG_LIVE_FLOOR),
+			room_animals, float(DRAG_HUNTERS) * carry / DRAG_BODY_MASS,
+			_animal_face(dragged_take)],
+		room_animals > dragged_take and float(DRAG_HUNTERS) * carry >= DRAG_BODY_MASS)
+
+	# (1) THE SHEET OPENS ON THE COMMITTED FLOOR'S ANSWER. The state the drag starts from, asserted so
+	#     that (2) is a MOVE rather than a lucky match.
+	h._assert_hud("the sheet opens stating the committed floor's %s — got %s"
+			% [_animal_face(committed_take), Readout.take_estimate_text(sheet)],
+		Readout.take_estimate_text(sheet).contains(_drag_take_needle(committed_take)))
+
+	# (2) …AND THE DRAG MOVES IT. The defect: only the two client-side arms recomposed under a drag,
+	#     so the take line went on stating the floor the sheet opened at until the drag was released.
+	var chart = Q.find_meta_node(sheet, HudWidgets.FLOOR_CHART_META)
+	h._assert_hud("the sheet draws a floor chart to drag at all", chart != null)
+	var asks_at_open := _drag_asked_floors.size()
+	chart.emit_signal("floor_changed", DRAG_LIVE_FLOOR, false)
+	await h._settle()
+	var dragged_line := Readout.take_estimate_text(sheet)
+	h._assert_hud("a LIVE drag re-states the take at the DRAGGED floor's %s, not the committed %s — got %s"
+			% [_animal_face(dragged_take), _animal_face(committed_take), dragged_line],
+		dragged_line.contains(_drag_take_needle(dragged_take))
+			and not dragged_line.contains(_drag_take_needle(committed_take)))
+	# (3) …WITHOUT REBUILDING THE SHEET. The answer arrives with no snapshot behind it and `answered`
+	#     lands on `refresh_compose_sheet`, which is a rebuild — and a rebuild frees the chart the
+	#     pointer is holding, so the fix would have ended every drag it served on the first reply.
+	h._assert_hud("…and the chart the drag is on is still alive — the answer refilled, it did not rebuild",
+		is_instance_valid(chart))
+	# (4) …and the move is a fresh QUESTION at the new floor, which is the mechanism rather than the
+	#     symptom: `ForecastQuery.key_of` carries the floor, so a moved floor must show up as an ask.
+	h._assert_hud("the drag asked the curve at %d%% — asked %s"
+			% [SourceForecast.floor_percent(DRAG_LIVE_FLOOR),
+				str(_drag_asked_floors.slice(asks_at_open))],
+		_drag_asked_floors.size() - asks_at_open == 1
+			and is_equal_approx(float(_drag_asked_floors[-1]), DRAG_LIVE_FLOOR))
+
+	# (5) A DRAG IS NOT ONE ASK PER EMITTED STEP. Each ask is a socket round trip and a slider emits on
+	#     every pixel of motion, so flooding the command socket would be a worse defect than the
+	#     staleness this closes. Asserted as a COUNT against a burst of distinct floors: "an ask
+	#     eventually happens" is satisfied by a rate limit that does not limit.
+	var asks_before_sweep := _drag_asked_floors.size()
+	for step in range(DRAG_SWEEP_STEPS):
+		chart.emit_signal("floor_changed",
+			DRAG_SWEEP_FIRST_FLOOR + float(step) * DRAG_SWEEP_FLOOR_STEP, false)
+	var sweep_asks := _drag_asked_floors.size() - asks_before_sweep
+	h._assert_hud("a %d-step sweep may put at most %d question(s) on the socket — it put %d"
+			% [DRAG_SWEEP_STEPS, DRAG_SWEEP_ASK_CEILING, sweep_asks],
+		sweep_asks <= DRAG_SWEEP_ASK_CEILING)
+	# (6) …AND THE LIMIT REOPENS. The other half of the pair: a limiter that simply stopped asking
+	#     satisfies (5) on its own and would leave the drag stale again, one interval in.
+	await _drag_wait_out_the_interval()
+	var asks_before_reopen := _drag_asked_floors.size()
+	chart.emit_signal("floor_changed", DRAG_REOPEN_FLOOR, false)
+	h._assert_hud("…and once the interval has passed the next motion asks again (at %d%%)"
+			% SourceForecast.floor_percent(DRAG_REOPEN_FLOOR),
+		_drag_asked_floors.size() - asks_before_reopen == 1
+			and is_equal_approx(float(_drag_asked_floors[-1]), DRAG_REOPEN_FLOOR))
+
+	# (7) WHILE AN ASK IS OUTSTANDING THE SHEET SAYS SO. The rule this arc keeps: an unanswered query
+	#     renders as PENDING rather than falling back to a smoothed client derivation — and, now that a
+	#     drag re-asks, rather than to the answer it still holds for a floor the player has left. The
+	#     stand-in stops answering, which is the state the claim is about.
+	_drag_withhold = true
+	await _drag_wait_out_the_interval()
+	var asks_before_pending := _drag_asked_floors.size()
+	chart.emit_signal("floor_changed", DRAG_PENDING_FLOOR, false)
+	await h._settle()
+	h._assert_hud("the drag asked the curve at %d%% and nothing answered"
+			% SourceForecast.floor_percent(DRAG_PENDING_FLOOR),
+		_drag_asked_floors.size() - asks_before_pending == 1)
+	h._assert_hud("…so the sheet states NO take at all — got \"%s\""
+			% Readout.take_estimate_text(sheet),
+		Readout.take_estimate_text(sheet) == ""
+			and not Readout.yields_text(sheet).contains(_drag_take_needle(dragged_take)))
+	h._assert_hud("…and says which it is waiting on rather than leaving the slot blank",
+		Readout.face_lines(sheet).has(HudComposeVocab.HUNT_TAKE_PENDING))
+
+	# Release the drag and put the seam, the composition and the band back the way every other block
+	# runs on. The release is a real commit, so the sheet ends this block rebuilt rather than refilled.
+	_drag_withhold = false
+	chart.emit_signal("floor_changed", DRAG_COMMITTED_FLOOR, true)
+	await h._settle()
+	query.reset()
+	ForecastFx.install(h._hud)
+	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_band = prior_band
+	h._hud._band_labor._player_bands = prior_bands
+
+## Let the rate limit's window close, in FRAMES rather than in a sleep the harness has no primitive
+## for. Each settle is at least one frame, so this is a handful of them; the loop reads the same clock
+## the limiter does, so the two cannot drift apart when the constant moves.
+func _drag_wait_out_the_interval() -> void:
+	var until := Time.get_ticks_msec() + HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC
+	while Time.get_ticks_msec() < until:
+		await h._settle()

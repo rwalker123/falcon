@@ -149,6 +149,27 @@ func ask(kind: String, subject: String, key: String, params: Dictionary) -> void
 ## saying so would flicker harder than the numbers it apologises for. Past the threshold it is not
 ## returned at all — see the const.
 func view(subject: String, key: String) -> Dictionary:
+	return _view(subject, key, true)
+
+## **THE SAME READ WITH THE STALE ARM CLOSED** — for a control whose MOTION is the question.
+##
+## The stale window is a bargain struck for the STEPPER: a `+` press moves the crew by one, the
+## previous crew's row is within a hand of the new one, and showing it for a frame beats blanking the
+## readout on every press. **A HARVEST-FLOOR DRAG is not that gesture.** The floor bounds the room the
+## whole curve is computed against, so the rows asked at the floor the drag STARTED from are not "one
+## tick behind" — they are the answer to a question the player has already left.
+##
+## And a drag RE-ASKS as it moves, which is what makes the stale arm actively wrong here rather than
+## merely generous: every ask re-stamps `asked_at`, so read through `view` the window would renew for
+## the whole length of the drag and the sheet would state the starting floor's take, confidently, until
+## the player let go. That is the defect the drag-time re-ask exists to close, wearing the fix's face.
+##
+## So a dragging sheet reads HERE: an answer stands only for the key it was actually asked at, and
+## anything else is `STATE_PENDING` — the take line then says it is waiting, which is honest.
+func view_exact(subject: String, key: String) -> Dictionary:
+	return _view(subject, key, false)
+
+func _view(subject: String, key: String, accept_stale: bool) -> Dictionary:
 	var entry: Dictionary = _subjects.get(subject, {})
 	if entry.is_empty():
 		return {"state": STATE_PENDING, "answer": {}, "error": ""}
@@ -157,7 +178,7 @@ func view(subject: String, key: String) -> Dictionary:
 	if String(entry.get("error_key", "")) == key:
 		return {"state": STATE_FAILED, "answer": {}, "error": String(entry.get("error", ""))}
 	var answer: Dictionary = entry.get("answer", {})
-	if not answer.is_empty() and String(entry.get("asked_key", "")) == key \
+	if accept_stale and not answer.is_empty() and String(entry.get("asked_key", "")) == key \
 			and Time.get_ticks_msec() - int(entry.get("asked_at", 0)) < STALE_AFTER_MSEC:
 		return {"state": STATE_READY, "answer": answer, "error": ""}
 	return {"state": STATE_PENDING, "answer": {}, "error": ""}

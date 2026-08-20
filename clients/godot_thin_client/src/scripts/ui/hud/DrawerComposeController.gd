@@ -126,6 +126,42 @@ var _herd_drawer_shape: Array = []
 ## being priced from the herd's own per-biomass vector and the band's ceilings.
 var _forecast_query: ForecastQuery = null
 
+# ---- WHAT A LIVE FLOOR DRAG HOLDS (see `_refresh_floor_live` and `_drag_crew_take`) --------------
+#
+# **A DRAG IS THE ONE GESTURE ON THIS PANEL THAT OUTLIVES THE RENDER THAT STARTED IT.** Every other
+# control answers a click by rebuilding the sheet; a drag may not, because the rebuild frees the chart
+# the pointer is holding. So the three things a drag changes — which floor is composed, which curve
+# answers for it, and whether that answer has landed — cannot live in the builder's locals the way the
+# rest of the composition does. They live here, for exactly as long as the gesture does.
+
+## **THE CURVE THE HUNT SHEET'S LIVE READINGS COMPOSE AGAINST** (`ForecastQuery.KIND_HUNT_CREW_TAKE`).
+## It is the committed floor's rows from the moment the sheet is built, and the DRAGGED floor's rows
+## from the moment one is answered — which is the whole of the fix: the take line follows the floor
+## being dragged rather than the floor the sheet opened at. Empty while an ask is in flight, which is
+## what makes `_hunt_yield_model` state no take at all rather than a number for a floor already left.
+var _hunt_live_crew_take: Array = []
+
+## …and the seam's own verdict on that same key, so the sheet can say WHICH of waiting and refused it
+## is in. Read by the live take-pending host; never derived from `_hunt_live_crew_take` being empty,
+## since a failure and a round trip still in flight are different sentences.
+var _hunt_live_crew_view: Dictionary = {}
+
+## **WHEN THE DRAG LAST PUT THE CURVE QUESTION ON THE SOCKET**, and the key it put — the rate limit's
+## two terms (`HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC`). The key is held beside the
+## clock so that a motion landing back on a floor already asked costs nothing AND does not restart the
+## interval: the seam would drop that ask as a duplicate, so charging the budget for it would delay
+## the next floor that is genuinely new.
+var _crew_take_drag_asked_at_msec: int = 0
+var _crew_take_drag_asked_key: String = ""
+
+## **THE REFILL A LIVE FLOOR CHANGE RUNS, AND THE FLAG THAT SAYS ONE IS RUNNING.** The builder owns
+## the live-host registry and the closures that fill it, so the refill is published here as a callable
+## rather than reachable as a method; `refresh_compose_sheet` calls it INSTEAD of rebuilding while a
+## drag is live, which is what lets a forecast answer land on a sheet the player is still holding.
+## Empty between drags, and re-set by every rebuild — the nodes the closure names are that rebuild's.
+var _floor_drag_refill: Callable = Callable()
+var _floor_drag_live: bool = false
+
 func set_forecast_query(query: ForecastQuery) -> void:
     _forecast_query = query
 
@@ -2353,6 +2389,8 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
 func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
+    # A rebuild frees the chart, so whatever drag was on it is over — see `_end_floor_drag`.
+    _end_floor_drag()
     for child in target.get_children():
         child.queue_free()
     if not _herd_compose_available(herd):
@@ -2460,13 +2498,24 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     #
     # **ONE ASK COVERS THE WHOLE STEPPER**, which is why the reply is a CURVE: it is keyed on the
     # band's pool rather than on the composed crew, so a `+` press reads a row out of an answer the
-    # seam already holds instead of putting a fresh question on the socket. It is asked at the
-    # COMMITTED floor — a live drag recomposes the two client-side arms around these rows and settles
-    # onto a fresh answer when the drag lands, the same compromise the expedition branch makes.
+    # seam already holds instead of putting a fresh question on the socket.
+    #
+    # **THE FLOOR IS THE OTHER HALF OF THAT KEY, AND IT IS NOT COVERED BY ONE ASK.** The curve is
+    # floor-dependent — every row is bounded by the room standing above the escapement floor — so this
+    # ask answers for the COMMITTED floor and no other. A drag therefore re-asks as it moves
+    # (`_drag_crew_take`, rate-limited); what is composed here is the sheet's opening state and the
+    # state it returns to on release.
     var crew_take_view := {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
     if not is_expedition:
         crew_take_view = _crew_take_view(band, herd_id, kit_id, _compose.hunt_floor(), assignable)
     var crew_take: Array = (crew_take_view["answer"] as Dictionary).get("per_crew", [])
+    # **THE LIVE PAIR STARTS WHERE THE REBUILD LEFT IT.** A rebuild ends whatever drag preceded it, so
+    # the committed floor's answer is the live answer until a drag replaces it; every live host reads
+    # these two rather than the locals above, which is what lets one refill serve both the build and
+    # the drag. Set on BOTH branches: an expedition composes no curve, and leaving the previous local
+    # sheet's rows standing here would arm the next drag with another herd's answer.
+    _hunt_live_crew_take = crew_take
+    _hunt_live_crew_view = crew_take_view
     # **THE HARVEST ROW IS THE SAME CONTROL ON BOTH BRANCHES** — three floor presets plus the slider
     # between them, since a floor is a number and there is no per-branch option list left to differ
     # about. Corral being local-only is still true: it is an IMPROVEMENT, and the improvement control
@@ -2606,28 +2655,43 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(), crew_label.to_lower(), lesson_known,
         crew_take)
     if bool(chart_model.get("known", false)):
+        # **THE DRAG'S REFILL, PUBLISHED RATHER THAN INLINE.** A forecast answer landing mid-drag has
+        # to reach these hosts too — it is the whole point of asking during the drag — and the seam's
+        # `answered` arrives at `refresh_compose_sheet`, which is a REBUILD and would free the chart
+        # under the pointer. So the refill is handed to the member the rebuild path defers to while a
+        # drag is live, and the chart's own live branch calls the same one.
+        #
+        # **ON THE EXPEDITION BRANCH `live_hosts` IS EMPTY AND THAT IS DELIBERATE**: the raid's numbers
+        # are a lookup into a table SAMPLED at five floors, so most of a drag moves nothing, and the
+        # release rebuilds the sheet against the sample the player landed on. The drag itself still
+        # survives, which is the contract.
+        _floor_drag_refill = func(floor: float) -> void:
+            # **THE CURVE IS RE-ASKED AS THE FLOOR MOVES** — rate-limited, and reading only an answer
+            # asked at THIS floor. Both halves are the fix: without the ask the rows below are the
+            # floor the sheet opened at, and without the exact read a superseded answer would stand in
+            # for them under the seam's stale window for as long as the drag kept renewing it.
+            if not is_expedition:
+                _drag_crew_take(band, herd_id, kit_id, floor, assignable)
+            _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+                _hunt_priced_herd(_live_herd(herd_id, herd), band),
+                SourceForecast.SOURCE_KIND_HERD,
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(), crew_label.to_lower(), lesson_known,
+                _hunt_live_crew_take),
+                _compose.hunt_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
                 _compose.set_hunt_floor(floor)
                 if committed:
+                    # The release ends the gesture BEFORE the rebuild, so nothing downstream of it can
+                    # still take the drag path against nodes this rebuild is about to free.
+                    _floor_drag_live = false
                     _compose.arm_hunt_autofill()
                     _build_herd_assign_controls(_live_herd(herd_id, herd), target)
                 else:
                     # A LIVE drag must not rebuild these controls — the rebuild frees the chart
                     # and the drag dies with it. Refill only the readings that follow the floor.
-                    # **On the EXPEDITION branch `live_hosts` is empty and that is deliberate**: the
-                    # raid's numbers are a lookup into a table SAMPLED at five floors, so most of a
-                    # drag moves nothing, and the release rebuilds the sheet against the sample the
-                    # player landed on. The drag itself still survives, which is the contract.
-                    # **THE DRAG RECOMPOSES AROUND THE COMMITTED FLOOR'S CURVE**, the same
-                    # compromise the take line already makes: the rows are keyed on the floor they
-                    # were asked at, the release rebuilds the sheet, and a fresh answer lands then.
-                    _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                        _hunt_priced_herd(_live_herd(herd_id, herd), band),
-                        SourceForecast.SOURCE_KIND_HERD,
-                        HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(), crew_label.to_lower(), lesson_known,
-                        crew_take),
-                        _compose.hunt_count())))
+                    _floor_drag_live = true
+                    _floor_drag_refill.call(floor)))
     # The expedition branch spends this slot on the distance refusal — it is that branch's answer to
     # "why is this a party rather than a hunt?" — and the local branch on what the floor means for the
     # herd. **ONE hint table serves both webs and both branches now** (`HudFormat.floor_hint`): a
@@ -2688,10 +2752,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
-    # **A STALE ANSWER COUNTS AS READY**, the seam's own rule: within `STALE_AFTER_MSEC` the previous
-    # crew's row stands while the new one flies, because blanking the readout on every stepper tick
-    # reads as a hunt with no forecast at all.
-    var crew_ready := ForecastQuery.STATE_READY == String(crew_take_view["state"])
+    # **A STALE ANSWER COUNTS AS READY ON THIS PATH**, the seam's own rule: within `STALE_AFTER_MSEC`
+    # the previous crew's row stands while the new one flies, because blanking the readout on every
+    # stepper tick reads as a hunt with no forecast at all. **A DRAG DOES NOT READ THIS PATH** — see
+    # `ForecastQuery.view_exact`, where the same indulgence would hide the whole defect being fixed.
     # **THE KIT ROW, directly under the crew stepper and above every forecast** — a kit describes the
     # crew, and it moves the fight (the attack tier) and the haul (the carry tier) alike. Both branches
     # get it: a local hunt sends `assign_labor … kit <id>` exactly as a raid sends
@@ -2887,15 +2951,39 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # the same reason: the numbers are the sim's, so the sheet says it is waiting rather than
         # composing a take out of the two stages it can see. Everything above this line is client
         # arithmetic over wire terms (the chart, the crew targets, the combat gate) and stands.
-        if not crew_ready:
-            target.add_child(HudWidgets.alloc_hint_label(
-                HudComposeVocab.HUNT_TAKE_PENDING \
-                if String(crew_take_view["state"]) == ForecastQuery.STATE_PENDING \
-                else HudComposeVocab.FORECAST_FAILED_FORMAT % String(crew_take_view["error"])))
+        # **AND IT IS IN THE LIVE SET, because the answer it is waiting on is the FLOOR's.** It used
+        # to be resolved once, at build time, from the committed floor's view — which was sound while
+        # a drag asked nothing and is a lie the moment one does: the sheet would drop its numbers for
+        # the dragged floor (correctly) and carry no sentence saying why. The registry's own rule
+        # decides it, as it decided the yields row: anything whose PRESENCE depends on the floor
+        # belongs in it.
+        #
+        # **HIDDEN RATHER THAN ABSENT** when the answer is in hand. A `BoxContainer` skips invisible
+        # children entirely, separation included, so an answered sheet lays out to the pixel it did
+        # before this host existed.
+        var take_state_host := VBoxContainer.new()
+        take_state_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        target.add_child(take_state_host)
+        _register_live(live_hosts, take_state_host, chart_model, _compose.hunt_count(),
+            func(host: Container, _live: Dictionary, _crew: int) -> void:
+                var state := String(_hunt_live_crew_view.get("state", ForecastQuery.STATE_PENDING))
+                host.visible = state != ForecastQuery.STATE_READY
+                if not host.visible:
+                    return
+                host.add_child(HudWidgets.alloc_hint_label(
+                    HudComposeVocab.HUNT_TAKE_PENDING \
+                    if state == ForecastQuery.STATE_PENDING \
+                    else HudComposeVocab.FORECAST_FAILED_FORMAT \
+                        % String(_hunt_live_crew_view.get("error", "")))))
+        # **THE ROWS COME OFF THE LIVE PAIR, NOT OFF THE BUILDER'S LOCAL.** The model is asked at
+        # `_live_floor(live)` on every refill, so binding the committed floor's curve into the closure
+        # would compose one floor's rows against another floor's room for the whole of a drag — the
+        # defect this arc closes, restated in the one place it would be invisible. The two agree
+        # exactly on a sheet nobody is dragging, which is why the substitution is safe.
         _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
             func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
                 return _hunt_yield_model(band, herd, floor_value, crew,
-                    composed_improvement, reaches, crew_take),
+                    composed_improvement, reaches, _hunt_live_crew_take),
             SourceForecast.LABOR_KIND_HUNT,
             _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
                 HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
@@ -3228,6 +3316,8 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer) -> void:
     if target == null:
         return
+    # A rebuild frees the chart, so whatever drag was on it is over — see `_end_floor_drag`.
+    _end_floor_drag()
     for child in target.get_children():
         child.queue_free()
     if not _forage_compose_available(tile_info):
@@ -3422,20 +3512,28 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _compose.forage_floor(), _compose.forage_count(),
         crew_label.to_lower(), lesson_known)
     if bool(chart_model.get("known", false)):
+        # The plant twin of the hunt sheet's published refill, and it exists for the narrower half of
+        # the same reason: this web asks the query channel nothing, but the seam's `answered` fans out
+        # to EVERY open sheet, so a raid reply landing while a forager drags this chart would rebuild
+        # it and end the drag. A drag is never rebuilt on either web.
+        _floor_drag_refill = func(floor: float) -> void:
+            _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+                _forage_priced_patch(_forage_take_source(
+                    _live_tile_info(subject_key, tile_info), take_state), band),
+                SourceForecast.SOURCE_KIND_FORAGE,
+                HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
+                lesson_known),
+                _compose.forage_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
                 _compose.set_forage_floor(floor)
                 if committed:
+                    _floor_drag_live = false
                     _compose.arm_forage_autofill()
                     _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
                 else:
-                    _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                        _forage_priced_patch(_forage_take_source(
-                            _live_tile_info(subject_key, tile_info), take_state), band),
-                        SourceForecast.SOURCE_KIND_FORAGE,
-                        HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
-                        lesson_known),
-                        _compose.forage_count())))
+                    _floor_drag_live = true
+                    _floor_drag_refill.call(floor)))
     # THE CREW, on ONE line with both targets (§7.6) — each clamped to the same cap the `+` obeys, so
     # a target is a shortcut to a count and never a way past the ceiling. The floor's TEACHING LINE
     # used to stand here, between the chart and the stepper; it reads in the readout's aside now,
@@ -3634,7 +3732,17 @@ func _on_compose_sheet_closed() -> void:
     _compose.clear_composing()
     _compose.reset_forage_source()
     _compose.reset_hunt_source()
+    _end_floor_drag()
     refresh_drawer_actions()
+
+## **THE GESTURE IS OVER — and a drag flag that outlives its chart is worse than no flag at all**,
+## because `refresh_compose_sheet` would then refill a set of freed hosts forever and the sheet would
+## stop answering snapshots. So it is cleared at every point a drag can end WITHOUT a release: the
+## sheet closing, and either builder running (the rebuild frees the chart, which is exactly what ends
+## a drag). The release itself clears it inline, before the rebuild it triggers.
+func _end_floor_drag() -> void:
+    _floor_drag_live = false
+    _floor_drag_refill = Callable()
 
 ## The rect the sheet floats beside: the selection card, so the subject list + standing summary it
 ## is editing stay readable. A zero rect (card hidden) makes the sheet hug the viewport margin.
@@ -3808,6 +3916,54 @@ func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: f
         })
     return _forecast_query.view(subject, key)
 
+## **THE SAME QUESTION, PUT WHILE THE FLOOR IS STILL MOVING** — and the reason it has to be put at all
+## is that the curve is FLOOR-DEPENDENT: every row is bounded by the room standing above the
+## escapement floor, so rows asked at the floor the drag started from describe a herd the player has
+## already dialled past. `ForecastQuery.key_of` carries the floor, so a new floor is a new key and
+## therefore a new question; what was missing was anyone asking it before the release.
+##
+## **THE CLIENT MAY NOT PATCH THE GAP ITSELF, and that is why the sheet waits instead.** The room
+## clamps the ENGAGEMENT, before the retreat and before the fight (`fauna::resolve_hunt_engagement`),
+## so a floor-shifted row cannot be recovered from a row in hand by scaling it — recomposing it means
+## re-fighting the fight, which is the whole thing this channel exists to stop the client doing.
+##
+## **RATE-LIMITED, NOT DEBOUNCED** — see `HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC` for
+## why the leading edge is the right one to keep and why the trailing edge needs no timer. The clock
+## is charged only when a question actually goes out: a motion landing back on a floor already asked
+## is one the seam would drop as a duplicate, and spending the budget on it would delay the next floor
+## that is genuinely new.
+##
+## Writes the live pair the drag's hosts read; it never returns anything, because the refill that
+## follows it reads those members and not a value threaded through the closure.
+func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: float,
+        max_workers: int) -> void:
+    if _forecast_query == null:
+        return
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
+    var key := ForecastQuery.key_of(subject, kit_id, max_workers, floor)
+    var now := Time.get_ticks_msec()
+    if key != _crew_take_drag_asked_key \
+            and now - _crew_take_drag_asked_at_msec \
+                >= HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC \
+            and max_workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
+        _crew_take_drag_asked_key = key
+        _crew_take_drag_asked_at_msec = now
+        _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
+            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": band_id,
+            "herd_id": herd_id,
+            "kit_id": kit_id,
+            "floor": floor,
+            "max_workers": max_workers,
+        })
+    # **READ EXACTLY, whether or not this motion asked.** A suppressed motion is still a floor the
+    # sheet has no answer for, and the answer it does hold is the previous floor's — so the take line
+    # says it is waiting rather than quoting a take for a floor the player has left. See
+    # `ForecastQuery.view_exact`.
+    _hunt_live_crew_view = _forecast_query.view_exact(subject, key)
+    _hunt_live_crew_take = (_hunt_live_crew_view["answer"] as Dictionary).get("per_crew", [])
+
 ## **THE OPTIMISTIC DECLARATION'S UNDO, ON THE ONE SURFACE `_after_pending_change()` CANNOT REACH.**
 ## `Hud.drop_pending_assign` is the rollback for a verb the server refused, and the write path it
 ## undoes (`_on_work_row_improvement_requested`) refreshes this sheet explicitly — so the rollback
@@ -3865,8 +4021,24 @@ func withdraw_declaration(kind: String, x: int, y: int, herd_id: String,
 ## > selection: the builders take the subject from `_selection`, so a rebuild there would compose the
 ## > sheet for the wrong herd — or, on an empty selection, for no herd at all. The sheet keeps the
 ## > frame it has, which is the honest answer to an answer it cannot place.
+## > #### ⛔ A LIVE FLOOR DRAG IS REFILLED, NEVER REBUILT — including by a forecast answer
+## >
+## > A rebuild `queue_free`s the chart, and Godot routes motion to the node that took the press, so a
+## > sheet rebuilt mid-drag ends the drag on the next pixel. That was harmless while a drag put no
+## > questions on the socket: nothing could answer during one. **The drag-time re-ask made it
+## > reachable on purpose** — the whole point is that an answer lands WHILE the player is still
+## > holding the chart — and `answered` arrives here.
+## >
+## > So a live drag takes the refill the builder published instead (`_floor_drag_refill`), at the floor
+## > the drag is currently on. Every reading that follows the floor is in the live registry, so the
+## > refill lands the new answer in exactly the hosts a rebuild would have redrawn — minus the chart,
+## > which is the one node that must survive.
 func refresh_compose_sheet(may_close: bool = true) -> void:
     if not is_compose_sheet_open():
+        return
+    if _floor_drag_live and _floor_drag_refill.is_valid():
+        _floor_drag_refill.call(_compose.hunt_floor() \
+            if _compose.kind() == ComposeState.KIND_HERD else _compose.forage_floor())
         return
     match _compose.kind():
         ComposeState.KIND_FORAGE:

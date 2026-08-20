@@ -462,6 +462,36 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
+> #### ⛔ THE CURVE IS FLOOR-DEPENDENT, SO A FLOOR DRAG MUST RE-ASK IT — and the reply must not kill the drag
+>
+> The curve's rows are bounded by the room above the escapement floor, so a sheet holding an answer for
+> the **committed** floor states a stale take for the whole of a drag. It is re-asked during the drag on
+> a **leading-edge rate limit** (`HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC`), not a quiet-window debounce:
+> a quiet window needs a timer this seam has no node to hang off and would answer for a floor the player
+> may already have released, whereas the first motion asks immediately and **the trailing edge is
+> already owned by the release**, which rebuilds and asks at the committed floor.
+>
+> **TWO THINGS MAKE THE OBVIOUS IMPLEMENTATION WRONG, and both are the fix wearing the defect's face.**
+>
+> **① `ForecastQuery.answered` fans out to `refresh_compose_sheet`, which REBUILDS — and a rebuild
+> `queue_free`s the chart the pointer is holding.** Asking during a drag makes that path reachable *on
+> purpose*, so the naive version ends every drag on the first reply it served. A live drag therefore
+> **refills** rather than rebuilds. Consequence, accepted deliberately: a sheet whose subject vanishes
+> mid-drag stays open until the release. A drag is sub-second; killing it is worse.
+> *(The forage sheet got the same guard even though it asks this channel nothing — `answered` fans out
+> to every open sheet, so a raid reply landing under a forager's drag would have ended it. Pre-existing,
+> one line, closed.)*
+>
+> **② The seam's ordinary `view()` cannot be used, because every throttled ask re-stamps `asked_at`** —
+> so the stale-answer window renews for the whole drag and the sheet confidently states the floor the
+> player started from. `view_exact()` closes that arm; while an ask is outstanding the take line shows
+> **pending**, which is the existing rule that an unanswered query renders as waiting rather than
+> falling back to a smoothed derivation.
+>
+> **The client may NOT reconstruct a floor-shifted row locally.** The room clamps the **engagement**,
+> before the retreat — pinned by a sim test — so a local approximation means redoing the fight, which is
+> the whole thing the curve exists to prevent.
+
 > #### ⛔ EVERY CREW QUESTION ON THE HUNT SHEET IS A SEARCH OF THE CURVE
 >
 > Once the sim answers *what does a crew of N take*, every other crew question on that panel is a

@@ -1581,7 +1581,7 @@ fails **thirteen** — every material claim on both quarries, each naming the cr
 quantum pointed at the published `bodyMass` fails **one**, the edible magnitude claim, at
 `0.1365 against 0.2093`.
 
-**A clean run is 349 frames / 1256 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 349 frames / 1278 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 recorded figure before this arc was 346 / 1177, the run MEASURED 347 / 1200 before a line of it was
 touched, and 348 / 1227 was recorded mid-arc — un-recorded drift accumulating every time, which is this
 line's own instruction being earned again.

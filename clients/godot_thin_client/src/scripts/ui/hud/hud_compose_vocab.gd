@@ -1532,6 +1532,30 @@ const HUNT_TAKE_BAND_FORMAT := " · %s – %s"
 ## composed from wire terms and stay.
 const HUNT_TAKE_PENDING := "Costing what this crew brings down…"
 
+## **HOW OFTEN A LIVE FLOOR DRAG MAY PUT THE CURVE QUESTION ON THE SOCKET.**
+##
+## The curve is FLOOR-DEPENDENT — its rows are bounded by the room standing above the escapement
+## floor — so a sheet that asks only at the COMMITTED floor states the take for the floor the player
+## started from for the whole length of a drag. The drag therefore re-asks; `ForecastQuery.key_of`
+## already carries the floor, so a new floor is a new question without anything else changing.
+##
+## **THE SHAPE IS A LEADING-EDGE RATE LIMIT, not a quiet-window debounce, and the release is why.** A
+## quiet window has to fire on a TIMER after the motion stops — a timer this seam has no node to hang
+## off, and one that would answer for a floor the player may already have let go of. A rate limit needs
+## no clock of its own: the first motion asks at once, so the sheet starts converging immediately, and
+## the drag's FINAL floor is guaranteed to be asked whether or not it falls inside a closed window,
+## because releasing the drag rebuilds the sheet and the rebuild asks at the committed floor. The
+## trailing edge is therefore already owned by the commit, and the only thing left to bound is the
+## middle of the gesture.
+##
+## **THE VALUE IS A HUMAN-MOTION FIGURE, not a frame count.** Under it, one ask per emitted step:
+## `HarvestFloorChart` quantises to whole percent, so a fast sweep of the plot puts dozens of distinct
+## questions on the command socket in well under a second. Over it, the number visibly lags the line
+## the player is dragging. Roughly a tenth of a second is the interval at which a readout still reads
+## as "following the drag" while a full-height sweep costs a handful of round trips rather than a
+## hundred.
+const HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC := 120
+
 # ---- WHICH LIMIT IS BINDING, AND ITS REMEDY ----------------------------------------------------
 # **IT REPLACES THE `settles at N%` ADVISORY ON THIS WEB.** That sentence is composed from the
 # projection walk, which carries the engagement and the retreat and NOT the fight — so on the one web
