@@ -473,3 +473,185 @@ fn a_crew_that_cannot_hurt_the_quarry_is_capped_at_nothing() {
         "a party that cannot bring the quarry down has no useful crew size at all"
     );
 }
+
+// =============================================================================================
+// A PEN IS COLLECTED, NOT STALKED — and the row says so from the sim side
+// =============================================================================================
+//
+// `huntUsefulWorkers` is published for **every** `Hunt` target, a corralled herd included, and it
+// used to be resolved from a *stalking* curve for all of them. A pen has no engagement stage at all:
+// `advance_labor_allocation`'s Hunt arm resolves a corralled herd in its own tend branch, which
+// `continue`s before `hunt_take`. So the number described a hunt the sim never runs — and on a
+// quarry whose `defense` bare hands cannot clear it came out `0`, which the Work board reads as
+// *no crew is useful here* and which shut the `+` gate on a pen whose keepers were collecting fine.
+//
+// The client guarded it by gating the injection on its own engagement-stage test. **That is the
+// wrong side of the wire**: the sim was publishing a number that did not apply and the client was
+// deciding when to disbelieve it. `fauna::hunt_crew_take_curve` branches on `is_corralled()` now and
+// answers the pen's own bounds, so the field means one thing on every hunt row.
+
+/// The pen the corralled fixture stands on — the tile the band is homed on, so nothing about
+/// distance changes between the roaming fixture and this one.
+const PEN_TILE: UVec2 = UVec2::new(1, 1);
+
+/// **A BAND CARRYING NOTHING.** The stalking reading this test's precondition rests on is *bare
+/// hands against a `defense` they cannot clear*, so the ledger has to be genuinely empty — and it
+/// has to be **stated**, because an absent one reads as start-stocked at the capture and as empty at
+/// the query (see [`world_hunting`]).
+fn bare() -> BandEquipment {
+    BandEquipment::default()
+}
+
+/// [`world_hunting`], with the herd **corralled** before the snapshot is taken.
+fn world_keeping_a_pen(species: &str, wear: BandEquipment) -> App {
+    let mut app = world_hunting(species, wear);
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == HERD_ID)
+            .expect("the fixture herd is in the registry");
+        assert!(
+            herd.corral_at(PEN_TILE, &ladder),
+            "fixture: {species} must be pennable, or there is no pen to publish a ceiling for"
+        );
+    }
+    recapture_snapshot_in_place(&mut app.world);
+    app
+}
+
+/// **WHAT A STALKING CURVE OVER THIS HERD WOULD HAVE PUBLISHED** — the plateau of
+/// `expected_brought_down` across the asked crews, walked with the same second implementation the
+/// tests above use.
+///
+/// [`take_and_reach`] resolves the fight unconditionally: it does not ask whether the herd is
+/// corralled, which is precisely the reading the field used to carry. So this is the *defect's own
+/// answer*, computed on the very herd under test rather than argued about.
+fn stalking_plateau(app: &App, wear: &BandEquipment) -> u32 {
+    let curve: Vec<(u32, f32)> = (1..=POOL)
+        .map(|workers| (workers, take_and_reach(app, workers, wear).0))
+        .collect();
+    plateau_of(&curve)
+}
+
+/// **THE PEN'S OWN CEILING, walked from the tend branch's three terms** — a second implementation,
+/// held to the same standard as [`plateau_of`]: two copies that agree are evidence, one copy
+/// compared with itself is not.
+///
+/// ```text
+/// production = herd_take_room(herd, floor)        // crew-INDEPENDENT — the stock above the floor
+/// collection = workers × pen carry tier           // husbandry gear, coverage-weighted
+/// handling   = herd_engage_rate(herd) × workers   // the species' rate × the pen's handling gain
+/// ```
+fn pen_plateau(app: &App, wear: &BandEquipment) -> u32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let equipment = EquipmentConfig::builtin();
+    let kit = equipment.default_kit(core_sim::KitJob::Hunt);
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry")
+        .clone();
+    let production = core_sim::herd_take_room(&herd, FLOOR, &fauna);
+    let handling = core_sim::herd_engage_rate(&herd, &fauna);
+    let curve: Vec<(u32, f32)> = (1..=POOL)
+        .map(|workers| {
+            let coverage = equipment.coverage(&kit, workers as f32, wear);
+            let carry = coverage.weighted_rate(|kit| {
+                equipment.pen_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    kit,
+                    wear,
+                )
+            });
+            let killed = core_sim::quantise_animal_take(
+                production,
+                workers as f32 * carry,
+                herd.body_mass,
+                handling * workers as f32,
+                core_sim::EngagementStop::WhenPackFull,
+            )
+            .killed as f32;
+            (workers, killed)
+        })
+        .collect();
+    plateau_of(&curve)
+}
+
+/// **A PENNED ROW PUBLISHES THE PEN'S CEILING, NOT THE STALKING CURVE'S ANSWER.**
+///
+/// Three preconditions, and every one of them is load-bearing rather than decoration:
+///
+/// 1. the fixture herd really **is** corralled — without it this is the roaming test again;
+/// 2. a stalking curve over *this very herd* really would publish [`NO_USEFUL_CREW`] — without it
+///    the two readings could agree and the test would pass with the branch ripped out;
+/// 3. the pen's own ceiling is a real, positive number — without it *"they disagree"* would be
+///    satisfied by a pen that also answers nothing.
+#[test]
+fn a_penned_row_publishes_the_pens_own_ceiling_and_not_the_stalking_curves() {
+    let app = world_keeping_a_pen(AUROCHS, bare());
+
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd is in the registry")
+            .is_corralled(),
+        "PRECONDITION: the fixture herd must be CORRALLED, or this is the roaming test again"
+    );
+
+    let stalking = stalking_plateau(&app, &bare());
+    assert_eq!(
+        stalking, NO_USEFUL_CREW,
+        "PRECONDITION: a stalking curve over this herd must publish NO_USEFUL_CREW — bare hands          against the aurochs' defense bring down nothing at any crew. It answered {stalking}, so          the two readings could agree and this test would pass against the defect"
+    );
+
+    let expected = pen_plateau(&app, &bare());
+    assert!(
+        expected > NO_USEFUL_CREW,
+        "PRECONDITION: the pen must have a real ceiling for the row to be wrong about — the          second implementation says {expected}"
+    );
+
+    let published = published_useful_workers(&app);
+    assert_eq!(
+        published, expected,
+        "a corralled row publishes the crew at which the PEN's collection stops rising — the          stock above the floor, the keepers' husbandry-tier carry and the species' handling rate.          The stalking reading beside it is {stalking}"
+    );
+}
+
+/// **…AND THE SAME NUMBER CROSSES THE SOCKET** — one producer, two transports, on the pen branch as
+/// much as on the stalking one.
+///
+/// The compose sheet asks `fauna::hunt_crew_take_curve` for rows and plateaus them itself, so a pen
+/// branch that reached only the capture would put the sheet and the worked row back into
+/// disagreement — which is the exact failure the one-producer rule exists to prevent.
+#[test]
+fn the_pens_published_cap_is_the_plateau_of_the_curve_the_socket_answers() {
+    let mut app = world_keeping_a_pen(AUROCHS, bare());
+    let published = published_useful_workers(&app);
+    let curve = crew_take_curve(&mut app);
+    assert_eq!(
+        curve.len(),
+        POOL as usize,
+        "the curve must cover the same crew pool the row was priced over: {curve:?}"
+    );
+    assert_eq!(
+        published,
+        plateau_of(&curve),
+        "the cap the snapshot published and the plateau of the curve the socket answered must be \
+         ONE number on a penned quarry too: {curve:?}"
+    );
+    // **A slaughter has no fight, so it has no spread** — a reader drawing a confidence band around
+    // a pen row would be drawing one around a certainty. Asserted on the rows the socket actually
+    // shipped rather than on the producer.
+    let rising = curve.iter().filter(|(_, likely)| *likely > 0.0).count();
+    assert!(
+        rising > 0,
+        "fixture: the pen curve must pay something somewhere, or the row check below is vacuous: \
+         {curve:?}"
+    );
+}

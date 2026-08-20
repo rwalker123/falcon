@@ -601,6 +601,13 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         // channel is drawn at (`combat_config.forecast_range_sigmas`).
         range_sigmas: combat.forecast_range_sigmas,
         floor: ask.floor,
+        // A **corralled** quarry is collected rather than stalked, and its curve's crew term is the
+        // keepers' own throughput off this baseline. A stalked one never reads it.
+        baseline_haul_rate: world
+            .resource::<crate::labor_config::LaborConfigHandle>()
+            .get()
+            .hunt
+            .per_worker_biomass_capacity,
         max_workers: ask.max_workers,
     });
     let per_crew = curve

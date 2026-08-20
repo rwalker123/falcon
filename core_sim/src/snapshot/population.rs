@@ -168,6 +168,7 @@ fn assigned_hunt_useful_crew(
             hunt_injury_damage_per_animal: hunt_crew_levers.combat.hunt_injury_damage_per_animal,
             range_sigmas: hunt_crew_levers.combat.forecast_range_sigmas,
             floor: *floor,
+            baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
             max_workers: crew_pool,
         },
     ))
@@ -338,6 +339,11 @@ pub(crate) struct HuntCrewLevers<'a> {
     /// on the band's own range is not a raid, and `expedition_tuning` differs by half again in the
     /// fight term.
     pub(crate) combat: &'a crate::combat_config::CombatConfig,
+    /// `labor_config.hunt.per_worker_biomass_capacity`, the bare carry rate both animal collection
+    /// tiers are resolved against. **A CORRALLED row needs it and a stalked one does not** — a pen
+    /// is collected rather than fought, so its curve's crew term is the keepers' throughput; see
+    /// `fauna::pen_crew_take_curve`.
+    pub(crate) baseline_haul_rate: f32,
 }
 
 pub(crate) struct PopulationStateInputs<'a> {
@@ -465,9 +471,14 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
     static FAUNA: OnceLock<std::sync::Arc<FaunaConfig>> = OnceLock::new();
     static COMBAT: OnceLock<std::sync::Arc<crate::combat_config::CombatConfig>> = OnceLock::new();
     static LEVERS: OnceLock<HuntCrewLevers<'static>> = OnceLock::new();
+    static LABOR: OnceLock<std::sync::Arc<crate::labor_config::LaborConfig>> = OnceLock::new();
     LEVERS.get_or_init(|| HuntCrewLevers {
         fauna: FAUNA.get_or_init(FaunaConfig::builtin),
         combat: COMBAT.get_or_init(crate::combat_config::CombatConfig::builtin),
+        baseline_haul_rate: LABOR
+            .get_or_init(crate::labor_config::LaborConfig::builtin)
+            .hunt
+            .per_worker_biomass_capacity,
     })
 }
 

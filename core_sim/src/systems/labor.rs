@@ -875,6 +875,52 @@ fn maintenance_shares(
 /// fills the herd's domestication meter, while any *stewardship* policy on a **Thriving** source
 /// earns the faction the knowledge that source's **current rung** teaches (slice 4 — Herding on a
 /// wild herd, Penning on a pastoral one; Cultivation/Seed Selection on the plant side).
+/// **THE FIRST SOURCE THIS PASS HAS ALREADY BANKED KEEPING ON THIS TURN**, or `None` if the slate is
+/// clean — the read behind [`advance_labor_allocation`]'s once-per-turn guard.
+///
+/// **The test is the PAIR — banked supply beside a stamped bill — and each half is load-bearing.**
+/// The two fields are written together, in the same arm, for the same source, and both are wiped a
+/// whole stage earlier by the decay passes (`forage::advance_cultivation`,
+/// `fauna::advance_husbandry`), which walk **every** patch and **every** herd unconditionally, ahead
+/// of any of their own `continue`s. So the pair standing at the *top* of this pass can only have
+/// been written by a previous run of it.
+///
+/// - **The supply alone is not the test.** A harness may seat `upkeep_supplied` by hand to stand a
+///   herd up as *kept last turn* — the state Logistics reads — and that writes no bill. Firing there
+///   would be reporting a fixture's own authorship as a driver fault.
+/// - **The bill alone is not the test either.** It is stamped for every *worked* source, keeping or
+///   none, an honest `Some(0.0)` on a wild patch — so it says only *"a pass has run"*, which is true
+///   of a great many harnesses that stage no keeping and double nothing. Measured: on the strict
+///   reading twenty-four tests trip a guard where no keeping figure moves.
+///
+/// What is left is exactly the misuse: supply this pass banked, about to be added to, against a bill
+/// that is never re-struck.
+fn source_with_keeping_already_banked(
+    forage: &ForageRegistry,
+    herds: &HerdRegistry,
+) -> Option<String> {
+    if let Some(patch) = forage
+        .patches
+        .values()
+        .find(|patch| patch.upkeep_supplied > NO_UPKEEP_DEMAND && patch.upkeep_demanded.is_some())
+    {
+        return Some(format!(
+            "the patch at ({}, {}) already carries {} keeping work",
+            patch.tile.x, patch.tile.y, patch.upkeep_supplied
+        ));
+    }
+    herds
+        .herds
+        .iter()
+        .find(|herd| herd.upkeep_supplied > NO_UPKEEP_DEMAND && herd.upkeep_demanded.is_some())
+        .map(|herd| {
+            format!(
+                "herd {} already carries {} keeping work",
+                herd.id, herd.upkeep_supplied
+            )
+        })
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
@@ -896,6 +942,37 @@ pub fn advance_labor_allocation(
         Option<&mut BandEquipment>,
     )>,
 ) {
+    // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
+    //
+    // The two accounts this pass writes are deliberately asymmetric. `upkeep_supplied` **accumulates**
+    // (`+=`) across the bands working a source, because the upkeep is per-SOURCE and two bands each
+    // put a fraction of it on the ground; `upkeep_demanded` is stamped **first-write-wins** and is
+    // never re-struck, because the bill has to describe the position the shares were split against.
+    // Both are cleared a whole stage earlier, by the Logistics decay passes.
+    //
+    // So a driver that runs this pass **twice with no Logistics pass between** measures a doubled
+    // supply against one turn's bill. Measured over three consecutive passes, one patch's
+    // `upkeep_supplied` ran `3.7037 → 5.5556 → 7.4074` against a demand stamped once at `1.8519` —
+    // it **overstates keeping**, silently, and everything struck from the pair (the shortfall, the
+    // rot, the neglect counter, the published `upkeepShortfall`) is wrong in the flattering
+    // direction.
+    //
+    // **THE PRODUCTION ORDERING IS NOT THE DEFECT AND MUST NOT BE "FIXED".** The accumulation across
+    // bands within one turn is what makes a multi-band holding add up at all. What must stop being
+    // silent is the **misuse** — so this is a debug-only guard on the driver rather than a runtime
+    // refusal: a guard that quietly skipped the second stamp would leave the doubled supply standing
+    // while claiming the pair was sound, which is the same wrong number with the alarm switched off.
+    #[cfg(debug_assertions)]
+    if let Some(source) = source_with_keeping_already_banked(&forage_registry, &registry) {
+        panic!(
+            "advance_labor_allocation ran twice with no Logistics pass between them: {source} \
+             from the previous run. `upkeep_supplied` accumulates across bands while \
+             `upkeep_demanded` is stamped once and never re-struck, so this pass would measure a \
+             doubled supply against one turn's bill and report the keeping as better met than it \
+             is. Run a whole turn — or `forage::advance_cultivation` + `fauna::advance_husbandry` \
+             — between labour passes."
+        );
+    }
     let fauna = configs.fauna.get();
     let labor = configs.labor.get();
     let flora = configs.flora.get();
@@ -5293,6 +5370,19 @@ mod labor_yield_tests {
         the_harness_build_crew(ladder.rung(key), harness_patch_load(world))
     }
 
+    /// **The keepers that exactly cover a PLANT rung's demand** at the harness patch's own
+    /// tender-load — what a fixture puts on the band's `agriculture` role so the meter it is
+    /// building is **held** while it is raised (§4.6a). The animal twin is
+    /// [`the_harness_keeping_crew`]; it is a second function rather than a `load` argument on that
+    /// one because the two loads are two different measures (a flock's head count against the
+    /// ground's own `K`), and a fixture picking the wrong one would staff a plausible number that
+    /// covers nothing.
+    fn the_harness_plant_keeping_crew(world: &World, key: RungKey) -> u32 {
+        let load = harness_patch_load(world);
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        ladder.rung(key).upkeep_crew_needed(load)
+    }
+
     /// **The harness patch's own tender-load** — the measure the plant rungs' maintenance rate
     /// scales by (`forage::patch_tender_loads`), the plant twin of [`harness_herd_load`]. Resolved
     /// off [`SOURCE_BIOME`]'s own `K` rather than assumed to be one, because this harness stands on
@@ -5364,6 +5454,34 @@ mod labor_yield_tests {
         )
         .expect("a staffed build finishes")
     }
+    /// **ONE WHOLE TURN OF THE HARNESS: the Logistics passes, in stage order, then the labour pass.**
+    ///
+    /// `advance_labor_allocation` writes two accounts of the keeping and writes them differently —
+    /// `upkeep_supplied` **accumulates** across the bands working a source, `upkeep_demanded` is
+    /// stamped **first-write-wins** — and both are wiped a whole stage earlier by the two decay
+    /// passes. A harness that runs the labour pass twice without them therefore measures a **doubled
+    /// supply against one turn's bill**, which the pass itself now refuses to do quietly.
+    ///
+    /// **The regrowth belongs here too, and leaving it out stalls a plant build**: the rung-2 gate
+    /// reads the escapement room, so gatherers on a patch nobody regrows pull it to their floor and
+    /// the Cultivate goes ineligible after a single turn.
+    ///
+    /// **Both webs' passes run, whichever web the caller is exercising.** A real turn runs both, and
+    /// each clears its own scratch ahead of any of its own `continue`s — so a plant harness pays
+    /// nothing for the animal pass and vice versa, while a harness that grows a second source later
+    /// cannot silently fall out of the clear.
+    ///
+    /// It is deliberately **not** a `clear_*` helper that wipes the two fields: a second producer of
+    /// *"what a turn does to the keeping"* is free to disagree with the pass that really does it, and
+    /// the decay these passes apply is exactly the cost a harness ought to be paying for leaving a
+    /// keeping unstaffed.
+    fn advance_one_turn(world: &mut World) {
+        world.run_system_once(advance_forage_regrowth);
+        world.run_system_once(crate::forage::advance_cultivation);
+        world.run_system_once(crate::fauna::advance_husbandry);
+        world.run_system_once(advance_labor_allocation);
+    }
+
     /// The biome under the harness's food-module tile — grassland, matching the
     /// `FoodModule::SavannaGrassland` tag it carries. A forage patch's carrying capacity is the
     /// **tile's** (`forage.capacity_by_biome`, the human food web's per-biome table), so the harness
@@ -8476,6 +8594,135 @@ mod labor_yield_tests {
     /// **The animal twin, rung 2.** A herd that finishes taming this turn hands its crew to the harvest
     /// rung with the herd id and the crew intact — so the band starts collecting the pastoral payoff
     /// instead of paying the taming dip on an already-tame herd forever.
+    /// **Whole turns run to put real work on the harness patch's meter before anything is
+    /// measured.** The plant keeping demand **interpolates on the position**, so a patch at
+    /// [`RUNG_UNSTARTED`] honestly owes `0` and supplies `0` — a fixture that measured there would
+    /// be comparing two zeroes and would pass with the guard ripped out. Two turns is enough for the
+    /// demand to be positive and still climbing, which the second arm below needs.
+    const WARM_UP_TURNS: usize = 2;
+
+    /// **A patch part-way into a Cultivate with its `agriculture` role staffed**, its meter carrying
+    /// real work and its keeping fully met — the one fixture shape in which the keeping figure
+    /// actually moves, and therefore the only one in which a second labour pass can double it.
+    ///
+    /// The warm-up is driven as **whole turns**, so the world it hands back is one the sim can
+    /// really be in: supply banked, bill stamped, and the next legal thing to do a Logistics clear.
+    fn a_world_keeping_a_patch_it_is_building() -> World {
+        let (mut world, tile) = world_with_source(CAP);
+        world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+        let crop = source_tile_default_crop(&world, RungKey::PlantTended);
+        let builders = plant_builders(&world, RungKey::PlantTended);
+        let keepers = the_harness_plant_keeping_crew(&world, RungKey::PlantTended);
+        assert!(
+            keepers > NO_CREW_ON_THIS_ACTIVITY,
+            "fixture: the rung must cost something to hold, or nothing is being guarded: {keepers}"
+        );
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: SOURCE,
+                        floor: BUILDER_FLOOR,
+                        species: Some(crop),
+                        take_species: TakeSelection::EVERYTHING,
+                    },
+                    workers: WORKERS,
+                    kit: None,
+                },
+                LaborAssignment {
+                    target: LaborTarget::Agriculture,
+                    workers: keepers,
+                    kit: None,
+                },
+            ],
+        );
+        declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
+        for _ in 0..WARM_UP_TURNS {
+            advance_one_turn(&mut world);
+        }
+        world
+    }
+
+    /// The harness patch's keeping accounts as they stand right now.
+    fn patch_keeping(world: &World) -> (f32, f32) {
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("the fixture seeded a patch");
+        (
+            patch.upkeep_supplied,
+            patch.upkeep_demanded.expect("a worked patch is billed"),
+        )
+    }
+
+    /// ⛔ **RUNNING THE LABOUR PASS TWICE WITH NO LOGISTICS BETWEEN IS LOUD, NOT SILENT.**
+    ///
+    /// `upkeep_supplied` accumulates across the bands working a source — deliberately, because the
+    /// upkeep is per-source and two bands each put a fraction of it on the ground — while
+    /// `upkeep_demanded` is stamped first-write-wins and never re-struck. Both are cleared a whole
+    /// stage earlier. So a driver that skips the clear measures a **doubled supply against one
+    /// turn's bill** and reports the keeping as better met than it is, in the flattering direction,
+    /// with nothing anywhere saying so.
+    ///
+    /// The production ordering is not the defect and is not what this pins. What it pins is that the
+    /// **misuse announces itself** — and its rescue arm below is what stops "always panic" from
+    /// satisfying it.
+    #[test]
+    #[should_panic(expected = "ran twice with no Logistics pass")]
+    fn a_second_labour_pass_with_no_logistics_between_is_refused() {
+        let world = a_world_keeping_a_patch_it_is_building();
+        let (supplied, _) = patch_keeping(&world);
+        assert!(
+            supplied > NO_UPKEEP_DEMAND,
+            "fixture: the warm-up must leave real keeping banked, or a second pass has nothing to \
+             double: {supplied}"
+        );
+        // **No clear between this and the warm-up's last pass** — the one thing a driver may not do.
+        let mut world = world;
+        world.run_system_once(advance_labor_allocation);
+    }
+
+    /// **THE RESCUE ARM — the same two passes, driven as two turns, bank ONE turn's keeping each.**
+    ///
+    /// Without this the guard above is satisfied by a pass that panics unconditionally. It also
+    /// states the quantity the guard exists to protect: a fully-staffed keeping supplies **exactly**
+    /// the bill it was handed, on turn two as on turn one. Under the defect the second turn's supply
+    /// is the sum of both turns' shares against a bill stamped once — comfortably past the bill,
+    /// which is precisely the over-statement.
+    #[test]
+    fn two_labour_passes_driven_as_two_turns_each_bank_one_turns_keeping() {
+        let mut world = a_world_keeping_a_patch_it_is_building();
+
+        let (first_supplied, first_billed) = patch_keeping(&world);
+        assert!(
+            first_billed > NO_UPKEEP_DEMAND,
+            "fixture: the rung must cost something to hold: {first_billed}"
+        );
+        assert!(
+            (first_supplied - first_billed).abs() < FORECAST_EPSILON,
+            "a fully-staffed keeping supplies exactly its bill: {first_supplied} vs {first_billed}"
+        );
+
+        advance_one_turn(&mut world);
+        let (second_supplied, second_billed) = patch_keeping(&world);
+        assert!(
+            (second_supplied - second_billed).abs() < FORECAST_EPSILON,
+            "and it still does on the next turn — the supply is this turn's, not both turns': \
+             {second_supplied} vs {second_billed}"
+        );
+        // **The bill MOVED between the two turns**, because the plant demand interpolates on the
+        // position and the builders banked a turn's work in between. Without that the two arms
+        // would be the same reading twice and a stale-basis defect could hide inside the epsilon.
+        assert!(
+            second_billed > first_billed,
+            "fixture: the build must raise the demand between the turns, or the second arm is the \
+             first one restated: {first_billed} -> {second_billed}"
+        );
+    }
+
     #[test]
     fn a_completed_taming_clears_the_improvement_and_leaves_the_stance_alone() {
         const BIG_HERD_CAP: f32 = 1_000.0;
@@ -8554,7 +8801,12 @@ mod labor_yield_tests {
                 "an unfinished build keeps its entry"
             );
             regrow_source_herd(&mut world);
-            world.run_system_once(advance_labor_allocation);
+            // **A WHOLE TURN, because this fixture staffs its keeping.** The band's `husbandry` row
+            // banks `upkeep_supplied` every pass and the Logistics decay passes are what clear it,
+            // so a bare labour pass in this loop would add a second turn's keeping on top of the
+            // first against a bill stamped once — and the pass now says so rather than quietly
+            // reporting the herd better kept than it is.
+            advance_one_turn(&mut world);
             turns_taken += 1;
         }
         assert!(

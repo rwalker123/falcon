@@ -7325,7 +7325,7 @@ pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
 /// set at completion, and half a fence is no fence — the animals are still roaming and nothing about
 /// handling them has changed. That is the deliberate difference from the plant web's Field, where a
 /// half-sown field genuinely has half a crop in the ground.
-pub(crate) fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig) -> f32 {
     let wild = fauna.engage_rate_for(&herd.species);
     if herd.is_corralled() {
         wild * fauna.husbandry.pen_engage_gain
@@ -7470,6 +7470,15 @@ pub struct HuntCrewCurveInputs<'a> {
     /// The floor this crew stops at. **A curve answered at one floor cannot be reused at another**:
     /// the room clamps the engagement *before* the retreat, so it moves every row.
     pub floor: f32,
+    /// `labor_config.hunt.per_worker_biomass_capacity` — what a **bare-handed** worker carries, the
+    /// baseline both animal carry tiers are resolved against
+    /// ([`crate::equipment_config::EquipmentConfig::pen_per_worker_biomass_capacity`]).
+    ///
+    /// **The stalking rows do not read it** — they are a *kill* rate, and the haul is a separate
+    /// bound the take applies afterwards. **The PEN rows do**, because a pen has no fight and its
+    /// crew term is the collection: what stops a penned row rising is the keepers running out of
+    /// hands to bring animals out with.
+    pub baseline_haul_rate: f32,
     /// The largest crew the curve is asked about — the source's own crew pool (the hands on it plus
     /// the band's idle ones), which is every crew the stepper beside it can reach.
     pub max_workers: u32,
@@ -7508,6 +7517,12 @@ pub struct HuntCrewCurveInputs<'a> {
 /// Each row is [`resolve_hunt_engagement`] — literally the function `systems::hunt_take` runs — with
 /// the wound ledger it hands back dropped. Nothing here touches the herd.
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
+    // **A PEN IS COLLECTED, NOT STALKED — so it gets the curve of the take it actually resolves.**
+    // See [`pen_crew_take_curve`]; the branch is here, at the one producer, so neither transport and
+    // no client has to know which rung a row stands on to trust the number.
+    if inputs.herd.is_corralled() {
+        return pen_crew_take_curve(inputs);
+    }
     let sigmas = inputs.range_sigmas.abs();
     (1..=inputs.max_workers)
         .map(|workers| {
@@ -7545,6 +7560,84 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 low: take_rate(-sigmas),
                 likely: take_rate(crate::combat::EXPECTED_STRIKES),
                 high: take_rate(sigmas),
+            }
+        })
+        .collect()
+}
+
+/// **THE PEN COLLECTION CURVE — the same question as [`hunt_crew_take_curve`], asked of a rung with
+/// no engagement stage.** One row per crew size, `1..=max_workers`, in animals a turn.
+///
+/// # A penned row HAS a useful-crew ceiling, and it is not the stalking one
+///
+/// A corralled herd never reaches `systems::hunt_take`: the Hunt arm's tend branch `continue`s
+/// before it and resolves the slaughter itself. There is no engagement, no retreat and **no fight**
+/// — a penned beast is walked out and killed — so a stalking curve over a pen answers a question the
+/// sim never asks, and answers it with the quarry's `defense` and the crew's *hunting* kit. A pen
+/// whose defense bare hands cannot clear published [`NO_USEFUL_CREW`] and shut the Work board's `+`
+/// gate on a row whose keepers were collecting perfectly well.
+///
+/// What actually bounds a pen's take, and therefore what this curve is
+/// (`systems::labor`'s tend branch, term for term):
+///
+/// ```text
+/// production = herd_take_room(herd, floor)            // crew-INDEPENDENT: the stock above the floor
+/// collection = workers × pen_per_worker_biomass       // the HUSBANDRY tier, coverage-weighted
+/// handling   = herd_engage_rate(herd) × workers       // the species' rate × the pen's handling gain
+/// row        = quantise_animal_take(production, collection, body_mass, handling, WhenPackFull).killed
+/// ```
+///
+/// So the ceiling is *the crew at which the keepers stop being the binding term* — the pen's honest
+/// answer to *"would another pair of hands buy me more"*, which is exactly what the field means on
+/// every other row.
+///
+/// # The three quantiles are one number, and that is a fact rather than a shortcut
+///
+/// The spread on a stalking row is the **fight**'s (`combat_config.forecast_range_sigmas` about
+/// [`crate::combat::EXPECTED_STRIKES`]). A slaughter has no fight, so there is nothing to be
+/// uncertain about: `low == likely == high`, and a reader drawing a band around a pen row would be
+/// drawing one around a certainty.
+///
+/// # It reads `killed`, matching the stalking rows' `expected_brought_down`
+///
+/// Both are *animals put on the ground*. `killed` already carries the carry bound
+/// (`WhenPackFull` stops the keepers once the pack is full), so it is the term that plateaus; the
+/// `carried`/`wasted` split below it is about what got home, which is not what a crew ceiling asks.
+fn pen_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
+    // **Crew-independent, so it is resolved once** — the stock standing above this assignment's own
+    // floor, through the very seam the tend branch draws from.
+    let production = herd_take_room(inputs.herd, inputs.floor, inputs.fauna);
+    // The species' own handling rate with the pen's gain already folded in — a keeper handles far
+    // more animals a turn than a hunter because they are standing still rather than running away.
+    let handling_per_worker = herd_engage_rate(inputs.herd, inputs.fauna);
+    (1..=inputs.max_workers)
+        .map(|workers| {
+            // **Coverage re-resolved per crew size**, exactly as the stalking rows do it: a band with
+            // five sets of handling gear stretches them differently over four keepers than over
+            // twelve, and that curvature is a term rather than an accident.
+            let coverage = inputs
+                .equipment
+                .coverage(inputs.kit, workers as f32, inputs.wear);
+            let carry_per_worker = coverage.weighted_rate(|kit| {
+                inputs.equipment.pen_per_worker_biomass_capacity(
+                    inputs.baseline_haul_rate,
+                    kit,
+                    inputs.wear,
+                )
+            });
+            let take = quantise_animal_take(
+                production,
+                workers as f32 * carry_per_worker,
+                inputs.herd.body_mass,
+                handling_per_worker * workers as f32,
+                EngagementStop::WhenPackFull,
+            )
+            .killed as f32;
+            HuntCrewTake {
+                workers,
+                low: take,
+                likely: take,
+                high: take,
             }
         })
         .collect()

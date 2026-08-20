@@ -1620,6 +1620,12 @@ const FIXTURE_LARDER: f32 = 50_000.0;
 /// arms are about the queue.
 fn resolve_a_pen_turn(app: &mut App) {
     app.world.run_system_once(core_sim::advance_herds);
+    // **The two Logistics decay passes, in stage order, before Population.** They are what clears
+    // `upkeep_supplied` / `upkeep_demanded`; without them a second call to this helper would bank a
+    // second turn's keeping on top of the first against a bill stamped once, and read the pen as
+    // better kept than it is. `advance_labor_allocation` refuses to do that quietly.
+    app.world.run_system_once(core_sim::advance_cultivation);
+    app.world.run_system_once(core_sim::advance_husbandry);
     app.world
         .run_system_once(core_sim::advance_labor_allocation);
     recapture_snapshot_in_place(&mut app.world);

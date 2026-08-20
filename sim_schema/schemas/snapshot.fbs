@@ -1583,15 +1583,24 @@ table LaborAssignment {
   // take on the client, which holds none of the capacity arithmetic.
   takeSpecies:[string];
   // --- HOW MANY HANDS THIS QUARRY CAN USE (appended last) ---------------------------------------
-  // THE CREW BEYOND WHICH MORE HANDS ADD NOTHING, **FIGHT INCLUDED** — the sim's answer to the Work
-  // board's `+` gate and to its "max N workers useful here" note, on a HUNT row. It is the crew at
-  // which this herd's per-crew take curve STOPS RISING, and it is literally the same number the
-  // crew-take query's rows plateau at: both come out of core_sim `fauna::hunt_crew_take_curve`, one
-  // shipped as rows and one as this scalar, so the compose sheet and the worked row cannot quote two
-  // ceilings for one herd.
+  // THE CREW BEYOND WHICH MORE HANDS ADD NOTHING — the sim's answer to the Work board's `+` gate and
+  // to its "max N workers useful here" note, on a HUNT row. It is the crew at which this quarry's
+  // per-crew take curve STOPS RISING, and it is literally the same number the crew-take query's rows
+  // plateau at: both come out of core_sim `fauna::hunt_crew_take_curve`, one shipped as rows and one
+  // as this scalar, so the compose sheet and the worked row cannot quote two ceilings for one herd.
   //
-  // **WHY THE CLIENT CANNOT DERIVE IT.** A take is bounded by three things — the room above the
-  // escapement floor, what the crew can haul, and WHAT THE PARTY CAN BRING DOWN IN A FIGHT
+  // **IT ANSWERS FOR THE WAY THIS QUARRY IS ACTUALLY WORKED, AND THE CLIENT NEED NOT ASK WHICH.**
+  // A roaming herd is stalked, so its curve carries the engagement, the retreat and THE FIGHT. A
+  // CORRALLED herd is collected: the sim's Hunt arm resolves a pen in its own tend branch, with no
+  // engagement stage at all, so its curve is the pen's own bounds — the stock above the floor, the
+  // keepers' HUSBANDRY-tier throughput, and the species' handling rate with the pen's gain. Both are
+  // real ceilings in animals a turn; the sim picks the right one off `corralled`. A client must NOT
+  // gate this field on `corralled` or on any engagement-stage test of its own: doing so is the
+  // client deciding when to disbelieve a published number, which is exactly what this field being
+  // sim-resolved is for.
+  //
+  // **WHY THE CLIENT CANNOT DERIVE IT.** A stalked take is bounded by three things — the room above
+  // the escapement floor, what the crew can haul, and WHAT THE PARTY CAN BRING DOWN IN A FIGHT
   // (damage / durability). The third needs `combat_config.hit_chance`, which is deliberately
   // unpublished, so a client-side quotient divides by the fightless engagement reach and reads high —
   // measured at 2.3x on a Wild Aurochs. Read this field; do not re-derive it.
@@ -1601,11 +1610,14 @@ table LaborAssignment {
   // sheet asks its curve over. A curve still rising at the top of that pool reports the pool itself:
   // "every hand this band has is still buying take", not a licence to name a crew it cannot field.
   //
-  // `0` MEANS "NO CREW IS USEFUL HERE" on a hunt row — a bare-handed party against a defense it
-  // cannot clear lands exactly zero however many people it sends. It is also the value on every
-  // NON-HUNT row (forage, scout, warrior, agriculture, husbandry, builders), which have no fight and
-  // no quarry: the field is hunt-only structurally, the way fodderYield is plant-only. Derived
-  // per-turn at capture. Appended last (append-only).
+  // `0` MEANS "NO CREW IS USEFUL HERE", AND IT MEANS EXACTLY THAT ON EVERY HUNT ROW — a bare-handed
+  // party against a defense it cannot clear lands zero however many people it sends; a pen with
+  // nothing above its floor hands over nothing to however many keepers stand in it. It is never
+  // "this row has no such answer": a hunt row always has one, which is why the pen branch exists
+  // rather than a sentinel. It is also the value on every NON-HUNT row (forage, scout, warrior,
+  // agriculture, husbandry, builders), which have no quarry at all: the field is hunt-only
+  // structurally, the way fodderYield is plant-only. Derived per-turn at capture. Appended last
+  // (append-only).
   huntUsefulWorkers:uint = 0;
 }
 

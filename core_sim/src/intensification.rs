@@ -1332,44 +1332,25 @@ pub enum RungMovement {
     Pursue,
 }
 
-/// How a source at this rung feeds itself. A bounded coded primitive (§5) — **not read yet**
-/// (`movement` is the only primitive the engine reads today).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RungFeeding {
-    /// Needs no feed at all — the plant web regrows from the land it stands on.
-    Photosynthesis,
-    /// Eats the **open** graze layer wherever it roams (`GrazePatch`, `fodder_per_biomass`).
-    Forage,
-    /// Feeds off its own **fenced footprint**'s graze, the keeper's larder covering the shortfall
-    /// (the pen economy, `docs/plan_grazing_2d.md`).
-    SelfGraze,
-}
-
-/// How the harvest comes off a source at this rung. A bounded coded primitive (§5) — **not read
-/// yet**.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RungHarvest {
-    /// Workers **draw the source down**: a wild gather / a wild hunt.
-    WorkerTake,
-    /// Workers take a **managed** harvest that never overdraws (a tended patch, a pen).
-    WorkerTend,
-    /// Pays its owner with **no workers at all**. **No shipped rung is `passive` any more** —
-    /// `plan_intensification_ladder.md` §3 retired the passive-free pastoral rung in slice 3b (every
-    /// rung is worker-driven; intensifying buys *yield per worker*, not zero workers). The variant
-    /// survives as vocabulary for a future rung that genuinely pays for nothing.
-    Passive,
-}
+// **RETIRED: `RungBehavior::feeding` (`RungFeeding`) and `RungBehavior::harvest` (`RungHarvest`)** —
+// two bounded coded primitives (`photosynthesis` / `forage` / `self_graze`, and `worker_take` /
+// `worker_tend` / `passive`) declared on every rung, parsed, variant-validated, and read by nothing.
+//
+// They were deleted rather than deprecated because a declared, validated field **reads like a live
+// lever**: `harvest` sits exactly where someone debugging the animal draw looks for the answer, and
+// cost an hour of a husbandry investigation before its lack of consumers surfaced. The defence that
+// `movement` also sat dead until slice 3b used it does not carry over — `movement` waiting was free
+// because nothing was looking to it to explain a behaviour. What each rung actually feeds on and how
+// its take comes off live in the systems that resolve them (`fauna::advance_herds`,
+// `fauna::pen_yield_biomass`, `forage::field_harvest_biomass`), which is the one place they can be
+// read without being believed twice.
 
 /// The behavior primitives a rung recombines. Bounded enums over coded behavior, per §5 — a rung
-/// that recombines existing primitives is pure config. Only **`movement`** is read today (slice 3b —
-/// `fauna::advance_herds`); `feeding` / `harvest` are still parsed and validated only.
+/// that recombines existing primitives is pure config. **`movement` is the only member**, and it is
+/// read: `fauna::advance_herds` dispatches a herd's movement off the rung it stands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct RungBehavior {
     pub movement: RungMovement,
-    pub feeding: RungFeeding,
-    pub harvest: RungHarvest,
 }
 
 /// **What the LAND must be for a rung to be placed on it** — the plant branch's twin of
@@ -1551,7 +1532,7 @@ pub struct RungBuild {
 
 /// **What SCALES a rung's standing upkeep** — the bounded coded set
 /// `docs/plan_standing_upkeep.md` §2.6 calls for, and the same "config over coded primitives" idiom
-/// [`RungBehavior`] already uses for `movement` / `feeding` / `harvest`.
+/// [`RungBehavior`] already uses for `movement`.
 ///
 /// An upkeep cannot be a flat per-rung number, because what makes a thing expensive to *hold* differs
 /// by what it is: a pen scales with the herd it holds, a farm with the area it works, a route with
@@ -1766,7 +1747,8 @@ pub struct RungDef {
     /// standing cost — the two **wild** rungs, and only those: all four managed rungs declare one.
     #[serde(default)]
     pub upkeep: Option<RungUpkeep>,
-    /// The coded primitives this rung recombines. **Not read yet.**
+    /// The coded primitives this rung recombines ([`RungBehavior`] — `movement`, which
+    /// `fauna::advance_herds` reads).
     pub behavior: RungBehavior,
 }
 
@@ -3211,6 +3193,49 @@ mod tests {
 
     /// The ladder must describe **what the sim does today**, not the target model — later slices
     /// change behaviour by editing it. Pin the current truth so a drifting edit is caught here.
+    /// **EVERY KEY A RUNG'S `behavior` BLOCK DECLARES IS ONE A SYSTEM READS.** `feeding` and
+    /// `harvest` were declared on all six rungs, parsed, variant-validated — and read by nothing, so
+    /// they read like live levers while explaining no behaviour at all. Deleting the fields alone
+    /// would not have kept them out: `RungBehavior` has no `deny_unknown_fields`, so a re-added key
+    /// parses silently and is dropped on the floor, which is the same trap wearing a config hat.
+    ///
+    /// The assertion is on the **shipped JSON's own key set**, not on the struct — a struct field
+    /// nothing reads is exactly what this guards against, so asking the struct would ask the defect
+    /// to report itself. `movement` is the whole set today because `fauna::advance_herds` is the
+    /// whole readership; a new primitive belongs here the turn a system reads it, and not before.
+    #[test]
+    fn every_behavior_key_on_every_rung_is_one_the_engine_reads() {
+        const KEYS_A_SYSTEM_READS: [&str; 1] = ["movement"];
+
+        let json: Value =
+            serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("builtin parses as json");
+        let rungs = json["rungs"].as_array().expect("rungs is an array");
+        assert!(!rungs.is_empty(), "the builtin ladder ships rungs");
+
+        for rung in rungs {
+            let branch = rung["branch"].as_str().expect("every rung names a branch");
+            let id = rung["id"].as_str().expect("every rung names an id");
+            let behavior = rung["behavior"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{branch}:{id} declares a behavior block"));
+
+            for key in behavior.keys() {
+                assert!(
+                    KEYS_A_SYSTEM_READS.contains(&key.as_str()),
+                    "{branch}:{id} declares behavior.{key}, which no system reads — a declared, \
+                     validated key that explains no behaviour costs the next reader an hour. \
+                     Add it back when a system reads it, and add it to KEYS_A_SYSTEM_READS then."
+                );
+            }
+            for key in KEYS_A_SYSTEM_READS {
+                assert!(
+                    behavior.contains_key(key),
+                    "{branch}:{id} omits behavior.{key}, which the engine does read"
+                );
+            }
+        }
+    }
+
     #[test]
     fn builtin_ladder_describes_todays_rungs() {
         let ladder = LadderConfig::builtin();

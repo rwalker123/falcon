@@ -2499,6 +2499,9 @@ pub fn capture_snapshot(
                     hunt_crew_levers: &crate::snapshot::population::HuntCrewLevers {
                         fauna: &fauna_config,
                         combat: &combat_config,
+                        // The bare carry rate a **corralled** row's collection curve is resolved
+                        // against; a stalked row's kill curve never reads it.
+                        baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
                     },
                     bench,
                     // **This band's faction decides which crafts are known**, so the memo is keyed

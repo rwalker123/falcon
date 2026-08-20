@@ -235,16 +235,33 @@ pub struct LaborAssignmentState {
     // `upkeepShortfall` — whose `supplied` is now this source's **share of the pool**. It stopped
     // answering *"did you staff this one"* and started answering *"where is my pooled shortfall
     // landing"*.
-    /// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING, *FIGHT INCLUDED*** — the sim's answer to the
-    /// Work board's `+` gate and to its *"max N workers useful here"* note, on a **hunt** row.
+    /// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING** — the sim's answer to the Work board's `+`
+    /// gate and to its *"max N workers useful here"* note, on a **hunt** row.
     ///
-    /// It is the crew at which this herd's per-crew take curve stops rising, and it is *the same
+    /// It is the crew at which this quarry's per-crew take curve stops rising, and it is *the same
     /// number the crew-take query's rows plateau at*: both come out of core_sim's
     /// `fauna::hunt_crew_take_curve`, one shipped as rows and one as this scalar, so the compose
     /// sheet and the worked row cannot quote two ceilings for one herd.
     ///
-    /// **The client cannot derive it.** A take is bounded by the room above the escapement floor,
-    /// by what the crew can haul, and by **what the party can bring down in a fight**
+    /// # ⛔ It answers for the way this quarry is ACTUALLY worked, and the client must not ask which
+    ///
+    /// A roaming herd is **stalked**, so its curve carries the engagement, the retreat and the
+    /// fight. A **corralled** herd is **collected** — core_sim's Hunt arm resolves a pen in its own
+    /// tend branch, which `continue`s before `hunt_take` and has no engagement stage at all — so its
+    /// curve is the pen's own bounds: the stock above the floor, the keepers' *husbandry*-tier
+    /// throughput, and the species' handling rate with the pen's gain
+    /// (`fauna::pen_crew_take_curve`). Both are real ceilings in animals a turn, and the sim picks
+    /// the right one off `corralled`.
+    ///
+    /// **A client may not gate this field on `corralled`, or on an engagement-stage test of its
+    /// own.** That is the client deciding when to disbelieve a published number, and it is the
+    /// shape this field being sim-resolved exists to remove. It was briefly necessary — the field
+    /// shipped resolved from a *stalking* curve for every hunt row, so a penned quarry whose
+    /// `defense` bare hands could not clear published `0` and shut the `+` gate on a row whose
+    /// keepers were collecting perfectly well — and the fix went in on the **sim** side.
+    ///
+    /// **The client cannot derive it.** A stalked take is bounded by the room above the escapement
+    /// floor, by what the crew can haul, and by **what the party can bring down in a fight**
     /// (`damage ÷ durability`); the third needs `combat_config.hit_chance`, which is deliberately
     /// unpublished. A client-side quotient therefore divides by the fightless engagement reach and
     /// reads high — 2.3× on a Wild Aurochs. **Read this field; do not re-derive it.**
@@ -253,11 +270,14 @@ pub struct LaborAssignmentState {
     /// idle ones, the same domain the compose sheet asks its curve over. A curve still rising at the
     /// top of that pool reports the pool itself: *every hand this band has is still buying take*.
     ///
-    /// `0` means **no crew is useful here** on a hunt row — a bare-handed party against a `defense`
-    /// it cannot clear lands exactly zero however many people it sends
-    /// (core_sim's `fauna::NO_USEFUL_CREW`). It is also the value on every **non-hunt** row, which
-    /// has no fight and no quarry: hunt-only structurally, the way [`Self::fodder_yield`] is
-    /// plant-only. Derived per-turn at capture. Appended last (append-only).
+    /// `0` means **no crew is useful here**, and it means exactly that on *every* hunt row: a
+    /// bare-handed party against a `defense` it cannot clear lands zero however many people it
+    /// sends, and a pen with nothing above its floor hands over nothing to however many keepers
+    /// stand in it (core_sim's `fauna::NO_USEFUL_CREW`). **It never means "this row has no such
+    /// answer"** — a hunt row always has one, which is why the pen branch exists rather than a
+    /// sentinel. It is also the value on every **non-hunt** row, which has no quarry at all:
+    /// hunt-only structurally, the way [`Self::fodder_yield`] is plant-only. Derived per-turn at
+    /// capture. Appended last (append-only).
     #[serde(default)]
     pub hunt_useful_workers: u32,
 }

@@ -46,6 +46,25 @@ never what its progress bar reads).
   fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
   No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
   Field, where half a sown field genuinely has half a crop in the ground.
+- **⛔ A PEN HAS ITS OWN CREW CURVE, and it is not the stalking one.** `fauna::hunt_crew_take_curve`
+  branches on `is_corralled()`. A corralled herd is resolved in `advance_labor_allocation`'s own tend
+  branch, which `continue`s before `hunt_take`: **no engagement, no retreat, no fight.** What bounds a
+  pen instead is the room above the floor (crew-independent), the crew's **husbandry** haul tier, and
+  `herd_engage_rate × workers` (the species rate through `husbandry.pen_engage_gain`). That is monotone
+  in the crew and plateaus, so *"would another pair of hands buy me more"* has a real answer for a pen
+  — a different curve, not the absence of one. `low == likely == high` on a pen row, because a
+  slaughter has no fight to be uncertain about.
+  > **THE BRANCH IS AT THE ONE PRODUCER, so both transports inherit it** — the snapshot's
+  > `huntUsefulWorkers` and the compose sheet's query rows. It was briefly the *client* deciding when
+  > to disbelieve the sim (gating the field on an engagement-stage test of its own), which is the
+  > shape this arc exists to remove: a number that does not apply must not be published and then
+  > guarded downstream. **`0` means "no crew is useful here" on every hunt row and never "this row has
+  > no such answer"** — the pen branch is why that collapse does not exist.
+  >
+  > Measured on a bare-handed band against a corralled Wild Aurochs: the stalking curve reads **0**
+  > and the pen's own ceiling is **20** of a 24-hand pool. The guard's liveness assertion is what
+  > earns that test — with the branch removed the whole socket curve is zeroes, so
+  > `plateau == published == 0` and the equality **alone would have passed**.
 - **⛔ THERE ARE TWO KEEPER COUNTS ON THE ANIMAL WEB, and the wire keeps them apart.** They answer
   different questions and one of them must never interpolate:
   - **`fauna::herd_upkeep_workers_needed`** — *how many hands does this herd's KEEPING BILL take*, =
