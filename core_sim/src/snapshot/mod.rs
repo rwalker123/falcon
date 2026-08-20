@@ -1372,6 +1372,7 @@ mod tests {
             // This fixture asserts on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers,
+            hunt_crew_levers: crate::snapshot::population::builtin_hunt_crew_levers(),
             bench: None,
             craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
             build_sources: crate::snapshot::population::empty_build_sources(),
@@ -1635,6 +1636,8 @@ mod tests {
             &SourceYield::ZERO,
             NOTHING_QUEUED_HERE.to_string(),
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
+            // These fixtures assert on the floor and the build axis, not on the take ceiling.
+            crate::fauna::NO_USEFUL_CREW,
         );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
@@ -1669,6 +1672,8 @@ mod tests {
                 .as_str()
                 .to_string(),
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
+            // These fixtures assert on the floor and the build axis, not on the take ceiling.
+            crate::fauna::NO_USEFUL_CREW,
         );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
@@ -1682,6 +1687,8 @@ mod tests {
             &SourceYield::ZERO,
             NOTHING_QUEUED_HERE.to_string(),
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
+            // These fixtures assert on the floor and the build axis, not on the take ceiling.
+            crate::fauna::NO_USEFUL_CREW,
         );
         assert_eq!(
             state.floor, 0.15,

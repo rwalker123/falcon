@@ -185,6 +185,45 @@ const KIT_ITEM_CONDITIONS_KEY := "kit_item_conditions"
 const KIT_ITEM_ID_KEY := "item_id"
 const KIT_ITEM_REMAINING_KEY := "remaining"
 
+# **UNITS THE BAND OWNS** (`KitItemCondition.count`) — the ownership statement, so nothing has to
+# infer it from a condition of zero: a worn-out item and one the band never had both read
+# `remaining 0`, and `count > 0` is what separates them.
+#
+# **IT IS UNITS, AND `KIT_ITEM_WORKERS_HOLDING_KEY` BESIDE IT IS PEOPLE.** The two are the same
+# number only while every item is held by one person, which is true of the whole shipped roster and
+# is not a rule — see `kit_units_owned` for the one place that distinction is deliberately spent.
+const KIT_ITEM_COUNT_KEY := "count"
+
+# **THE BAND HAS NOT STATED HOW MANY IT OWNS** — an item with no published row, or a row from a
+# fixture that predates the field. Distinct from `0`, which is the real and sharp answer *it owns
+# none*, and every reader must withhold rather than render on it.
+const KIT_UNITS_UNSTATED := -1
+
+## **UNITS OF ONE ITEM THE BAND OWNS**, or `KIT_UNITS_UNSTATED` where it states none.
+##
+## > #### ⛔ THIS IS UNITS. `kit_workers_holding` IS PEOPLE, AND THEY ARE NOT INTERCHANGEABLE
+## >
+## > A unit arms `workers_per_unit` people — a per-item config number the wire does not carry — and a
+## > unit needs its FULL crew or it is not used at all. So this may never stand in for
+## > `workers_holding`, which is the sim's own answer for a STAFFED job and is what every
+## > coverage readout on a worked row reads.
+##
+## **The one thing it may answer is a PRE-COMMIT question**, which the sim's people-counts cannot:
+## `workers_on_quoted_job` is the allocation's head count, so on a compose sheet where nobody is
+## assigned yet both published counts are `0` and say nothing about the crew being composed. Counting
+## UNITS against that composed crew is the only honest reading left, and it is exact for every item
+## the game ships (`workers_per_unit` defaults to 1 and no shipped item overrides it).
+static func kit_units_owned(band: Dictionary, item_id: String) -> int:
+    if item_id.is_empty():
+        return KIT_UNITS_UNSTATED
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if String(row.get(KIT_ITEM_ID_KEY, "")) != item_id:
+            continue
+        if not (row as Dictionary).has(KIT_ITEM_COUNT_KEY):
+            return KIT_UNITS_UNSTATED
+        return maxi(int(row[KIT_ITEM_COUNT_KEY]), 0)
+    return KIT_UNITS_UNSTATED
+
 # **HOW MANY PEOPLE AN ITEM ACTUALLY REACHES** (issue #520) — the sim's own answer, resolved through
 # the same `coverage` seam the take runs through. A unit ARMS A PERSON, so owning one is not arming
 # the band: `count` is UNITS and this is PEOPLE, and the two part company the moment the band is

@@ -458,10 +458,19 @@ const KIT_UNSTAFFED_HEADCOUNT := 0.0
 ## says how much life is left in the item, `workers_holding` how many people it reaches and
 ## `workers_on_quoted_job` how many are on the job that wanted it. All three are stated outright,
 ## because a fixture letting one imply another passes a client that reads the wrong one.
+## **UNITS OWNED FOLLOW THE PEOPLE REACHED, and the default is what makes that a claim rather than a
+## coincidence.** Every item the roster ships is held by ONE person (`workers_per_unit` defaults to 1
+## and nothing overrides it), so a fixture whose `count` disagreed with its `workers_holding` would be
+## a band no server can produce. Stated as its own argument all the same, because the two are
+## different questions — units in the ledger, people they reach — and the pre-commit coverage clause
+## is the one readout that has only the first to go on.
+const KIT_UNITS_AS_PEOPLE_REACHED := -1
+
 static func kit_condition_row(item_id: String, remaining: float, workers_holding: float,
-		workers_on_quoted_job: float) -> Dictionary:
+		workers_on_quoted_job: float, units: int = KIT_UNITS_AS_PEOPLE_REACHED) -> Dictionary:
 	return {"item_id": item_id, "remaining": remaining, "workers_holding": workers_holding,
-		"workers_on_quoted_job": workers_on_quoted_job}
+		"workers_on_quoted_job": workers_on_quoted_job,
+		"count": int(workers_holding) if units == KIT_UNITS_AS_PEOPLE_REACHED else units}
 
 ## The seven item rows a kitted band publishes — **each quoted at ITS OWN job's head count**, which is
 ## the shape the wire really has: spears and the sled at the hunt, baskets at the forage default,

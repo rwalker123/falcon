@@ -1311,6 +1311,19 @@ const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
 ## sled collects a pen at the bare rate. It prints on a hunt sheet BESIDE the sled's line rather than
 ## instead of it (a husbandry kit carries both), and only for a kit that actually supplies the axis.
 const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
+## **HOW MANY OF THE COMPOSED CREW THIS KIT ACTUALLY REACHES** — `3 of 8 equipped`, printed after the
+## tier clauses and before the item conditions.
+##
+## **THE TIERS ABOVE IT DESCRIBE A PERSON, NOT THE PARTY, and without this clause the line let the
+## party inherit them.** A band holding ONE spear and composing EIGHT hunters read `attack 20.0`
+## while the sim priced seven of the eight bare-handed inside the take curve: the take was right and
+## the line was wrong about why.
+##
+## **IT STATES THE COVERAGE AND NEVER BLENDS THE ATTACK.** A crew-averaged tier would describe
+## nobody, and it would be a third number for a division the sim has already published
+## (`PopulationCohortState.huntCrews`). The count is the crew the WHOLE kit reaches, not one axis's,
+## because this client may not map an axis to the component behind it — see `KitRoster.tier_hint`.
+const KIT_HINT_COVERAGE_FORMAT := "%d of %d equipped"
 ## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
 ## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.

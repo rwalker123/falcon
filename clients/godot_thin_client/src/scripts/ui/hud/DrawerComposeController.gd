@@ -2700,7 +2700,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         func(picked: String) -> void:
             _compose.set_hunt_kit_id(picked)
             _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_count())
     # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
     # directly under the crew that will fight it — both lines answer "is this crew the right size, and
     # can it win at all", which is what the stepper one row up has just posed.
@@ -2966,10 +2966,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ##
 ## `quarry` / `prefix` are what the greying is resolved against and are omitted by the forage sheet,
 ## which has no animal to be inapplicable to.
+## **`crew` IS THE STEPPER ONE ROW ABOVE**, handed on so the hint can say how far the band's gear
+## reaches into the party being composed. A sheet that passes none keeps the pre-clause line.
 func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: String,
         default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
-        prefix: String = "") -> void:
-    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix)
+        prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED) -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix,
+        HudComposeVocab.COMPOSE_FIELD_KIT, false, crew)
     if row != null:
         target.add_child(row)
 

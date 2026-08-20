@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 310
+const EXPECTED_CHECKPOINTS := 319
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -2030,6 +2030,30 @@ const GATE_SPLIT_LINE := "⚠ 4 of your 6 hunters can take Woolly Mammoth; the o
 ## split whatever the rest of the band is carrying.
 const GATE_SPLIT_COVERED_HUNTERS := 3
 
+## **THE KIT LINE'S OWN SENTENCE ON THE SAME PARTLY-ARMED BAND**, spelled out rather than recomposed
+## through `KitRoster.tier_hint` — an expectation built from the function under test agrees only with
+## itself, and the whole finding here is a clause of four small numbers.
+##
+## **THE TIERS ARE THE EQUIPPED ONES AND THE COVERAGE IS NOT, WHICH IS THE DEFECT IN ONE LINE.**
+## `with_short_spears` holds four spears; `effective_tiers` resolves `attack` through the band's best
+## live item, so the line quoted `attack 20.0` to a party of six while the sim priced two of the six
+## bare-handed inside its take curve. The take was right and the line was wrong about why. The fix
+## STATES the coverage — it does not blend the attack, which would describe nobody and would be a
+## third number for a division `huntCrews` has already published.
+const GATE_SPLIT_KIT_HINT := "attack 20.0 · carry 40.0 per hunter · 4 of 6 equipped · spears 87 · sled 54"
+
+## **THE SAME BAND, THE SAME KIT, A PARTY THE GEAR COVERS — AND THE CLAUSE STILL PRINTS.** It is the
+## half that makes the assertion above a claim about the NUMBERS rather than about a clause existing:
+## `4 of 6` and `3 of 3` differ in every digit, so a client that hardcoded either, or that only ever
+## printed on a shortfall, fails one of the pair.
+##
+## **FULL COVERAGE IS STATED, NOT WITHHELD.** A clause that appeared only when the band was short
+## would be a warning glyph in words: the player would have no baseline to watch `6 of 6` become
+## `5 of 6` against, and a clause POPPING INTO EXISTENCE as the stepper crosses the gear's reach reads
+## as the step having broken something. It is the same rule the condition clauses beside it follow —
+## `spears 74` prints every frame, not only once the spears are nearly gone.
+const GATE_SPLIT_COVERED_KIT_HINT := "attack 20.0 · carry 40.0 per hunter · 3 of 3 equipped · spears 87 · sled 54"
+
 ## The partly-equipped party's own frame. Its band is `with_short_spears`, which differs from the
 ## speared band of gate-a in NOTHING a condition readout can see — every item is live and at the same
 ## wear — so the only thing that can move this line is the crew division itself.
@@ -2051,6 +2075,12 @@ func _combat_gate_split_state() -> void:
 		Readout.hunt_gate_blocked(sheet) == Readout.HUNT_GATE_ABSENT)
 	h._assert_hud("…and the sheet says WHICH of them can take it: %s" % GATE_SPLIT_LINE,
 		Readout.hunt_crew_split_line(sheet) == GATE_SPLIT_LINE)
+	# **AND THE KIT LINE NO LONGER CLAIMS AN ATTACK THE PARTY DOES NOT HAVE.** The two lines answer
+	# different questions off different wire terms — the split says who can beat THIS quarry's
+	# defence (`huntCrews` against `defense`), the kit line says how far the gear reaches into the
+	# party at all — so a band whose spears simply ran short would state the second and not the first.
+	h._assert_hud("…and the Kit line states the coverage beside the tiers: \"%s\""
+		% Readout.kit_hint_line(sheet), Readout.kit_hint_line(sheet) == GATE_SPLIT_KIT_HINT)
 	# **THE SAME BAND AND THE SAME QUARRY, A SMALLER PARTY — AND NOW THERE IS NOTHING TO SAY.** The
 	# gear covers a prefix of whoever is sent, so three hunters drawn from four spears are all armed;
 	# a line here would be the band's shortfall reported as this party's, which reads as "2 of my 3
@@ -2062,6 +2092,12 @@ func _combat_gate_split_state() -> void:
 	await h._settle()
 	h._assert_hud("…and a party that fits inside the armed run states NO split",
 		Readout.hunt_crew_split_line(h._hud._drawercompose._compose_sheet) == "")
+	# **THE KIT LINE STILL SPEAKS, and it says everybody.** The split line above goes quiet because
+	# there is no division in THIS party to report; the coverage clause is not a warning and stays,
+	# which is what gives the player a `3 of 3` to watch turn into `3 of 4` on the very next step.
+	h._assert_hud("…while the Kit line states FULL coverage rather than falling silent: \"%s\""
+		% Readout.kit_hint_line(h._hud._drawercompose._compose_sheet),
+		Readout.kit_hint_line(h._hud._drawercompose._compose_sheet) == GATE_SPLIT_COVERED_KIT_HINT)
 
 
 # =====================================================================================
@@ -4038,6 +4074,101 @@ func _subone_aurochs_herd() -> Dictionary:
 		"tile_info": HerdFx.compact_herd_tile_fixture(),
 	}
 
+## **IDLE HANDS STANDING BY WHILE THE `+` GATE IS PROBED.** The gate closes for two different
+## reasons — the band has nobody left, or this source has all the hands it can use — and only the
+## second is under test, so the band is deliberately not the thing that runs out.
+const BOARD_IDLE_HANDS := 4
+
+## **THE WORK BOARD'S `+` GATE AND THE COMPOSE SHEET, ON ONE HERD AND ONE CEILING.**
+##
+## The board renders many rows a frame and cannot round-trip a crew-take query for each, so it prices
+## a worked row from the snapshot alone — and `max_useful_workers` then fell through to the closed
+## form `take_workers`, which divides by an engagement reach carrying **no attack, no defense and no
+## durability**. On a fight-bound quarry that is a different ceiling from the one the sheet's own
+## curve plateaus at, for the same herd, two panels apart.
+##
+## **THE PRECONDITION IS ASSERTED, NOT ASSUMED.** The board's own fightless quotient is checked to
+## DISAGREE with the plateau first: on a quarry where the two models happen to land together the
+## equality below would pass against the defect itself.
+##
+## It walks the real seams rather than handing a forecast a literal — the worker map's
+## presence-sensitive copy, then the board's injection — because a dropped copy is exactly the shape
+## that would quietly leave the board back on the quotient.
+func _board_cap_matches_the_sheet(herd: Dictionary, band: Dictionary, floor_value: float,
+		plateau: int) -> void:
+	var herd_id := String(herd["id"])
+	var board_base := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, floor_value)
+	var quotient := SourceForecast.max_useful_workers(board_base)
+	h._assert_hud(("precondition: this quarry is FIGHT-bound — the board's fightless quotient says"
+			+ " %d hunters are useful where the sheet's curve stops rising at %d")
+			% [quotient, plateau], quotient != plateau)
+	# The row as the decoder hands it over: a confirmed hunt assignment carrying the sim's own
+	# `huntUsefulWorkers`, staffed one hand BELOW the ceiling so the `+` has somewhere to go.
+	var below_cap := plateau - 1
+	var worked := band.duplicate(true)
+	worked["labor_assignments"] = [{
+		"kind": SourceForecast.LABOR_KIND_HUNT, "workers": below_cap,
+		"target_x": int(herd["x"]), "target_y": int(herd["y"]), "fauna_id": herd_id,
+		"floor": floor_value,
+		SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY: plateau,
+	}]
+	var merged: Dictionary = h._hud._band_labor.effective_worker_map(worked)
+	var row: Dictionary = merged.get(h._hud._band_labor.pending_key(
+		SourceForecast.LABOR_KIND_HUNT, int(herd["x"]), int(herd["y"]), herd_id), {})
+	h._assert_hud("the worked row carries the sim's own crew ceiling through the worker map (%s)"
+			% str(row.get(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY, "absent")),
+		int(row.get(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY,
+			SourceForecast.NO_CREW_ANSWER)) == plateau)
+	var board := SourceForecast.with_published_useful_crew(board_base, row)
+	h._assert_hud("the Work board quotes the sheet's ceiling (%d), not the fightless crew (%d)"
+			% [plateau, quotient], SourceForecast.max_useful_workers(board) == plateau)
+	# …and the gate the player actually presses moves with it: dead AT the ceiling, live one below,
+	# with idle hands standing by either way so the source is the only thing that can be refusing.
+	var at_cap := SourceForecast.source_worker_cap_state(board, plateau, BOARD_IDLE_HANDS)
+	var under := SourceForecast.source_worker_cap_state(board, below_cap, BOARD_IDLE_HANDS)
+	h._assert_hud("…and the row's `+` is dead at %d and live at %d, idle hands to spare on both"
+			% [plateau, below_cap],
+		not bool(at_cap["can_add"]) and bool(under["can_add"])
+			and String(at_cap["note"]) != "")
+
+	# **A NON-HUNT ROW KEEPS ITS OWN ANSWER, and the `0` on it is not the hunt's `0`.** The wire
+	# publishes this field on every row — `0` meaning *no crew is useful here* on a hunt and *does not
+	# apply* everywhere else — so the two readings must not collapse. The forage row really does carry
+	# the zero (else the guard below is guarding nothing), and its cap is untouched by it.
+	var patch := _retreat_crew_patch(UNCHANGED_PROBE_STAY)
+	var patch_band := band.duplicate(true)
+	patch_band["labor_assignments"] = [{
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": below_cap,
+		"target_x": int(patch["x"]), "target_y": int(patch["y"]), "fauna_id": "",
+		"floor": floor_value,
+		SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY: SourceForecast.PUBLISHED_NO_USEFUL_CREW,
+	}]
+	var patch_row: Dictionary = h._hud._band_labor.effective_worker_map(patch_band).get(
+		h._hud._band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
+			int(patch["x"]), int(patch["y"]), ""), {})
+	h._assert_hud("a forage row carries the structural `0` every non-hunt row publishes",
+		int(patch_row.get(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY,
+			SourceForecast.NO_CREW_ANSWER)) == SourceForecast.PUBLISHED_NO_USEFUL_CREW)
+	var patch_cap := _source_worker_cap(patch, SourceForecast.SOURCE_KIND_FORAGE)
+	var patch_forecast := SourceForecast.forecast_inputs(patch, SourceForecast.SOURCE_KIND_FORAGE,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	h._assert_hud("…and its cap stays its own %d rather than collapsing to that zero" % patch_cap,
+		patch_cap > 0 and SourceForecast.max_useful_workers(
+			SourceForecast.with_published_useful_crew(patch_forecast, patch_row)) == patch_cap)
+	# **A PEN IS THE SAME REFUSAL ONE STEP OVER.** It IS a hunt row, so the wire publishes the field
+	# on it — but a penned beast is collected rather than stalked (`NO_ENGAGEMENT_STAGE`), and its cap
+	# was never the fightless quotient this replaces. A stalking curve's plateau must not bind it.
+	var pen := _retreat_crew_pen(UNCHANGED_PROBE_STAY)
+	var pen_cap := _source_worker_cap(pen, SourceForecast.SOURCE_KIND_HERD)
+	var pen_forecast := SourceForecast.forecast_inputs(pen, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	h._assert_hud("a PEN keeps its own cap (%d) — no engagement stage, no published plateau" % pen_cap,
+		pen_cap > 0 and SourceForecast.max_useful_workers(
+			SourceForecast.with_published_useful_crew(pen_forecast, {
+				SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY:
+					SourceForecast.PUBLISHED_NO_USEFUL_CREW})) == pen_cap)
+
 func _subone_take_assertions() -> void:
 	var prior_band = h._hud._band_labor.player_band()
 	var prior_bands: Array = h._hud._band_labor._player_bands
@@ -4164,6 +4295,16 @@ func _subone_take_assertions() -> void:
 			% [plateau, SourceForecast.max_useful_workers(fightless)],
 		SourceForecast.max_useful_workers(forecast) == plateau
 			and SourceForecast.max_useful_workers(fightless) != plateau)
+
+	# (9) **AND THE WORK BOARD QUOTES THE SAME CEILING FOR THE SAME HERD.** The board prices a worked
+	#     row with no crew-take reply in hand, so it holds `fightless` above — and `fightless` is
+	#     asserted one line up to be a DIFFERENT number from the plateau, which is the precondition
+	#     that makes this pair a finding rather than a coincidence on a quarry where both models
+	#     agree. The sim publishes the plateau of its OWN curve on every assigned hunt row; this walks
+	#     the two client seams that carry it (the worker map's presence-sensitive copy, then the
+	#     board's injection) rather than handing the forecast a literal, because a broken copy is
+	#     exactly the shape that would leave the board on the quotient again.
+	_board_cap_matches_the_sheet(herd, band, floor_value, plateau)
 
 	# Back to the seam and the band every other block runs on.
 	h._hud.forecast_query().reset()

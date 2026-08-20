@@ -629,6 +629,17 @@ const FORECAST_PER_WORKER_MATERIAL_KEY := "per_worker_material"
 # `MaterialStore` this turn. Read through `material_rows_of`, never as a forecast: the sim seeds it
 # EMPTY pre-commit by design (see there).
 const ASSIGNMENT_MATERIAL_YIELD_KEY := "material_yield"
+# **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING, *FIGHT INCLUDED*, ON A LABOR ASSIGNMENT** — the
+# sim's own `LaborAssignment.huntUsefulWorkers`, the plateau of the same `hunt_crew_take_curve` the
+# compose sheet's per-crew rows are drawn from. It rides the work-row map presence-sensitively
+# (`HudBandLaborState.effective_worker_map`) and reaches a forecast through
+# `with_published_useful_crew`, so a board row and a sheet cannot quote two ceilings for one herd.
+#
+# **IT IS HUNT-ONLY, and the `0` is why the copy is presence-sensitive**: on a hunt row `0` means
+# *no crew is useful here*, and on every non-hunt row it is the same `0` meaning *does not apply*.
+# Nothing may read this off a forage row — see `with_published_useful_crew`, whose one caller is the
+# board's hunt branch.
+const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
 # **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
 # composed row and every per-preset one). It is a PAYLOAD, not a rate: no `/turn`, projected off the
 # same carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree. On an
@@ -4777,6 +4788,49 @@ static func per_crew_of(forecast: Dictionary) -> Array:
     var rows: Variant = forecast.get("per_crew", [])
     return rows if rows is Array else []
 
+## The forecast slot the sim's published plateau travels in — deliberately spelled differently from
+## the assignment key it is copied from, so a forecast composed off a HERD dict (which carries no
+## such key) can never pick one up by accident.
+const FORECAST_PUBLISHED_USEFUL_CREW_KEY := "published_useful_crew"
+
+## **NO CREW IS USEFUL HERE** — the sim's `fauna::NO_USEFUL_CREW` as it arrives on the wire, and the
+## cap `max_useful_workers` returns for it. A bare-handed party against a `defense` it cannot clear
+## lands exactly zero however many people it sends, so *"one worker is useful"* would be a false
+## floor and **no crew floor applies to it**, for the same reason none applies to `MAX_USEFUL_BARREN`:
+## flooring a cap on the hands that would take the regrowth staffs a crew against a take of zero.
+const PUBLISHED_NO_USEFUL_CREW := 0
+
+## **CARRY THE SIM'S OWN CEILING ONTO A FORECAST** — a copy of the work row's
+## `ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY`, made ONLY where the row actually published one.
+##
+## **THE PRESENCE TEST IS THE WHOLE FUNCTION.** The wire's `0` is *no crew is useful here* on a hunt
+## row and *does not apply* on every other row, and those two readings must not collapse: a forage
+## row copied through here would cap its `+` at nothing. So the copy happens in ONE place — the Work
+## board's hunt branch — and a source that published nothing is returned untouched, which leaves the
+## closed forms answering exactly as they did.
+static func with_published_useful_crew(forecast: Dictionary, source: Dictionary) -> Dictionary:
+    if not source.has(ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY):
+        return forecast
+    # **THE ENGAGEMENT STAGE IS THE GATE, exactly as it is on the sheet's fight lines.** The wire
+    # publishes this field on every `Hunt` row, and a PEN is a hunt row — but a penned beast is
+    # collected rather than stalked, so it states `NO_ENGAGEMENT_STAGE` and its cap was never the
+    # fightless quotient this replaces. Letting the plateau of a stalking curve bind a pen would let
+    # a `0` on a defended species kill the `+` on a herd the keepers simply walk up to.
+    if not has_engagement_stage(float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE))):
+        return forecast
+    var out := forecast.duplicate()
+    out[FORECAST_PUBLISHED_USEFUL_CREW_KEY] = maxi(
+        int(source[ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY]), PUBLISHED_NO_USEFUL_CREW)
+    return out
+
+## The ceiling the sim published for this source, or `NO_CREW_ANSWER` where it published none — which
+## is every surface with no assigned row behind it (the compose sheet, which holds the curve itself,
+## and every pre-commit forecast).
+static func published_useful_crew(forecast: Dictionary) -> int:
+    if not forecast.has(FORECAST_PUBLISHED_USEFUL_CREW_KEY):
+        return NO_CREW_ANSWER
+    return maxi(int(forecast[FORECAST_PUBLISHED_USEFUL_CREW_KEY]), PUBLISHED_NO_USEFUL_CREW)
+
 static func max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
@@ -4813,6 +4867,24 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # `expedition_useful_cap` runs the identical shape on the raid branch.
         hold = maxi(hold, per_crew.size())
         plateau = NO_CREW_ANSWER
+    if plateau == NO_CREW_ANSWER:
+        # **THE WORK BOARD READS THE SIM'S ANSWER RATHER THAN INVERTING THE TAKE.** A worked row is
+        # priced with no query reply in hand, so the curve above is empty there and the closed form
+        # below used to answer — `take_workers`, which divides by `engagement_carry`: the engagement
+        # and the retreat with **no attack, no defense and no durability** in it. On a fight-bound
+        # quarry that read 2.3× high, so the board quoted a different ceiling from the compose sheet
+        # for the same herd. The sim now publishes the plateau of its OWN curve on every assigned
+        # hunt row, and this is where the board picks it up — the same slot the curve's plateau
+        # occupies, so both twins (`source_worker_cap_state` and
+        # `DrawerComposeController._forecast_worker_cap`) inherit it without either being told.
+        var published := published_useful_crew(forecast)
+        if published == PUBLISHED_NO_USEFUL_CREW:
+            # **NO CREW IS USEFUL HERE, and no floor may raise that.** The sim has said this party
+            # brings nothing down at any headcount; flooring on the hands that would take the
+            # regrowth would staff a crew against a take of zero, which is the parking
+            # `MAX_USEFUL_BARREN` refuses one account over.
+            return PUBLISHED_NO_USEFUL_CREW
+        plateau = published
     if per_worker < FORECAST_MIN_PER_WORKER:
         # **THE AXIS IS SILENT — ASK THE OTHER ACCOUNTS BEFORE CALLING THE SOURCE BARREN.** Reported
         # from play on a wild patch of 56% tobacco + 44% hay grass: it pays no food by construction

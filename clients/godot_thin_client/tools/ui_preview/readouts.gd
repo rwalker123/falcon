@@ -346,6 +346,14 @@ static func hunt_crew_split_line(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.HUNT_CREW_SPLIT_META)
 	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
 
+## **THE KIT ROW'S HINT LINE** — `attack 20.0 · carry 40.0 per hunter · 4 of 6 equipped · spears 74 ·
+## sled 58`. A plain `Label` carrying `KitRoster.KIT_HINT_META`, so a harness makes its claim about
+## the LINE rather than about a string that happens to appear on the sheet. `""` when no kit row
+## rendered at all, which every assertion here distinguishes from a line that rendered differently.
+static func kit_hint_line(root: Node) -> String:
+	var node := Q.find_meta_node(root, KitRoster.KIT_HINT_META)
+	return (node as Label).text if node is Label else ""
+
 ## What `hunt_gate_blocked` answers when NO gate line rendered at all. A third state, not a `false`:
 ## "the sheet says the fight is winnable" and "the sheet says nothing about the fight" are different
 ## findings, and collapsing them would let a vanished line pass an is-not-blocked assertion.

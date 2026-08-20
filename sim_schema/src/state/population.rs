@@ -235,6 +235,31 @@ pub struct LaborAssignmentState {
     // `upkeepShortfall` — whose `supplied` is now this source's **share of the pool**. It stopped
     // answering *"did you staff this one"* and started answering *"where is my pooled shortfall
     // landing"*.
+    /// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING, *FIGHT INCLUDED*** — the sim's answer to the
+    /// Work board's `+` gate and to its *"max N workers useful here"* note, on a **hunt** row.
+    ///
+    /// It is the crew at which this herd's per-crew take curve stops rising, and it is *the same
+    /// number the crew-take query's rows plateau at*: both come out of core_sim's
+    /// `fauna::hunt_crew_take_curve`, one shipped as rows and one as this scalar, so the compose
+    /// sheet and the worked row cannot quote two ceilings for one herd.
+    ///
+    /// **The client cannot derive it.** A take is bounded by the room above the escapement floor,
+    /// by what the crew can haul, and by **what the party can bring down in a fight**
+    /// (`damage ÷ durability`); the third needs `combat_config.hit_chance`, which is deliberately
+    /// unpublished. A client-side quotient therefore divides by the fightless engagement reach and
+    /// reads high — 2.3× on a Wild Aurochs. **Read this field; do not re-derive it.**
+    ///
+    /// **The domain is this source's own crew pool** — the hands already on the row plus the band's
+    /// idle ones, the same domain the compose sheet asks its curve over. A curve still rising at the
+    /// top of that pool reports the pool itself: *every hand this band has is still buying take*.
+    ///
+    /// `0` means **no crew is useful here** on a hunt row — a bare-handed party against a `defense`
+    /// it cannot clear lands exactly zero however many people it sends
+    /// (core_sim's `fauna::NO_USEFUL_CREW`). It is also the value on every **non-hunt** row, which
+    /// has no fight and no quarry: hunt-only structurally, the way [`Self::fodder_yield`] is
+    /// plant-only. Derived per-turn at capture. Appended last (append-only).
+    #[serde(default)]
+    pub hunt_useful_workers: u32,
 }
 
 /// **One item's remaining condition in a band's TOE** — a row of

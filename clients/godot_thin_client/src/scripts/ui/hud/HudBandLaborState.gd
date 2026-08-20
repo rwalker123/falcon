@@ -639,9 +639,25 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY):
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = \
 				(a as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY]
+		# **THE SIM'S OWN CREW CEILING FOR THIS ROW**, and it rides presence-sensitively for a
+		# sharper reason than the rates above: its `0` is *no crew is useful here* on a HUNT row and
+		# *does not apply* on every other one, so a `get(..., 0)` default would assert the first
+		# reading about a forage patch and kill its `+`. The board's hunt branch is the only reader
+		# (`SourceForecast.with_published_useful_crew`), and an absent key leaves the closed forms
+		# answering exactly as they did.
+		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY):
+			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY] = \
+				int((a as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY])
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
+		# **THE PUBLISHED CREW CEILING SURVIVES A PENDING EDIT**, for the reason `improvement` does:
+		# `assign_labor` does not restate it, and blanking it would drop this row back onto the
+		# fightless closed form — a HIGHER ceiling — for the one frame between the click and its
+		# confirmation, which is precisely the frame the `+` is being clicked in. Its domain (the
+		# hands on the row plus the band's idle ones) is unmoved by a `+`/`-` on this same row.
+		var settled: Variant = (merged.get(key, {}) as Dictionary).get(
+			SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY, null)
 		# **THERE IS NO BUILD CREW LEFT TO PRESERVE HERE** (`docs/plan_standing_upkeep.md` §2.5). This
 		# overlay used to carry the confirmed `improvement_workers` through a pending TAKE edit,
 		# because `assign_labor` states no build crew and blanking it made staffed builders read as
@@ -667,6 +683,9 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# un-acknowledged edit shows no strip until the next snapshot projects it.
 			"arrival_schedule": PackedFloat32Array(),
 		}
+		if settled != null:
+			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY] = \
+				int(settled)
 	return merged
 
 ## **WHAT THE PLAYER IS DOING ON ONE SOURCE, FOLDED ACROSS EVERY BAND** — `{workers, improvement}`.

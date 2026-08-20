@@ -2494,6 +2494,12 @@ pub fn capture_snapshot(
                     expedition_delivery,
                     equipment,
                     kit_levers: &kit_levers,
+                    // The take model's roster and the fight's dials, for each hunt row's
+                    // `hunt_useful_workers`.
+                    hunt_crew_levers: &crate::snapshot::population::HuntCrewLevers {
+                        fauna: &fauna_config,
+                        combat: &combat_config,
+                    },
                     bench,
                     // **This band's faction decides which crafts are known**, so the memo is keyed
                     // per faction and resolved lazily — one entry per faction that owns a band,

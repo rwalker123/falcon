@@ -54,7 +54,7 @@ use crate::components::{floor_is_valid, BandEquipment, BandId};
 use crate::creatures_config::CreaturesConfigHandle;
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle, KitJob};
 use crate::expedition_config::{ExpeditionConfig, ExpeditionConfigHandle};
-use crate::fauna::{Herd, HerdRegistry, HuntDraw, HuntingParty};
+use crate::fauna::{Herd, HerdRegistry, HuntingParty};
 use crate::fauna_config::{FaunaConfig, FaunaConfigHandle};
 use crate::labor_config::LaborConfigHandle;
 use crate::orders::FactionId;
@@ -584,52 +584,32 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
     let fauna = world.resource::<FaunaConfigHandle>().get();
     let combat = world.resource::<CombatConfigHandle>().get();
     let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
-    // The reported band's width — the same readout lever every other quantile pair on this channel
-    // is drawn at (`combat_config.forecast_range_sigmas`).
-    let sigmas = combat.forecast_range_sigmas;
-    let per_crew = (1..=ask.max_workers)
-        .map(|workers| {
-            let coverage = equipment.coverage(&kit, workers as f32, &wear);
-            let party = crate::fauna::PartyResolution {
-                equipment: &equipment,
-                coverage: &coverage,
-                wear: &wear,
-                intrinsic,
-                // **BASE, not `expedition_tuning`** — see this function's doc.
-                tuning: combat.tuning(),
-                hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
-            }
-            .party_against(crate::equipment_config::Quarry::Mass(herd.body_mass));
-            // **The take's own three stages** ([`crate::fauna::resolve_hunt_engagement`]), which is
-            // literally the function `systems::hunt_take` runs — not a second reading of it. The
-            // wound ledger it hands back is dropped: a query resolves the fight the turn will and
-            // mutates nothing.
-            //
-            // **The RATE, not the turn's floored body count** — see this function's doc. Reading
-            // `fight.brought_down` here is what published `0` for every aurochs crew from 1 to 11.
-            let take_rate = |draw_sigmas: f32| {
-                crate::fauna::resolve_hunt_engagement(
-                    &herd,
-                    &fauna,
-                    &party,
-                    workers,
-                    ask.floor,
-                    HuntDraw::Quantile {
-                        sigmas: draw_sigmas,
-                    },
-                )
-                .fight
-                .expected_brought_down
-            };
-            HuntCrewTakeRow {
-                workers,
-                // Monotone non-decreasing in the quantile at every stage, so `low <= likely <= high`
-                // is a property of the arithmetic rather than a clamp applied afterwards — the same
-                // invariant `fauna::forecast_take_range` holds.
-                animals_low: take_rate(-sigmas.abs()),
-                animals_likely: take_rate(crate::combat::EXPECTED_STRIKES),
-                animals_high: take_rate(sigmas.abs()),
-            }
+    // **THE ONE PRODUCER** ([`crate::fauna::hunt_crew_take_curve`]) — the same call the capture makes
+    // to publish an assigned row's `hunt_useful_workers`, so the rows this reply ships and the cap
+    // the Work board reads cannot be two different arithmetics. This half is only the transport.
+    let curve = crate::fauna::hunt_crew_take_curve(&crate::fauna::HuntCrewCurveInputs {
+        herd: &herd,
+        fauna: &fauna,
+        equipment: &equipment,
+        kit: &kit,
+        wear: &wear,
+        intrinsic,
+        // **BASE, not `expedition_tuning`** — see this function's doc.
+        tuning: combat.tuning(),
+        hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        // The reported band's width — the same readout lever every other quantile pair on this
+        // channel is drawn at (`combat_config.forecast_range_sigmas`).
+        range_sigmas: combat.forecast_range_sigmas,
+        floor: ask.floor,
+        max_workers: ask.max_workers,
+    });
+    let per_crew = curve
+        .into_iter()
+        .map(|row| HuntCrewTakeRow {
+            workers: row.workers,
+            animals_low: row.low,
+            animals_likely: row.likely,
+            animals_high: row.high,
         })
         .collect();
     QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew })
@@ -789,6 +769,7 @@ mod tests {
     use bevy::prelude::Entity;
 
     use crate::components::LocalStore;
+    use crate::fauna::HuntDraw;
     use crate::fauna_config::SizeClass;
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
 

@@ -637,6 +637,28 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // component and so has no kit axis — read that as "no selection to make", never as "no
             // kit". Always inserted so the entry shape is stable.
             let _ = entry.insert("kit_id", assignment.kitId().unwrap_or_default());
+            // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — the crew beyond which more
+            // hunters add nothing, and the sim's own answer rather than an input to a client
+            // quotient. It is the plateau of `fauna::hunt_crew_take_curve`, the SAME curve the
+            // compose sheet's per-crew rows come out of, so the Work board's `+` gate and the sheet
+            // cannot quote two ceilings for one herd.
+            //
+            // **THE CLIENT CANNOT DERIVE IT.** A take is bounded by the room above the escapement
+            // floor, by what the crew can haul, and by what the party can BRING DOWN
+            // (`damage ÷ durability`); the third needs `combat_config.hit_chance`, which is
+            // deliberately unpublished, so the closed form divides by a fightless engagement reach
+            // and reads 2.3× high on a Wild Aurochs.
+            //
+            // **`0` IS TWO DIFFERENT SENTENCES and only the row's KIND separates them**: on a hunt
+            // row it is *no crew is useful here* (a bare-handed party against a defense it cannot
+            // clear), and on every non-hunt row it is *does not apply* — the field is hunt-only
+            // structurally, the way `fodder_yield` is plant-only. Always inserted so the entry
+            // shape is stable; `SourceForecast.published_useful_crew` is the one reader and it is
+            // reached only from the hunt branch of the work board.
+            let _ = entry.insert(
+                "hunt_useful_workers",
+                i64::from(assignment.huntUsefulWorkers()),
+            );
             array.push(&entry.to_variant());
         }
     }

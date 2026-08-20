@@ -283,6 +283,11 @@ fn create_populations<'a>(
                                 // WHICH PLANTS THIS CREW CARRIES HOME — appended last. Empty is
                                 // "the whole basket", which is what every crew took before this.
                                 takeSpecies: take_species,
+                                // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — the
+                                // plateau of the sim's own crew-take curve, published so the Work
+                                // board's `+` gate reads it instead of dividing by a fightless
+                                // reach. `0` on every non-hunt row. Appended last.
+                                huntUsefulWorkers: assignment.hunt_useful_workers,
                             },
                         )
                     })

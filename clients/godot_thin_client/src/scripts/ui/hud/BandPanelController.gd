@@ -3326,6 +3326,16 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # MAINTAIN allocation, answered by the compose sheet's keeping row and by `maintain`,
             # so raising the TAKE row's `+` to `herdersNeeded` staffed one crew against another
             # crew's demand.
+            #
+            # **AND THE CEILING IS THE SIM'S, NOT A QUOTIENT.** This row is priced with no crew-take
+            # reply in hand, so `max_useful_workers` used to fall through to the closed form —
+            # `take_workers`, which divides by a reach carrying no attack, no defense and no
+            # durability — and the board quoted a ceiling the compose sheet's own curve disagreed
+            # with on any fight-bound quarry. The wire publishes the plateau of that same curve on
+            # every assigned hunt row; carrying it onto the forecast is all it takes for both cap
+            # twins to read it. **The forage branch above deliberately does not**: its `0` is a
+            # structural *does not apply*, never *no crew is useful here*.
+            hunt_forecast = SourceForecast.with_published_useful_crew(hunt_forecast, m)
             cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle)
         var note := String(yld.get("note", ""))
         var rung := _work_source_rung(kind, patch, live_herd)
@@ -4542,7 +4552,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
             rerender(),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _send_expedition_count)
     var quarry_id := _compose.party_quarry_id()
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4610,10 +4620,14 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
 ##
 ## `quarry` / `prefix` are what a kit's greying is resolved against (`KitRoster.kit_offer`); both
 ## dock missions have a herd in hand by the time this is reached.
+## **`crew` IS THE PARTY STEPPER ABOVE IT**, handed on so the hint can state how far the band's gear
+## reaches into the party being composed. Both dock missions have one; a caller with none keeps the
+## pre-clause line.
 func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: String,
         default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
-        prefix: String = "") -> void:
-    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix)
+        prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED) -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix,
+        HudComposeVocab.COMPOSE_FIELD_KIT, false, crew)
     if row != null:
         sheet.add_child(row)
 
@@ -4761,7 +4775,7 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
             rerender(),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _send_expedition_count)
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     confirm.set_meta(HudWidgets.SEND_DENIAL_CONFIRM_META, true)

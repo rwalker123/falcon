@@ -7422,6 +7422,189 @@ pub struct HuntEngagement {
     pub fight: HuntFight,
 }
 
+/// **One crew size's whole-crew take**, in animals a turn, with the fight already resolved — one row
+/// of [`hunt_crew_take_curve`].
+///
+/// It is [`HuntFight::expected_brought_down`] and never [`HuntFight::brought_down`]: the rows are a
+/// **rate**, not the bodies that hit the ground next turn. See [`hunt_crew_take_curve`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HuntCrewTake {
+    /// The crew this row prices — **the whole party**, not a marginal hunter. The take is not linear
+    /// in the crew (the fight arm is, the engagement arm is a staircase), so a per-hunter reading of
+    /// this number is wrong by up to the width of a tread.
+    pub workers: u32,
+    /// The pessimistic bound, at `combat_config.forecast_range_sigmas` below the mean.
+    pub low: f32,
+    /// The point estimate ([`crate::combat::EXPECTED_STRIKES`]) — the only quantile
+    /// [`hunt_useful_crew`] reads.
+    pub likely: f32,
+    /// The optimistic bound, the same width above.
+    pub high: f32,
+}
+
+/// Everything one crew-take curve is resolved from, gathered so the **query** and the **capture**
+/// hand the producer identical inputs rather than each assembling a party its own way.
+pub struct HuntCrewCurveInputs<'a> {
+    /// The quarry, live — its stock, its wounds and the rung it stands on all enter the take.
+    pub herd: &'a Herd,
+    pub fauna: &'a FaunaConfig,
+    /// The item table every crew's tier resolves through.
+    pub equipment: &'a crate::equipment_config::EquipmentConfig,
+    /// The kit this crew works under, already **resolved** to a roster entry — a curve priced at the
+    /// job default for a band carrying traps answers a question nobody asked.
+    pub kit: &'a crate::equipment_config::KitChoice,
+    /// The band's live wear ledger. Coverage is re-resolved per crew size against it, which is a
+    /// term of the curve rather than an accident: five spears stretch differently over four hunters
+    /// than over twelve.
+    pub wear: &'a crate::components::BandEquipment,
+    /// The `person` roster row — what a hunter is before any gear.
+    pub intrinsic: CombatStats,
+    /// The severity dials the fight resolves at. **A resident band hunting its own range passes the
+    /// base [`crate::combat_config::CombatConfig::tuning`]**; only a detached raid passes
+    /// `expedition_tuning`, and the two differ by half again in the fight term.
+    pub tuning: CombatTuning,
+    /// [`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`].
+    pub hunt_injury_damage_per_animal: f32,
+    /// `combat_config.forecast_range_sigmas` — the reported band's half-width, a readout lever.
+    pub range_sigmas: f32,
+    /// The floor this crew stops at. **A curve answered at one floor cannot be reused at another**:
+    /// the room clamps the engagement *before* the retreat, so it moves every row.
+    pub floor: f32,
+    /// The largest crew the curve is asked about — the source's own crew pool (the hands on it plus
+    /// the band's idle ones), which is every crew the stepper beside it can reach.
+    pub max_workers: u32,
+}
+
+/// **THE HUNT TAKE CURVE — the one producer.** One row per crew size, `1..=max_workers`, each row
+/// the *whole* crew's expected animals a turn with the engagement, the retreat and **the fight** all
+/// resolved.
+///
+/// # Why it is a seam and not a body inside the query
+///
+/// Because the answer travels on **two transports** and there may only be one arithmetic behind
+/// them:
+///
+/// - `forecast_query::answer_hunt_crew_take` ships the rows themselves, for a compose sheet asking
+///   about a crew it has not committed yet;
+/// - the snapshot ships [`hunt_useful_crew`] of these rows on an **assigned** row's
+///   [`sim_schema::state::LaborAssignmentState::hunt_useful_workers`], because the Work board
+///   renders many rows a frame and cannot round-trip for each of them.
+///
+/// The board's `+` gate used to divide the room by a *fightless* per-worker reach — the engagement
+/// and the retreat with no attack, no defense and no durability — and so quoted a different ceiling
+/// from the compose sheet for the same herd. Both now read this.
+///
+/// # The rows are a RATE, and that is not a rounding preference
+///
+/// [`HuntFight::expected_brought_down`], never `brought_down`. A Wild Aurochs (`defense 6`,
+/// `durability 150`, `engage_rate 0.17`) is engaged one animal at a time by every crew from 1 to 11,
+/// so the blow is capped well under a `150`-durability body and `floor(damage / durability)` is `0`
+/// for every one of them — a curve of zeroes for crews genuinely taking `0.75` a turn. The wound
+/// ledger the sim carries between turns is what makes the un-floored rate the honest answer, and a
+/// curve is one frozen turn by construction.
+///
+/// # It resolves the take's own three stages, and does not mutate
+///
+/// Each row is [`resolve_hunt_engagement`] — literally the function `systems::hunt_take` runs — with
+/// the wound ledger it hands back dropped. Nothing here touches the herd.
+pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
+    let sigmas = inputs.range_sigmas.abs();
+    (1..=inputs.max_workers)
+        .map(|workers| {
+            let coverage = inputs
+                .equipment
+                .coverage(inputs.kit, workers as f32, inputs.wear);
+            let party = PartyResolution {
+                equipment: inputs.equipment,
+                coverage: &coverage,
+                wear: inputs.wear,
+                intrinsic: inputs.intrinsic,
+                tuning: inputs.tuning,
+                hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+            }
+            .party_against(crate::equipment_config::Quarry::Mass(inputs.herd.body_mass));
+            let take_rate = |draw_sigmas: f32| {
+                resolve_hunt_engagement(
+                    inputs.herd,
+                    inputs.fauna,
+                    &party,
+                    workers,
+                    inputs.floor,
+                    HuntDraw::Quantile {
+                        sigmas: draw_sigmas,
+                    },
+                )
+                .fight
+                .expected_brought_down
+            };
+            HuntCrewTake {
+                workers,
+                // Monotone non-decreasing in the quantile at every stage, so `low <= likely <= high`
+                // is a property of the arithmetic rather than a clamp applied afterwards — the same
+                // invariant [`forecast_take_range`] holds.
+                low: take_rate(-sigmas),
+                likely: take_rate(crate::combat::EXPECTED_STRIKES),
+                high: take_rate(sigmas),
+            }
+        })
+        .collect()
+}
+
+/// **NO CREW IS USEFUL HERE** — what [`hunt_useful_crew`] answers when no crew in the curve brings
+/// anything down at all: a bare-handed party against a `defense` it cannot clear lands exactly zero
+/// however many people it sends, and *"one worker is useful"* would be a false floor.
+///
+/// It is also what an **empty** curve reads, which is the same statement about a crew pool of
+/// nobody. The wire's [`sim_schema::state::LaborAssignmentState::hunt_useful_workers`] carries it as
+/// `0`.
+pub const NO_USEFUL_CREW: u32 = 0;
+
+/// **HOW CLOSE COUNTS AS THE SAME TAKE.** The curve's rows are `min(fight, stayed)` where `stayed`
+/// is itself clamped by the room, so adjacent crews on a bound tread agree to within float noise
+/// rather than bit-for-bit; without an epsilon a wobble in the last mantissa bits would read as a
+/// crew that buys more take. **Relative, not absolute**, because the rows span a Wild Fowl's
+/// hundreds of animals a turn and a mammoth's hundredths.
+///
+/// The client's `SourceForecast.CREW_TAKE_REACH_TOLERANCE` is the same number for the same reason —
+/// it walks the *published rows* of this same curve — so the two readings of one curve cannot
+/// disagree about where it stopped rising.
+const CREW_TAKE_RISE_TOLERANCE: f32 = 0.001;
+
+/// **WHERE THE CURVE STOPS RISING** — the crew beyond which more hands add nothing, *fight
+/// included*. This is what *"max N workers useful here"* means, and it is the same answer the
+/// crew-take curve plateaus at because it **is** that plateau: the snapshot publishes this, the
+/// query publishes the rows, and both come out of [`hunt_crew_take_curve`].
+///
+/// # It is the LAST RISE, not the first flat
+///
+/// The engagement is a staircase — `floor(w × engage_rate)` is flat across whole runs of crew sizes
+/// and steps at integer boundaries — so a scan that stopped at the first crew whose take equalled
+/// its predecessor's would report the bottom of a tread as the top of the stairs. On the shipped
+/// Wild Boar (`engage_rate 0.33`) crews one through six all bring the same single animal to bay and
+/// the seventh brings two.
+///
+/// # A curve still rising at its last row plateaus AT that row
+///
+/// The curve is asked about a bounded pool, so *"still climbing when the rows ran out"* is the
+/// honest answer *every hand this band has is still buying take* — not a licence to invent crews it
+/// cannot field. A reader that needs to tell the two apart compares the answer with the curve's
+/// length, which is what the client's `crew_take_curve_settled` does.
+///
+/// [`NO_USEFUL_CREW`] when nothing in the curve brings anything down.
+pub fn hunt_useful_crew(curve: &[HuntCrewTake]) -> u32 {
+    let mut plateau = NO_USEFUL_CREW;
+    let mut best = 0.0f32;
+    for row in curve {
+        // A non-finite row is not a bigger take, it is an unpriceable one — the reading a source
+        // with no engagement stage at all produces — so it never counts as a rise.
+        if row.likely.is_finite() && row.likely > best * (1.0 + CREW_TAKE_RISE_TOLERANCE) {
+            best = row.likely;
+            plateau = row.workers;
+        }
+    }
+    plateau
+}
+
 // **RETIRED: `corral_yield`** — the gross managed yield a penned herd handed its keeper each turn.
 // It was `pen_yield_biomass` through the species vector, with no floor term, no drawdown and no
 // engagement bound. A pen takes the ordinary escapement draw now: **a rung may change production, no

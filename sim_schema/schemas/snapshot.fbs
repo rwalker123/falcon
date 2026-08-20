@@ -1582,6 +1582,31 @@ table LaborAssignment {
   // arrival schedule - ALREADY answer for this selection. Render them; never re-derive a per-species
   // take on the client, which holds none of the capacity arithmetic.
   takeSpecies:[string];
+  // --- HOW MANY HANDS THIS QUARRY CAN USE (appended last) ---------------------------------------
+  // THE CREW BEYOND WHICH MORE HANDS ADD NOTHING, **FIGHT INCLUDED** — the sim's answer to the Work
+  // board's `+` gate and to its "max N workers useful here" note, on a HUNT row. It is the crew at
+  // which this herd's per-crew take curve STOPS RISING, and it is literally the same number the
+  // crew-take query's rows plateau at: both come out of core_sim `fauna::hunt_crew_take_curve`, one
+  // shipped as rows and one as this scalar, so the compose sheet and the worked row cannot quote two
+  // ceilings for one herd.
+  //
+  // **WHY THE CLIENT CANNOT DERIVE IT.** A take is bounded by three things — the room above the
+  // escapement floor, what the crew can haul, and WHAT THE PARTY CAN BRING DOWN IN A FIGHT
+  // (damage / durability). The third needs `combat_config.hit_chance`, which is deliberately
+  // unpublished, so a client-side quotient divides by the fightless engagement reach and reads high —
+  // measured at 2.3x on a Wild Aurochs. Read this field; do not re-derive it.
+  //
+  // **THE DOMAIN IS THIS SOURCE'S OWN CREW POOL** — the hands already on the row plus the band's idle
+  // ones, which is every crew the stepper beside it can reach, and the same domain the compose
+  // sheet asks its curve over. A curve still rising at the top of that pool reports the pool itself:
+  // "every hand this band has is still buying take", not a licence to name a crew it cannot field.
+  //
+  // `0` MEANS "NO CREW IS USEFUL HERE" on a hunt row — a bare-handed party against a defense it
+  // cannot clear lands exactly zero however many people it sends. It is also the value on every
+  // NON-HUNT row (forage, scout, warrior, agriculture, husbandry, builders), which have no fight and
+  // no quarry: the field is hunt-only structurally, the way fodderYield is plant-only. Derived
+  // per-turn at capture. Appended last (append-only).
+  huntUsefulWorkers:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
