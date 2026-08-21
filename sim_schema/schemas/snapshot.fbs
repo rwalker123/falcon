@@ -1958,10 +1958,18 @@ table ForagePatchState {
   // config key (flora_config.json), `displayName` the player-facing name, `share` this plant's
   // fraction of the tile's basket.
   //
-  // DERIVED FROM THE BIOME, NOT PER-PATCH STATE: it is a pure function of the tile's terrain and the
-  // roster's affinity weights — every tile of a biome reads the same composition, and nothing on the
-  // patch can change it. What this PARTICULAR patch has been committed to is a separate pair of
-  // fields (`committedSpecies`/`committedDisplayName`, appended below).
+  // ⛔ IT IS THE PATCH'S OWN REWEIGHTED BASKET, NOT THE BIOME'S. This comment used to say the
+  // opposite — "a pure function of the tile's terrain… nothing on the patch can change it" — and that
+  // has been false since #433: `forage::patch_composition` resolves through `composition_for_rung`,
+  // so a TENDED patch publishes its favored species lifted by `tended_weeding_gain` with the share
+  // taken from the least abundant members first, and a FIELD publishes the crop at 1.0. The take
+  // reads the identical seam, so the card and the yield cannot disagree — but a reader trusting the
+  // old wording will mistake a weeded share for a biome constant and go looking for a second
+  // producer that does not exist. (It cost exactly that during the §4.11 playtest.) The biome's own
+  // realization is what this reweights, not what it publishes.
+  //
+  // What this PARTICULAR patch has been committed to is a separate pair of fields
+  // (`committedSpecies`/`committedDisplayName`, appended below).
   //
   // THE SHARES SUM TO 1 for any tile that bears forage at all — the decomposition ruling made
   // structural, so `share × the tile's forageCapacity` is the plant's own capacity and the parts
