@@ -639,6 +639,26 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 > had been built for a subject that is not the selection. It now takes `may_close`, and the `answered`
 > lambda passes `false`: **a query answers a question the sheet composed and carries no news about
 > whether the subject still exists — only a snapshot can retire a subject.**
+- **⛔ A CURVE OF ZEROES PLATEAUS AT NOBODY, NOT AT ONE — and this walk must agree with the sim's.**
+  `SourceForecast.crew_take_plateau` is a deliberate *second* implementation of
+  `fauna::hunt_useful_crew` (it walks the published rows; the sim walks its own), so the two have to
+  land on the same number everywhere. It seeded `plateau := 1` and scanned from the second row, which
+  is a **false floor** on a curve that never rises — the case the sim names explicitly and answers
+  `NO_USEFUL_CREW` for (*"a bare-handed party against a `defense` it cannot clear lands exactly zero
+  however many people it sends"*). Reported from play on a Rabbit Warren: the sheet printed
+  `max 1 worker useful here — more would be idle` while the same herd's wire row carried
+  `huntUsefulWorkers: 0` — two readings of one curve, disagreeing by the whole of the answer. The scan
+  now starts from `PUBLISHED_NO_USEFUL_CREW` at row **one** and only a row rising above zero names a
+  crew, which is the sim's loop line for line, `is_finite` guard included.
+  > **`max_useful_workers` needs its own refusal beside the published one**, because the two arms are
+  > reached on different sources: the curve arm where a query reply is in hand (a compose sheet), the
+  > published arm where none is (a worked board row). Without it the zero fell through to the
+  > `maxi(plateau, hold)` below and the hold/reach floors staffed a crew against a take of nothing —
+  > the same parking `MAX_USEFUL_BARREN` refuses one account over.
+  >
+  > **The sim-side fix landed with it and is the reason this stopped firing in play**: the crew curve
+  > was resolving against the herd's *post-take* stock, so a worked source read zero at every crew.
+  > See `.claude/rules/core_sim/fauna.md` → "A FORECAST REGROWS FIRST".
 - **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
   mins `animals_stayed` into its own kill count; `floor(min(carry, engaged × fpa) / fpa)` is the same
   arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short

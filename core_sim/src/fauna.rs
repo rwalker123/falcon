@@ -7603,6 +7603,29 @@ pub struct HuntCrewCurveInputs<'a> {
     pub max_workers: u32,
 }
 
+/// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a private clone with one Logistics regrowth
+/// applied, which is the state every forecast on this seam is really being asked about.
+///
+/// It is [`project_realized_hunt`]'s loop body stopped after its first step (`regrow` → read the
+/// room), and it exists so that *"a forecast regrows first"* is **one expression** rather than a
+/// rule each forecast path remembers. [`hunt_crew_take_curve`]'s doc carries the measurement that
+/// forced it.
+///
+/// **It does not despawn, shed, starve or graze**, and that is deliberate rather than an omission:
+/// those are `advance_herds` / `advance_husbandry`'s business and they need a world. The projection
+/// makes exactly the same simplification, so the curve and the steady rate the work board publishes
+/// stay two readings of one model.
+///
+/// **"Regrown" is not "larger".** Below the Allee threshold [`regrow_biomass`] takes the depensation
+/// branch and the clone comes back **smaller** — which is the honest forecast for a collapsing herd,
+/// since next turn's take really will draw on less stock. A guard asserting the clone never shrinks
+/// looked obviously true and fired on the first thin-herd fixture it met.
+pub(crate) fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
+    let mut quarry = herd.clone();
+    regrow_biomass(&mut quarry, fauna);
+    quarry
+}
+
 /// **THE HUNT TAKE CURVE — the one producer.** One row per crew size, `1..=max_workers`, each row
 /// the *whole* crew's expected animals a turn with the engagement, the retreat and **the fight** all
 /// resolved.
@@ -7634,13 +7657,41 @@ pub struct HuntCrewCurveInputs<'a> {
 /// # It resolves the take's own three stages, and does not mutate
 ///
 /// Each row is [`resolve_hunt_engagement`] — literally the function `systems::hunt_take` runs — with
-/// the wound ledger it hands back dropped. Nothing here touches the herd.
+/// the wound ledger it hands back dropped. Nothing here touches the caller's herd.
+///
+/// # It asks about NEXT TURN, so it regrows first — the take it predicts does
+///
+/// Every caller resolves this **after** the Population take: the query answers a client between
+/// turns and the capture publishes [`hunt_useful_crew`] in the Snapshot stage. The take it is
+/// predicting runs after the *next* Logistics regrowth. Reading the herd as it stands is therefore
+/// reading it a whole turn early, and the error is not small — it is the entire take, because both
+/// terms the room is made of are written by the take that just happened:
+///
+/// - [`escapement_ceiling`] reads `biomass`, which the take has just drawn back down toward the
+///   floor. A crew holding a herd at its floor leaves a room of approximately nothing.
+/// - the [`growth_share`] backstop reads [`Herd::growth_this_turn`], which is
+///   `biomass − biomass_before_regrowth` — and the take is subtracted from `biomass` after
+///   `regrow_biomass` stamps the pair. On a source harvested at or above its growth that field is
+///   **zero**, so the backstop that exists to pay a source sitting at its floor is switched off by
+///   precisely the harvesting that puts it there.
+///
+/// Reported from play on a Rabbit Warren (`K 10`, floor `0.5`, one trapper): the row's own
+/// `actualYield` was `0.0216` — four rabbits — and its `arrivalSchedule` was positive in all twenty
+/// slots, while this curve read **zero at every crew size**, the sheet said *"these hunters bring
+/// down ≈0 Rabbit Warren/turn"*, and `huntUsefulWorkers` published `0` for a row that was feeding
+/// the band. The stock the take saw was `5.914`; the stock this read was `5.039`.
+///
+/// So the quarry is a **private regrown clone**, which is [`project_realized_hunt`]'s loop
+/// (`regrow` → read the room → take) stopped after its first turn — and that is why the work board,
+/// which reads that projection, was right about this herd for the whole life of the discrepancy.
+/// The clone is what keeps *"nothing here touches the herd"* true.
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
+    let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     // **A PEN IS COLLECTED, NOT STALKED — so it gets the curve of the take it actually resolves.**
     // See [`pen_crew_take_curve`]; the branch is here, at the one producer, so neither transport and
     // no client has to know which rung a row stands on to trust the number.
-    if inputs.herd.is_corralled() {
-        return pen_crew_take_curve(inputs);
+    if quarry.is_corralled() {
+        return pen_crew_take_curve(&quarry, inputs);
     }
     let sigmas = inputs.range_sigmas.abs();
     (1..=inputs.max_workers)
@@ -7656,10 +7707,10 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 tuning: inputs.tuning,
                 hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
             }
-            .party_against(crate::equipment_config::Quarry::Mass(inputs.herd.body_mass));
+            .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass));
             let take_rate = |draw_sigmas: f32| {
                 resolve_hunt_engagement(
-                    inputs.herd,
+                    &quarry,
                     inputs.fauna,
                     &party,
                     workers,
@@ -7722,13 +7773,20 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
 /// Both are *animals put on the ground*. `killed` already carries the carry bound
 /// (`WhenPackFull` stops the keepers once the pack is full), so it is the term that plateaus; the
 /// `carried`/`wasted` split below it is about what got home, which is not what a crew ceiling asks.
-fn pen_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
+///
+/// # `quarry` is the REGROWN clone, not `inputs.herd`
+///
+/// A pen is drawn through the same escapement room a stalked herd is, so it carries the same
+/// one-turn skew and takes the same cure — see [`hunt_crew_take_curve`], which does the regrowing
+/// and hands the result down. Reading `inputs.herd` here would leave the pen rows a turn behind the
+/// stalking ones for no reason anybody could state.
+fn pen_crew_take_curve(quarry: &Herd, inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
     // **Crew-independent, so it is resolved once** — the stock standing above this assignment's own
     // floor, through the very seam the tend branch draws from.
-    let production = herd_take_room(inputs.herd, inputs.floor, inputs.fauna);
+    let production = herd_take_room(quarry, inputs.floor, inputs.fauna);
     // The species' own handling rate with the pen's gain already folded in — a keeper handles far
     // more animals a turn than a hunter because they are standing still rather than running away.
-    let handling_per_worker = herd_engage_rate(inputs.herd, inputs.fauna);
+    let handling_per_worker = herd_engage_rate(quarry, inputs.fauna);
     (1..=inputs.max_workers)
         .map(|workers| {
             // **Coverage re-resolved per crew size**, exactly as the stalking rows do it: a band with
@@ -7747,7 +7805,7 @@ fn pen_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
             let take = quantise_animal_take(
                 production,
                 workers as f32 * carry_per_worker,
-                inputs.herd.body_mass,
+                quarry.body_mass,
                 handling_per_worker * workers as f32,
                 EngagementStop::WhenPackFull,
             )

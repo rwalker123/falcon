@@ -2631,14 +2631,25 @@ static func crew_take_reaching(per_crew: Array, animals: float) -> int:
 ## `NO_CREW_ANSWER` where there is no curve; a curve that rises to its own last row plateaus AT that
 ## row, which is the honest answer to a question asked about a bounded pool — every hand the band has
 ## is still buying take.
+##
+## **A CURVE OF ZEROES PLATEAUS AT NOBODY (`PUBLISHED_NO_USEFUL_CREW`), NOT AT ONE.** This walk is a
+## deliberate second implementation of the sim's `fauna::hunt_useful_crew`, so it has to agree with it
+## everywhere, and the sim's own doc names this case: *"a bare-handed party against a `defense` it
+## cannot clear lands exactly zero however many people it sends, and one worker is useful would be a
+## false floor."* Seeding at `1` printed exactly that false floor — reported from play as
+## `max 1 worker useful here` on a Rabbit Warren whose wire row carried `huntUsefulWorkers: 0`, the
+## two readings of one curve disagreeing by the whole of the answer. So the scan starts from nothing
+## and only a row that genuinely rises above zero names a crew, which is the sim's loop line for line.
 static func crew_take_plateau(per_crew: Array) -> int:
     if not has_crew_take_curve(per_crew):
         return NO_CREW_ANSWER
-    var plateau := 1
-    var best := crew_take_likely(per_crew, 1)
-    for workers in range(2, per_crew.size() + 1):
+    var plateau := PUBLISHED_NO_USEFUL_CREW
+    var best := 0.0
+    for workers in range(1, per_crew.size() + 1):
         var take := crew_take_likely(per_crew, workers)
-        if take > best * (1.0 + CREW_TAKE_REACH_TOLERANCE):
+        # A non-finite row is not a bigger take, it is an unpriceable one — the sim's own guard, kept
+        # here so the two walks cannot differ on a source with no engagement stage.
+        if is_finite(take) and take > best * (1.0 + CREW_TAKE_REACH_TOLERANCE):
             best = take
             plateau = workers
     return plateau
@@ -4949,6 +4960,14 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # `expedition_useful_cap` runs the identical shape on the raid branch.
         hold = maxi(hold, per_crew.size())
         plateau = NO_CREW_ANSWER
+    if plateau == PUBLISHED_NO_USEFUL_CREW:
+        # **THE CURVE ITSELF SAYS NOBODY, and no floor may raise that** — the identical refusal the
+        # published-scalar arm below makes, and it has to be spelled here too because the two arms are
+        # reached on different sources: this one where a reply is in hand (a compose sheet), that one
+        # where none is (a worked board row). Falling through would hand the zero to the `maxi(…, hold)`
+        # below and staff a crew against a take of nothing, which is the parking `MAX_USEFUL_BARREN`
+        # refuses one account over.
+        return PUBLISHED_NO_USEFUL_CREW
     if plateau == NO_CREW_ANSWER:
         # **THE WORK BOARD READS THE SIM'S ANSWER RATHER THAN INVERTING THE TAKE.** A worked row is
         # priced with no query reply in hand, so the curve above is empty there and the closed form

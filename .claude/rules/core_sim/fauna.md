@@ -460,6 +460,45 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > > so *leave the whole herd standing* keeps meaning exactly that — at the take **and** at the gate, with
 > > no special case. A flat share would have made a full floor cull every turn.
 > >
+> > **⛔ A FORECAST REGROWS FIRST, BECAUSE THE TAKE IT PRICES RUNS AFTER LOGISTICS.**
+> > `fauna::hunt_crew_take_curve` resolves against `fauna::next_turns_quarry` — a private clone with
+> > one `regrow_biomass` applied — and **not** the herd as the registry holds it. Every caller reads
+> > it after the Population take (the query answers a client between turns; the capture publishes
+> > `hunt_useful_crew` in the Snapshot stage), so the raw herd is a whole turn stale, and on a
+> > **worked** source that staleness is the entire take rather than a rounding:
+> >
+> > - `escapement_ceiling` reads `biomass`, which the take has just drawn back toward the floor, so
+> >   the room left standing is approximately nothing; and
+> > - the growth-share backstop reads `Herd::growth_this_turn`, which is
+> >   `biomass − biomass_before_regrowth` — and the take is subtracted from `biomass` **after**
+> >   `regrow_biomass` stamps the pair. On a source harvested at or above its growth that field is
+> >   **`0`**, so *the backstop that exists to pay a source sitting at its floor is switched off by
+> >   exactly the harvesting that puts it there.*
+> >
+> > Measured in play on a Rabbit Warren (`K 10`, floor `0.5`, one trapper): the row published
+> > `actualYield 0.0216` — four rabbits — with a positive `arrivalSchedule` in **all twenty slots**,
+> > while the curve read **zero at every crew size**, the compose sheet said *"these hunters bring
+> > down ≈0 Rabbit Warren/turn"*, and `huntUsefulWorkers` published `0` for a row that was feeding the
+> > band. The stock the take saw was `5.914`; the stock the curve read was `5.039`.
+> >
+> > **`project_realized_hunt` was right about that herd throughout, and structurally so** — its loop
+> > is `regrow` → read the room → take, every turn — which is why the Work board's `/turn` and the
+> > compose sheet's headline disagreed by 8× rather than by a rounding. `next_turns_quarry` is that
+> > loop's first step, named, so *"a forecast regrows first"* is one expression rather than a rule
+> > each forecast path remembers.
+> >
+> > **"Regrown" is not "larger".** Below the Allee threshold `regrow_biomass` takes the depensation
+> > branch and the clone comes back *smaller*, which is the honest forecast for a collapsing herd. A
+> > guard asserting the clone never shrinks looks obviously true and fires on the first thin-herd
+> > fixture it meets.
+> >
+> > **The client's room arm was already forward** (`SourceForecast.escapement_room_next_turn`), so
+> > before this the two halves of the sheet's own `min(room, haul, brought_down)` sat a turn apart and
+> > the stale one won. Both halves are next-turn now; `forecast_query`'s
+> > `the_curve_reproduces_the_take_on_a_herd_held_at_its_floor` is the guard, and its precondition —
+> > *the standing room affords zero whole animals* — is what makes it a test of the frame rather than
+> > of a number.
+> >
 > > **THE ESCAPEMENT PREDICATE WAS SPLIT, and the half that did NOT move is the point.** It fed two
 > > seams. The **lesson** keeps the pure room, because `learn_multiplier`'s self-limit is load-bearing —
 > > a floor just under `1.0` deliberately learns at nearly ×2 while taking almost nothing, and its doc

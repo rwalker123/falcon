@@ -1367,6 +1367,20 @@ mod tests {
     /// back), the biomass does not. These fixtures are about the engagement and the fight, so a herd
     /// that visibly drew down would be measuring the drawdown instead; the thin-herd fixture wants
     /// its escapement room *constant* for the same reason.
+    ///
+    /// # ⛔ Each turn REGROWS before it takes, because the sim's turn does
+    ///
+    /// `hunt_take` runs in Population, one whole stage after Logistics' [`regrow_biomass`], so a
+    /// harness that called it on the raw fixture was pricing a turn the sim never runs — and the
+    /// curve it was comparing against is asked between turns, about the take *after* the next
+    /// regrowth. Both sides now stand at the same point in the turn, which is the only arrangement
+    /// in which *"the curve reproduces the sim's own take"* is a statement about one quantity.
+    ///
+    /// Measured in play before the two were aligned: a Rabbit Warren's row published
+    /// `actualYield 0.0216` — four rabbits — with a positive `arrivalSchedule` in all twenty slots,
+    /// while the curve resolved at the same herd's *post-take* stock read **zero at every crew
+    /// size**. This harness passed throughout, because it was reading the herd a turn early on both
+    /// sides at once.
     fn sim_take(
         world: &World,
         species: &str,
@@ -1380,6 +1394,9 @@ mod tests {
         let mut herd = herd_of_biomass(species, body_mass, biomass);
         let mut killed = 0.0_f32;
         for _ in 0..LEDGER_TURNS {
+            // Logistics, then Population — the turn order the take actually runs in, so what is held
+            // level between turns is the stock *before* the regrowth.
+            crate::fauna::regrow_biomass(&mut herd, &fauna);
             killed += crate::systems::hunt_take(
                 &mut herd,
                 workers,
@@ -1426,10 +1443,18 @@ mod tests {
             SWEEP_CREW as usize,
             "one row per crew size, `1..=max_workers`"
         );
+        // **THE CLIENT'S ROOM ARM IS NEXT TURN'S, and it is written that way here because that is
+        // what the client does** — `SourceForecast.escapement_room_next_turn` regrows before it
+        // subtracts the floor, for the same reason the curve does: the take being priced runs after
+        // the next Logistics pass. Composing a *standing* room against a next-turn row would put the
+        // two halves of one `min` a whole turn apart, which is the defect this suite now pins.
         let ceiling = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             crate::fauna::herd_take_room(
-                &herd_of_biomass(species, body_mass, biomass),
+                &crate::fauna::next_turns_quarry(
+                    &herd_of_biomass(species, body_mass, biomass),
+                    &fauna,
+                ),
                 floor,
                 &fauna,
             )
@@ -1559,6 +1584,91 @@ mod tests {
         );
 
         the_curve_reproduces_the_take(DEER, DEER_BODY, THIN_HERD, STRIP_IT_BARE);
+    }
+
+    /// **A SOURCE HELD AT ITS FLOOR — the state a working crew keeps a herd in, and the one the
+    /// standing-frame curve answered `0` for at every crew size.**
+    ///
+    /// The three fixtures above all stand well clear of their floor, so the curve's *frame* — which
+    /// point in the turn it reads the herd at — cannot be seen in any of them: a fat herd's room is
+    /// enormous either way. This one is the regime the game spends its time in. A crew working a
+    /// source draws it back to the floor every turn, so at capture time
+    ///
+    /// - the escapement room is approximately **nothing** (the take just removed it), and
+    /// - [`Herd::growth_this_turn`] is **zero**, because it is `biomass − biomass_before_regrowth`
+    ///   and the take is subtracted from `biomass` after `regrow_biomass` stamps the pair — so the
+    ///   growth-share backstop that exists to pay a source sitting at its floor is switched off by
+    ///   exactly the harvesting that puts it there.
+    ///
+    /// Reported from play on a Rabbit Warren: the row published `actualYield 0.0216` — four rabbits —
+    /// with a positive `arrivalSchedule` in all twenty slots, beside a compose sheet reading
+    /// *"these hunters bring down ≈0 Rabbit Warren/turn"* and a `huntUsefulWorkers` of `0`.
+    ///
+    /// **The precondition is the falsification, and it is asserted rather than described**: the
+    /// standing room here affords **zero whole animals**, so a curve that reads the herd as it stands
+    /// is identically zero at every crew and every assertion below fails. Nothing else in this
+    /// section stages that.
+    #[test]
+    fn the_curve_reproduces_the_take_on_a_herd_held_at_its_floor() {
+        /// Exactly [`HELD_AT_THE_FLOOR`] of `herd_of_biomass`'s capacity — a herd a crew has drawn
+        /// back to its floor and holds there.
+        const ON_THE_FLOOR: f32 = 50_000.0;
+        /// The floor that stock sits on.
+        const HELD_AT_THE_FLOOR: f32 = 0.5;
+
+        let mut world = world_hunting_biomass(DEER, DEER_BODY, ON_THE_FLOOR);
+        let held = herd_of_biomass(DEER, DEER_BODY, ON_THE_FLOOR);
+        {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            assert_eq!(
+                held.growth_this_turn(),
+                0.0,
+                "the fixture must stand as a WORKED source does — the take has already eaten this \
+                 turn's growth, which is what silences the growth-share backstop"
+            );
+            let standing = crate::fauna::herd_take_room(&held, HELD_AT_THE_FLOOR, &fauna);
+            assert_eq!(
+                crate::fauna::animals_affordable(standing, DEER_BODY),
+                0.0,
+                "the standing room ({standing}) must afford NO whole animal, or the old frame \
+                 answers the same number as the new one and this fixture proves nothing"
+            );
+            // Regrown HERE rather than through `fauna::next_turns_quarry`, deliberately: that is the
+            // seam under test, and a precondition written in terms of it would go quiet in exactly
+            // the sabotage this fixture exists to catch — leaving the reproduction assertion below to
+            // report the failure instead of this one masking it.
+            let mut grown = held.clone();
+            crate::fauna::regrow_biomass(&mut grown, &fauna);
+            let next = crate::fauna::herd_take_room(&grown, HELD_AT_THE_FLOOR, &fauna);
+            assert!(
+                crate::fauna::animals_affordable(next, DEER_BODY) > 0.0,
+                "…while next turn's room ({next}) affords a real take — the whole of the gap this \
+                 fixture exists to pin"
+            );
+        }
+
+        // **AND THE PUBLISHED SCALAR AGREES WITH THE ROWS**, since both come out of the one producer
+        // and the play report had them disagreeing by the whole of the answer: `huntUsefulWorkers`
+        // read `NO_USEFUL_CREW` on a row that was feeding the band. Walked off the SOCKET rows rather
+        // than by calling the curve again, so this is the two transports compared and not a function
+        // compared with itself.
+        let curve: Vec<crate::fauna::HuntCrewTake> =
+            crew_curve(&mut world, &crew_ask(SWEEP_CREW, HELD_AT_THE_FLOOR))
+                .iter()
+                .map(|row| crate::fauna::HuntCrewTake {
+                    workers: row.workers,
+                    low: row.animals_low,
+                    likely: row.animals_likely,
+                    high: row.animals_high,
+                })
+                .collect();
+        assert!(
+            crate::fauna::hunt_useful_crew(&curve) > crate::fauna::NO_USEFUL_CREW,
+            "a herd paying a real take must publish a real useful-crew cap, not `no crew is useful \
+             here`"
+        );
+
+        the_curve_reproduces_the_take(DEER, DEER_BODY, ON_THE_FLOOR, HELD_AT_THE_FLOOR);
     }
 
     /// **THE BINDING TERM FLIPS INSIDE THE STEPPER'S OWN RANGE**, which is why the sweep above is a
