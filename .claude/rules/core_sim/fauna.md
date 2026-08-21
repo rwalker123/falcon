@@ -499,6 +499,47 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > > *the standing room affords zero whole animals* — is what makes it a test of the frame rather than
 > > of a number.
 > >
+> > **⛔ AND THE CURVE IS A RATE ALL THE WAY DOWN — `EngagementQuantum::Rate`, ITS ONLY CALLER.**
+> > Regrowing fixed *which turn* the room is measured in; it does not stop the room being **rounded to
+> > whole animals**, and on heavy-bodied quarry the rounding is the whole reading. `animals_affordable`
+> > floors `room ÷ body_mass`, which is right for a take (bodies hit the ground) and wrong for a rate,
+> > for the reason `SpeciesDef::body_mass`'s config note already states: *"when the herd cannot yet
+> > spare a whole animal the hunt PAUSES and the herd regrows; that wait is constant escapement,
+> > discretised, and the herd's own biomass is the accumulator (there is no credit meter)."* Flooring a
+> > rate against that quantum reports **a cadence as a never**.
+> >
+> > It is the same correction `HuntFight::expected_brought_down` already makes one stage later, in the
+> > same words — the fight arm was floored too, and published a curve of zeroes for crews genuinely
+> > taking `0.75` a turn. The **room** arm simply never got the treatment.
+> >
+> > Reported from play on a **Wild Aurochs** (`body_mass 120`, wild `r 0.09`) standing on its 50% floor
+> > at 1200 of 2400 biomass: one turn's growth is `54` biomass — **0.45 of one body** — which floors to
+> > **zero animals**, so all 24 rows read `0`, the sheet said the hunters bring down nothing, and the
+> > stepper offered **no crew to assign at all**. The herd pays one aurochs about every two and a half
+> > turns.
+> >
+> > **BOTH FLOORS HAD TO GO, and that is the trap.** Un-flooring the room alone changes nothing:
+> > `animals_that_stay` opens with `let stayers = engaged.floor()`, so a `0.45` engagement is handed to
+> > the binomial as `0` one stage later and the curve is zero however the room was measured. Hence
+> > `animals_sparable` **and** `HuntingParty::stayers_at_rate` — the binomial's `n·p` and
+> > `√(n·p·(1−p))` are the continuous extension of the same distribution, so a fractional `n` is the
+> > *same* reading rather than a new model. Both sabotages are pinned separately by
+> > `hunt_useful_crew_on_the_wire::big_game_held_at_its_floor_publishes_a_rate_and_a_crew`.
+> >
+> > **EVERY TAKE PATH KEEPS ITS FLOOR** — `EngagementQuantum::WholeAnimals` is the default at all four
+> > other call sites, `systems::hunt_take` included — which is what makes the change safe: a turn still
+> > resolves in bodies, and only the reading documented as a rate is un-rounded.
+> >
+> > **A FROZEN-STOCK HARNESS CANNOT MEASURE THIS, and `forecast_query`'s reproduction sweep had to say
+> > so.** `sim_take` holds the herd's biomass level between turns, which is also what discards the
+> > remainder the accumulator lives in: a crew that may spare `3.9` bodies kills `3` and leaves `0.9`
+> > standing, and a reset throws that `0.9` away every turn for ever. So the sweep compares the rate
+> > against the frozen turn as a **bracket** whose slack is exactly the fraction the floor drops,
+> > carried through the retreat — `0` on any fixture whose room divides evenly into bodies. The fight's
+> > remainder needs no such allowance: `hunt_take` writes `herd.wounds` back and the harness keeps it,
+> > so that quantum already integrates. **The room's was the one the harness dropped — the same
+> > asymmetry the curve itself had.**
+> >
 > > **THE ESCAPEMENT PREDICATE WAS SPLIT, and the half that did NOT move is the point.** It fed two
 > > seams. The **lesson** keeps the pure room, because `learn_multiplier`'s self-limit is load-bearing —
 > > a floor just under `1.0` deliberately learns at nearly ×2 while taking almost nothing, and its doc

@@ -1756,7 +1756,17 @@ pub fn hunt_take(
     // panel reads resolves the very stages this take runs rather than a client-side echo of two of
     // them. The escapement room the engagement is clamped by comes back on the same value, because
     // the quantiser below needs the identical number.
-    let engagement = fauna::resolve_hunt_engagement(herd, fauna, party, workers, floor, draw);
+    // **BODIES** — this resolves a turn, so the room and the retreat are floored to whole animals
+    // exactly as they always were. Only the crew curve asks for a rate.
+    let engagement = fauna::resolve_hunt_engagement(
+        herd,
+        fauna,
+        party,
+        workers,
+        floor,
+        draw,
+        fauna::EngagementQuantum::WholeAnimals,
+    );
     let fauna::HuntEngagement {
         ceiling,
         engaged,

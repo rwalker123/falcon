@@ -71,9 +71,11 @@ const FLOOR: f32 = 0.5;
 /// curve genuinely stops.
 const STANDING_STOCK: f32 = 480.0;
 
-/// A herd of `species` at [`STANDING_STOCK`], sitting on its own carrying capacity so its regrowth
-/// contributes nothing and the room is exactly the floor's share.
-fn probe_herd(app: &App, species: &str) -> Herd {
+/// A herd of `species` at a **stated** stock and ceiling. Most fixtures pass
+/// [`STANDING_STOCK`] for both, which sits the herd on its own carrying capacity so its regrowth
+/// contributes nothing and the room is exactly the floor's share; a fixture testing the ROOM itself
+/// states the two apart.
+fn probe_herd_at(app: &App, species: &str, biomass: f32, capacity: f32) -> Herd {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let def = fauna
         .species_by_display(species)
@@ -83,8 +85,8 @@ fn probe_herd(app: &App, species: &str) -> Herd {
         species.to_string(),
         SizeClass::Big,
         vec![UVec2::new(1, 1)],
-        STANDING_STOCK,
-        STANDING_STOCK,
+        biomass,
+        capacity,
         def.fodder_per_biomass,
         def.regrowth_rate.unwrap_or(0.1),
         def.body_mass,
@@ -98,12 +100,24 @@ fn probe_herd(app: &App, species: &str) -> Herd {
 /// `band_equipment` reads it as an *empty* one. A fixture that omitted it would be comparing a
 /// speared cap against a bare-handed curve and calling the difference a defect.
 fn world_hunting(species: &str, wear: BandEquipment) -> App {
+    world_hunting_at(species, wear, STANDING_STOCK, STANDING_STOCK, FLOOR)
+}
+
+/// [`world_hunting`] with the herd's stock, its ceiling and the crew's floor all stated — the shape
+/// a fixture needs when the ROOM is the term under test rather than the engagement or the fight.
+fn world_hunting_at(
+    species: &str,
+    wear: BandEquipment,
+    biomass: f32,
+    capacity: f32,
+    floor: f32,
+) -> App {
     let mut app = build_test_app();
     // One `update()` runs the whole Startup worldgen chain, which seeds the `TileRegistry` the band
     // is homed on.
     app.update();
     let tile = home_tile(&app);
-    let herd = probe_herd(&app, species);
+    let herd = probe_herd_at(&app, species, biomass, capacity);
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         registry.clear();
@@ -145,7 +159,7 @@ fn world_hunting(species: &str, wear: BandEquipment) -> App {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FLOOR,
+                    floor,
                 },
                 workers: CREW_ON_THE_ROW,
                 // No kit named — the row resolves to the hunt job's default, which is the kit the
@@ -295,6 +309,9 @@ fn take_and_reach(app: &App, workers: u32, wear: &BandEquipment) -> (f32, f32) {
         HuntDraw::Quantile {
             sigmas: core_sim::EXPECTED_STRIKES,
         },
+        // **The CURVE's quantum**, because this helper exists to reason about the curve's own
+        // binding term — asking the same question in bodies would describe a different reading.
+        core_sim::EngagementQuantum::Rate,
     );
     (engagement.fight.expected_brought_down, engagement.stayed)
 }
@@ -653,5 +670,97 @@ fn the_pens_published_cap_is_the_plateau_of_the_curve_the_socket_answers() {
         rising > 0,
         "fixture: the pen curve must pay something somewhere, or the row check below is vacuous: \
          {curve:?}"
+    );
+}
+
+/// **BIG GAME HELD AT ITS FLOOR STILL OFFERS A HUNT, AND THE SHEET STILL HAS A CREW TO OFFER.**
+///
+/// The shipped Wild Aurochs is the roster's clearest case of a body heavier than a turn's growth:
+/// `body_mass 120` against a wild `r` of `0.09`. A herd standing exactly on a 50% floor at 1200 of
+/// 2400 biomass has **no** escapement room, and one turn's growth is `0.09 × 1200 × 0.5` =
+/// **54 biomass — 0.45 of one body**.
+///
+/// Rounded to whole animals that room is **zero**, and everything downstream of it is zero with it:
+/// the engagement, the retreat, the fight, every row of the curve, and therefore
+/// [`core_sim::hunt_useful_crew`]. Reported from play as *"these hunters bring down ≈0 Wild
+/// Aurochs/turn"* over a stepper pinned at `0` with a dead `+` and `max 0 workers useful here`
+/// beneath it — on a herd that pays one aurochs about every two and a half turns.
+///
+/// The room a **rate** is clamped by is not rounded ([`core_sim::animals_sparable`]), because the
+/// whole-animal quantum is a timing effect the herd's own biomass integrates. This asserts the two
+/// consequences a player sees: a positive per-turn rate, and a crew the sheet can offer.
+///
+/// **The precondition is the falsification**, and it is derived here rather than read off the seam
+/// under test: one turn's growth is positive and lighter than one body, and rounding it to whole
+/// animals gives exactly zero. A fixture merely standing clear of its floor passes on the rounded
+/// form too and would prove nothing.
+#[test]
+fn big_game_held_at_its_floor_publishes_a_rate_and_a_crew() {
+    /// A ceiling that makes one body a meaningful fraction of a turn's growth — the regime every
+    /// heavy-bodied quarry sits in, and one [`STANDING_STOCK`] is far too fat to reach.
+    const AUROCHS_CEILING: f32 = 2_400.0;
+    /// Exactly [`HELD_AT_THE_FLOOR`] of it — a herd a crew has drawn back to its floor and holds.
+    const ON_THE_FLOOR: f32 = 1_200.0;
+    /// The floor it is held on.
+    const HELD_AT_THE_FLOOR: f32 = 0.5;
+
+    let mut app = world_hunting_at(
+        AUROCHS,
+        stocked(),
+        ON_THE_FLOOR,
+        AUROCHS_CEILING,
+        HELD_AT_THE_FLOOR,
+    );
+
+    {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd is in the registry")
+            .clone();
+        assert_eq!(
+            core_sim::hunt_escapement_ceiling(HELD_AT_THE_FLOOR, herd.biomass, AUROCHS_CEILING),
+            0.0,
+            "the fixture must stand exactly ON its floor, or the room is not the term under test"
+        );
+        let growth = core_sim::regrowth_delta_at(
+            &herd,
+            herd.biomass,
+            core_sim::herd_capacity(&herd, &fauna),
+            &core_sim::herd_ecology(&herd, &fauna),
+        );
+        assert!(
+            growth > 0.0 && growth < herd.body_mass,
+            "one turn's growth ({growth}) must be POSITIVE and lighter than one body ({}), which \
+             is the whole regime this fixture exists in",
+            herd.body_mass
+        );
+        assert_eq!(
+            core_sim::animals_affordable(growth, herd.body_mass),
+            0.0,
+            "…and rounded to whole animals it must be exactly zero — the reading that left the \
+             sheet with no crew to offer"
+        );
+    }
+
+    // **THE CURVE PAYS A REAL RATE**, which is the sentence the sheet prints.
+    let curve = crew_take_curve(&mut app);
+    let lead = curve
+        .first()
+        .expect("the curve covers the asked crew pool")
+        .1;
+    assert!(
+        lead > 0.0,
+        "one hunter on a herd sparing under a body a turn must still bring down a positive RATE, \
+         not nothing: {curve:?}"
+    );
+
+    // **AND THE PUBLISHED CAP OFFERS A CREW**, which is what the Work board's `+` reads and what the
+    // compose sheet's stepper is capped by.
+    assert!(
+        published_useful_workers(&app) > NO_USEFUL_CREW,
+        "a herd paying a real rate must publish a useful-crew cap: {curve:?}"
     );
 }

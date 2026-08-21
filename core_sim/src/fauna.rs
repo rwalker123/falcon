@@ -5996,6 +5996,37 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
     }
 }
 
+/// **[`animals_that_stay`] ON A FRACTIONAL ENGAGEMENT** — the retreat as a rate
+/// ([`EngagementQuantum::Rate`]), with the whole-animal floor removed.
+///
+/// The binomial's mean and standard deviation, `n·p` and `√(n·p·(1−p))`, are defined for a
+/// fractional `n` and are the continuous extension of the same distribution — so this is the *same*
+/// reading [`animals_that_stay`] takes, asked of an engagement that has not been rounded to bodies.
+/// **`n` here is a rate, not a count**, which is the whole of why the floor is wrong for it: a party
+/// engaging four fifths of an animal a turn keeps `0.8 × stay` of one a turn.
+///
+/// **A [`HuntDraw::Seeded`] draw falls back to the whole-animal form**, and that is not a shortcut:
+/// a live take resolves *bodies* — you cannot roll a fraction of an animal breaking off — so a rate
+/// has nothing to draw. No caller reaches it (only the curve asks for a rate, and a curve never
+/// draws); the arm exists so the function is total rather than panicking on an unreachable state.
+///
+/// The `wariness <= 0` and non-finite guards are [`animals_that_stay`]'s, unchanged: a calm quarry
+/// and a source with no engagement stage at all answer their exact identities on both forms.
+pub fn animals_that_stay_at_rate(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
+    if wariness <= 0.0 || !engaged.is_finite() || engaged <= 0.0 {
+        return engaged;
+    }
+    match draw {
+        HuntDraw::Seeded(_) => animals_that_stay(engaged, wariness, draw),
+        HuntDraw::Quantile { sigmas } => {
+            let stay_chance = 1.0 - wariness.min(1.0);
+            let mean = engaged * stay_chance;
+            let deviation = (engaged * stay_chance * (1.0 - stay_chance)).sqrt();
+            (mean + sigmas * deviation).clamp(0.0, engaged)
+        }
+    }
+}
+
 /// **How a hunt resolves its two stochastic stages** — the retreat draw ([`animals_that_stay`]) and
 /// the fight's per-unit attack rolls ([`crate::combat::StrikeDraw`]) — carried as one value so a
 /// take path states its mode once and every stage downstream obeys it.
@@ -6327,6 +6358,18 @@ impl HuntingParty {
     /// made at all — so a trap line lands in a tested regime rather than a new branch.
     pub fn stayers(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         animals_that_stay(engaged, effective_wariness(wariness, self.dispersion), draw)
+    }
+
+    /// **[`stayers`](Self::stayers) WITHOUT THE WHOLE-ANIMAL FLOOR** — the retreat applied to a
+    /// fractional engagement, for [`EngagementQuantum::Rate`].
+    ///
+    /// **The retreat re-floors what the room clamp already floored, one stage later**, and that is
+    /// why un-flooring [`animals_sparable`] alone changes nothing: `animals_that_stay` opens with
+    /// `let stayers = engaged.floor()`, so an engagement of `0.45` is handed to the binomial as `0`
+    /// and the whole curve is zero however the room was measured. Both floors have to go, or neither
+    /// does.
+    pub fn stayers_at_rate(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
+        animals_that_stay_at_rate(engaged, effective_wariness(wariness, self.dispersion), draw)
     }
 
     /// **The closed form of [`stayers`](Self::stayers)** — the share of an engagement this party
@@ -7052,6 +7095,58 @@ pub fn animals_affordable(policy_ceiling: f32, body_mass: f32) -> f32 {
     whole_animals(policy_ceiling.max(0.0), body_mass)
 }
 
+/// **[`animals_affordable`] AS A RATE — the same room, unrounded.** `ceiling ÷ body_mass`, with no
+/// whole-animal floor under it.
+///
+/// # Why the floored form is wrong for a curve, and only for a curve
+///
+/// A take puts **bodies** on the ground, so `animals_affordable` is right wherever a turn is being
+/// resolved. A [`hunt_crew_take_curve`] row is a **rate**, and the whole-animal quantum on this web
+/// is a *timing* effect the herd's own biomass integrates — `SpeciesDef::body_mass`'s config note
+/// says it outright: *"when the herd cannot yet spare a whole animal the hunt PAUSES and the herd
+/// regrows; that wait is constant escapement, discretised, and the herd's own biomass is the
+/// accumulator (there is no credit meter)."* Flooring a rate against that quantum therefore reports
+/// a **cadence as a never**.
+///
+/// It is the same correction [`HuntFight::expected_brought_down`] already makes one stage later, for
+/// the same reason and in the same words — the fight arm was floored to whole animals too, and a
+/// curve of zeroes was published for crews genuinely taking `0.75` a turn. The room arm simply did
+/// not get the treatment at the time.
+///
+/// Reported from play on a **Wild Aurochs** (`body_mass 120`, wild `r 0.09`) standing on its 50%
+/// floor at 1200 of 2400 biomass: next turn's room is `0.09 × 1200 × 0.5` = **54 biomass — 0.45 of
+/// one body** — which floors to **zero animals**, so every crew size read `0`, the sheet said the
+/// hunters bring down nothing, and the stepper offered no crew to assign. The herd pays one aurochs
+/// about every two and a half turns.
+///
+/// **The floor is untouched on every take path**, which is what makes this safe: only
+/// [`EngagementQuantum::Rate`] reaches this function.
+pub fn animals_sparable(policy_ceiling: f32, body_mass: f32) -> f32 {
+    if !body_mass.is_finite() || body_mass <= 0.0 {
+        return 0.0;
+    }
+    policy_ceiling.max(0.0) / body_mass
+}
+
+/// **IS AN ENGAGEMENT COUNTED IN BODIES, OR AS A RATE?** — carried as a type rather than inferred
+/// from [`HuntDraw`], because *whether to roll* and *what unit the answer is in* are independent and
+/// the one caller that wants a rate is a forecast that could just as easily have wanted bodies.
+///
+/// The whole-animal quantum belongs to a **turn**, not to the model: the herd's own biomass carries
+/// the remainder between turns, so a source sparing four fifths of a body a turn genuinely pays one
+/// body every five turns. A reading that describes one turn must round; a reading that describes a
+/// *rate* must not, or it reports that cadence as a never.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngagementQuantum {
+    /// **A turn** — the room and the retreat are floored to whole animals, because that is what
+    /// hits the ground. Every take path and every per-turn forecast.
+    WholeAnimals,
+    /// **A rate** — neither is floored. [`hunt_crew_take_curve`] alone, whose rows are documented as
+    /// a per-turn rate and are already un-floored at the fight stage
+    /// ([`HuntFight::expected_brought_down`]).
+    Rate,
+}
+
 /// Whole animals in `available` biomass, at `body_mass` each — `floor`, with
 /// [`ANIMAL_COUNT_EPSILON`] of relative slop so the same take counts the same animals whether it is
 /// quantised in biomass or in provisions.
@@ -7502,11 +7597,24 @@ pub fn resolve_hunt_engagement(
     // **Live or forecast** — a live take draws both stochastic stages from its per-event seed; a
     // curve reads their quantiles. See [`HuntDraw`].
     draw: HuntDraw,
+    // **Bodies, or a rate?** — see [`EngagementQuantum`]. Orthogonal to `draw`: *whether to roll* and
+    // *what unit the answer is in* are different questions, and the curve is the one caller that
+    // wants a rate.
+    quantum: EngagementQuantum,
 ) -> HuntEngagement {
     let ceiling = herd_take_room(herd, floor, fauna);
-    let engaged = animals_engaged(workers, fauna.engage_rate_for(&herd.species))
-        .min(animals_affordable(ceiling, herd.body_mass));
-    let stayed = party.stayers(engaged, fauna.wariness_for(&herd.species), draw);
+    let reach = animals_engaged(workers, fauna.engage_rate_for(&herd.species));
+    let wariness = fauna.wariness_for(&herd.species);
+    let (engaged, stayed) = match quantum {
+        EngagementQuantum::WholeAnimals => {
+            let engaged = reach.min(animals_affordable(ceiling, herd.body_mass));
+            (engaged, party.stayers(engaged, wariness, draw))
+        }
+        EngagementQuantum::Rate => {
+            let engaged = reach.min(animals_sparable(ceiling, herd.body_mass));
+            (engaged, party.stayers_at_rate(engaged, wariness, draw))
+        }
+    };
     let fight = resolve_hunt_fight(
         stayed,
         workers as f32,
@@ -7718,6 +7826,10 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                     HuntDraw::Quantile {
                         sigmas: draw_sigmas,
                     },
+                    // **THE ONE CALLER THAT WANTS A RATE** — these rows are documented as a per-turn
+                    // rate, and are already un-floored at the fight stage. See
+                    // [`EngagementQuantum`].
+                    EngagementQuantum::Rate,
                 )
                 .fight
                 .expected_brought_down

@@ -659,6 +659,23 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   > **The sim-side fix landed with it and is the reason this stopped firing in play**: the crew curve
   > was resolving against the herd's *post-take* stock, so a worked source read zero at every crew.
   > See `.claude/rules/core_sim/fauna.md` → "A FORECAST REGROWS FIRST".
+- **⛔ AND THE CAP ITSELF IS FLOORED AT ONE, BECAUSE *"MAY I START THIS"* IS NOT *"WOULD ANOTHER HAND
+  HELP"*.** `max_useful_workers` turns a zero plateau into `MAX_USEFUL_BARREN`, never into `0`.
+  Passing the sim's `NO_USEFUL_CREW` straight through pinned the stepper at `0` with a dead `+` and
+  `max 0 workers useful here` beneath it — reported from play on a Wild Aurochs standing on its floor,
+  a herd that pays one animal every two and a half turns. **A player must always be able to staff a
+  source at or under its floor** and be told the take begins once it grows past it.
+  > **The two numbers answer different questions and are not a divergence to be repaired.**
+  > `fauna::hunt_useful_crew` gates the Work board's `+` on an ALREADY-WORKED row, where
+  > `NO_USEFUL_CREW` is the honest floor; this cap gates whether the sheet may offer a crew at all.
+  > `MAX_USEFUL_BARREN` is the same answer the barren-patch arm one branch down already gives, with
+  > the same argument written out: *we know what this source pays, and it is nothing, so the honest
+  > ceiling is one worker* — and **no floors apply to it**, because `hold` and `reach` can both be
+  > large on a source paying nothing.
+  >
+  > The sim half of this landed beside it: a curve is a **rate**, so its room is no longer rounded to
+  > whole animals and big game at its floor publishes a real per-turn figure instead of a zero. See
+  > `.claude/rules/core_sim/fauna.md` → "THE CURVE IS A RATE ALL THE WAY DOWN".
 - **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
   mins `animals_stayed` into its own kill count; `floor(min(carry, engaged × fpa) / fpa)` is the same
   arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short

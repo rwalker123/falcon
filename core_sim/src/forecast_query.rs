@@ -1459,6 +1459,29 @@ mod tests {
                 &fauna,
             )
         };
+        // **WHAT A FROZEN STOCK THROWS AWAY, NAMED AND BOUNDED** — the whole of the slack allowed
+        // below, and `0` on every fixture whose room divides evenly into bodies.
+        //
+        // `sim_take` holds the herd's biomass level between turns so these fixtures measure the
+        // engagement and the fight rather than a drawdown. That reset is also what discards the
+        // **remainder**: in the sim a crew that may spare `3.9` bodies kills `3` and leaves `0.9`
+        // standing, which joins next turn's room — the herd's own biomass is the accumulator, and
+        // it is the reason the curve publishes an un-floored rate ([`fauna::animals_sparable`]). A
+        // frozen stock cannot integrate that, so it pays `floor` every turn for ever, and the two
+        // readings differ by exactly the fraction the floor drops, carried through the retreat.
+        //
+        // **The fight's remainder is NOT in this figure, and does not need to be**: `hunt_take`
+        // writes `herd.wounds` back and the harness keeps it, so that quantum already integrates.
+        // The room's was the one the harness dropped — the same asymmetry the curve itself had.
+        let discarded_by_the_frozen_stock = {
+            let sparable = ceiling / body_mass;
+            let wariness = world
+                .resource::<FaunaConfigHandle>()
+                .get()
+                .wariness_for(species);
+            (sparable - sparable.floor())
+                * fixture_party(&world, body_mass, 1).stay_fraction(wariness)
+        };
         let mut saw_a_kill = false;
         for (index, row) in rows.iter().enumerate() {
             let workers = index as u32 + 1;
@@ -1467,17 +1490,23 @@ mod tests {
                 "rows ascend from 1 and echo their crew"
             );
             // The client's whole job: two caps it already holds, and the published row.
-            let affordable = (ceiling / body_mass).floor();
+            // **THE ROOM ARM IS NOT FLOORED**, because the client does not floor it —
+            // `DrawerComposeController._hunt_delivered_and_waste` composes `min(room / body,
+            // haulable, brought_down)` and only the HAUL arm takes a `floor`. A `.floor()` here
+            // modelled a client that does not exist.
+            let sparable = ceiling / body_mass;
             let carryable = ((workers as f32 * RESIDENT_CARRY_PER_WORKER) / body_mass)
                 .floor()
                 .max(1.0);
-            let composed = affordable.min(carryable).min(row.animals_likely);
+            let composed = sparable.min(carryable).min(row.animals_likely);
             let paid = sim_take(&world, species, body_mass, biomass, workers, floor);
             assert!(
-                (composed - paid).abs() <= SUSTAINED_RATE_EPSILON,
+                paid <= composed + SUSTAINED_RATE_EPSILON
+                    && composed <= paid + discarded_by_the_frozen_stock + SUSTAINED_RATE_EPSILON,
                 "a crew of {workers} on {species}: the published curve, min'd against the two caps \
                  the client already derives, reads {composed}/turn where `hunt_take` sustains \
-                 {paid}/turn"
+                 {paid}/turn (a frozen stock may discard at most \
+                 {discarded_by_the_frozen_stock}/turn)"
             );
             saw_a_kill |= composed > 0.0;
         }
@@ -1791,6 +1820,7 @@ mod tests {
                 workers,
                 STRIP_IT_BARE,
                 HuntDraw::EXPECTED,
+                crate::fauna::EngagementQuantum::WholeAnimals,
             );
             // The wounds carry, exactly as `hunt_take` carries them. The herd's biomass is left
             // alone: these fixtures stand far above every floor, so the room is constant and the
@@ -2029,6 +2059,7 @@ mod tests {
             ZERO_READING_CREW,
             STRIP_IT_BARE,
             HuntDraw::EXPECTED,
+            crate::fauna::EngagementQuantum::WholeAnimals,
         );
 
         // **THE PRECONDITION, and without it this test cannot tell the defect from the fix.** The

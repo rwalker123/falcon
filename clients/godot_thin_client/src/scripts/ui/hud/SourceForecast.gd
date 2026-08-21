@@ -2640,6 +2640,11 @@ static func crew_take_reaching(per_crew: Array, animals: float) -> int:
 ## `max 1 worker useful here` on a Rabbit Warren whose wire row carried `huntUsefulWorkers: 0`, the
 ## two readings of one curve disagreeing by the whole of the answer. So the scan starts from nothing
 ## and only a row that genuinely rises above zero names a crew, which is the sim's loop line for line.
+##
+## **THIS IS A READING OF THE CURVE, NOT A CAP ON THE STEPPER**, and the distinction is load-bearing:
+## `max_useful_workers` turns a zero here into `MAX_USEFUL_BARREN` rather than passing it on, because
+## *may I staff this at all* is a different question from *would another hand buy more take*. Its
+## comment carries the play report that made the difference visible.
 static func crew_take_plateau(per_crew: Array) -> int:
     if not has_crew_take_curve(per_crew):
         return NO_CREW_ANSWER
@@ -4961,13 +4966,22 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         hold = maxi(hold, per_crew.size())
         plateau = NO_CREW_ANSWER
     if plateau == PUBLISHED_NO_USEFUL_CREW:
-        # **THE CURVE ITSELF SAYS NOBODY, and no floor may raise that** — the identical refusal the
-        # published-scalar arm below makes, and it has to be spelled here too because the two arms are
-        # reached on different sources: this one where a reply is in hand (a compose sheet), that one
-        # where none is (a worked board row). Falling through would hand the zero to the `maxi(…, hold)`
-        # below and staff a crew against a take of nothing, which is the parking `MAX_USEFUL_BARREN`
-        # refuses one account over.
-        return PUBLISHED_NO_USEFUL_CREW
+        # **A CURVE OF ZEROES CAPS THE STEPPER AT ONE, NOT AT NONE** — `MAX_USEFUL_BARREN`, and the
+        # barren-patch arm below already carries the argument verbatim: *we know what this source pays,
+        # and it is nothing, so the honest ceiling is one worker.*
+        #
+        # **THE SHEET'S CAP AND THE SIM'S SCALAR ANSWER DIFFERENT QUESTIONS, and reading them as one
+        # is what broke this.** `fauna::hunt_useful_crew` gates the Work board's `+` on an ALREADY-WORKED
+        # row — *would another hand buy more take* — where `NO_USEFUL_CREW` is the honest floor. This
+        # cap gates *may I start this at all*, and the answer to that is never *no*: a player must be
+        # able to staff a herd sitting at (or under) its floor, and be told the take begins once it
+        # grows past it. Returning the sim's zero here left the stepper pinned at `0` with a dead `+`
+        # and `max 0 workers useful here` beneath it — reported from play on a Wild Aurochs.
+        #
+        # **NO FLOORS APPLY TO IT**, exactly as they do not to the barren answer one branch down:
+        # `hold` and `reach` can both be large on a source paying nothing, and flooring on them would
+        # park a crew against a take of zero.
+        return MAX_USEFUL_BARREN
     if plateau == NO_CREW_ANSWER:
         # **THE WORK BOARD READS THE SIM'S ANSWER RATHER THAN INVERTING THE TAKE.** A worked row is
         # priced with no query reply in hand, so the curve above is empty there and the closed form
