@@ -895,6 +895,11 @@ fn maintenance_shares(
 ///
 /// What is left is exactly the misuse: supply this pass banked, about to be added to, against a bill
 /// that is never re-struck.
+///
+/// **Gated to match its only call site.** The guard it serves is `#[cfg(debug_assertions)]`, so
+/// without the same gate here this function is dead code in a release build — and `cargo clippy`
+/// defaults to the dev profile, where the call site compiles and the orphan is invisible.
+#[cfg(debug_assertions)]
 fn source_with_keeping_already_banked(
     forage: &ForageRegistry,
     herds: &HerdRegistry,
