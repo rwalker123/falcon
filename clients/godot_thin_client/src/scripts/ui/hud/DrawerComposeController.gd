@@ -484,9 +484,15 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
         # against. Clamped, it could never be the smallest and the line could never name the crew.
         CREW_TAKE_BROUGHT_DOWN: brought_down}
 
-## **THE TAKE ESTIMATE, ITS BAND AND ITS CADENCE, AS ONE LINE** — `≈0.35 Wild Boar/turn`, plus
-## ` · 0.21 – 0.48` only where the band is genuinely a band, plus ` · about one every 2.9 turns` only
-## where a body takes more than a turn to drop.
+## **HOW SURE THE TAKE IS AND HOW OFTEN IT LANDS, AS THE TAIL OF THE SENTENCE THAT QUOTES IT** —
+## ` (0.21 – 0.48)` only where the band is genuinely a band, then `, about one every 2.9 turns` only
+## where a body takes more than a turn to drop. `""` on a certain take of a whole animal or more,
+## which leaves `HudComposeVocab.HUNT_LIMIT_CREW_FORMAT` a bare figure and a full stop.
+##
+## **IT IS A TAIL RATHER THAN A LINE OF ITS OWN, and that is what this arc changed.** The band and the
+## cadence used to ride a take estimate ABOVE the yields, which restated a rate the binding-limit
+## sentence below the yields already quoted — the same number twice, with the four accounts in
+## between. One sentence carries all three readings now: figure → spread → wait.
 ##
 ## **THE CADENCE IS NOT CHROME.** On this web a fractional animal is the ORDINARY reading, not an edge
 ## case: the whole-animal quantum is a timing effect the sim's wound ledger carries between turns, so
@@ -500,19 +506,18 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
 ## three quantiles arrive bit-identical. Chrome that renders `0.35 – 0.35` would manufacture doubt the
 ## model does not have — and doing it by printing equal numbers rather than by suppressing the clause
 ## is the same lie with extra ink.
-func _hunt_take_estimate_line(dw: Dictionary, quarry: String) -> String:
+func _hunt_take_spread(dw: Dictionary) -> String:
     var likely := float(dw[CREW_TAKE_ANIMALS])
     var low := float(dw[CREW_TAKE_ANIMALS_LOW])
     var high := float(dw[CREW_TAKE_ANIMALS_HIGH])
-    var line: String = HudComposeVocab.HUNT_TAKE_ESTIMATE_FORMAT % [
-        _format_animal_rate(likely), quarry]
+    var tail := ""
     if not SourceForecast.hunt_take_band_is_degenerate(low, likely, high):
-        line += HudComposeVocab.HUNT_TAKE_BAND_FORMAT % [
+        tail = HudComposeVocab.HUNT_TAKE_BAND_FORMAT % [
             _format_animal_rate(low), _format_animal_rate(high)]
-    # **AND THE CADENCE, WHERE A BODY TAKES MORE THAN A TURN TO DROP.** It rides the LIKELY take and
-    # comes last, after the band, so the line reads figure → spread → wait: the number, how sure it is,
-    # and what it feels like. See `HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT`.
-    return line + _hunt_take_cadence(likely)
+    # **AND THE CADENCE COMES LAST, after the band**, so the sentence reads figure → spread → wait:
+    # the number, how sure it is, and what it feels like. It rides the LIKELY take, which is the
+    # figure the sentence itself quotes. See `HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT`.
+    return tail + _hunt_take_cadence(likely)
 
 ## The crew NOUN this sheet calls these hands, lower-cased for a sentence — the same fork the stepper's
 ## row label makes (`SourceForecast.is_managed_hunt_source`), so the remedy line and the control it
@@ -565,9 +570,16 @@ func _hunt_binding_limit(herd: Dictionary, band: Dictionary, floor: float, dw: D
         sustainable = maxf(SourceForecast.regrowth_at(samples,
             SourceForecast.clamp_floor(floor)), 0.0) * output / body
     if crew_animals <= minf(room_animals, sustainable):
+        # **THE COMPARISON ABOVE IS THE UNCLAMPED ARM; THE FIGURE QUOTED IS THE CLAMPED TAKE.** They
+        # are one number in this branch save for the haul — the crew binding is exactly the room not
+        # binding — and the take is what the band brackets, what the cadence divides and what the
+        # accounts below are conversions of. Quoting the unclamped kill instead would put a figure in
+        # the sentence that its own parenthetical band could contradict, on a party that kills more
+        # than it can carry home — the state the waste note beside it already explains.
+        var take := float(dw[CREW_TAKE_ANIMALS])
         return {"severity": SourceForecast.VERDICT_SLOW,
             "text": HudComposeVocab.HUNT_LIMIT_CREW_FORMAT % [
-                crew_noun, _format_animal_rate(crew_animals), quarry]}
+                crew_noun, _format_animal_rate(take), quarry, _hunt_take_spread(dw)]}
     if sustainable <= room_animals:
         return {"severity": SourceForecast.VERDICT_OK,
             "text": HudComposeVocab.HUNT_LIMIT_SUSTAINABLE_FORMAT % [
@@ -929,11 +941,12 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
             float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
             account, after, materials),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
-        # **THE TAKE ESTIMATE, ABOVE THE YIELDS** — the one reading on this sheet that carries the
-        # sim's uncertainty, and the reason the four accounts below it may stay single numbers.
-        YIELD_MODEL_TAKE: _hunt_take_estimate_line(dw, quarry),
+        # **THESE ROWS ARE QUOTED AT ONE POINT OF A BAND**, so their caption says which point — the
+        # band itself rides the sentence below them (`_hunt_take_spread`).
+        YIELD_MODEL_AT_LIKELY: true,
         # …and the sentence under them, which names the SMALLEST of the three limits rather than
-        # re-walking a projection the fight is missing from.
+        # re-walking a projection the fight is missing from — and, where that limit is the crew,
+        # states this sheet's ONLY reading of the take in animals, its band and its cadence.
         YIELD_MODEL_LIMIT: _hunt_binding_limit(herd, band, floor, dw,
             _hunt_crew_noun(herd, improvement)),
         YIELD_MODEL_OVERDRAW: overdraws,
@@ -1051,15 +1064,20 @@ const YIELD_MODEL_LOCKED_REASON := "locked_reason"
 ## this client does not have). They ride the MODEL for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
 ## evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
 const YIELD_MODEL_NOTES := "notes"
-## **THE TAKE ESTIMATE AND ITS BAND, above the yields** — `≈0.35 Wild Boar · 0.21 – 0.48`, or the
-## bare figure where the band is degenerate. `""` on every model that has no such answer (the plant
-## web, and the hunt web's degrade branch, whose smoothed rate is not a quantised take at all).
+## **ARE THESE ROWS ONE POINT OF A BAND?** — the caption's gate (`at the likely take`), `false` on
+## every model whose readings carry no spread at all: the whole plant web, and the hunt web's degrade
+## branch, whose smoothed rate is not a quantised take.
 ##
-## **THE YIELDS UNDER IT STAY SINGLE NUMBERS.** Four bands would assert four independent rolls, which
+## **THE ROWS THEMSELVES STAY SINGLE NUMBERS.** Four bands would assert four independent rolls, which
 ## is false: the food, the bone, the fibre and the hide are fixed conversions of ONE carried biomass,
-## so they move together and their spread is this line's, stated once. The row's caption says which
-## point of the band they are quoted at.
-const YIELD_MODEL_TAKE := "take_estimate"
+## so they move together and their spread is stated once — in the binding-limit sentence below them
+## (`YIELD_MODEL_LIMIT`), which is where the take in animals is stated too.
+##
+## **IT USED TO BE THE TAKE ESTIMATE LINE ITSELF**, a `≈0.35 Wild Boar/turn · 0.21 – 0.48` label
+## mounted above the rows. It said what the sentence below the rows already said, so it is gone and
+## what survives of it is this flag: the caption still has to say which point of the band the four
+## accounts are quoted at.
+const YIELD_MODEL_AT_LIKELY := "at_likely"
 ## **WHICH OF THE THREE LIMITS IS BINDING, AND ITS REMEDY** — `{severity, text}` in the verdict's own
 ## shape, so the readout's third register renders it through `HudWidgets.build_verdict_line` exactly
 ## as it renders the shared harvest verdict. `{}` means "this model names no limit", which is the
@@ -2361,16 +2379,13 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         for line in notes:
             host.add_child(HudWidgets.alloc_hint_label(String(line)))
         return
-    # **THE TAKE ESTIMATE LEADS THE BLOCK** — the animals this crew brings down per turn, and the only
-    # reading in the box that carries the sim's uncertainty. The four accounts under it are fixed
-    # conversions of ONE carried biomass, so they are single numbers and the caption says which point
-    # of this band they are quoted at. A model with no such answer (the whole plant web) renders no
-    # line and no caption suffix, exactly as before.
-    var take_line := String(model.get(YIELD_MODEL_TAKE, ""))
-    if take_line != "":
-        var take_label := HudWidgets.alloc_section_label(take_line)
-        take_label.set_meta(HudWidgets.TAKE_ESTIMATE_META, true)
-        host.add_child(take_label)
+    # **NOTHING LEADS THE BLOCK — THE ROWS DO.** A take estimate used to be mounted here, above the
+    # caption, stating the animals this crew brings down per turn; the binding-limit sentence under
+    # the rows quoted the same rate, so the sheet said it twice with the four accounts in between.
+    # The take, its band and its cadence are that sentence's now. What survives here is the caption's
+    # suffix: the accounts are fixed conversions of ONE carried biomass quoted at the LIKELY point of
+    # the band, and the caption is what keeps them honest beside a sentence that carries a range.
+    var at_likely := bool(model.get(YIELD_MODEL_AT_LIKELY, false))
     var overdraws := bool(model[YIELD_MODEL_OVERDRAW])
     var note := HudComposeVocab.OVERHUNT_FLAG + " " + String(
         HudComposeVocab.LOCAL_OVERDRAW_NOTES.get(labor_kind, "")) if overdraws         else SourceForecast.YIELD_RENEWABLE_NOTE
@@ -2381,7 +2396,7 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
         String(model[YIELD_MODEL_WASTE]),
         "",
-        HudComposeVocab.YIELD_HEADER_AT_LIKELY_SUFFIX if take_line != "" else ""))
+        HudComposeVocab.YIELD_HEADER_AT_LIKELY_SUFFIX if at_likely else ""))
 
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown

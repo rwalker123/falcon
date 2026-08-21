@@ -545,10 +545,26 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 >
 > **A SUB-ONE RATE IS THE NORMAL CASE AND MUST NOT ROUND TO ZERO.** The whole-animal quantum is a
 > *timing* effect — the wound ledger carries damage between turns, so a party that cannot finish a body
-> this turn still finishes one eventually. The line states the decimal **and**, below one a turn, the
-> wait: `≈0.75 Wild Aurochs/turn · about one every 1.3 turns`. Decimal alone reads as *"not quite one,
-> so nothing happens"* — the same conclusion the `≈0` produced. The clause is suppressed at or above
-> one a turn and sits after the quantile band, so the line reads figure → spread → wait.
+> this turn still finishes one eventually. Decimal alone reads as *"not quite one, so nothing happens"*
+> — the same conclusion the `≈0` produced — so the rate is stated **with the wait**.
+>
+> **IT IS ONE SENTENCE, ON THE BINDING-LIMIT LINE, AND NOTHING STANDS ABOVE THE `NEXT TURN` CAPTION.**
+> A separate estimate line above the caption shipped for one slice and was reported from play as saying
+> *"pretty much the same text"* twice on one card. The band and the cadence folded onto the survivor:
+> `These hunters bring down ≈0.38 Wild Boar/turn (0.22 – 0.52), about one every 2.7 turns.` — figure →
+> spread → wait. The band is **parenthesised** rather than `·`-separated, since a middot strip read as
+> a fragment of the strip this stopped being; each half suppresses on its own terms (degenerate band,
+> and ≥ 1 animal a turn).
+>
+> **The sentence quotes the CLAMPED take**, not the unclamped kill: they differ only when the haul
+> binds, and quoting the kill would put a figure in the sentence that its own parenthetical band
+> contradicts.
+>
+> **`— add hands to take more` was removed and the other remedies were NOT.** It named no count and sat
+> two lines under `max N workers useful here`, which contradicts it. The ones that survive name a real
+> action: *"more hands would take from the stock, not the surplus"* is a consequence to weigh, and
+> *"lower it, or let the herd grow"* offers two. **A remedy earns its place by being actionable**, not
+> by being a remedy.
 >
 > **The Work board's row `+` gate stays on the closed form** — it prices a worked row with no reply in
 > hand. Both cap twins divide through the one `max_useful_workers` and the curve rides the forecast

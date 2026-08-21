@@ -767,12 +767,6 @@ const CREW_ROW_LABEL_META := "crew_row_label"
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
 const VERDICT_META := "verdict"
-## **THE TAKE ESTIMATE'S IDENTITY** — the readout's own first line, the animals this crew brings down
-## per turn with its band where it has one. It is a plain section Label like several others in the
-## box, so a harness looking for it by FACE would be matching a live number; the meta is what makes a
-## claim about the LINE rather than about a string that happens to appear on the sheet.
-const TAKE_ESTIMATE_META := "take_estimate"
-
 ## **THE PRE-LAUNCH FIGHT'S ONE REMAINING LINE** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5), with
 ## a meta because it must be assertable by ABSENCE as well as by presence — a pen and the whole plant
 ## web render none, and that emptiness is the byte-identity claim this arc has to hold.

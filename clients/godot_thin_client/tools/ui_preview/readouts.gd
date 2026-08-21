@@ -219,15 +219,20 @@ static func verdict_severity(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.VERDICT_META)
 	return String((node as Control).get_meta(HudWidgets.VERDICT_META, "")) if node != null else ""
 
-## **THE READOUT'S TAKE ESTIMATE** — `≈0.75 Wild Boar/turn`, plus its band where the sim published
-## one. `""` where the model states none, which is the whole plant web and the hunt web's degrade
-## branch, so an absence claim and a magnitude claim are both sayable off one reader.
+## **WHERE THE YIELDS BLOCK SITS AMONG ITS HOST'S CHILDREN** — `-1` when no readout rendered at all,
+## which is what makes an index claim a claim rather than a vacuous pass on an empty sheet.
 ##
-## By `HudWidgets.TAKE_ESTIMATE_META`, never by face: the line is a plain section Label beside several
-## others, and its face is the live number a claim is usually about.
-static func take_estimate_text(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.TAKE_ESTIMATE_META)
-	return (node as Label).text if node is Label else ""
+## **`0` IS THE "NOTHING ABOVE `NEXT TURN`" CLAIM, ASKED STRUCTURALLY.** The hunt sheet used to mount
+## a take estimate line above the caption — `≈0.75 WILD BOAR/TURN · 0 – 1 · ABOUT ONE EVERY 1.3
+## TURNS` — restating a rate the binding-limit sentence below the rows already carried. Anything put
+## back in that slot takes index 0 and pushes the block to 1, so this reads the DEFECT rather than a
+## string, and a replacement line worded differently cannot slip past it.
+static func yields_block_index(root: Node) -> int:
+	var row := Q.find_meta_node(root, HudWidgets.YIELDS_ROW_META)
+	var block := (row as Node).get_parent() if row != null else null
+	if block == null or block.get_parent() == null:
+		return -1
+	return block.get_index()
 
 ## Every Label text under `root`, in tree order — the rung face's lines as they are stacked.
 static func face_lines(root: Node) -> Array[String]:

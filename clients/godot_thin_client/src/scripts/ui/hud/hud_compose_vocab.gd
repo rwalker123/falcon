@@ -1497,33 +1497,43 @@ const HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT := "<%s"
 # So a take under one animal a turn states its CADENCE too, in the unit the player waits in. Above one
 # a turn nothing is appended: the decimal is self-explanatory there and the line does not grow for the
 # ordinary case.
+#
+# **IT IS AN APPOSITION, NOT A COLUMN.** It closes `HUNT_LIMIT_CREW_FORMAT`'s sentence — the rate
+# restated in the unit the player waits in — rather than standing as a third field of a
+# `·`-separated strip, which is what it was while a take line of its own sat above the yields.
 const HUNT_TAKE_CADENCE_THRESHOLD := 1.0
-const HUNT_TAKE_CADENCE_FORMAT := " · about one every %s turns"
+const HUNT_TAKE_CADENCE_FORMAT := ", about one every %s turns"
 
 # The cadence's own precision — ONE decimal, trimmed like the rate beside it (1.34→"1.3", 2.00→"2").
 # Two would assert a precision the quantile band underneath it does not have; zero would round a
 # 1.3-turn wait to "every 1 turns", which is the same lie as `≈0` wearing different clothes.
 const HUNT_CADENCE_DECIMALS := 1
 
-# ---- THE PRE-COMMIT TAKE ESTIMATE (`ForecastQuery.KIND_HUNT_CREW_TAKE`) -------------------------
-# **ONE LINE ABOVE THE YIELDS, and it is the only reading on this sheet that carries a BAND.** The
-# panel lets the player move the crew before committing, so the take has to be re-answered as the
-# stepper moves — and the client cannot answer it: the fight is damage over durability against the
-# quarry's defense and the wound ledger it is standing there with, and `combat_config.hit_chance` is
-# deliberately unpublished. Composed here without it, the sheet read **1.92 food** where a Wild
-# Aurochs paid **0.84** to four hunters, and bone, fibre and hide were over by the same 2.3×.
+# ---- THE PRE-COMMIT TAKE, AND WHY IT IS STATED ONCE (`ForecastQuery.KIND_HUNT_CREW_TAKE`) -------
+# **THE TAKE IS THE SIM'S ANSWER.** The panel lets the player move the crew before committing, so the
+# take has to be re-answered as the stepper moves — and the client cannot answer it: the fight is
+# damage over durability against the quarry's defense and the wound ledger it is standing there with,
+# and `combat_config.hit_chance` is deliberately unpublished. Composed here without it, the sheet read
+# **1.92 food** where a Wild Aurochs paid **0.84** to four hunters, and bone, fibre and hide were over
+# by the same 2.3×.
+#
+# **IT USED TO BE STATED TWICE, WITH THE ACCOUNTS SANDWICHED BETWEEN.** A line of its own led the
+# yields block — `≈0.75 WILD BOAR/TURN · 0 – 1 · ABOUT ONE EVERY 1.3 TURNS` — above a `NEXT TURN` row
+# whose binding-limit sentence, two lines further down, quoted the same rate again. The line is gone.
+# The band below and the cadence above fold into `HUNT_LIMIT_CREW_FORMAT`, which is now the only place
+# the crew's take is stated, and the yields' caption alone says which point of the band they are
+# quoted at (`YIELD_HEADER_AT_LIKELY_SUFFIX`).
 
-## The figure. `≈0.35 Wild Boar/turn` — the same `≈`-on-the-number split
-## `HUNT_ANIMAL_RATE_FACE_FORMAT` already makes, so the take and the delivered rate beside it cannot
-## qualify their numbers two different ways.
-const HUNT_TAKE_ESTIMATE_FORMAT := HUNT_ANIMAL_RATE_FACE_FORMAT + " " + HUNT_ANIMAL_RATE_UNIT_FORMAT
-
-## …and the band, appended. **IT IS OMITTED ENTIRELY WHERE THE BAND IS DEGENERATE** — which is every
-## reading at the shipped tuning (`combat_config.hit_chance = 1.0`), both stochastic stages answering
-## their degenerate identity at any quantile. Range chrome that always renders manufactures doubt the
-## model does not have, so `SourceForecast.hunt_take_band_is_degenerate` decides whether it appears at
-## all rather than the numbers being printed equal to each other.
-const HUNT_TAKE_BAND_FORMAT := " · %s – %s"
+## The band, appended to the take that sentence quotes. **IT IS OMITTED ENTIRELY WHERE THE BAND IS
+## DEGENERATE** — which is every reading at the shipped tuning (`combat_config.hit_chance = 1.0`),
+## both stochastic stages answering their degenerate identity at any quantile. Range chrome that
+## always renders manufactures doubt the model does not have, so
+## `SourceForecast.hunt_take_band_is_degenerate` decides whether it appears at all rather than the
+## numbers being printed equal to each other.
+##
+## **PARENTHESES RATHER THAN A `·` FIELD**, for the cadence clause's reason: what it qualifies is a
+## sentence now, and a middot strip inside one reads as a fragment of the strip this stopped being.
+const HUNT_TAKE_BAND_FORMAT := " (%s – %s)"
 
 ## **WHILE THE ANSWER IS IN FLIGHT** — the local hunt's twin of `RAID_FORECAST_PENDING`, and separate
 ## for that constant's own reason: the two sheets are waiting on different questions, and a shared
@@ -1574,10 +1584,26 @@ const HUNT_LIMIT_SUSTAINABLE_FORMAT := "The herd breeds back ≈%s %s a turn —
 ## THE FLOOR BINDS — there is little standing above it to take, and the floor is the player's own dial.
 const HUNT_LIMIT_ROOM_FORMAT := "Only ≈%s %s stand above your floor — lower it, or let the herd grow."
 
-## THE CREW BINDS — the one limit with hands as its remedy, and the one the ⚠-amber severity is for.
-## It names the crew NOUN the stepper above it uses (`hunters` / `herders`), so the remedy points at a
-## control on this sheet rather than at an abstraction.
-const HUNT_LIMIT_CREW_FORMAT := "These %s bring down ≈%s %s a turn — add hands to take more."
+## **THE CREW BINDS — and this is the one limit whose figure IS the take**, which is why the band and
+## the cadence ride this sentence and no other. It wears the ⚠-amber severity.
+##
+## **IT NAMES NO REMEDY, and the stepper's own `max N useful here — more would be idle` is why.** It
+## used to close *"— add hands to take more"*: a clause naming no count, two lines under a control
+## already stating the exact crew past which a hand is idle, and flatly contradicting it for any crew
+## inside one of that cap. The other three limits keep their tails because each names something to
+## DO (lower the floor, let the herd grow) or a consequence to weigh (hands past this take stock, not
+## surplus); this one named neither.
+##
+## It names the crew NOUN the stepper above it uses (`hunters` / `herders`), so the sentence and the
+## control it describes cannot call one crew two things.
+##
+## **THE RATE IS BUILT FROM THE SHARED FACE/UNIT PAIR, not spelled out as prose.** It read
+## *"≈0.75 Wild Boar a turn"* while the take estimate above the rows carried the `/turn` form, so the
+## one figure the sheet states twice was stated in two different units of English; taking the head
+## from `HUNT_DELIVERED_FORMAT`'s own pieces is what makes that unrepeatable. The trailing `%s` is the
+## band-and-cadence tail, `""` on a certain take of a whole animal or more.
+const HUNT_LIMIT_CREW_FORMAT := "These %s bring down " + HUNT_ANIMAL_RATE_FACE_FORMAT + " " \
+    + HUNT_ANIMAL_RATE_UNIT_FORMAT + "%s."
 
 ## **THE CAPTION OVER THE YIELDS SAYS WHICH POINT OF THE BAND THEY ARE QUOTED AT.** They are single
 ## numbers by decision — four bands would assert four independent rolls, and the four accounts are

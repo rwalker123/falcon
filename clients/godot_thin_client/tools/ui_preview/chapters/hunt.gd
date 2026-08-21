@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 338
+const EXPECTED_CHECKPOINTS := 342
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -4011,10 +4011,13 @@ func _crew_take_readout_assertions() -> void:
 	h._assert_hud("precondition: the sheet composes %d hunters" % CREW_TAKE_CLAIM_CREW,
 		Readout.stepper_value(sheet) == CREW_TAKE_CLAIM_CREW)
 
-	# (1) THE TAKE LINE IS THE SIM'S FIGURE. The claim the whole channel exists for: the client may not
-	#     compose this number, so the readout must state the one that came back and no other.
-	var take_line := Readout.take_estimate_text(sheet)
-	h._assert_hud("the take line states the SIM's %s animals/turn, not the fightless %s — got %s"
+	# (1) THE TAKE SENTENCE IS THE SIM'S FIGURE. The claim the whole channel exists for: the client may
+	#     not compose this number, so the readout must state the one that came back and no other.
+	# **IT IS THE BINDING-LIMIT SENTENCE BELOW THE ROWS, and that is now the sheet's ONLY statement of
+	#     the take** — the estimate line that used to lead the readout said the same rate a second
+	#     time, with the four accounts in between, and was retired for it.
+	var take_line := Readout.verdict_text(sheet)
+	h._assert_hud("the take sentence states the SIM's %s animals/turn, not the fightless %s — got %s"
 			% [_animal_face(with_fight), _animal_face(two_stage), take_line],
 		take_line.contains(HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _animal_face(with_fight))
 			and not take_line.contains(
@@ -4039,13 +4042,18 @@ func _crew_take_readout_assertions() -> void:
 	#     advisory got wrong, since it sized "12 herders would reach the floor" without the fight.
 	h._assert_hud("the binding limit names the hunters and their %s — got %s"
 			% [_animal_face(with_fight), Readout.verdict_text(sheet)],
-		Readout.verdict_text(sheet).contains(HudComposeVocab.HUNT_LIMIT_CREW_FORMAT % [
-			HudComposeVocab.HUNT_CREW_LABEL.to_lower(), _animal_face(with_fight),
-			String(herd["species"])]))
+		Readout.verdict_text(sheet).contains(_crew_limit_head(
+			HudComposeVocab.HUNT_CREW_LABEL.to_lower(), with_fight, String(herd["species"]))))
+	# …AND NAMES NO REMEDY. It closed *"— add hands to take more"*: a clause naming no count, two lines
+	# under the stepper's own `max N useful here — more would be idle`, and wrong at any crew inside one
+	# of that cap. The needle is LITERAL, since the constant that used to carry it is gone.
+	h._assert_hud("…and offers no \"%s\" remedy under a stepper already stating the useful crew — got %s"
+			% [RETIRED_CREW_REMEDY_NEEDLE, Readout.verdict_text(sheet)],
+		not Readout.verdict_text(sheet).contains(RETIRED_CREW_REMEDY_NEEDLE))
 
 	# (5) THE WIDEST READOUT THIS SHEET DRAWS STILL FITS. The Work zone's height and width budgets are
-	#     full, and this arc added a line to the box — so the fit is asserted on the state that carries
-	#     the take line, its band AND the limit sentence rather than trusted.
+	#     full, and the take sentence is the longest thing in the box — so the fit is asserted on the
+	#     state that carries the figure, its band AND its cadence in one sentence rather than trusted.
 	_crew_take_band_is_real = true
 	await _open_crew_take_sheet(herd)
 	sheet = h._hud._drawercompose._compose_sheet
@@ -4053,7 +4061,7 @@ func _crew_take_readout_assertions() -> void:
 
 	# (6) …AND A REAL BAND IS PRINTED. The pair is the claim: a rule that never rendered the range
 	#     satisfies (3) alone and one that always rendered it satisfies this alone.
-	take_line = Readout.take_estimate_text(sheet)
+	take_line = Readout.verdict_text(sheet)
 	h._assert_hud("a real band prints %s - %s beside the figure — got %s"
 			% [_animal_face(with_fight * CREW_TAKE_LOW_FRACTION),
 				_animal_face(with_fight * CREW_TAKE_HIGH_FRACTION), take_line],
@@ -4082,6 +4090,28 @@ func _crew_take_readout_assertions() -> void:
 ## and the rendered number cannot round differently.
 func _animal_face(animals: float) -> String:
 	return h._hud._drawercompose._format_animal_rate(animals)
+
+## **THE CREW-LIMIT SENTENCE'S HEAD** — its own format with an EMPTY band-and-cadence tail and the full
+## stop trimmed, i.e. everything up to where that tail begins. A claim about the sentence is written
+## against this so it survives a fixture whose take gains or loses a range or a cadence clause; the
+## tail is the business of the band and cadence claims, which assert it themselves.
+func _crew_limit_head(crew_noun: String, animals: float, quarry: String) -> String:
+	return (HudComposeVocab.HUNT_LIMIT_CREW_FORMAT % [
+		crew_noun, _animal_face(animals), quarry, ""]).trim_suffix(".")
+
+## **THE TWO WAYS THIS SENTENCE COULD SPELL AN ANIMALS-PER-TURN RATE, and the one it must.** Both are
+## LITERAL rather than composed from `HudComposeVocab`: a claim about the FORM a constant takes cannot
+## be written in terms of that constant, which would pass whatever the constant happened to say. The
+## reported line read `≈0.75 Wild Boar a turn` — prose, where every other rate on this sheet is a rate.
+const TAKE_RATE_UNIT_NEEDLE := "/turn"
+const TAKE_PROSE_UNIT_NEEDLE := " a turn"
+
+## **THE REMEDY THIS SENTENCE NO LONGER OFFERS.** Reported from play: it sat two lines under the
+## stepper's `max 7 workers useful here — more would be idle`, named no count, and told a crew of six
+## to add hands the control above had already capped. Literal, because the constant that carried it is
+## deleted — a needle read out of the vocabulary could only assert that the vocabulary agrees with
+## itself.
+const RETIRED_CREW_REMEDY_NEEDLE := "add hands to take more"
 
 ## The mark a RANGE clause cannot be drawn without — the EN DASH `HudComposeVocab.HUNT_TAKE_BAND_FORMAT`
 ## separates its two ends with. Spelled as an escape rather than typed, so it cannot be confused at a
@@ -4294,23 +4324,41 @@ func _subone_take_assertions() -> void:
 			SUBONE_HUNTERS],
 		room_animals > take and float(SUBONE_HUNTERS) * carry >= SUBONE_BODY_MASS)
 
-	# (1) THE TAKE LINE STATES THE FRACTION. The reported face is the one thing it may never print.
-	# **THE FACES ARE UPPER-CASED BY THE LABEL, so the needles are too.** And the forbidden one is the
-	# WHOLE reported line rather than the bare `≈0`, which is a prefix of `≈0.75` and would fail every
-	# correct render — the assertion passing for the wrong reason in the other direction.
-	var take_line := Readout.take_estimate_text(sheet).to_upper()
-	var zero_line: String = (HudComposeVocab.HUNT_TAKE_ESTIMATE_FORMAT % ["0", quarry]).to_upper()
-	h._assert_hud("the take line states %s a turn, never the reported \"%s\" — got %s"
+	# (1) THE TAKE SENTENCE STATES THE FRACTION. The reported face is the one thing it may never print.
+	# **IT IS THE BINDING-LIMIT SENTENCE BELOW THE ROWS.** The estimate line that used to lead the
+	# readout carried this claim and was retired for restating a rate that sentence already quoted, so
+	# the whole take reading — figure, band, cadence — is read out of the verdict register now.
+	# The forbidden face is the WHOLE reported line rather than the bare `≈0`, which is a prefix of
+	# `≈0.75` and would fail every correct render — the assertion passing for the wrong reason in the
+	# other direction.
+	var take_line := Readout.verdict_text(sheet)
+	var zero_line: String = HudComposeVocab.HUNT_DELIVERED_FORMAT % ["0", quarry]
+	h._assert_hud("the take sentence states %s a turn, never the reported \"%s\" — got %s"
 			% [_animal_face(take), zero_line, take_line],
-		take_line.contains((HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT
-				% _animal_face(take)).to_upper())
+		take_line.contains(HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _animal_face(take))
 			and not take_line.contains(zero_line))
 	# (2) …AND SAYS WHAT THE FRACTION MEANS. A decimal alone still reads as "not quite one", which is
 	#     the same conclusion the `≈0` produced; the cadence is the half that makes the wait legible.
 	var cadence: String = HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT % \
 		h._hud._drawercompose._format_trimmed(1.0 / take, HudComposeVocab.HUNT_CADENCE_DECIMALS)
 	h._assert_hud("…and states the cadence a sub-one take is actually felt as (%s) — got %s"
-			% [cadence.strip_edges(), take_line], take_line.contains(cadence.to_upper()))
+			% [cadence.strip_edges(), take_line], take_line.contains(cadence))
+	# (2a) …SPELLED AS A RATE. `≈0.75 Wild Aurochs a turn` was prose on a sheet whose every other
+	#      reading is a rate, and it is the form the retired estimate line already used.
+	h._assert_hud("…as \"%s%s\", never the reported \"%s%s\" — got %s"
+			% [quarry, TAKE_RATE_UNIT_NEEDLE, quarry, TAKE_PROSE_UNIT_NEEDLE, take_line],
+		take_line.contains(quarry + TAKE_RATE_UNIT_NEEDLE)
+			and not take_line.contains(quarry + TAKE_PROSE_UNIT_NEEDLE))
+	# (2b) **AND IT IS STATED ONCE.** The reported frame said the rate twice — an estimate line above
+	#      `NEXT TURN` and the sentence below the rows — with the four accounts sandwiched between.
+	#      Asked STRUCTURALLY, of the readout's first register: anything mounted above the caption
+	#      takes index 0 and pushes the rows to 1, so a replacement line worded differently fails here
+	#      too. The precondition is half the claim — on a sheet that drew no rows at all the index is
+	#      `-1` and an "is it 0" test alone would be answering about nothing.
+	h._assert_hud("precondition: the readout drew its rows — got \"%s\"" % Readout.yields_text(sheet),
+		Readout.yields_text(sheet) != "")
+	h._assert_hud("nothing stands above the NEXT TURN caption — the rows lead the readout (index %d)"
+			% Readout.yields_block_index(sheet), Readout.yields_block_index(sheet) == 0)
 
 	# (3) THE FOOD ROW IS THE SAME TAKE, VALUED. The four accounts are fixed conversions of one carried
 	#     biomass, so a take rounded away takes every one of them to zero with it — which is the
@@ -4326,8 +4374,8 @@ func _subone_take_assertions() -> void:
 	#     is a remedy attached to a claim that hands cannot help.
 	h._assert_hud("the binding limit names the hunters at %s, the curve's own figure — got %s"
 			% [_animal_face(take), Readout.verdict_text(sheet)],
-		Readout.verdict_text(sheet).contains(HudComposeVocab.HUNT_LIMIT_CREW_FORMAT % [
-			HudComposeVocab.HUNT_CREW_LABEL.to_lower(), _animal_face(take), quarry]))
+		Readout.verdict_text(sheet).contains(_crew_limit_head(
+			HudComposeVocab.HUNT_CREW_LABEL.to_lower(), take, quarry)))
 
 	# (5) **THE PLATEAU READS HONESTLY.** Every crew from one to ten takes something, and each takes
 	#     more than the one below it — the published curve's whole shape, and the exact span the old
@@ -4526,8 +4574,10 @@ func _drag_rows(max_workers: int, floor_value: float) -> Array:
 		scaled.append(scaled_row)
 	return scaled
 
-## The needle the take line states a rate with — the whole `≈N` clause rather than the bare digits, so
-## a figure that merely APPEARS somewhere on the sheet (a crew pill, the stepper) cannot satisfy it.
+## The needle the take sentence states a rate with — the whole `≈N` clause rather than the bare digits,
+## so a figure that merely APPEARS somewhere on the sheet (a crew pill, the stepper) cannot satisfy it.
+## Read out of the VERDICT register: the take, its band and its cadence are the binding-limit
+## sentence's since the estimate line above the yields was retired for saying the rate twice.
 func _drag_take_needle(animals: float) -> String:
 	return HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _animal_face(animals)
 
@@ -4598,8 +4648,8 @@ func _crew_take_follows_the_drag_assertions() -> void:
 	# (1) THE SHEET OPENS ON THE COMMITTED FLOOR'S ANSWER. The state the drag starts from, asserted so
 	#     that (2) is a MOVE rather than a lucky match.
 	h._assert_hud("the sheet opens stating the committed floor's %s — got %s"
-			% [_animal_face(committed_take), Readout.take_estimate_text(sheet)],
-		Readout.take_estimate_text(sheet).contains(_drag_take_needle(committed_take)))
+			% [_animal_face(committed_take), Readout.verdict_text(sheet)],
+		Readout.verdict_text(sheet).contains(_drag_take_needle(committed_take)))
 
 	# (2) …AND THE DRAG MOVES IT. The defect: only the two client-side arms recomposed under a drag,
 	#     so the take line went on stating the floor the sheet opened at until the drag was released.
@@ -4608,7 +4658,7 @@ func _crew_take_follows_the_drag_assertions() -> void:
 	var asks_at_open := _drag_asked_floors.size()
 	chart.emit_signal("floor_changed", DRAG_LIVE_FLOOR, false)
 	await h._settle()
-	var dragged_line := Readout.take_estimate_text(sheet)
+	var dragged_line := Readout.verdict_text(sheet)
 	h._assert_hud("a LIVE drag re-states the take at the DRAGGED floor's %s, not the committed %s — got %s"
 			% [_animal_face(dragged_take), _animal_face(committed_take), dragged_line],
 		dragged_line.contains(_drag_take_needle(dragged_take))
@@ -4661,8 +4711,8 @@ func _crew_take_follows_the_drag_assertions() -> void:
 			% SourceForecast.floor_percent(DRAG_PENDING_FLOOR),
 		_drag_asked_floors.size() - asks_before_pending == 1)
 	h._assert_hud("…so the sheet states NO take at all — got \"%s\""
-			% Readout.take_estimate_text(sheet),
-		Readout.take_estimate_text(sheet) == ""
+			% Readout.verdict_text(sheet),
+		not Readout.verdict_text(sheet).contains(_drag_take_needle(dragged_take))
 			and not Readout.yields_text(sheet).contains(_drag_take_needle(dragged_take)))
 	h._assert_hud("…and says which it is waiting on rather than leaving the slot blank",
 		Readout.face_lines(sheet).has(HudComposeVocab.HUNT_TAKE_PENDING))
