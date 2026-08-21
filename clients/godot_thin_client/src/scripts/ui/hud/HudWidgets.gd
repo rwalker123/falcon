@@ -1395,9 +1395,15 @@ static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictiona
 ##   • ***hold it after*** — the hands that take exactly what grows back, once it is there.
 ##
 ## Both are exact, both are stated, and each is a TARGET you can click to staff. Neither is a hidden
-## rule the player has to infer from a stepper going dead. A target the wire cannot price
-## (`NO_CREW_ANSWER` — a dead-season patch has no throughput to divide by) is not rendered at all,
-## rather than shown as a zero that would read as "nobody is needed".
+## rule the player has to infer from a stepper going dead.
+##
+## **A TARGET NO CREW REACHES (`NO_CREW_ANSWER`) STILL RENDERS — DISABLED, WEARING `✕`.** It used to
+## be dropped, and a missing pill reads as the sheet having nothing to say about clearing at all,
+## when the answer it has is a definite *no*. Never a zero, which would read as "nobody is needed".
+## The reason rides the tooltip (`CREW_TARGET_*_UNREACHABLE_TOOLTIP`), so the sheet stays quiet and
+## the why stays reachable. `disabled` is set BEFORE `apply_pill_button`, and no `pressed` handler is
+## connected at all — the tint below reads `btn.disabled`, and a disabled Button emits nothing, so
+## the pill is non-interactive by both its look and its wiring.
 ## **THEY ARE PILLS ON THE CREW'S OWN LINE, not full-width boxes on a row of their own.** A target is
 ## a VALUE you can jump to, while the stepper beside it is a control you operate, and the two shapes
 ## have to say which is which: two boxed buttons spanning the panel read as the primary action of the
@@ -1409,39 +1415,51 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
     row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
     for spec in [
         [CREW_TARGET_CLEAR, int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
-            HudComposeVocab.CREW_TARGET_CLEAR_LABEL, HudComposeVocab.CREW_TARGET_CLEAR_TOOLTIP],
+            HudComposeVocab.CREW_TARGET_CLEAR_LABEL, HudComposeVocab.CREW_TARGET_CLEAR_TOOLTIP,
+            HudComposeVocab.CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP],
         [CREW_TARGET_HOLD, int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),
-            HudComposeVocab.CREW_TARGET_HOLD_LABEL, HudComposeVocab.CREW_TARGET_HOLD_TOOLTIP],
+            HudComposeVocab.CREW_TARGET_HOLD_LABEL, HudComposeVocab.CREW_TARGET_HOLD_TOOLTIP,
+            HudComposeVocab.CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP],
     ]:
         var count := int(spec[1])
-        if count == SourceForecast.NO_CREW_ANSWER:
-            continue
+        var unreachable := count == SourceForecast.NO_CREW_ANSWER
         var btn := Button.new()
-        btn.tooltip_text = String(spec[3])
+        btn.tooltip_text = String(spec[4] if unreachable else spec[3])
         btn.set_meta(CREW_TARGET_META, String(spec[0]))
         btn.set_meta(CREW_TARGET_COUNT_META, count)
         # The target the crew is ALREADY on wears the selected fill, so the two numbers double as a
-        # readout of where the current staffing sits between them.
-        var selected := workers == count
+        # readout of where the current staffing sits between them. An unreachable target is nobody's
+        # current staffing, and `workers == NO_CREW_ANSWER` cannot arise, but it is stated rather than
+        # relied on: a pill the player can never be standing on must never light.
+        var selected := not unreachable and workers == count
+        btn.disabled = unreachable
         HudStyle.apply_pill_button(btn, selected)
-        btn.pressed.connect(func() -> void: on_pick.call(count))
+        if not unreachable:
+            btn.pressed.connect(func() -> void: on_pick.call(count))
         # The tint is the SHARED TABLE's answer for this button's own state — `btn.disabled` included,
         # exactly as `build_floor_picker` asks it. `apply_pill_button` already writes a `disabled`
         # stylebox, so the box can fade; a face built from child Labels cannot follow it through the
         # theme (see `_crew_target_pill`), so the state has to reach the tint here or the box would
         # fade under two lines still at full brightness.
-        row.add_child(_crew_target_pill(btn, count, String(spec[2]),
+        row.add_child(_crew_target_pill(btn,
+            HudComposeVocab.CREW_TARGET_UNREACHABLE_FACE if unreachable else str(count),
+            String(spec[2]),
             HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
     return row
 
 
 ## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
 ## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one
-## `Button.text`. The COUNT leads at the pill's own size in full ink (it is what the player compares
-## against the stepper); the label naming which answer it is follows, one step down and one step
-## quieter. Both tints derive from the ONE colour the caller resolved, so a selected pill moves as a
-## unit; never give the label a colour of its own.
-static func _crew_target_pill(btn: Button, count: int, label_text: String,
+## `Button.text`. The LEAD line leads at the pill's own size in full ink (it is what the player
+## compares against the stepper); the label naming which answer it is follows, one step down and one
+## step quieter. Both tints derive from the ONE colour the caller resolved, so a selected pill moves
+## as a unit; never give the label a colour of its own.
+##
+## **`count_face` IS A STRING, and that is the point**: the lead line is a count on every reachable
+## target and `CREW_TARGET_UNREACHABLE_FACE` on the one no crew reaches, and this layer must not have
+## to know which. An `int` parameter would force the caller to smuggle the sentinel through as a
+## number and this function to re-decide what it meant.
+static func _crew_target_pill(btn: Button, count_face: String, label_text: String,
         tint: Color) -> MarginContainer:
     var cell := MarginContainer.new()
     cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1455,7 +1473,7 @@ static func _crew_target_pill(btn: Button, count: int, label_text: String,
     var face := HBoxContainer.new()
     face.mouse_filter = Control.MOUSE_FILTER_IGNORE
     face.add_theme_constant_override("separation", HudComposeVocab.CREW_TARGET_FACE_SEPARATION)
-    face.add_child(_pill_face_line(str(count), tint,
+    face.add_child(_pill_face_line(count_face, tint,
         HudComposeVocab.CREW_TARGET_COUNT_FONT_SIZE))
     face.add_child(_pill_face_line(label_text,
         Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),

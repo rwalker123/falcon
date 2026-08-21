@@ -1116,7 +1116,13 @@ const WEEDING_BALANCE_EPSILON: f32 = 1e-3;
 ///   has not displaced anything yet, and both halves of a commitment switch on together at completion.
 /// - **tended** (rung 2) — [`weeded`]: the favored crop's share rises to `min(1, share × gain)`, taken
 ///   from the least abundant remaining species first. That *is* weeding.
-/// - **field** (rung 3) — [`planted`]: one entry, the crop, at [`WHOLE_BASKET`]. You sowed it.
+/// - **field** (rung 3) — [`planted`]: the crop takes the whole basket *less* whatever stands outside
+///   the worked ground. You sowed it.
+///
+/// **Both reweights are bounded by what working the ground can actually clear**
+/// ([`FloraConfig::stands_in_worked_ground`]), which is why this seam needs the roster and not just
+/// the shares. A member that is not growing in the soil — a kelp bed, a mussel bed, a navigable
+/// river's fish — is not displaced by tending the bank or sowing the field beside it.
 ///
 /// Borrowed on the wild arm (`Cow`), because that arm is >99% of patches and this is resolved inside
 /// the forward-projection loops — deep-copying a `String` per named plant per simulated turn is the
@@ -1124,6 +1130,7 @@ const WEEDING_BALANCE_EPSILON: f32 = 1e-3;
 pub fn patch_composition<'a>(
     patch: &ForagePatch,
     tile_composition: &'a [FloraShare],
+    flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> Cow<'a, [FloraShare]> {
     // **⛔ THE BASKET IS RESOLVED AT `held`, AND IT IS THE ONE THING THAT CANNOT BE INTERPOLATED.**
@@ -1135,7 +1142,13 @@ pub fn patch_composition<'a>(
     // So the composition steps at the rung actually **achieved** and the *rates* carry the smoothing:
     // a Field at 40% is priced on a tended patch's weeded basket at a rate 40% of the way to the
     // Field's. This is deliberate, not an oversight.
-    composition_for_rung(patch, tile_composition, forage, patch.standing().held)
+    composition_for_rung(
+        patch,
+        tile_composition,
+        flora,
+        forage,
+        patch.standing().held,
+    )
 }
 
 /// **A PER-RUNG QUANTITY AT THIS PATCH'S STANDING** — [`interpolate`] bound to the patch, so no rate
@@ -1151,8 +1164,10 @@ fn patch_interpolate(patch: &ForagePatch, value_at: impl Fn(RungKey) -> f32) -> 
 /// *quote* reads, and the reason a rung's payoff can never be assembled out of another rung's
 /// composition.
 ///
-/// - `PlantField` → [`planted`]: one entry, the crop, holding the whole basket.
-/// - `PlantTended` → [`weeded`]: the favored share rises to `min(1, share × tended_weeding_gain)`.
+/// - `PlantField` → [`planted`]: the crop holds the basket less whatever stands outside the worked
+///   ground.
+/// - `PlantTended` → [`weeded`]: the favored share rises to `min(1, share × tended_weeding_gain)`, or
+///   as far toward it as the clearable members can pay for.
 /// - anything below → the tile's basket verbatim; there is nothing a rung-1 stand reweights.
 ///
 /// **It answers the rung it is ASKED about, never the rung the patch happens to stand on**, and that
@@ -1169,6 +1184,7 @@ fn patch_interpolate(patch: &ForagePatch, value_at: impl Fn(RungKey) -> f32) -> 
 pub fn composition_for_rung<'a>(
     patch: &ForagePatch,
     tile_composition: &'a [FloraShare],
+    flora: &FloraConfig,
     forage: &ForageLaborConfig,
     rung: RungKey,
 ) -> Cow<'a, [FloraShare]> {
@@ -1176,14 +1192,30 @@ pub fn composition_for_rung<'a>(
         return Cow::Borrowed(tile_composition);
     };
     match rung {
-        RungKey::PlantField => Cow::Owned(planted(favored)),
+        RungKey::PlantField => Cow::Owned(planted(tile_composition, favored, flora)),
         RungKey::PlantTended => Cow::Owned(weeded(
             tile_composition,
             favored,
             forage.cultivation.tended_weeding_gain,
+            flora,
         )),
         _ => Cow::Borrowed(tile_composition),
     }
+}
+
+/// **WHAT WORKING THIS GROUND CANNOT REMOVE** — the members of `composition` a Cultivate or a Sow
+/// leaves standing, because they are not growing in the soil the crew is working
+/// ([`crate::flora_config::FloraDef::stands_in_worked_ground`]). Stated once so [`weeded`] and
+/// [`planted`] cannot come to
+/// disagree about which members are protected.
+///
+/// **It is NOT `cultivation_ceiling: wild`, and the difference is six species wide.** Ten shipped
+/// rows are gather-only, but you can genuinely clear acorns, pine nuts, mesquite pods, cloudberry,
+/// rock tripe and arctic greens off ground you are tending — only the fisheries (kelp, shellfish,
+/// river fish) are somewhere your hoe never reaches. Gating on the ceiling would shield all ten and
+/// quietly make Cultivate much weaker on woodland and scrub.
+fn stands_outside_worked_ground(entry: &FloraShare, flora: &FloraConfig) -> bool {
+    !flora.stands_in_worked_ground(&entry.species)
 }
 
 /// **WEEDING, stated once** — the rung-2 reweight: the favored crop's share rises to
@@ -1197,9 +1229,22 @@ pub fn composition_for_rung<'a>(
 /// should not invent. Abundance is currency-free, deterministic from the composition alone, and
 /// independent of which crop was favored. Do not "improve" this to a yield ranking.
 ///
+/// **THE GAIN IS AN ASK, NOT A GUARANTEE — it is paid only out of what the crew can clear.**
+/// Members standing outside the worked ground ([`stands_outside_worked_ground`]) are never touched,
+/// and if what remains cannot cover `share × gain - share` the favored share rises by **only what
+/// was there to take** rather than reaching into the protected members for the difference. On a
+/// navigable hex that is the whole point: you cannot weed fish out of a river by tending the reeds
+/// on its bank, and before this guard a Cultivate deleted the fishery wherever it happened to be the
+/// least abundant member.
+///
 /// A `favored` the tile does not actually grow returns the basket verbatim: there is nothing to weed
 /// toward.
-fn weeded(composition: &[FloraShare], favored: &str, gain: f32) -> Vec<FloraShare> {
+fn weeded(
+    composition: &[FloraShare],
+    favored: &str,
+    gain: f32,
+    flora: &FloraConfig,
+) -> Vec<FloraShare> {
     let Some(share) = composition
         .iter()
         .find(|entry| entry.species == favored)
@@ -1208,15 +1253,21 @@ fn weeded(composition: &[FloraShare], favored: &str, gain: f32) -> Vec<FloraShar
     else {
         return composition.to_vec();
     };
-    let target = (share * gain).min(WHOLE_BASKET);
-    let mut owed = target - share;
-    // The others, LEAST ABUNDANT FIRST. Sorted before anything is summed — this output goes on the
-    // wire, so a differently-ordered f32 addition is a snapshot-hash flake (`flora.md`).
-    let mut others: Vec<FloraShare> = composition
+    // **THE MEMBERS THE HOE REACHES, and they are the only ones this function may move.** Split off
+    // before any target is computed, because the protected members bound the target itself.
+    let (mut others, protected): (Vec<FloraShare>, Vec<FloraShare>) = composition
         .iter()
         .filter(|entry| entry.species != favored)
         .cloned()
-        .collect();
+        .partition(|entry| !stands_outside_worked_ground(entry, flora));
+    // **THE ASK, CLAMPED TO WHAT THE CLEARABLE POOL CAN PAY.** `min` rather than a shortfall carried
+    // into the protected members: weeding harder does not make a river's fish into reeds.
+    let clearable: f32 = others.iter().map(|entry| entry.share).sum();
+    let asked = (share * gain).min(WHOLE_BASKET) - share;
+    let target = share + asked.min(clearable);
+    let mut owed = target - share;
+    // The others, LEAST ABUNDANT FIRST. Sorted before anything is summed — this output goes on the
+    // wire, so a differently-ordered f32 addition is a snapshot-hash flake (`flora.md`).
     others.sort_by(|a, b| {
         a.share
             .total_cmp(&b.share)
@@ -1235,13 +1286,14 @@ fn weeded(composition: &[FloraShare], favored: &str, gain: f32) -> Vec<FloraShar
         entry.share -= taken;
         owed -= taken;
     }
-    // `owed <= WHOLE_BASKET - share = Σ others`, so the others can always cover it.
+    // `owed <= clearable = Σ others` by the clamp above, so the clearable others can always cover it.
     debug_assert!(
         owed <= WEEDING_BALANCE_EPSILON,
         "weeding {favored} to {target} left {owed} unpaid — the basket did not sum to 1"
     );
     let mut weeded: Vec<FloraShare> = others
         .into_iter()
+        .chain(protected)
         .filter(|entry| entry.share > NO_SHARE)
         .collect();
     weeded.push(FloraShare {
@@ -1261,13 +1313,42 @@ fn weeded(composition: &[FloraShare], favored: &str, gain: f32) -> Vec<FloraShar
     weeded
 }
 
-/// **PLANTING, stated once** — the rung-3 reweight: one entry, the sown crop, holding the
-/// [`WHOLE_BASKET`]. A Field has no volunteers.
-fn planted(favored: &str) -> Vec<FloraShare> {
-    vec![FloraShare {
+/// **PLANTING, stated once** — the rung-3 reweight: the sown crop takes the [`WHOLE_BASKET`] **less
+/// whatever stands outside the worked ground** ([`stands_outside_worked_ground`]), which those
+/// members keep at their own shares. A Field has no volunteers; it does not have a drained river
+/// either.
+///
+/// **This arm was the worse half of the bug the guard exists for.** It used to force the crop to
+/// `1.0` and every other member to nothing, no ranking involved, so sowing a navigable hex deleted
+/// the river's fishery outright — a strictly bigger loss than the weeding path's, and it would have
+/// survived a fix to [`weeded`] alone.
+///
+/// The remainder cannot go negative in a valid config: a crop must itself stand in the worked ground
+/// to be committed to ([`FloraConfig::validate`]), so its own share is not in the protected sum and
+/// the protected members can at most take the rest of the basket. It is still clamped, because
+/// `favored` need not be a member of `composition` at all (a crop the tile does not grow), and a
+/// remainder of nothing is then the honest answer rather than a negative share on the wire.
+fn planted(composition: &[FloraShare], favored: &str, flora: &FloraConfig) -> Vec<FloraShare> {
+    let protected: Vec<FloraShare> = composition
+        .iter()
+        .filter(|entry| entry.species != favored && stands_outside_worked_ground(entry, flora))
+        .cloned()
+        .collect();
+    let remainder =
+        (WHOLE_BASKET - protected.iter().map(|entry| entry.share).sum::<f32>()).max(NO_SHARE);
+    let mut planted: Vec<FloraShare> = protected;
+    planted.push(FloraShare {
         species: favored.to_string(),
-        share: WHOLE_BASKET,
-    }]
+        share: remainder,
+    });
+    planted.retain(|entry| entry.share > NO_SHARE);
+    // The wire's total order, exactly as [`weeded`] emits it — share DESC, then species key ASC.
+    planted.sort_by(|a, b| {
+        b.share
+            .total_cmp(&a.share)
+            .then_with(|| a.species.cmp(&b.species))
+    });
+    planted
 }
 
 /// **The multiplier the FAVORED species' yield vector carries on `rung`** —
@@ -1370,7 +1451,7 @@ fn rung_rate(
     rate_of: impl Fn(&crate::flora_config::FloraDef) -> f32,
     fallback: f32,
 ) -> f32 {
-    let standing = composition_for_rung(patch, tile_composition, forage, rung);
+    let standing = composition_for_rung(patch, tile_composition, flora, forage, rung);
     basket_rate(
         &narrowed(&standing, take),
         patch.species.as_deref(),
@@ -1503,7 +1584,7 @@ pub fn patch_species_rates(
 ) -> Vec<SpeciesRate> {
     // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES** — `patch_material_yields`' rule, and for
     // its reason: a rate lerps across the rung being raised, a *basket* cannot be blended.
-    let composition = patch_composition(patch, tile_composition, forage);
+    let composition = patch_composition(patch, tile_composition, flora, forage);
     let favored_gain = patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage));
     composition
         .iter()
@@ -1605,7 +1686,7 @@ fn rung_material_yields_at(
     favored_gain: f32,
     take: &TakeSelection,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
-    let standing = composition_for_rung(patch, tile_composition, forage, basket_rung);
+    let standing = composition_for_rung(patch, tile_composition, flora, forage, basket_rung);
     let composition = narrowed(&standing, take);
     let mut rows = Vec::new();
     for entry in composition.iter() {
@@ -1713,10 +1794,13 @@ fn rung_provisions_per_biomass(
 /// species_quality`.
 ///
 /// **It reads `PlantField` whatever rung the patch stands on**, which is the whole point: a Field's
-/// basket is 100% its crop and takes no rung-2 conversion gain, so this is exactly `crop rate ÷ wild
-/// rate` — the number a Field would really pay — even when the patch it is asked about is currently
-/// tended. `fieldYield` is published for every patch, so anything else is a quote that disagrees with
-/// the payout (see [`composition_for_rung`]).
+/// basket is its crop plus only whatever working the ground could not clear
+/// ([`stands_outside_worked_ground`]), and it takes no rung-2 conversion gain — so on ordinary
+/// inland ground this is exactly `crop rate ÷ wild rate`, the number a Field would really pay, even
+/// when the patch it is asked about is currently tended. Beside a fishery it is the sown basket's
+/// own average, which is likewise what that Field would pay. `fieldYield` is published for every
+/// patch, so anything else is a quote that disagrees with the payout (see
+/// [`composition_for_rung`]).
 ///
 /// **Derived, never a second config field.** A `field_provisions_multiplier` per species would be a
 /// redundant lever that could drift from the conversion rate it is supposed to express.
@@ -2928,7 +3012,7 @@ pub(crate) fn forage_take(
     // the stand is standing there to be carried home, so the ceiling and the standing-crop clamp
     // below are both taken on that share. `WHOLE_BASKET` when the crew named nothing.
     let selected = selected_biomass_share(
-        &patch_composition(patch, tile_composition, forage),
+        &patch_composition(patch, tile_composition, flora, forage),
         take_species,
     );
     // **THE ROOM *OR* THE GROWTH SHARE** ([`patch_take_room`]), not the raw escapement room: a stand
@@ -3554,7 +3638,7 @@ pub(crate) fn forage_forecast(
     // share scales that room by exactly the share — the same number `forage_take` multiplies its
     // ceiling by. `WHOLE_BASKET` leaves both terms untouched.
     let selected = selected_biomass_share(
-        &patch_composition(patch, tile_composition, forage),
+        &patch_composition(patch, tile_composition, flora, forage),
         take_species,
     );
     SourceYieldForecast {
@@ -3806,7 +3890,7 @@ pub fn forage_source_yield_preview(
     // mixed stand is comparing what it took against what *that* stand sustains, so both the stock
     // terms and the conversion read the selected subset — the same scaling the ceiling gets.
     let selected = selected_biomass_share(
-        &patch_composition(patch, tile_composition, forage),
+        &patch_composition(patch, tile_composition, flora, forage),
         take_species,
     );
     let sustainable = forage_provisions(

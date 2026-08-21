@@ -521,6 +521,31 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
   **favored species' whole yield vector**, #433; the term that makes a 25-turn Cultivate pay back in
   the teens of turns instead of the eighties, and the reason a marginal favorite barely moves the
   number while a dominant one pays twice). Both validated finite and `>= 1.0`.
+  > **⛔ NEITHER REWEIGHT MAY TOUCH A MEMBER THAT IS NOT STANDING IN THE WORKED GROUND.**
+  > `FloraDef::stands_in_worked_ground` (default **true**, `false` on `kelp` / `shellfish_beds` /
+  > `river_fish`) names the physical fact, not the mechanic: *does this member stand in the soil the
+  > crew is turning over.* **Weeding** pays its gain only out of the clearable members —
+  > `target = share + min(asked, Σ clearable)` — so the favoured share rises by what was clearable and
+  > **no further**, rather than reaching into the protected ones for the shortfall. **A Field** gives
+  > the crop `1.0 − Σ(protected)` instead of `1.0`, so a Sow beside a channel publishes **two** entries
+  > where it used to publish one.
+  >
+  > **`cultivation_ceiling` IS NOT THE PREDICATE, and that is the whole reason the field exists.** Ten
+  > of the thirty-three species are `ceiling: wild`, and they split two ways: you genuinely *can* clear
+  > oak mast, pine nut, cloudberry, mesquite, rock tripe and arctic greens off ground you are working —
+  > you simply cannot farm them. Gating on the ceiling would have shielded all six and quietly made a
+  > Cultivate much weaker on woodland and scrub. A test asserts that pair — `ceiling: wild` **and**
+  > standing in worked ground — so the two questions cannot be re-merged. `sea_kale` is the judgement
+  > call and is left **clearable**: samphire is a salt-marsh plant rooted in ground, unlike the mussels
+  > beside it.
+  >
+  > **The remainder cannot go negative, by proof rather than by clamp:** a crop must be clearable to be
+  > committable (a load-time rejection), so the crop's own share is never inside the protected sum.
+  >
+  > **Playtest consequence worth knowing:** a Field beside a channel now pays a little food from the
+  > fishery even when the crop is a zero-provision cash crop. That is correct — the fish were always
+  > there — but it is a visible change on navigable tiles.
+
   **`capacity_per_tender`** (195.0 — **HOW MUCH STANDING CROP ONE TENDER LOOKS AFTER**, the divisor in
   `forage::patch_tender_loads` and the plant twin of `fauna_config`'s per-species `animals_per_herder`.
   **One global ratio, deliberately not one per flora species**: a patch's basket is several species

@@ -1830,7 +1830,12 @@ pub fn advance_labor_allocation(
                     // for the selection rather than for the whole basket a narrowed crew never
                     // touched. Resolved before the take, off the same pre-take state the ceiling is.
                     let selected_share = crate::forage::selected_biomass_share(
-                        &crate::forage::patch_composition(patch, &tile_composition, &labor.forage),
+                        &crate::forage::patch_composition(
+                            patch,
+                            &tile_composition,
+                            &flora,
+                            &labor.forage,
+                        ),
                         take_species,
                     );
                     // **THE WHOLE STAND'S ROOM ABOVE THE FLOOR — what the BUILD is gated on.**

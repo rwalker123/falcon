@@ -21,14 +21,15 @@ use core_sim::TakeSelection;
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, commit_payoff, generate_hydrology,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world,
-    tile_forage_capacity, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FloraConfig, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
-    MapPresets, MapPresetsHandle, MaterialPayoff, MoraleCause, PopulationCohort, RungKey,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
-    TileRegistry, WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FOOD,
+    tile_flora_composition, tile_forage_capacity, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FloraConfig,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MaterialPayoff, MoraleCause,
+    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
+    BUILTIN_LABOR_CONFIG, FODDER, FOOD,
 };
 use sim_runtime::TerrainType;
 
@@ -222,32 +223,51 @@ fn spawn_world() -> App {
     app
 }
 
-/// The first land tile carrying a forage patch, in a totally-ordered `(y, x)` sweep — any real
-/// ground will do: a Field's trade payoff reads the committed **species** off the patch, never the
-/// tile's biome, so the tile only has to be somewhere a band can stand and work.
+/// The first land tile carrying a forage patch **whose whole basket stands in the worked ground**,
+/// in a totally-ordered `(y, x)` sweep. A Field's material payoff reads the committed **species**
+/// off the patch rather than the tile's biome, so almost any real ground will do — with one
+/// exception that these fixtures' claims turn on.
+///
+/// **A member standing OUTSIDE the worked ground survives a Sow** (`forage::planted`): sowing the
+/// bank of a navigable hex cannot drain the channel, so the crop takes the *clearable remainder* and
+/// the river's fishery keeps its share. Every claim below is of the form *"a cash Field pays no
+/// food"* / *"a hay Field pays no food"* — statements about **the crop** — and a fishery standing
+/// beside it pays food perfectly honestly. So the sweep skips those tiles rather than the tests
+/// weakening their claims to accommodate a plant the crop never displaced.
 fn first_patch_tile(app: &App) -> (bevy::prelude::Entity, UVec2) {
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();
         (registry.width, registry.height)
     };
+    let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let map_seed = app.world.resource::<SimulationConfig>().map_seed;
     for y in 0..height {
         for x in 0..width {
             let coord = UVec2::new(x, y);
             let Some(entity) = app.world.resource::<TileRegistry>().index(x, y) else {
                 continue;
             };
-            if app.world.get::<Tile>(entity).is_some()
-                && app
-                    .world
-                    .resource::<ForageRegistry>()
-                    .patch(coord)
-                    .is_some()
+            let Some(ground) = app.world.get::<Tile>(entity) else {
+                continue;
+            };
+            if app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_none()
             {
+                continue;
+            }
+            let all_clearable = tile_flora_composition(&flora, &labor.forage, ground, map_seed)
+                .iter()
+                .all(|entry| flora.stands_in_worked_ground(&entry.species));
+            if all_clearable {
                 return (entity, coord);
             }
         }
     }
-    panic!("the pinned map must carry at least one forage patch");
+    panic!("the pinned map must carry a forage patch whose basket a Field can wholly displace");
 }
 
 /// **Whose Field the fixture seats** — the harness's one faction, so the owner-lock the accrual

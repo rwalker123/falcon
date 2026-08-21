@@ -947,7 +947,10 @@ pub struct ForagePatchState {
     /// basket is a pure function of its terrain, the roster's affinity weights and its coordinate
     /// (per-tile realization, §10); the patch then reweights it: a **tended** patch's favored crop
     /// rises to `min(1, share × tended_weeding_gain)` at the expense of the least abundant members,
-    /// and a **Field** publishes a single 100% entry. That is the whole of what a rung below 4 does
+    /// and a **Field** publishes its crop alone. **Both reweights reach only what working the ground
+    /// can clear**: a member that is not growing in the soil — a kelp bed, a mussel bed, a navigable
+    /// river's fish — keeps its share through both, so a Field beside a channel publishes the crop
+    /// *and* the fishery rather than a single 100% entry. That is the whole of what a rung below 4 does
     /// — the tile's capacity itself never moves — so this list is where the client can *see* a
     /// commitment take hold. Zero-share entries are filtered out. The shares sum to `1.0` on any
     /// forage-bearing tile, so `share × forage_capacity` is that plant's own capacity and the parts
@@ -1502,7 +1505,8 @@ pub struct FloraShareInfo {
     /// **What committing this tile to this plant pays, against just gathering it wild, at the tended
     /// rung** — the tended payoff over the wild payoff, where tending **weeds** the basket (the
     /// favored share rises to `min(1, share × tended_weeding_gain)`, taken from the least abundant
-    /// first) and converts the favored term at `tended_conversion_gain`
+    /// of the members standing in the worked ground first) and converts the favored term at
+    /// `tended_conversion_gain`
     /// (`docs/plan_flora_roster.md` §4.3).
     ///
     /// `> 1.0` committing beats gathering the whole basket; `< 1.0` it is a **loss the player stays

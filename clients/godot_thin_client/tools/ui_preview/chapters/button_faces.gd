@@ -99,7 +99,7 @@ func _two_line_pill_face(disabled: bool) -> Control:
 	var btn := Button.new()
 	btn.disabled = disabled
 	HudStyle.apply_pill_button(btn)
-	return HudWidgets._crew_target_pill(btn, TWO_LINE_FACE_PROBE_HOLD_CREW,
+	return HudWidgets._crew_target_pill(btn, str(TWO_LINE_FACE_PROBE_HOLD_CREW),
 		HudComposeVocab.CREW_TARGET_HOLD_LABEL,
 		HudStyle.button_font_color(TWO_LINE_FACE_PROBE_VARIANT, disabled))
 

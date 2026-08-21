@@ -946,7 +946,7 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
     let ground = app.world.get::<Tile>(tile_entity).expect("the tile");
     let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
     assert_eq!(
-        core_sim::patch_composition(&patch, &composition, &labor.forage).as_ref(),
+        core_sim::patch_composition(&patch, &composition, &flora, &labor.forage).as_ref(),
         composition.as_ref(),
         "and it is still the mixed basket it started as"
     );

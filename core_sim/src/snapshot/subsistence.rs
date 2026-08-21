@@ -1434,7 +1434,7 @@ fn patch_composition_info(
                 .collect(),
         }
     };
-    let effective = patch_composition(patch, tile_composition, forage);
+    let effective = patch_composition(patch, tile_composition, flora, forage);
     let quoted = tile_quotes.composition(patch.tile);
     let Cow::Owned(effective) = effective else {
         // wild: the tile's basket verbatim, shared rather than rebuilt.

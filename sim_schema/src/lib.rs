@@ -1022,8 +1022,9 @@ mod tests {
     ///    the populated row beside it is what keeps this from passing blind.
     #[test]
     fn the_per_material_cash_quote_survives_the_wire_per_rung() {
-        /// A Field is 100% its crop; the tended patch beside it is a weeded basket, so the two rungs
-        /// legitimately quote different amounts of the same material.
+        /// A Field is its crop plus whatever the crew could not clear; the tended patch beside it
+        /// is a weeded basket, so the two rungs legitimately quote different amounts of the same
+        /// material.
         const SOW_FIBRE: f32 = 4.28;
         const CULTIVATE_FIBRE: f32 = 0.29;
 

@@ -284,7 +284,15 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   idempotent, never compounding, and a lapse or a retune reaches patches already on the map. What a
   commitment changes is `forage::patch_composition`: **Tended** raises the favored share to
   `min(1.0, share × tended_weeding_gain)` (**1.5**, `labor_config.json`), taking the increase from the
-  **least abundant remaining species first**; **Field** forces it to `1.0` and the rest to `0`. There
+  **least abundant remaining species first**; **Field** gives the crop `1.0 − Σ(protected)`.
+  > **⛔ BOTH REWEIGHTS SKIP A MEMBER THAT DOES NOT STAND IN THE WORKED GROUND**
+  > (`FloraDef::stands_in_worked_ground`, `false` on `kelp` / `shellfish_beds` / `river_fish`). Weeding
+  > ranks by **abundance alone**, so without the guard a Cultivate on a navigable hex would weed the
+  > river's fishery away the moment it was the least abundant member — and a **Field** was worse, since
+  > forcing the crop to `1.0` deleted it outright with no ranking involved. The gain is now an ask paid
+  > only out of the clearable pool (`min(asked, Σ clearable)`), and the crop takes only the clearable
+  > remainder. **It is not `cultivation_ceiling`** — see `cultivation.md`, where the six gather-only
+  > plants you *can* clear are named. There
   is no rung below 4 that raises `K` **and none that lowers it** — the earlier concentration term did
   the latter, cutting a committed tile's `K` to `share × gain` and **discarding the remainder**, which
   is the bug #433 fixed. `effective_forage_capacity` / `patch_concentration` /

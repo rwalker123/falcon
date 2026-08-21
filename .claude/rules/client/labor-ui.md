@@ -462,6 +462,40 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
+> #### ⛔ "NOTHING IS BEING TAKEN" AND THE VERDICT MUST READ THE SAME STOCK
+>
+> The teaching line claimed *"Teaching nothing: nothing is being taken"* beside a published
+> **+0.71 /turn**, and it was wrong twice: something was being taken, and the lesson **was** being
+> credited. Two producers, two different stocks — the client tested the wire's **published** biomass,
+> which is **post-take**, while the sim's lesson gate reads `biomass_before`, the **post-regrowth,
+> pre-take** stock. A source sitting at its floor is below the line on the first and 17.8 above it on
+> the second.
+>
+> **It is not an edge case: it is the steady state a Sustain policy is FOR.** And the fix already
+> existed one row up — `harvest_verdict` had been moved onto the forward-looking
+> `escapement_room_next_turn` for this exact reason, which is why the verdict correctly read *"At the
+> floor and holding it"* while the line under it said nothing was happening. `floor_chart_model` now
+> resolves that room **once** and feeds both, so the two cannot disagree again.
+>
+> **AN UNREACHABLE CREW TARGET SHOWS A DISABLED `✕`, NOT ABSENCE.** `clear it now` / `hold it after`
+> used to vanish when no crew in the curve reached them, leaving a hole where a number had been. The
+> pill now renders disabled with `✕` and a tooltip carrying the reason. **`✕` and not `∞`**: infinity
+> reads as a quantity and invites the player to send more hunters, when the curve has plateaued and a
+> quarry that scatters can never be cleared in one turn at any size. `HudWidgets` takes a
+> `count_face: String` rather than an `int` so the render layer never re-decides what the sentinel
+> meant — and the preview's own `CREW_TARGET_ABSENT` had to move off `-1`, because `NO_CREW_ANSWER` is
+> `-1` and now rides a pill that **is** rendered.
+>
+> **The tooltip's first wording was confidently wrong** and is worth recording: the same `✕` renders
+> for a second cause (no throughput to divide by — a dead season on a forage tile), where *"the quarry
+> breaks off and retreats"* is nonsense. The retreat rides a conditional clause now.
+>
+> **The forage take-note line is deleted, all three variants**, including the last-plant refusal. The
+> refusal itself is untouched and the chip is deliberately **not** greyed — Ray: *"a user will figure
+> it out without the verbosity of the text."* The **cultivate** twins survive: naming the crop the sim
+> would otherwise settle on silently is a different job from describing a selection. They share the
+> slot, not the purpose.
+
 > #### ⛔ A CLIMBING FLOOR MUST NAME WHAT IT IS CLIMBING TO
 >
 > The escapement floor is `floor_fraction × K` and **a rung raises `K`**, so the floor climbs every turn

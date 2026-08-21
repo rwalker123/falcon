@@ -34,9 +34,9 @@ const START_ORDER_PENDING_VERB := "Starting"
 # one enumeration — `HudFormat.floor_hint` answers `""` and every consumer renders no line.
 #
 # The other four each state something the number does not. `strip`'s is LOAD-BEARING beyond its own
-# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web, and the
-# reaching verdict DROPS its own "then holds it" clause there on the understanding that this line
-# carries the consequence.
+# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web. The
+# reaching verdict states a bare countdown and nothing about an aftermath (`VERDICT_REACHES_FORMAT`),
+# so this line is the whole of what says what arriving there costs.
 #
 # **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's
 # aside, the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition
@@ -115,6 +115,29 @@ const CREW_TARGET_CLEAR_LABEL := "clear it now"
 const CREW_TARGET_HOLD_LABEL := "hold it after"
 const CREW_TARGET_CLEAR_TOOLTIP := "Enough hands to take everything standing above the floor in a single turn."
 const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back once it is sitting at the floor — any more go idle."
+
+# **A TARGET NO CREW REACHES STILL SHOWS — DISABLED, WITH A ✕ WHERE THE COUNT GOES.** It used to
+# vanish, which reads as the sheet having nothing to say about clearing at all; the pill is the one
+# place that question is answered, so it stays and answers it in the negative.
+#
+# **✕ AND DELIBERATELY NOT ∞.** An infinity is a QUANTITY — it says "an infinite crew would do it" and
+# invites the player to keep adding hunters. They do not help: the take curve plateaus, and a quarry
+# that scatters can never be cleared in one turn by anybody. `✕` says *this cannot be done*, which is
+# the true statement and the only one the model supports.
+const CREW_TARGET_UNREACHABLE_FACE := "✕"
+
+# …and the REASON, on the hover, because the sheet stays quiet while the why stays reachable. One
+# sentence each, because the two targets fail differently: a clear that no crew reaches is often
+# permanent rather than a matter of pool size — a wary quarry breaks off and retreats, so the last of
+# it is never standing there to be taken — while a hold that no crew reaches is the take flattening
+# out below what the source puts back.
+#
+# **EACH LEADS WITH WHAT IS TRUE ON EVERY SOURCE AND QUALIFIES THE REST.** The same `✕` renders for a
+# second reason — a source with no throughput to divide by, a patch in deep winter — and there is no
+# quarry on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
+# than an assertion, and the flat-take half says only that more hands do not lift it.
+const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "No crew this band can field clears it in one turn, and where a quarry breaks off and retreats no crew ever could, at any size."
+const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "No crew this band can field takes what grows back here — more hands do not lift the take past it."
 
 # ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
 # The crew is ONE statement — *this many hands, and here are the two numbers worth matching* — so the

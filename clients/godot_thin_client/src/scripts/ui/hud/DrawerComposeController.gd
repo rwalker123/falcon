@@ -769,7 +769,7 @@ func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: 
 ## after a ~25-turn build. Reported from play — the caption sat one line above the labelled row and
 ## was read as naming it. One transition on screen, labelled, and it is the one being decided; the
 ## walk is not lost, the verdict two lines down still narrates it in prose ("Reaches the floor in 13
-## turns, then holds it").
+## turns").
 ##
 ## **IT IS ASKED AT THE MODEL, and one seam serves both webs.** The caption's `has_after` is derived
 ## from the rows the model emits, so gating here is what makes it impossible for the arrow and the
@@ -1317,9 +1317,13 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
                 # every other), and to collapse a fully-ticked selection back to the empty default.
                 _compose.toggle_forage_take_species(species, _take_basket_keys(basket))
             rebuild.call()))
-    block.add_child(HudWidgets.alloc_hint_label(
-        _take_consequence_note(selection, single_pick, crop_is_default, crop_rung, committed,
-            basket)))
+    # **THE FORAGE SIDE MOUNTS NO LINE, and the empty answer must not become an empty Label.** A
+    # zero-height hint still spends the block's separation, so the chips would sit over a gap that
+    # nothing draws in. `""` is the whole of the forage answer now (`_take_consequence_note`).
+    var consequence := _take_consequence_note(single_pick, crop_is_default, crop_rung, committed,
+        basket)
+    if consequence != "":
+        block.add_child(HudWidgets.alloc_hint_label(consequence))
     # **THE IDLE WARNING IS NOT WRITTEN HERE, AND NOT BECAUSE IT WAS DROPPED.** It is the crew
     # stepper's own `max N useful here — more would be idle`, one control up, and that note now moves
     # with the chips: the cap divides the NARROWED patch's ceiling
@@ -1385,28 +1389,25 @@ func _take_chip_state(species: String, selection: PackedStringArray, single_pick
         return HudFloraVocab.TAKE_STATE_SELECTED
     return HudFloraVocab.TAKE_STATE_UNSELECTED
 
-## What the selection COSTS, in one sentence, and it differs by VERB: a gatherer leaves the plants
-## nobody picked standing, a cultivator weeds them out of the ground. The cultivate-with-nothing-picked
-## line NAMES the crop the game would settle on, because silence there is the game choosing for the
-## player without saying so.
+## What committing this ground COSTS, in one sentence — and the sentence exists on the CULTIVATE side
+## only. With nothing picked it NAMES the crop the game would settle on, because silence there is the
+## game choosing for the player without saying so; with a crop picked it says what committing does to
+## the rest of the stand.
 ##
-## **A REFUSED CLICK TAKES THIS SLOT.** Unticking the last remaining plant is declined, and the whole
-## reason this line exists is to state a consequence — so on the render straight after that press it
-## states the refusal instead, which is the one consequence the player is actually asking about. The
-## flag is cleared by the next landing toggle, so the sentence lasts exactly as long as the state it
-## describes. It cannot arise on the single-pick side: picking a crop replaces rather than removes.
-func _take_consequence_note(selection: PackedStringArray, single_pick: bool, crop_is_default: bool,
+## **FORAGING ANSWERS `""`, and it is a deletion rather than a gap** (`HudFloraVocab`, the consequence
+## block): the two selection sentences restated the chip row directly above them, and the refusal
+## sentence — shown when the last remaining plant was unticked — was verbosity over a fact a player
+## discovers by pressing the chip. The refusal is still ENFORCED in `ComposeState`; it is simply
+## silent, and the chips are not greyed to announce it.
+func _take_consequence_note(single_pick: bool, crop_is_default: bool,
         crop_rung: String, committed: String, basket: Array[Dictionary]) -> String:
-    if not single_pick and _compose.forage_take_refused():
-        return HudFloraVocab.TAKE_NOTE_FORAGE_LAST_PLANT
-    if single_pick:
-        if crop_is_default:
-            return HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % _take_display_name(
-                committed, basket)
-        return HudFloraVocab.TAKE_NOTE_CULTIVATE_NARROWED_FORMAT % String(
-            HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(crop_rung, crop_rung))
-    return HudFloraVocab.TAKE_NOTE_FORAGE_ALL if selection.is_empty() \
-        else HudFloraVocab.TAKE_NOTE_FORAGE_NARROWED
+    if not single_pick:
+        return ""
+    if crop_is_default:
+        return HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % _take_display_name(
+            committed, basket)
+    return HudFloraVocab.TAKE_NOTE_CULTIVATE_NARROWED_FORMAT % String(
+        HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(crop_rung, crop_rung))
 
 func _take_display_name(species: String, basket: Array[Dictionary]) -> String:
     for entry in basket:
@@ -2168,7 +2169,8 @@ func _refresh_floor_live(hosts: Array, model: Dictionary, workers: int) -> void:
 ## A source with NO chart model gets the stepper alone: an expedition, a managed rung-3 source, a
 ## source the wire published no curve for — none of them has a floor axis, so there is nothing to
 ## target. That is a different answer from `NO_CREW_ANSWER`, which is a source that HAS one and whose
-## crew cannot be priced (a dead-season patch); `build_crew_targets` drops those, one target each.
+## crew cannot be priced; `build_crew_targets` renders those as a DISABLED `✕` pill, so "there is no
+## floor here" and "this target cannot be reached" stay two different things on screen.
 func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, count: int,
         plus_enabled: bool, on_change: Callable, model: Dictionary, on_pick: Callable) -> void:
     var block := VBoxContainer.new()

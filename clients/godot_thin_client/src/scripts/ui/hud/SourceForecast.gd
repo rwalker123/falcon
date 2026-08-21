@@ -2603,12 +2603,13 @@ static func crew_take_biomass(per_crew: Array, workers: int, body_mass: float) -
 ## **THE SMALLEST CREW IN THE CURVE WHOSE TAKE REACHES `animals` A TURN**, or `NO_CREW_ANSWER` when no
 ## crew the question was asked about gets there.
 ##
-## **`NO_CREW_ANSWER` IS A REAL AND USEFUL ANSWER HERE, and the pill declines to render on it**
+## **`NO_CREW_ANSWER` IS A REAL AND USEFUL ANSWER HERE, and the pill states it as `✕`, disabled**
 ## (`HudWidgets.build_crew_targets`). The curve is asked for crews 1..the band's own pool, so "no row
 ## reaches it" means *this band cannot do it at any size it can field* — and the retreat makes that
 ## permanent rather than a matter of pool size, since `stayed` caps at `room × stayFraction` and a
 ## quarry that scatters can never be cleared in one turn by anybody. Naming a count nobody can staff
-## would be the §7.6 failure in its purest form: a target the stepper beside it refuses to reach.
+## would be the §7.6 failure in its purest form: a target the stepper beside it refuses to reach. The
+## pill used to be dropped instead, which said nothing where the answer is a definite *no*.
 static func crew_take_reaching(per_crew: Array, animals: float) -> int:
     if not has_crew_take_curve(per_crew) or animals <= 0.0:
         return NO_CREW_ANSWER
@@ -2692,7 +2693,7 @@ static func crew_to_clear(room: float, carry: float, reaching: int,
     # **WITH A CURVE IN HAND THIS IS A SEARCH, NOT A QUOTIENT** — the first crew whose published take
     # covers the room. The quotient below it inverts `engagement_carry`, which has no fight in it, so
     # on a quarry the party can reach but cannot kill it named a crew that clears nothing; the curve
-    # simply never reaches the room there and the pill declines to render (`crew_take_reaching`).
+    # simply never reaches the room there and the pill states `✕` (`crew_take_reaching`).
     if has_crew_take_curve(per_crew) and body_mass > 0.0:
         var found := crew_take_reaching(per_crew, room / body_mass)
         if found != NO_CREW_ANSWER:
@@ -2903,23 +2904,22 @@ const VERDICT_OK := "ok"
 const VERDICT_SLOW := "slow"
 const VERDICT_BLOCKED := "blocked"
 # THE FLOOR BINDS — the crew is big enough, so the floor is what the source settles at.
-const VERDICT_REACHES_FORMAT := "Reaches the floor in %d turns, then holds it — taking only what grows back."
+#
+# **IT STATES THE COUNTDOWN AND NOTHING ELSE.** Both readings once closed with *", then holds it —
+# taking only what grows back"*, and that clause is gone: what the source does once it ARRIVES is the
+# `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said by the sheet the moment it is true, so a
+# countdown that also narrated the aftermath was answering a question the player had not reached yet.
+#
+# **AND THAT IS WHY THERE IS ONE PAIR HERE RATHER THAN TWO.** A STRIPPED twin of each existed solely
+# to drop that clause where there was no aftermath to promise — a herd taken to floor 0 is gone, and
+# the full sentence contradicted the sheet's own `0 hold it after`. With the clause off the base
+# form the two spellings were the same string, and a `regrows` flag choosing between identical
+# constants is a fork with one answer; `harvest_verdict` therefore takes no such flag. What stripping
+# costs is still said, by the aside's `FLOOR_STRIP_CONSEQUENCE`.
+const VERDICT_REACHES_FORMAT := "Reaches the floor in %d turns."
 # A crew big enough to clear the source in one turn is common (it is the `clear it now` target), so
 # "1 turns" is a reading the panel would print often rather than an edge case worth tolerating.
-const VERDICT_REACHES_ONE_TURN := "Reaches the floor next turn, then holds it — taking only what grows back."
-# **…AND THE SAME TWO WITH NO SECOND CLAUSE, because at some floors there is nothing to hold.** A HERD
-# taken to floor 0 is gone for good: nothing regrows, so "then holds it — taking only what grows back"
-# promised an aftermath the sheet's own `0 hold it after` was simultaneously denying. The clause is
-# dropped rather than reworded — what stripping costs is already the aside's `FLOOR_STRIP_CONSEQUENCE`
-# sentence ("the herd is gone for good, for you and for everyone else"), and a verdict restating it
-# would say one fact twice.
-#
-# **The test is the REGROWTH at this floor, not the web and not floor 0.** A patch stripped to 0
-# reseeds from bare ground, so it genuinely does hold at 0 and pay what grows back — the full sentence
-# is true there. Branching on "fauna at floor 0" would get that case wrong in the direction of saying
-# less than is true, and would miss any other floor a source cannot grow at.
-const VERDICT_REACHES_STRIPPED_FORMAT := "Reaches the floor in %d turns."
-const VERDICT_REACHES_ONE_TURN_STRIPPED := "Reaches the floor next turn."
+const VERDICT_REACHES_ONE_TURN := "Reaches the floor next turn."
 # THE CREW BINDS — the take equals the regrowth somewhere ABOVE the floor, and that is where it stops.
 # The crew that WOULD reach it is named, because "add hands" is the remedy and a verdict that
 # withholds the number is a puzzle rather than an answer.
@@ -3235,6 +3235,22 @@ static func crew_is_taking(workers: int, biomass: float, capacity: float, floor:
     return workers > 0 \
         and biomass > clamp_floor(floor) * capacity + STOCK_FRACTION_EPSILON * capacity
 
+## **IS THIS CREW TAKING ANYTHING NEXT TURN?** — the FORWARD-LOOKING twin of `crew_is_taking`, and the
+## only one a sentence about what the crew is EARNING may be keyed on.
+##
+## `crew_is_taking` tests the room standing right now, `B − floor·K`, against the wire's PUBLISHED
+## biomass — which is the POST-take stock, so on a source held at its floor it is false by
+## construction. That is the intended steady state of a Sustain policy, not an edge case: a patch
+## publishing `+0.71 /turn` rendered *"Teaching nothing: nothing is being taken"* beside it, and the
+## sim's own lesson gate was meanwhile firing at full multiplier off `biomass_before` — the
+## post-regrowth, PRE-take stock (`systems::labor`), which on that patch stands well above the floor.
+##
+## `room_next_turn` is `escapement_room_next_turn` — this turn's growth first, then what stands above
+## the floor — which is the same room the readout's headline and the verdict's at-the-floor refusal
+## are composed from, so no two of the three can disagree about whether a take is happening.
+static func crew_is_taking_next_turn(workers: int, room_next_turn: float) -> bool:
+    return workers > 0 and room_next_turn > 0.0
+
 ## The aside's teaching line as `{text, teaching}` — `teaching` is whether the source is actually
 ## being taught at a rate, which is what earns the line SIGNAL cyan. `{}` when this rung teaches
 ## nothing at all, which is the caller's cue to render no line rather than an empty one.
@@ -3274,13 +3290,12 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
 ## The verdict for a crew at a floor, as `{severity, text}`. `crew_noun` is the sheet's own word for
 ## these workers (foragers / hunters / herders), lower-cased by the caller that owns it.
 ##
-## `regrows` is whether this floor is one the source can grow AT — false for a herd taken to 0, which
-## is gone rather than held. It defaults TRUE so a caller that has no curve to ask keeps the sentence
-## it had; the one caller that composes a projection resolves it from the same samples the projection
-## walks. See `VERDICT_REACHES_STRIPPED_FORMAT`.
+## **IT TAKES NO `regrows` TERM.** One existed to drop the reaching sentence's *"then holds it"*
+## clause where there was no aftermath to promise; the clause is off both readings now, so the flag
+## chose between two identical strings. See `VERDICT_REACHES_FORMAT`.
 static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
         floor: float, reaching_crew: int, crew_noun: String,
-        body_mass: float = 0.0, quarry: String = "", regrows: bool = true,
+        body_mass: float = 0.0, quarry: String = "",
         takes_next_turn: bool = true) -> Dictionary:
     if workers <= 0:
         return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
@@ -3302,11 +3317,9 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
         return {"severity": VERDICT_OK, "text": VERDICT_HOLDS_AT_FLOOR}
     var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
     if reached != PROJECTION_REACHED_NONE:
-        var one_turn := VERDICT_REACHES_ONE_TURN if regrows else VERDICT_REACHES_ONE_TURN_STRIPPED
-        var many := VERDICT_REACHES_FORMAT if regrows else VERDICT_REACHES_STRIPPED_FORMAT
         return {
             "severity": VERDICT_OK,
-            "text": one_turn if reached == 1 else many % reached,
+            "text": VERDICT_REACHES_ONE_TURN if reached == 1 else VERDICT_REACHES_FORMAT % reached,
         }
     var settled := int(round(float(walk.get("settled_fraction", 0.0)) * FLOOR_PERCENT_SCALE))
     var text := VERDICT_SETTLES_FORMAT % settled
@@ -3377,6 +3390,10 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
         engage_rate, stay, per_crew)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
+    # **THE ROOM NEXT TURN, RESOLVED ONCE.** Two sentences on this model are keyed on it — the
+    # verdict's at-the-floor refusal and the teaching line's "nothing is being taken" — and both were
+    # once free to answer it from a different reading. Composing it here is what makes them one answer.
+    var room_next_turn := escapement_room_next_turn(src, prefix, floor_value)
     return {
         "known": true,
         # **THE CREW EVERYTHING BELOW WAS COMPOSED AGAINST**, carried on the model rather than left
@@ -3444,22 +3461,22 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
         "crew_to_hold": hold,
-        # `regrows` from the SAME samples the projection walks and `crew_to_hold` divides — so the
-        # verdict's promise of an aftermath, the `hold it after` count and the readout's `after`
-        # reading are three consequences of one number and cannot contradict each other. They did:
-        # this sheet read `0 hold it after` beside "then holds it — taking only what grows back".
-        # …and `takes_next_turn` from the SAME room the readout's headline is composed from
+        # `takes_next_turn` from the SAME room the readout's headline is composed from
         # (`escapement_room_next_turn`), so the sentence and the number above it are one answer.
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
-            crew_noun, body_mass, quarry, regrowth_at(samples, floor_value) > 0.0,
-            escapement_room_next_turn(src, prefix, floor_value) > 0.0),
+            crew_noun, body_mass, quarry, room_next_turn > 0.0),
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
         # by every live drag, and this model IS what a drag recomposes. **It takes no `improvement`**:
         # the line is about the LESSON alone now (`docs/plan_standing_upkeep.md` §2.2), and a build in
         # flight neither speeds it up nor is paced by it.
+        # …and its `taking` term is the FORWARD room, the same one the verdict above is keyed on
+        # (`crew_is_taking_next_turn`). It read the instantaneous `crew_is_taking`, which is false by
+        # construction on any source held at its floor — so a patch publishing a live take, whose
+        # lesson the sim was crediting at full multiplier, was told *"nothing is being taken"* while
+        # the verdict one row up correctly read *"At the floor and holding it"*.
         "teaching_note": teaching_note(rung_lesson(kind, src, prefix), floor_value,
-            crew_is_taking(workers, biomass, capacity, floor_value), lesson_known),
+            crew_is_taking_next_turn(workers, room_next_turn), lesson_known),
     }
 
 ## The herd's per-worker rate, ceiling AT `floor` and one-animal quantum ON THE AXIS IT IS QUANTISED

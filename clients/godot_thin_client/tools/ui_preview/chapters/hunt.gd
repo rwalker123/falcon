@@ -8,7 +8,17 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 342
+const EXPECTED_CHECKPOINTS := 345
+
+## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
+## rests on ("this model reached the reaching branch at all").
+const REACHES_FLOOR_NEEDLE := "Reaches the floor"
+
+## **A NEEDLE FOR A RETIRED CLAUSE, KEPT SO IT STAYS RETIRED.** The countdown used to close by
+## promising the equilibrium it was counting down to, on sources that had one; the readout states that
+## itself, in `VERDICT_HOLDS_AT_FLOOR`, the moment it is true. Spelled out because there is no const
+## left to compose it from.
+const RETIRED_AFTERMATH_NEEDLE := "then holds it"
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -1613,15 +1623,21 @@ func run(harness) -> void:
 		SourceForecast.regrowth_at(SourceForecast.regrowth_samples(h._floor_chart_drawn_patch,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) >= 0.0)
 
-	# **A VERDICT MAY NOT PROMISE AN AFTERMATH THE SOURCE HAS NO WAY TO REACH.** Reported from play: a
-	# Rabbit Warren at `Take everything` read `0 hold it after` beside "Reaches the floor in 2 turns,
-	# then holds it — taking only what grows back". The herd is GONE at floor 0; there is nothing to
-	# hold and nothing that grows back, and the panel was contradicting its own crew target.
+	# **A VERDICT MAY NOT PROMISE AN AFTERMATH AT ALL — IT STATES THE COUNTDOWN AND STOPS.** Reported
+	# from play: a Rabbit Warren at `Take everything` read `0 hold it after` beside "Reaches the floor
+	# in 2 turns, then holds it — taking only what grows back". The herd is GONE at floor 0; there is
+	# nothing to hold and nothing that grows back, and the panel was contradicting its own crew target.
 	#
-	# **The discriminator is the REGROWTH at that floor, not the web and not floor 0**, and this pair
-	# is what pins that: the same floor on a PATCH keeps the full sentence, because a stripped patch
-	# reseeds from bare ground and genuinely does hold at 0 paying what grows back. A fix that branched
-	# on "fauna" or on "floor == 0" would pass the herd line below and fail the patch line under it.
+	# That was first fixed by FORKING the sentence on the regrowth at the floor, so a stripped herd
+	# dropped the clause and a stripped patch — which really does reseed from bare ground — kept it.
+	# The clause is now off BOTH readings (`VERDICT_REACHES_FORMAT`): what a source does once it
+	# arrives is the `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said the moment it is true. With
+	# nothing left for the fork to choose between, `harvest_verdict` takes no `regrows` term.
+	#
+	# **THE THREE MODELS ARE KEPT, and they are what stops the fork coming back**: a stripped herd (no
+	# aftermath), a stripped patch (a real one) and a HEALTHY herd above its floor (also a real one).
+	# Any re-added branch — on the web, on floor 0, or on the regrowth — puts the clause back on at
+	# least one of the three, and the single claim below covers all three at once.
 	var strip_crew := 64
 	var stripped_herd := SourceForecast.floor_chart_model(allee_herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_MIN, strip_crew, "hunters", LESSON_NOT_YET_LEARNED)
@@ -1631,24 +1647,24 @@ func run(harness) -> void:
 		LESSON_NOT_YET_LEARNED)
 	var stripped_herd_text := String((stripped_herd.get("verdict", {}) as Dictionary).get("text", ""))
 	var stripped_patch_text = String((stripped_patch.get("verdict", {}) as Dictionary).get("text", ""))
-	h._assert_hud("both stripped sources REACH their floor, so both are stating the reaching verdict",
-		stripped_herd_text.contains("Reaches the floor")
-			and stripped_patch_text.contains("Reaches the floor"))
-	h._assert_hud("a herd taken to nothing is not promised that it holds what grows back",
-		not stripped_herd_text.contains("grows back"))
-	h._assert_hud("…while a patch at the same floor still is — it reseeds, so the clause is TRUE there",
-		stripped_patch_text.contains("grows back"))
-	# **THE LINE THAT RULES OUT THE PLAUSIBLE WRONG FIX.** Branching on `kind != SOURCE_KIND_HERD`
-	# passes both assertions above — the two fixtures there make "is a herd" and "cannot regrow"
-	# coincide, so the sabotage changed no output and the pair testified to nothing. A HEALTHY herd
-	# above its floor regrows at that floor like anything else and must KEEP the clause; that is the
-	# case a web branch gets wrong, and the only one of the three that can see the difference.
+	# The healthy herd is the third model, and it is the one a WEB branch gets wrong: it regrows at
+	# its floor like anything else, so "is a herd" and "cannot regrow" stop coinciding here.
 	var held_herd := SourceForecast.floor_chart_model(
 		ForageFx.floorify(HerdFx.grazing_healthy_herd_fixture()), SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED)
 	var held_herd_text := String((held_herd.get("verdict", {}) as Dictionary).get("text", ""))
-	h._assert_hud("a HERD that still regrows at its floor keeps the clause — it is the growth, not the web",
-		held_herd_text.contains("Reaches the floor") and held_herd_text.contains("grows back"))
+	# The PRECONDITION: all three really are stating the countdown. Without it the absence claim below
+	# passes on three models that reached some other verdict entirely.
+	h._assert_hud("all three sources REACH their floor, so all three are stating the reaching verdict",
+		stripped_herd_text.contains(REACHES_FLOOR_NEEDLE)
+			and stripped_patch_text.contains(REACHES_FLOOR_NEEDLE)
+			and held_herd_text.contains(REACHES_FLOOR_NEEDLE))
+	h._assert_hud(("…and NONE of them promises an aftermath — not the stripped herd, not the patch"
+			+ " that reseeds, not the healthy herd (%s / %s / %s)")
+			% [stripped_herd_text, stripped_patch_text, held_herd_text],
+		not stripped_herd_text.contains(RETIRED_AFTERMATH_NEEDLE)
+			and not stripped_patch_text.contains(RETIRED_AFTERMATH_NEEDLE)
+			and not held_herd_text.contains(RETIRED_AFTERMATH_NEEDLE))
 
 	# **THE FLOOR FLAG'S UNIT AND ITS ORDER**, which no PNG can testify to at 10px. Asserted against
 	# hand-built models rather than the live sheet so both webs are reachable from one place and the
@@ -1789,7 +1805,7 @@ func run(harness) -> void:
 	# far enough under it that it does not.
 	var at_floor := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
 		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
-		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true, false)
+		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", false)
 	h._assert_hud("the at-floor verdict quotes the threshold in the SAME unit the flag flies",
 		String(at_floor.get("text", "")).contains("≈11 Red Deer")
 			and not String(at_floor.get("text", "")).contains("1075"))
@@ -1800,7 +1816,7 @@ func run(harness) -> void:
 	# which would be about a source that is not there yet.
 	var holding := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
 		"settled_fraction": 0.0, "series": []}, ForageFx.FLOOR_CHART_CREW, 96.0, 2150.0,
-		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true, true)
+		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer", true)
 	h._assert_hud("…while a source held AT its floor states that it is holding, not that it is empty",
 		String(holding.get("text", "")) == SourceForecast.VERDICT_HOLDS_AT_FLOOR
 			and String(holding.get("severity", "")) == SourceForecast.VERDICT_OK)
@@ -1969,6 +1985,9 @@ func run(harness) -> void:
 
 	# ---- …AND SO IS EVERY CREW ANSWER BESIDE IT, DOWN TO A FRACTION OF AN ANIMAL -----------------
 	await _subone_take_assertions()
+
+	# ---- …AND A TARGET NO CREW REACHES SAYS SO, RATHER THAN VANISHING ----------------------------
+	await _unreachable_target_state()
 
 	# ---- …AND IT IS RE-ASKED AS THE HARVEST FLOOR MOVES, RATE-LIMITED -----------------------------
 	await _crew_take_follows_the_drag_assertions()
@@ -4440,6 +4459,98 @@ func _subone_take_assertions() -> void:
 	_board_cap_matches_the_sheet(herd, band, floor_value, plateau)
 
 	# Back to the seam and the band every other block runs on.
+	h._hud.forecast_query().reset()
+	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_band = prior_band
+	h._hud._band_labor._player_bands = prior_bands
+
+
+# =====================================================================================
+#  A TARGET NO CREW REACHES — THE `✕` PILL
+# =====================================================================================
+# ***CLEAR IT NOW* HAS AN ANSWER ON A QUARRY THAT SCATTERS, AND THE ANSWER IS "NOBODY".** The pill
+# used to be DROPPED on `NO_CREW_ANSWER`, so the sheet read as having nothing to say about clearing at
+# all — when what it has is a definite refusal. It renders disabled now, leading with `✕`, and the
+# reason rides its tooltip.
+#
+# **`✕` AND DELIBERATELY NOT `∞`.** An infinity is a QUANTITY: it invites the player to keep adding
+# hunters, and they do not help. The take curve plateaus at `room × stayFraction` — the animals that
+# stay to be fought — so a wary quarry can never be cleared in one turn by any crew at any size.
+#
+# The fixture is the sub-one aurochs with its RETREAT turned up and nothing else touched: at
+# `stayFraction 0.1` one animal in ten stays, the curve settles an order of magnitude below the room,
+# and the two preconditions below say so out loud. Without them the render claim passes on a quarry
+# whose curve reaches the target perfectly well and whose pill happens to be missing for some other
+# reason.
+
+## The retreat that puts the target out of reach. One animal in ten stays to be fought, so the curve
+## settles at a tenth of the room and no crew in the band's pool clears the herd in a turn. Every
+## other term is the sub-one aurochs', unchanged, so the fixture differs from the reachable one in
+## exactly the field the claim is about.
+const SCATTER_STAY_FRACTION := 0.1
+
+func _scatter_aurochs_herd() -> Dictionary:
+	var herd := _subone_aurochs_herd()
+	herd["id"] = "game_aurochs_22"
+	herd["label"] = "Wild Aurochs (game_aurochs_22)"
+	herd[SourceForecast.FORECAST_STAY_FRACTION_KEY] = SCATTER_STAY_FRACTION
+	return herd
+
+func _unreachable_target_state() -> void:
+	var prior_band = h._hud._band_labor.player_band()
+	var prior_bands: Array = h._hud._band_labor._player_bands
+	var band := _delivered_oracle_band()
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	var herd := _scatter_aurochs_herd()
+	var floor_value := SourceForecast.FLOOR_FOOD_PEAK
+	h._hud.forecast_query().reset()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(herd)
+	h._compose_herd(herd, SUBONE_HUNTERS, floor_value)
+	await h._settle()
+	await h._save("herd_hunt_unreachable_target")
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+
+	# (0) THE PRECONDITION — the CURVE genuinely fails, and fails permanently. `crew_take_reaching`
+	#     answering the sentinel is "no crew in the band's pool gets there"; `crew_take_curve_settled`
+	#     is what makes that a property of the quarry rather than of the pool's size, and it is the
+	#     term `crew_to_clear` consults before it declines to price the target at all.
+	var pool: int = h._hud._band_labor.source_crew_pool_hunt(band, String(herd["id"]))
+	var rows := ForecastFx.crew_take_rows(herd, pool, floor_value)
+	var room_animals := SourceForecast.escapement_room(herd, "", floor_value) / SUBONE_BODY_MASS
+	var plateau_take := SourceForecast.crew_take_likely(rows,
+		SourceForecast.crew_take_plateau(rows))
+	h._assert_hud(("precondition: %.2f animals stand above the floor and the curve settles at %.2f —"
+			+ " no crew in a pool of %d reaches it") % [room_animals, plateau_take, pool],
+		room_animals > 0.0
+			and SourceForecast.crew_take_reaching(rows, room_animals)
+				== SourceForecast.NO_CREW_ANSWER
+			and SourceForecast.crew_take_curve_settled(rows))
+	# (1) …AND THE SENTINEL REACHES THE PILL. Read off the meta, which is the model's own answer
+	#     carried onto the control — the half that says the builder was asked the question at all.
+	h._assert_hud("…so the sheet's *clear it now* target is the unpriceable sentinel (%d)"
+			% Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR),
+		Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR)
+			== SourceForecast.NO_CREW_ANSWER)
+	# (2) **THE CLAIM: THE PILL IS THERE AND IT SAYS `✕`.** The face, not the meta — a builder that
+	#     kept the sentinel on the meta and printed `-1` in the pill satisfies (1) on its own. `""` is
+	#     what an ABSENT pill answers, which is the state this whole block exists to rule out.
+	h._assert_hud("…and it renders a pill reading %s rather than vanishing (got \"%s\")"
+			% [Readout.CREW_TARGET_UNREACHABLE_FACE,
+				Readout.crew_target_face(sheet, HudWidgets.CREW_TARGET_CLEAR)],
+		Readout.crew_target_face(sheet, HudWidgets.CREW_TARGET_CLEAR)
+			== Readout.CREW_TARGET_UNREACHABLE_FACE)
+	# (3) …AND IT IS NOT CLICKABLE, BY BOTH HALVES. `disabled` is what the player meets; the handler
+	#     count is the half a driven press cannot see, since Godot swallows a click on a disabled
+	#     Button — a pill left connected reads as correct in every press assertion and is one
+	#     `disabled = false` from calling `on_pick` with `-1` as a worker count.
+	h._assert_hud("…disabled, and wired to nothing (%d handlers)"
+			% Readout.crew_target_press_handlers(sheet, HudWidgets.CREW_TARGET_CLEAR),
+		Readout.crew_target_is_disabled(sheet, HudWidgets.CREW_TARGET_CLEAR)
+			and Readout.crew_target_press_handlers(sheet, HudWidgets.CREW_TARGET_CLEAR) == 0)
+
 	h._hud.forecast_query().reset()
 	h._hud._compose.reset_hunt_source()
 	h._hud._band_labor._player_band = prior_band
