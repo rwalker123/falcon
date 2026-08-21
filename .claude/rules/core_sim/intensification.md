@@ -1371,6 +1371,14 @@ answers three fields: `held` (the highest rung whose meter is **full** — what 
 in full), `raising` (the rung being worked, `None` at the top of a branch), and `credit` (how far into
 it, `0.0..=1.0`).
 
+- **`RungStanding::arrived_at(rung)` is the LADDER-FREE standing a QUOTE is struck at** — `held = rung`,
+  no credit, so `interpolate` answers exactly that rung's value. It exists so a build can advertise
+  what it is heading for **through the same expression that computes the live reading**, rather than a
+  second formula that agrees today: `patch_capacity_at` and `ecological_carrying_capacity` are each
+  called twice, once at the source's live standing and once at `arrived_at(destination)`, and the
+  answer is published as `buildDestinationCapacity`. A test runs the build to completion and asserts
+  the delivered capacity **is** the number that was advertised, which makes it a promise rather than
+  an estimate. See `graze.md` → the one `K` seam.
 - **⛔ NO CALL SITE MAY RE-DERIVE A STANDING FROM A METER.** Two seams answering one question is the
   shape that has already produced three "the two disagree" defects in this arc; the resolution has one
   home so it can have one answer.

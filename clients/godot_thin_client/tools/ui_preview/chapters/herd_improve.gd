@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 30
+const EXPECTED_CHECKPOINTS := 37
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -18,6 +18,17 @@ const Q := preload("res://tools/ui_preview/node_query.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
+
+## **WHAT THE PEN WOULD CARRY** — the destination capacity the climbing-floor state is staged at, well
+## above the taming herd's own live `K` of 2150 so the two figures on the flag cannot be confused for
+## one another. A pen is a different piece of land from the range the herd walks, which is exactly why
+## the sim quotes it separately.
+const PENNED_DESTINATION_CAPACITY := 3000.0
+
+## …and the same herd on ground that would carry NOTHING once fenced. `0` is a real reading — a pen
+## struck on rock — and it is the one the `-1` sentinel exists to keep apart from *no band has queued
+## this herd*. Asserted, not rendered: it is a sentence in a hover, not a frame.
+const BARREN_DESTINATION_CAPACITY := 0.0
 
 # ---- THE BUILDING HERD: the regime where the dip drops the crew BELOW ONE BODY ------------------
 # **THE ANIMAL WEB'S HALF OF THE SAME DEFECT**, and it fails DIFFERENTLY from the plant one, which is
@@ -346,3 +357,62 @@ func run(harness) -> void:
 	h._hud._band_labor._player_band = prior_dip_band
 	h._hud._band_labor._player_bands = prior_dip_bands
 	h._hud._compose.reset_hunt_source()   # the states after this one open on their own herd
+
+	# State herd_floor_destination — **THE CLIMBING FLOOR, WITH SOMEWHERE TO CLIMB TO.** The flag has
+	# marked a moving threshold with a bare `↑` since the build dip landed; the wire now states the
+	# capacity the source will have at the rung the entry was sent to, so the flag can say what the
+	# climb ends at instead of only that it is under way (`buildDestinationCapacity`).
+	var penned_herd := HerdFx.taming_herd_fixture()
+	penned_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	penned_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = \
+		PENNED_DESTINATION_CAPACITY
+	h._hud._band_labor._player_band = _tame_standing_band_fixture()
+	h._hud._band_labor._player_bands = [_tame_standing_band_fixture()]
+	h._show_herd(penned_herd)
+	h._compose_herd(penned_herd)
+	await h._settle()
+	await h._save("herd_floor_destination")
+	# **AND THE DRAWER'S OWN COMPANION TO IT.** `What taming is buying` states this herd's LIVE ceiling
+	# at the top of the hover; the destination capacity is that same reading at the rung the build is
+	# heading for, so it belongs in the clause that already says the ceiling is climbing rather than on
+	# a line of its own. The wording carries the sim's one honesty constraint — the figure is struck on
+	# TODAY'S land, the rung moving while the ground does not — so it says *as it stands today* and
+	# quotes no date.
+	var penned_hover := DetailFormat.husbandry_payoff_hover(penned_herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX)
+	h._assert_hud("the payoff hover names the ceiling the taming is heading for, and the rung",
+		penned_hover.contains("Corralled would carry ≈30 Red Deer"))
+	h._assert_hud("…and states the ground it was struck on rather than promising a future",
+		penned_hover.contains("on this ground as it stands today"))
+	# **THE PRECONDITION, THEN THE ABSENCE.** An unqueued herd's row really does carry the `< 0`
+	# sentinel — asserted first, or the silence below would pass just as well on a row that carried a
+	# real destination the hover simply declined to state.
+	var unqueued_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
+	h._assert_hud("the precondition — an unqueued herd's row carries the no-destination sentinel",
+		SourceForecast.build_destination_capacity(unqueued_herd,
+			HudComposeVocab.BARE_FORECAST_PREFIX) == SourceForecast.NO_BUILD_DESTINATION_CAPACITY)
+	var unqueued_hover := DetailFormat.husbandry_payoff_hover(unqueued_herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX)
+	h._assert_hud("…so the hover keeps the bare climbing line and quotes no ceiling at all (got '%s')"
+		% unqueued_hover, unqueued_hover.contains(DetailFormat.HUSBANDRY_PAYOFF_CLIMBING))
+	# **AND IT IS THE SENTINEL DOING IT, not the missing rung beside it** — this row names where it is
+	# heading and prices that destination at `< 0`, so the capacity's own sentinel is the only thing
+	# left to hold the ceiling back. Without this line the pair above passes on a hover that never
+	# looked at the capacity at all.
+	var unpriced_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
+	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	var unpriced_hover := DetailFormat.husbandry_payoff_hover(unpriced_herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX)
+	h._assert_hud("a NAMED destination the wire prices at the sentinel quotes no ceiling either (got '%s')"
+		% unpriced_hover, unpriced_hover.contains(DetailFormat.HUSBANDRY_PAYOFF_CLIMBING))
+	# **A DESTINATION THAT WOULD CARRY NOTHING IS STILL A DESTINATION** — the distinction the sentinel
+	# is out of range for. A hover that swallowed this as *nothing queued* would hide the one pen the
+	# player most needs talking out of.
+	var barren_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
+	barren_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	barren_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = BARREN_DESTINATION_CAPACITY
+	var barren_hover := DetailFormat.husbandry_payoff_hover(barren_herd,
+		HudComposeVocab.BARE_FORECAST_PREFIX)
+	h._assert_hud("a pen that would carry nothing states its zero, a reading and not an absence (got '%s')"
+		% barren_hover, barren_hover.contains("Corralled would carry 0 on this ground"))
+	h._hud._compose.reset_hunt_source()

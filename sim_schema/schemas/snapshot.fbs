@@ -2618,6 +2618,34 @@ table ForagePatchState {
   // `0` where the tile is not on the map at all, the same absent-means-nothing reading `composition`
   // takes there; never a fabricated capacity.
   tileCapacity:float = 0;
+
+  // WHAT THIS SOURCE WILL HOLD AT THE RUNG ITS BUILD IS HEADING FOR (appended last, append-only
+  // wire) - the carrying capacity of `buildDestinationRung`, or `-1` when no band has queued this
+  // source and there is therefore NO DESTINATION TO QUOTE.
+  //
+  // WHY IT SHIPS. A take is held above `floorFraction x K`, and A RUNG RAISES `K` - the plant web
+  // through `field_capacity_gain`, the animal web through `pastoral_density` / `pen_density`, all
+  // interpolated on the source's ladder position. So while a build runs THE FLOOR CLIMBS EVERY TURN
+  // underneath the player and their take falls. With only the live `carryingCapacity` on the wire a
+  // client can mark that the floor is MOVING and nothing more, so a reduced take reads as the source
+  // being poor rather than as the player's own investment arriving. This is where it is going.
+  //
+  // IT IS THE DESTINATION'S CAPACITY, NOT NEXT TURN'S. Next turn's is not well defined - next turn's
+  // position depends on work nobody has banked yet. The destination is exact: the entry already
+  // names the rung its climb ends on, so the gain at that rung is known today. Read it as one object
+  // with `buildDestinationRung`.
+  //
+  // `-1` IS "NO DESTINATION", AND IT CANNOT BE `0`. A capacity of zero is a REAL READING a real
+  // source has - barren ground, an overgrazed range, a rock pen - so a `0` here would say "build
+  // this and it will hold nothing" about every unqueued source on the map. A capacity is never
+  // negative, so any `< 0` is the absent reading and a client renders NO DESTINATION LINE AT ALL,
+  // exactly as it does for `buildTurnsRemaining = -1`.
+  //
+  // ONE PRODUCER: struck by the same seam that writes the live `carryingCapacity`, at the
+  // destination standing instead of the source's own. THE RUNG MOVES, THE LAND DOES NOT - the flow
+  // is summed over the land as it stands TODAY, so this moves if the land does, exactly as the live
+  // capacity beside it moves.
+  buildDestinationCapacity:float = -1;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -3801,6 +3829,20 @@ table HerdTelemetryState {
   // verb names, owing that meter's own remainder. It becomes a real climb when this web moves onto
   // one position, and the field is here now so that move costs the wire nothing.
   buildLegs:[BuildLegState];
+
+  // WHAT THIS HERD WILL HOLD AT THE RUNG ITS BUILD IS HEADING FOR (appended last, append-only wire)
+  // - the animal twin of `ForagePatchState.buildDestinationCapacity`; that field carries the whole
+  // rationale, including why `-1` rather than `0` is the "no destination" reading.
+  //
+  // WHAT THE RUNG BUYS HERE is `pastoral_density` / `pen_density`, the per-species husbandry density
+  // gains - domestication makes the LAND hold more animals.
+  //
+  // A CORRAL DESTINATION PROJECTS ITS FOOTPRINT TOO: a pen is not the roam range with `pen_density`
+  // applied to it, it is a FENCED PIECE OF LAND, so the quote is summed over the `penRadius` disk the
+  // herd is standing on today - which is where `corral_at` anchors the pen when the build lands.
+  // Quoting a Corral over the range the herd walks today would overstate it by the whole ratio
+  // between them.
+  buildDestinationCapacity:float = -1;
 }
 
 table CommandEventState {

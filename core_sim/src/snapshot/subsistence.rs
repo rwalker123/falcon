@@ -225,6 +225,12 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     pub(crate) equipped_haul_rate: f32,
     pub(crate) grid_size: UVec2,
     pub(crate) wrap_horizontal: bool,
+    /// **THE LAND THE DESTINATION CAPACITY IS STRUCK OVER** — the same registry
+    /// `fauna::advance_herds` sums a herd's `K` from, because
+    /// [`crate::fauna::herd_destination_capacity`] *is* that seam at a second standing. Without it
+    /// the row would have to re-derive the flow, and a second producer of a capacity is exactly the
+    /// drift this arc keeps paying for.
+    pub(crate) graze: &'a crate::graze::GrazeRegistry,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
@@ -306,6 +312,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         equipped_haul_rate,
         grid_size,
         wrap_horizontal,
+        graze,
         parties,
         penned_parties,
         fallback_party,
@@ -313,6 +320,20 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
     } = inputs;
     let width = grid_size.x.max(1);
     let height = grid_size.y.max(1);
+    // **The prey layer the CARNIVORE arm of the `K` seam reads**, for the destination quote below.
+    // Built **only when something on the map is actually climbing**, because it is a pass over every
+    // herd and no shipped carnivore can carry a husbandry destination (`husbandry_ceiling: wild`) —
+    // an empty slice would nevertheless quote a pack's destination `K` as zero, so the index is real
+    // whenever any quote is taken rather than assumed unreachable.
+    let prey_index = if registry
+        .herds
+        .iter()
+        .any(|herd| herd.build_destination.is_some())
+    {
+        crate::fauna::build_prey_index(&registry.herds, fauna)
+    } else {
+        Vec::new()
+    };
     telemetry
         .entries
         .iter()
@@ -830,6 +851,23 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 ),
                 build_legs: herd
                     .map_or_else(Vec::new, |herd| published_build_legs(&herd.build_legs)),
+                // **WHERE THAT DESTINATION LEAVES THIS HERD'S `K`** — `None` (the wire's sentinel)
+                // when no band has queued it, which is a different statement from a capacity of
+                // zero. Read through `fauna::herd_destination_capacity`, i.e. through the **one**
+                // seam that writes the live `carrying_capacity` above, evaluated at the destination
+                // standing — never a second expression that happens to agree today.
+                build_destination_capacity: herd.and_then(|herd| {
+                    crate::fauna::herd_destination_capacity(
+                        herd,
+                        species_def,
+                        graze,
+                        &prey_index,
+                        fauna,
+                        width,
+                        height,
+                        wrap_horizontal,
+                    )
+                }),
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -1165,6 +1203,17 @@ pub(crate) fn snapshot_forage_patches(
                 // staffing the KEEPING rather than by adding builders.
                 build_destination_rung: published_destination_rung(patch.build_destination),
                 build_legs: published_build_legs(&patch.build_legs),
+                // **WHERE THAT DESTINATION LEAVES THIS PATCH'S `K`** — `None` (the wire's sentinel)
+                // when no band has queued it, which is a different statement from a capacity of
+                // zero. Read through `forage::patch_destination_capacity`, i.e. through the **one**
+                // expression `advance_forage_regrowth` writes the live `carrying_capacity` with,
+                // evaluated at the destination standing. A `Cultivate` destination therefore quotes
+                // the capacity the patch already has — only rung 3 raises `K` on this web.
+                build_destination_capacity: crate::forage::patch_destination_capacity(
+                    tile_capacity,
+                    patch,
+                    forage,
+                ),
                 // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
                 // fog-safe twin of `carrying_capacity` above and the denominator every upkeep figure
                 // on this row is quoted per. **The reading already resolved once above**, never a

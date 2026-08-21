@@ -3259,7 +3259,53 @@ pub fn patch_carrying_capacity(
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
 ) -> f32 {
-    tile_capacity * patch_interpolate(patch, |rung| rung_capacity_gain(rung, forage))
+    patch_capacity_at(tile_capacity, &patch.standing(), forage)
+}
+
+/// **THE PLANT WEB'S ONE CAPACITY EXPRESSION, ASKED AT A STANDING THE PATCH MAY NOT STAND ON** —
+/// the tile's own `K` times the interpolated [`rung_capacity_gain`].
+///
+/// # ⛔ ONE PRODUCER, TWO STANDINGS
+///
+/// [`patch_carrying_capacity`] is this at the patch's **live** standing — the one write in
+/// [`advance_forage_regrowth`] — and [`patch_destination_capacity`] is the very same expression at
+/// the standing the patch's build is climbing toward. A destination figure assembled out of a second
+/// formula would be a published quote that agrees with the sim only until one of them is retuned,
+/// which is the drift `composition_for_rung` and `rung_msy_take` already record.
+fn patch_capacity_at(
+    tile_capacity: f32,
+    standing: &RungStanding,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    tile_capacity * interpolate(standing, |rung| rung_capacity_gain(rung, forage))
+}
+
+/// **THE CAPACITY THIS PATCH WILL HOLD AT THE RUNG ITS BUILD IS HEADING FOR** — `None` when no band
+/// has queued it, because then there is **no destination to quote**, which is a different statement
+/// from a capacity of zero (barren ground, which is a real reading a real patch can have).
+///
+/// **It is the DESTINATION's capacity, not next turn's.** Next turn's position depends on work that
+/// has not been banked yet; the destination is exact — the queue entry already names the rung its
+/// climb ends on ([`ForagePatch::build_destination`]), so the gain at that rung is known today.
+///
+/// # WHY IT IS PUBLISHED AT ALL
+///
+/// The escapement floor a gather is held above is `floor_fraction × K`, and rung 3 **raises `K`**
+/// (`cultivation.field_capacity_gain`). So while a `Sow` runs, the floor climbs every turn
+/// underneath the player and their take falls — and with only the live `K` on the wire, that reads
+/// as the patch being poor rather than as their own investment arriving. This is the number the
+/// climb is heading toward.
+pub fn patch_destination_capacity(
+    tile_capacity: f32,
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+) -> Option<f32> {
+    let destination = patch.build_destination?;
+    Some(patch_capacity_at(
+        tile_capacity,
+        &RungStanding::arrived_at(destination),
+        forage,
+    ))
 }
 
 // **RETIRED: `rung_carrying_capacity`** — the tile's capacity times a named rung's gain, for the

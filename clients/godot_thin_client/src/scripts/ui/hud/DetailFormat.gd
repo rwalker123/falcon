@@ -1249,6 +1249,22 @@ const HUSBANDRY_PAYOFF_CEILING_FORMAT := "Ceiling %s"
 const HUSBANDRY_PAYOFF_BREEDING_FORMAT := "Breeds back up to ≈%s a turn"
 const HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT := "Sustainable %s a turn at the best-harvest floor"
 const HUSBANDRY_PAYOFF_CLIMBING := "All three are climbing while the taming runs."
+## **…AND WHERE THE CEILING STOPS CLIMBING**, on a herd whose destination the wire states — the line
+## above with the number the player is actually buying folded into it, rather than a second line
+## beneath it repeating its subject.
+##
+## **IT NAMES THE CEILING, THE RUNG AND THE GROUND, in that order, because all three are the reading.**
+## `buildDestinationCapacity` is this range's `K` at the rung the build was sent to, and it is struck
+## on the land AS IT STANDS TODAY (the rung moves, the land does not) — so it drifts turn to turn
+## exactly as the live `Ceiling` two lines above it does. *"would carry"* and *"as it stands today"*
+## are what keep it a reading of the present rather than a promise about the future; the sim quotes
+## no date and neither may this.
+##
+## **NOTHING IS SAID ABOUT THE OTHER TWO.** The breeding rate and the sustainable yield climb with the
+## ceiling, but the wire quotes a destination for the ceiling ALONE, so the sentence names the one
+## figure it has and leaves the others to the clause they already share.
+const HUSBANDRY_PAYOFF_DESTINATION_FORMAT := \
+        "All three are climbing while the taming runs: %s would carry %s on this ground as it stands today."
 static func husbandry_payoff_hover(herd_data: Dictionary, prefix: String) -> String:
     var body_mass := float(herd_data.get(prefix + SourceForecast.FORECAST_BODY_MASS_KEY, 0.0))
     var capacity := float(herd_data.get(prefix + SourceForecast.FORECAST_CAPACITY_KEY, 0.0))
@@ -1276,8 +1292,26 @@ static func husbandry_payoff_hover(herd_data: Dictionary, prefix: String) -> Str
                 * provisions))
     if int(herd_data.get(prefix + SourceForecast.FORECAST_BUILD_TURNS_KEY,
             SourceForecast.BUILD_TURNS_NONE_TO_STATE)) > SourceForecast.BUILD_TURNS_NONE_TO_STATE:
-        lines.append(HUSBANDRY_PAYOFF_CLIMBING)
+        lines.append(husbandry_payoff_climbing_line(herd_data, prefix, body_mass, quarry))
     return "\n".join(lines)
+
+## The climbing line's two faces — with the destination ceiling where the wire states one, without it
+## where it does not. **A source no band has queued renders NO CLAUSE AT ALL rather than a zero**: a
+## range really can carry nothing, so the sentinel is the only thing that can say *there is nowhere
+## this is heading*, and `states_destination_capacity` is the one test that reads it.
+##
+## The rung is named through `rung_badge_word`, the same table the card's own badges use, so the
+## sentence and the badge beneath it cannot call one rung two things. An unnameable rung falls back to
+## the bare climbing line for the same reason the chart's flag does: a figure with nothing to anchor
+## it to is the bare second number this arc keeps refusing to print.
+static func husbandry_payoff_climbing_line(herd_data: Dictionary, prefix: String, body_mass: float,
+        quarry: String) -> String:
+    var destination := SourceForecast.build_destination_capacity(herd_data, prefix)
+    var rung := rung_badge_word(SourceForecast.build_destination_rung(herd_data, prefix))
+    if not SourceForecast.states_destination_capacity(destination) or rung.is_empty():
+        return HUSBANDRY_PAYOFF_CLIMBING
+    return HUSBANDRY_PAYOFF_DESTINATION_FORMAT % [rung,
+        SourceForecast.stock_face(destination, body_mass, quarry)]
 
 ## **WHAT AN UNDER-KEPT RUNG IS DOING, IN ONE WORD, PER WEB** — the state that rides the built row's
 ## `⚠`. The pair is the work board's two notes reduced to their verb (`WORK_ROW_UNDER_KEPT_NOTE` says

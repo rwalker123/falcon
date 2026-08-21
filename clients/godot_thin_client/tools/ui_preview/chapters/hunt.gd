@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 332
+const EXPECTED_CHECKPOINTS := 338
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -32,6 +32,18 @@ const LOCAL_HUNT_HUNTERS := 6
 ## 0.8 per-worker carry = 3 carriers to haul one body. The dial is clamped to it exactly as it is
 ## for the player, so this — not 6 — is what a guard on those frames can assert.
 const LOCAL_HUNT_CAPPED_CREW := 3
+
+## **THE THREE DESTINATION CAPACITIES THE FLOOR FLAG IS PROBED AT**, all against the taming herd's own
+## live `K` of 2150 (≈11 Red Deer at the best-harvest floor, which is what the flag flies today).
+##
+## The first is an ordinary pen — richer than the range the herd walks, so the threshold it quotes
+## (≈15) cannot be mistaken for a restatement of the live one. The second is the LIVENESS probe: only
+## the published field changes between them, so a clause composed from anything else renders the same
+## string twice. The third is the case the `-1` sentinel exists to keep apart from *nothing queued* —
+## a pen struck on ground that would carry nothing at all.
+const FLOOR_FLAG_DESTINATION_CAPACITY := 3000.0
+const FLOOR_FLAG_DESTINATION_CAPACITY_RICHER := 4000.0
+const FLOOR_FLAG_DESTINATION_CAPACITY_BARREN := 0.0
 
 ## The crew the LABOR-BOUND frame is composed at, and the number its stepper must SHOW. Named because
 ## it is asserted against the rendered value, so the dial and the expectation are one number rather
@@ -1677,6 +1689,76 @@ func run(harness) -> void:
 	h._assert_hud("…and a herd with no build in flight carries no mark at all",
 		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 			== "leave 50% · ≈11 Red Deer")
+	# **AND WHERE THE CLIMB STOPS.** The mark above says the threshold is moving and the wire now says
+	# what it is moving TOWARD: `buildDestinationCapacity` is the source's `K` at the rung its build
+	# was sent to, so `floor x` it is the same threshold at the destination's standing. Everything
+	# below runs through the REAL model (`floor_chart_model` over a wire-shaped herd), not a hand-built
+	# one, because the claim is that a WIRE FIELD reaches the flag — a hand-built model would assert
+	# the formatting and nothing about the decode.
+	#
+	# **THE TWO CAPACITIES ARE DELIBERATELY DIFFERENT** (2150 standing, 3000 penned ⇒ ≈11 and ≈15). An
+	# expectation struck where they coincide is satisfied by a clause that merely restates the live
+	# figure, which is the shape of a passing-but-blind equality; here only the published destination
+	# produces the rendered number.
+	var destination_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
+	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = \
+		FLOOR_FLAG_DESTINATION_CAPACITY
+	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+	var destination_flag := flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
+	h._assert_hud("a climbing floor states the threshold it is climbing to, and names the rung (got '%s')"
+		% destination_flag, destination_flag == "leave 50% · ≈11 Red Deer ↑ ≈15 at Corralled")
+	# **THE LIVENESS HALF: the figure MOVES WITH THE WIRE.** Same herd, same live capacity, same rung,
+	# one published destination changed — so an implementation that recomposed the live number, or
+	# hard-wired a gain of its own, renders the same string twice and fails here while passing above.
+	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = \
+		FLOOR_FLAG_DESTINATION_CAPACITY_RICHER
+	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+	var richer_flag := flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
+	h._assert_hud("…and it is the WIRE's number: a richer destination renders a higher threshold (got '%s')"
+		% richer_flag, richer_flag == "leave 50% · ≈11 Red Deer ↑ ≈20 at Corralled")
+	# **A CAPACITY OF ZERO IS A READING, NOT AN ABSENCE** — the case the sentinel exists to keep apart.
+	# A pen struck on rock really would hold nothing, and swallowing that as *nothing queued* would
+	# quietly hide the one destination a player most needs talking out of.
+	destination_herd[SourceForecast.FORECAST_BUILD_DESTINATION_CAPACITY_KEY] = \
+		FLOOR_FLAG_DESTINATION_CAPACITY_BARREN
+	flag_probe.set_model(SourceForecast.floor_chart_model(destination_herd,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+	h._assert_hud("a destination that would hold NOTHING still states itself — zero is not absent",
+		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
+			== "leave 50% · ≈11 Red Deer ↑ 0 at Corralled")
+	# **AND A HERD HEADING NOWHERE STATES NO CLAUSE AT ALL — no dash, no zero, no empty `at`.** The
+	# PRECONDITION is asserted first and it is the whole point of the pair: without it this passes on a
+	# row that carried a perfectly good destination the flag simply declined to render, which is the
+	# same silence and a different bug.
+	var unqueued_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
+	h._assert_hud("the precondition — this row really does carry the no-destination sentinel",
+		SourceForecast.build_destination_capacity(unqueued_herd,
+			HudComposeVocab.BARE_FORECAST_PREFIX) == SourceForecast.NO_BUILD_DESTINATION_CAPACITY)
+	flag_probe.set_model(SourceForecast.floor_chart_model(unqueued_herd,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+	h._assert_hud("…so its flag keeps the bare mark and quotes nothing",
+		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
+			== "leave 50% · ≈11 Red Deer" + HarvestFloorChart.FLOOR_FLAG_CLIMBING_SUFFIX)
+	# **AND THE SENTINEL IS WHAT DOES THE SUPPRESSING, not the missing rung beside it.** The pair above
+	# states neither, so it is satisfied by a flag that only ever checks the rung — this row NAMES its
+	# destination and prices it at the sentinel, which leaves the capacity's own `< 0` as the only
+	# thing that can hold the clause back.
+	var unpriced_herd := ForageFx.floorify(HerdFx.taming_herd_fixture())
+	unpriced_herd[SourceForecast.FORECAST_BUILD_DESTINATION_KEY] = SourceForecast.RUNG_KEY_PEN
+	flag_probe.set_model(SourceForecast.floor_chart_model(unpriced_herd,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, strip_crew, "hunters", LESSON_NOT_YET_LEARNED))
+	var unpriced_flag := flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
+	h._assert_hud("a NAMED destination the wire prices at the sentinel still quotes nothing (got '%s')"
+		% unpriced_flag, unpriced_flag
+			== "leave 50% · ≈11 Red Deer" + HarvestFloorChart.FLOOR_FLAG_CLIMBING_SUFFIX)
 	# …and the MODEL is what decides it, off the wire's own `buildTurnsRemaining` rather than off any
 	# reading the client composes. The sentinels are NEGATIVE (`BUILD_TURNS_HOLDS` / `_ROTS` /
 	# `_QUEUE_BLOCKED`), so a stalled or parked build correctly states no climb: nothing is rising.

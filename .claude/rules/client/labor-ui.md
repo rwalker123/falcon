@@ -462,6 +462,34 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
+> #### ⛔ A CLIMBING FLOOR MUST NAME WHAT IT IS CLIMBING TO
+>
+> The escapement floor is `floor_fraction × K` and **a rung raises `K`**, so the floor climbs every turn
+> a capacity-raising build runs — and that is why the take falls during it. A bare `↑` says only that
+> it moves; the player still reads the falling take as the source being poor rather than as their own
+> investment. The flag states the destination: `leave 50% · ≈11 Red Deer ↑ ≈15 at Corralled`, off the
+> sim's `buildDestinationCapacity`.
+>
+> - **It rides the existing `↑` rather than adding a line** — the Work zone's budgets are full. Measured
+>   on the rendered frame, the pill takes ~167px of a ~197px plot, so a longer species name still fits.
+> - **The rung is NAMED (`at Corralled`) so the second figure cannot be read as a delta or a rate.**
+> - **The quarry is stated once** — `≈11 Red Deer ↑ ≈15 Red Deer` read as *two herds* in the first
+>   render, which is why `stock_face_unqualified` exists.
+> - **The clause rides the climbing flag AND the sentinel**: a parked or blocked build still names a
+>   destination, but nothing is rising toward it.
+> - **`< 0` renders nothing.** It is deliberately not `0`, because a destination that would hold nothing
+>   is a real reading (barren ground, a rock pen) and the two must not collapse.
+> - **The honesty constraint lands in the hover, where there is room for a sentence** — *"would carry ≈30
+>   Red Deer on this ground **as it stands today**"*. The figure is struck on today's land: the rung
+>   moves, the land does not, so it drifts as the live `K` drifts. The flag names a rung and no date, so
+>   neither surface promises a future number.
+>
+> **THE PLANT TWIN IS A FOG LEAK AND IS REDACTED.** `patch_build_destination_capacity` is
+> `tile K × field_capacity_gain` — the same interpolated ladder position `patch_carrying_capacity` is
+> hidden to protect (`land-readouts.md` → "Fog splits a stock from its CAPACITY"). It joined
+> `FOW_DISCOVERED_HIDDEN_KEYS` with it. A new field on a redacted quantity inherits the redaction; it
+> does not get to re-open the hole under a new name.
+
 > #### ⛔ THE CURVE IS FLOOR-DEPENDENT, SO A FLOOR DRAG MUST RE-ASK IT — and the reply must not kill the drag
 >
 > The curve's rows are bounded by the room above the escapement floor, so a sheet holding an answer for

@@ -431,6 +431,7 @@
     {
       "biomass": 69.25,
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[0].build_destination_rung",
       "build_legs": [
         {
@@ -606,6 +607,7 @@
     {
       "biomass": 74.910004,
       "build_blocked_reason": "forage_patches[1].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[1].build_destination_rung",
       "build_legs": [
         {
@@ -922,6 +924,7 @@
       "biomass": 109.120003,
       "body_mass": 32.599998,
       "build_blocked_reason": "herds[0].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[0].build_destination_rung",
       "build_legs": [
         {
@@ -1045,6 +1048,7 @@
       "biomass": 44.529999,
       "body_mass": 55.09,
       "build_blocked_reason": "herds[1].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[1].build_destination_rung",
       "build_legs": [
         {

@@ -2899,6 +2899,9 @@ pub fn capture_snapshot(
         ),
         grid_size: config.grid_size,
         wrap_horizontal: config.map_topology.wrap_horizontal,
+        // **The graze layer the destination-capacity quote is struck over** — the same registry the
+        // live `K` is summed from, so the two are one seam at two standings.
+        graze: &graze_registry,
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,

@@ -1251,6 +1251,23 @@ impl RungStanding {
             credit: NO_RUNG_CREDIT,
         }
     }
+
+    /// **A SOURCE THAT HAS ARRIVED AT `rung`** — the standing of a position sitting exactly on that
+    /// rung's top, answered **without a ladder** for [`Self::unstarted`]'s reason: it is the rung
+    /// held in full, raising whatever sits above it at no credit.
+    ///
+    /// It is what a **destination** reading is struck at (`forage::patch_destination_capacity`,
+    /// `fauna::herd_destination_capacity`): a queue entry names the rung its climb ends on, and
+    /// every per-rung quantity is [`interpolate`]d, which at [`NO_RUNG_CREDIT`] answers exactly
+    /// `value_at(rung)`. So the destination figure and the live one are **one expression at two
+    /// standings**, never two formulas that agree today.
+    pub fn arrived_at(rung: RungKey) -> Self {
+        Self {
+            held: rung,
+            raising: rung.above(),
+            credit: NO_RUNG_CREDIT,
+        }
+    }
 }
 
 /// **A RUNG THERE IS NOTHING TO BUILD** — the width of a rung with no `build` block, and the width

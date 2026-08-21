@@ -891,6 +891,24 @@ const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
 # family exists to prevent.
 const FORECAST_BUILD_DESTINATION_KEY := "build_destination_rung"
 const FORECAST_BUILD_LEGS_KEY := "build_legs"
+# **WHAT THE SOURCE WILL CARRY AT THAT DESTINATION** — the same `K` as `FORECAST_CAPACITY_KEY`,
+# struck at the destination rung's standing instead of the source's own, so the pair is read as ONE
+# object: that key says where the climb ends, this says what the ground holds when it gets there.
+#
+# **IT IS WHY THE TAKE FALLS DURING A BUILD.** The escapement floor is `floor x K` and a rung RAISES
+# `K` — `field_capacity_gain` on the plant web, `pastoral_density` / `pen_density` on the animal one —
+# so the floor climbs every turn a build runs and the player's take drops underneath it. Without this
+# figure a surface can mark that the floor is MOVING and nothing more, and a fall the player paid for
+# reads as the source being poor.
+#
+# **THE DESTINATION'S, NOT NEXT TURN'S** — next turn's position depends on work nobody has banked, so
+# it is not even well defined; the destination rung is already named, so its gain is known today.
+#
+# **AND IT IS STRUCK ON TODAY'S LAND: THE RUNG MOVES, THE LAND DOES NOT.** The sim sums the flow over
+# the ground as it stands this turn, so this figure drifts turn to turn exactly as the live capacity
+# beside it does. Every wording built on it therefore states the ground it was struck on and never
+# promises a future number.
+const FORECAST_BUILD_DESTINATION_CAPACITY_KEY := "build_destination_capacity"
 # The three keys of one published leg. **Named**, because the producer is the Rust decoder and the
 # readers are two GDScript surfaces: a typo in a `get` here is a silent zero, which on the work side
 # would price a whole branch as free.
@@ -1091,6 +1109,17 @@ const NOT_IN_ANY_BUILD_QUEUE := -1
 
 ## The head of a band's build queue — the one entry its whole builders pool is funding.
 const BUILD_QUEUE_HEAD := 0
+
+## **THIS SOURCE IS HEADING NOWHERE** — the neutral of `FORECAST_BUILD_DESTINATION_CAPACITY_KEY`, the
+## client's copy of `sim_schema::NO_BUILD_DESTINATION_CAPACITY`. No band has queued the source, so
+## there is no destination whose capacity could be quoted.
+##
+## **IT CANNOT BE `0`, AND THAT IS THE WHOLE REASON IT IS A SENTINEL.** A capacity of zero is a REAL
+## reading a real source has — barren ground, an overgrazed range, a rock pen — so a zero standing for
+## *nothing queued* would tell the player that building here would hold nothing, on every unqueued
+## source on the map. A capacity is never negative, so ANY `< 0` is this reading and every surface
+## renders NO DESTINATION LINE AT ALL for it: no dash, no zero, no empty clause.
+const NO_BUILD_DESTINATION_CAPACITY := -1.0
 
 ## **THE NET AT WHICH A METER NEITHER GROWS NOR ROTS** — a build crew banking exactly what the meter
 ## is bleeding, so `crew work − rot` is exactly this. The client's copy of the sim's
@@ -3398,6 +3427,19 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "floor_climbing": build_verb(src, prefix, kind) != IMPROVEMENT_NONE
             and int(src.get(prefix + FORECAST_BUILD_TURNS_KEY,
                 BUILD_TURNS_NONE_TO_STATE)) > BUILD_TURNS_NONE_TO_STATE,
+        # **…AND WHAT IT IS CLIMBING TOWARD.** The mark above says the threshold is moving; these two
+        # say where it stops — the capacity the source will hold at the rung the build was sent to,
+        # and that rung's own badge word. The flag multiplies the first by the live floor, which is
+        # why the CAPACITY rides the model rather than a composed string: the player drags the floor
+        # without recomposing this dict, and a precomposed count would freeze at the floor it was
+        # struck at.
+        #
+        # **`NO_BUILD_DESTINATION_CAPACITY` AND `""` ARE THE ABSENT READINGS**, and the flag renders
+        # NO CLAUSE for either — an unqueued source has no destination, and a rung this client's table
+        # cannot name has no word to hang a figure on. Never a zero: a real source really can hold
+        # nothing.
+        "destination_capacity": build_destination_capacity(src, prefix),
+        "destination_rung": DetailFormat.rung_badge_word(build_destination_rung(src, prefix)),
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
@@ -4263,6 +4305,29 @@ static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
 static func build_destination_rung(src: Dictionary, prefix: String) -> String:
     var key := String(src.get(prefix + FORECAST_BUILD_DESTINATION_KEY, "")).strip_edges()
     return String(RUNG_KEY_IMPROVEMENTS.get(key, IMPROVEMENT_NONE))
+
+## **WHAT THIS SOURCE WILL CARRY AT THAT DESTINATION** — the wire's own figure, passed through, with
+## every "no destination" reading normalised to `NO_BUILD_DESTINATION_CAPACITY`.
+##
+## Read it BESIDE `build_destination_rung`, never instead of it: that names the rung the climb ends
+## on, this is the ceiling the ground holds once it is there. It is the term that explains a FALLING
+## take — the escapement floor is `floor x K` and the rung raises `K`, so the floor climbs every turn
+## the build runs — and it is the only figure on the wire that says what it is climbing toward.
+##
+## **A `0.0` HERE IS A REAL CAPACITY AND SURVIVES** (barren ground, an overgrazed range, a rock pen);
+## only a NEGATIVE is the absent reading, which is the whole reason the sentinel lives out of range.
+## Nothing derived here: the client holds neither the rung gains nor the land the flow is summed over.
+static func build_destination_capacity(src: Dictionary, prefix: String) -> float:
+    var capacity := float(src.get(prefix + FORECAST_BUILD_DESTINATION_CAPACITY_KEY,
+        NO_BUILD_DESTINATION_CAPACITY))
+    return capacity if capacity >= 0.0 else NO_BUILD_DESTINATION_CAPACITY
+
+## **IS THERE A DESTINATION TO QUOTE AT ALL** — the ONE test every surface makes on the value above,
+## so a reader cannot invent a second spelling of *absent* and render a `0` for it. Exact, not
+## approximate: `build_destination_capacity` normalises to the sentinel or to a real `>= 0` reading,
+## and there is nothing in between.
+static func states_destination_capacity(capacity: float) -> bool:
+    return capacity > NO_BUILD_DESTINATION_CAPACITY
 
 ## **THE LEGS THE QUEUED ENTRY STILL HAS TO LAY**, in climb order, first-incomplete first — the FIRST
 ## row is the leg in flight. `[]` when the source is not queued, or has already arrived, and that
@@ -5262,6 +5327,22 @@ static func stock_face(stock: float, body_mass: float, quarry: String) -> String
     var animals := animal_count(stock, body_mass)
     if animals != ANIMAL_COUNT_NONE and quarry != "":
         return STOCK_ANIMALS_FORMAT % [animals, quarry]
+    return format_stock(stock)
+
+## **THE SAME QUANTITY WITH THE SPECIES LEFT OFF** — `≈15`, for the SECOND figure in a pair whose
+## first has already named what is being counted: the floor flag's `leave 50% · ≈11 Red Deer ↑ ≈15 at
+## Corralled` states one threshold at two standings, and repeating the quarry between them reads as
+## two different animals rather than one herd at two ceilings.
+##
+## **IT IS A SECOND DECORATION, NEVER A SECOND COUNT.** `animal_count` is still the one place biomass
+## becomes a head count, so this cannot drift from `stock_face` in the way that matters; only the
+## trailing noun differs. A patch has no body and reads identically through both — biomass names no
+## species either way.
+const STOCK_ANIMALS_UNQUALIFIED_FORMAT := "≈%d"
+static func stock_face_unqualified(stock: float, body_mass: float) -> String:
+    var animals := animal_count(stock, body_mass)
+    if animals != ANIMAL_COUNT_NONE:
+        return STOCK_ANIMALS_UNQUALIFIED_FORMAT % animals
     return format_stock(stock)
 
 static func herd_display_name(herd: Dictionary) -> String:

@@ -550,6 +550,13 @@ fn create_herds<'a>(
                 buildBlockedReason: Some(build_blocked_reason),
                 buildDestinationRung: Some(build_destination_rung),
                 buildLegs: build_legs,
+                // **WHERE THAT DESTINATION WILL LEAVE THIS HERD'S `K`** — appended last
+                // (append-only wire). `None` is *"no band has queued it"*, which crosses as the
+                // [`crate::NO_BUILD_DESTINATION_CAPACITY`] sentinel rather than as `0`: a capacity
+                // of zero is a real reading a real herd has.
+                buildDestinationCapacity: herd
+                    .build_destination_capacity
+                    .unwrap_or(crate::NO_BUILD_DESTINATION_CAPACITY),
             },
         );
         entries.push(entry);
@@ -733,6 +740,11 @@ fn create_forage_patches<'a>(
                 // remembered hex state a capacity without stating the ladder position the fog
                 // redaction exists to hide.
                 tileCapacity: patch.tile_capacity,
+                // **WHERE THIS PATCH'S BUILD IS TAKING ITS `K`** — appended last (append-only
+                // wire); see the herd twin for the sentinel.
+                buildDestinationCapacity: patch
+                    .build_destination_capacity
+                    .unwrap_or(crate::NO_BUILD_DESTINATION_CAPACITY),
             },
         );
         entries.push(entry);

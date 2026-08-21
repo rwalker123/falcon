@@ -419,7 +419,7 @@ fn a_tame_begun_on_the_floor_completes_at_every_crew_size() {
             // that omits this measures `regrow_biomass`'s abandonment gate instead of the floor.
             herd.upkeep_supplied = crate::fauna::herd_upkeep_demand(&herd, &fauna, &ladder);
             herd.carrying_capacity =
-                range_capacity * crate::fauna::herd_density_gain(&herd, &fauna);
+                range_capacity * crate::fauna::herd_density_gain(&herd.standing(), &herd, &fauna);
             regrow_biomass(&mut herd, &fauna);
             let room = crate::fauna::herd_take_room(&herd, ON_THE_FLOOR, &fauna);
             if room <= 0.0 {
@@ -535,7 +535,7 @@ fn probe_the_tame_floor_squeeze() {
             // **The rung's density gain, re-applied from the range's own K** — idempotent, exactly
             // as the sim's one write is, and it is what makes the floor climb as the herd tames.
             herd.carrying_capacity =
-                range_capacity * crate::fauna::herd_density_gain(&herd, &fauna);
+                range_capacity * crate::fauna::herd_density_gain(&herd.standing(), &herd, &fauna);
             regrow_biomass(&mut herd, &fauna);
             // **The room the take reads**, pre-quantisation and pre-crew — the herd's own offer.
             // **What the take will actually pay, and what the build's gate reads** — the escapement

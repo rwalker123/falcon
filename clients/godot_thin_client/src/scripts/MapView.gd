@@ -323,6 +323,12 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# with the queue position and the countdown they belong to. A remembered tile knows where the
 	# ground has been taken no better than it knows how far along the job is.
 	"patch_build_destination_rung", "patch_build_legs",
+	# …and WHAT THE GROUND WILL CARRY at that destination. It rides the destination it belongs to, and
+	# it must: the figure is `tile K x the rung's field_capacity_gain`, so publishing it on a remembered
+	# hex hands over the same interpolated ladder position `patch_carrying_capacity` is redacted to
+	# hide — one rung further up. A hex the player cannot see renders no floor instrument at all, so
+	# nothing reads it there either.
+	"patch_build_destination_capacity",
 	# The estimate's per-source TERM travels under the same rule as the answer beside it — it is a
 	# figure about a build being worked, and a remembered tile knows no more about that than it knows
 	# the progress. (The gear half of the estimate is not here at all: it rides the band's kit row.)
@@ -2827,6 +2833,13 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# each `turns_remaining` is chained behind the legs above it, so nothing on this path may
 		# narrow, re-order or re-derive them.
 		info["patch_build_destination_rung"] = String(patch.get("build_destination_rung", ""))
+		# **WHAT THIS PATCH WILL CARRY AT THAT DESTINATION** — the ceiling the rung buys, which is what
+		# says why the take falls while the build runs: the escapement floor is a fraction of `K` and the
+		# rung raises `K`, so the floor climbs underneath the player every turn. Its default is
+		# `NO_BUILD_DESTINATION_CAPACITY` and never `0`, which would tell the player that improving any
+		# unqueued patch would leave it holding nothing.
+		info["patch_build_destination_capacity"] = float(patch.get("build_destination_capacity",
+			SourceForecast.NO_BUILD_DESTINATION_CAPACITY))
 		info["patch_build_legs"] = patch.get("build_legs", [])
 		# **THE ESTIMATE'S PER-SOURCE TERM, so the compose sheet can price a crew the player is
 		# PROPOSING.** The turn count above is the sim's answer for the crew already here; this is

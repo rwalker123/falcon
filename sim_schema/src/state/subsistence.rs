@@ -95,6 +95,20 @@ pub const BUILD_QUEUE_BLOCKED: i32 = -4;
 /// together.
 pub const NOT_IN_ANY_BUILD_QUEUE: i32 = -1;
 
+/// **"THIS SOURCE IS HEADING NOWHERE"** — the wire value of `buildDestinationCapacity` on a source
+/// **no band has queued**, on the same *"outside the range a real answer lives in"* convention as
+/// the three sentinels above.
+///
+/// **It cannot be `0`, and that is the whole reason it is a sentinel.** A carrying capacity of zero
+/// is a **real reading a real source has** — barren ground, an overgrazed range, a rock pen — so a
+/// zero here would say *"build this and it will hold nothing"* about every unqueued source on the
+/// map. This is the ambiguity `huntUsefulWorkers` had to be untangled from in the other direction,
+/// and the resolution is the same one: a value that means "no answer" must live where no answer can.
+///
+/// A capacity is never negative, so any `< 0` reading is this. A client renders **no destination
+/// line at all** for it, exactly as it renders none for [`NO_BUILD_TURNS_ESTIMATE`].
+pub const NO_BUILD_DESTINATION_CAPACITY: f32 = -1.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
     pub faction: u32,
@@ -717,6 +731,37 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_legs: Vec<BuildLegState>,
+    /// **THE CARRYING CAPACITY THIS SOURCE WILL HAVE AT THE RUNG ITS BUILD IS HEADING FOR** —
+    /// `None` (→ [`crate::NO_BUILD_DESTINATION_CAPACITY`] on the wire) when no band has queued it,
+    /// because then there is no destination to quote.
+    ///
+    /// # WHY IT SHIPS: THE FLOOR MOVES UNDER THE PLAYER WHILE THEY BUILD
+    ///
+    /// A take is held above `floor_fraction × K`, and a rung **raises `K`** — the plant web through
+    /// `field_capacity_gain`, the animal web through `pastoral_density` / `pen_density`, all three
+    /// interpolated on the source's ladder position. So the floor climbs every turn a build runs and
+    /// the player's take falls. With only the live `K` on the wire, the client can mark that the
+    /// floor is *moving* and nothing more, so a reduced take reads as the source being poor rather
+    /// than as the player's own investment arriving. This is where it is going.
+    ///
+    /// # IT IS THE DESTINATION'S, NOT NEXT TURN'S
+    ///
+    /// Next turn's capacity is not well defined — next turn's position depends on work nobody has
+    /// banked yet. The **destination** is exact: the queue entry already names the rung its climb
+    /// ends on ([`Self::build_destination_rung`]), so the gain at that rung is known today. Read the
+    /// two as one object; this is the capacity *of* that rung.
+    ///
+    /// # THE RUNG MOVES, THE LAND DOES NOT
+    ///
+    /// Struck at capture by the **same seam that writes the live `carrying_capacity`**, at the
+    /// destination standing instead of the source's own — one expression at two standings, never a
+    /// second formula. The land underneath it is today's: a herd's flow is summed over the graze as
+    /// it stands now, a patch's is its tile's own `K`. So the figure moves if the land does, exactly
+    /// as the live capacity beside it moves.
+    ///
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_destination_capacity: Option<f32>,
 }
 
 impl Default for HerdTelemetryState {
@@ -803,6 +848,9 @@ impl Default for HerdTelemetryState {
             build_blocked_reason: String::new(),
             build_destination_rung: String::new(),
             build_legs: Vec::new(),
+            // **A herd nothing has described is heading nowhere** — the absent reading, never a
+            // capacity of zero.
+            build_destination_capacity: None,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1342,6 +1390,17 @@ pub struct ForagePatchState {
     /// [`Self::composition`] takes there — never a fabricated capacity. Appended (append-only).
     #[serde(default)]
     pub tile_capacity: f32,
+    /// **THE CARRYING CAPACITY THIS PATCH WILL HAVE AT THE RUNG ITS BUILD IS HEADING FOR** — the
+    /// plant twin of [`HerdTelemetryState::build_destination_capacity`], which carries the whole
+    /// rationale. `None` (→ [`crate::NO_BUILD_DESTINATION_CAPACITY`] on the wire) when no band has
+    /// queued it.
+    ///
+    /// **Only rung 3 moves it on this web.** A `Cultivate` buys the ground a faster curve, not a
+    /// denser one, so a Cultivate destination quotes exactly [`Self::carrying_capacity`] — an equal
+    /// reading, honestly, and not a stale one. It is the `Sow` that lifts it by
+    /// `cultivation.field_capacity_gain`. Appended (append-only).
+    #[serde(default)]
+    pub build_destination_capacity: Option<f32>,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from

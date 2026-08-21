@@ -97,10 +97,29 @@ const FLOOR_ARROW_HALF_HEIGHT := 5.0
 const FLOOR_FLAG_FORMAT := "leave %d%% · %s"
 const FLOOR_FLAG_STRIP := "leave nothing"
 ## **THE FLOOR IS CLIMBING** — appended while a build is raising this source's capacity, so the animal
-## count in the flag is a number in motion rather than a standing one. It marks the DIRECTION and
-## nothing else: the wire states no next-turn capacity, so a magnitude here would be invented. The
-## STRIP face never takes it — a floor of nothing has no count to move.
+## count in the flag is a number in motion rather than a standing one. On its own it marks the
+## DIRECTION and nothing else, which is all a source whose destination the wire does not state can
+## honestly say. The STRIP face never takes it — a floor of nothing has no count to move.
 const FLOOR_FLAG_CLIMBING_SUFFIX := " ↑"
+## **…AND WHERE IT STOPS CLIMBING**, on the sources the wire names a destination for: `leave 50% ·
+## ≈11 Red Deer ↑ ≈15 at Corralled` — the same threshold, in the same unit, struck at the rung the
+## build was sent to (`floor × buildDestinationCapacity`).
+##
+## **THE RUNG IS NAMED BECAUSE A BARE SECOND FIGURE IS NOT A READING.** `≈11 → ≈15` beside a
+## percentage invites the eye to take the difference as a per-turn rate or a delta the player is owed;
+## anchoring the figure to `Corralled` says what it IS — what this ground asks you to leave once the
+## herd is corralled — and no arithmetic between the two numbers means anything.
+##
+## **IT IS A DESTINATION, NOT A DATE, AND NOT A PROMISE.** The capacity behind it is struck on the
+## land AS IT STANDS TODAY (the rung moves, the land does not), so it drifts turn to turn exactly as
+## the live figure beside it does. `at <rung>` says at that rung and states no when; the flag has room
+## for no more, and the herd drawer's `What taming is buying` hover carries the caveat in words.
+##
+## **BOTH TERMS OR NEITHER.** The clause rides the climbing mark rather than the wire's sentinel
+## alone: a PARKED or blocked build (`buildTurnsRemaining` negative) still names a destination, but
+## nothing is rising toward it while nobody pays for it, and a flag quoting a threshold the player is
+## not moving toward is the same invented promise the magnitude-less `↑` was written to avoid.
+const FLOOR_FLAG_DESTINATION_FORMAT := " ↑ %s at %s"
 const FLOOR_FLAG_FONT_SIZE := 10
 const FLOOR_FLAG_PAD := 3.0
 const FLOOR_FLAG_INSET := 5.0
@@ -316,12 +335,29 @@ func _draw_floor(plot: Rect2) -> void:
 
 ## The flag's words for a floor that leaves something standing. **No branch on the web**: the quantity
 ## comes from `stock_face`, which the at-floor verdict under this chart also reads, so the two can
-## only ever name the threshold identically. See `FLOOR_FLAG_FORMAT` for why the percent leads.
+## only ever name the threshold identically — and the destination clause takes the same count through
+## `stock_face_unqualified`, which drops the species and nothing else. See `FLOOR_FLAG_FORMAT` for why
+## the percent leads and `FLOOR_FLAG_DESTINATION_FORMAT` for what the clause may and may not claim.
 func _floor_flag_text(floor_value: float, floor_stock: float) -> String:
+	var body_mass := float(_model.get("body_mass", 0.0))
+	var quarry := String(_model.get("quarry", ""))
 	var text := FLOOR_FLAG_FORMAT % [SourceForecast.floor_percent(floor_value),
-		SourceForecast.stock_face(floor_stock, float(_model.get("body_mass", 0.0)),
-			String(_model.get("quarry", "")))]
-	return text + FLOOR_FLAG_CLIMBING_SUFFIX if bool(_model.get("floor_climbing", false)) else text
+		SourceForecast.stock_face(floor_stock, body_mass, quarry)]
+	if not bool(_model.get("floor_climbing", false)):
+		return text
+	# **THE SAME THRESHOLD AT THE DESTINATION'S CEILING** — `floor x K_destination`, in the flag's own
+	# unit, so the pair states one quantity at two standings rather than two quantities. A source with
+	# no destination on the wire, or one whose rung this client cannot name, keeps the bare mark.
+	var destination := float(_model.get("destination_capacity",
+		SourceForecast.NO_BUILD_DESTINATION_CAPACITY))
+	var rung := String(_model.get("destination_rung", ""))
+	if not SourceForecast.states_destination_capacity(destination) or rung.is_empty():
+		return text + FLOOR_FLAG_CLIMBING_SUFFIX
+	# **THE QUARRY IS NAMED ONCE.** The clause is the same threshold as the figure in front of it, at
+	# the destination's standing, so it takes the unqualified face — `≈11 Red Deer ↑ ≈15` is one herd at
+	# two ceilings where `≈11 Red Deer ↑ ≈15 Red Deer` reads as two herds.
+	return text + FLOOR_FLAG_DESTINATION_FORMAT % [
+		SourceForecast.stock_face_unqualified(floor_value * destination, body_mass), rung]
 
 ## THE LEARNING RAIL — `learn_multiplier` as a gradient, brightest where the most is left standing,
 ## with a marker at the floor. It answers "are these people, on this ground, contributing to the

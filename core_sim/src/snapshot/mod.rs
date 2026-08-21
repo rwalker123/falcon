@@ -966,6 +966,9 @@ mod tests {
                 .default_kit_id(crate::equipment_config::KitJob::Hunt)
                 .to_string(),
         };
+        // **No graze layer in the fog fixtures** — these test the visibility filter, not a capacity,
+        // and an empty registry is exactly the "K is frozen" state `settled_capacity` answers for.
+        let graze = crate::graze::GrazeRegistry::default();
         herd_snapshot_entries(HerdSnapshotInputs {
             telemetry,
             registry,
@@ -978,6 +981,7 @@ mod tests {
                 ),
             grid_size: UVec2::new(64, 64),
             wrap_horizontal: false,
+            graze: &graze,
             visibility,
             viewer: VIEWER,
             fog_enabled,

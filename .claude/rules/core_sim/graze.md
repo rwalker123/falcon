@@ -230,6 +230,31 @@ oscillates or crashes if built carelessly.
   (`hex_range_tiles(corralled_at, pen_radius)`), via the same `ecological_carrying_capacity` seam (a
   wholly-barren footprint keeps the frozen `K` and is fully larder-fed). A non-grazing herd
   (`fodder ≤ 0`) or an absent graze layer keeps the constant `K`.
+  > **⛔ THE SEAM IS NOW PARAMETERISED BY A STANDING, so a build can QUOTE the `K` it is heading for.**
+  > `ecological_carrying_capacity(..., at: CapacityStanding)` answers at the standing it is handed:
+  > `live` for the one write in `advance_herds`, `arrived_at(destination)` for the figure published as
+  > `buildDestinationCapacity`. **One expression, two readings** — the destination is not a second
+  > formula that agrees today, and a test runs a build to completion and asserts the delivered `K`
+  > **is** the number that was advertised. `settled_capacity` states the write rule once for both
+  > (an absent answer or a barren pen keeps the frozen `K`).
+  >
+  > **A CORRAL PROJECTS THE FENCE, NOT THE RANGE.** `herd_footprint_at` takes the penned flag, because
+  > a pen is a *different piece of land* rather than the roam range with `pen_density` applied to it.
+  > Measured on the shipped fixture, quoting the range instead over-states the destination by **7×**
+  > (5600 against a delivered 800) — a confident, badly wrong promise on the rung where the player is
+  > investing most.
+  >
+  > **`-1` IS THE NO-DESTINATION SENTINEL AND IT MAY NOT BE `0`**: a capacity of zero is a real reading
+  > (barren ground, an overgrazed range, a rock pen), so the two would collapse.
+  >
+  > **The figure is struck on TODAY's land** — the rung moves, the land does not — so the quote drifts
+  > turn to turn exactly as the live `K` does. It is exact only against unchanged ground, which is what
+  > the build fixtures pin by holding the land still.
+  >
+  > **The obvious guard does not catch the obvious defect.** `destination > live` passes even when the
+  > destination is wrongly read at the *live* standing, because within a turn the ladder position
+  > advances **after** the `K` write. What catches it is asserting the number stayed **stable on ground
+  > that did not move**.
 - **`graze_sustainable_flow` — NOT `sustainable_yield`.** The K flow is pure logistic at the MSY-clamped
   biomass (`logistic_regrowth(min(G, cap/2), cap, r_graze)`), deliberately **without** the Allee cutoff
   `sustainable_yield` applies — **grass has no depensation**, so a heavily-but-recoverably grazed tile

@@ -69,6 +69,8 @@ exactly as the upkeep does:
 | gain | where it lands | why |
 |---|---|---|
 | `field_capacity_gain` | the one `carrying_capacity` write in `advance_forage_regrowth` | a sown field is planted densely with the competitors pulled out, so it **holds** more standing crop |
+
+**The gain is also what a Sow ADVERTISES.** `forage::patch_capacity_at` is the one expression behind that write, and `patch_destination_capacity` calls it at `RungStanding::arrived_at(build_destination)` — so a running Sow publishes the `K` the Field will deliver (`buildDestinationCapacity`), struck through the same seam rather than a second formula. That matters because **the escapement floor is a fraction of `K`**, so a Sow raises the floor under the player every turn it runs; without the destination they see the take fall with nothing saying where it is heading. `-1` means no build in flight and is deliberately not `0`, since a capacity of zero is a real reading on barren ground.
 | `field_regrowth_gain` | `patch_ecology`, the seam that already existed for this | you sowed it and you replant it, so it **comes back** faster |
 
 > #### ⛔ THE UPKEEP SCALE READS THE **TILE's** K, NEVER `ForagePatch::carrying_capacity`

@@ -1342,21 +1342,24 @@ pub fn herd_capacity(herd: &Herd, _fauna: &FaunaConfig) -> f32 {
     herd.carrying_capacity
 }
 
-/// **The per-species density (K) multiplier for a herd's CURRENT husbandry rung** — domestication makes
-/// the land hold *more* animals, non-linearly by species (the density ladder, orthogonal to the r-gains
+/// **The per-species density (K) multiplier a husbandry STANDING buys** — domestication makes the land
+/// hold *more* animals, non-linearly by species (the density ladder, orthogonal to the r-gains
 /// `herd_ecology` folds in). A **corralled** herd multiplies its footprint `K` by the species'
 /// [`SpeciesDef::pen_density`], a **mobile-tamed** herd by its [`SpeciesDef::pastoral_density`], and a
 /// **wild** herd by [`DEFAULT_HUSBANDRY_DENSITY`] (`1.0`, so its `K` is byte-identical). Mirrors
 /// `herd_ecology`'s rung dispatch exactly.
 ///
+/// **The standing is a PARAMETER, and that is what keeps the two readings one expression.** The live
+/// `K` passes the herd's own ([`CapacityStanding::live`]); the destination quote passes the standing
+/// the build is climbing toward ([`herd_destination_capacity`]). A destination assembled out of a
+/// second formula would agree with the sim only until one of them was retuned.
+///
 /// Resolved **live** by display name (`pen_density_for` / `pastoral_density_for`, the `taming_cost_multiplier_for`
 /// path), never cached on the `Herd`, so a config retune reaches herds already on the map. Applied at
 /// the single K seam [`ecological_carrying_capacity`] (the one place `herd.carrying_capacity` is
 /// written), covering both the graze-derived and the fallback constant K.
-pub fn herd_density_gain(herd: &Herd, fauna: &FaunaConfig) -> f32 {
-    interpolate(&herd.standing(), |rung| {
-        rung_density_gain(rung, herd, fauna)
-    })
+pub fn herd_density_gain(standing: &RungStanding, herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    interpolate(standing, |rung| rung_density_gain(rung, herd, fauna))
 }
 
 /// **THE DENSITY GAIN A RUNG BUYS**, asked about a rung the herd may not stand on — the animal twin
@@ -2431,13 +2434,21 @@ pub fn advance_herds(
         // instead holds its herd on the granary. A grazeable footprint (`k > 0`) gives the pen its
         // ecological K and it self-feeds. (A *mobile* herd keeps the 2b-ii behaviour — it shrinks toward
         // `Some(0)` on barren ground, which its graze-aware roam is meant to keep it off of.)
-        if let Some(k) =
-            ecological_carrying_capacity(herd, def, graze, &prey_index, &fauna, width, height, wrap)
-        {
-            if !(herd.is_corralled() && k <= 0.0) {
-                herd.carrying_capacity = k;
-            }
-        }
+        herd.carrying_capacity = settled_capacity(
+            ecological_carrying_capacity(
+                herd,
+                def,
+                graze,
+                &prey_index,
+                &fauna,
+                width,
+                height,
+                wrap,
+                CapacityStanding::live(herd),
+            ),
+            herd.is_corralled(),
+            herd.carrying_capacity,
+        );
         regrow_biomass(herd, &fauna);
         let position = herd.position();
         info!(
@@ -2498,9 +2509,22 @@ pub fn advance_herds(
 ///
 /// `pen_radius = 0` (today) is the single corralled tile; the `ExtendPen` command (2d-β) grows it.
 fn herd_footprint(herd: &Herd, def: Option<&SpeciesDef>) -> (UVec2, u32) {
-    match herd.corralled_at {
-        Some(pen) => (pen, herd.pen_radius),
-        None => (herd.current_pos, herd.graze_range_radius(def)),
+    herd_footprint_at(herd, def, herd.corralled_at.is_some())
+}
+
+/// [`herd_footprint`] asked about a fencing the herd may not have yet — the **destination** reading's
+/// half of the footprint question ([`herd_destination_capacity`]).
+///
+/// A herd climbing toward a pen has no `corralled_at` yet, and `corral_at` anchors the pen **where
+/// the herd is standing** when the Corral lands, so *"here, at `pen_radius`"* is the projection —
+/// the same "today's position, tomorrow's rung" rule every other destination term follows. It
+/// matters because a pen's footprint is a fraction of a roam range: quoting a Corral's `K` over the
+/// range the herd walks today would overstate it by the whole ratio between them, which
+/// `pen_density` only partly gives back.
+fn herd_footprint_at(herd: &Herd, def: Option<&SpeciesDef>, penned: bool) -> (UVec2, u32) {
+    match (penned, herd.corralled_at) {
+        (true, pen) => (pen.unwrap_or(herd.current_pos), herd.pen_radius),
+        (false, _) => (herd.current_pos, herd.graze_range_radius(def)),
     }
 }
 
@@ -2636,6 +2660,7 @@ fn ecological_carrying_capacity(
     width: u32,
     height: u32,
     wrap: bool,
+    at: CapacityStanding,
 ) -> Option<f32> {
     // **Diet branches the ONE K seam** (Predators Phase 1a). A carnivore's food layer is *other herds*
     // (the prey index), not the per-tile `GrazeRegistry` — so it ignores graze / `fodder_per_biomass`
@@ -2647,7 +2672,7 @@ fn ecological_carrying_capacity(
     if herd.fodder_per_biomass <= 0.0 || graze.is_empty() {
         return None;
     }
-    let (anchor, radius) = herd_footprint(herd, def);
+    let (anchor, radius) = herd_footprint_at(herd, def, at.penned);
     let range = hex_range_tiles(anchor, radius, width, height, wrap);
     let mut flow = 0.0;
     for tile in range {
@@ -2676,7 +2701,101 @@ fn ecological_carrying_capacity(
     // in (which scale the *rate*, not the *ceiling*). Applied to the FINAL range-derived K, so a wild
     // herd's `×1.0` leaves this byte-identical; recomputed fresh each turn from `flow`, so it is
     // idempotent (never a compounding read of the already-scaled field).
-    Some(flow / herd.fodder_per_biomass * herd_density_gain(herd, fauna))
+    Some(flow / herd.fodder_per_biomass * herd_density_gain(&at.standing, herd, fauna))
+}
+
+/// **THE RUNG A CAPACITY READING IS STRUCK AT** — the two things [`ecological_carrying_capacity`]
+/// takes off the husbandry ladder rather than off the land: *where does this herd stand* (which
+/// [`herd_density_gain`]) and *is it behind a fence* (which [`herd_footprint_at`]).
+///
+/// It exists so the **live** `K` and the **destination** `K` are the same call with a different
+/// standing. The pair is carried together because they are not independent — a herd at
+/// `animal:pen` is by construction fenced — but they are not derivable from each other either: a
+/// fixture may seat a position without anchoring a pen, and the live reading must keep answering
+/// off `corralled_at` the way it always has.
+#[derive(Debug, Clone, Copy)]
+struct CapacityStanding {
+    /// The ladder standing the per-rung gain is interpolated on.
+    standing: RungStanding,
+    /// Whether the reading is taken over a **fenced footprint** rather than a roam range.
+    penned: bool,
+}
+
+impl CapacityStanding {
+    /// **WHERE THE HERD STANDS NOW** — the live reading `advance_herds` writes. `penned` is
+    /// `corralled_at`, which is what the footprint seam has always branched on.
+    fn live(herd: &Herd) -> Self {
+        Self {
+            standing: herd.standing(),
+            penned: herd.corralled_at.is_some(),
+        }
+    }
+
+    /// **WHERE THE HERD WILL STAND ONCE IT ARRIVES AT `rung`.** A pen already built stays a pen (a
+    /// destination cannot un-fence a herd), so the fencing is *either* — which is also what keeps an
+    /// `extend_pen` entry, whose destination is the rung it already holds, reading over its fence.
+    fn arrived_at(rung: RungKey, herd: &Herd) -> Self {
+        Self {
+            standing: RungStanding::arrived_at(rung),
+            penned: herd.corralled_at.is_some() || rung.is_at_or_above(RungKey::AnimalPen),
+        }
+    }
+}
+
+/// **THE RULE THAT TURNS A COMPUTED `K` INTO THE ONE A HERD ACTUALLY CARRIES**, stated once so the
+/// live write and the destination quote cannot apply different ones:
+///
+/// - the seam answering `None` — a **non-grazing** species or an absent graze layer — keeps the
+///   herd's frozen constant `K`, and a rung therefore buys it nothing;
+/// - a **penned** herd on a wholly-barren footprint (`Some(0)`) likewise keeps it, Grazing 2d §2.3's
+///   "a rock pen holds its herd on the granary" — crushing a pen to zero is the state that guard
+///   exists to prevent.
+///
+/// `standing_capacity` is what the herd is carrying today, which is what both arms fall back to.
+fn settled_capacity(computed: Option<f32>, penned: bool, standing_capacity: f32) -> f32 {
+    match computed {
+        Some(k) if !(penned && k <= 0.0) => k,
+        _ => standing_capacity,
+    }
+}
+
+/// **THE CAPACITY THIS HERD WILL CARRY AT THE RUNG ITS BUILD IS HEADING FOR** — `None` when no band
+/// has queued it, because then there is **no destination to quote**, which is a different statement
+/// from a capacity of zero (a barren range, which is a real reading a real herd can have).
+///
+/// # ⛔ IT IS THE ONE `K` SEAM AT A SECOND STANDING — never a second formula
+///
+/// [`ecological_carrying_capacity`] is the only place `herd.carrying_capacity` is written, and this
+/// calls **it**, with [`CapacityStanding::arrived_at`] in place of the live standing and
+/// [`settled_capacity`] applying the same write rule. So the number advertised while the build runs
+/// is the number the herd is handed when it lands.
+///
+/// **The rung moves; the land does not.** The flow is summed over the graze as it stands **today**,
+/// exactly as the live `K` is — a projection of a future range would be inventing pasture. So this
+/// answers *"what would this herd hold if it stood on that rung right now"*, which is the only
+/// question with an exact answer; the delivered figure differs by however much the land itself moved
+/// in the meantime, the same way the live `K` moves turn to turn.
+///
+/// **The pen leg projects its FOOTPRINT too** ([`herd_footprint_at`]), because a Corral does not
+/// merely multiply the range's `K` by `pen_density` — it swaps a roam range for a fenced one.
+#[allow(clippy::too_many_arguments)]
+pub fn herd_destination_capacity(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    graze: &GrazeRegistry,
+    prey: &[PreyDatum],
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Option<f32> {
+    let destination = herd.build_destination?;
+    let at = CapacityStanding::arrived_at(destination, herd);
+    Some(settled_capacity(
+        ecological_carrying_capacity(herd, def, graze, prey, fauna, width, height, wrap, at),
+        at.penned,
+        herd.carrying_capacity,
+    ))
 }
 
 /// **A carnivore's prey-limited carrying capacity** (Predators Phase 1a) — the trophic transpose of
@@ -9889,8 +10008,8 @@ mod tests {
         // **THE PRECONDITION** — wild and pastoral must differ on both axes, or "between" is a
         // statement about one number and the test passes when the ladder collapses.
         let (wild_density, tame_density) = (
-            herd_density_gain(&wild, &fauna),
-            herd_density_gain(&tame, &fauna),
+            herd_density_gain(&wild.standing(), &wild, &fauna),
+            herd_density_gain(&tame.standing(), &tame, &fauna),
         );
         let (wild_r, tame_r) = (
             herd_ecology(&wild, &fauna).regrowth_rate,
@@ -9907,7 +10026,7 @@ mod tests {
              against {wild_r})"
         );
 
-        let half_density = herd_density_gain(&half, &fauna);
+        let half_density = herd_density_gain(&half.standing(), &half, &fauna);
         assert!(
             half_density > wild_density && half_density < tame_density,
             "a half-tamed herd's ceiling sits between the two: {half_density} in \
@@ -9950,13 +10069,15 @@ mod tests {
             "fixture: and they must be different positions"
         );
 
-        let pastoral_density = herd_density_gain(&herd_at(WHOLLY_TAMED).0, &fauna);
+        let wholly_tamed = herd_at(WHOLLY_TAMED).0;
+        let pastoral_density = herd_density_gain(&wholly_tamed.standing(), &wholly_tamed, &fauna);
         assert!(
-            (herd_density_gain(&nearly, &fauna) - pastoral_density).abs() < 1e-4,
+            (herd_density_gain(&nearly.standing(), &nearly, &fauna) - pastoral_density).abs()
+                < 1e-4,
             "a fence 99% up buys NOTHING — the herd holds what a pastoral herd holds"
         );
         assert!(
-            herd_density_gain(&closed, &fauna) > pastoral_density,
+            herd_density_gain(&closed.standing(), &closed, &fauna) > pastoral_density,
             "…and the last percent buys all of it"
         );
 
@@ -9992,8 +10113,8 @@ mod tests {
             herd_upkeep_demand(&tame, &fauna, &ladder),
         );
         let benefit_span = (
-            herd_density_gain(&wild, &fauna),
-            herd_density_gain(&tame, &fauna),
+            herd_density_gain(&wild.standing(), &wild, &fauna),
+            herd_density_gain(&tame.standing(), &tame, &fauna),
         );
         assert!(
             cost_span.1 > cost_span.0 && benefit_span.1 > benefit_span.0,
@@ -10005,7 +10126,8 @@ mod tests {
             let (herd, _, _) = herd_at(fraction);
             let cost_share = (herd_upkeep_demand(&herd, &fauna, &ladder) - cost_span.0)
                 / (cost_span.1 - cost_span.0);
-            let benefit_share = (herd_density_gain(&herd, &fauna) - benefit_span.0)
+            let benefit_share = (herd_density_gain(&herd.standing(), &herd, &fauna)
+                - benefit_span.0)
                 / (benefit_span.1 - benefit_span.0);
             assert!(
                 (cost_share - benefit_share).abs() < 1e-4,
