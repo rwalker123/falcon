@@ -185,7 +185,7 @@ fn under_herded_edge_state_rewinds_on_rollback() {
     // `advance_husbandry` latches `under_herded = true`.
     let herd_id = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry.herds.iter_mut().next().expect("a herd spawned");
+        let herd = registry.herds.first_mut().expect("a herd spawned");
         herd.owner = Some(FactionId(0));
         herd.set_ladder_position(
             core_sim::FABRICATED_BUILD_COST,
