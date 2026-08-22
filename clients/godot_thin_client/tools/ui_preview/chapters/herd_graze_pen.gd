@@ -356,8 +356,23 @@ func _self_feeding_pen_herd_fixture() -> Dictionary:
 	return fixture
 
 ## The SAME pen mid-EXTENSION (Grazing 2d-γ): the keeper is fencing the next ring, so
-## `pen_extend_progress` is 0.6 and `_build_herd_assign_controls` replaces the "Extend pen" button with
-## a WARN-amber "Fencing 60%" badge. Partial pasture (60%) so the feed-split reads "60% · larder N.N".
+## `_build_herd_assign_controls` replaces the "Extend pen" button with a WARN-amber "Fencing 60%"
+## badge. Partial pasture (60%) so the feed-split reads "60% · larder N.N".
+##
+## **THE RING METER IS A WORK PAIR, NOT A FRACTION.** `pen_extend_progress` banks WORK against
+## `pen_extend_cost` (both stamped by the sim's accrual seam), so the fixture states the pair and the
+## rendered percentage is the client's own division of it. It read `0.6` alone while the field was
+## normalized, which is exactly the state that rendered `Fencing 6900%` in play once the sim moved to
+## work units — a fixture holding the fraction would have kept the frame looking right.
+const PEN_RING_WORK_COST := 70.0
+
+const PEN_RING_WORK_DONE := 42.0        # 42 / 70 == 60%, a clean fraction the PNG shows outright
+
+## …and the percentage that pair IS, stated as the ANSWER rather than re-derived through the division
+## under test: an assertion that recomputes the code's own expression passes at any scale factor.
+## `Fencing 4200%` (the reported defect's shape) and `Fencing 0%` (an unpriced ring) both fail here.
+const PEN_RING_PERCENT := 60
+
 func _extending_pen_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.domesticated_herd_fixture()
 	fixture["pen_radius"] = 1
@@ -368,8 +383,48 @@ func _extending_pen_herd_fixture() -> Dictionary:
 	# Invariant: gross(1.74) × pasture(0.6) + hay(0) + larder(0.696) == gross(1.74).
 	fixture["pen_larder_bill"] = 0.696
 	fixture["pen_hay_food"] = 0.0
-	fixture["pen_extend_progress"] = 0.6
+	fixture["pen_extend_progress"] = PEN_RING_WORK_DONE
+	fixture["pen_extend_cost"] = PEN_RING_WORK_COST
 	return fixture
+
+
+## **THE BADGE QUOTES THE PAIR, NOT THE NUMERATOR.** Reported from play as `Fencing 6900%`: the ring
+## meter moved from a normalized `0..1` fraction to WORK UNITS and the badge kept scaling the raw field
+## by 100. The claim is the NUMBER, on both the pill and its hover — a presence check would have passed
+## throughout the defect's life.
+func _assert_fencing_badge_quotes_the_work_pair() -> void:
+	# **BOTH SITES, and that is why the claim is made twice.** The builder and the in-place patch
+	# (`_update_extend_pen_control`, taken on a re-render of the SAME shape) are a known drift pair —
+	# they were two open-coded copies of the same wrong multiplication — so the second render is what
+	# says the patch path goes through the same helper.
+	_assert_fencing_badge_reads(PEN_RING_PERCENT)
+	h._hud._drawercompose.build_herd_drawer_actions(_extending_pen_herd_fixture())
+	_assert_fencing_badge_reads(PEN_RING_PERCENT)
+
+func _assert_fencing_badge_reads(percent: int) -> void:
+	var badge := _fencing_badge()
+	if badge == null:
+		h._fail("no Fencing badge rendered on the extending pen — nothing to judge")
+		return
+	h._assert_hud("the fence ring's badge divides banked work by the ring's cost (\"%s\")" % badge.text,
+		badge.text == HudComposeVocab.PEN_FENCING_LABEL % percent)
+	h._assert_hud("…and its hover spends the room the pill has not got on the WORK PAIR (\"%s\")"
+			% badge.tooltip_text,
+		badge.tooltip_text == HudSelectionVocab.BUILD_METER_WORK_FORMAT % [
+			HudComposeVocab.PEN_FENCING_VERB,
+			DetailFormat.format_work_units(PEN_RING_WORK_DONE),
+			DetailFormat.format_work_units(PEN_RING_WORK_COST), percent])
+
+## The WARN-amber pill `_build_extend_pen_control` puts in the herd drawer's action row, or `null`
+## while the pen offers its "Extend pen" button instead.
+func _fencing_badge() -> Label:
+	var host: Node = h._hud._drawercompose._herd_assign_controls
+	if host == null:
+		return null
+	for child in host.get_children():
+		if child is Label and (child as Label).text.begins_with(HudComposeVocab.PEN_FENCING_VERB):
+			return child as Label
+	return null
 
 ## A FODDERED pen (Flora roster F3): the pen knows Foddering and drew hay, so its feed is a THREE-way
 ## split, all food units. GROSS demand `pen_upkeep` = 2.0 partitions into: pasture 40%
@@ -654,15 +709,16 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_pen_self_feeding")
 
-	# State 2d-γ extending pen — the SAME pen mid-extension (`pen_extend_progress` 0.6): the keeper is
-	# fencing the next ring, so the "Extend pen" button is replaced by a WARN-amber "Fencing 60%" badge
-	# (the pen twin of the corral-build "Building N%" meter). Partial pasture → "Fed by pasture 60% ·
-	# larder 0.7 food/turn".
+	# State 2d-γ extending pen — the SAME pen mid-extension (42 of 70 work banked toward the ring): the
+	# keeper is fencing the next ring, so the "Extend pen" button is replaced by a WARN-amber
+	# "Fencing 60%" badge (the pen twin of the corral-build "Building N%" meter). Partial pasture →
+	# "Fed by pasture 60% · larder 0.7 food/turn".
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_extending_pen_herd_fixture())
 	h._compose_herd(_extending_pen_herd_fixture())
 	await h._settle()
 	await h._save("herd_pen_extending")
+	_assert_fencing_badge_quotes_the_work_pair()
 
 	# State F3 foddered pen — the honest THREE-way feed split. The pen drew hay, so its GROSS demand
 	# (`pen_upkeep` 2.0) partitions into pasture 40% (0.80 free) · hay 0.9 (`pen_hay_food`) · larder 0.3

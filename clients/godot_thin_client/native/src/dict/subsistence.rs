@@ -425,13 +425,20 @@ pub(crate) fn herds_to_array(
         //   `pen_pasture_fraction` = the share of the pen's feed its footprint covered (0..1); with
         //                            `pen_upkeep` (the OFFSET larder bill) this drives the "Fed by pasture
         //                            NN% · larder N.N food/turn" split in the herd drawer.
-        //   `pen_extend_progress`  = the in-flight fence ring's build meter (0..1) for a "Fencing N%" badge.
+        //   `pen_extend_progress`  = the in-flight fence ring's build meter, in WORK UNITS (the same
+        //                            unit-costed meter `tame_work_done`/`corral_work_done` carry, NOT a
+        //                            0..1 fraction), and
+        //   `pen_extend_cost`      = the work that ring completes at. A "Fencing N%" badge is the
+        //                            QUOTIENT of the two; both read 0 with no ring in flight (and on the
+        //                            turn one is begun, before the sim stamps the cost), so the zero
+        //                            denominator must be guarded — 0/0 is "no ring", not "0%".
         // Read by Hud's herd drawer (feed-split + footprint rows, Extend affordance) and MapView's pen
         // footprint highlight.
         let _ = dict.insert("pen_radius", herd.penRadius() as i64);
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
+        let _ = dict.insert("pen_extend_cost", herd.penExtendCost());
         // `fodder_draw` = the hay this pen drew from its keeper's fodder store last turn (Flora roster
         // F3). NOTE THE UNITS: this is in FODDER units (`fodder_per_biomass × biomass` scale, ~25× the
         // food-unit scale for deer), NOT food-equivalent — so it CANNOT sit in the feed-split row beside

@@ -2433,6 +2433,42 @@ the claim is that the two surfaces AGREE. Sabotage-verified by returning the des
 exactly **six** fail (both readouts × the two-leg sow, the first turn and the animal twin) while the
 single-leg control stays green, printing the played `Sowing 0% · turn 64` and `▦0%`.
 
+### …AND A FENCE RING'S PERCENTAGE IS ITS OWN METER, BECAUSE IT CLIMBS NOTHING
+
+Reported from play. `🐄 Corral Wild Fowl   turn 151 (0%)`, and the percentage never moved for the
+ring's whole life. A pen-extension ring is the one queue entry the leg re-pointing above cannot reach:
+`BuildJob::ExtendPen`'s destination is the pen rung it **widens**, so there is no leg to climb, only
+more of the one the source is already on. The herd reads `Corralled 100%`, `build_verb` answers no rung
+in flight, `RungGates.rung_in_progress` is empty, and the ladder credit the column quotes is therefore
+**structurally zero for every ring, always** — a plausible-looking row with a number that can only be
+zero.
+
+| what | reads |
+|---|---|
+| the row's TITLE | `Corral <herd>` — a ring derives the verb of the rung it widens, and is UNCHANGED |
+| the date | the sim's own ring countdown (`published_ring_turns`) — always correct, and UNCHANGED |
+| the percentage | the RING's meter: `SourceForecast.pen_extend_fraction`, in work units |
+
+- **THE RING IS IDENTIFIED FROM WHAT IS ALREADY ON THE WIRE** — `SourceForecast.BUILD_JOB_EXTEND_PEN`,
+  the `extend_pen` token `snapshot::population::resolved_build_job` publishes in the row's
+  `improvement` slot because a built pen carries no meter for a rung verb to name. No wire field was
+  added for it, and none is needed.
+- **THE MODEL CARRIES THE QUOTIENT, NOT THE ROW** (`build_ring_progress`), resolved in
+  `_work_source_models` where the live herd dict is already in hand — beside the six other build fields
+  and for their reason. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field is
+  meaningful only under the branch `improvement` selects.
+- **IT IS THE SAME DIVISION THE HERD DRAWER'S BADGE QUOTES.** The queue row and the `Fencing N%` pill
+  read one ring through one helper, so they cannot state it two ways — see `labor-ui.md` → "The fence
+  ring's meter is a work pair" for the units and the zero-denominator rule.
+
+Asserted in `band_panel_preview` as `band_panel_queue_ring` on three claims, the first being the
+precondition without which the other two pass for free: that the pen rung is FULL with no rung in
+flight (so the ladder genuinely has nothing to credit), that the face still derives the widened rung's
+verb, and the date column by EQUALITY — which pins the untouched countdown and the ring's own
+percentage in one string. The fixture's pair (30 of 40 work → 75%) deliberately differs from the herd
+drawer's (42 of 70 → 60%), so a row quoting the wrong ring fails on the number rather than coinciding
+with it.
+
 ### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 
 The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't

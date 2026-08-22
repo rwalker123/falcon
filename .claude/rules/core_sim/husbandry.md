@@ -706,6 +706,27 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > **A ring another band's entry was funding stops for that band too**, and the dead entry left behind
 > is retired the next turn by the already-built sweep (`!pen_extending` is a ring's *"already
 > built"*) — see "A DEAD ENTRY PARKS THE POOL FOR EVER" in `intensification.md`.
+
+> #### THE RING METER IS IN WORK UNITS, AND THE WIRE CARRIES ITS DENOMINATOR
+>
+> `pen_extend_progress` is an **absolute work count**, not a `0..1` fraction: it was normalized until
+> `docs/plan_standing_upkeep.md` §4.8 priced improvements in work, and it completes at
+> `pen_extend_cost` — the `animal:pen` rung's own `work_cost`, which `accrue_pen_extension` **stamps
+> on the first worked turn** (`begin_pen_extension` leaves it at `RUNG_UNSTARTED`, and both reset
+> together when the ring lands).
+>
+> **So the pair ships, never the meter alone.** `penExtendProgress` and `penExtendCost` cross to the
+> client from the same herd in the same expression in `snapshot/subsistence.rs`, and a "Fencing N%"
+> badge is their quotient with the zero denominator guarded — `0 / 0` is *"no ring"*, not *"0%"*.
+> The one field on its own is an unscaled work count that a percentage readout renders as nonsense
+> (a 69-unit ring read as *"Fencing 6900%"*), which is what a schema comment still describing a
+> normalized fraction cost. It is the same meter/pile pair `tameWorkDone`/`tameWorkCost` and
+> `corralWorkDone`/`corralWorkCost` already publish, with one difference: those costs are **resolved
+> at capture** so a compose sheet can price an uncommitted build, while this one is the herd's
+> **stamped** cost. Guarded by
+> `build_queue::a_ring_publishes_the_cost_its_progress_completes_at`, which asserts on the encoded
+> snapshot — an arm reading `Herd::pen_extend_cost` in process would pass even with the capture
+> never writing the field.
 - **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; `CorralCommand`
   proto field 38 with its `workers` field `reserved`, `CommandEventKind::Corral`) **queues the
   `Corral`** on the band(s) already hunting the herd standing on that tile — the command form of the

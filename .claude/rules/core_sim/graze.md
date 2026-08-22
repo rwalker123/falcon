@@ -362,16 +362,18 @@ investment worked off over turns, reusing the corral build ladder — no materia
   validation and the mutation can never disagree).
 - **The build ladder** rides the corral-tend branch of `advance_labor_allocation`: while `pen_extending`,
   the keeper's HARVEST is **dipped to the `animal:pen` rung's `yield_fraction_while_building`** (the forgone yield *is* the labor
-  cost of the ring, the same dip the corral *build* pays), and `Herd::accrue_pen_extension` adds
-  that same rung's `progress_per_turn` (0.04 → ~25 turns/ring) to `pen_extend_progress` **after**
-  the take. At `1.0` the ring completes: `pen_radius += 1` (saturating at `pen_radius_max`),
-  `pen_extend_progress` resets, `pen_extending` clears, and a `Corral` feed line fires; the larger
+  cost of the ring, the same dip the corral *build* pays), and `Herd::accrue_pen_extension` banks the
+  builders' work on `pen_extend_progress` **after** the take — in **work units**, against that same
+  rung's own `work_cost`, which it stamps into `pen_extend_cost`. At `pen_extend_cost` the ring
+  completes: `pen_radius += 1` (saturating at `pen_radius_max`), meter and cost reset,
+  `pen_extending` clears, and a `Corral` feed line fires; the larger
   footprint's higher K arrives on the next `advance_herds`. The FEED (larder offset) is unchanged while
   extending — self-feeding and the harvest dip are orthogonal.
 - **Config:** `husbandry.pen_radius_max` (**2** → up to a 19-tile footprint; validated `>= 1`). The only
   new lever. **`pen_extending`** rides the checkpoint alongside `pen_radius` / `pen_extend_progress`,
-  so a rollback rewinds an in-flight extension. `penExtendProgress` on the wire now carries the live ring
-  meter (α left it at 0) for a client "Fencing N%" badge.
+  so a rollback rewinds an in-flight extension. `penExtendProgress` on the wire carries the live ring
+  meter (α left it at 0) and `penExtendCost` its denominator; a client "Fencing N%" badge is the
+  quotient of the two — see "THE RING METER IS IN WORK UNITS" in `husbandry.md`.
 - **Tests:** `grazing_2d_pen::extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max` (the
   ring accrues over ~25 turns, flips `pen_radius` 0→1, K rises with the 7-tile footprint, and caps at
   `pen_radius_max`); `server::tests::extend_pen_*` (the five validation rejections + the happy path).

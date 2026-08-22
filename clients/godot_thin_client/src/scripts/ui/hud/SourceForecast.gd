@@ -110,6 +110,14 @@ const IMPROVEMENT_CORRAL := "corral"
 # webs never share a rung, and read by nothing that needs "all four".
 const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
 const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
+# **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
+# publishes this in the `improvement` slot for a queue entry whose declared job is
+# `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter
+# for a rung verb to name and the entry publishes the command's own name instead. It is therefore
+# absent from `HUNT_IMPROVEMENTS` and from every `FORECAST_BUILD_*_KEYS` table — the ring's meter is
+# the herd's own `pen_extend_progress` / `pen_extend_cost` pair, read by `pen_extend_fraction`. This
+# token is how a reader tells a RING entry from a RUNG entry with what is already on the wire.
+const BUILD_JOB_EXTEND_PEN := "extend_pen"
 # A herd at or above this domestication progress is fully tamed (pastoral); its crew are keepers.
 const DOMESTICATION_COMPLETE := 1.0
 # WHICH KIND OF SOURCE a forecast dict describes, stated explicitly by every `forecast_inputs` caller:
@@ -4251,6 +4259,55 @@ static func build_work_cost(src: Dictionary, prefix: String, improvement: String
     return maxf(float(src.get(
         prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
         BUILD_WORK_COST_NONE)
+
+# ---- THE IN-FLIGHT FENCE RING'S METER -----------------------------------------------------------
+# The two herd-dict keys the ring's meter lives in, BOTH IN WORK UNITS. `pen_extend_progress` is the
+# work banked toward the ring in flight and `pen_extend_cost` is the `animal:pen` rung's own
+# `work_cost`, which `Herd::accrue_pen_extension` stamps beside it while the meter is incomplete.
+# The pair is unprefixed: it rides the raw herd dict `herds_to_array` decodes, which is the same
+# `BARE_FORECAST_PREFIX` source every other herd readout reads.
+const PEN_EXTEND_PROGRESS_KEY := "pen_extend_progress"
+const PEN_EXTEND_COST_KEY := "pen_extend_cost"
+
+# What `pen_extend_fraction` answers for a ring the wire has not priced yet — an EMPTY meter, which
+# is what a ring with nothing banked is.
+const PEN_EXTEND_EMPTY_METER := 0.0
+
+## **WORK BANKED TOWARD THE RING IN FLIGHT**, in work units — the numerator of `pen_extend_fraction`,
+## and the left-hand absolute of the badge's `Fencing N / M work (P%)` hover.
+static func pen_extend_work_done(herd: Dictionary) -> float:
+    return maxf(float(herd.get(PEN_EXTEND_PROGRESS_KEY, 0.0)), 0.0)
+
+## **WHAT THE RING IN FLIGHT COMPLETES AT**, in work units — the `animal:pen` rung's own `work_cost`,
+## stamped on the herd by the sim's accrual seam. `BUILD_WORK_COST_NONE` where no ring has been
+## priced yet.
+static func pen_extend_cost(herd: Dictionary) -> float:
+    return maxf(float(herd.get(PEN_EXTEND_COST_KEY, BUILD_WORK_COST_NONE)), BUILD_WORK_COST_NONE)
+
+## **THE RING'S METER AS A FRACTION — the ONE place that division is written.** Two surfaces quote a
+## ring: the herd drawer's WARN-amber `Fencing N%` badge (and its in-place patch) and the build
+## queue's percentage for an `extend_pen` entry. All of them come through here, so one ring can never
+## be quoted two ways.
+##
+## **`pen_extend_progress` IS WORK, NOT A FRACTION.** It was normalized `0..1` until unit-costed work
+## landed; a reader that still scales it by `PROGRESS_PERCENT_SCALE` prints `Fencing 6900%` off 69
+## banked work units. The denominator is on the wire beside it, so there is nothing to guess.
+##
+## **IT IS NOT A RUNG METER AND HAS NO `FORECAST_BUILD_*_KEYS` ROW.** A ring widens the pen rung its
+## herd already stands on — the herd reads `Corralled 100%` for the ring's whole life — so
+## `improvement_progress` has nothing to answer for it and `build_completion_value`'s ladder credit is
+## structurally zero.
+##
+## **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `Herd::begin_pen_extension` leaves both
+## fields at zero and `accrue_pen_extension` is what stamps the cost, so a ring that has banked no
+## turn yet has no denominator to divide by: `0 / 0` is *no ring*, not `0%` and certainly not `100%`.
+## It answers `PEN_EXTEND_EMPTY_METER` there rather than dividing. The drawer badge additionally gates
+## on `pen_extend_progress > 0`, so it never renders that state at all.
+static func pen_extend_fraction(herd: Dictionary) -> float:
+    var cost := pen_extend_cost(herd)
+    if cost <= BUILD_WORK_COST_NONE:
+        return PEN_EXTEND_EMPTY_METER
+    return clampf(pen_extend_work_done(herd) / cost, 0.0, 1.0)
 
 ## **WHAT THIS IMPROVEMENT'S RUNG COSTS TO HOLD, PER TURN** — the STANDING price of the rung being
 ## quoted, read at the rung being PRICED rather than at the rung the source is billed for today. It

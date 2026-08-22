@@ -688,6 +688,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // this capture, so it reflects the current turn); `pen_extend_progress` is
                 // authoritative `Herd` state (the in-flight ExtendPen ring meter) — here it just
                 // crosses to the client wire alongside it.
+                //
+                // `pen_extend_cost` is that meter's DENOMINATOR, in the same work units, and is read
+                // from the SAME `herd` in the same expression so the pair can never come from two
+                // reads. Both are `0.0` with no ring in flight (and on the turn one is begun, before
+                // `accrue_pen_extension` stamps the cost), which is why the client's percentage has
+                // to guard the zero denominator rather than assume one.
                 pen_radius: herd.map(|herd| herd.pen_radius).unwrap_or(0),
                 pen_footprint_tiles: herd
                     .and_then(|herd| {
@@ -705,6 +711,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(0),
                 pen_pasture_fraction: herd.map(|herd| herd.pen_pasture_fraction).unwrap_or(0.0),
                 pen_extend_progress: herd.map(|herd| herd.pen_extend_progress).unwrap_or(0.0),
+                pen_extend_cost: herd.map(|herd| herd.pen_extend_cost).unwrap_or(0.0),
                 // Husbandry ceiling (Grazing 2d-δ) — the client hides the corral/extend affordance on a
                 // non-`pen` herd and the domestication track on a `wild` one.
                 husbandry_ceiling: herd

@@ -565,6 +565,9 @@ fn create_herds<'a>(
                 // wire). The RESOLVED kit of the winning band's queue entry; `""` when no band has
                 // it queued.
                 buildKitId: Some(build_kit_id),
+                // **The pen ring's DENOMINATOR** — appended last (append-only wire). Rides beside
+                // `penExtendProgress` above in the same work units; `0` with no ring in flight.
+                penExtendCost: herd.pen_extend_cost,
             },
         );
         entries.push(entry);

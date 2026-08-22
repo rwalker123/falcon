@@ -3256,9 +3256,12 @@ table HerdTelemetryState {
   // pasture feeds it for free; 0.0 = a barren footprint pays the full larder bill. With `penUpkeep`
   // the client renders "fed by pasture NN% · larder N/turn". 0.0 if unpenned.
   penPastureFraction:float = 0;
-  // `penExtendProgress` = the in-flight ExtendPen ring's build meter for a "Fencing N%" badge: 0 when
-  // the pen is not extending, otherwise the ring's build progress (0..1, completes at 1.0 → pen_radius
-  // grows by one).
+  // `penExtendProgress` = the in-flight ExtendPen ring's build meter, **in WORK UNITS** — the same
+  // unit-costed meter every other build on this table carries (`tameWorkDone`/`corralWorkDone`), NOT a
+  // 0..1 fraction. It completes at `penExtendCost` below (→ `penRadius` grows by one and both reset to
+  // 0), so a client wanting a "Fencing N%" badge DIVIDES: `penExtendProgress / penExtendCost`, guarding
+  // the 0 denominator. 0 when the pen is not extending — and also on the turn a ring is begun but not
+  // yet worked, which is the same reading as "nothing banked".
   penExtendProgress:float = 0;
   // --- Husbandry ceiling (Grazing 2d-δ, appended last) --- how far up the ladder this species climbs:
   // "wild" (hunt-only) | "pastoral" (tames + roams, never pens) | "pen" (the full ladder). The client
@@ -3879,6 +3882,19 @@ table HerdTelemetryState {
   // `ForagePatchState.buildKitId`; that field carries the whole rationale, including why the wire
   // states the RESOLVED kit rather than the stored one and why there is no second "default" field.
   buildKitId:string;
+
+  // WHAT THE IN-FLIGHT FENCE RING COSTS (appended last, append-only wire) - the DENOMINATOR of
+  // `penExtendProgress` above, in the SAME work units, so the pen ring publishes the pile/meter pair
+  // every other build on this table already does (`tameWorkDone`/`tameWorkCost`,
+  // `corralWorkDone`/`corralWorkCost`). Without it the progress meter is an unscaled work count and a
+  // client rendering it as a percentage quotes nonsense.
+  //
+  // IT IS THE HERD'S STAMPED COST, NOT A LIVE QUOTE - unlike `tameWorkCost`/`corralWorkCost`, which
+  // are resolved at capture so a compose sheet can price a build BEFORE the player commits. The ring
+  // is stamped by the accrual seam on the first worked turn, so this reads 0 both when no ring is in
+  // flight and on the turn one is begun but not yet worked. Read the pair together: `0 / 0` is "no
+  // ring", never "0%".
+  penExtendCost:float = 0;
 }
 
 table CommandEventState {

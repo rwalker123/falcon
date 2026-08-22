@@ -232,9 +232,11 @@ pub struct HerdTelemetryState {
     /// unpenned herd. Appended (append-only).
     #[serde(default)]
     pub pen_pasture_fraction: f32,
-    /// **The in-flight `ExtendPen` ring's build meter** for a "Fencing N%" badge: `0.0` when the pen is
-    /// not extending, otherwise the ring's build progress (`0..1`, completing at `1.0` → `pen_radius`
-    /// grows by one). Appended last (append-only).
+    /// **The in-flight `ExtendPen` ring's build meter, in WORK UNITS** — the same unit-costed meter
+    /// [`Self::tame_work_done`] / [`Self::corral_work_done`] carry, **not** a `0..1` fraction. It
+    /// completes at [`Self::pen_extend_cost`] (→ `pen_radius` grows by one and both reset to `0.0`),
+    /// so a "Fencing N%" badge is `pen_extend_progress / pen_extend_cost` with the zero denominator
+    /// guarded. `0.0` when the pen is not extending. Appended (append-only).
     #[serde(default)]
     pub pen_extend_progress: f32,
     /// **How far up the husbandry ladder this species climbs** (Grazing 2d-δ): `wild` | `pastoral` |
@@ -768,6 +770,18 @@ pub struct HerdTelemetryState {
     /// field, and it is captured live off the winning band's queue. Appended (append-only).
     #[serde(default)]
     pub build_kit_id: String,
+    /// **What the in-flight fence ring costs, in work units** — the *denominator* of
+    /// [`Self::pen_extend_progress`], in the same units, so the pen ring ships the meter/pile pair
+    /// every other build on this row already does.
+    ///
+    /// **It is the herd's STAMPED cost, not a live quote** — the one way it differs from
+    /// [`Self::tame_work_cost`] / [`Self::corral_work_cost`], which resolve at capture so a compose
+    /// sheet can price a build before the player commits. `Herd::accrue_pen_extension` stamps it on
+    /// the first worked turn, so it reads `0.0` both with no ring in flight and on the turn a ring is
+    /// begun. Read the pair together: `0.0 / 0.0` is *"no ring"*, never *"0%"*.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub pen_extend_cost: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -860,6 +874,7 @@ impl Default for HerdTelemetryState {
             // A herd in nobody's queue is being raised with nothing — the "not queued" reading, and
             // a different statement from the roster's own bare kit.
             build_kit_id: String::new(),
+            pen_extend_cost: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }

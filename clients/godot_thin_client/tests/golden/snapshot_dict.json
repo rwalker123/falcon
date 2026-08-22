@@ -1007,6 +1007,7 @@
         }
       ],
       "pastoral_yield": 90.18,
+      "pen_extend_cost": 91.480003,
       "pen_extend_progress": 34.240002,
       "pen_fed_fraction": 2.26,
       "pen_footprint_tiles": 167,
@@ -1132,6 +1133,7 @@
         }
       ],
       "pastoral_yield": 53.27,
+      "pen_extend_cost": 39.439999,
       "pen_extend_progress": 58.25,
       "pen_fed_fraction": 94.949997,
       "pen_footprint_tiles": 24,

@@ -2517,9 +2517,22 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # `Cultivating 18% · turn 83`: the title still names what was ordered, the date is still the whole
     # climb's, and the verb is what makes the percentage attributable to a rung the title does not
     # name. A single-leg entry's leg IS its destination, so it names its own rung unchanged.
+    #
+    # **AND A RING'S PERCENTAGE IS ITS OWN METER, NOT A LADDER CREDIT.** `BuildJob::ExtendPen` widens
+    # the pen rung its herd already stands on, so the entry climbs nothing: the herd reads
+    # `Corralled 100%`, the ladder has no leg in flight to credit, and the column read
+    # `Corral <herd> — turn 151 (0%)` for the ring's entire life. The wire already distinguishes the
+    # two — `resolved_build_job` publishes `extend_pen` rather than a rung verb, because a built pen
+    # carries no meter for a verb to name — so the branch is on the token the model already holds, and
+    # the number it swaps in is `SourceForecast.pen_extend_fraction`'s, the same division the herd
+    # drawer's "Fencing N%" badge quotes. The FACE is untouched: a ring derives the verb of the rung it
+    # widens, which is why the row is still titled `Corral <herd>`. The DATE is untouched too — the sim
+    # publishes a dedicated ring countdown, and only the percentage was ever missing.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
-    var percent := HudFormat.progress_percent(float(model.get("building_progress", 0.0)))
+    var is_ring := String(model.get("improvement", "")) == SourceForecast.BUILD_JOB_EXTEND_PEN
+    var percent := HudFormat.progress_percent(float(model.get(
+        "build_ring_progress" if is_ring else "building_progress", 0.0)))
     var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
         else DetailFormat.build_completion_value(turns, builders, percent,
             _band_labor.current_turn(), String(model.get("building_policy", "")))
@@ -3978,6 +3991,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
+            # **A RING QUOTES ITS OWN METER, BECAUSE THE LADDER HAS NOTHING TO QUOTE FOR IT.** An
+            # `extend_pen` entry widens the pen rung its herd already stands on — there is no leg to
+            # climb, only more of the one the source is already on — so `building` above is empty, the
+            # trio beside this reads `0%`, and it would read `0%` for the ring's whole life. The ring's
+            # real meter is the herd's own `pen_extend_progress` / `pen_extend_cost` pair, in WORK
+            # UNITS, and `SourceForecast.pen_extend_fraction` is the same single division the herd
+            # drawer's "Fencing N%" badge comes through — so the badge and the queue row cannot quote
+            # one ring two ways. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field
+            # is meaningful only under the ring branch that `improvement` selects.
+            "build_ring_progress": SourceForecast.pen_extend_fraction(live_herd) \
+                if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
+                else SourceForecast.PEN_EXTEND_EMPTY_METER,
             # **WHAT THAT RUNG COSTS, BOTH HALVES — the one-off pile and the standing rate.** They ride
             # the model because this is where the raw wire source is in hand, and TWO surfaces spend
             # them: the queue row's tooltip states the job's full price, and the POOLS block reads the

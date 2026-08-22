@@ -1510,6 +1510,7 @@ func _ready() -> void:
 	await _assert_leg_in_flight_first_turn()
 	await _assert_leg_in_flight_single_leg()
 	await _assert_leg_in_flight_animal_twin()
+	await _assert_queue_row_ring_quotes_its_own_meter()
 	# …and the track's own PNG-less claim, for the same reason: a rung row with nothing written on it
 	# renders as a perfectly plausible gap in a card.
 	_assert_rung_track_names_every_offer()
@@ -8600,6 +8601,107 @@ func _assert_leg_in_flight_animal_twin() -> void:
 	# The one PICTURE of the animal twin: `◎35%` on the board row under `Taming 35% · turn N` in the
 	# queue, with the row still titled for the pen it is headed for.
 	await _save("band_panel_queue_leg_animal")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+# ---- THE RING: an entry the LADDER cannot credit at all ----------------------------------------
+#
+# **REPORTED FROM PLAY.** `Corral Wild Fowl — turn 151 (0%)`, and the percentage never moved for the
+# ring's whole life. `BuildJob::ExtendPen`'s destination is the pen rung it WIDENS, so the entry
+# climbs nothing: the herd reads `Corralled 100%`, `build_verb` answers no rung in flight, and the leg
+# credit the column quotes is structurally zero. Its real meter is the herd's own
+# `pen_extend_progress` / `pen_extend_cost` pair, in WORK UNITS — the same pair the herd drawer's
+# `Fencing N%` badge quotes, through the same single division.
+
+const RING_HERD_ID := "ring_pen_herd"
+
+const RING_HERD_TILE := Vector2i(64, 24)
+
+const RING_TURNS := 9
+
+# The ring's meter as a WORK PAIR, and the percentage it IS. The answer is stated rather than
+# re-derived through the division under test, and the pair differs from the herd drawer's fixture
+# (42 / 70) so a row quoting the wrong ring fails on the number rather than coinciding with it.
+const RING_WORK_COST := 40.0
+
+const RING_WORK_DONE := 30.0
+
+const RING_PERCENT := 75
+
+## A BUILT pen with a ring in flight: fully tamed, `Corralled 100%`, and an `extend_pen` entry at the
+## head of its band's queue. `build_legs` is EMPTY because a ring lays none — there is no leg to
+## climb, only more of the one the source is already on — and `build_destination_rung` is the pen
+## rung it widens, which is what keeps the row titled `Corral …`.
+func _ring_herd_fixtures() -> Array:
+	return [{
+		"id": RING_HERD_ID, "species": "Wild Fowl",
+		"x": RING_HERD_TILE.x, "y": RING_HERD_TILE.y,
+		"population": 60, "ecology_phase": "thriving",
+		"husbandry_ceiling": SourceForecast.HUSBANDRY_CEILING_PEN,
+		"domestication": SourceForecast.DOMESTICATION_COMPLETE,
+		"corralled": true, "corral_progress": 1.0,
+		"pen_radius": 1, "pen_footprint_tiles": 7,
+		"pen_extending": true,
+		"pen_extend_progress": RING_WORK_DONE,
+		"pen_extend_cost": RING_WORK_COST,
+		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
+		"build_turns_remaining": RING_TURNS,
+		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
+		"build_legs": [],
+	}]
+
+## The band KEEPING that pen, carrying the wire's own `extend_pen` job token on its row — the one
+## thing that tells a ring entry from a rung entry, and the reason no new wire field is needed.
+func _ring_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 951
+	band["id"] = "Band 21"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"fauna_id": RING_HERD_ID,
+			"target_x": RING_HERD_TILE.x, "target_y": RING_HERD_TILE.y,
+			"improvement": SourceForecast.BUILD_JOB_EXTEND_PEN,
+			"actual_yield": 0.45, "sustainable_yield": 0.45},
+		{"kind": "builders", "workers": 3},
+	]
+	return band
+
+## **THE RING QUOTES ITS OWN METER.** Three claims, and the first is the precondition without which
+## the other two are satisfied for free: the ladder has NOTHING to credit here, so a row still reading
+## the ladder shows `0%` — which is exactly what play reported.
+func _assert_queue_row_ring_quotes_its_own_meter() -> void:
+	_set_forage_patches([])
+	_set_world_herds(_ring_herd_fixtures())
+	_push_bands([_ring_band_fixture()])
+	await _settle()
+	var herd: Dictionary = _hud._band_labor.find_world_herd(RING_HERD_ID)
+	# 1. THE PRECONDITION. The pen rung is FULL and no rung is in flight, so `rung_in_progress` is
+	#    empty and the leg credit the column used to quote is structurally zero.
+	_assert_band_panel("ring — the herd is Corralled with no rung in flight, so the ladder has nothing to credit",
+		SourceForecast.improvement_progress(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+			SourceForecast.IMPROVEMENT_CORRAL) >= SourceForecast.BUILD_METER_FULL
+		and RungGates.rung_in_progress(SourceForecast.LABOR_KIND_HUNT, herd,
+			SourceForecast.BUILD_JOB_EXTEND_PEN).is_empty())
+	var rows := _build_queue_rows()
+	if rows.size() != 1:
+		_fail("ring — the ring board draws %d queue rows to judge, wanted 1" % rows.size())
+		return
+	# 2. THE FACE IS UNTOUCHED. A ring derives the verb of the rung it widens, so the row is still
+	#    titled `Corral <herd>` — the half of this row that was never wrong.
+	var face := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_FACE_META)
+	var drawn_face := "" if face == null else String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META))
+	_assert_band_panel("ring — the row still derives the verb of the rung it widens (\"%s\")" % drawn_face,
+		drawn_face.begins_with(HudFormat.policy_face(SourceForecast.IMPROVEMENT_CORRAL)))
+	# 3. THE DATE AND THE PERCENTAGE, as ONE equality — the sim's ring countdown was always right and
+	#    must not move, and the percentage beside it is the ring's own meter. Asserting them apart
+	#    would let a row state a real date beside a `0%` and pass, which is the reported defect.
+	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META)
+	var drawn_date := "" if date == null else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META))
+	var wanted_date := HudSelectionVocab.RUNG_COMPLETES_FORMAT % [
+		_hud._band_labor.current_turn() + RING_TURNS, RING_PERCENT]
+	_assert_band_panel("ring — the date column reads \"%s\" (got \"%s\")" % [wanted_date, drawn_date],
+		drawn_date == wanted_date)
+	await _save("band_panel_queue_ring")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 

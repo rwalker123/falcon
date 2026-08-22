@@ -4178,6 +4178,37 @@ which is what makes a spent one inert rather than something to clean up.
   `BaseFx.unbuilt(tile)` zeroes both meters, re-prices the absolutes and drops the keeping with the
   rung (a patch on no rung owes nothing, and the demand is a term of the build's pace now).
 
+### THE FENCE RING'S METER IS A WORK PAIR, AND IT IS NOT ON THE RUNG LADDER
+
+A pen-extension ring (`BuildJob::ExtendPen`) has its own meter on the herd dict, and it sits outside
+everything the section above describes: `pen_extend_progress` is the work banked toward the ring in
+flight and `pen_extend_cost` is the `animal:pen` rung's own `work_cost`, which `accrue_pen_extension`
+stamps beside it. **Both are WORK UNITS.** `pen_extend_progress` was a normalized `0..1` fraction
+until `docs/plan_unit_costed_work.md` §4.8, and its readers were not moved with it — 69 banked work
+units scaled by `PROGRESS_PERCENT_SCALE` rendered as **`Fencing 6900%`**, reported from play.
+
+- **`SourceForecast.pen_extend_fraction(herd)` IS THE ONLY PLACE THAT DIVISION IS WRITTEN**, with
+  `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. Two surfaces quote a ring —
+  the herd drawer's WARN-amber `Fencing N%` pill (built by `_build_extend_pen_control`, patched in
+  place by `_update_extend_pen_control`, both through `_apply_fencing_badge`) and the build queue's
+  percentage for a ring entry — and they were two open-coded copies of the same wrong multiplication.
+- **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `begin_pen_extension` leaves both fields
+  at zero and the accrual seam is what stamps the cost, so `0 / 0` is *no ring*: the helper answers an
+  empty meter rather than dividing. The drawer's own gate is on the NUMERATOR
+  (`pen_extend_work_done(herd) > 0`), which is what keeps a declared-but-unaccrued ring out of the
+  badge entirely instead of rendering it as `0%`.
+- **NO `FORECAST_BUILD_*_KEYS` ROW, AND `build_verb` ANSWERS NOTHING FOR IT.** A ring widens the pen
+  rung its herd already stands on, so the herd reads `Corralled 100%` for the ring's whole life and
+  the rung ladder has no meter in flight to report. `extend_pen` is therefore not an
+  `IMPROVEMENT_*` — it is `BUILD_JOB_EXTEND_PEN`, the token
+  `snapshot::population::resolved_build_job` publishes in the wire's `improvement` slot for a ring
+  entry, and the one thing that tells a ring from a rung with what is already on the wire.
+- **THE BADGE STAYS A PERCENTAGE AND THE PAIR RIDES ITS HOVER.** `Fencing 42 / 70 work (60%)` bursts a
+  compact pill in a drawer column, so the hover carries it — through
+  `DetailFormat.build_meter_value`, the house form every other build meter uses, rather than a second
+  spelling. Frame: `herd_pen_extending` (42 of 70 work banked → `Fencing 60%`), asserted on the NUMBER
+  and on both render paths, since a presence check passes throughout the defect's life.
+
 ### CLOSED — the build's PRICE and its turn estimate are on the wire now
 
 This section read *"No build RATE on the wire — `progress_per_turn` is sim-side config, so the

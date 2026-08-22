@@ -1684,8 +1684,15 @@ fn resolve_a_pen_turn(app: &mut App) {
     recapture_snapshot_in_place(&mut app.world);
 }
 
-/// **The herd row's `buildTurnsRemaining`, off the ENCODED buffer.**
-fn published_ring_turns(app: &App, id: &str) -> i32 {
+/// **Read the fixture pen's row off the ENCODED buffer** and hand it to `read`.
+///
+/// One body for every ring readout below, so a **pair** of fields a client divides is decoded from
+/// ONE encode of ONE snapshot — two helpers each doing their own encode could disagree.
+fn with_published_ring<T>(
+    app: &App,
+    id: &str,
+    read: impl FnOnce(shadow_scale_flatbuffers::generated::shadow_scale::sim::HerdTelemetryState) -> T,
+) -> T {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -1697,7 +1704,7 @@ fn published_ring_turns(app: &App, id: &str) -> i32 {
     let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
     let envelope =
         fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
-    envelope
+    let herd = envelope
         .payload_as_snapshot()
         .expect("the envelope carries a snapshot")
         .subsistence()
@@ -1705,8 +1712,32 @@ fn published_ring_turns(app: &App, id: &str) -> i32 {
         .expect("the subsistence section carries the herd list")
         .iter()
         .find(|herd| herd.id().unwrap_or_default() == id)
-        .expect("the fixture pen is on the wire — it is OWNED, which passes the fog gate")
-        .buildTurnsRemaining()
+        .expect("the fixture pen is on the wire — it is OWNED, which passes the fog gate");
+    read(herd)
+}
+
+/// **The herd row's `buildTurnsRemaining`, off the ENCODED buffer.**
+fn published_ring_turns(app: &App, id: &str) -> i32 {
+    with_published_ring(app, id, |herd| herd.buildTurnsRemaining())
+}
+
+/// **The ring's published meter and the cost it completes at**, as one read of one buffer.
+fn published_ring_meter(app: &App, id: &str) -> (f32, f32) {
+    with_published_ring(app, id, |herd| {
+        (herd.penExtendProgress(), herd.penExtendCost())
+    })
+}
+
+/// **What a ring costs, off the shipped ladder** — a ring is priced on the `animal:pen` rung it
+/// widens (`labor.rs`'s `ring_cost`), so a retune moves the fixture with the game.
+fn pen_ring_work_cost() -> f32 {
+    build_test_app()
+        .world
+        .resource::<core_sim::LadderConfigHandle>()
+        .get()
+        .rung(RungKey::AnimalPen)
+        .build_cost(core_sim::RUNG_COST_UNSCALED)
+        .expect("the pen rung builds")
 }
 
 /// **A RING AT THE HEAD PUBLISHES ITS OWN COUNTDOWN, AND POISONS NOTHING BEHIND IT.**
@@ -1740,6 +1771,52 @@ fn a_ring_at_the_head_publishes_a_real_countdown_and_leaves_the_queue_behind_it_
         behind > ring,
         "…and the entry behind it is CHAINED behind the ring ({behind} should follow {ring}), \
          not poisoned by it"
+    );
+}
+
+/// **THE RING'S METER SHIPS WITH ITS DENOMINATOR, AND BOTH ARE IN WORK UNITS.**
+///
+/// `penExtendProgress` was a normalized `0..1` fraction until `docs/plan_standing_upkeep.md` §4.8
+/// priced improvements in **work**; it has been a work COUNT ever since, and the wire went on
+/// publishing it alone. A client multiplying it by 100 rendered **"Fencing 6900%"** for a ring 69
+/// work units in — the meter was right, the denominator was missing.
+///
+/// **Asserted on the ENCODED snapshot**, because an arm reading `Herd::pen_extend_cost` in process
+/// would pass even if the capture never wrote the field — which is the whole defect.
+///
+/// **The pair is checked against the countdown beside it**, not against a hand-written fraction: the
+/// remaining work the published pair implies, over the pool's own supply, is exactly what
+/// `buildTurnsRemaining` says. Two published fields that divide to one another are the proof that
+/// they share units.
+#[test]
+fn a_ring_publishes_the_cost_its_progress_completes_at() {
+    let (mut app, _band, herd_id, _source) = world_with_a_ring_at_the_head(BUILDERS);
+    resolve_a_pen_turn(&mut app);
+
+    let (progress, cost) = published_ring_meter(&app, &herd_id);
+    println!("the ring publishes {progress} of {cost} work units");
+    assert_eq!(
+        cost,
+        pen_ring_work_cost(),
+        "a ring costs what the pen rung it widens costs — the wire must publish THAT, not a \
+         normalized 1.0"
+    );
+    assert!(
+        progress > 0.0 && progress < cost,
+        "one turn of {BUILDERS} builders banks part of the ring, so the published meter is strictly \
+         between nothing and the whole cost: {progress} of {cost}"
+    );
+
+    // The pair divides to the fraction the sim computes — and its remainder, over the bare pool's
+    // own supply, dates the ring exactly as the independently published countdown does.
+    let supply = core_sim::pool_work_supply(BUILDERS, core_sim::NO_BUILD_GEAR);
+    let expected = core_sim::build_turns_remaining(cost, progress, supply)
+        .expect("a staffed pool has a finish date") as i32;
+    assert_eq!(
+        published_ring_turns(&app, &herd_id),
+        expected,
+        "the published meter/cost pair must date the ring the same way the published countdown \
+         does — if they disagree, one of them is in the wrong units"
     );
 }
 

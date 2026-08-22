@@ -1203,6 +1203,17 @@ Sabotage-verified by returning the destination reading: **exactly six fail** —
 two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,
 while the single-leg control stays green.
 
+**A FIFTH STATE SITS BESIDE THEM AND IS NOT ONE OF THE FOUR: `band_panel_queue_ring`**, the pen
+extension the leg re-pointing cannot reach at all. A ring widens the rung its herd already stands on,
+so it has no leg and the ladder credit is structurally zero for its whole life — the row read
+`🐄 Corral Wild Fowl   turn 151 (0%)` in play. Its percentage is the herd's own
+`pen_extend_progress / pen_extend_cost`, and the state carries a PNG because a queue row for a
+completed rung is a shape the four above never render. Three claims, the first a PRECONDITION without
+which the other two pass for free: that the pen rung is full with no rung in flight, that the face
+still names the widened rung's verb, and the date column by EQUALITY. Its fixture pair (30 of 40 work
+⇒ 75%) differs from the herd drawer's `herd_pen_extending` (42 of 70 ⇒ 60%) on purpose, so a row that
+reached for the wrong ring fails on the number instead of coinciding with it.
+
 **`_report_queue_row_columns` PRINTS the row's two columns and both worst cases**, the
 `_report_work_row_name_column` rule one block over: the verb made the date column longer, and what a
 red line there asks for is a design decision. It reads **queue NAME 126px** (the widest shipped face,

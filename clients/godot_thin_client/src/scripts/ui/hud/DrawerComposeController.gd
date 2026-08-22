@@ -2052,11 +2052,16 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
 ## WARN-amber "Fencing N%" badge — the pen twin of the corral-build "Building N%" meter. The server
 ## rejects an extend at max radius / unowned / Herding-unknown with a feed message; the client does
 ## not pre-gate on those (max radius is not on the wire).
+##
+## **THE RING'S METER IS IN WORK UNITS**, banked against `pen_extend_cost` on the same herd dict, so
+## the badge's percentage comes from `SourceForecast.pen_extend_fraction` and never from the raw
+## field. The gate below is still on the NUMERATOR, which is what keeps a declared-but-unaccrued ring
+## (both fields at zero — `begin_pen_extension` sets the flag, `accrue_pen_extension` stamps the cost)
+## out of the badge entirely rather than rendering it as `0%`.
 func _build_extend_pen_control(herd: Dictionary, target: VBoxContainer) -> void:
-    var extend_progress := float(herd.get("pen_extend_progress", 0.0))
-    if extend_progress > 0.0:
+    if SourceForecast.pen_extend_work_done(herd) > 0.0:
         var badge := Label.new()
-        badge.text = HudComposeVocab.PEN_FENCING_LABEL % int(round(extend_progress * HudConst.PROGRESS_PERCENT_SCALE))
+        _apply_fencing_badge(badge, herd)
         badge.add_theme_color_override("font_color", HudStyle.WARN)
         target.add_child(badge)
         return
@@ -4169,7 +4174,7 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
     if not (available or corralled):
         _clear_herd_drawer()
         return
-    var extending := corralled and float(herd.get("pen_extend_progress", 0.0)) > 0.0
+    var extending := corralled and SourceForecast.pen_extend_work_done(herd) > 0.0
     var herd_id := String(herd.get("id", ""))
     var noun := _herd_crew_noun(herd)
     var summary_model: Dictionary = {}
@@ -4243,7 +4248,21 @@ func _herd_actions_shape(herd_id: String, corralled: bool, extending: bool, avai
 func _update_extend_pen_control(node: Node, herd: Dictionary) -> void:
     var badge := node as Label
     if badge != null:
-        badge.text = HudComposeVocab.PEN_FENCING_LABEL % int(round(float(herd.get("pen_extend_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))
+        _apply_fencing_badge(badge, herd)
+
+## **THE BADGE'S WORDS, WRITTEN ONCE FOR THE BUILD PATH AND THE PATCH PATH.** The two are a known
+## drift pair — the builder above and `_update_extend_pen_control` both state the same ring — so the
+## quotient and the hover live here rather than being spelled at each site.
+##
+## **THE FACE IS A PERCENTAGE AND THE HOVER IS THE PAIR.** `SourceForecast.pen_extend_fraction` is the
+## one division of `pen_extend_progress / pen_extend_cost` (both WORK UNITS); the hover states the
+## absolutes through `DetailFormat.build_meter_value`, which is the house form of a build meter, so a
+## ring reads like every other job the player is paying for.
+func _apply_fencing_badge(badge: Label, herd: Dictionary) -> void:
+    var fraction := SourceForecast.pen_extend_fraction(herd)
+    badge.text = HudComposeVocab.PEN_FENCING_LABEL % HudFormat.progress_percent(fraction)
+    badge.tooltip_text = DetailFormat.build_meter_value(HudComposeVocab.PEN_FENCING_VERB,
+        fraction, SourceForecast.pen_extend_work_done(herd), SourceForecast.pen_extend_cost(herd))
 
 ## Patch the `Assign … ▸` button in place: its noun (herders vs hunters can flip as a herd is tamed)
 ## and its primary/ghost lit-while-composing state, without freeing the button (whose `pressed`
