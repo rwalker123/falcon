@@ -12919,6 +12919,13 @@ mod tests {
     /// f32 slack between the seeded forecast (provisions, direct f32 math) and the resolved take
     /// (biomass → fixed-point provisions): different multiplication order + a 1e-6 fixed-point grid.
     const SEED_EPSILON: f32 = 1e-4;
+    /// **HOW FAR THE STEADY HEADLINE MAY MOVE ACROSS THE TURN IT PROJECTED.** `realized` is a window
+    /// average over a **quantised** take, so resolving the turn slides the window and re-phases the
+    /// pulse inside it — a few percent, on a herd whose whole steady rate is a couple of bodies a
+    /// window. The defect the no-jump tests exist for is an order-of-magnitude **lurch** (the arc
+    /// opened on an 8× disagreement between the headline and the compose sheet), which this refuses
+    /// with two digits to spare.
+    const REALIZED_NO_JUMP_FRACTION: f32 = 0.10;
     /// Side of the square tile grid the seeding tests build.
     const GRID: u32 = 3;
     /// The biome the harness grid stands on — grassland, matching the `FoodModule::SavannaGrassland`
@@ -13079,8 +13086,22 @@ mod tests {
     }
 
     /// Resolve one turn of labor (the only system that used to write yield telemetry).
+    /// **One turn of Logistics, then the Population labor arm** — the two stages a seeded row spans.
+    ///
+    /// The seed is a **pre-commit** forecast: it prices the source as the *next* take will find it,
+    /// one Logistics regrowth on (`forage::next_turns_stand` / `fauna::next_turns_quarry`), because
+    /// every production reader of it sits after the Population take. A harness that ran the labor arm
+    /// alone would compare the quote against a turn whose regrowth never happened, and the difference
+    /// would be exactly the growth — so *"no jump"* would be asserting the wrong thing.
     fn resolve_labor(app: &mut bevy::prelude::App) {
         use bevy_ecs::system::RunSystemOnce;
+        app.world.run_system_once(core_sim::advance_forage_regrowth);
+        {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            for herd in app.world.resource_mut::<HerdRegistry>().herds.iter_mut() {
+                *herd = core_sim::next_turns_quarry(herd, &fauna);
+            }
+        }
         app.world
             .run_system_once(core_sim::advance_labor_allocation);
     }
@@ -13424,10 +13445,23 @@ mod tests {
 
     /// **Hunt, no jump — the STEADY `realized` projection is a pure function of state.** The
     /// assign-time seeded `realized` is the forward projection off `hunt_forecast`'s herd, and the
-    /// first resolved turn recomputes the identical projection from the identical (unchanged) herd
-    /// state — so the headline "Food /turn" does not move at all between compose-time and the first
-    /// resolved turn, even though `actual` (the lumpy kill) may. Asserted as exact equality, the true
-    /// no-jump restored by the forward-projection definition.
+    /// first resolved turn recomputes the same projection from the herd the turn left behind — so
+    /// the headline "Food /turn" is steady between compose-time and the first resolved turn, even
+    /// though `actual` (the lumpy kill) may pulse.
+    ///
+    /// # ⛔ IT IS A SLIDING WINDOW OVER A QUANTISED TAKE, SO "STEADY" IS NOT BIT-FOR-BIT
+    ///
+    /// `project_realized_hunt` averages `yield_average_horizon_turns` simulated turns, each of them
+    /// `regrow → take`, and each take lands in **whole animals**. The seed's window opens on the turn
+    /// about to be resolved; the resolved row's opens on the one after it, because the turn in
+    /// between actually happened — so the window slides, the pulse inside it re-phases, and the herd
+    /// the second window starts from is the one the turn left. What must not happen is a **lurch**,
+    /// which is what [`REALIZED_NO_JUMP_FRACTION`] bounds.
+    ///
+    /// **The exact equality it replaced was an artifact of a frozen harness** — see [`resolve_labor`]
+    /// — where the standing room quantised to zero whole animals, nothing was taken, and the herd the
+    /// second projection started from was byte-identical to the first. A harness that resolves the
+    /// turn the row is about cannot reproduce that, and should not.
     #[test]
     fn resolved_hunt_realized_equals_the_seeded_realized() {
         let mut app = build_test_app();
@@ -13447,9 +13481,9 @@ mod tests {
         let resolved = source_realized(&app, band);
 
         assert!(
-            (resolved - seeded).abs() < SEED_EPSILON,
-            "the forward-projected realized is a pure function of state, so seed == first resolved \
-             (seed {seeded}, resolved {resolved})"
+            (resolved - seeded).abs() <= seeded * REALIZED_NO_JUMP_FRACTION + SEED_EPSILON,
+            "the forward-projected realized is steady across the turn it projected — it may re-phase \
+             by a body, it may not lurch: seed {seeded}, resolved {resolved}"
         );
     }
 
@@ -13491,8 +13525,21 @@ mod tests {
         );
     }
 
-    /// **A barren source still reads `+0.00`.** The seed is a forecast, not a fiction: a patch with no
-    /// biomass yields nothing, so `+0.00` stays reachable — and correct — there.
+    /// **A barren source still reads `+0.00`.** The seed is a forecast, not a fiction: ground that
+    /// grows nothing yields nothing, so `+0.00` stays reachable — and correct — there.
+    ///
+    /// # ⛔ A STRIPPED STAND IS NOT BARREN GROUND, AND THE FIXTURE HAS TO SAY WHICH IT MEANS
+    ///
+    /// The fixture used to be a patch at **zero biomass on ordinary ground**, which is *not* a source
+    /// that yields nothing: `forage::regrow_patch` lifts a depleted stand to its reseed floor and
+    /// regrows it, so the very next gather takes a real harvest — and the seeded row prices the turn
+    /// the take runs on (`forage::next_turns_stand`), which is that one. Quoting `0` there would be
+    /// the fiction this test exists to forbid, and the `realized` headline on the same row has always
+    /// said so (`project_realized_forage` regrows first too).
+    ///
+    /// So the barren case is stated as barren **ground** — no carrying capacity, nothing to reseed
+    /// from — which is the state `capacity_by_biome`'s `NO_FORAGE_CAPACITY` names and the one where
+    /// `+0.00` is the honest answer at every horizon.
     #[test]
     fn a_barren_source_seeds_zero() {
         let mut app = build_test_app();
@@ -13500,6 +13547,13 @@ mod tests {
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
         seed_patch_with_biomass(&mut app, coord, 0.0, EcologyPhase::Collapsing);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry
+                .patch_mut(coord)
+                .expect("the fixture seeded a patch");
+            patch.carrying_capacity = core_sim::NO_FORAGE_CAPACITY;
+        }
         let band = spawn_idle_band(&mut app, faction, tile);
 
         assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);

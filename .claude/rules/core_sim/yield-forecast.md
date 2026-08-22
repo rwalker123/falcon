@@ -489,6 +489,26 @@ projection* is the sustained MSY. Pinned by
 
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:
+
+> #### ⛔ AND `actual` MEANS THE TAKE AFTER THE **NEXT** LOGISTICS, NOT AGAINST TODAY'S STOCK
+>
+> A forecast is read between turns — the query answers a client, the capture publishes in the
+> Snapshot stage — so every caller sees the source **after** the Population take. Priced against that
+> stock the forecast is a whole turn stale, and on a worked source the staleness is the entire take.
+> So `hunt_forecast` and `forage_forecast` resolve **both** stock terms off the regrow-first
+> projection (`fauna::next_turns_quarry` / `forage::next_turns_stand`), which is what makes the
+> identity hold on a source sitting at its floor. `fauna.md` → "A FORECAST REGROWS FIRST" carries the
+> mechanism and the play autopsies.
+>
+> **Both terms, or neither.** Threading only the growth forward leaves the escapement arm stale and
+> the identity still broken, one term smaller.
+>
+> **What this costs a harness:** a fixture that freezes a stock and reads a forecast is quoting a turn
+> the sim has not run. It must resolve a turn in stage order (Logistics → Population) or quote the
+> forecast **before** the regrowth. Two fixture shapes stopped being available with it — a bit-for-bit
+> equality between a seeded and a resolved realized yield (its old pass came from a frozen herd taking
+> nothing; it is bounded now), and *"a stripped patch is barren"*, since a stripped patch reseeds and
+> pays next turn. Barren has to mean barren **ground**.
 - forage (`forage.rs`): `forage_escapement_ceiling` (the stock standing above the floor, in biomass — **no dip**) · `forage_per_worker_biomass`
   (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
   `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both

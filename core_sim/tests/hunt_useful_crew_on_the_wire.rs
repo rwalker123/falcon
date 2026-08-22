@@ -521,7 +521,19 @@ fn bare() -> BandEquipment {
 
 /// [`world_hunting`], with the herd **corralled** before the snapshot is taken.
 fn world_keeping_a_pen(species: &str, wear: BandEquipment) -> App {
-    let mut app = world_hunting(species, wear);
+    world_keeping_a_pen_at(species, wear, STANDING_STOCK, STANDING_STOCK, FLOOR)
+}
+
+/// [`world_keeping_a_pen`] with the herd's stock, its ceiling and the keepers' floor all stated —
+/// the shape a fixture needs when the pen's own ROOM is the term under test.
+fn world_keeping_a_pen_at(
+    species: &str,
+    wear: BandEquipment,
+    biomass: f32,
+    capacity: f32,
+    floor: f32,
+) -> App {
+    let mut app = world_hunting_at(species, wear, biomass, capacity, floor);
     {
         let ladder = core_sim::LadderConfig::builtin();
         let mut registry = app.world.resource_mut::<HerdRegistry>();
@@ -585,14 +597,13 @@ fn pen_plateau(app: &App, wear: &BandEquipment) -> u32 {
                     wear,
                 )
             });
-            let killed = core_sim::quantise_animal_take(
-                production,
-                workers as f32 * carry,
-                herd.body_mass,
-                handling * workers as f32,
-                core_sim::EngagementStop::WhenPackFull,
-            )
-            .killed as f32;
+            // **A RATE, un-floored, exactly as the producer resolves it** — `animals_sparable`
+            // rather than `quantise_animal_take`'s whole-animal `killed`, with the carry arm
+            // un-floored beside it and only its one-body minimum kept (a keeper who cannot haul a
+            // whole beast still walks one out).
+            let killed = core_sim::animals_sparable(production, herd.body_mass)
+                .min((workers as f32 * carry / herd.body_mass).max(ONE_WHOLE_ANIMAL))
+                .min(handling * workers as f32);
             (workers, killed)
         })
         .collect();
@@ -762,5 +773,94 @@ fn big_game_held_at_its_floor_publishes_a_rate_and_a_crew() {
     assert!(
         published_useful_workers(&app) > NO_USEFUL_CREW,
         "a herd paying a real rate must publish a useful-crew cap: {curve:?}"
+    );
+}
+
+/// **THE SMALLEST TAKE A CREW THAT TAKES ANYTHING PUTS ON THE GROUND** — one animal. The sim's own
+/// `ONE_WHOLE_ANIMAL`, restated here because [`pen_plateau`] is a second implementation and a second
+/// implementation that imported the first's constants would be the first.
+const ONE_WHOLE_ANIMAL: f32 = 1.0;
+
+/// **A PEN SPARING LESS THAN A BODY A TURN STILL OFFERS A CREW.**
+///
+/// The stalking rows were un-floored when a Wild Aurochs held at its floor published a curve of
+/// zeroes (`big_game_held_at_its_floor_publishes_a_rate_and_a_crew`); **the pen path was missed**,
+/// and it is the same quantum, the same species and the same sentence — `quantise_animal_take`
+/// returns `killed = 0` for any room under one body, so every crew read `0`,
+/// [`core_sim::hunt_useful_crew`] answered [`NO_USEFUL_CREW`], and the Work board's `+` shut on a pen
+/// whose keepers collect one beast about every two and a half turns.
+///
+/// **The shipped pen fixture cannot see this**: it stands a herd on `STANDING_STOCK` at its own
+/// ceiling, where the room is hundreds of biomass and the floor never bites. So this one is
+/// deliberately **thin** — a stock at its floor, whose one turn of penned regrowth is lighter than
+/// one aurochs — and the precondition below derives that from the herd rather than asserting it of
+/// the seam under test.
+#[test]
+fn a_thin_pen_publishes_a_rate_and_a_crew() {
+    /// The pen's ceiling, and the stock held exactly on the floor below it — sized so one turn of
+    /// the **penned** regrowth is a fraction of a 120-kg body.
+    const PEN_CEILING: f32 = 1_000.0;
+    const ON_THE_FLOOR: f32 = PEN_CEILING * HELD_AT_THE_FLOOR;
+    /// The floor the keepers hold it at.
+    const HELD_AT_THE_FLOOR: f32 = 0.5;
+
+    let mut app = world_keeping_a_pen_at(
+        AUROCHS,
+        stocked(),
+        ON_THE_FLOOR,
+        PEN_CEILING,
+        HELD_AT_THE_FLOOR,
+    );
+
+    {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd is in the registry")
+            .clone();
+        assert!(
+            herd.is_corralled(),
+            "PRECONDITION: the fixture herd must be CORRALLED, or this is the stalking test"
+        );
+        // **The room the take will find** — one Logistics regrowth on, which is the turn a curve is
+        // about — and it must be positive and lighter than one body, or the flooring this test
+        // exists for could not have shown.
+        let room = core_sim::herd_take_room(
+            &core_sim::next_turns_quarry(&herd, &fauna),
+            HELD_AT_THE_FLOOR,
+            &fauna,
+        );
+        assert!(
+            room > 0.0 && room < herd.body_mass,
+            "PRECONDITION: the pen's room ({room}) must be POSITIVE and lighter than one body ({}) \
+             — that is the whole regime this fixture exists in",
+            herd.body_mass
+        );
+        assert_eq!(
+            core_sim::animals_affordable(room, herd.body_mass),
+            0.0,
+            "…and rounded to whole animals it must be exactly zero — the reading that shut the + \
+             gate on a working pen"
+        );
+    }
+
+    // **THE CURVE PAYS A REAL RATE**, which is the sentence the sheet prints.
+    let curve = crew_take_curve(&mut app);
+    let lead = curve
+        .first()
+        .expect("the curve covers the asked crew pool")
+        .1;
+    assert!(
+        lead > 0.0,
+        "one keeper on a pen sparing under a body a turn must still collect a positive RATE, not \
+         nothing: {curve:?}"
+    );
+
+    // **AND THE PUBLISHED CAP OFFERS A CREW**, which is what the Work board's `+` reads.
+    assert!(
+        published_useful_workers(&app) > NO_USEFUL_CREW,
+        "a pen paying a real rate must publish a useful-crew cap: {curve:?}"
     );
 }

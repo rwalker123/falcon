@@ -47,7 +47,30 @@ const TEST_MODULE_MARKER: &str = "#[cfg(test)]";
 ///
 /// Other `src/` files are not scanned: their unit tests assemble worlds by hand, and `mapgen.rs`'s
 /// one caller takes an explicit seed as a parameter.
+///
+/// # ⛔ THE WALK IS RECURSIVE, AND THE SHARED HELPERS ARE WHY
+///
+/// A flat `read_dir` skipped every **subdirectory** of the two suites, and three exist:
+/// `integration_tests/tests/common/`, `integration_tests/tests/fixtures/` and
+/// `core_sim/tests/telling_support/`. `common/mod.rs` is pulled in by every integration test through
+/// `mod common;`, so an offending call added *there* would put the whole suite back on a random map
+/// while this guard stayed green — the fifty-ninth file, arriving through the one door the guard was
+/// not watching.
 fn scanned_sources() -> Vec<(PathBuf, usize)> {
+    /// Every `.rs` under `dir`, at any depth.
+    fn collect_rs(dir: &PathBuf, out: &mut Vec<PathBuf>) {
+        let entries = fs::read_dir(dir).unwrap_or_else(|err| {
+            panic!("the test directory {} is readable: {err}", dir.display())
+        });
+        for path in entries.filter_map(|entry| entry.ok().map(|entry| entry.path())) {
+            if path.is_dir() {
+                collect_rs(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
         .parent()
@@ -57,15 +80,9 @@ fn scanned_sources() -> Vec<(PathBuf, usize)> {
         manifest.join("tests"),
         workspace.join("integration_tests/tests"),
     ] {
-        let entries = fs::read_dir(&dir).unwrap_or_else(|err| {
-            panic!("the test directory {} is readable: {err}", dir.display())
-        });
-        scanned.extend(
-            entries
-                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-                .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
-                .map(|path| (path, 0usize)),
-        );
+        let mut found = Vec::new();
+        collect_rs(&dir, &mut found);
+        scanned.extend(found.into_iter().map(|path| (path, 0usize)));
     }
     scanned.sort();
 
@@ -150,6 +167,32 @@ fn the_guard_would_catch_an_offender() {
     assert!(
         prose.trim_start().starts_with("//"),
         "the comment exemption must key off the line, not off the token"
+    );
+
+    // **AND THE WALK REALLY DESCENDS.** The suites' shared helpers live in subdirectories
+    // (`integration_tests/tests/common/`, `.../fixtures/`, `core_sim/tests/telling_support/`), and a
+    // flat `read_dir` — which is what this guard had — reads as a full scan while silently missing
+    // every one of them. Asserted by *depth* rather than by naming a directory, so moving or
+    // renaming a helper module cannot quietly turn the walk flat again.
+    let roots = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core_sim sits in the workspace root")
+            .join("integration_tests/tests"),
+    ];
+    let nested = scanned_sources()
+        .into_iter()
+        .filter(|(path, _)| {
+            roots.iter().any(|root| {
+                path.starts_with(root) && path.parent().is_some_and(|parent| parent != root)
+            })
+        })
+        .count();
+    assert!(
+        nested > 0,
+        "the walk must descend into the suites' subdirectories — a shared `common/mod.rs` is the \
+         one file whose offence would reach every integration test at once"
     );
 
     // **AND THE MIXED FILE IS ACTUALLY NARROWED, NOT SKIPPED.** `server.rs` is the one source whose

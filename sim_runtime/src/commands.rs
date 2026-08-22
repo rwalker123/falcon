@@ -513,6 +513,11 @@ pub mod query_error {
     pub const INVALID_FLOOR: &str = "invalid_floor";
     /// A party of zero. There is no raid to project, so there is no answer to give.
     pub const INVALID_PARTY: &str = "invalid_party";
+    /// A crew-take query asking about more workers than any band could field. The reply is one row
+    /// per crew, so the ask is linear in that number and an unbounded one is a wedged command thread
+    /// rather than a large answer. Refused, never clamped — the same rule an out-of-range floor
+    /// follows, for the same reason: a clamp answers a question nobody asked.
+    pub const INVALID_CREW: &str = "invalid_crew";
 }
 
 /// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s

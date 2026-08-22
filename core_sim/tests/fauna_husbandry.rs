@@ -4580,7 +4580,60 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
         Some(Improvement::Corral),
         "but the pen's meter is at zero, so climbing to it is still the player's to say"
     );
+
+    // (4) **PART-FENCED — the case the `on_completion` rung made unreachable.**
+    //
+    // `animal:pen` is `partial_credit: on_completion`, so `RungStanding::credit` is pinned to zero
+    // at every position short of a finished fence. The pen arm tested exactly that credit, so a herd
+    // with real work banked on its fence and **no live declaration** — what `banking.declared_on`
+    // answers once the queue entry is gone — derived no verb at all, where the retired
+    // `corral_progress > 0` walk answered `Corral`. The three cases above are all pastoral or
+    // complete, so none of them could see it.
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let pen_base = {
+            let herd = herd_of(&app, &id);
+            herd.rung_cost(core_sim::RungKey::AnimalPastoral, &ladder)
+        };
+        let pen_cost = herd_of(&app, &id).rung_cost(core_sim::RungKey::AnimalPen, &ladder);
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.set_ladder_position(pen_base + pen_cost * HALF_A_FENCE, &ladder);
+    }
+    let part_fenced = herd_of(&app, &id);
+
+    // **THE PRECONDITION** — the state really is part-fenced, and the credit really is zero, or the
+    // arm under test is being asked an easier question than the defect was.
+    assert_eq!(
+        part_fenced.standing().raising,
+        Some(core_sim::RungKey::AnimalPen),
+        "fixture: the herd must be raising the pen"
+    );
+    assert_eq!(
+        part_fenced.standing().credit,
+        core_sim::NO_RUNG_CREDIT,
+        "fixture: an `on_completion` rung in flight is worth nothing — which is why the verb cannot \
+         be derived from the credit"
+    );
+    assert!(
+        !part_fenced.corral_meter_full(),
+        "fixture: the fence must be unfinished, or the herd is maintaining"
+    );
+
+    assert_eq!(
+        core_sim::herd_build_verb(&part_fenced, None),
+        Some(Improvement::Corral),
+        "a pen with work banked on it declares its own rung, with no declaration to lean on"
+    );
+    assert_eq!(
+        core_sim::herd_build_verb(&part_fenced, Some(Improvement::Tame)),
+        Some(Improvement::Corral),
+        "…and it governs a stale `Tame` beside it — a pen with work on it is the rung in flight"
+    );
 }
+
+/// Half-way up the pen rung — a fence with real work in it and real work left.
+const HALF_A_FENCE: f32 = 0.5;
 
 /// **WHAT ONE OF A BAND'S ANIMAL KEEPERS SUPPLIES PER TURN** — its bare `PER_WORKER_OUTPUT` plus
 /// whatever the derived `husbandry` kit delivers (`docs/plan_standing_upkeep.md` §4.8: one supply
@@ -4888,5 +4941,111 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
         "…so the flock beside it is still paid in full — {} of {}",
         open.holding_supplied,
         open.holding_demand
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE GRACE AND THE PRESSURE ARE ONE PREDICATE (`fauna::herd_is_neglected`)
+// ---------------------------------------------------------------------------------------------
+
+/// **Staffing that leaves a tenth of the flock unheld** — under the whole-animal gate on a small
+/// herd, over it on a large one. The whole fixture is that one fraction read at two herd sizes.
+const NINETY_PERCENT_KEPT: f32 = 0.9;
+
+/// **A flock small enough that a tenth of it is less than one animal.** Three head at 10% short is
+/// `0.3` of an animal, which `uncontained_overage` correctly answers `None` for: you cannot lose
+/// three tenths of a rabbit.
+const A_THREE_HEAD_FLOCK: f32 = 3.0;
+
+/// **…and one big enough that the same tenth is ten whole animals** — the state the herd crosses
+/// into, where the shed genuinely arms.
+const A_HUNDRED_HEAD_FLOCK: f32 = 100.0;
+
+/// Turns of faithful 90% keeping before the flock grows. Long enough that a pressure meter rising
+/// `+0.1` a turn would reach the region where `(1 + escape_acceleration)^pressure` clamps the shed
+/// rate to `1.0` — which is what the defect did.
+const A_LONG_SERVICE: u32 = 300;
+
+/// **⛔ A HERD NEVER ONCE UNDER-CONTAINED CANNOT ACCUMULATE NEGLECT — the grace and the pressure are
+/// one predicate.**
+///
+/// `Herd::neglect_turns` rises only when [`uncontained_overage`] leaves **a whole animal** unheld;
+/// `Herd::neglect_pressure` rose on any positive shortfall fraction at all, decayed only on a turn
+/// the bill was fully met, and had no ceiling. So a **3-head flock kept at 90%** — overage `0.3`,
+/// never under-contained, never shedding, its grace reset every single turn — nevertheless frayed at
+/// `+0.1` a turn for as long as it was kept that way. The pressure is the exponent in
+/// `rate × (1 + escape_acceleration)^pressure`, so the turn that flock finally grew past the
+/// one-animal gate, its first shed fired at a rate three hundred turns of *good* keeping had
+/// multiplied.
+///
+/// Both halves are asserted, and neither is sufficient. The pressure staying at zero is the fix
+/// stated; the shed being **identical** to a herd with no history at all is the consequence a player
+/// feels. The two runs draw the same jitter (the seed is `map_seed ^ tick ^ id`, and these harness
+/// systems advance no tick), so the comparison is exact rather than banded.
+#[test]
+fn ninety_percent_keeping_never_frays_a_herd_below_the_whole_animal_gate() {
+    /// The biomass a herd of `head` animals of this fixture's species stands at.
+    fn flock(app: &App, id: &str, head: f32) -> f32 {
+        herd_of(app, id).body_mass * head
+    }
+
+    // Hold a small flock at 90% for `service` turns, then grow it past the whole-animal gate and
+    // return `(pressure before it grew, the biomass its first shed takes)`.
+    let run = |service: u32| -> (f32, f32) {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        domesticate(&mut app, &id);
+
+        let small = flock(&app, &id, A_THREE_HEAD_FLOCK);
+        reseat(&mut app, &id, small, small);
+        for _ in 0..service {
+            seat_keeping(&mut app, &id, NINETY_PERCENT_KEPT);
+            run_turns_untended(&mut app, 1);
+        }
+        let pressure = herd_of(&app, &id).neglect_pressure;
+
+        // The flock grows past the gate: the same 10% short is now ten whole animals unheld.
+        let big = flock(&app, &id, A_HUNDRED_HEAD_FLOCK);
+        reseat(&mut app, &id, big, big);
+        let grace = neglect_grace(&app, &id);
+        let mut shed = 0.0;
+        for _ in 0..=(grace + 2) {
+            seat_keeping(&mut app, &id, NINETY_PERCENT_KEPT);
+            let before = herd_of(&app, &id).biomass;
+            run_turns_untended(&mut app, 1);
+            let after = herd_of(&app, &id).biomass;
+            if after < before {
+                shed = before - after;
+                break;
+            }
+        }
+        (pressure, shed)
+    };
+
+    let (fresh_pressure, fresh_shed) = run(0);
+    let (served_pressure, served_shed) = run(A_LONG_SERVICE);
+
+    // **THE PRECONDITION** — the fixture really does arm the shed once the flock is large, or
+    // "sheds the same" would be a comparison of two zeroes.
+    assert!(
+        fresh_shed > 0.0,
+        "fixture: a hundred-head flock kept at 90% must genuinely shed once its grace elapses, or \
+         this test compares nothing"
+    );
+    assert_eq!(
+        fresh_pressure, 0.0,
+        "fixture: a herd that has just been tamed carries no pressure"
+    );
+
+    assert_eq!(
+        served_pressure, 0.0,
+        "{A_LONG_SERVICE} turns of keeping that never left a whole animal unheld must leave the \
+         herd unfrayed — the grace was reset every one of those turns, and the pressure has to be \
+         reset by the same predicate or it is measuring a neglect that never happened"
+    );
+    assert!(
+        (served_shed - fresh_shed).abs() < 1e-4,
+        "…so its first shed is exactly what a herd with no history sheds: {served_shed} against \
+         {fresh_shed}"
     );
 }

@@ -1177,7 +1177,28 @@ pub struct RungStanding {
     /// that no call site tests `partial_credit` and no two call sites can come to disagree about
     /// what a half-built rung is worth.
     pub credit: f32,
+    /// **THE WORK BANKED INTO [`Self::raising`]**, in work units — `position − the rung's base`, and
+    /// [`NO_RUNG_WORK_BANKED`] where nothing is being raised.
+    ///
+    /// # ⛔ IT IS NOT [`Self::credit`], AND THE DIFFERENCE IS AN `on_completion` RUNG
+    ///
+    /// `credit` is what a part-raised rung is **worth**, which
+    /// [`RungPartialCredit::OnCompletion`] pins to [`NO_RUNG_CREDIT`] by construction: half a fence
+    /// is no fence. This is what has been **put into** it, which is a fact about the meter and is
+    /// positive from the first work banked whatever the rung's partial-credit mode says.
+    ///
+    /// **A caller asking *"is this rung being built"* wants this one.** `fauna::herd_build_verb`
+    /// asked `credit > 0` of `animal:pen` — a test that mode makes permanently false — so a herd
+    /// with real work banked on a fence and no live declaration derived **no verb at all**, and the
+    /// arm written to keep *"a pen with work on it governs"* was unreachable. Anything asking what a
+    /// rung is *worth* still reads `credit`; [`interpolate`] is its only consumer.
+    pub banked: f32,
 }
+
+/// **A RUNG BEING RAISED THAT CARRIES NO WORK YET** — [`RungStanding::banked`]'s neutral, and what a
+/// standing with nothing being raised answers. Named rather than a bare `0.0` because the predicate
+/// *"has any work been banked here"* is exactly the comparison against it.
+pub const NO_RUNG_WORK_BANKED: f32 = 0.0;
 
 impl RungStanding {
     /// **RESOLVE A POSITION INTO A STANDING** — walk `branch`'s rungs in ladder order, accumulating
@@ -1212,6 +1233,7 @@ impl RungStanding {
                     held,
                     raising: None,
                     credit: NO_RUNG_CREDIT,
+                    banked: NO_RUNG_WORK_BANKED,
                 };
             };
             let (base, width) = rung_span(next, &cost_at);
@@ -1231,6 +1253,9 @@ impl RungStanding {
                 held,
                 raising: Some(next),
                 credit,
+                // **What has been PUT INTO the rung**, whatever the partial-credit mode says it is
+                // worth — see [`Self::banked`].
+                banked: (position - base).max(NO_RUNG_WORK_BANKED),
             };
         }
     }
@@ -1249,6 +1274,7 @@ impl RungStanding {
             held,
             raising: held.above(),
             credit: NO_RUNG_CREDIT,
+            banked: NO_RUNG_WORK_BANKED,
         }
     }
 
@@ -1266,6 +1292,7 @@ impl RungStanding {
             held: rung,
             raising: rung.above(),
             credit: NO_RUNG_CREDIT,
+            banked: NO_RUNG_WORK_BANKED,
         }
     }
 }

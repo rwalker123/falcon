@@ -191,7 +191,7 @@ invariant.
   gain → capped` map.
   > **THE CAP IS A PEN-ONLY EFFECT, AND IT SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.**
   > Any species whose wild `r` exceeds `cap / pen_gain` = **0.25** cannot receive the whole pen bonus.
-  > Of the six **pennable** species, three lose some of it: **fowl** and **rabbit** forfeit **29%**
+  > Of the seven **pennable** species, three lose some of it: **fowl** and **rabbit** forfeit **29%**
   > (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
   > `forest_grouse` and `river_fish` are also cap-bound but are `wild`-ceiling, so nothing can pen them
   > and the loss is unreachable. **The cap never binds at PASTORAL** — the fastest pastoral rate on the
@@ -409,6 +409,26 @@ it was met — and by a herd not being managed at all, since a wild herd is nobo
 **Animals leave only while that counter exceeds the herd's rung's `upkeep.grace_turns`**
 (`RungDef::upkeep_grace_turns`), resolved through **`fauna::herd_keeping_rung`**: `animal:pen` once
 there is any pen progress, `animal:pastoral` for any other managed herd.
+
+> #### ⛔ THE GRACE AND THE PRESSURE ANSWER TO **ONE** PREDICATE, `fauna::herd_is_neglected`
+>
+> They did not, and the divergence was a herd-killer. `neglect_turns` rose only on
+> `overage_last_turn.is_some()`, which `uncontained_overage` gates at **one whole animal**;
+> `neglect_pressure` rose on any `shortfall_fraction > 0`, fell only on a turn the bill was met, and
+> had **no ceiling** — while being the exponent in `rate × (1 + escape_acceleration)^pressure`.
+>
+> **The failure is silent for as long as you like and then total.** A 3-head herd kept at 90%
+> staffing has an overage of `0.3`, under the whole-animal gate, so `neglect_turns` resets every turn
+> and nothing ever sheds — while pressure climbs `+0.1` a turn for ever. Three hundred such turns put
+> it at `30`; the turn the herd breeds past the gate, the first shed fires at a rate clamped to the
+> whole herd. **A herd the player kept 90% staffed, and that was never once under-contained, is gone
+> in one turn.**
+>
+> **The fix is the shared predicate, and deliberately NOT a cap.** Both terms now ask
+> `herd_is_neglected`, so pressure can only rise on a turn the grace counter also rises and the same
+> reset bounds both. A ceiling on top would be a second mechanism guarding a case the first one
+> already closes — and it would leave the two definitions in place to drift again.
+> `ninety_percent_keeping_never_frays_a_herd_below_the_whole_animal_gate` is the pin.
 
 - **THE SHED IS CONTINUOUS IN THE SHORTFALL.** `uncontained_overage` is the unmet demand converted
   back into animals (`shortfall_in_loads × animals_per_herder`), which is the same number the retired

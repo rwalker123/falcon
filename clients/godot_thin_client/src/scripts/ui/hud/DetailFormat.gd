@@ -1246,7 +1246,20 @@ static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary
 ## silence every other derived reading on this card keeps.
 const HUSBANDRY_PAYOFF_HEADING := "What taming is buying"
 const HUSBANDRY_PAYOFF_CEILING_FORMAT := "Ceiling %s"
-const HUSBANDRY_PAYOFF_BREEDING_FORMAT := "Breeds back up to ≈%s a turn"
+## **THE BREEDING LINE IS A RATE, AND IT IS ROUNDED AS ONE** (`DetailFormat.animal_rate_face`), which
+## is what the two `%s` are: the fractional head count and the species. It read
+## `HUSBANDRY_PAYOFF_BREEDING_FORMAT % SourceForecast.stock_face(...)` and was wrong twice over —
+## `stock_face` carries its own `≈`, so every herd this hover has ever appeared on rendered
+## `Breeds back up to ≈≈3 Red Deer a turn`; and `stock_face` floors the count at one body, which is
+## right for a STANDING herd and a lie about a per-turn curve (a mammoth on a range peaking at 50
+## biomass a turn read `≈1 Mammoth`, eight times the truth). The sustainable line below rounds the
+## same curve at the same two decimals, so one hover no longer states one curve two ways.
+const HUSBANDRY_PAYOFF_BREEDING_FORMAT := "Breeds back up to ≈%s %s a turn"
+## **AND ITS RATE IS `format_signed`, NOT `format_yield`** — the rule `SourceForecast`'s own
+## `YIELD_TOOLTIP_RATES_FORMAT` states: the unit is carried by the WORDS (*a turn*), so the `/turn`
+## suffix printed it twice in four words (`Sustainable +1.74 /turn a turn at the best-harvest floor`).
+## The MAGNITUDE is untouched — both formatters round at `YIELD_DECIMALS`, which is the half of
+## `format_yield` this line was reaching for.
 const HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT := "Sustainable %s a turn at the best-harvest floor"
 const HUSBANDRY_PAYOFF_CLIMBING := "All three are climbing while the taming runs."
 ## **…AND WHERE THE CEILING STOPS CLIMBING**, on a herd whose destination the wire states — the line
@@ -1279,15 +1292,14 @@ static func husbandry_payoff_hover(herd_data: Dictionary, prefix: String) -> Str
     var lines: Array[String] = [
         HUSBANDRY_PAYOFF_HEADING,
         HUSBANDRY_PAYOFF_CEILING_FORMAT % SourceForecast.stock_face(capacity, body_mass, quarry),
-        HUSBANDRY_PAYOFF_BREEDING_FORMAT % SourceForecast.stock_face(peak_biomass, body_mass,
-            quarry),
+        HUSBANDRY_PAYOFF_BREEDING_FORMAT % [animal_rate_face(peak_biomass / body_mass), quarry],
     ]
     # …and what that regrowth is worth in the store, at the floor the ladder is actually run at. A
     # species that pays no food states no such line rather than a zero.
     var provisions := float(herd_data.get(
         prefix + SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
     if provisions > 0.0:
-        lines.append(HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT % SourceForecast.format_yield(
+        lines.append(HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT % SourceForecast.format_signed(
             maxf(SourceForecast.regrowth_at(samples, SourceForecast.FLOOR_FOOD_PEAK), 0.0)
                 * provisions))
     if int(herd_data.get(prefix + SourceForecast.FORECAST_BUILD_TURNS_KEY,
@@ -1484,6 +1496,38 @@ static func format_work_units(value: float) -> String:
     if is_equal_approx(value, round(value)):
         return "%d" % int(round(value))
     return String.num(value, HudSelectionVocab.BUILD_WORK_DECIMALS)
+
+## Fixed-decimal, then trailing zeros AND a trailing dot stripped. `String.num` keeps a lone ".0", so
+## format fixed and strip the tail ourselves (rstrip stops at the first non-matching char, so integer
+## zeros survive).
+static func format_trimmed(value: float, decimals: int) -> String:
+    var text := ("%." + str(decimals) + "f") % value
+    if "." in text:
+        text = text.rstrip("0")
+        if text.ends_with("."):
+            text = text.rstrip(".")
+    return text
+
+## **A RATE IN ANIMALS PER TURN, AND THE ONE PLACE ONE IS ROUNDED** — `2.3`, `0.13`, `<0.01`. The
+## compose sheet's take sentence, its band and its binding-limit line all read through here, and so
+## does the herd card's payoff hover, so a fractional take and a fractional breeding rate cannot be
+## rounded two different ways on two surfaces describing the same curve.
+##
+## **A POSITIVE RATE NEVER COMES BACK AS `0`** (`HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN`). Two
+## decimals cannot state a rate of `0.004`, and printing the rounded figure told a player that a crew
+## which does eventually bring an animal down brings down none — the reported `≈0 WILD AUROCHS/TURN`.
+## Under the floor the face becomes `<0.01`, which is a small number rather than an absence.
+##
+## **IT IS NOT `SourceForecast.stock_face`, and the difference is the whole reason it exists.** That
+## one counts a STANDING herd and floors at one body, because a fifth of a body is still an animal on
+## the map; a RATE has no such floor — a range that regrows a fifth of a mammoth a turn regrows a
+## fifth of a mammoth, and rounding it up to one overstates the herd eightfold.
+static func animal_rate_face(value: float) -> String:
+    if value > 0.0 and value < HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN:
+        return HudComposeVocab.HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT % format_trimmed(
+            HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN,
+            HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
+    return format_trimmed(value, HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
 
 ## **WHAT THE JOB COSTS, WHAT IT WOULD TAKE, AND WHAT HOLDING IT COSTS FOREVER — the compose sheet's
 ## pre-commit quote**, as `50 work, ≈25 turns · 2 work a turn from Agriculture to hold` (or `50 work`

@@ -106,36 +106,45 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     // Domesticated + corralled at its tile with a grown (radius-1) fence.
     let (herd_id, pen_tile) = {
         let mut herds = app.world.resource_mut::<HerdRegistry>();
+        // **A PENNABLE herd, not simply the first one** — the fixture runs the real accrual now, and
+        // `tame_outright` / `corral_at` both refuse a species whose `husbandry_ceiling` forbids the
+        // rung. Picking by the gate is what makes "you cannot fabricate a penned `wild` herd" hold
+        // here as everywhere else.
         let index = herds
             .herds
             .iter()
-            .position(|h| h.id.starts_with("game_"))
-            .or(if herds.herds.is_empty() {
-                None
-            } else {
-                Some(0)
-            })
-            .expect("worldgen seeds herds");
+            .position(|h| h.id.starts_with("game_") && h.can_pen())
+            .expect(
+                "the harness map must seed at least one pennable herd — this fixture stands up a \
+                 real, completed pen",
+            );
         let herd = &mut herds.herds[index];
         let tile = herd.current_pos;
-        // **Written straight onto the herd, gates and all** — worldgen picks whichever species is
-        // first on the map and it may be `wild`-ceiling, while what is under test is that the
-        // *checkpoint* carries a finished rung. A completed meter is `progress >= cost > 0`, so both
-        // halves are set: the fabricated one-worker-turn job (`FABRICATED_BUILD_COST`) says "this
-        // rung is paid for" without pretending to the ladder's own price.
-        herd.set_ladder_position(
-            core_sim::FABRICATED_BUILD_COST,
-            &core_sim::LadderConfig::builtin(),
+        // **THE REAL ACCRUAL, BOTH RUNGS** — `tame_outright` then `corral_at`, which is what
+        // `FABRICATED_BUILD_COST`'s own doc says a fixture wanting a finished rung must do.
+        //
+        // # ⛔ WRITING THE METER DID NOT STAND UP A PEN, AND THE TEST WENT QUIET
+        //
+        // Two byte-identical `set_ladder_position(FABRICATED_BUILD_COST, …)` calls stood here (the
+        // second dead). `FABRICATED_BUILD_COST` is **one worker-turn** while `animal:pastoral`
+        // costs 50 and `animal:pen` 75, so a position of `1.0` leaves the herd holding
+        // `animal:wild`: `is_domesticated()` and `corral_meter_full()` were both **false**, where
+        // the retired two-meter form made both true. What survived was `corralled_at` and
+        // `pen_radius` — two plain fields the fixture had written by hand — so the pen half of this
+        // test would have passed with the pen **rung's** capture and restore entirely broken.
+        let ladder = core_sim::LadderConfig::builtin();
+        assert!(
+            herd.tame_outright(faction, &ladder),
+            "fixture: the herd must be tameable, or there is no pastoral rung under the fence"
         );
-        herd.owner = Some(faction);
-        herd.corralled_at = Some(tile);
+        assert!(
+            herd.corral_at(tile, &ladder),
+            "fixture: the herd must be pennable, or there is no completed pen to round-trip"
+        );
         herd.pen_radius = 1;
-        herd.set_ladder_position(
-            core_sim::FABRICATED_BUILD_COST,
-            &core_sim::LadderConfig::builtin(),
-        );
         herd.biomass = herd.carrying_capacity;
-        // The one-turn "keeper tended it" grace the restore drops:
+        // The one-turn "keeper tended it" grace the restore drops. `corral_at` grants it; restated
+        // here because it is the signal under test rather than a side effect the fixture inherits.
         herd.corralled_tended_this_turn = true;
         (herd.id.clone(), tile)
     };
@@ -193,6 +202,23 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         Some(pen_tile),
         "the pen should still be corralled immediately after restore"
     );
+    // **AND THE RUNG UNDER IT** — `corralled_at` and `pen_radius` are plain fields the fixture wrote
+    // by hand, so a pen assertion that reads only those passes with the ladder position's capture or
+    // restore entirely broken. The position is what says the fence was *built*.
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd_id)
+            .expect("herd restored")
+            .corral_meter_full(),
+        "the pen RUNG must survive the round-trip, not just the two fence fields beside it \
+         (ladder position = {})",
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd_id)
+            .expect("herd restored")
+            .ladder_position()
+    );
 
     // --- Advance exactly one turn: the post-restore Logistics pass. ------------------------------
     run_turn(&mut app);
@@ -237,5 +263,14 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     assert_eq!(
         herd.pen_radius, 1,
         "the pen's ExtendPen radius was thrown away on the post-restore turn"
+    );
+    assert!(
+        herd.corral_meter_full() && herd.is_domesticated(),
+        "…and so was the ladder position both rungs stand on (position = {}, pen work done = {})",
+        herd.ladder_position(),
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPen,
+            &core_sim::LadderConfig::builtin()
+        )
     );
 }

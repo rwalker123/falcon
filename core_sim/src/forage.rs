@@ -2549,6 +2549,32 @@ pub fn patch_upkeep_demand(
 /// loads`. [`NO_TENDER_LOAD`] where either term is not positive — barren ground, or a patch whose
 /// tile is off the map — which is the same *"there is nothing here to keep"* the animal web's
 /// `NO_KEEPER_LOAD` states.
+/// **THE SIZE OF THE LAND UNDER A PATCH** — the tile's own `K` where the map has one, and the
+/// capacity the patch was **seeded** with where it does not. Every plant seam that needs a
+/// tender-load basis goes through this, so an absent tile reads one way across the whole web.
+///
+/// # ⛔ AN ABSENT TILE IS THE HARNESS CASE, AND THE TWO PASSES USED TO READ IT OPPOSITE WAYS
+///
+/// [`advance_forage_regrowth`] deliberately leaves `carrying_capacity` alone when the coord is not in
+/// the `TileRegistry` — *"a patch whose tile is absent from the map keeps whatever capacity it was
+/// seeded with, which is what lets test harnesses build synthetic patches on tiles that do not
+/// exist"*. [`advance_cultivation`] resolved the same absence to [`NO_FORAGE_CAPACITY`] while its
+/// comment claimed it looked the tile up *"exactly as `advance_forage_regrowth` looks it up"*, so
+/// such a patch presented [`NO_TENDER_LOAD`], owed nothing, was never short, and **kept a finished
+/// Cultivate or Field for ever with nobody on it**.
+///
+/// # ⛔ AND `ForagePatch::carrying_capacity` IS THE RIGHT FALLBACK ONLY BECAUSE THE TILE IS ABSENT
+///
+/// [`patch_tender_loads`] forbids reading the patch's capacity in the ordinary case, and rightly:
+/// [`patch_carrying_capacity`] has already multiplied the tile's `K` by the rung's capacity gain, so
+/// billing off it would charge the gain and the rate's own climb together. **Off-map that
+/// multiplication never happened** — `advance_forage_regrowth` is the only writer of the field and
+/// it skips exactly these patches — so the seeded number *is* the land's `K`, ungained, for as long
+/// as the coord stays off the map.
+pub fn patch_land_capacity(patch: &ForagePatch, tile_capacity: Option<f32>) -> f32 {
+    tile_capacity.unwrap_or(patch.carrying_capacity)
+}
+
 pub fn patch_tender_loads(tile_capacity: f32, forage: &ForageLaborConfig) -> f32 {
     // NaN-safe by construction: every guard is a positive test, so a NaN input falls through to `0`
     // (no load) rather than sneaking past a negated comparison.
@@ -2774,19 +2800,19 @@ pub fn advance_cultivation(
     let labor = labor_config.get();
     let forage = &labor.forage;
     for patch in registry.patches.values_mut() {
-        // **THE SIZE OF THE LAND UNDER THIS PATCH** — the tile's own `K`, looked up exactly as
-        // `advance_forage_regrowth` looks it up, because the plant upkeep is quoted **per
-        // tender-load** (`patch_tender_loads`) and one tile is what a load measures. A patch whose
-        // tile is absent from the map reads [`NO_FORAGE_CAPACITY`] and therefore no load at all —
-        // the same *"ground nobody can see offers nothing"* reading the regrowth pass, the labor
-        // arm's composition and the capture already take, rather than a substituted capacity that
-        // would bill land that is not there.
-        let tile_capacity = tile_registry
-            .index(patch.tile.x, patch.tile.y)
-            .and_then(|entity| tiles.get(entity).ok())
-            .map_or(NO_FORAGE_CAPACITY, |tile| {
-                tile_forage_capacity(forage, tile)
-            });
+        // **THE SIZE OF THE LAND UNDER THIS PATCH** ([`patch_land_capacity`]) — the tile's own `K`,
+        // because the plant upkeep is quoted **per tender-load** (`patch_tender_loads`) and one tile
+        // is what a load measures. A patch whose coord is **not on the map** keeps the capacity it
+        // was seeded with, exactly as `advance_forage_regrowth` keeps it: that is the synthetic
+        // off-map patch the regrowth pass documents as supported, and reading it as barren here left
+        // it owing nothing and holding a finished rung for ever with nobody on it.
+        let tile_capacity = patch_land_capacity(
+            patch,
+            tile_registry
+                .index(patch.tile.x, patch.tile.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map(|tile| tile_forage_capacity(forage, tile)),
+        );
         // **Newest first, through the one seam the wire reads too.** Exactly one meter is ever at
         // risk — the Field while it has anything left, then the tended ground under it — and that
         // rung owns *both* halves of the question, because the grace sits inside the same `upkeep`
@@ -2940,6 +2966,25 @@ fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
         forage.reseed_floor_fraction,
     );
     patch.refresh_ecology_phase(&ecology);
+}
+
+/// **THE STAND AS NEXT TURN'S TAKE WILL FIND IT** — a clone with one Logistics regrowth applied,
+/// and the plant twin of [`crate::fauna::next_turns_quarry`]. Nothing here touches the caller's
+/// patch.
+///
+/// It exists for the same reason its animal twin does: every consumer of a forecast resolves it
+/// **after** the Population take, so `ForagePatch::growth_this_turn` read there has already been
+/// drawn back down by the very gathering the growth-share backstop exists to pay. Projecting one
+/// turn forward is [`project_realized_forage`]'s loop body stopped after its first step
+/// (`regrow` → read the room), so *"a forecast regrows first"* is one expression on this web too.
+///
+/// **It does not gather, tend or bleed** — those need a world, and the projection makes the same
+/// simplification, so the forecast and the steady rate the work board publishes stay two readings of
+/// one model.
+pub fn next_turns_stand(patch: &ForagePatch, forage: &ForageLaborConfig) -> ForagePatch {
+    let mut stand = patch.clone();
+    regrow_patch(&mut stand, forage);
+    stand
 }
 
 /// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
@@ -3641,6 +3686,9 @@ pub(crate) fn forage_forecast(
         &patch_composition(patch, tile_composition, flora, forage),
         take_species,
     );
+    // **THE STAND AS NEXT TURN'S GATHER WILL FIND IT** — one Logistics regrowth on a private clone,
+    // for the reason stated on the two stock terms below.
+    let stand = next_turns_stand(patch, forage);
     SourceYieldForecast {
         // A plant is not stalked — the engagement stage is an animal-web concept, and so is the fight
         // it feeds. Nothing on the plant web is brought down.
@@ -3655,8 +3703,14 @@ pub(crate) fn forage_forecast(
         // **The TERMS of the take** — `ceiling_at(floor, improvement)` composes exactly what
         // `forage_take` computes, at any floor the player's dial can name, on the share of the stand
         // the crew is here for.
-        biomass: patch.biomass * selected,
+        // **⛔ BOTH STOCK TERMS ARE NEXT TURN'S** ([`SourceYieldForecast::growth`], and the animal
+        // twin's note in `fauna::hunt_forecast`): every caller reads this **after** the Population
+        // gather, so the raw patch is a turn stale in both terms `take_room` is made of. The
+        // selection rides all three, because `take_room` is homogeneous in `(B, K, growth)` — the
+        // same stand seen at the size the crew is working.
+        biomass: stand.biomass * selected,
         carrying_capacity: patch.carrying_capacity * selected,
+        growth: stand.growth_this_turn() * selected,
         // What one unit of this patch's standing crop is worth, at its own basket rate. Food-only:
         // the plant web's trade/fodder PROJECTION is a known gap (`plant_food_only`), while the
         // trade a gather actually earns is reported on the resolved row.
@@ -4952,6 +5006,106 @@ mod tests {
         assert!(
             build_seam > 0.0,
             "while the BUILD's gate reads what the take will pay ({build_seam})"
+        );
+    }
+
+    /// **⛔ AND THE PUBLISHED ROW PAYS IT TOO** — the backstop the take applies has to reach the wire,
+    /// or the two seams the previous test proves are one function still describe different turns.
+    ///
+    /// `SourceYieldForecast::ceiling_at` read the bare escapement room while `forage_take` read
+    /// [`patch_take_room`], so on exactly this fixture — a stand below a floor its own Sow raised —
+    /// the sim handed the crew `growth × (1 − floor)` while the row it published beside it read
+    /// `actual 0`, `range 0` and **no useful crew**: a Field feeding a band, reported as a Field
+    /// paying nothing.
+    ///
+    /// **Asserted against the take itself**, run through the shipped `forage_take` on the stand the
+    /// row is about — one Logistics regrowth on ([`next_turns_stand`]), which is the turn a
+    /// pre-commit row prices. A comparison against a re-derived formula would pass with both sides
+    /// wrong in the same way.
+    #[test]
+    fn a_patch_below_its_climbing_floor_publishes_the_take_it_will_hand_over() {
+        const HALF_THE_STAND: f32 = 0.5;
+        /// Enough hands that the *stand*, not the crew's arms, is what bounds the take — the
+        /// backstop is a property of the ground and a labor-bound fixture would never reach it.
+        const GATHERERS: u32 = 20;
+        /// A full season, so nothing about the weather is in the comparison.
+        const FULL_SEASON: f32 = 1.0;
+        /// A band at neutral productivity — the row ships at this multiplier by contract.
+        const NEUTRAL_OUTPUT: f32 = 1.0;
+        /// Horizons for the row's two projections. Any positive value works; the assertion is on
+        /// `actual`, and these only have to be live.
+        const SHORT_HORIZON: u32 = 4;
+        /// The band the shipped `combat_config` reports at. The plant web has no stochastic stage,
+        /// so it can only be a point — threaded because the seed takes it.
+        const RANGE_SIGMAS: f32 = 1.0;
+
+        /// **Deep enough under the floor to stay under it after regrowing.** The row prices the
+        /// stand one turn on, so a fixture seated just below the floor climbs over it and the
+        /// escapement room — not the backstop — is what answers.
+        const WELL_UNDER_THE_FLOOR: f32 = 0.3;
+
+        let forage = test_forage_config();
+        let cap = forage.capacity_for(TEST_BIOME);
+        let mut patch = ForagePatch::new(REF_TILE, cap);
+        patch.biomass = cap * WELL_UNDER_THE_FLOOR;
+        patch.biomass_before_regrowth = patch.biomass;
+        let patch = patch;
+        let flora = crate::flora_config::FloraConfig::builtin();
+        let composition = flora.realized_composition(TEST_BIOME, patch.tile, REF_SEED);
+
+        // **THE PRECONDITION** — the room really is empty on the turn the row is about, so what the
+        // row publishes can only have come from the growth share.
+        let stand = next_turns_stand(&patch, &forage);
+        let room =
+            forage_escapement_ceiling(HALF_THE_STAND, stand.biomass, stand.carrying_capacity);
+        assert_eq!(
+            room, 0.0,
+            "fixture: the stand must still be BELOW its floor after regrowing, or the escapement \
+             room is what pays and the backstop is untested ({room})"
+        );
+
+        let published = forage_source_yield_preview(
+            &patch,
+            &composition,
+            &forage,
+            &flora,
+            forage.per_worker_biomass_capacity,
+            FULL_SEASON,
+            NEUTRAL_OUTPUT,
+            GATHERERS,
+            HALF_THE_STAND,
+            &TakeSelection::EVERYTHING,
+            SHORT_HORIZON,
+            SHORT_HORIZON,
+            RANGE_SIGMAS,
+        );
+
+        let handed_over = {
+            let mut taking = stand.clone();
+            forage_take(
+                &mut taking,
+                &composition,
+                GATHERERS,
+                HALF_THE_STAND,
+                &TakeSelection::EVERYTHING,
+                &forage,
+                &flora,
+                NEUTRAL_OUTPUT,
+                forage.per_worker_biomass_capacity,
+                FULL_SEASON,
+            )
+            .to_f32()
+        };
+
+        assert!(
+            handed_over > 0.0,
+            "fixture: the take must hand over the growth share, or there is no disagreement to \
+             catch"
+        );
+        assert!(
+            (published.actual - handed_over).abs() < 1e-4,
+            "the row publishes what the gatherers are handed: {} against {handed_over}",
+            published.actual
         );
     }
 

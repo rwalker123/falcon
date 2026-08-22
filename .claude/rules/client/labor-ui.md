@@ -550,6 +550,34 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 > **pending**, which is the existing rule that an unanswered query renders as waiting rather than
 > falling back to a smoothed derivation.
 >
+> **⛔ AND THE RELEASE PATH READS THROUGH THE SAME ACCESSOR, FOR THE SAME REASON.** `_crew_take_view`
+> is the one seam behind the take, band, cadence and yield rows, the binding-limit sentence *and*
+> `arm_hunt_autofill`'s plateau — so `view()` there hands every one of them the **previous floor's**
+> curve labelled `READY`: the `ask()` three lines earlier stamps `asked_key`/`asked_at`, which is
+> exactly the pair `_view` serves a stale answer on. `take_state_host` stays hidden, so nothing
+> renders "waiting" and the sheet states the wrong floor's numbers with no tell — and the autofill
+> takes a plateau the real reply's `clamp_hunt_count` can only lower, so a floor dragged down leaves a
+> permanently under-staffed party. **A drag and its release are one gesture; only `view()`'s stale
+> window told them apart.** The raid path (`_raid_forecast_view`) keeps `view()` deliberately — its
+> key carries the composed party, so there the stale window is bargained against the stepper gesture
+> itself.
+>
+> **⛔ AND THE CREW BOUND IS CLAMPED ON *BOTH* ASK PATHS, THROUGH ONE CONSTANT.** The sim refuses a
+> `max_workers` above `MAX_CREW_TAKE_WORKERS` (1000) with `query_error::INVALID_CREW` rather than
+> clamping it — the loop resolves a `coverage()` and three `resolve_hunt_engagement` calls per crew
+> and materialises a reply row each, so an unbounded ask wedges the command thread and allocates for
+> as long as it survives. The client mirrors the bound in `HudComposeVocab.HUNT_CREW_TAKE_MAX_WORKERS`
+> and applies it in `_crew_take_workers()`, which **`_crew_take_view` and `_drag_crew_take` both go
+> through**. Clamping one path only is worse than clamping neither: the crew term is half of
+> `ForecastQuery.key_of`, so the two paths would ask under one key and read back under another, and
+> the sheet would **wait for ever on an answer that had already landed**. The native bridge is a pure
+> pass-through, so GDScript is the only place the bound can live.
+>
+> **`invalid_crew` gets no prose of its own, deliberately.** `HudComposeVocab.FORECAST_FAILED_FORMAT`
+> is token-agnostic by an existing decision — a sentence per token would be prose for states the UI is
+> built to make unreachable — so it renders as `No forecast available (invalid_crew).` and the token
+> rides the line for a bug report. The clamp is what makes it unreachable; the message is the backstop.
+>
 > **The client may NOT reconstruct a floor-shifted row locally.** The room clamps the **engagement**,
 > before the retreat — pinned by a sim test — so a local approximation means redoing the fight, which is
 > the whole thing the curve exists to prevent.
@@ -1336,6 +1364,23 @@ number and they diverged the moment the flag learned to count animals while the 
 quoting `grows past 1075` — caught in a rendered frame, not in review — so the cure is that no second
 rendering exists, not two kept in step by hand. `floor_chart_model` binds `body_mass` / `quarry` once
 and passes them BOTH to `harvest_verdict` and out on the model, for the same reason.
+
+> #### ⛔ `stock_face` IS FOR A **STOCK**. A PER-TURN RATE THROUGH IT IS AN OVERSTATEMENT, NOT A ROUNDING
+>
+> Its `animal_count` is `maxi(1, round(biomass / body_mass))`, and the **floor at one** is what makes
+> it right for a standing herd — you cannot have half an animal standing there — and wrong for
+> anything measured *per turn*, where a value below one body is the ordinary case. A mammoth range
+> (`body_mass 400`) peaking at 50 biomass/turn rendered `≈1 Mammoth a turn`: an **8× overstatement**,
+> and the same rate-vs-stock class the sim fixed on the take line with `EngagementQuantum::Rate`.
+> Rates go through `DetailFormat.animal_rate_face` (animals, two decimals, with a `<0.01` guard so a
+> live rate never prints as `0`) or `format_yield` (biomass) — never `stock_face`.
+>
+> **The tell was a doubled `≈`.** `HUSBANDRY_PAYOFF_BREEDING_FORMAT` carried its own `≈` and
+> `stock_face` returns one too, so the hover read `Breeds back up to ≈≈3 Red Deer a turn` on every
+> herd it appeared on. A format string and the formatter it is filled with **each owning a unit or a
+> qualifier** is the shape to look for: the sustainable line beside it had the same fault the other
+> way round, printing `+1.74 /turn a turn`. **One hover, one curve, one rounding** — the two lines
+> disagreed about how to round the same number, which is what made both visible at once.
 
 **THE FLAG LEADS WITH THE PERCENT, ON BOTH WEBS** — ONE `FLOOR_FLAG_FORMAT`, `leave 50% · 98` on a
 patch and `leave 50% · ≈11 Red Deer` on a herd, and **`HarvestFloorChart` branches on nothing**: it
@@ -3679,9 +3724,11 @@ one-off `workCost` cannot state.
   it survives the move onto `scaled_by: source_load` is worth stating.** The pair no longer reads
   identically on every patch — it is scaled by the patch's **tender-load** — but that load is
   `tile forage capacity / capacity_per_tender`, a pure function of the tile's **terrain**, which a
-  Discovered tile remembers by definition. It is the same argument `patch_carrying_capacity` already
-  rides on ("Fog splits a stock from its CAPACITY"): no player action moves it, so the figure sent
-  for an unseen hex is the figure that hex last showed. **What would break this is a scale term that
+  Discovered tile remembers by definition: no player action moves it, so the figure sent for an
+  unseen hex is the figure that hex last showed. **`patch_carrying_capacity` is NOT the precedent —
+  it is the counter-example**, and it sits in `FOW_DISCOVERED_HIDDEN_KEYS` for precisely the reason
+  the pair stays out: the Field rung *does* move it, so it is live patch state wearing a terrain
+  figure's clothes. **What would break this is a scale term that
   read live patch state** — `ForagePatch::carrying_capacity`, say, which carries the rung's own gain
   — and that is a second reason the measure reads the tile's K rather than the patch's. The second
   reason it used to carry — that redacting it would cost the closed form its rate term — died with the

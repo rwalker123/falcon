@@ -64,6 +64,10 @@ pub fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // The ladder the herd nouns read — `nouns::most_domesticated_species` ranks a herd by the
+    // fraction of its **own** branch it has climbed, and a branch's rung prices are the ladder's.
+    app.world
+        .insert_resource(core_sim::LadderConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(SedentarizationScore::default());
     app.world

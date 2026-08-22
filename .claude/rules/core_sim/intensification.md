@@ -375,10 +375,10 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   other caller passes **`RUNG_COST_UNSCALED`** (the plant `tended` patch and `field`, the `pen` and
   its `ExtendPen` rings — penning is a flat job for every species: a fence is a fence). See "The
   `Tame` verb" for the inversion from the retired `taming_rate`.
-- **The per-source state does not move.** `ForagePatch::cultivation_progress`,
-  `Herd::domestication_progress` and `Herd::corral_progress` stay where they live — each now beside a
-  **stored companion cost** — and the engine supplies the *amount*, while the source owns its meter,
-  the clamp to that cost, and the side-effects of completing it (ownership, `corralled_at`, the feed
+- **The per-source state does not move.** Each source owns its own progress —
+  `ForagePatch::ladder_position` and `Herd::ladder_position`, each beside its **stamped `standing`**
+  — and the engine supplies the *amount*, while the source owns the position, the clamp to the
+  rung's cost, and the side-effects of completing it (ownership, `corralled_at`, the feed
   line).
 - **Callers.** Accrual: the `Cultivate`, **`Tame`** and `Corral` arms of `advance_labor_allocation`
   (Population) — the *same* call, once per rung. Decay: `forage::advance_cultivation` and
@@ -990,8 +990,8 @@ of its span` and lost the instant the position dips — which is where this star
 - **The building/maintaining state test went with it.** `ForagePatch::cultivation_meter_full` /
   `field_meter_full` existed only to distinguish *achieved* from *its meter is full*, and there is no
   gap left between them.
-- **The animal rungs needed no bar and still do not**: `domestication_progress` is monotone-up and a
-  pen is held by `corralled_at`, a stored flag rather than a meter.
+- **The animal rungs needed no bar and still do not**: a herd's `ladder_position` is monotone-up and
+  a pen is held by `corralled_at`, a stored flag rather than a meter.
 - **A rung's BENEFIT is no longer binary on the achieved state** — which is the sentence this section
   used to end with as a deferred proposal. It is the arc.
 
@@ -1069,6 +1069,15 @@ other row (§2.5).
   work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
   through **`forage::patch_claims_keeping`** / **`fauna::herd_claims_keeping`** — one function per web,
   answering *does this source claim at all*.
+  > **⛔ AND IT PRICES THAT CLAIM OFF THE STAMPED BILL — `patch_keeping_basis` / `herd_keeping_basis`,
+  > NEVER THE LIVE DEMAND.** `maintenance_shares` and the capture must quote the same number or the
+  > wire contradicts itself: `snapshot.fbs` states `demand − supplied == shortfall` verbatim on **both**
+  > the herd and patch tables. The shares and the stamp both sit inside the per-band loop, and the
+  > **build accrual that moves the ladder position runs later in the same iteration** — so with two
+  > bands on one source, one of them also building, band A's share and stamp are struck at position P
+  > while band B's shares read a *risen* live demand at P′. The published pair then fails the
+  > identity, and band B's pool spends work the source never owed. **A demand that moves mid-turn is
+  > only safe to read once**, which is what the stamp is for.
   > **⛔ THE LABOUR PASS MAY NOT RUN TWICE WITHOUT A LOGISTICS PASS BETWEEN, and a debug assertion
   > now says so.** `upkeep_supplied` **accumulates** (its clear lives in Logistics, so several bands can
   > pay one source in one turn) while `upkeep_demanded` is stamped **first-write-wins** and never
@@ -1101,7 +1110,8 @@ other row (§2.5).
   > source about to bank its first work must still claim on the turn it has banked nothing.
 
   > **⛔ IT USED TO BE `source_has_a_meter_at_risk`, AND THAT WAS A SECOND DEFINITION THAT DRIFTED.**
-  > That seam is **progress-only**; the payment side (`patch_upkeep_supply` → `patch_keeping_meter`) is
+  > That seam is **progress-only**; the payment side (`patch_upkeep_supply` → what is now
+  > `patch_keeping_basis`) is
   > **progress-OR-verb**. Reported from play: a band 6% into a Cultivate with Agriculture staffed read
   > `Short 2 of the 2 work` — i.e. **supplied 0.0 on a staffed role**.
   >
@@ -1114,10 +1124,16 @@ other row (§2.5).
   > **The animal web had it too, with a different cause**: `owner` is recorded on the first accrual,
   > which happens after the shares are split, so a herd mid-Tame read as wild and claimed nothing.
   >
-  > **`patch_unwinding_rung` / `herd_keeping_rung` are now that function asked with NO VERB**
-  > (`NOTHING_IN_FLIGHT`), not a parallel spelling — so the decay pass, the snapshot and the wire
+  > **`patch_unwinding_rung` / `herd_keeping_rung` are the SAME question asked with NO VERB**
+  > (`NOTHING_IN_FLIGHT`) that `patch_claims_keeping` asks with one, not a parallel spelling — so the
+  > decay pass, the snapshot and the wire
   > countdowns are byte-identical while the claim side gained the verb term. `source_has_a_meter_at_risk`
   > survives as the **row-survival** seam alone, and its doc says so.
+  >
+  > **The retired `patch_keeping_meter` is NOT what holds them together any more.** Its two jobs
+  > split — `patch_claims_keeping` is the gate and `patch_keeping_basis` the bill — so "one function,
+  > so they cannot drift" no longer describes the code. What keeps them honest now is that the bill
+  > is **stamped** (`upkeep_demanded`) and every reader takes the stamp.
 
   **THE VERB TERM IS NARROWED TO THE FUNDED HEAD, and that is deliberate.** Taking it straight from the
   queue entry — the literal "same input as the payment side" — makes *every waiting entry* claim its full
@@ -1391,6 +1407,15 @@ it, `0.0..=1.0`).
   `NO_RUNG_CREDIT` at every position short of full, so no consumer of a standing ever learns that
   rung is different — which is what keeps the flag from becoming a special case scattered across the
   payout sites.
+- **`RungStanding::banked` is how you ask *"is there work on this rung"* — `credit` CANNOT answer it.**
+  The two questions look identical and are not: `credit` is *what the part-built rung is worth*, which
+  `on_completion` pins to `NO_RUNG_CREDIT` by construction, while `banked` is *how much work has been
+  put into it*, which is true of a half-raised pen and a half-sown Field alike. Testing
+  `standing.credit > NO_RUNG_CREDIT_HELD` on an `on_completion` rung is therefore **dead code that
+  reads as live** — `herd_build_verb`'s `AnimalPen` arm was exactly that, and its stated invariant
+  (*"a pen with work on it governs"*) was unenforced: a herd with real work on `animal:pen` and no
+  live queue entry fell through and reported **no verb at all**, where the retired
+  `corral_progress > RUNG_UNSTARTED` walk answered `Corral`. `NO_RUNG_WORK_BANKED` is the sentinel.
 
 #### The delta form: `interpolate` states it, and validation guards it
 
@@ -1412,17 +1437,18 @@ Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
 > `plant:field` is `continuous`. Two different facts, one grammar. `husbandry.md` → the rung-3 notes
 > own the animal half.
 
-- **THE PLANT WEB IS ON IT; THE ANIMAL WEB IS NOT YET.** `ForagePatch` carries one
-  `ladder_position` and a stamped `standing` (below); `Herd` still carries `domestication_progress` /
-  `corral_progress` with their stamped costs, and `animal:pen`'s `on_completion` therefore does
-  nothing until that web moves. `retain_fraction` is **deleted on both webs** — the animal rungs
-  never declared one.
+- **BOTH WEBS ARE ON IT.** `ForagePatch` and `Herd` each carry one `ladder_position` and a stamped
+  `standing` (below); the retired per-rung meters — `cultivation_progress` / `field_progress` on the
+  plant side, `domestication_progress` / `corral_progress` on the animal one, each with its own
+  stamped `*_cost` — are **gone**, and `animal:pen`'s `on_completion` is live. `retain_fraction` is
+  **deleted on both webs** — the animal rungs never declared one.
 
-#### The plant web's storage: ONE position, and a STAMPED standing beside it
+#### The storage: ONE position, and a STAMPED standing beside it
 
-`ForagePatch::ladder_position` is authoritative and **private**; `ForagePatch::standing` is derived
-from it and re-stamped on every write. `cultivation_progress` / `field_progress` and their four
-stamped companions (`*_cost`, `*_retain_bar`) are **gone**.
+`ForagePatch::ladder_position` and `Herd::ladder_position` are authoritative and **private**; the
+`standing` beside each is derived from it and re-stamped on every write. `cultivation_progress` /
+`field_progress` and `domestication_progress` / `corral_progress`, with their stamped companions
+(`*_cost`, `*_retain_bar`), are **gone**.
 
 - **⛔ THE ONLY WAY TO MOVE THE POSITION IS `set_ladder_position(position, ladder)`**, which writes
   both fields together. There is no public mutator for the position alone, so the pair cannot be
@@ -1689,7 +1715,7 @@ pushed only for a source that carries a rung entry, so the field stays at `-1`. 
 gate refused, at any staffing** — `eligible` takes no crew count — which is why the client must not
 render it as a crew problem.
 
-**The animal half is untestable and the fixture says so**: `domestication_progress` is monotone and no
+**The animal half is untestable and the fixture says so**: a herd's `ladder_position` is monotone and no
 animal rung declares a `meter_decay`, so "eroded but achieved" cannot be produced there. The refusal is
 asserted on both webs; the accept only on the plant one.
 

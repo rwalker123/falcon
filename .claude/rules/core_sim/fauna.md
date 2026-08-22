@@ -487,6 +487,23 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > > loop's first step, named, so *"a forecast regrows first"* is one expression rather than a rule
 > > each forecast path remembers.
 > >
+> > **⛔ THE RULE IS EVERY FORECAST PATH ON BOTH WEBS, NOT THE CREW CURVE ALONE.** `hunt_forecast` and
+> > `forage_forecast` resolve **both** stock terms forward — the escapement arm as well as the growth
+> > arm — off `fauna::next_turns_quarry` and its plant twin `forage::next_turns_stand`. Threading only
+> > the *growth* into `SourceYieldForecast` was tried first and is **not enough**: it leaves the
+> > escapement arm a turn stale, so on a herd sitting *at* its floor the published row and the take
+> > still disagree, which is the same defect one term smaller. **A forecast either prices the whole
+> > next turn or it prices none of it.**
+> >
+> > **The consequence for harnesses is the part that bites.** A fixture that freezes a stock and reads
+> > a forecast is now quoting a turn the sim has not run, so it must either resolve a turn **in stage
+> > order** (Logistics → Population) or quote the forecast **before** the regrowth. Six did neither
+> > and had to be corrected. Two shapes stopped being available with it: an exact bit-for-bit equality
+> > between a seeded and a resolved realized yield (its old pass came from a frozen herd taking
+> > nothing — it is bounded now, `REALIZED_NO_JUMP_FRACTION`), and *"a stripped patch is barren"* — a
+> > stripped patch **reseeds and pays next turn**, so a barren fixture has to state barren **ground**,
+> > meaning zero capacity.
+> >
 > > **"Regrown" is not "larger".** Below the Allee threshold `regrow_biomass` takes the depensation
 > > branch and the clone comes back *smaller*, which is the honest forecast for a collapsing herd. A
 > > guard asserting the clone never shrinks looks obviously true and fires on the first thin-herd
@@ -529,6 +546,20 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > > **EVERY TAKE PATH KEEPS ITS FLOOR** — `EngagementQuantum::WholeAnimals` is the default at all four
 > > other call sites, `systems::hunt_take` included — which is what makes the change safe: a turn still
 > > resolves in bodies, and only the reading documented as a rate is un-rounded.
+> >
+> > **⛔ AND THE PEN CURVE IS THE SAME CURVE.** `pen_crew_take_curve` published
+> > `quantise_animal_take(…).killed as f32` — whole animals — while every stalking row beside it
+> > published the un-floored rate, and `quantise_animal_take` returns `killed = 0` whenever the
+> > affordable count is below one. So a **penned** aurochs whose next-turn room is 54 biomass read
+> > `0.0` at every crew size, `hunt_useful_crew` fell to `NO_USEFUL_CREW`, and the Work board's `+`
+> > shut on a pen collecting a beast every two and a half turns — the same cadence-as-a-never, one
+> > function over. It publishes the rate now (`animals_sparable`, `ONE_WHOLE_ANIMAL`).
+> >
+> > **The fixture is why it survived the first pass.** The shipped pen fixture stood a **fat** herd up
+> > and then mirrored the curve's own expression to predict it, so it agreed with the bug and could
+> > not have failed. A curve that rounds is only visible on a source whose room is **smaller than one
+> > body** — `a_thin_pen_publishes_a_rate_and_a_crew` is that fixture, and a rounding fixture needs a
+> > thin subject the way a fog fixture needs a remembered hex.
 > >
 > > **A FROZEN-STOCK HARNESS CANNOT MEASURE THIS, and `forecast_query`'s reproduction sweep had to say
 > > so.** `sim_take` holds the herd's biomass level between turns, which is also what discards the
@@ -709,7 +740,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   across the boundary — and because the staffing reading lags a turn, the player is told
 >   "staff all 1", then "staff all 2", satisfies neither, and slips the tameness. So the requirement is
 >   now a **persisted, deadband-stabilized `Herd::herders_needed`** (rewound by rollback with the
->   cloned registry, like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
+>   cloned registry, like `ladder_position`), updated every turn by `Herd::stabilize_herders_needed` in
 >   `advance_husbandry`: **up immediately** when the raw need rises (under-herding is harmful), **down
 >   only once the herd falls below `(current − 1)·animals_per_herder − band`** where `band =
 >   animals_per_herder × husbandry.herders_hysteresis_fraction` (**0.25**, `fauna_config.json`, a
@@ -905,7 +936,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   maintain + take.**
 > - **Understaffing SHEDS ANIMALS — it does not touch tameness (neglect-escape arc,
 >   `docs/plan_fauna_neglect_escape.md`).** The tameness-bleed (`decay_under_herded`, and with it
->   `decay_domestication`) is **DELETED**: `domestication_progress` is now permanent stock capital,
+>   `decay_domestication`) is **DELETED**: the herd's `ladder_position` is now permanent stock capital,
 >   monotone-up (earned via `Tame`), never bled by a neglected turn. Instead an under-contained managed
 >   herd (`is_corralled() || owner.is_some()`) **sheds whole animals over its labor capacity** into a
 >   nearby wild herd of the same species. **The overage IS the upkeep shortfall, converted into
@@ -1042,21 +1073,26 @@ keeps an overhunted map slowly replenishing (early forager play stays game-rich)
 undoing a local extinction (the crashed group is gone; a *new* group may immigrate
 elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under rollback).
 
-**Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A
-`Herd` carries `domestication_progress` (in **work units**, complete at its stored
-`domestication_cost`) and `owner:
-Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
+**Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A `Herd` carries
+**one private `ladder_position`** (in **work units**, spanning both animal rungs) plus a **stamped
+`standing`** derived from it, and `owner: Option<FactionId>`, exported as
+`HerdTelemetryState.domestication`. The retired two-meter form — `domestication_progress` /
+`corral_progress`, each with its own stamped `*_cost` — is **gone**; both webs are now on the one
+position (`intensification.md` → "The storage: ONE position, and a STAMPED standing beside it").
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
   (Population), a Hunt assignment carrying **`Improvement::Tame`** adds the
   crew's own output in work units against `work_cost × the species' taming_cost_multiplier`, for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
-  husbandry ceiling + something standing above the crew's floor). **There is no health gate** —
+  husbandry ceiling + something standing above the crew's floor); the work lands on the herd's one
+  `ladder_position`, and the stamped `standing` beside it is what says which rung that reaches.
+  **There is no health gate** —
   `docs/plan_harvest_floor.md` §3.2 replaced it with the floor's rate on every rung of both webs, and
-  the "Ecology phase" section above says the same. The herd is domesticated once the meter reaches
-  the cost stored on it, which is what `is_domesticated()` compares; the old normalized `1.0` retired
+  the "Ecology phase" section above says the same. The herd is domesticated once its
+  `ladder_position` carries the stamped `standing` to `animal:pastoral`, which is what
+  `is_domesticated()` reads; the old normalized `1.0` retired
   with `RUNG_COMPLETE`. **A `Sustain` hunt tames nothing** — it only
   *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
-- *Decay*: **there is none.** `domestication_progress` is monotone-up since the neglect-escape arc —
+- *Decay*: **there is none.** `ladder_position` is monotone-up since the neglect-escape arc —
   neglect sheds **animals**, never tameness — and the `decay_fraction_per_turn` the `animal:pastoral`
   rung used to carry has been retired from the ladder outright: on the plant branch the bleed is the
   unmet `upkeep` (`docs/plan_standing_upkeep.md` §2.4), and on this one there is nothing to bleed. What

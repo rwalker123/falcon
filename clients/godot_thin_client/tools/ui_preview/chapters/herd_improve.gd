@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 37
+const EXPECTED_CHECKPOINTS := 39
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -384,6 +384,28 @@ func run(harness) -> void:
 		penned_hover.contains("Corralled would carry ≈30 Red Deer"))
 	h._assert_hud("…and states the ground it was struck on rather than promising a future",
 		penned_hover.contains("on this ground as it stands today"))
+	# **AND THE BREEDING LINE IS A RATE, ROUNDED AS ONE, WEARING ONE `≈`.** It filled a format that
+	# carries its own `≈` with `SourceForecast.stock_face`, which carries a second — so every herd this
+	# hover has ever appeared on rendered `≈≈`. The doubled glyph is asserted separately from the
+	# figure because the two are independent failures of one line.
+	h._assert_hud("the payoff hover wears ONE ≈ per figure, never the doubled `≈≈` (got '%s')"
+		% penned_hover, not penned_hover.contains("≈≈"))
+	# …and the FIGURE. `stock_face` floors its count at one body, which is right for a standing herd
+	# and a lie about a per-turn curve: this range's peak regrowth is a QUARTER of a Red Deer a turn
+	# and the line read `≈1`. The claim is that the fraction survives — `rate_face` carrying a decimal
+	# point is the precondition, since the whole-animal rounding it replaced could not produce one.
+	var payoff_prefix := HudComposeVocab.BARE_FORECAST_PREFIX
+	var payoff_samples := SourceForecast.regrowth_samples(penned_herd, payoff_prefix)
+	var payoff_peak := SourceForecast.regrowth_at(payoff_samples,
+		SourceForecast.growth_peak_fraction(payoff_samples))
+	var payoff_body := float(penned_herd.get(
+		payoff_prefix + SourceForecast.FORECAST_BODY_MASS_KEY, 0.0))
+	var breeding_line := DetailFormat.HUSBANDRY_PAYOFF_BREEDING_FORMAT % [
+		DetailFormat.animal_rate_face(payoff_peak / payoff_body),
+		SourceForecast.herd_display_name(penned_herd)]
+	h._assert_hud("…and states the breeding RATE unrounded to whole animals (`%s`)" % breeding_line,
+		payoff_body > 0.0 and breeding_line.contains(".")
+			and penned_hover.contains(breeding_line))
 	# **THE PRECONDITION, THEN THE ABSENCE.** An unqueued herd's row really does carry the `< 0`
 	# sentinel — asserted first, or the silence below would pass just as well on a row that carried a
 	# real destination the hover simply declined to state.

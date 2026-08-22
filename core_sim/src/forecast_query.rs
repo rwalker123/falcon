@@ -570,6 +570,15 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);
     }
+    // **AND THE LOOP BOUND IS VALIDATED LIKE THE FLOOR IS** — `max_workers` is fed straight into
+    // `hunt_crew_take_curve`'s `1..=max_workers`, whose body resolves a kit coverage and three
+    // engagements per crew and materialises one reply row each. Every other field on this ask is
+    // checked (`floor_is_valid`, `resolve_quarry_and_kit`); this one was not, so a client bug
+    // sending `u32::MAX` wedged the command thread and allocated tens of gigabytes answering a
+    // question about a band that cannot exist.
+    if ask.max_workers > MAX_CREW_TAKE_WORKERS {
+        return query_failure(query_error::INVALID_CREW);
+    }
     let (herd, wear, kit) = match resolve_quarry_and_kit(
         world,
         ask.faction_id,
@@ -621,6 +630,17 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         .collect();
     QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew })
 }
+
+/// **THE LARGEST CREW A TAKE CURVE MAY BE ASKED ABOUT.** The reply is one row per crew over
+/// `1..=max_workers`, so both the work and the allocation are linear in the ask — and the domain the
+/// number *means* is a band's own crew pool, which is its working population. A thousand hunters on
+/// one herd is already an order of magnitude past anything the demographics produce, so the bound
+/// refuses nonsense without ever refusing play.
+///
+/// **A refusal, not a clamp** — the rule `floor_is_valid` follows at the same boundary: silently
+/// answering a smaller crew than was asked about would hand a client a curve whose last row is not
+/// the plateau it thinks it is.
+const MAX_CREW_TAKE_WORKERS: u32 = 1_000;
 
 /// A refusal, as its token. One constructor so the reply shape cannot drift between the seven
 /// failure paths.
@@ -2304,6 +2324,20 @@ mod tests {
     /// these needs, and spelling it at the binding buries the only thing the table is about.
     type CrewPerturbation = Box<dyn Fn(&mut HuntCrewTakeQuery)>;
 
+    /// **THE BOUND IS A CEILING, NOT A NARROWING** — the largest legal ask is still answered, so the
+    /// refusal above cannot be satisfied by a validator that turned the query off.
+    #[test]
+    fn the_largest_legal_crew_is_still_answered() {
+        let mut world = world_hunting(BOAR, BOAR_BODY);
+        let ask = crew_ask(MAX_CREW_TAKE_WORKERS, A_FLOOR);
+        let curve = crew_curve(&mut world, &ask);
+        assert_eq!(
+            curve.len(),
+            MAX_CREW_TAKE_WORKERS as usize,
+            "a crew exactly at the bound is a legal question with a full answer"
+        );
+    }
+
     #[test]
     fn the_crew_curve_refuses_on_the_shared_tokens() {
         let mut world = world_hunting(BOAR, BOAR_BODY);
@@ -2327,6 +2361,12 @@ mod tests {
             (
                 query_error::INVALID_FLOOR,
                 Box::new(|ask: &mut HuntCrewTakeQuery| ask.floor = 1.5),
+            ),
+            // **The loop bound, which was the one unvalidated field on this ask.** `u32::MAX` is the
+            // shape a client bug actually takes, and the curve would have tried to answer it.
+            (
+                query_error::INVALID_CREW,
+                Box::new(|ask: &mut HuntCrewTakeQuery| ask.max_workers = u32::MAX),
             ),
         ];
         for (token, perturb) in cases {

@@ -372,7 +372,11 @@ fn take_at(app: &App, herd: &Herd, seed: u64) -> core_sim::HuntOutcome {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
 
     let combat = app.world.resource::<CombatConfigHandle>().get();
-    let mut quarry = herd.clone();
+    // **THE HERD AS THE TURN THE FORECAST PRICES WILL FIND IT** — one Logistics regrowth on
+    // (`core_sim::next_turns_quarry`). A pre-commit row is read after the Population take and
+    // predicts the take *after the next* regrowth, so a comparison against the un-regrown herd
+    // compares two turns and reads the growth as a drift.
+    let mut quarry = core_sim::next_turns_quarry(herd, &fauna);
     hunt_take(
         &mut quarry,
         CREW,

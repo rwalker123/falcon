@@ -1326,13 +1326,15 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
 
                 // The sim's real band take (a resident band has no carry limit — it eats/banks the
                 // whole take, so `carry_room_biomass = INFINITY`, exactly as the Hunt labor arm
-                // passes). Clone the herd so each sweep entry sees the same pre-take state.
-                let mut herd = app
-                    .world
-                    .resource::<HerdRegistry>()
-                    .find(id)
-                    .expect("herd present")
-                    .clone();
+                // passes). Cloned so each sweep entry sees the same pre-take state — and **regrown
+                // once**, because that is the turn the preview beside it is about: a pre-commit
+                // forecast prices the herd as the next take will find it (`next_turns_quarry`), and
+                // a real turn runs Logistics before Population. Taking from the un-regrown herd
+                // would compare two turns and call the growth a drift.
+                let mut herd = {
+                    let registry = app.world.resource::<HerdRegistry>();
+                    core_sim::next_turns_quarry(registry.find(id).expect("herd present"), &fauna)
+                };
                 let take = hunt_take(
                     &mut herd,
                     workers,

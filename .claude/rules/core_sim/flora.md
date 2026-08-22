@@ -278,9 +278,16 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   > `species: None`, so no command path validated a player's crop at all — and the guard test went on
   > passing because it fed `validate_improvement` a `Some(species)` **no command could supply**.
   > Assert a command-path rejection through the command, never through the validator it calls.
-- **Weeding — the composition moves, `K` NEVER DOES** (#433). `carrying_capacity` is
-  `tile_forage_capacity` at every rung; the write is **`advance_forage_regrowth`'s**, once a turn,
-  recomputed fresh from the tile — the plant twin of `fauna::ecological_carrying_capacity`, so it is
+- **Weeding — the composition moves, `K` NEVER DOES** (#433). **Weeding** is what that says: a
+  reweight changes the basket and never the ceiling. `carrying_capacity` itself is the tile's
+  `tile_forage_capacity` **multiplied by the interpolated `field_capacity_gain`** — the identity
+  below `plant:field` and up to **2.53** at it, so the ceiling *does* move, but only as the **Field
+  rung's payout**, never as a side effect of a reweight. **The two are not interchangeable**: a
+  measure billed against the land — the upkeep scale — reads the land's own K through
+  `forage::patch_land_capacity`, never `ForagePatch::carrying_capacity`, or it bills the rung for the
+  K that rung raised (`cultivation.md` → "THE UPKEEP SCALE READS THE **TILE's** K", which also carries
+  why all four land readings share that one seam). The write is **`advance_forage_regrowth`'s**, once
+  a turn, recomputed fresh from the tile — the plant twin of `fauna::ecological_carrying_capacity`, so it is
   idempotent, never compounding, and a lapse or a retune reaches patches already on the map. What a
   commitment changes is `forage::patch_composition`: **Tended** raises the favored share to
   `min(1.0, share × tended_weeding_gain)` (**1.5**, `labor_config.json`), taking the increase from the
@@ -292,10 +299,12 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   > forcing the crop to `1.0` deleted it outright with no ranking involved. The gain is now an ask paid
   > only out of the clearable pool (`min(asked, Σ clearable)`), and the crop takes only the clearable
   > remainder. **It is not `cultivation_ceiling`** — see `cultivation.md`, where the six gather-only
-  > plants you *can* clear are named. There
-  is no rung below 4 that raises `K` **and none that lowers it** — the earlier concentration term did
-  the latter, cutting a committed tile's `K` to `share × gain` and **discarding the remainder**, which
-  is the bug #433 fixed. `effective_forage_capacity` / `patch_concentration` /
+  > plants you *can* clear are named.
+
+  **`plant:field` is the ONE rung that raises `K`, and NO rung may lower it** — the earlier
+  concentration term did the latter, cutting a committed tile's `K` to `share × gain` and
+  **discarding the remainder**, which is the bug #433 fixed.
+  `effective_forage_capacity` / `patch_concentration` /
   `concentration_for_share` and the `field_concentration_gain` dial are **retired** with it.
   **Least abundant first is currency-free and deliberate:** ranking the weeds by yield would mean
   comparing a food rate against a fodder rate against a material's characteristic vector — exchange

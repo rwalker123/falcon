@@ -30,7 +30,7 @@ use crate::{
     intensification::{
         interpolate, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, RungMovement,
         RungStanding, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE,
-        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -369,7 +369,12 @@ pub struct Herd {
     /// A Steppe Runner's `animal:pastoral` boundary sits at 250 work units where an aurochs' sits at
     /// 50, so a ladder-wide reading would put every herd's rung edges in the wrong place.
     pub taming_cost_multiplier: f32,
-    /// Faction tending/owning this group (`Some` iff `domestication_progress > 0`).
+    /// Faction tending/owning this group — `Some` from the **first** `Tame` accrual
+    /// ([`Self::accrue_domestication`] records it before any work is banked), and cleared only
+    /// when a managed herd sheds its last animal. So it is *not* a reading of
+    /// [`Self::ladder_position`]: a herd one work unit up the pastoral rung already has an owner,
+    /// and an owner is what puts it in the managed set (`is_corralled() || owner.is_some()`) that
+    /// pays keeping and sheds.
     pub owner: Option<FactionId>,
     /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd.
     /// `Some` = the herd does NOT roam (`advance_herds` skips its movement — it stays put) and is
@@ -898,6 +903,36 @@ impl Herd {
         }
     }
 
+    /// **HOW FAR UP ITS OWN LADDER THIS HERD STANDS, `0.0..=1.0`** — the position over the total
+    /// cost of the whole animal branch **at this herd's prices**.
+    ///
+    /// # ⛔ RAW POSITIONS ARE NOT COMPARABLE ACROSS SPECIES, AND THAT IS WHAT THIS IS FOR
+    ///
+    /// `taming_cost_multiplier` scales `animal:pastoral` and nothing else ([`Herd::standing_at`]
+    /// passes `RUNG_COST_UNSCALED` for the pen), so a **fully penned rabbit** sits at `50 + 75 =
+    /// 125` work units while a **merely tamed Steppe Runner** sits at `250`. Any ordering on the raw
+    /// position therefore ranks the un-penned steppe runner above the finished rabbit pen — which is
+    /// the one case a species-picking reader (`telling::nouns::most_domesticated_species`) ever
+    /// sees. Dividing by the branch's own total makes the comparison apples-to-apples: the rabbit
+    /// reads `1.0`, the steppe runner `0.77`.
+    ///
+    /// The branch top is walked from the root through [`RungKey::above`] rather than named, so
+    /// appending a rung moves this with the ladder.
+    pub fn ladder_fraction(&self, ladder: &LadderConfig) -> f32 {
+        let mut top = RungBranch::Animal.root_rung();
+        while let Some(next) = top.above() {
+            top = next;
+        }
+        let (base, width) = self.rung_span(top, ladder);
+        let whole_ladder = base + width;
+        if whole_ladder <= RUNG_UNSTARTED {
+            // A branch that costs nothing to climb is wholly climbed by standing on it — there is no
+            // ratio to take, and `0/0` is not an answer.
+            return WHOLE_RUNG;
+        }
+        (self.ladder_position / whole_ladder).clamp(RUNG_UNSTARTED, WHOLE_RUNG)
+    }
+
     /// A fully-tamed (managed livestock) group: yields provisions each turn and is
     /// immune to the overhunting collapse.
     ///
@@ -985,9 +1020,9 @@ impl Herd {
     }
 
     // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
-    // the retired `decay_under_herded` tameness-bleed; `domestication_progress` is now monotone-up
+    // the retired `decay_under_herded` tameness-bleed; [`Self::ladder_position`] is monotone-up
     // (earned via `Tame`, never lost to neglect), and ownership clears only when a managed herd sheds
-    // to zero animals (`advance_husbandry`), not when progress reaches zero.
+    // to zero animals (`advance_husbandry`), not when the position falls.
 
     /// **IS THE PEN METER FULL?** — `corral_progress >= corral_cost`, the *building vs maintaining*
     /// state test (`docs/plan_standing_upkeep.md` §2.4) and **not** the same question as
@@ -3635,7 +3670,8 @@ pub fn repopulate_fauna(
 /// pass **replaced both** the tameness-bleed (`decay_under_herded`) and the binary corral escape with
 /// **one** mechanic: an under-contained managed herd sheds whole animals over its labor capacity into a
 /// nearby **wild** herd of the same species ([`shed_uncontained_animals`] → [`place_shed_animals`]),
-/// and `domestication_progress` is **never** decayed by neglect (it is monotone-up, earned via `Tame`).
+/// and [`Herd::ladder_position`] is **never** decayed by neglect (it is monotone-up, earned via
+/// `Tame`, and no animal rung declares a `meter_decay`).
 /// Total abandonment falls out as the `herded_fraction == 0` limit: the whole flock **bleeds out** to
 /// the wild web over turns, and when the herd can no longer shed a whole animal the empty managed entity
 /// is **despawned** (Phase 3; the pen, if any, is announced lost via [`announce_pen_lost`] first, §2.4).
@@ -3728,7 +3764,7 @@ pub fn advance_husbandry(
         );
         // The `tamed_this_turn` flag is still cleared each turn so it can never go stale — but its one
         // consumer, the retired tameness decay, is GONE (`docs/plan_fauna_neglect_escape.md` §2.1):
-        // `domestication_progress` is monotone-up now, never bled by neglect.
+        // the herd's ladder position is monotone-up now, never bled by neglect.
         herd.tamed_this_turn = false;
         // **And the turns estimate with it**, on the same one-turn cycle: a build the keeper walked
         // away from must stop publishing a finish date, and the labor arm re-stamps it this turn if a
@@ -3808,7 +3844,7 @@ pub fn advance_husbandry(
         // different questions: *is this herd under-contained* (which drives the notice, and must be
         // true during the grace — that is when the player can still fix it) versus *do animals leave
         // this turn* (which the grace suppresses).
-        let under_contained = overage_last_turn.is_some();
+        let under_contained = herd_is_neglected(overage_last_turn);
         // **The neglect counter** — the animal twin of `ForagePatch::neglect_turns`. A herd whose
         // keepers can hold it is forgiven outright, so the grace measures *consecutive* neglect.
         if under_contained {
@@ -3826,7 +3862,23 @@ pub fn advance_husbandry(
         // *"I tend it, but not enough"* case), and **falls by the recovery rate** — slower than it
         // rose, which is the cost of neglect — on any turn the bill is met. It never resets on one
         // good turn.
-        herd.neglect_pressure = if shortfall_fraction_last_turn > 0.0 {
+        //
+        // # ⛔ IT RISES ON THE SAME PREDICATE THE GRACE DOES, AND THAT IS WHAT BOUNDS IT
+        //
+        // It rose on `shortfall_fraction > 0` while the grace counted [`herd_is_neglected`], and the
+        // two are not the same test: a **3-head herd kept at 90%** has an overage of `0.3` of an
+        // animal, so the grace resets every turn and nothing ever sheds — while the pressure climbed
+        // `+0.1` a turn, for ever, with nothing to spend it. It is the exponent in
+        // `rate × (1 + escape_acceleration)^pressure`, so the turn that herd finally grew past the
+        // one-animal gate the first shed fired at a rate clamped to the **whole flock**: a herd its
+        // keeper had held at 90% for three hundred turns, and which had never once been
+        // under-contained, lost everything in a single turn.
+        //
+        // Sharing the predicate is the whole fix, and no cap is wanted on top of it: while the herd
+        // *is* neglected the counter climbs too, so the shed fires the moment the grace runs out and
+        // spends the pressure it has accumulated. A herd cannot bank pressure it is not shedding
+        // against.
+        herd.neglect_pressure = if under_contained {
             herd.neglect_pressure + shortfall_fraction_last_turn
         } else {
             (herd.neglect_pressure - fauna.husbandry.neglect_recovery_rate.max(0.0))
@@ -3957,8 +4009,8 @@ struct ShedEvent {
 /// **The shared "animals leave" mechanic** (`docs/plan_fauna_neglect_escape.md` §2.2/§3.2) — an
 /// under-contained managed herd sheds whole animals over its labor capacity into the wild web. It
 /// replaced BOTH `decay_under_herded` (the tameness-bleed) and the binary corral escape: neglect now
-/// costs the **visible** axis (herd size), never the invisible one (`domestication_progress`, which is
-/// monotone-up and never touched here).
+/// costs the **visible** axis (herd size), never the invisible one ([`Herd::ladder_position`], which
+/// is monotone-up and never touched here).
 ///
 /// **THE SHED IS THE SHORTFALL PENALTY, and it is continuous in it** (`docs/plan_standing_upkeep.md`
 /// §2.4): the animals nobody has hands for are the ones that drift off, so half the keepers a herd
@@ -4089,9 +4141,9 @@ const NO_RUNG_CREDIT_HELD: f32 = 0.0;
 ///
 /// # BOTH ANIMAL METERS ARE MONOTONE, AND THAT READS CORRECTLY
 ///
-/// `domestication_progress` is monotone-up (the neglect-escape arc retired its bleed) and a pen's
-/// meter never bleeds either, so an animal rung derived as *building* stays that way **until it
-/// completes** — a half-tamed herd is permanently building. That is the honest reading rather than a
+/// [`Herd::ladder_position`] is monotone-up on both animal rungs (the neglect-escape arc retired the
+/// taming bleed, and no animal rung declares a `meter_decay`), so a rung derived as *building* stays
+/// that way **until it completes** — a half-tamed herd is permanently building. That is the honest reading rather than a
 /// loop: it means the `Tame` is still in flight, which it is, and the herd accrues the moment
 /// builders are staffed. Nothing re-declares anything, because nothing is written.
 ///
@@ -4102,20 +4154,24 @@ pub fn herd_build_verb(
     declared: Option<crate::components::Improvement>,
 ) -> Option<crate::components::Improvement> {
     use crate::components::Improvement;
-    // **Newest meter first**, the twin of `herd_keeping_rung`'s order: a pen with any progress on it
-    // governs, so a `Tame` declared on a penned herd is dead rather than stalled.
-    let standing = herd.standing();
     // **The rung the position is actually raising declares for itself**, which is the one-position
     // form of the retired newest-meter-first walk: a pen with work on it governs, so a `Tame`
     // declared on a herd already fencing is dead rather than stalled.
-    match standing.raising {
-        Some(RungKey::AnimalPen) if standing.credit > NO_RUNG_CREDIT_HELD => {
-            return Some(Improvement::Corral)
+    //
+    // # ⛔ IT IS THE WORK BANKED, NOT THE CREDIT — an `on_completion` rung has none
+    //
+    // The pen arm asked `standing.credit > 0`, and `animal:pen` is `partial_credit: on_completion`,
+    // which `RungStanding::at` pins to `NO_RUNG_CREDIT` at **every** position short of full. So the
+    // arm could never fire: a herd with real work banked on its fence and no live declaration (what
+    // `banking.declared_on` answers once the queue entry is gone) fell through and derived **no
+    // verb**, where the retired two-meter walk answered `Corral`. `RungStanding::banked` is what a
+    // meter carries rather than what it is worth, so it is positive from the first work banked on
+    // either rung — which is also why one arm now serves both.
+    let standing = herd.standing();
+    if standing.banked > NO_RUNG_WORK_BANKED {
+        if let Some(verb) = standing.raising.and_then(RungKey::builder_verb) {
+            return Some(verb);
         }
-        Some(RungKey::AnimalPastoral) if herd.ladder_position() > RUNG_UNSTARTED => {
-            return Some(Improvement::Tame)
-        }
-        _ => {}
     }
     // Nothing is part-way up a rung here, so a declaration is the player starting one.
     match declared {
@@ -4461,6 +4517,26 @@ pub fn herd_neglect_grace_remaining(herd: &Herd, ladder: &LadderConfig) -> Optio
 /// animals**, so a shortfall of less than one animal is not under-containment at all — the herd is
 /// within a head of its keepers' capacity and nothing can leave. That is the same whole-animal
 /// discipline `quantise_animal_take` imposes on the take.
+/// **⛔ IS THIS HERD NEGLECTED THIS TURN? — THE ONE PREDICATE, SHARED BY THE GRACE AND THE PRESSURE.**
+///
+/// A managed herd is neglected on a turn its keeping shortfall leaves at least one **whole animal**
+/// uncontained ([`uncontained_overage`], whose [`MIN_ESCAPE_ANIMALS`] quantum is the animal branch's
+/// own: a herd loses whole beasts, so a shortfall too small to free one is not under-containment).
+///
+/// **It exists because two things that must move together were driven by two tests.**
+/// `Herd::neglect_turns` counted this one; `Herd::neglect_pressure` rose on any positive shortfall
+/// fraction at all. A 3-head herd kept at 90% therefore reset its grace every turn — nothing ever
+/// shed — while the pressure climbed for ever, and the turn the flock grew past the whole-animal gate
+/// the first shed fired at a rate the accumulated exponent had clamped to the entire herd. One
+/// function, called twice, is what makes that unrepresentable rather than merely fixed.
+///
+/// **It takes the overage rather than the herd**, because `advance_husbandry` captures that reading
+/// *before* it clears `upkeep_supplied` and `upkeep_demanded` for the turn — re-resolving it
+/// afterwards would score every herd as wholly unkept.
+fn herd_is_neglected(overage_last_turn: Option<f32>) -> bool {
+    overage_last_turn.is_some()
+}
+
 fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -> Option<f32> {
     let body_mass = herd.body_mass;
     if body_mass <= 0.0 || herd.biomass <= 0.0 {
@@ -4640,8 +4716,8 @@ fn pick_adjacent_land(
 }
 
 /// Construct the fresh **wild** herd a shed spawns (`docs/plan_fauna_neglect_escape.md` §2.3 step 2),
-/// carrying the escapees' biomass at `owner = None` / `domestication_progress = 0` / `corralled_at =
-/// None` — a fresh wild group whatever its origin stock. Reuses the source species' cached traits and
+/// carrying the escapees' biomass at `owner = None` / `ladder_position = RUNG_UNSTARTED` /
+/// `corralled_at = None` — a fresh wild group whatever its origin stock. Reuses the source species' cached traits and
 /// the same `build_short_route` land-neighbour path `spawn_game_group_at` uses, so it is byte-identical
 /// to a naturally-spawned herd of that species. **Exempt from `abundance.max_total_game`** (§5 item 2)
 /// and carries the [`FERAL_ID_PREFIX`] the immigration cap scan skips.
@@ -4801,6 +4877,27 @@ pub struct SourceYieldForecast {
     /// The source's carrying capacity — the `K` a floor is a fraction *of*. Ignored on a managed
     /// source.
     pub carrying_capacity: f32,
+    /// **THE GROWTH THE TAKE THIS FORECAST PRICES WILL SEE**, in biomass — the third term of
+    /// [`take_room`], and the reason this type can hold the take's own backstop rather than a
+    /// narrower reading of it.
+    ///
+    /// # ⛔ IT IS NEXT TURN'S GROWTH, NOT [`Herd::growth_this_turn`] READ WHERE THE FORECAST STANDS
+    ///
+    /// Every consumer of this type resolves it **after** the Population take — the capture publishes
+    /// a row in the Snapshot stage, the assign-time seed answers a client between turns — and
+    /// `growth_this_turn` is `biomass − biomass_before_regrowth`, with the take subtracted from
+    /// `biomass` *after* `regrow_biomass` stamped the pair. On a source harvested at or above its
+    /// growth that field reads **zero**, so a forecast reading it there would switch off precisely
+    /// the backstop that exists to pay a source sitting on its floor.
+    ///
+    /// So both producers fill it from the **regrow-first projection** the crew curve already runs
+    /// ([`next_turns_quarry`], `forage::next_turns_stand`) — the same rule
+    /// [`hunt_crew_take_curve`]'s doc states at length: *a forecast regrows first, because the take
+    /// it prices runs after Logistics.*
+    ///
+    /// `0.0` on a source that is not growing, which pays nothing through the backstop and leaves the
+    /// escapement room to answer alone — the reading every forecast had before the backstop existed.
+    pub growth: f32,
     /// **What ONE UNIT of this source's biomass is worth, in every account** — the patch's
     /// basket-averaged `provisions_per_biomass`, or the herd's [`crate::fauna_config::HuntYield`]
     /// vector, with the caller's `output_multiplier` already folded in exactly as it is into every
@@ -4931,12 +5028,22 @@ impl SourceYieldForecast {
     // `managed_production` is always `None`.
 
     /// **THE yield/turn cap this source pays at `floor`** — the one computation every reader of this
-    /// type goes through, and the exact twin of the take path's `hunt_escapement_ceiling` /
-    /// `forage_escapement_ceiling`:
+    /// type goes through, and the exact twin of the take path's [`herd_take_room`] /
+    /// `forage::patch_take_room`:
     ///
     /// ```text
-    /// max(0, B − floor·K) × per_biomass_yield
+    /// take_room(floor, B, K, growth) × per_biomass_yield
     /// ```
+    ///
+    /// # ⛔ IT IS [`take_room`], NOT [`escapement_ceiling`] — THE TAKE'S BOUND, WHOLE
+    ///
+    /// The room *or* the share of the turn's growth the floor leaves takeable, whichever is larger,
+    /// through the very function `hunt_take`/`forage::forage_take` are bounded by. It read the bare
+    /// escapement room while the take paths carried the backstop, and on a source at or below a
+    /// floor its own build raised the two then said different things: the take handed over
+    /// `growth × (1 − floor)` while the row published `actual 0`, `range 0` and no useful crew at
+    /// all. The growth term rides on [`Self::growth`] precisely so this stays one function rather
+    /// than a reimplementation that agrees today.
     ///
     /// **It answers ANY floor, which is why the four stance rows became a function.** The player
     /// drags a continuous dial; a forecast made of fixed rows can only answer the floors someone
@@ -4962,7 +5069,7 @@ impl SourceYieldForecast {
         if let Some(production) = self.managed_production {
             return production;
         }
-        let room = escapement_ceiling(floor, self.biomass, self.carrying_capacity);
+        let room = take_room(floor, self.biomass, self.carrying_capacity, self.growth);
         self.per_biomass_yield
             .scale(room)
             .min(self.per_biomass_yield.scale(self.biomass.max(0.0)))
@@ -7711,8 +7818,13 @@ pub struct HuntCrewCurveInputs<'a> {
     pub max_workers: u32,
 }
 
-/// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a private clone with one Logistics regrowth
-/// applied, which is the state every forecast on this seam is really being asked about.
+/// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a clone with one Logistics regrowth applied,
+/// which is the state every forecast on this seam is really being asked about. Nothing here touches
+/// the caller's herd.
+///
+/// **`pub` because a HARNESS has to advance the same turn the forecast projected**: a fixture that
+/// quotes a pre-commit row and then resolves the take must run this in between, or it compares two
+/// turns and reads the growth as a drift.
 ///
 /// It is [`project_realized_hunt`]'s loop body stopped after its first step (`regrow` → read the
 /// room), and it exists so that *"a forecast regrows first"* is **one expression** rather than a
@@ -7728,7 +7840,7 @@ pub struct HuntCrewCurveInputs<'a> {
 /// branch and the clone comes back **smaller** — which is the honest forecast for a collapsing herd,
 /// since next turn's take really will draw on less stock. A guard asserting the clone never shrinks
 /// looked obviously true and fired on the first thin-herd fixture it met.
-pub(crate) fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
+pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
     let mut quarry = herd.clone();
     regrow_biomass(&mut quarry, fauna);
     quarry
@@ -7880,11 +7992,20 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
 /// uncertain about: `low == likely == high`, and a reader drawing a band around a pen row would be
 /// drawing one around a certainty.
 ///
-/// # It reads `killed`, matching the stalking rows' `expected_brought_down`
+/// # It is *animals put on the ground*, matching the stalking rows' `expected_brought_down` — AND
+/// # IT IS A RATE, FOR THE SAME REASON THEY ARE
 ///
-/// Both are *animals put on the ground*. `killed` already carries the carry bound
-/// (`WhenPackFull` stops the keepers once the pack is full), so it is the term that plateaus; the
-/// `carried`/`wasted` split below it is about what got home, which is not what a crew ceiling asks.
+/// It published [`quantise_animal_take`]'s `killed`, which is `0` for any crew whose room affords
+/// less than one whole body — so a penned **Wild Aurochs** (`body_mass 120`) whose next-turn room is
+/// 54 biomass read `0` at *every* crew size, [`hunt_useful_crew`] answered [`NO_USEFUL_CREW`], and
+/// the Work board's `+` shut on a pen that collects one beast about every two and a half turns.
+/// That is the *"cadence reported as a never"* the stalking rows were fixed for
+/// ([`EngagementQuantum::Rate`]); the pen path is the same statement about the same quantum, and the
+/// herd's own biomass is the accumulator on both.
+///
+/// The carry bound stays (a curve asks *"would another pair of hands buy me more"*, and on a pen the
+/// keepers' haul is what answers), and it keeps its own [`ONE_WHOLE_ANIMAL`] floor, which is not a
+/// rounding but the indivisibility of the animal.
 ///
 /// # `quarry` is the REGROWN clone, not `inputs.herd`
 ///
@@ -7914,14 +8035,22 @@ fn pen_crew_take_curve(quarry: &Herd, inputs: &HuntCrewCurveInputs<'_>) -> Vec<H
                     inputs.wear,
                 )
             });
-            let take = quantise_animal_take(
-                production,
-                workers as f32 * carry_per_worker,
-                quarry.body_mass,
-                handling_per_worker * workers as f32,
-                EngagementStop::WhenPackFull,
-            )
-            .killed as f32;
+            // **A RATE, NOT A TURN'S BODIES** — [`animals_sparable`], and the carry arm un-floored
+            // beside it, for the reason [`EngagementQuantum::Rate`] states one branch over. This is
+            // the same three bounds [`quantise_animal_take`] applies (`killed`), with the two
+            // whole-animal floors taken off: the room a crew may spare, what its keepers can carry
+            // out, and the species' handling.
+            let take = animals_sparable(production, quarry.body_mass)
+                .min(
+                    (workers as f32 * carry_per_worker / quarry.body_mass)
+                        // **The carry arm still cannot bind below one body**, exactly as
+                        // `quantise_animal_take`'s `carryable.max(1.0)` does not: a keeper who
+                        // cannot haul a whole beast still walks one out and wastes the rest. That
+                        // is a fact about the animal, not a rounding, so it survives the rate.
+                        .max(ONE_WHOLE_ANIMAL),
+                )
+                .min(handling_per_worker * workers as f32)
+                .max(0.0);
             HuntCrewTake {
                 workers,
                 low: take,
@@ -7931,6 +8060,12 @@ fn pen_crew_take_curve(quarry: &Herd, inputs: &HuntCrewCurveInputs<'_>) -> Vec<H
         })
         .collect()
 }
+
+/// **THE SMALLEST TAKE A CREW THAT TAKES ANYTHING PUTS ON THE GROUND** — one animal, because an
+/// animal is indivisible even when the hands that killed it cannot carry it home. It is
+/// [`quantise_animal_take`]'s own `carryable.max(1.0)`, named where [`pen_crew_take_curve`] applies
+/// it as a rate: the collection bound may not fall below one body, though every other bound may.
+const ONE_WHOLE_ANIMAL: f32 = 1.0;
 
 /// **NO CREW IS USEFUL HERE** — what [`hunt_useful_crew`] answers when no crew in the curve brings
 /// anything down at all: a bare-handed party against a `defense` it cannot clear lands exactly zero
@@ -8049,6 +8184,9 @@ pub(crate) fn hunt_forecast(
     // production, no rung changes the draw** — so a pen takes the ordinary path below, and what
     // penning buys is its `r` gain, its density gain on `K`, its slower escape and its handling gain.
     let hunt_yield = herd_hunt_yield(herd, fauna);
+    // **THE HERD AS NEXT TURN'S TAKE WILL FIND IT** — one Logistics regrowth applied to a private
+    // clone, for the reason spelled out on the two stock terms below.
+    let quarry = next_turns_quarry(herd, fauna);
     // **The two investment rungs' harvests, in BIOMASS, resolved once.** Both quotes below are a
     // rate applied to one of these, and the material account needs the biomass itself — see
     // `SourceYieldForecast::managed_yield_biomass`. Same `biomass_before_regrowth` basis and
@@ -8077,9 +8215,24 @@ pub(crate) fn hunt_forecast(
         fight: Some((party.clone(), herd_quarry_fight(herd, fauna))),
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
-        // the raw field) and its CURRENT biomass, so the forecast and the take read the same stock.
-        biomass: herd.biomass,
+        // the raw field) and the stock the take will find, so the forecast and the take read one
+        // herd.
+        //
+        // # ⛔ BOTH STOCK TERMS ARE NEXT TURN'S, BECAUSE THE TAKE THEY PRICE RUNS AFTER LOGISTICS
+        //
+        // Every caller resolves this **after** the Population take — the capture publishes a row in
+        // the Snapshot stage, the assign-time seed answers a client between turns — so the raw herd
+        // is a whole turn stale in *both* terms `take_room` is made of: `biomass` has just been
+        // drawn back toward the floor, and `growth_this_turn` is `biomass − biomass_before_regrowth`
+        // with the take subtracted after `regrow_biomass` stamped the pair, which on a worked source
+        // reads **zero** and switches off the very backstop that pays a herd sitting on its floor.
+        // So the pair comes off [`next_turns_quarry`] — the same private regrown clone
+        // [`hunt_crew_take_curve`] resolves against, and the first step of the loop
+        // [`project_realized_hunt`] runs — and the row's `actual`, its `realized` headline and the
+        // crew curve beside it are three readings of one turn rather than two frames.
+        biomass: quarry.biomass,
         carrying_capacity: herd_capacity(herd, fauna),
+        growth: quarry.growth_this_turn(),
         // What one unit of this herd's biomass is worth, in both currencies — the species' vector,
         // resolved once for the whole forecast.
         per_biomass_yield: hunt_yield.apply(ONE_UNIT_OF_BIOMASS, output_multiplier),
@@ -10458,6 +10611,138 @@ mod tests {
         assert!(
             take > 0.0,
             "…so the build's gate no longer refuses a herd its own improvement pushed under"
+        );
+    }
+
+    /// **⛔ AND THE PUBLISHED ROW PAYS IT TOO** — the animal twin of
+    /// `forage::tests::a_patch_below_its_climbing_floor_publishes_the_take_it_will_hand_over`, and
+    /// the same defect: [`SourceYieldForecast::ceiling_at`] read the bare escapement room while
+    /// [`herd_take_room`] carried the backstop, so on a herd its own Tame pushed under its floor the
+    /// sim handed the hunters `growth × (1 − floor)` while the row beside it published `actual 0`,
+    /// `range 0` and no useful crew.
+    ///
+    /// **Asserted against the take itself**, run through the shipped `hunt_take` on the herd the row
+    /// is about — one Logistics regrowth on ([`next_turns_quarry`]) — because a comparison against a
+    /// re-derived formula passes with both sides wrong in the same way.
+    ///
+    /// **The fixture is a BOAR rather than the aurochs the rest of this section uses**, and that is
+    /// load-bearing: the animal take lands in whole bodies, and an aurochs' growth share at this
+    /// squeeze is a fraction of its 120-unit body, so both sides would agree on a quantised zero and
+    /// the test would pass against the defect. The precondition below states it.
+    #[test]
+    fn a_herd_below_its_climbing_floor_publishes_the_take_it_will_hand_over() {
+        /// The shipped species whose body is light enough that a squeezed herd's growth share is
+        /// still several whole animals — see this test's doc.
+        const BOAR: &str = "Wild Boar";
+        const HALF_THE_STOCK: f32 = 0.5;
+        /// Enough hunters that the *herd*, not the party's reach, bounds the take.
+        const HUNTERS: u32 = 20;
+        /// The wild ceiling the fixture starts from, and the stock it stands at — half of it, so the
+        /// herd is exactly on its floor **before** the Tame raises `K` out from under it.
+        const WILD_CEILING: f32 = 1_000.0;
+        const ON_THE_WILD_FLOOR: f32 = WILD_CEILING * HALF_THE_STOCK;
+        /// Horizons for the row's two projections; the assertion is on `actual`, so these only have
+        /// to be live.
+        const SHORT_HORIZON: u32 = 4;
+        /// The reported band's width. It only moves `range`, which this test does not assert on —
+        /// `actual` is the row's expectation whatever the band around it is.
+        const RANGE_SIGMAS: f32 = 1.0;
+        /// What one hunter hauls, in biomass — the reference rate the other forecast fixtures in
+        /// this module pass.
+        const PER_HUNTER_HAUL: f32 = 40.0;
+        /// A band at neutral productivity — the row ships at this multiplier by contract.
+        const NEUTRAL_OUTPUT: f32 = 1.0;
+
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let def = fauna
+            .species_by_display(BOAR)
+            .expect("the fixture names a shipped species");
+        let mut herd = Herd::new(
+            "game_squeeze".to_string(),
+            BOAR.to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            ON_THE_WILD_FLOOR,
+            WILD_CEILING,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a tameable species breeds"),
+            def.body_mass,
+        );
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(BOAR);
+        assert!(
+            herd.tame_outright(FactionId(0), &ladder),
+            "fixture: the species must be tameable, or `K` never climbs and there is no squeeze"
+        );
+        // **AND THE `K` THE TAME BOUGHT, THROUGH THE SHIPPED SEAM.** Domestication makes the land
+        // hold more animals ([`herd_density_gain`]); in play the graze pass restamps
+        // `carrying_capacity` with it each turn, and a synthetic herd has no pasture under it — so
+        // the fixture applies the herd's own gain rather than naming a number. This is the squeeze:
+        // `floor · K` climbs out from under a herd that was standing exactly on it.
+        herd.carrying_capacity *= herd_density_gain(&herd.standing(), &herd, &fauna);
+
+        // **THE PRECONDITIONS**, both on the herd the row is about — one Logistics regrowth on.
+        let quarry = next_turns_quarry(&herd, &fauna);
+        let capacity = herd_capacity(&quarry, &fauna);
+        let room = hunt_escapement_ceiling(HALF_THE_STOCK, quarry.biomass, capacity);
+        assert_eq!(
+            room, 0.0,
+            "fixture: the Tame must have raised `K` out from under the herd, or the escapement room \
+             is what pays and the backstop is untested ({room})"
+        );
+        let backstop = herd_take_room(&quarry, HALF_THE_STOCK, &fauna);
+        assert!(
+            backstop > quarry.body_mass,
+            "fixture: the growth share ({backstop}) must afford a whole body ({}), or both sides \
+             agree on a quantised zero and the defect is invisible",
+            quarry.body_mass
+        );
+
+        let party = HuntingParty::builtin_equipped();
+        let published = hunt_source_yield_preview(
+            &herd,
+            &fauna,
+            PER_HUNTER_HAUL,
+            &party,
+            NEUTRAL_OUTPUT,
+            HUNTERS,
+            HALF_THE_STOCK,
+            SHORT_HORIZON,
+            SHORT_HORIZON,
+            RANGE_SIGMAS,
+        );
+
+        let handed_over = {
+            let mut taking = quarry.clone();
+            let outcome = crate::systems::hunt_take(
+                &mut taking,
+                HUNTERS,
+                HALF_THE_STOCK,
+                PER_HUNTER_HAUL,
+                &party,
+                &fauna,
+                // A resident band banks the whole take — the Hunt labor arm's own carry room.
+                f32::INFINITY,
+                // **THE SAME READING OF THE STOCHASTIC STAGES THE ROW PUBLISHES.** A boar carries
+                // `wariness 0.25`, so the retreat is a real distribution and a *seeded* take would
+                // differ from the row's expectation by the draw rather than by the defect. That
+                // spread is what `SourceYield::range` reports; `actual` is the expectation, and this
+                // asserts the expectation.
+                HuntDraw::EXPECTED,
+            );
+            herd_hunt_yield(&quarry, &fauna)
+                .apply(outcome.take.carried, NEUTRAL_OUTPUT)
+                .provisions
+        };
+
+        assert!(
+            handed_over > 0.0,
+            "fixture: the take must hand over the growth share, or there is no disagreement to catch"
+        );
+        assert!(
+            (published.actual - handed_over).abs() < 1e-4,
+            "the row publishes what the hunters are handed: {} against {handed_over}",
+            published.actual
         );
     }
 

@@ -772,6 +772,20 @@ dropping `path_for`'s loaded check fails the two degradation claims **and three 
 `_assert_food_layer_rows`' own** — every species then resolving to a nonexistent flora path that
 displaces the role marks, which is exactly what that older group is there to catch.
 
+### ⛔ A PRECONDITION ASSERTED OVER THE FIXTURE'S OWN CONSTANTS IS NOT A PRECONDITION
+
+A claim whose job is *"the sim effect this whole block depends on is still applying"* has to reach the
+**sim's** number. `land_readouts.gd` asserted a Field's boosted ceiling exceeded the ground under it
+as `FIELD_GROUND_CAPACITY * FIELD_CAPACITY_GAIN > FIELD_GROUND_CAPACITY`, where the gain was a
+harness-local `2.53` — that is `x * 2.53 > x`, arithmetic over two numbers the fixture wrote itself,
+and it stays green with `labor_config.json`'s `field_capacity_gain` set to `1.0`, which is precisely
+the day the block goes vacuous. The gain is now read out of `core_sim/src/data/labor_config.json`
+(`forage.cultivation.field_capacity_gain`) as the sim-side twin
+`climbing_to_field_does_not_compound_the_capacity_gain` already did, and **the read itself is a second
+claim** — a config the harness failed to parse must fail loudly rather than fall back to a literal and
+restore the tautology. The general shape is "a dead field cannot diverge": a fixture that supplies
+both sides of its own comparison is measuring the harness.
+
 ### A flora fixture's `species` must be a real `flora_config.json` id
 
 **The KEY is an asset lookup now, and a wrong one fails SILENTLY.** `FloraSprites` composes

@@ -731,13 +731,20 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    that needs a crop, and the move would buy nothing.
 
    **7b — WHAT §4.6b LEFT STANDING, and this slice is where it lands.**
-   Each is reachable in play today and none is a defect in the model. The first three are one shape —
-   a band-level act with no band-level surface — and the fourth is an asymmetry the pending rows
-   introduced.
+   Each is reachable in play today and none is a defect in the model. **The first has since LANDED**;
+   of the three that remain, the first two are one shape — a band-level act with no band-level
+   surface — and the last is an asymmetry the pending rows introduced.
 
    - **Nothing on the Work tab declares a build** (①), so the tile sheet is still the only door.
+     > **LANDED, with §4.7a's ①.** The `⌃` ready mark on a work row is the control that declares, and
+     > the compose sheet keeps the forecast while ceasing to be the commit. **The limit that move left
+     > is STATED rather than closed**, which §4.7a called the defensible answer: a source the band
+     > does not work has no row and therefore no way to declare, and the sheet says *"Send gatherers
+     > here first, then Cultivate this patch from the Work tab."*
    - **The kit override has no home** (②) — the card's picker is deleted, so the derivation currently
-     stands alone and cannot be overridden at all.
+     stands alone and cannot be overridden at all. **Still open, and it is the cross-cutting one**: a
+     kit per queue entry needs a field on `BuildQueueEntry`, a command and a wire field, where the
+     other two are client-only.
    - **The queue cannot be reordered from the UI.** `build_order` is command-line only, as is
      `abandon`; the block caps at three rows plus a `+N more` overflow, chosen so the board keeps
      legible rows in a height-capped horizontal dock. Drag-to-reorder is this slice's, and the cap
@@ -746,6 +753,14 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
      the tail, `○`, no date), but unticking a **confirmed** entry does not leave the block until the
      turn resolves — the queue's positions are wire state and the optimistic overlay carries
      additions only. The asymmetry is visible and should be closed with the row's own controls.
+
+   > **⛔ THE ZONE HAS NO ROOM LEFT, AND THAT IS THIS SLICE'S FIRST DECISION — NOT ITS LAST.** All
+   > three surviving items want pixels in the Work zone, and §4.7's landing spent the last of them:
+   > `PANEL_HEIGHT_WIDE` ships at **456** for a **396px** box, and the zone reads **396 of 396 in
+   > height and 354 of 356 in width**, with assertions that fail loudly rather than clipping silently.
+   > So each item's cost has to be **measured before it is designed**, and the lever that pays for it
+   > — a taller strip, a wider panel, two-abreast pool cards — is **Ray's to pick**. Designing all
+   > three and discovering the overflow at the end is the failure this note exists to prevent.
 
 8. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
    subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has
@@ -980,7 +995,7 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     >
     > - **`husbandry_regrowth_cap` SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.** The cap
     >   is `1.0` and `pen_gain` is `4.0`, so a species whose wild `r` exceeds `0.25` cannot receive the
-    >   whole pen bonus. Of the six **pennable** species, three lose some of it: **fowl** and **rabbit**
+    >   whole pen bonus. Of the seven **pennable** species, three lose some of it: **fowl** and **rabbit**
     >   forfeit **29%** (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
     >   **The cap never binds at the pastoral rung** — the fastest pastoral rate on the roster is `0.70`
     >   — so it is a pen-only effect, which is why it reads as the pen underperforming rather than as a

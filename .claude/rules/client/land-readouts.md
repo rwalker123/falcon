@@ -61,8 +61,12 @@ paths:
     shared `ecology_value_hex`, which matches the phase word wherever in the value it sits, so
     folding the rows forked no styling path: a stressed patch, a stressed pasture and a stressed herd
     still read identically.
-  Each row renders only where that web has a stock at all (`patch_carrying_capacity > 0` /
-  `graze_capacity > 0`) — never a `0 / 0`, which reads as a starved stock rather than an absent one.
+  Each row renders only where that web has a stock at all — never a `0 / 0`, which reads as a
+  starved stock rather than an absent one. **The `Foraging` gate is
+  `DetailFormat.patch_capacity(tile_info) > 0.0`, NOT the raw `patch_carrying_capacity`**
+  (`SubjectDrawerController.gd`), because that field is **redacted on a remembered hex** and the
+  accessor falls back to `patch_tile_capacity`; reading the raw field drops the row entirely on
+  exactly the tiles the card exists to remember. `Grazing` gates on `graze_capacity > 0`.
   **AND THE `Foraging` ROW HAS A SECOND GATE THE `Grazing` ROW DOES NOT: the ground must be a
   GATHERING SITE** (`DetailFormat.tile_is_gathering_site`, issue #464). The row's label is a **VERB**,
   and the sim's plant rungs 1–3 all carry `requires_gathering_site`, so on ground that is not one the

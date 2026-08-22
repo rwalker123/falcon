@@ -64,10 +64,17 @@ const STALE_AFTER_MSEC := 400
 ## **HOW LONG A TRANSPORT FAILURE STANDS BEFORE THE SAME QUESTION MAY BE PUT AGAIN.**
 ##
 ## A refusal the SERVER spelled (`sim_runtime::commands::query_error` — `unknown_herd`, `unknown_kit`,
-## `kit_wrong_job`, `invalid_floor`, `invalid_party`, `unknown_band`, `no_active_world`) is a statement
-## about the QUESTION, and the sheet composed that question out of the band, herd, kit and party it is
-## already rendering. Re-asking cannot change the answer, so a server token is never re-asked at all —
-## `ask` runs once per render, and retrying there would spin the socket instead of fixing anything.
+## `kit_wrong_job`, `invalid_floor`, `invalid_party`, `invalid_crew`, `unknown_band`,
+## `no_active_world`) is a statement about the QUESTION, and the sheet composed that question out of
+## the band, herd, kit and party it is already rendering. Re-asking cannot change the answer, so a
+## server token is never re-asked at all — `ask` runs once per render, and retrying there would spin
+## the socket instead of fixing anything.
+##
+## **NONE OF THEM GETS PROSE OF ITS OWN, and `invalid_crew` did not change that** — see
+## `HudComposeVocab.FORECAST_FAILED_FORMAT`: every one of these is a CLIENT bug if it ever fires in
+## normal play, so the token rides one honest failure line rather than earning a sentence for a state
+## the UI is built to make unreachable. What `invalid_crew` earned instead is the clamp that stops the
+## client asking for it at all (`DrawerComposeController._crew_take_workers`).
 ##
 ## `QUERY_ERROR_TRANSPORT` says nothing about the question. A refused connect, the worker's read
 ## timeout, a decode error, a HUD standing up before `Main` has a command client — every one of them

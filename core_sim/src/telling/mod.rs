@@ -44,6 +44,7 @@ use crate::{
     culture::CultureManager,
     fauna::HerdRegistry,
     fauna_config::FaunaConfigHandle,
+    intensification::LadderConfigHandle,
     mapgen::WorldGenSeed,
     orders::{FactionId, FactionRegistry},
     resources::{
@@ -796,6 +797,8 @@ pub struct TellingSources<'w, 's> {
     pub discovery_progress: Res<'w, DiscoveryProgressLedger>,
     pub herds: Res<'w, HerdRegistry>,
     pub fauna_config: Res<'w, FaunaConfigHandle>,
+    /// The rung prices `nouns::most_domesticated_species` normalises a herd's position against.
+    pub ladder_config: Res<'w, LadderConfigHandle>,
     pub sites_config: Res<'w, SitesConfigHandle>,
     pub culture: Res<'w, CultureManager>,
     /// Resident bands only — a detached expedition's larder is not the people's larder.
@@ -971,6 +974,7 @@ pub fn telling_tick(
         .map(|tile| tile.resource_terrain());
 
     let fauna = sources.fauna_config.get();
+    let ladder = sources.ladder_config.get();
     let sites = sources.sites_config.get();
     // The threads the resolvers read. Cloned out of the ledger so the resolution loop can borrow
     // it immutably while the ledger is being written; threads are few and small by construction
@@ -985,6 +989,7 @@ pub fn telling_tick(
         bands: &bands,
         herds: &sources.herds,
         fauna: &fauna,
+        ladder: &ladder,
         threads: &threads,
     };
 

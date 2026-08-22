@@ -1589,6 +1589,22 @@ const HUNT_TAKE_PENDING := "Costing what this crew brings down…"
 ## hundred.
 const HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC := 120
 
+## **THE LARGEST CREW THE TAKE CURVE MAY BE ASKED ABOUT** — `core_sim`'s own `MAX_CREW_TAKE_WORKERS`,
+## restated on this side because the client composes the ask.
+##
+## **THE SERVER REFUSES ABOVE IT RATHER THAN CLAMPING** (`query_error::INVALID_CREW`), which is the
+## right rule there — a curve silently answered for a smaller crew than was asked about has a last row
+## that is not the plateau the caller thinks it is. It also means an over-large ask costs the player a
+## sheet: the take, band, cadence and yields all drop out and `No forecast available (invalid_crew)`
+## stands in their place. So the CLIENT clamps, at the one place the question is composed, and the
+## question that goes out is one the sim will answer.
+##
+## **NOTHING IN PLAY REACHES IT.** The ask carries the band's own hunt crew pool
+## (`HudBandLaborState.source_crew_pool_hunt` — idle hands plus the ones already on this herd), and a
+## thousand hunters on one herd is an order of magnitude past anything the demographics produce. The
+## bound is a guard against a bug on this side, not a rule the player can feel.
+const HUNT_CREW_TAKE_MAX_WORKERS := 1000
+
 # ---- WHICH LIMIT IS BINDING, AND ITS REMEDY ----------------------------------------------------
 # **IT REPLACES THE `settles at N%` ADVISORY ON THIS WEB.** That sentence is composed from the
 # projection walk, which carries the engagement and the retreat and NOT the fight — so on the one web

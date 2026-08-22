@@ -513,7 +513,7 @@ func _hunt_take_spread(dw: Dictionary) -> String:
     var tail := ""
     if not SourceForecast.hunt_take_band_is_degenerate(low, likely, high):
         tail = HudComposeVocab.HUNT_TAKE_BAND_FORMAT % [
-            _format_animal_rate(low), _format_animal_rate(high)]
+            DetailFormat.animal_rate_face(low), DetailFormat.animal_rate_face(high)]
     # **AND THE CADENCE COMES LAST, after the band**, so the sentence reads figure → spread → wait:
     # the number, how sure it is, and what it feels like. It rides the LIKELY take, which is the
     # figure the sentence itself quotes. See `HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT`.
@@ -579,29 +579,14 @@ func _hunt_binding_limit(herd: Dictionary, band: Dictionary, floor: float, dw: D
         var take := float(dw[CREW_TAKE_ANIMALS])
         return {"severity": SourceForecast.VERDICT_SLOW,
             "text": HudComposeVocab.HUNT_LIMIT_CREW_FORMAT % [
-                crew_noun, _format_animal_rate(take), quarry, _hunt_take_spread(dw)]}
+                crew_noun, DetailFormat.animal_rate_face(take), quarry, _hunt_take_spread(dw)]}
     if sustainable <= room_animals:
         return {"severity": SourceForecast.VERDICT_OK,
             "text": HudComposeVocab.HUNT_LIMIT_SUSTAINABLE_FORMAT % [
-                _format_animal_rate(sustainable), quarry]}
+                DetailFormat.animal_rate_face(sustainable), quarry]}
     return {"severity": SourceForecast.VERDICT_OK,
         "text": HudComposeVocab.HUNT_LIMIT_ROOM_FORMAT % [
-            _format_animal_rate(room_animals), quarry]}
-
-## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
-## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15").
-##
-## **A POSITIVE RATE NEVER COMES BACK AS `0`** (`HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN`). Two
-## decimals cannot state a take of `0.004`, and printing the rounded figure told a player that a crew
-## which does eventually bring an animal down brings down none — the reported `≈0 WILD AUROCHS/TURN`
-## in its remaining form. Under the floor the face becomes `<0.01`, which is a small number rather
-## than an absence.
-func _format_animal_rate(value: float) -> String:
-    if value > 0.0 and value < HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN:
-        return HudComposeVocab.HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT % _format_trimmed(
-            HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN,
-            HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
-    return _format_trimmed(value, HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
+            DetailFormat.animal_rate_face(room_animals), quarry]}
 
 ## **HOW OFTEN A BODY ACTUALLY DROPS**, for a take under one animal a turn — `1 ÷ rate`, the cadence
 ## the wound ledger integrates the fractional take into. `""` at or above one a turn and for a rate of
@@ -610,19 +595,8 @@ func _format_animal_rate(value: float) -> String:
 func _hunt_take_cadence(rate: float) -> String:
     if rate <= 0.0 or rate >= HudComposeVocab.HUNT_TAKE_CADENCE_THRESHOLD:
         return ""
-    return HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT % _format_trimmed(1.0 / rate,
+    return HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT % DetailFormat.format_trimmed(1.0 / rate,
         HudComposeVocab.HUNT_CADENCE_DECIMALS)
-
-## Fixed-decimal, then trailing zeros AND a trailing dot stripped. `String.num` keeps a lone ".0", so
-## format fixed and strip the tail ourselves (rstrip stops at the first non-matching char, so integer
-## zeros survive).
-func _format_trimmed(value: float, decimals: int) -> String:
-    var text := ("%." + str(decimals) + "f") % value
-    if "." in text:
-        text = text.rstrip("0")
-        if text.ends_with("."):
-            text = text.rstrip(".")
-    return text
 
 
 ## Each FLOOR PRESET's button metric on a LOCAL hunt, keyed preset -> a `{compact, full}` pair (compact
@@ -895,7 +869,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     var body := float(dw["body_mass"])
     var delivered := float(dw["delivered_biomass"])
     var animal_rate := delivered / body if body > 0.0 else 0.0
-    var rate_text := _format_animal_rate(animal_rate)
+    var rate_text := DetailFormat.animal_rate_face(animal_rate)
     var quarry := SourceForecast.herd_display_name(herd)
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
     # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
@@ -2769,10 +2743,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
-    # **A STALE ANSWER COUNTS AS READY ON THIS PATH**, the seam's own rule: within `STALE_AFTER_MSEC`
-    # the previous crew's row stands while the new one flies, because blanking the readout on every
-    # stepper tick reads as a hunt with no forecast at all. **A DRAG DOES NOT READ THIS PATH** — see
-    # `ForecastQuery.view_exact`, where the same indulgence would hide the whole defect being fixed.
+    # **NO STALE ANSWER STANDS ON THIS PATH EITHER** — `_crew_take_view` reads `view_exact`, and the
+    # note that used to stand here said the opposite. The stale window's bargain is about a STEPPER
+    # tick, and a stepper tick moves nothing this question is keyed on (the key carries the band's
+    # POOL, not the composed crew), so the indulgence bought the readout nothing and cost it the
+    # release of a floor drag: the rebuild asked the new floor and read back the old floor's curve as
+    # READY. See `_crew_take_view` for the whole of it, and `ForecastQuery.view_exact` for the rule.
     # **THE KIT ROW, directly under the crew stepper and above every forecast** — a kit describes the
     # crew, and it moves the fight (the attack tier) and the haul (the carry tier) alike. Both branches
     # get it: a local hunt sends `assign_labor … kit <id>` exactly as a raid sends
@@ -3905,6 +3881,21 @@ func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, part
         })
     return _forecast_query.view(subject, key)
 
+## **THE CREW TERM OF THE CREW-TAKE KEY, BOUNDED** — `HudComposeVocab.HUNT_CREW_TAKE_MAX_WORKERS`,
+## which is `core_sim`'s own `MAX_CREW_TAKE_WORKERS`.
+##
+## **BOTH ASK PATHS GO THROUGH IT, and they have to go through the SAME one.** The number is half the
+## question and half the key (`ForecastQuery.key_of`), so a clamp applied on one path and not the
+## other would ask under one key and read back under another — the sheet would then wait forever on an
+## answer that had already landed. Clamping here, before either the key or the payload is built, keeps
+## the two spellings of the question identical by construction.
+##
+## The sim REFUSES an over-large ask rather than clamping it (`query_error::INVALID_CREW`), so an
+## unclamped client would render `No forecast available (invalid_crew)` where a curve belongs. See the
+## const for why nothing in play reaches the bound.
+func _crew_take_workers(max_workers: int) -> int:
+    return mini(max_workers, HudComposeVocab.HUNT_CREW_TAKE_MAX_WORKERS)
+
 ## **THE CREW-TAKE QUESTION, COMPOSED AND ASKED** — the resident twin of `_raid_forecast_view`, one
 ## place so the ask and the read cannot describe two different herds.
 ##
@@ -3915,23 +3906,40 @@ func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, part
 ##
 ## **A CREW OF 0 IS STILL ASKED**, unlike the raid: the sheet is composing a curve rather than one
 ## party, the stepper is about to be filled from it, and a pool of zero is what answers nothing.
+##
+## **AND IT READS `view_exact`, FOR THE SAME REASON THE DRAG DOES.** The stale window is a bargain
+## struck for a control whose motion is one tick of a stepper; the two terms of THIS key are the kit
+## and the FLOOR, and neither is a tick — a different floor is a different room, a different kit a
+## different fight. Read through `view`, the `ask` three lines above stamps `asked_key` with the very
+## key being read back, so the seam answers `STATE_READY` carrying the PREVIOUS floor's curve: the
+## release of a drag onto a floor the 120 ms rate limit never asked composed the take, the band, the
+## cadence, the yields and the binding-limit sentence out of the floor the player had already left,
+## with `take_state_host` hidden and nothing on the sheet saying so. Worse, `arm_hunt_autofill` then
+## filled the stepper from that plateau and the real reply's `clamp_hunt_count` can only LOWER it, so
+## a floor dragged down left a permanently under-staffed party.
+##
+## Exact, an answer stands only for the key it was actually asked at; everything else is
+## `STATE_PENDING`, which is what puts `HudComposeVocab.HUNT_TAKE_PENDING` on the sheet until the real
+## curve lands. The stepper itself is unaffected either way — the key carries the POOL, not the
+## composed crew, so a `+` press re-reads an answer the seam already holds.
 func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: float,
         max_workers: int) -> Dictionary:
     if _forecast_query == null:
         return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, max_workers, floor)
-    if max_workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor)
+    if workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
             "band_id": band_id,
             "herd_id": herd_id,
             "kit_id": kit_id,
             "floor": floor,
-            "max_workers": max_workers,
+            "max_workers": workers,
         })
-    return _forecast_query.view(subject, key)
+    return _forecast_query.view_exact(subject, key)
 
 ## **THE SAME QUESTION, PUT WHILE THE FLOOR IS STILL MOVING** — and the reason it has to be put at all
 ## is that the curve is FLOOR-DEPENDENT: every row is bounded by the room standing above the
@@ -3957,13 +3965,17 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
     if _forecast_query == null:
         return
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    # **THE SAME CLAMP THE BUILD PATH APPLIES, and it must be the same one** — see
+    # `_crew_take_workers`: the crew term is half the key, so two paths clamping differently would ask
+    # under one key and read back under another.
+    var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, max_workers, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor)
     var now := Time.get_ticks_msec()
     if key != _crew_take_drag_asked_key \
             and now - _crew_take_drag_asked_at_msec \
                 >= HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC \
-            and max_workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
+            and workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _crew_take_drag_asked_key = key
         _crew_take_drag_asked_at_msec = now
         _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
@@ -3972,7 +3984,7 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
             "herd_id": herd_id,
             "kit_id": kit_id,
             "floor": floor,
-            "max_workers": max_workers,
+            "max_workers": workers,
         })
     # **READ EXACTLY, whether or not this motion asked.** A suppressed motion is still a floor the
     # sheet has no answer for, and the answer it does hold is the previous floor's — so the take line

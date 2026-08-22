@@ -980,12 +980,15 @@ pub(crate) fn snapshot_forage_patches(
             // plants and falls back to the empty-basket defaults.
             let tile_composition = tile_quotes.tile_composition(patch.tile);
             // **THE SIZE OF THE LAND UNDER THIS PATCH** — the tile's own `K`, which every upkeep
-            // figure on this row is quoted per tender-load of. Absent ground presents none, exactly
-            // as it names no plants above.
-            let tile_capacity = tile_capacities
-                .get(&patch.tile)
-                .copied()
-                .unwrap_or(crate::labor_config::NO_FORAGE_CAPACITY);
+            // figure on this row is quoted per tender-load of. Through
+            // `forage::patch_land_capacity`, so a patch whose coord is **not on the map** publishes
+            // the bill struck against its seeded capacity — the same reading `advance_cultivation`
+            // bleeds against and `maintenance_shares` claims against, which is what keeps the row's
+            // `demand − supplied == shortfall` a statement about one number.
+            let tile_capacity = crate::forage::patch_land_capacity(
+                patch,
+                tile_capacities.get(&patch.tile).copied(),
+            );
             // **The measure both rung quotes below are struck per** — one reading, so the price a
             // compose sheet shows and the bill the patch is handed cannot come from two places.
             let tender_loads = crate::forage::patch_tender_loads(tile_capacity, forage);

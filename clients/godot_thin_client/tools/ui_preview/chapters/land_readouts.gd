@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 49
+const EXPECTED_CHECKPOINTS := 50
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -248,10 +248,48 @@ const SHIPPED_ART_SPECIES := "wild_emmer"
 const DEGRADED_TIER_SPECIES := "hay_grass"
 const DEGRADED_TIER_ROLE := "fodder"
 
-## `labor_config.json`'s shipped `cultivation.field_capacity_gain` — what a completed Field multiplies
-## the TILE's own `K` by. Named here rather than written as a boosted number so the fixture's two
-## capacities are visibly one ground reading and its gain, which is the whole claim being asserted.
-const FIELD_CAPACITY_GAIN := 2.53
+## **THE SHIPPED `forage.cultivation.field_capacity_gain`, READ OFF THE SIM'S OWN CONFIG** — what a
+## completed Field multiplies the TILE's own `K` by, and the term this whole block is about.
+##
+## **IT WAS A HARNESS-LOCAL `2.53`, AND THAT MADE THE BLOCK'S PRECONDITION A TAUTOLOGY.** CLAIM 0 read
+## `ground * FIELD_CAPACITY_GAIN > ground` — `x * 2.53 > x`, over two numbers this file writes itself
+## — so setting the shipped gain to `1.0` left all three claims passing on a card with no Field payoff
+## left to state, which is precisely the vacuity the claim's own docstring promises it prevents. The
+## sim-side twin (`forage::climbing_to_field_does_not_compound_the_capacity_gain`) reads the config
+## and calls the same reading a PRECONDITION; this one now does too.
+##
+## The config is the SERVER's file, so it is reached through the project directory rather than `res://`
+## — the harness and `core_sim` are two directories of one checkout (a worktree included), which is
+## what makes the relative walk stable.
+const LABOR_CONFIG_RELATIVE_PATH := "../../core_sim/src/data/labor_config.json"
+const LABOR_CONFIG_FORAGE_KEY := "forage"
+const LABOR_CONFIG_CULTIVATION_KEY := "cultivation"
+const LABOR_CONFIG_FIELD_GAIN_KEY := "field_capacity_gain"
+
+## What an unreadable or unrecognisable config answers. A gain that multiplies NOTHING, deliberately:
+## it fails CLAIM 0 rather than letting the block pass on a number nobody managed to read.
+const FIELD_CAPACITY_GAIN_UNREAD := 0.0
+
+## A gain of exactly one buys the rung nothing — the value the config would have to hold for the whole
+## block to be vacuous, and therefore the one CLAIM 0 is written against.
+const FIELD_CAPACITY_GAIN_NO_GAIN := 1.0
+
+func _field_capacity_gain() -> float:
+	var path := ProjectSettings.globalize_path("res://").path_join(
+		LABOR_CONFIG_RELATIVE_PATH).simplify_path()
+	if not FileAccess.file_exists(path):
+		return FIELD_CAPACITY_GAIN_UNREAD
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (parsed is Dictionary):
+		return FIELD_CAPACITY_GAIN_UNREAD
+	var forage: Variant = (parsed as Dictionary).get(LABOR_CONFIG_FORAGE_KEY, {})
+	if not (forage is Dictionary):
+		return FIELD_CAPACITY_GAIN_UNREAD
+	var cultivation: Variant = (forage as Dictionary).get(LABOR_CONFIG_CULTIVATION_KEY, {})
+	if not (cultivation is Dictionary):
+		return FIELD_CAPACITY_GAIN_UNREAD
+	return float((cultivation as Dictionary).get(LABOR_CONFIG_FIELD_GAIN_KEY,
+		FIELD_CAPACITY_GAIN_UNREAD))
 
 ## The GROUND's own `K` under that Field. `BaseFx.FIXTURE_CAPACITY`, so the Field fixture stands on
 ## exactly the ground every other tile fixture in this chapter does and the only thing that changed is
@@ -376,12 +414,21 @@ func _assert_fog_stock_parity() -> void:
 ## claim below is that precondition: without it the whole block goes vacuous the moment the gain stops
 ## applying.
 func _assert_fog_field_capacity_is_the_ground() -> void:
+	var gain := _field_capacity_gain()
 	var ground := FIELD_GROUND_CAPACITY
-	var boosted := FIELD_GROUND_CAPACITY * FIELD_CAPACITY_GAIN
-	# CLAIM 0 — the two numbers are actually different. Everything after it is about which one the
-	# card picked, and on equal numbers there is no pick to observe.
-	h._assert_hud("a FIELD's ceiling and the ground under it are DIFFERENT numbers (%.0f vs %.0f)"
-		% [boosted, ground], boosted > ground)
+	var boosted := FIELD_GROUND_CAPACITY * gain
+	# CLAIM 0a — the harness actually read the shipped file. Told apart from CLAIM 0 because the two
+	# need opposite responses: this one fails when the config moved or the walk to it broke, that one
+	# when the RUNG stopped buying anything.
+	h._assert_hud("the shipped `%s.%s.%s` was read (got %s)" % [LABOR_CONFIG_FORAGE_KEY,
+			LABOR_CONFIG_CULTIVATION_KEY, LABOR_CONFIG_FIELD_GAIN_KEY, gain],
+		gain > FIELD_CAPACITY_GAIN_UNREAD)
+	# CLAIM 0 — and it is a real multiplier, so the two numbers below are actually different.
+	# Everything after it is about which one the card picked, and on equal numbers there is no pick to
+	# observe. Written against the SHIPPED gain, so dropping it to 1.0 in `labor_config.json` fails
+	# here instead of leaving the block passing over a fixture arguing with itself.
+	h._assert_hud("a FIELD's ceiling and the ground under it are DIFFERENT numbers (%.0f vs %.0f at a gain of %s)"
+		% [boosted, ground, gain], gain > FIELD_CAPACITY_GAIN_NO_GAIN and boosted > ground)
 	# Floorified BEFORE the erasure, exactly as the parity assertion above: the seeder fills growth
 	# terms off the capacity, and four of the keys it seeds are keys the shipped list removes.
 	var remembered := ForageFx.floorify(
@@ -418,7 +465,7 @@ func _assert_fog_field_capacity_is_the_ground() -> void:
 func _field_rung_tile_fixture(visibility_state: String) -> Dictionary:
 	var tile := TileFx.sight_tile_fixture(visibility_state)
 	tile["patch_tile_capacity"] = FIELD_GROUND_CAPACITY
-	tile["patch_carrying_capacity"] = FIELD_GROUND_CAPACITY * FIELD_CAPACITY_GAIN
+	tile["patch_carrying_capacity"] = FIELD_GROUND_CAPACITY * _field_capacity_gain()
 	tile["patch_is_field"] = true
 	tile["patch_field_progress"] = 1.0
 	return tile

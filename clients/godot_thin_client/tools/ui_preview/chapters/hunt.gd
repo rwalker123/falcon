@@ -4105,10 +4105,10 @@ func _crew_take_readout_assertions() -> void:
 	h._hud._band_labor._player_band = prior_band
 	h._hud._band_labor._player_bands = prior_bands
 
-## An animals-per-turn face as the readout spells it — the controller's own formatter, so the needle
-## and the rendered number cannot round differently.
+## An animals-per-turn face as the readout spells it — the SHIPPED formatter, so the needle and the
+## rendered number cannot round differently.
 func _animal_face(animals: float) -> String:
-	return h._hud._drawercompose._format_animal_rate(animals)
+	return DetailFormat.animal_rate_face(animals)
 
 ## **THE CREW-LIMIT SENTENCE'S HEAD** — its own format with an EMPTY band-and-cadence tail and the full
 ## stop trimmed, i.e. everything up to where that tail begins. A claim about the sentence is written
@@ -4359,7 +4359,7 @@ func _subone_take_assertions() -> void:
 	# (2) …AND SAYS WHAT THE FRACTION MEANS. A decimal alone still reads as "not quite one", which is
 	#     the same conclusion the `≈0` produced; the cadence is the half that makes the wait legible.
 	var cadence: String = HudComposeVocab.HUNT_TAKE_CADENCE_FORMAT % \
-		h._hud._drawercompose._format_trimmed(1.0 / take, HudComposeVocab.HUNT_CADENCE_DECIMALS)
+		DetailFormat.format_trimmed(1.0 / take, HudComposeVocab.HUNT_CADENCE_DECIMALS)
 	h._assert_hud("…and states the cadence a sub-one take is actually felt as (%s) — got %s"
 			% [cadence.strip_edges(), take_line], take_line.contains(cadence))
 	# (2a) …SPELLED AS A RATE. `≈0.75 Wild Aurochs a turn` was prose on a sheet whose every other

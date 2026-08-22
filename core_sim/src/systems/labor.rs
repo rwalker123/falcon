@@ -778,7 +778,18 @@ fn maintenance_shares(
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
                     // on the turn its first work is about to land*.
-                    demand: crate::forage::patch_upkeep_demand(
+                    //
+                    // **⛔ AND IT IS THE STAMPED BILL, NOT THE LIVE DEMAND** — the same
+                    // `patch_keeping_basis` the capture publishes and `advance_cultivation` bleeds
+                    // against. This pass runs inside the **per-band** loop and the build accrual
+                    // that moves the position runs later in the same iteration, so on a source two
+                    // bands work — one keeping it, one building it — a share struck off the *live*
+                    // demand is struck at a position the published bill was never taken at. The
+                    // wire then states `upkeepDemand` from the first band's stamp against an
+                    // `upkeepSupplied` paid at a later one, and `demand − supplied == shortfall` —
+                    // written into `snapshot.fbs` for both webs — is false while the pool spends
+                    // work the source never owed.
+                    demand: crate::forage::patch_keeping_basis(
                         patch,
                         ladder,
                         tile_capacity_of(*tile),
@@ -802,7 +813,12 @@ fn maintenance_shares(
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
                     // on the turn its first work is about to land*.
-                    demand: fauna::herd_upkeep_demand(herd, fauna, ladder),
+                    //
+                    // **⛔ AND IT IS THE STAMPED BILL** — `herd_keeping_basis`, for the reason the
+                    // plant arm above states at length: the share and the published demand must be
+                    // struck at one position, or the wire's `demand − supplied == shortfall` is
+                    // false on every source two bands share.
+                    demand: fauna::herd_keeping_basis(herd, fauna, ladder),
                     invested: fauna::herd_at_risk_cost(herd),
                     tiebreak: herd.id.clone(),
                 });
@@ -1147,15 +1163,19 @@ pub fn advance_labor_allocation(
         });
         // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
         // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
-        // system is (the registry index, then the query). Ground that is not on the map reads
-        // `NO_FORAGE_CAPACITY`, which presents no tender-load and so no claim — the same
-        // absent-means-nothing reading the composition below takes.
+        // system is (the registry index, then the query), and handed to
+        // `forage::patch_land_capacity` so a coord that is **not on the map** reads the patch's
+        // seeded capacity here exactly as it does in the decay pass that bills against this share.
+        // Ground with no patch on it presents no load and therefore no claim.
         let tile_capacity_of = |coord: UVec2| {
-            tile_registry
+            let ground = tile_registry
                 .index(coord.x, coord.y)
                 .and_then(|entity| tiles.get(entity).ok())
-                .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |ground| {
-                    tile_forage_capacity(&labor.forage, ground)
+                .map(|tile| tile_forage_capacity(&labor.forage, tile));
+            forage_registry
+                .patch(coord)
+                .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |patch| {
+                    crate::forage::patch_land_capacity(patch, ground)
                 })
         };
         let upkeep_shares = maintenance_shares(
@@ -1642,13 +1662,14 @@ pub fn advance_labor_allocation(
                     );
                     // **THE SIZE OF THE LAND** — the tile's own `K`, resolved here beside the basket
                     // and off the same tile, because the standing upkeep is quoted per **tender-load**
-                    // of it (`forage::patch_tender_loads`). Ground nobody can see offers no capacity,
-                    // exactly as it names no plants.
-                    let plant_tile_capacity = tiles
+                    // of it (`forage::patch_tender_loads`). Resolved as an `Option` here and folded
+                    // into the patch's own land reading below (`forage::patch_land_capacity`), so a
+                    // coord that is **not on the map** bills off the capacity the patch was seeded
+                    // with at the stamp exactly as it does at the claim and in the decay pass.
+                    let plant_tile_ground = tiles
                         .get(tile_entity)
-                        .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |ground| {
-                            tile_forage_capacity(&labor.forage, ground)
-                        });
+                        .ok()
+                        .map(|ground| tile_forage_capacity(&labor.forage, ground));
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
                     // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
                     // seeded a patch at Startup; a missing one (a dynamically-tagged tile, or ground
@@ -1657,6 +1678,8 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
+                    let plant_tile_capacity =
+                        crate::forage::patch_land_capacity(patch, plant_tile_ground);
                     // **THE LIVE VERB, DERIVED** — the declaration above counts only where the meter
                     // it names is at zero; otherwise the newest meter with progress on it decides.
                     let improvement = crate::forage::patch_build_verb(patch, declared);
@@ -6482,6 +6505,10 @@ mod labor_yield_tests {
             "liveness: the gatherers must actually take something"
         );
 
+        // **The turn the quote is about** — the forecast prices the stand one Logistics regrowth
+        // from here, so the harness advances it before resolving ([`advance_logistics_regrowth`]).
+        advance_logistics_regrowth(&mut world);
+
         // The resolved turn, with a **Cultivate staffed beside them** out of the same band.
         const BUILDERS: u32 = 3;
         let band = spawn_band(
@@ -7024,6 +7051,29 @@ mod labor_yield_tests {
         (forecast.ceiling_at(floor).provisions / forecast.per_worker_yield.provisions).ceil() as u32
     }
 
+    /// **THE LOGISTICS REGROWTH THESE HARNESSES OWE THEIR SOURCES.**
+    ///
+    /// A pre-commit forecast prices the source **as next turn's take will find it** — one Logistics
+    /// regrowth on (`forage::next_turns_stand` / `fauna::next_turns_quarry`), because every
+    /// production caller reads it *after* the Population take. A harness that quotes a forecast and
+    /// then runs `advance_labor_allocation` on its own has skipped the stage in between, so
+    /// *"forecast == actual"* would be comparing two different turns and the difference would be
+    /// exactly the growth.
+    ///
+    /// It regrows the registries and nothing else — no movement, no shed, no capacity rewrite from
+    /// the tile — which is the same simplification the projections make, so what the fixture
+    /// advances is precisely what the forecast projected.
+    fn advance_logistics_regrowth(world: &mut World) {
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        for patch in world.resource_mut::<ForageRegistry>().patches.values_mut() {
+            *patch = crate::forage::next_turns_stand(patch, &labor.forage);
+        }
+        for herd in world.resource_mut::<HerdRegistry>().herds.iter_mut() {
+            *herd = crate::fauna::next_turns_quarry(herd, &fauna);
+        }
+    }
+
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
     /// hunt policy ceiling with a single 40-biomass hunter, so a labor-bound hunt needs a bigger one).
     fn reseat_herd(world: &mut World, biomass: f32, cap: f32) {
@@ -7106,6 +7156,8 @@ mod labor_yield_tests {
                     if let Some(declared) = improvement {
                         declare_patch_build(&mut world, band, SOURCE, declared, SWEPT_BUILDERS);
                     }
+                    // The stage the forecast was quoted across ([`advance_logistics_regrowth`]).
+                    advance_logistics_regrowth(&mut world);
                     world.run_system_once(advance_labor_allocation);
                     let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
@@ -7191,6 +7243,9 @@ mod labor_yield_tests {
                         if let Some(declared) = improvement {
                             declare_herd_build(&mut world, band, HERD_ID, declared, SWEPT_BUILDERS);
                         }
+                        // The stage the forecast was quoted across
+                        // ([`advance_logistics_regrowth`]).
+                        advance_logistics_regrowth(&mut world);
                         world.run_system_once(advance_labor_allocation);
                         let actual =
                             world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
@@ -8517,9 +8572,14 @@ mod labor_yield_tests {
         );
 
         // (1) The completing turn still pays the dip, to the number.
-        world.run_system_once(advance_forage_regrowth);
+        //
+        // **Quoted BEFORE the regrowth, because that is where a client reads it**: the pre-commit
+        // forecast prices the stand one Logistics regrowth ahead of the state it is taken from
+        // (`forage::next_turns_stand`), so quoting it *after* the regrowth would project a second
+        // one and promise a turn that never happens.
         let promised_dip =
             forage_expected_take(&world, WORKERS, BUILDER_FLOOR, Some(Improvement::Cultivate));
+        world.run_system_once(advance_forage_regrowth);
         world.run_system_once(advance_labor_allocation);
         let completing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
@@ -8566,9 +8626,10 @@ mod labor_yield_tests {
             "the crop the crew committed 25 turns to survives the handoff"
         );
 
-        // (3) The bug: the next turn pays the tended harvest, not the dip.
-        world.run_system_once(advance_forage_regrowth);
+        // (3) The bug: the next turn pays the tended harvest, not the dip. Quoted before the
+        // regrowth for (1)'s reason — the forecast projects that regrowth itself.
         let promised_harvest = forage_expected_take(&world, WORKERS, BUILDER_FLOOR, None);
+        world.run_system_once(advance_forage_regrowth);
         world.run_system_once(advance_labor_allocation);
         let after = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(

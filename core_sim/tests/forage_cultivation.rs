@@ -4389,3 +4389,145 @@ fn bare_builders() -> core_sim::KitChoice {
         .kit("none")
         .expect("the shipped roster carries the empty kit")
 }
+
+/// **⛔ THE PUBLISHED KEEPING TRIPLE IS INTERNALLY CONSISTENT WHEN TWO BANDS SHARE ONE SOURCE.**
+///
+/// `snapshot.fbs` states `upkeepDemand − upkeepSupplied == upkeepShortfall` on both the patch and the
+/// herd table, and tells the client to do no arithmetic of its own. That identity is a claim about
+/// **one position**: the bill is stamped first-write-wins (`ForagePatch::upkeep_demanded`) at the
+/// moment the shares are struck, and the build accrual that moves the position runs *later in the
+/// same band's iteration*.
+///
+/// `maintenance_shares` priced each claim off the **live** `patch_upkeep_demand`, so with two bands
+/// on one patch — the first building it, the second keeping it — the second band's share was struck
+/// after the first band's builders had banked their turn. The wire then published the first band's
+/// stamp against the second band's larger payment, `demand − supplied` went **negative** while
+/// `shortfall` clamped at `0`, and the keeping pool spent work the patch never owed.
+///
+/// **The turn a build banks its FIRST work is the sharpest form of it**: bare ground owes nothing, so
+/// the stamp is an honest `0`, and any positive supply at all breaks the identity. The fixture is
+/// therefore a wild patch, a builder band with **no** keepers, and a keeper band with no build —
+/// asserted on the **published rows**, because the identity is a statement about the artifact.
+#[test]
+fn two_bands_on_one_patch_publish_a_consistent_keeping_triple() {
+    /// Keepers enough to cover any bill this ground could present, so a share struck off the wrong
+    /// demand is paid in full rather than clipped by a thin pool.
+    const AMPLE_KEEPERS: u32 = 4;
+    /// The keeping band's take crew — it works the patch, which is what puts it in the loop at all.
+    const A_GATHERER: u32 = 1;
+
+    // **The full app, not this file's `spawn_world`** — the identity under test is a property of
+    // the *published* row, so the fixture needs the capture the rest of the file does without.
+    let mut app = core_sim::build_test_app();
+    app.update();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+
+    // Band A **builds** and keeps nothing: its own `agriculture` role is empty, so every unit of
+    // supply this patch receives comes from band B and the two cannot be confused.
+    let crew = build_crew(&app);
+    spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), crew);
+    // Band B **keeps** and builds nothing. Spawned second, so it is the band whose share is struck
+    // after band A's builders have banked their turn — the whole mechanism.
+    let keeper = spawn_forager_of(&mut app, tile, coord, None, A_GATHERER);
+    set_maintain_workers(&mut app, keeper, AMPLE_KEEPERS);
+
+    run_turns_with_forage(&mut app, 1);
+
+    // **THE PRECONDITION** — band A really did bank work this turn, so the demand really did move
+    // under band B. Without it the two readings coincide and the test passes on a dead fixture.
+    let banked = progress_of(&app, coord);
+    assert!(
+        banked > core_sim::RUNG_UNSTARTED,
+        "fixture: the builder must have banked work this turn, or the demand never moved under the \
+         keeper ({banked})"
+    );
+
+    app.world
+        .run_system_once(core_sim::recapture_snapshot_in_place);
+    let row = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .last_snapshot()
+        .expect("a capture")
+        .forage_patches
+        .iter()
+        .find(|patch| patch.x == coord.x && patch.y == coord.y)
+        .expect("the fixture patch is on the wire")
+        .clone();
+
+    assert!(
+        (row.upkeep_demand - row.upkeep_supplied - row.upkeep_shortfall).abs() < 1e-4,
+        "the wire states `demand − supplied == shortfall`, and a keeper paying a bill struck at a \
+         later position breaks it: demand {} supplied {} shortfall {}",
+        row.upkeep_demand,
+        row.upkeep_supplied,
+        row.upkeep_shortfall
+    );
+    assert!(
+        row.upkeep_supplied <= row.upkeep_demand + 1e-4,
+        "…and the pool never spends work the source did not owe: supplied {} against a bill of {}",
+        row.upkeep_supplied,
+        row.upkeep_demand
+    );
+}
+
+/// **⛔ AN OFF-MAP PATCH IS SYNTHETIC GROUND, NOT BARREN GROUND — and it bleeds like any other.**
+///
+/// `advance_forage_regrowth` deliberately leaves a patch's `carrying_capacity` alone when its coord
+/// is absent from the `TileRegistry`, *"which is what lets test harnesses build synthetic patches on
+/// tiles that do not exist"*. `advance_cultivation` resolved the same absence to `NO_FORAGE_CAPACITY`
+/// — while its comment claimed it looked the tile up *"exactly as `advance_forage_regrowth` looks it
+/// up"* — so such a patch presented no tender-load, owed **nothing**, was never short, and kept a
+/// finished Cultivate for ever with nobody on it. One absence, read two ways, in two passes of the
+/// same stage.
+///
+/// Both arms are asserted. The on-map patch is the control: it must revert, or *"the off-map one
+/// reverts too"* would be a claim about a pass that does nothing.
+#[test]
+fn an_off_map_patch_owes_its_keeping_and_reverts_like_any_other() {
+    /// A coord well outside the harness map — the synthetic ground the regrowth pass supports.
+    const OFF_THE_MAP: UVec2 = UVec2::new(9_000, 9_000);
+
+    /// Seat a finished, unkept Cultivate and let the decay pass run past its grace. Returns
+    /// `(seated, left)` work units. `off_map` puts the patch on a coord the `TileRegistry` does not
+    /// carry, seeded with the same capacity the on-map ground presents.
+    fn revert(off_map: bool) -> (f32, f32) {
+        let mut app = spawn_world();
+        let (_tile, on_map) = prime_thriving_patch(&mut app);
+        let coord = if off_map { OFF_THE_MAP } else { on_map };
+        if off_map {
+            let capacity = plant_tile_capacity(&app, on_map);
+            let mut patch = core_sim::ForagePatch::new(coord, capacity);
+            patch.biomass = capacity;
+            app.world
+                .resource_mut::<ForageRegistry>()
+                .patches
+                .insert(coord, patch);
+        }
+        seat_tended_patch(&mut app, coord);
+        let seated = progress_of(&app, coord);
+        let turns = tended_grace(&app) + 2;
+        run_turns_untended(&mut app, turns);
+        (seated, progress_of(&app, coord))
+    }
+
+    let (control_seated, control_left) = revert(false);
+    assert!(
+        control_left < control_seated,
+        "control: an unkept ON-MAP patch must revert ({control_seated} -> {control_left}), or this \
+         test measures a pass that does nothing"
+    );
+
+    let (seated, left) = revert(true);
+    assert!(
+        seated > core_sim::RUNG_UNSTARTED,
+        "fixture: the synthetic patch must start with a finished rung on it ({seated})"
+    );
+    assert!(
+        left < seated,
+        "a patch whose coord is off the map owes its keeping off the capacity it was SEEDED with — \
+         reading that absence as barren left it holding a finished rung for ever with nobody on it \
+         ({seated} -> {left})"
+    );
+}
