@@ -5603,6 +5603,23 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             "sow_material_payoff": material_payoff_rows(entry.get("sow_material_payoff", [])),
             "cultivate_material_payoff":
                 material_payoff_rows(entry.get("cultivate_material_payoff", [])),
+            # **WHAT SOWING THIS CROP WOULD COST, in work units** (`docs/plan_standing_upkeep.md`
+            # §4.15) — the one figure on this entry that is not a payoff, and the COST half of the
+            # crop decision. A Sow is priced by how much of the tile the chosen crop still has to
+            # replace, so the patch's own `field_work_cost` prices exactly ONE crop (its commitment,
+            # or the rung's auto-pick) while every other row of a crop list quoted that same number.
+            #
+            # **PRESENCE IS ITS OWN KEY, and here it means *this plant cannot climb to a Field on
+            # this ground*** — the sim omits the figure rather than publishing a `0`, the multiplier
+            # being floored precisely because laying the rows and putting the seed in costs work on
+            # any ground. A missing-means-zero reading would advertise a free Sow for a job that
+            # cannot be ordered at all.
+            #
+            # ⛔ **IT IS NEITHER DERIVED FROM `share` NOR A DERIVATION OF IT.** A committed patch's
+            # published `share` is its REWEIGHTED one while this is struck on the tile's own basket,
+            # which is what the sim charges against; the two are deliberately different questions.
+            "sow_work_cost": float(entry.get("sow_work_cost", 0.0)),
+            "has_sow_work_cost": entry.has("sow_work_cost"),
             # WHAT THIS PLANT IS FOR — the sim's own display tag ("staple"/"fodder"/"cash"), carried
             # so the tile card's basket rows can lead with a role icon. **`""` is UNSTATED and must
             # stay `""`**: defaulting a missing tag to "staple" would invent a fact, and re-deriving

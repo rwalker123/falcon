@@ -1741,21 +1741,6 @@ const RUNG_TRACK_COST_FORMAT := "%s work · %s"
 
 const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
 
-# ---- THE PRICE'S OWN REASON, on the row that states the price ------------------------------------
-#
-# **A SOW'S PRICE MOVES WITH THE CROP'S SHARE OF THE TILE and nothing said so.** `plant:field`'s build
-# cost is scaled by how much of the chosen crop already stands here — sowing a crop that holds most of
-# the ground is mostly tidying, sowing one that holds a tenth means replacing the tile — so two Sows
-# on two tiles are quoted at wildly different work with no stated cause. The reason belongs where the
-# price is, which on the declaration path is the destination track's own Field row.
-#
-# ⛔ **IT STATES THE SHARE AS A CAUSE AND NEVER AS AN INPUT.** `fieldWorkCost` on the wire already
-# carries the scaled number; this client quotes THAT and must never re-derive a cost from the share.
-# The sentence is deliberately directional rather than a verdict — the client cannot say *dear* or
-# *cheap* without the sim's reference share, which is a config lever and is not on the wire, and a
-# guessed verdict beside an exact number is worse than no verdict.
-const RUNG_TRACK_SOW_PRICE_NOTE_FORMAT := "Priced on %s, %d%% of this ground — the less of the crop already standing, the more a Sow has to replace."
-
 # ---- THE CROP STEP — the second page of the same card (`docs/plan_standing_upkeep.md` §2.8) --------
 #
 # **A PLANT RUNG DOES NOT COMMIT UNTIL A CROP IS NAMED.** The `⌃` used to declare in one click and

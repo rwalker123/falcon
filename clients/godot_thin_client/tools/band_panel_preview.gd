@@ -1516,30 +1516,32 @@ func _ready() -> void:
 	_assert_rung_track_names_every_offer()
 
 	# **THE CROP IS PICKED WHEN THE JOB IS DECLARED** (§4.15) — three states on ONE basket, so the
-	# only thing moving between them is the crop the price was struck against.
+	# only thing moving between them is which crop the patch is committed to.
 	#
 	# **THE BASKET IS MIXED ON PURPOSE**: a staple that feeds the band beside a cash crop that feeds
-	# nobody, both legally sowable. A single-plant fixture cannot make the claim at all — the trap is
-	# a picker that lists names and shares, on which the dominant plant looks like the obvious answer.
+	# nobody, both legally sowable and each carrying its OWN Sow price; plus a third plant the wire
+	# prices no Sow for at all. A single-plant fixture cannot make any of the claims — the trap is a
+	# picker that lists names and shares, on which the dominant plant looks like the obvious answer,
+	# and a picker quoting one price per PATCH passes every assertion a one-crop basket can state.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_hud.update_food_modules([{"x": TRACK_PATCH.x, "y": TRACK_PATCH.y,
 		"module": "savanna_grassland", "kind": "gather"}])
-	_set_forage_patches([_crop_patch_row(CROP_CHEAP_FIELD_WORK_COST)])
+	_set_forage_patches([_crop_patch_row(CROP_STAPLE_SOW_WORK_COST)])
 	_set_world_herds([])
 	_push_bands([_track_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
 	await _settle()
-	# …the CHEAP Sow first: uncommitted ground, so the price is struck against the rung's own auto-pick
-	# — the highest-share legal plant, which is the wire's share-DESC first entry.
-	await _assert_rung_price_note(CROP_STAPLE_NAME, CROP_STAPLE_PERCENT,
-		CROP_CHEAP_FIELD_WORK_COST, "cheap")
+	# …the CHEAP Sow first: uncommitted ground, so the patch's own price is struck against the rung's
+	# auto-pick — the highest-share legal plant, which is the wire's share-DESC first priced entry.
+	await _assert_rung_sow_price(CROP_STAPLE_SOW_WORK_COST, "cheap")
 	await _save("band_panel_rung_price_cheap")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 
-	# …then the CROP STEP that rung opens, on the same ground: every row states what it PAYS, and the
-	# cash crop's `0.00 food` is the whole reason the step exists.
+	# …then the CROP STEP that rung opens, on the same ground: every row states what its OWN Sow would
+	# cost and what it would then pay, and the cash crop's `0.00 food` beside a work figure four times
+	# the staple's is the whole reason the step exists.
 	await _assert_rung_crop_step()
 	await _save("band_panel_rung_crop")
 	_assert_zones_within_bounds()
@@ -1547,14 +1549,14 @@ func _ready() -> void:
 	_hud._bandpanel._rung_track.hide()
 	await _settle()
 
-	# …and the DEAR Sow: the same two plants and the same ground, COMMITTED to the minority crop, at
-	# the price the wire quotes for it. The pair is the claim — a note that named one crop whatever
-	# the patch was committed to passes either state alone.
-	_set_forage_patches([_crop_patch_row(CROP_DEAR_FIELD_WORK_COST, CROP_CASH_SPECIES)])
+	# …and the DEAR Sow: the same basket and the same ground, COMMITTED to the minority crop, so the
+	# patch's own `field_work_cost` is now that crop's figure. The pair is the claim — a Field row
+	# quoting a constant passes either state alone — and it is also the invariant the sim asserts on
+	# the envelope, seen from the client: the committed crop's per-crop price IS the patch's price.
+	_set_forage_patches([_crop_patch_row(CROP_CASH_SOW_WORK_COST, CROP_CASH_SPECIES)])
 	_push_bands([_track_band_fixture()])
 	await _settle()
-	await _assert_rung_price_note(CROP_CASH_NAME, CROP_CASH_PERCENT,
-		CROP_DEAR_FIELD_WORK_COST, "dear")
+	await _assert_rung_sow_price(CROP_CASH_SOW_WORK_COST, "dear")
 	await _save("band_panel_rung_price_dear")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
@@ -8258,23 +8260,24 @@ func _track_patch_row(is_cultivated: bool, cultivation_work_done: float) -> Dict
 		"field_work_cost": TRACK_FIELD_WORK_COST,
 		"field_work_done": 0.0,
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
-			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+			"share": 1.0, "can_cultivate": true, "can_sow": true,
+			"sow_work_cost": TRACK_FIELD_WORK_COST}],
 	}
 
 # ---- THE CROP STEP AND THE SOW'S PRICE (§4.15) ---------------------------------------------------
 #
-# **ONE BASKET, TWO PLANTS, AND THEY DIFFER IN EVERY WAY THE PICKER IS SUPPOSED TO SHOW**: a staple
-# holding most of the ground and paying food, and a cash crop holding a fifth and paying **no food at
+# **ONE BASKET, THREE PLANTS, AND THEY DIFFER IN EVERY WAY THE PICKER IS SUPPOSED TO SHOW**: a staple
+# holding most of the ground and paying food, a cash crop holding a fifth and paying **no food at
 # all** — which is the exact tile that got committed to tobacco in play, and the one a picker of names
-# and shares cannot warn about.
+# and shares cannot warn about — and a third plant the wire prices **no Sow for at all**.
 const CROP_STAPLE_SPECIES := "wild_emmer"
 const CROP_STAPLE_NAME := "Wild Grain"
-const CROP_STAPLE_PERCENT := 78
+const CROP_STAPLE_PERCENT := 70
 const CROP_STAPLE_SOW_PAYOFF := 3.40
 
 const CROP_CASH_SPECIES := "tobacco"
 const CROP_CASH_NAME := "Tobacco"
-const CROP_CASH_PERCENT := 22
+const CROP_CASH_PERCENT := 20
 ## **THE ZERO IS THE FIXTURE.** A sown Field is 100% its crop, so a cash crop's provisions payoff is
 ## structurally `0` — and a row that omitted the clause rather than printing it is the silence this
 ## whole step exists to end.
@@ -8282,17 +8285,29 @@ const CROP_CASH_SOW_PAYOFF := 0.0
 const CROP_CASH_MATERIAL := "tobacco"
 const CROP_CASH_MATERIAL_PAYOFF := 1.12
 
-## The two prices the WIRE quotes for the same rung on the same ground. Both are `fieldWorkCost` —
-## already scaled sim-side by the crop's share — so a client that re-derived a cost from the share
-## would have to disagree with one of them, and the assertions read the wire's number back off the
-## rendered face rather than recomputing it.
-const CROP_CHEAP_FIELD_WORK_COST := 38.0
+## **THE PLANT THAT CANNOT CLIMB TO A FIELD HERE.** `can_sow` is the SPECIES' global ceiling and is
+## deliberately `true`, so the crop step's own `sow_work_cost` guard is the only thing that can keep
+## this row off the list — a filter written against the ceiling flag alone would leave it on.
+const CROP_BARRED_SPECIES := "wild_flax"
+const CROP_BARRED_NAME := "Wild Flax"
+const CROP_BARRED_PERCENT := 10
+const CROP_BARRED_SOW_PAYOFF := 0.85
 
-const CROP_DEAR_FIELD_WORK_COST := 150.0
+## **THE TWO PRICES THE WIRE QUOTES FOR THE SAME RUNG ON THE SAME GROUND, one per CROP** — the whole
+## point of the per-crop figure, so they are deliberately far apart: a picker quoting one price per
+## PATCH renders both rows at whichever of them the patch happens to carry.
+##
+## **THE PATCH'S OWN `field_work_cost` IS ONE OF THEM BY CONSTRUCTION**, which is the invariant the
+## sim asserts on the encoded envelope: uncommitted ground is priced at the auto-pick's figure, and a
+## committed patch at its commitment's. The fixture states that by passing the crop's own const as the
+## patch's price rather than by holding a third number free to disagree with both.
+const CROP_STAPLE_SOW_WORK_COST := 38.0
 
-## The mixed-basket patch, on the track board's own tile. `committed` names the crop the price was
-## struck against; `""` leaves the ground uncommitted, where the rung's auto-pick — the wire's
-## share-DESC FIRST legal entry — is the answer instead.
+const CROP_CASH_SOW_WORK_COST := 150.0
+
+## The mixed-basket patch, on the track board's own tile. `committed` names the crop the patch's own
+## price was struck against; `""` leaves the ground uncommitted, where the rung's auto-pick — the
+## wire's share-DESC FIRST priced entry — is the answer instead.
 func _crop_patch_row(field_work_cost: float, committed: String = "") -> Dictionary:
 	return {
 		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
@@ -8306,25 +8321,34 @@ func _crop_patch_row(field_work_cost: float, committed: String = "") -> Dictiona
 			{"species": CROP_STAPLE_SPECIES, "display_name": CROP_STAPLE_NAME,
 				"share": float(CROP_STAPLE_PERCENT) / 100.0, "role": "staple",
 				"can_cultivate": true, "can_sow": true,
+				"sow_work_cost": CROP_STAPLE_SOW_WORK_COST,
 				"sow_payoff": CROP_STAPLE_SOW_PAYOFF, "cultivate_payoff": 1.20},
 			{"species": CROP_CASH_SPECIES, "display_name": CROP_CASH_NAME,
 				"share": float(CROP_CASH_PERCENT) / 100.0, "role": "cash",
 				"can_cultivate": true, "can_sow": true,
+				"sow_work_cost": CROP_CASH_SOW_WORK_COST,
 				"sow_payoff": CROP_CASH_SOW_PAYOFF, "cultivate_payoff": 0.0,
 				"sow_material_payoff": [{
 					SourceForecast.MATERIAL_PAYOFF_ID_KEY: CROP_CASH_MATERIAL,
 					SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: CROP_CASH_MATERIAL_PAYOFF}]},
+			# **NO `sow_work_cost` KEY AT ALL** — the wire's own "this plant cannot climb to a Field
+			# here". It still pays a Cultivate, so the row stays legal on the other plant rung and its
+			# absence from the Sow step cannot be read as the basket simply being short.
+			{"species": CROP_BARRED_SPECIES, "display_name": CROP_BARRED_NAME,
+				"share": float(CROP_BARRED_PERCENT) / 100.0, "role": "cash",
+				"can_cultivate": true, "can_sow": true,
+				"sow_payoff": CROP_BARRED_SOW_PAYOFF, "cultivate_payoff": 0.40},
 		],
 	}
 
-## **THE SOW ROW STATES ITS PRICE AND WHY IT IS THAT PRICE** — the wire's `fieldWorkCost`, and the
-## crop-and-share sentence beneath it naming the plant the sim struck it against.
+## **WHAT WILL *THIS PATCH'S* SOW COST** — the wire's own `fieldWorkCost`, on the destination track's
+## Field row.
 ##
-## ⛔ **THE COST IS ASSERTED AGAINST THE FIXTURE'S OWN WIRE FIGURE, never against anything derived
-## from the share.** That is the claim: the client quotes the wire and states the share as the cause.
-## A client that re-derived would have to disagree with one of the two prices, both of which the same
-## basket produces here.
-func _assert_rung_price_note(crop: String, percent: int, work_cost: float, what: String) -> void:
+## ⛔ **ASSERTED AGAINST THE FIXTURE'S OWN WIRE FIGURE, never against anything derived from the crop's
+## share and never against the per-crop figure the picker states.** For the crop a patch is committed
+## to the two agree by construction — the sim asserts that on the encoded envelope — and the client
+## quotes each as published rather than deriving either from the other.
+func _assert_rung_sow_price(work_cost: float, what: String) -> void:
 	if not await _open_rung_track_from_mark("the %s Sow" % what):
 		return
 	var faces := _rung_track_faces()
@@ -8333,15 +8357,19 @@ func _assert_rung_price_note(crop: String, percent: int, work_cost: float, what:
 	_assert_band_panel("crop — the %s Sow quotes the WIRE's own price `%s` (got `%s`)"
 		% [what, want_face, String(faces.get(SourceForecast.IMPROVEMENT_SOW, ""))],
 		String(faces.get(SourceForecast.IMPROVEMENT_SOW, "")) == want_face)
-	var want_note := HudWorkVocab.RUNG_TRACK_SOW_PRICE_NOTE_FORMAT % [crop, percent]
-	_assert_band_panel("crop — …beside the reason `%s`" % want_note,
-		_rung_track_aside_text().contains(want_note))
 
-## **THE CROP STEP, OPENED FROM THE SOW ROW, WITH EVERY ROW'S PAYOFF STATED.**
+## **THE CROP STEP, OPENED FROM THE SOW ROW, EVERY ROW STATING ITS OWN PRICE AND ITS OWN PAYOFF.**
 ##
 ## **THE SET IS THE CLAIM.** A step that stated the staple's food and nothing else passes any single
 ## row's assertion; what the trap needs is the cash crop's `0.00 food` rendered BESIDE a live one, and
 ## the `Sim picks` row naming the plant it would silently land on.
+##
+## ⛔ **AND THE TWO WORK FIGURES MUST DIFFER, which is the whole of what the per-crop price buys.**
+## A picker quoting one figure per PATCH renders a perfectly plausible step — every row carries a
+## number, and it is the same wrong number — so the claim is stated as an INEQUALITY beside the two
+## exact faces rather than left to them. The barred plant's ABSENCE is the other half: it is legally
+## sowable by its species ceiling and unpriced on this ground, so a step that admitted it would be
+## offering a job the sim refuses at a price it never quoted.
 func _assert_rung_crop_step() -> void:
 	var row := _rung_track_row(SourceForecast.IMPROVEMENT_SOW)
 	if row == null:
@@ -8361,22 +8389,45 @@ func _assert_rung_crop_step() -> void:
 	# the claim is on the SIGNAL rather than on the card, a declaration being what actually escapes.
 	_assert_band_panel("crop — …and no declaration escaped before a crop was named (%d sent)"
 		% declared.size(), declared.is_empty())
-	var payoffs := _rung_crop_payoffs()
-	var want_staple := HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT.trim_prefix(
-		HudFloraVocab.FLORA_CROP_CLAUSE_LEAD) % CROP_STAPLE_SOW_PAYOFF
+	_assert_band_panel("crop — …and the plant the wire prices no Sow for is not offered at all",
+		not rows.has(CROP_BARRED_SPECIES))
+	var faces := _rung_crop_faces()
+	var want_staple := _want_crop_face(CROP_STAPLE_SOW_WORK_COST, CROP_STAPLE_SOW_PAYOFF, "")
 	_assert_band_panel("crop — the staple states `%s` (got `%s`)"
-		% [want_staple, String(payoffs.get(CROP_STAPLE_SPECIES, ""))],
-		String(payoffs.get(CROP_STAPLE_SPECIES, "")) == want_staple)
-	var want_cash := (HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT.trim_prefix(
-		HudFloraVocab.FLORA_CROP_CLAUSE_LEAD) % CROP_CASH_SOW_PAYOFF) \
-		+ (HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT
+		% [want_staple, String(faces.get(CROP_STAPLE_SPECIES, ""))],
+		String(faces.get(CROP_STAPLE_SPECIES, "")) == want_staple)
+	var want_cash := _want_crop_face(CROP_CASH_SOW_WORK_COST, CROP_CASH_SOW_PAYOFF,
+		HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT
 			% [CROP_CASH_MATERIAL_PAYOFF, CROP_CASH_MATERIAL])
 	_assert_band_panel("crop — …and the cash crop states its ZERO food beside its material: `%s` (got `%s`)"
-		% [want_cash, String(payoffs.get(CROP_CASH_SPECIES, ""))],
-		String(payoffs.get(CROP_CASH_SPECIES, "")) == want_cash)
+		% [want_cash, String(faces.get(CROP_CASH_SPECIES, ""))],
+		String(faces.get(CROP_CASH_SPECIES, "")) == want_cash)
+	# **THE INEQUALITY IS THE POINT**, and it is stated over the two work clauses alone: the faces
+	# above differ in their payoffs too, so comparing them whole would pass on a picker quoting one
+	# price per patch.
+	_assert_band_panel("crop — …and the two crops quote DIFFERENT work (`%s` vs `%s`)"
+		% [_want_work_clause(CROP_STAPLE_SOW_WORK_COST),
+			_want_work_clause(CROP_CASH_SOW_WORK_COST)],
+		String(faces.get(CROP_STAPLE_SPECIES, "")).begins_with(
+			_want_work_clause(CROP_STAPLE_SOW_WORK_COST))
+			and String(faces.get(CROP_CASH_SPECIES, "")).begins_with(
+				_want_work_clause(CROP_CASH_SOW_WORK_COST))
+			and not is_equal_approx(CROP_STAPLE_SOW_WORK_COST, CROP_CASH_SOW_WORK_COST))
 	_assert_band_panel("crop — …and `Sim picks` names the plant it would land on (got `%s`)"
-		% String(payoffs.get(RungLadder.CROP_SIM_PICKS, "")),
-		String(payoffs.get(RungLadder.CROP_SIM_PICKS, "")).contains(CROP_STAPLE_NAME))
+		% String(faces.get(RungLadder.CROP_SIM_PICKS, "")),
+		String(faces.get(RungLadder.CROP_SIM_PICKS, "")).contains(CROP_STAPLE_NAME))
+
+## The face a crop row owes, composed from the SAME clause formats the picker composes it from — a
+## literal here would pin the wording rather than the figures, which are what this block is about.
+func _want_crop_face(work_cost: float, food: float, tail: String) -> String:
+	return _want_work_clause(work_cost) \
+		+ (HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT % food) + tail
+
+## …and its leading COST clause on its own, the needle the inequality is stated over.
+func _want_work_clause(work_cost: float) -> String:
+	return (HudFloraVocab.FLORA_CROP_WORK_CLAUSE_FORMAT
+		% DetailFormat.format_work_units(work_cost)).trim_prefix(
+			HudFloraVocab.FLORA_CROP_CLAUSE_LEAD)
 
 ## **THE SAME GROUND MID-CLIMB, WITH A TWO-LEG ENTRY QUEUED TO `plant:field`.** It is the shape the
 ## whole arc is about: one position, one queue row, and a destination two rungs above where the patch
@@ -8407,7 +8458,8 @@ func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
-			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+			"share": 1.0, "can_cultivate": true, "can_sow": true,
+			"sow_work_cost": TRACK_FIELD_WORK_COST}],
 	}]
 
 ## **ONE WORK UNIT BANKED — the FIRST turn of a thirty-nine-turn climb**, which is the turn the
@@ -8438,7 +8490,8 @@ func _track_single_leg_patch_fixtures() -> Array:
 				"turns_remaining": TRACK_FIELD_LEG_TURNS},
 		],
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
-			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+			"share": 1.0, "can_cultivate": true, "can_sow": true,
+			"sow_work_cost": TRACK_FIELD_WORK_COST}],
 	}]
 
 # ---- THE ANIMAL TWIN: a `corral` ordered on a herd that is not tamed yet ------------------------
@@ -9021,8 +9074,13 @@ func _declare_patch_fixtures() -> Array:
 		# would leave the price claim asserting an empty string against an empty string.
 		"field_work_cost": DECLARE_SOW_WORK_COST,
 		"field_upkeep_demand": DECLARE_SOW_UPKEEP_PER_TURN,
+		# **AND THE CROP CARRIES THAT PRICE TOO** — a single-plant basket, so the patch's own figure
+		# and its one crop's figure are the same number by construction, which is the invariant the
+		# sim asserts on the envelope. Without the key the crop step offers no row and the plant rung
+		# declares in one click, which silently skips the crop-step claim below.
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
-			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+			"share": 1.0, "can_cultivate": true, "can_sow": true,
+			"sow_work_cost": DECLARE_SOW_WORK_COST}],
 	}]
 
 ## The Sow rung's two published prices on the declare board — the pile once and the rate forever.
@@ -9144,10 +9202,10 @@ func _rung_crop_rows() -> Dictionary:
 			out[String(control.get_meta(HudWorkVocab.RUNG_CROP_ROW_META))] = control as Button
 	return out
 
-## The PAYOFF aside beneath each crop row, as `species -> text`. It is the sibling that follows the
-## row in the step's column — the same shape a locked rung's reason takes — so it is read by position
-## rather than by a meta of its own: a payoff carries no identity beyond the row it explains.
-func _rung_crop_payoffs() -> Dictionary:
+## The price-and-payoff aside beneath each crop row, as `species -> text`. It is the sibling that
+## follows the row in the step's column — the same shape a locked rung's reason takes — so it is read
+## by position rather than by a meta of its own: a face carries no identity beyond the row it prices.
+func _rung_crop_faces() -> Dictionary:
 	var out: Dictionary = {}
 	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_CROP_ROW_META, []):
 		var parent := control.get_parent()

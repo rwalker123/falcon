@@ -292,6 +292,18 @@ const FLORA_CROP_CLAUSE_LEAD := " · "
 # absolute per-turn rate and is read against them.
 const FLORA_CROP_FOOD_CLAUSE_FORMAT := FLORA_CROP_CLAUSE_LEAD + "%.2f food"
 
+# > #### THE ONE CLAUSE ON A CROP ROW THAT IS A **COST**
+#
+# Every clause above states what a rung would PAY; this states what committing to this crop would
+# cost in WORK, and it LEADS the row for that reason — a price is read before the payoffs it is
+# weighed against. It takes the same ` · ` lead as its neighbours because the row trims one leading
+# separator and only one, whichever clause happens to come first.
+#
+# The figure is `DetailFormat.format_work_units`' — whole numbers bare, fractions to one place, the
+# spelling every other work quantity in this client already uses — so the crop rows and the rung
+# track's own `38 work` cannot round one price two ways.
+const FLORA_CROP_WORK_CLAUSE_FORMAT := FLORA_CROP_CLAUSE_LEAD + "%s work"
+
 # ---- WHAT A CASH CROP PAYS: ONE CLAUSE PER MATERIAL (arc #527) ----------------------------------
 # **A VECTOR, NOT A SCALAR, IS THE WHOLE DIFFERENCE.** The retired `· %.2f trade` clause answered
 # *"how much trade"* — a number a market could total and a player could not act on. This answers
@@ -552,32 +564,22 @@ const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground woul
 # `Sum(share x rate) / Sum(share)` over the ticked species and the forecast moves the moment a chip
 # does — the same `NOW -> AFTER` treatment the worker stepper already gets.
 #
-# **WHAT IS STILL NOT KNOWN IS SAID OUT LOUD, in two different sentences.**
+# **WHAT IS STILL NOT KNOWN IS SAID OUT LOUD — in ONE sentence, about ONE of the two states.**
 #
-# The first is a narrowing the wire priced NO per-species rate for. The composition is a weighted
+# `selection_rates` answers its unquotable dict from two arms and only this one has anything to say:
+# the other is a selection naming plants this tile no longer grows, where the game KNOWS what
+# happened and the sheet simply quotes nothing. A sentence explaining a state the game already
+# handles correctly is prose the player has to read to learn nothing. The composer's two-state
+# distinction STAYS — it is what stops this sentence being printed about the other state, which is
+# the lie it was split out to end.
+#
+# This one is a narrowing the wire priced NO per-species rate for. The composition is a weighted
 # mean, so one missing term is not a term that can be left out of it, and there is nothing else this
 # client holds that a rate could be recovered from — so it quotes nothing at all rather than the
 # whole basket's numbers under a narrowed heading, which is the quote-vs-payout defect this arc has
 # shipped before. **A `0.0` rate is NOT this case**: a cash crop pays no food and says so, and the
 # selection is fully quoted.
 const TAKE_UNQUOTED_NOTE := "This selection is not priced yet — no take is quoted for it."
-
-# The SECOND silence, and it is a different fact with a different remedy. `selection_rates` answered
-# both with the sentence above until 2026-08-22, so a player whose ticked plants had simply stopped
-# growing here was told the SERVER had not priced them — a sentence with nothing to act on, about a
-# state whose remedy is one click away and is not mentioned.
-#
-# **IT NAMES THE REMEDY, which is the whole repair.** The chips directly above this line are the
-# control: tick something that grows here and the sheet prices it.
-#
-# **REACHABLE, AND RARER THAN IT WAS.** A commitment now prunes a crew's stale `take_species` and adds
-# the committed crop, so the common route into this state is closed; what still reaches it is a roster
-# change, or a NATURAL composition shift that drops a plant a standing selection still names. A wrong
-# sentence about a rare state is worse than a right one, not better.
-#
-# **A CASH CROP PAYING `0.0` IS NEITHER OF THESE** — the note above says so and it must stay true:
-# that selection is fully quoted, and its zero is a real reading rather than a silence.
-const TAKE_ABSENT_NOTE := "None of the plants you picked grow here any more — pick one from the row above."
 
 # **THE MATERIAL ACCOUNT IS NO LONGER ONE OF THESE SILENCES.** It was, for exactly as long as
 # `materialPerBiomass` was the only material rate on the wire — a basket average with nothing finer

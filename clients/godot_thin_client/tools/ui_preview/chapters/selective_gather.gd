@@ -624,30 +624,32 @@ func run(harness) -> void:
 			PackedStringArray([UNQUOTED_SPECIES])).get(SourceForecast.SELECTION_REASON, ""))
 			== SourceForecast.SELECTION_REASON_UNPRICED)
 
-	# ---- …AND A SELECTION OF PLANTS THAT DO NOT GROW HERE says a DIFFERENT thing -----------------
-	# `selection_rates` answers its unquotable dict for two states and this sheet printed ONE sentence
-	# for both — so a crew whose ticked plants had simply stopped growing on this ground was told the
-	# SERVER had not priced them, which names no remedy and is not what happened. Reported 2026-08-22.
+	# ---- …AND A SELECTION OF PLANTS THAT DO NOT GROW HERE says NOTHING AT ALL --------------------
+	# `selection_rates` answers its unquotable dict for two states and this sheet printed the sentence
+	# above for both — so a crew whose ticked plants had simply stopped growing on this ground was
+	# told the SERVER had not priced them, which is not what happened. Reported 2026-08-22.
 	#
-	# **THE PAIR IS THE CLAIM.** The state above and this one differ in nothing a frame can show — an
-	# unquotable sheet renders the same shape either way — so what is asserted is that the two
-	# sentences are BOTH reachable and are NOT each other. A client that printed the new sentence for
-	# both passes either half alone.
+	# **THE COMPOSER'S TWO-STATE DISTINCTION IS WHAT FIXED IT AND IT STAYS; THE SECOND SENTENCE DID
+	# NOT.** The sim prunes a stale take selection on commit, so where this state is reached at all
+	# the game knows what happened — and where the game knows, it should behave correctly rather than
+	# narrate. The sheet simply quotes nothing.
 	#
-	# **REACHABLE RATHER THAN SYNTHETIC.** A commitment now prunes a crew's stale `take_species`
-	# sim-side, so the common route in is closed; a roster change, or a natural composition shift that
-	# drops a plant a standing selection still names, is what still reaches it.
+	# **THE PAIR IS STILL THE CLAIM**, one half now being a silence: the state above must keep its
+	# sentence and this one must not borrow it, which is exactly the lie the split was made to end.
 	var absent := _gather_tile()
 	h._hud._compose.reset_forage_source()
 	h._show_tile(absent)
 	_compose_selection(absent, PackedStringArray([ABSENT_SPECIES]), BASKET_WORKERS)
 	await h._settle()
 	await h._save("forage_take_absent")
-	h._assert_hud("a selection naming plants this tile no longer grows says THAT, with the remedy",
-		_sheet_says(HudFloraVocab.TAKE_ABSENT_NOTE))
-	h._assert_hud("…and does NOT blame the wire's pricing, which is the other sentence entirely",
+	h._assert_hud("a selection naming plants this tile no longer grows does NOT blame the wire's pricing",
 		not _sheet_says(HudFloraVocab.TAKE_UNQUOTED_NOTE))
-	h._assert_hud("…and quotes no take, the two silences differing in words rather than in numbers",
+	h._assert_hud("…and it is the ABSENT reason, not the unpriced one, that the composer states",
+		String(SourceForecast.selection_rates(
+			SourceForecast.flora_basket_entries(absent.get("patch_composition", [])),
+			PackedStringArray([ABSENT_SPECIES])).get(SourceForecast.SELECTION_REASON, ""))
+			== SourceForecast.SELECTION_REASON_ABSENT)
+	h._assert_hud("…and quotes no take, the two silences differing in nothing the sheet prints",
 		_quote(SourceForecast.YIELD_ACCOUNT_FOOD)["food"] == Readout.YIELDS_ACCOUNT_ABSENT)
 	# **AND THE THIRD STATE THE TWO MUST NOT SWALLOW**: a cash crop paying `0.0` is FULLY QUOTED. It
 	# is asserted here rather than beside the cash frames because that is the claim this fork could

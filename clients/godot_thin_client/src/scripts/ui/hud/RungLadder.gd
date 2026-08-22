@@ -64,11 +64,6 @@ const ROW_WORK_KEY := "work_remaining"
 const ROW_TURNS_KEY := "turns_remaining"
 const ROW_REASONS_KEY := "reasons"
 const ROW_SELECTABLE_KEY := "selectable"
-## **WHY THIS RUNG COSTS WHAT IT COSTS — an aside beneath the row, `""` on every rung with no cause to
-## state.** It shares `_build_aside`'s shape with a locked rung's REASON and is a different kind of
-## sentence: a reason says the rung is refused, a note says the price beside it has a cause. Only the
-## Sow rung has one today (`HudWorkVocab.RUNG_TRACK_SOW_PRICE_NOTE_FORMAT`).
-const ROW_NOTE_KEY := "note"
 
 ## A rung whose owing this layer cannot state at all — the wire prices no such job on this source.
 ## Distinct from `0.0`, which is a real reading meaning *nothing left to pay*.
@@ -85,7 +80,18 @@ const CROP_COMMITTED_SPECIES_KEY := "committed_species"
 ## The row keys `crop_choices` publishes and `build_crop_step` renders, `track`'s own convention.
 const CROP_SPECIES_KEY := "species"
 const CROP_LABEL_KEY := "label"
-const CROP_PAYOFF_KEY := "payoff"
+## What this crop would COST and what it would PAY, as one aside beneath the row. It was
+## `CROP_PAYOFF_KEY` while a crop row carried payoffs alone; a key named for the payoffs while
+## holding a price is how a reader comes to believe the work figure is one.
+const CROP_FACE_KEY := "face"
+
+## **THE PER-CROP SOW PRICE, AND ITS ABSENCE IS A REFUSAL** (`FloraShareInfo.sowWorkCost`, carried
+## onto the basket entry by `SourceForecast.flora_basket_entries` with its own presence key). A plant
+## the wire prices no Sow for is one that cannot climb to a Field on this ground — the tile-specific
+## legality the species-global `can_sow` ceiling flag structurally cannot express — so it is the same
+## predicate the sim's own `default_species_for_rung` filters on.
+const CROP_SOW_WORK_COST_KEY := "sow_work_cost"
+const CROP_HAS_SOW_WORK_COST_KEY := "has_sow_work_cost"
 
 ## **THE WIRE'S OWN SPELLING OF *let the sim choose*** — a real instruction rather than an absent one,
 ## which is why it is a named empty string and not a sentinel. `Main.format_assign_labor` omits the
@@ -133,7 +139,6 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
             ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
             ROW_REASONS_KEY: [] as Array[String],
             ROW_SELECTABLE_KEY: false,
-            ROW_NOTE_KEY: "",
         }
         if index < standing:
             row[ROW_STATE_KEY] = STATE_BANKED
@@ -165,61 +170,8 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
         else:
             row[ROW_STATE_KEY] = STATE_OPEN
             row[ROW_SELECTABLE_KEY] = true
-        # **THE PRICE'S REASON RIDES A ROW THAT STATES A PRICE**, i.e. never a banked, standing or
-        # locked one (those three return above, or state their refusal instead of a figure).
-        row[ROW_NOTE_KEY] = _price_note(kind, source, prefix, verb) \
-            if String(row[ROW_STATE_KEY]) != STATE_LOCKED else ""
         rows.append(row)
     return rows
-
-## **WHY THIS RUNG IS PRICED AS IT IS — `""` for every rung with no cause worth stating.**
-##
-## Only the Sow rung has one: `plant:field`'s build cost is scaled by the chosen crop's WEEDED share
-## of the tile, so the same rung is quoted at wildly different work on two tiles and nothing else on
-## the card says why. Everything above the plant web — Cultivate's flat cost, both animal rungs'
-## species multiplier — is either unscaled or already carried by the species name on the row.
-##
-## ⛔ **IT NAMES THE CROP THE WIRE'S FIGURE WAS MEASURED AGAINST**, which is the patch's commitment
-## where it has one and the rung's own auto-pick where it has not — the sim's `patch_field_cost_
-## multiplier` resolution, restated. Naming a different plant would explain the number with a cause
-## that did not produce it.
-##
-## **THE SHARE IS THE PUBLISHED `composition` SHARE, and it is a CAUSE rather than a term.** The sim
-## measures against the WEEDED share (the standing share times the tending gain), which is a second
-## number for one plant and is not what any other surface in this client shows; stating the standing
-## share as the direction of the price is honest, and quoting an arithmetic input would invite the
-## re-derivation the wire's `fieldWorkCost` exists to make unnecessary.
-static func _price_note(kind: String, source: Dictionary, prefix: String,
-        improvement: String) -> String:
-    if kind != SourceForecast.LABOR_KIND_FORAGE \
-            or improvement != SourceForecast.IMPROVEMENT_SOW:
-        return ""
-    var entry := _priced_crop_entry(source, prefix, improvement)
-    if entry.is_empty():
-        return ""
-    return HudWorkVocab.RUNG_TRACK_SOW_PRICE_NOTE_FORMAT % [
-        String(entry.get("display_name", "")), int(entry.get("percent", 0))]
-
-## The basket entry a plant rung's price was struck against — the patch's COMMITTED crop where it has
-## one, else the highest-share entry this rung may legally take. The wire's composition order is
-## share-DESC, so the first legal entry IS the sim's own `default_species_for_rung` answer and no sort
-## is done here. `{}` where nothing can climb.
-static func _priced_crop_entry(source: Dictionary, prefix: String,
-        improvement: String) -> Dictionary:
-    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(improvement, ""))
-    if flag == "":
-        return {}
-    var committed := String(source.get(prefix + CROP_COMMITTED_SPECIES_KEY, "")).strip_edges()
-    var fallback := {}
-    for entry in SourceForecast.flora_basket_entries(
-            source.get(prefix + CROP_COMPOSITION_KEY, [])):
-        if not bool(entry.get(flag, false)):
-            continue
-        if committed != "" and String(entry.get("species", "")) == committed:
-            return entry
-        if fallback.is_empty():
-            fallback = entry
-    return fallback
 
 ## **IS THERE ANY DESTINATION TO OFFER ON THIS SOURCE?** — the one test a caller asks before opening a
 ## track, so an empty card is never floated. It is deliberately NOT `next_rung_ready`: that answer is
@@ -254,11 +206,6 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable) -> VBoxConta
         column.add_child(_build_row(row, on_pick))
         for reason in (row.get(ROW_REASONS_KEY, []) as Array):
             column.add_child(_build_aside(String(reason)))
-        # The PRICE's own cause, beneath the row that states the price. A locked rung never carries
-        # one, so the reason and the note can never stack into two asides on one row.
-        var note := String(row.get(ROW_NOTE_KEY, ""))
-        if note != "":
-            column.add_child(_build_aside(note))
     return column
 
 ## One rung's line: its name on the left, its state or its price on the right.
@@ -306,8 +253,8 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     return line
 
 ## An aside beneath a row, in the quiet ink a gate reason takes everywhere else in this client — used
-## for a locked rung's REASON, for a priced rung's NOTE and for a crop row's PAYOFF, which are three
-## different sentences in one shape rather than one sentence with three meanings.
+## for a locked rung's REASON and for a crop row's own price-and-payoff FACE, which are two different
+## statements in one shape rather than one statement with two meanings.
 static func _build_aside(text: String) -> Label:
     var label := Label.new()
     label.text = text
@@ -340,6 +287,20 @@ static func rung_commits_a_crop(improvement: String) -> bool:
 ## rule), its fodder when it pays any, and ONE CLAUSE PER MATERIAL — never a summed materials figure,
 ## which is the retired trade axis under a new name.
 ##
+## ⛔ **AND ON THE SOW RUNG EVERY ROW STATES ITS OWN PRICE.** The work half used to be one figure per
+## PATCH — the patch's `field_work_cost`, struck against its commitment or the rung's auto-pick — so
+## every crop in this list was quoted the default crop's price while the payoffs beside them moved,
+## which defeats a list that exists to weigh work against payoff. The per-crop figure is on the wire
+## (`CROP_SOW_WORK_COST_KEY`) and is quoted AS PUBLISHED: **neither number here is derived from the
+## other, and neither is derived from `share`** — a committed patch's published share is its
+## reweighted one while the price is struck on the tile's own basket, which is what the sim charges
+## against.
+##
+## **A CROP THE WIRE PRICES NO SOW FOR RENDERS NO ROW AT ALL.** Absence is the sim saying this plant
+## cannot climb to a Field here, so a row would offer a job that cannot be ordered — and a `0` in its
+## place would read as a free Sow. It is also what keeps `Sim picks` honest: the rows left are exactly
+## the plants `default_species_for_rung` chooses between, so the first of them IS what it resolves to.
+##
 ## **THE FIGURES ARE THE RUNG'S OWN, read off the composition entry.** `sow_payoff` /
 ## `cultivate_payoff` and their fodder and material twins are what THIS rung would pay once it stands,
 ## per plant, on this ground; the per-biomass rates beside them describe the wild stand being gathered
@@ -355,14 +316,19 @@ static func crop_choices(source: Dictionary, prefix: String,
     var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(improvement, ""))
     if flag == "":
         return rows
+    var sow := improvement == SourceForecast.IMPROVEMENT_SOW
     for entry in SourceForecast.flora_basket_entries(
             source.get(prefix + CROP_COMPOSITION_KEY, [])):
         if not bool(entry.get(flag, false)):
             continue
+        # The wire's own refusal, and only the Sow rung has a price to be refused: a Cultivate's
+        # build cost is unscaled, so no per-crop work figure exists for it and none is asked for.
+        if sow and not bool(entry.get(CROP_HAS_SOW_WORK_COST_KEY, false)):
+            continue
         rows.append({
             CROP_SPECIES_KEY: String(entry.get("species", "")),
             CROP_LABEL_KEY: _crop_label(entry),
-            CROP_PAYOFF_KEY: _crop_payoff_face(entry, improvement),
+            CROP_FACE_KEY: _crop_face(entry, improvement),
         })
     if rows.is_empty():
         return rows
@@ -373,7 +339,7 @@ static func crop_choices(source: Dictionary, prefix: String,
     rows.append({
         CROP_SPECIES_KEY: CROP_SIM_PICKS,
         CROP_LABEL_KEY: HudWorkVocab.RUNG_CROP_SIM_PICKS_LABEL,
-        CROP_PAYOFF_KEY: HudWorkVocab.RUNG_CROP_SIM_PICKS_NOTE_FORMAT % String(
+        CROP_FACE_KEY: HudWorkVocab.RUNG_CROP_SIM_PICKS_NOTE_FORMAT % String(
             (rows[0] as Dictionary).get(CROP_LABEL_KEY, "")),
     })
     return rows
@@ -387,12 +353,24 @@ static func _crop_label(entry: Dictionary) -> String:
     var role := FoodIcons.for_crop_role(String(entry.get("role", "")))
     return name if role == "" else "%s %s" % [role, name]
 
-## What committing THIS plant on THIS rung pays, per turn, per account.
-static func _crop_payoff_face(entry: Dictionary, improvement: String) -> String:
+## What committing THIS plant on THIS rung would COST, and what it would then pay, per turn, per
+## account — `38 work · 0.00 food · 1.12 tobacco`.
+##
+## **THE COST LEADS**, because it is the figure two rows of one picker most differ by and because a
+## price is read before the payoffs it is weighed against. It renders on the Sow rung alone: a
+## Cultivate's build cost is unscaled, so the wire prices no per-crop figure for it and a clause here
+## would have to invent one.
+static func _crop_face(entry: Dictionary, improvement: String) -> String:
     var sow := improvement == SourceForecast.IMPROVEMENT_SOW
+    var face := ""
+    if sow:
+        # Quoted, never re-derived. `crop_choices` has already refused every row without the key, so
+        # this read can never fall back to a zero that would advertise a free Sow.
+        face += HudFloraVocab.FLORA_CROP_WORK_CLAUSE_FORMAT % DetailFormat.format_work_units(
+            float(entry.get(CROP_SOW_WORK_COST_KEY, 0.0)))
     # **THE FOOD CLAUSE RENDERS AT ZERO.** See `crop_choices` — a cash crop's payoff is exactly `0`,
     # and the unstated zero is the whole reason this step exists.
-    var face := HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT % float(
+    face += HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT % float(
         entry.get("sow_payoff" if sow else "cultivate_payoff", 0.0))
     var fodder := float(entry.get("sow_fodder_payoff" if sow else "cultivate_fodder_payoff", 0.0))
     if SourceForecast.has_component(fodder):
@@ -408,7 +386,8 @@ static func _crop_payoff_face(entry: Dictionary, improvement: String) -> String:
     # The leading separator belongs between clauses, not before the first one.
     return face.trim_prefix(HudFloraVocab.FLORA_CROP_CLAUSE_LEAD)
 
-## **THE CROP STEP AS CONTROLS** — a pressable row per crop over its payoff aside, and a Back row.
+## **THE CROP STEP AS CONTROLS** — a pressable row per crop over its price-and-payoff aside, and a
+## Back row.
 ##
 ## `on_pick` takes the row's SPECIES key, which is what the command carries; `on_back` returns to the
 ## rung list. Both are `Callable`s, `build_track`'s own treatment — this layer holds no state.
@@ -427,7 +406,7 @@ static func build_crop_step(rows: Array[Dictionary], on_pick: Callable,
         column.add_child(_build_aside(HudWorkVocab.RUNG_CROP_NONE_NOTE))
     for row in rows:
         column.add_child(_build_crop_row(row, on_pick))
-        column.add_child(_build_aside(String(row.get(CROP_PAYOFF_KEY, ""))))
+        column.add_child(_build_aside(String(row.get(CROP_FACE_KEY, ""))))
     column.add_child(_build_back_row(on_back))
     return column
 

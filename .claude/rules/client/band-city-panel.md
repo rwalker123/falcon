@@ -3321,12 +3321,12 @@ declaration:
 
 ```
 WHAT TO GROW
-  🌾 Wild Grain 78%
-     3.40 food
-  🚬 Tobacco 22%
-     0.00 food · 1.12 tobacco
+  🌾 Wild Grain 70%
+     38 work · 3.40 food
+  🚬 Tobacco 20%
+     150 work · 0.00 food · 1.12 tobacco
   Sim picks
-     → 🌾 Wild Grain 78%
+     → 🌾 Wild Grain 70%
   ‹ Back
 ```
 
@@ -3335,6 +3335,23 @@ WHAT TO GROW
   because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to *this
   field feeds nobody* states the zero unless a row does — so the FOOD clause is the one clause in
   `HudFloraVocab` exempt from the render-only-when-non-zero rule and prints `0.00 food` outright.
+- ⛔ **AND EACH ROW STATES ITS OWN SOW PRICE, WHICH IS THE OTHER HALF OF THE DECISION.** The work
+  figure was one number per PATCH — `fieldWorkCost`, struck against the patch's commitment or the
+  rung's auto-pick — so every crop in the list was quoted the DEFAULT crop's price while the payoffs
+  beside them moved, and the true one appeared only once the leg started and re-quoted. A picker
+  exists to weigh work against payoff; with the work half wrong for every crop but one it did the
+  opposite. `FloraShareInfo.sowWorkCost` rides each composition entry and is quoted as published.
+  It LEADS the row, a price being read before what it buys.
+- **A CROP THE WIRE PRICES NO SOW FOR RENDERS NO ROW.** Absence is the sim's "this plant cannot climb
+  to a Field on this ground" — the tile-specific legality `can_sow` (a SPECIES ceiling) structurally
+  cannot express — so a row would offer a job that cannot be ordered, and a `0` would read as a free
+  Sow. It is the same predicate `default_species_for_rung` filters on, so the rows that survive are
+  exactly the plants `Sim picks` chooses between.
+- ⛔ **NOTHING HERE IS DERIVED FROM ANYTHING ELSE HERE.** A committed patch's published `share` is its
+  REWEIGHTED one while `sowWorkCost` is struck on the tile's own basket, which is what the sim charges
+  against; and the per-crop price and the patch's own `fieldWorkCost` agree by construction for the
+  crop a patch is committed to (asserted sim-side on the encoded envelope) rather than by one being
+  computed from the other. Quote each as published.
 - **THE FIGURES ARE THE RUNG'S OWN, per plant** — `sow_payoff` / `cultivate_payoff` and their fodder
   and material twins off the composition entry, which is what THIS rung would pay once it stands. The
   per-biomass rates beside them describe the wild stand being gathered today and answer a different
@@ -3358,44 +3375,39 @@ WHAT TO GROW
 - **THE QUEUE ROW'S OWN CROP PICKER IS UNTOUCHED.** This adds the choice at DECLARATION; changing it
   before the job starts is still the settings strip's.
 
-### …AND THE FIELD ROW SAYS WHY A SOW IS DEAR OR CHEAP (§4.15)
+### …AND THE FIELD ROW STATES ITS PRICE AND NO REASON (§4.15)
 
-`plant:field`'s build cost is scaled by the crop's share of the tile — sowing a crop that already
-holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the tile —
-so two Sows are quoted at wildly different work and **nothing on any surface said why**. The reason
-goes where the price is stated, which on the declaration path is this card's Field row:
+`plant:field`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
+already holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the
+tile — so two Sows are quoted at wildly different work. The declaration path's own Field row states
+that price:
 
 ```
 ▦ Field                            150 work
-  Priced on Tobacco, 22% of this ground — the less of the
-  crop already standing, the more a Sow has to replace.
 ```
 
-- ⛔ **THE PRICE IS THE WIRE'S AND IS NEVER RE-DERIVED.** `fieldWorkCost` already carries the scaled
-  number; the share is stated as its CAUSE. The two frames are the same basket at two wire prices, so
-  a client that re-derived a cost from the share would have to disagree with one of them.
-- **IT NAMES THE CROP THE FIGURE WAS MEASURED AGAINST** — the patch's commitment where it has one, the
-  rung's own auto-pick where it has not (`forage::patch_field_cost_multiplier`'s resolution, restated).
-  Naming a different plant would explain the number with a cause that did not produce it.
-- **IT IS DIRECTIONAL RATHER THAN A VERDICT.** The client cannot say *dear* or *cheap*: that needs the
-  sim's `field_reference_crop_share`, a config lever not on the wire, and a guessed verdict beside an
-  exact number is worse than no verdict.
-- **THE SHARE QUOTED IS THE PUBLISHED `composition` SHARE.** The sim measures against the WEEDED share
-  (standing share × the tending gain), which is a second number for one plant and is what no other
-  surface in this client shows.
-- **Only the Sow rung carries one.** Cultivate's cost is unscaled and both animal rungs' multiplier is
-  the species', which the row already names.
+- ⛔ **THE PRICE IS THE WIRE'S `fieldWorkCost` AND IS NEVER RE-DERIVED.** It is what will be charged
+  for THIS patch's Sow — the crop it is committed to, or the rung's auto-pick where it has none.
+- **THE CAUSE IS NOW SHOWN RATHER THAN NARRATED.** A crop-and-share sentence sat beneath the price for
+  one release, naming the plant the figure was struck against; the crop step one press away states
+  every legal crop's OWN price, so the sentence explained a variation the player can now simply read.
+  Ray, on it: *"too wordy. If it is known, we don't need any of that text."* `RUNG_TRACK_SOW_PRICE_
+  NOTE_FORMAT`, `RungLadder`'s `ROW_NOTE_KEY`, `_price_note` and `_priced_crop_entry` are all retired,
+  and no rung on the track carries an aside but a LOCKED one's gate reason.
+- **THE TWO FIGURES AGREE BY CONSTRUCTION FOR THE COMMITTED CROP, and the client asserts rather than
+  derives.** The per-crop `sowWorkCost` for the crop a patch is actually committed to IS that patch's
+  `fieldWorkCost` — one sim-side expression, checked on the encoded envelope — so neither surface may
+  compute the other's number.
+- **Only the Sow rung has a per-crop price at all.** Cultivate's cost is unscaled and both animal
+  rungs' multiplier is the species', which the row already names — so the crop step quotes work on the
+  Sow rung and nothing on the others.
 
-**Frames, judged as a SET:** `band_panel_rung_price_cheap` (uncommitted ground, priced on the dominant
-staple at `38 work`) · `band_panel_rung_crop` (the step that rung opens, every payoff stated) ·
-`band_panel_rung_price_dear` (the SAME two plants COMMITTED to the minority crop at `150 work`). A
-note that named one crop whatever the patch was committed to passes either price frame alone.
-
-> **KNOWN GAP — the price quoted at declaration is the one struck for the crop the patch is on.**
-> `fieldWorkCost` is a single per-patch figure, re-measured at the leg boundary, so a player who picks
-> a crop OTHER than the one the note names will see the price re-quoted once the leg starts. Closing it
-> is server-side: a per-crop `fieldWorkCost` on each composition entry, beside the payoffs already
-> there.
+**Frames, judged as a SET:** `band_panel_rung_price_cheap` (uncommitted ground, the patch priced at
+its auto-pick's `38 work`) · `band_panel_rung_crop` (the step that rung opens — `38 work · 3.40 food`
+against `150 work · 0.00 food · 1.12 tobacco`, and the third plant the wire prices no Sow for absent
+entirely) · `band_panel_rung_price_dear` (the SAME basket COMMITTED to the minority crop, the patch
+now at `150 work`). A Field row quoting a constant passes either price frame alone, and a picker
+quoting one price per patch passes every claim a one-crop basket can state.
 
 ## DENIAL is a third MISSION on the parties footer, not a floor on the hunt form
 

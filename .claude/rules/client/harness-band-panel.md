@@ -1206,17 +1206,35 @@ rung's meter renders a perfectly plausible row:
 things it varies are the two the claims are about**: what the WIRE quotes for the Field rung, and
 which crop the patch is committed to.
 
-**THE BASKET IS MIXED, and a single-plant one cannot make the claim at all.** A staple holding 78% and
-paying food sits beside a cash crop holding 22% and paying **none** — which is the tile that got
+**THE BASKET IS MIXED, and a single-plant one cannot make the claim at all.** A staple holding 70% and
+paying food sits beside a cash crop holding 20% and paying **none** — which is the tile that got
 committed to tobacco in play, and the shape a picker of names and shares cannot warn about. The
 `0.00 food` clause is asserted by EQUALITY against `HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT`, so a
 row that suppressed the zero (which every other clause on a crop row correctly does) fails.
 
-**THE PRICE PAIR IS THE CLAIM.** `38 work` on uncommitted ground priced against the dominant staple,
-`150 work` on the SAME two plants committed to the minority crop — so a note naming one crop whatever
-the patch carries passes either state alone, and a client that re-derived a cost from the share would
-have to disagree with one of the two wire figures. Both are asserted against the fixture's own
-`fieldWorkCost` through `RUNG_TRACK_COST_UNDATED_FORMAT`, never against anything computed from a share.
+**THE TWO CROPS CARRY THEIR OWN SOW PRICES, AND THE INEQUALITY IS ASSERTED SEPARATELY.** `38 work`
+against `150 work` on one tile is the whole of what the per-crop figure buys, and a picker quoting one
+price per PATCH renders a perfectly plausible step — every row carries a number, and it is the same
+wrong number — so the faces are pinned by EQUALITY and the *they differ* claim is stated over the
+leading work clauses on its own. Both expectations are composed from the picker's OWN clause formats
+(`_want_crop_face` / `_want_work_clause`), which pins the figures rather than the wording.
+
+**A THIRD PLANT CARRIES NO `sow_work_cost` AT ALL and must render NO ROW.** Its `can_sow` is
+deliberately `true` — that flag is the SPECIES' global ceiling — so the crop step's own presence guard
+is the only thing that can withhold it, and a filter written against the ceiling flag would leave it
+on the list offering a job the sim refuses at a price it never quoted.
+
+**THE PATCH'S OWN PRICE IS STILL ASSERTED, and it is now a pair with the per-crop one.**
+`_assert_rung_sow_price` reads the Field row's `fieldWorkCost` back through
+`RUNG_TRACK_COST_UNDATED_FORMAT` — `38 work` on uncommitted ground, `150 work` on the SAME basket
+committed to the minority crop — so a Field row quoting a constant passes either state alone. The
+fixture passes the COMMITTED crop's own const as the patch's `field_work_cost`, which is the invariant
+the sim asserts on the encoded envelope stated from the client's side; neither figure is derived from
+the other, and neither is derived from a share.
+
+**THE FIELD ROW STATES NO REASON.** The crop-and-share sentence beneath the price is retired — the
+work figure stands on its own now that each crop states one — so `_assert_rung_sow_price` makes the
+price claim alone.
 
 **`_assert_ready_mark_declares` WALKS THE STEP RATHER THAN ASSUMING EITHER SHAPE.** The declare board
 carries a `sow`, a `tame` and a `corral`, and only the first asks for a crop — so after pressing the
@@ -1228,8 +1246,8 @@ being what actually escapes.
 
 `_rung_crop_rows` keys on `HudWorkVocab.RUNG_CROP_ROW_META`, spelled apart from `RUNG_TRACK_ROW_META`
 so a harness asking *which rung* can never be answered by a crop row that happens to be on screen;
-`_rung_crop_payoffs` reads each row's aside by POSITION (the sibling that follows it), a payoff
-carrying no identity beyond the row it explains.
+`_rung_crop_faces` reads each row's aside by POSITION (the sibling that follows it), a price-and-payoff
+face carrying no identity beyond the row it prices.
 
 Sabotage-verified by returning the destination reading: **exactly six fail** — both readouts on the
 two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,

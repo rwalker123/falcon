@@ -1463,7 +1463,7 @@ compared against a constant the fixture also states.
 | `forage_take_narrowed` | the sheet OPENS on the selection the band's own row carries, and prices it IDENTICALLY to the ticked one |
 | `forage_take_zero_food` | a plant paying `0.0` food is PRICED — a live `1.22 → 0.18 FODDER`, no food row, no *not priced* aside |
 | `forage_take_unquoted` | a selection the WIRE priced no rate for quotes nothing, in words |
-| `forage_take_absent` | **the OTHER silence, and the pair is the claim** — a selection naming plants this tile no longer grows says THAT, with the remedy, and does not blame the wire's pricing. Judged with the frame above and with a third claim neither may swallow: a crop paying `0.0` food is FULLY QUOTED |
+| `forage_take_absent` | **the OTHER silence, and it says NOTHING** — a selection naming plants this tile no longer grows quotes no take and prints no sentence, in particular not the frame above's. The composer's own reason is asserted directly (`SELECTION_REASON_ABSENT`), that two-state split being what keeps the surviving sentence off this state; judged with the frame above and with a third claim neither may swallow: a crop paying `0.0` food is FULLY QUOTED |
 | `forage_take_cultivate` | single-pick: exactly one chip lit, and the line NAMES the crop the game would settle on |
 | `forage_take_cultivate_picked` | picking a crop MOVES the lit pill — it picks the basket's OTHER `can_cultivate` member, since picking the crop the resolver had already settled on would light the pill that was already lit — and the line says cultivating weeds the rest out |
 | `forage_take_cash_narrowed` | **the case the feature was argued on** — tick cotton, see `3.55 FIBRE · 1.52 TOBACCO` where the *not priced* apology used to be, and no FOOD row |

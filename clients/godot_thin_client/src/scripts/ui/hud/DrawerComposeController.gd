@@ -1237,15 +1237,18 @@ func _forage_take_source(tile_info: Dictionary, take: Dictionary) -> Dictionary:
 ## The asides a narrowed take owes — `[]` for the whole basket AND for a fully priced narrowing, which
 ## is what keeps every other sheet on this controller unchanged.
 ##
-## **TWO SILENCES, AND THEY ARE NOT THE SAME SENTENCE.** `selection_rates` returns its unquotable dict
-## for two states with different remedies — the wire priced no per-species rate for a plant that IS in
-## the basket, and the ticked plants are not in this tile's basket at all — so the aside is picked off
-## the reason the composer states rather than printed once for both. The second is the one that had
-## the obvious remedy the shared sentence never mentioned; see `HudFloraVocab.TAKE_ABSENT_NOTE`.
+## **ONE OF THE TWO UNQUOTABLE STATES SAYS NOTHING, AND THAT IS THE INTENT.** `selection_rates`
+## returns its unquotable dict for two — the wire priced no per-species rate for a plant that IS in
+## the basket, and the ticked plants are not in this tile's basket at all. Only the first is a fact
+## the player can neither see nor fix, so only it gets a sentence; the second is a state the sim now
+## prunes on commit, and where the game knows what happened it should behave correctly rather than
+## narrate it. An empty `notes` there renders `_wordless_take_model`'s `{}`, i.e. nothing at all.
 ##
-## **THE REASON IS READ OFF THE RATES, NOT RE-DERIVED HERE.** `_selective_take_state` carries the same
-## dict the quoted/unquoted verdict was taken from, so the sentence and the verdict cannot disagree
-## about which state this is.
+## ⛔ **THE TWO-STATE DISTINCTION IS STILL WHAT THIS BRANCH READS**, and dropping it would put the
+## surviving sentence back on the state it is false about — a crew told the SERVER had not priced
+## plants that had simply stopped growing there. `_selective_take_state` carries the same dict the
+## quoted/unquoted verdict was taken from, so the sentence and the verdict cannot disagree about
+## which state this is.
 func _take_notes(take: Dictionary) -> Array[String]:
     var notes: Array[String] = []
     if not bool(take.get(TAKE_SELECTION_NARROWED, false)):
@@ -1254,9 +1257,8 @@ func _take_notes(take: Dictionary) -> Array[String]:
         var rates: Dictionary = take.get(TAKE_SELECTION_RATES, {}) as Dictionary
         var reason := String(rates.get(SourceForecast.SELECTION_REASON,
             SourceForecast.SELECTION_REASON_ABSENT))
-        notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE \
-            if reason == SourceForecast.SELECTION_REASON_UNPRICED \
-            else HudFloraVocab.TAKE_ABSENT_NOTE)
+        if reason == SourceForecast.SELECTION_REASON_UNPRICED:
+            notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
     return notes
 
 ## A model with NO numbers in it — the shape every "there is nothing this sheet may state" path
