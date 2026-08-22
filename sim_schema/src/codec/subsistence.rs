@@ -812,6 +812,10 @@ fn create_flora_shares<'a>(
                 // nothing at all.
                 sowMaterialPayoff: Some(sow_materials),
                 cultivateMaterialPayoff: Some(cultivate_materials),
+                // **What sowing THIS crop would cost in work** — appended last (append-only wire,
+                // §4.15). `0` is "no figure" (the plant cannot climb to a Field here), never a free
+                // Sow.
+                sowWorkCost: share.sow_work_cost,
             },
         );
         entries.push(entry);

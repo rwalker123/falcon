@@ -21,6 +21,10 @@
 //!    against the payoff function; a multiplier that landed on the charge and not on the forecast
 //!    would have the compose sheet quoting a price the job does not take, which is a defect class
 //!    this arc has shipped before.
+//! 3. **The PER-CROP price and the patch's own price are one number.** The crop picker states a work
+//!    figure against every crop it offers (`FloraShareInfo.sowWorkCost`), and the patch states one
+//!    for the crop it is committed to (`fieldWorkCost`) — two published numbers for one fact, which
+//!    have to be the same number or the picker is lying about whichever the player picked.
 //!
 //! **Read off the ENCODED buffer**, the discipline `build_turns_on_the_wire.rs` and
 //! `destination_capacity_on_the_wire.rs` follow: a field can be right in the capture and wrong in the
@@ -248,8 +252,31 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
     ));
 }
 
-/// The `plant:field` price this patch's row publishes, read off the encoded envelope.
-fn published_field_work_cost(app: &App, source: UVec2) -> f32 {
+/// **One patch row as the wire carries it**, copied out of the envelope so the borrowed buffer can
+/// be dropped. Every figure this file asserts on is read here and nowhere else: a price can be right
+/// in the capture and wrong in the envelope, and the envelope is what a client sees.
+struct PublishedPatch {
+    tile: UVec2,
+    /// The patch's own `plant:field` price — the one crop it is committed to (or the rung's
+    /// auto-pick), in work units.
+    field_work_cost: f32,
+    /// `""` when the patch is still the wild mixed basket.
+    committed_species: String,
+    crops: Vec<PublishedCrop>,
+}
+
+/// One entry of a published basket — the crop picker's row.
+struct PublishedCrop {
+    species: String,
+    share: f32,
+    can_sow: bool,
+    /// What a Sow committing this tile to *this* crop would be charged, in work units. `0` is the
+    /// wire's "no figure" for a crop that cannot climb to a Field here.
+    sow_work_cost: f32,
+}
+
+/// Every patch row on the wire, in the order the snapshot states them.
+fn published_patches(app: &App) -> Vec<PublishedPatch> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -261,16 +288,47 @@ fn published_field_work_cost(app: &App, source: UVec2) -> f32 {
     let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
     let envelope =
         fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
-    let row = envelope
+    envelope
         .payload_as_snapshot()
         .expect("the envelope carries a snapshot")
         .subsistence()
         .and_then(|section| section.foragePatches())
         .expect("the subsistence section carries the patch list")
         .iter()
-        .find(|patch| patch.x() == source.x && patch.y() == source.y)
-        .expect("the fixture patch is on the wire");
-    row.fieldWorkCost()
+        .map(|row| PublishedPatch {
+            tile: UVec2::new(row.x(), row.y()),
+            field_work_cost: row.fieldWorkCost(),
+            committed_species: row.committedSpecies().unwrap_or_default().to_string(),
+            crops: row
+                .composition()
+                .map(|basket| {
+                    basket
+                        .iter()
+                        .map(|entry| PublishedCrop {
+                            species: entry.species().unwrap_or_default().to_string(),
+                            share: entry.share(),
+                            can_sow: entry.canSow(),
+                            sow_work_cost: entry.sowWorkCost(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// The fixture patch's row, by coord — the rows are sorted by `(y, x)`, so the lookup is never by
+/// position in the list.
+fn published_patch(app: &App, source: UVec2) -> PublishedPatch {
+    published_patches(app)
+        .into_iter()
+        .find(|patch| patch.tile == source)
+        .expect("the fixture patch is on the wire")
+}
+
+/// The `plant:field` price this patch's row publishes, read off the encoded envelope.
+fn published_field_work_cost(app: &App, source: UVec2) -> f32 {
+    published_patch(app, source).field_work_cost
 }
 
 fn ladder_position(app: &App, source: UVec2) -> f32 {
@@ -279,6 +337,20 @@ fn ladder_position(app: &App, source: UVec2) -> f32 {
         .patch(source)
         .expect("the fixture patch survives")
         .ladder_position()
+}
+
+/// **The wire's "this crop cannot be sown here"** — a Sow price is never legitimately `0`, so the
+/// schema default reads as *no figure* and a client renders no row rather than a free Sow.
+const NO_SOW_WORK_COST: f32 = 0.0;
+
+/// The `plant:field` rung's **declared** `work_cost` — the price on reference ground, which every
+/// per-patch and per-crop figure published here is a multiple of.
+fn field_declared_cost(app: &App) -> f32 {
+    core_sim::plant_rung_span(
+        RungKey::PlantField,
+        &app.world.resource::<LadderConfigHandle>().get(),
+    )
+    .1
 }
 
 fn field_base(app: &App) -> f32 {
@@ -453,5 +525,200 @@ fn the_published_sow_price_is_the_work_the_field_rung_takes() {
         "the Field rung took {charged} work units against a published price of {published} — a \
          sheet that quotes one number and a job that charges another is the defect §4.3's rule \
          exists to catch"
+    );
+}
+
+/// ⛔ **THE PER-CROP PRICE AND THE PATCH'S OWN PRICE ARE ONE NUMBER.**
+///
+/// The crop picker states a work figure against every crop it offers, and the patch states one for
+/// the crop it is committed to. Two published numbers for one fact that disagree is the defect class
+/// §4.3's rule exists to catch — so the entry for the committed crop must be *exactly*
+/// `fieldWorkCost`, before a single turn of work and again once the Field leg has started and been
+/// stamped.
+///
+/// The second reading is the one that matters: a stamped leg answers the patch's own price list, so
+/// a per-crop figure derived from anywhere else would drift apart from it at the leg boundary.
+#[test]
+fn the_per_crop_sow_price_is_the_price_this_patch_is_charged() {
+    let (mut app, source) = a_two_leg_sow();
+    let declared = field_declared_cost(&app);
+
+    // **① Untouched ground, where the patch prices the rung's AUTO-PICK.** The row a player is
+    // shown before anyone has worked here, which is where the picker is actually read.
+    let at_declaration = published_patch(&app, source);
+    assert!(
+        at_declaration.committed_species.is_empty(),
+        "PRECONDITION: the fixture patch must still be the wild basket on the first frame, or this \
+         reading is the committed one below"
+    );
+    assert!(
+        (at_declaration.field_work_cost - declared).abs() > SAME_JOB,
+        "PRECONDITION: the fixture ground must be priced away from the ladder's declared \
+         {declared}, or an entry that published the bare rung cost would pass: got {}",
+        at_declaration.field_work_cost
+    );
+    let picked = auto_picked_crop(&app, source);
+    assert_crop_is_priced_as_the_patch(&at_declaration, &picked, "on untouched ground");
+
+    // **② One turn in, where the crew's first work COMMITS the patch to that crop.**
+    run_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+    let committed = published_patch(&app, source);
+    assert!(
+        !committed.committed_species.is_empty(),
+        "PRECONDITION: a worked Sow must commit the patch to a crop, or there is no commitment to \
+         price against"
+    );
+    let crop = committed.committed_species.clone();
+    assert_crop_is_priced_as_the_patch(&committed, &crop, "once committed");
+
+    // **③ With the Field leg running, where the patch answers its STAMPED price** — the reading
+    // that matters, because a per-crop figure derived from anywhere else would drift apart from
+    // the stamp at the leg boundary.
+    let base = field_base(&app);
+    let mut turns = 0;
+    while ladder_position(&app, source) <= base {
+        assert!(
+            turns < BUILD_HORIZON,
+            "fixture: the Cultivate leg must land inside {BUILD_HORIZON} turns"
+        );
+        run_turn(&mut app);
+        turns += 1;
+    }
+    recapture_snapshot_in_place(&mut app.world);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(source)
+            .expect("the fixture patch survives")
+            .quoted_field_cost_multiplier()
+            .is_some(),
+        "PRECONDITION: the Field leg must carry a stamp, or this reading is the same live measure \
+         the ones above already made"
+    );
+    let running = published_patch(&app, source);
+    assert_crop_is_priced_as_the_patch(&running, &crop, "with the Field leg running");
+}
+
+/// The invariant itself, stated once so all three readings above assert the same thing.
+fn assert_crop_is_priced_as_the_patch(patch: &PublishedPatch, crop: &str, when: &str) {
+    let row = patch
+        .crops
+        .iter()
+        .find(|entry| entry.species == crop)
+        .unwrap_or_else(|| panic!("{when}: `{crop}` is not in the patch's published basket"));
+    assert!(
+        (row.sow_work_cost - patch.field_work_cost).abs() < SAME_JOB,
+        "{when}: the picker quotes {} work units for `{crop}` while the patch priced on that very \
+         crop is charged {} — one fact, two published numbers",
+        row.sow_work_cost,
+        patch.field_work_cost
+    );
+}
+
+/// **The crop an unworked patch is priced on** — the `plant:field` rung's own auto-pick over the
+/// tile's basket, resolved through the same `forage::default_species_for_rung` seam the readout and
+/// the labor arm both commit through.
+fn auto_picked_crop(app: &App, source: UVec2) -> String {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(source.x, source.y)
+        .expect("the fixture tile resolves");
+    let ground = app
+        .world
+        .get::<core_sim::Tile>(entity)
+        .expect("the fixture tile");
+    let composition = core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+    core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
+        .expect("the site was chosen for having a crop that climbs to a Field")
+}
+
+/// ⛔ **A CROP THAT ALREADY HOLDS THE GROUND IS CHEAPER TO SOW THAN A MARGINAL ONE**, and every
+/// published figure sits inside the two clamps.
+///
+/// This is the whole point of the per-crop figure: sowing a crop that holds most of the tile is
+/// tidying, sowing one that holds a tenth is replacing the tile, and the picker exists so a player
+/// can weigh that against the payoff before committing. Asserted across every patch on the map
+/// rather than on one fixture tile, so the ordering is a property of the measure and not of one
+/// basket — with a liveness half, because a column of identical prices would satisfy
+/// "non-increasing" everywhere.
+#[test]
+fn a_dominant_crop_is_cheaper_to_sow_than_a_marginal_one() {
+    let (app, _) = a_two_leg_sow();
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let cultivation = &labor.forage.cultivation;
+    let declared = field_declared_cost(&app);
+    let floor = declared * cultivation.field_share_cost_floor;
+    let ceiling = declared * cultivation.field_share_cost_ceiling;
+
+    let mut saw_a_pair_priced_apart = false;
+    let mut saw_a_crop_that_cannot_sow = false;
+    for patch in published_patches(&app) {
+        // **The WILD rows only.** A committed patch publishes its reweighted basket, so its shares
+        // are the crop's *after* the commitment while the price is struck on the ground the tile
+        // actually holds — a comparison there would be between two different baskets.
+        if !patch.committed_species.is_empty() {
+            continue;
+        }
+        for crop in &patch.crops {
+            if !crop.can_sow {
+                assert_eq!(
+                    crop.sow_work_cost, NO_SOW_WORK_COST,
+                    "`{}` cannot climb to a Field, so its row must carry NO figure rather than a \
+                     price a player could act on",
+                    crop.species
+                );
+                saw_a_crop_that_cannot_sow = true;
+                continue;
+            }
+            assert!(
+                crop.sow_work_cost >= floor - SAME_JOB && crop.sow_work_cost <= ceiling + SAME_JOB,
+                "`{}` is priced at {} work units, outside the clamps [{floor}, {ceiling}] — both \
+                 are load-bearing: without the floor a Sow on ground already wholly the crop is \
+                 free, and without the ceiling a marginal crop's price is bounded only by the \
+                 anchor",
+                crop.species,
+                crop.sow_work_cost
+            );
+        }
+        // The basket is published share DESC, so each window reads dominant-then-marginal.
+        for pair in patch.crops.windows(2) {
+            let (dominant, marginal) = (&pair[0], &pair[1]);
+            if !dominant.can_sow || !marginal.can_sow {
+                continue;
+            }
+            assert!(
+                dominant.share >= marginal.share,
+                "PRECONDITION: the published basket must be ordered by share"
+            );
+            assert!(
+                dominant.sow_work_cost <= marginal.sow_work_cost + SAME_JOB,
+                "`{}` holds {} of the tile and is quoted {} work units, while `{}` holds {} and is \
+                 quoted {} — a Sow is priced by what it REPLACES, so more ground already the crop \
+                 can never cost more",
+                dominant.species,
+                dominant.share,
+                dominant.sow_work_cost,
+                marginal.species,
+                marginal.share,
+                marginal.sow_work_cost
+            );
+            saw_a_pair_priced_apart |= dominant.sow_work_cost < marginal.sow_work_cost - SAME_JOB;
+        }
+    }
+
+    assert!(
+        saw_a_pair_priced_apart,
+        "no two crops anywhere on the map were priced apart — the figure is not reading the crop's \
+         own share, and every ordering assertion above compared a number with itself"
+    );
+    assert!(
+        saw_a_crop_that_cannot_sow,
+        "no published basket named a plant that cannot climb to a Field — the 'no figure' half is \
+         untested here"
     );
 }

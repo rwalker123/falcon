@@ -1651,6 +1651,26 @@ pub struct FloraShareInfo {
     /// the standing crop, so one number cannot answer both rungs. Appended (append-only).
     #[serde(default)]
     pub cultivate_material_payoff: Vec<MaterialPayoff>,
+    /// **What a Sow committing this tile to THIS plant would cost, in work units**
+    /// (`docs/plan_standing_upkeep.md` §4.15) — the rung's declared `work_cost` times the multiplier
+    /// this crop's own share earns, in the same units as [`ForagePatchState::field_work_cost`].
+    ///
+    /// **The cost half of the crop decision.** `plant:field` is priced by how much of the tile the
+    /// chosen crop still has to replace, and a patch prices exactly one crop — its commitment, or the
+    /// rung's auto-pick — so every row of a crop picker quoted the *same* work figure and only the
+    /// payoffs moved. This one moves with the crop, so work and payoff can be weighed against each
+    /// other before anything is committed.
+    ///
+    /// `0` means **no figure** — the plant cannot climb to a Field on this ground — and must render
+    /// as *no row*, never as a free Sow. A real price is never `0`: the multiplier is clamped at
+    /// `field_share_cost_floor` precisely because ground already wholly the crop still has its rows
+    /// laid and its seed put in.
+    ///
+    /// Produced by `forage::crop_field_cost_multiplier`, the same expression the patch's own price
+    /// goes through, so the figure quoted for the committed crop **is**
+    /// [`ForagePatchState::field_work_cost`]. Appended (append-only).
+    #[serde(default)]
+    pub sow_work_cost: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

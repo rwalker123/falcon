@@ -2228,7 +2228,13 @@ pub fn capture_snapshot(
     // keeper-load, so the row needs the ground and not just the patch. Collected in this sweep for
     // the same reason `sow_site_refusals` is: the tiles are here and the readout is not.
     let mut tile_capacities: HashMap<UVec2, f32> = HashMap::new();
-    let mut flora_sweep = flora_quotes.sweep(&flora_config, &labor_config, config.map_seed, grid);
+    let mut flora_sweep = flora_quotes.sweep(
+        &flora_config,
+        &labor_config,
+        &ladder_config,
+        config.map_seed,
+        grid,
+    );
     for tile in patch_tiles {
         tile_capacities.insert(
             tile.position,

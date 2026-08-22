@@ -1206,9 +1206,32 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > **④ AND THE QUOTE MOVED WITH THE CHARGE**, on §4.3's rule. Every surface that states what a Sow
     > will cost resolves through one seam (`forage::patch_field_cost_multiplier`): the arm that charges
     > it, `patch_build_legs`' work figures and their chained dates, the pre-commit projection the `⌃`
-    > mark and the compose sheet read, and the published `fieldWorkCost`. **No wire field was added** —
-    > `fieldWorkCost` already carried the price and now carries the scaled one, so the client quotes
-    > what the sim charges without re-deriving anything.
+    > mark and the compose sheet read, and the published `fieldWorkCost`. **The patch's own price
+    > added no wire field** — `fieldWorkCost` already carried it and now carries the scaled one, so
+    > the client quotes what the sim charges without re-deriving anything. The **per-crop** half below
+    > is a different question, and it is the one thing here that did add a field.
+    >
+    > **⑤ AND THE PICKER PRICES EVERY CROP, NOT ONLY THE ONE THE PATCH ALREADY NAMES.** A patch
+    > prices exactly *one* crop — its commitment, or the rung's auto-pick — so the crop picker on the
+    > `⌃`'s destination-rung popover, which lists each legal crop beside what it would pay
+    > (`sowPayoff` / `sowFodderPayoff` / `sowMaterialPayoff`), had the *same* work figure against
+    > every row while only the payoffs moved, and the true figure appeared only once the leg started
+    > and re-quoted. **That defeats the picker**, whose whole job is to let work be weighed against
+    > payoff *before* committing.
+    >
+    > So the work half answers per crop exactly as the payoffs do: `FloraShareInfo.sowWorkCost`, one
+    > figure per composition entry, in the same work units as `fieldWorkCost`. It is
+    > `field_cost_multiplier_at_share` over **that crop's own** `field_replaced_share`, priced by the
+    > ladder's own `build_cost` — *one expression* with the patch's own price
+    > (`forage::crop_field_cost_multiplier`, which `patch_field_cost_multiplier` goes through), so the
+    > figure quoted for the crop a patch is committed to **is** that patch's `fieldWorkCost` rather
+    > than a second derivation that happens to agree. Asserted on the encoded envelope, at
+    > declaration, at the commitment and again with the leg stamped.
+    >
+    > **Empty for a crop that cannot climb to a Field here** (`species_climbs` at `plant:field`),
+    > which renders as *no row*: a `0` would read as a free Sow, and a real price never is one — the
+    > floor clamp exists precisely because laying the rows and putting the seed in costs work on any
+    > ground.
 
 > **Every number in this arc is provisional until §4.14.** The plant demands of `2.0` / `4.0` are
 > whole-number placeholders chosen to be legible, not balanced; the graces of `2` and `1` are

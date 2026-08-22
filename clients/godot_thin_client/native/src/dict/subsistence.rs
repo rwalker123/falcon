@@ -5,6 +5,12 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
+/// **The wire's "this crop cannot be sown here"** for `FloraShareInfo.sowWorkCost` — a Sow price is
+/// never legitimately `0` (the sim's multiplier is floored, because laying the rows and putting the
+/// seed in costs work on any ground), so the schema default reads as *no figure* and the key is
+/// simply not inserted.
+const NO_SOW_WORK_COST: f32 = 0.0;
+
 /// The `regrowthSamples` vector both source tables publish, as the packed float array GDScript
 /// interpolates over. **An ABSENT vector stays EMPTY** rather than becoming a run of zeros:
 /// "published no curve" and "does not grow" are different claims, and only the first may leave the
@@ -985,6 +991,26 @@ pub(crate) fn forage_patches_to_array(
                     "cultivate_material_payoff",
                     &material_payoffs_to_array(share.cultivateMaterialPayoff()),
                 );
+                // WHAT SOWING THIS CROP WOULD COST, in work units (§4.15) — the COST half of the
+                // crop decision, and the only figure on this entry that is not a payoff. A Sow is
+                // priced by how much of the tile the chosen crop still has to replace, and the
+                // patch's own `field_work_cost` prices exactly ONE crop (its commitment, or the
+                // rung's auto-pick) — so a crop picker showed the same work figure against every
+                // row while the payoffs beside them moved. This one moves with the crop.
+                //
+                // Same units as the patch's `field_work_cost`, and for the crop the patch is
+                // ACTUALLY committed to it is the identical number: both come out of one sim-side
+                // expression. Compare them, never re-derive one from the other.
+                //
+                // **ABSENT MEANS NO FIGURE, NEVER A FREE SOW** — the key is only inserted when the
+                // plant can climb to a Field on this ground, the `role` convention rather than the
+                // `sow_material_payoff` one, because a `0` work cost is not a readable answer: a
+                // real price is floored at `field_share_cost_floor` since laying the rows and
+                // putting the seed in costs work even on ground already wholly the crop. Render no
+                // row where the key is missing.
+                if share.sowWorkCost() > NO_SOW_WORK_COST {
+                    let _ = share_dict.insert("sow_work_cost", share.sowWorkCost());
+                }
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

@@ -1445,8 +1445,56 @@ pub fn patch_field_cost_multiplier(
             None => return RUNG_COST_UNSCALED,
         },
     };
+    field_cost_multiplier_for_crop(tile_composition, &crop, flora, forage)
+}
+
+/// **WHAT A SOW COMMITTING THIS GROUND TO `crop` WOULD BE CHARGED**, as a multiple of the
+/// `plant:field` rung's declared `work_cost` — the *per-crop* reading of the price
+/// [`patch_field_cost_multiplier`] states once per patch (`docs/plan_standing_upkeep.md` §4.15).
+///
+/// **The crop picker is what it is for.** A patch prices exactly one crop — its commitment, or the
+/// auto-pick where it has none — so a list of the crops a player could sow here showed the same work
+/// figure against every one of them, and the true figure only appeared once the leg had started and
+/// re-quoted. The picker exists to weigh work against payoff *before* committing, so the work half
+/// has to answer per crop exactly as `commit_payoff` and its siblings do.
+///
+/// **[`None`] when `crop` cannot climb to a Field here** — the same [`species_climbs`] gate the
+/// per-crop payoff quotes take, and it must render as *no row*, never as a `0`: a zero here would
+/// read as a Sow that costs nothing. A patch's own [`patch_field_cost_multiplier`] still answers
+/// [`RUNG_COST_UNSCALED`] in that case, because a published price has to state *something* and the
+/// ladder's declared figure is the honest thing for ground the rung cannot be built on.
+///
+/// It is the **live** measure, which is what a quote for a job nobody has started should be; a patch
+/// whose leg is already running holds its stamped price instead ([`patch_field_cost_multiplier`]'s
+/// first arm), and the two coincide because both read the basket of the rung below.
+pub fn crop_field_cost_multiplier(
+    tile_composition: &[FloraShare],
+    crop: &str,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> Option<f32> {
+    species_climbs(
+        crop,
+        share_of(tile_composition, crop),
+        flora,
+        RungKey::PlantField,
+    )
+    .then(|| field_cost_multiplier_for_crop(tile_composition, crop, flora, forage))
+}
+
+/// **The price expression itself, stated once** — the share this crop has to replace, priced by
+/// [`field_cost_multiplier_at_share`]. Both the patch's price and the picker's per-crop quote go
+/// through it, so the number a player is shown per crop and the number the job charges on the crop
+/// they pick are one computation rather than two that agree today (`docs/plan_flora_roster.md`
+/// §4.3's rule).
+fn field_cost_multiplier_for_crop(
+    tile_composition: &[FloraShare],
+    crop: &str,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> f32 {
     field_cost_multiplier_at_share(
-        field_replaced_share(tile_composition, &crop, flora, forage),
+        field_replaced_share(tile_composition, crop, flora, forage),
         &forage.cultivation,
     )
 }

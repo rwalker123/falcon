@@ -2913,6 +2913,24 @@ table FloraShareInfo {
   // differ in basket, conversion gain AND the shape of the harvest, so one number cannot answer both.
   sowMaterialPayoff:[MaterialPayoff];
   cultivateMaterialPayoff:[MaterialPayoff];
+  // --- WHAT SOWING THIS CROP WOULD COST (appended last, docs/plan_standing_upkeep.md 4.15) ---
+  // Work units a `Sow` committing this tile to THIS plant would be charged: the `plant:field` rung's
+  // declared work_cost times the multiplier this crop's own share of the tile earns. Same units as
+  // ForagePatchState.fieldWorkCost.
+  //
+  // THE COST HALF OF THE CROP DECISION. A Sow is priced by how much of the tile the chosen crop still
+  // has to replace, and a patch prices exactly ONE crop - its commitment, or the rung's auto-pick - so
+  // every row of a crop picker quoted the same work figure while only the payoffs moved. This one
+  // moves with the crop, which is what lets work be weighed against payoff before committing.
+  //
+  // `0` MEANS NO FIGURE - the plant cannot climb to a Field on this ground - and must render as NO
+  // ROW, never as a free Sow. A real price is never 0: the multiplier is clamped at
+  // field_share_cost_floor because ground already wholly the crop still has its rows laid and its
+  // seed put in.
+  //
+  // Produced by forage::crop_field_cost_multiplier, the SAME expression the patch's own price goes
+  // through, so the figure quoted for the crop a patch is committed to IS that patch's fieldWorkCost.
+  sowWorkCost:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

@@ -953,10 +953,28 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
 - **Every surface that states what a Sow will cost resolves through one seam**,
   `forage::patch_field_cost_multiplier` — the arm that charges it, `patch_build_legs`' work figures and
   their chained dates, the pre-commit `projected_build_quote` the `⌃` mark and the compose sheet read,
-  and the published `fieldWorkCost`. **No wire field was added**: `fieldWorkCost` already carried the
-  price and now carries the scaled one. That seam answers the patch's **own** price list whenever the
-  position stands above the Field rung's base, quoted or not, so the published cost and the published
-  `fieldWorkDone` can never divide by two different denominators.
+  and the published `fieldWorkCost`, which already carried the price and now carries the scaled one.
+  That seam answers the patch's **own** price list whenever the position stands above the Field rung's
+  base, quoted or not, so the published cost and the published `fieldWorkDone` can never divide by two
+  different denominators.
+- **The crop picker prices every crop, through the same expression** (`FloraShareInfo::sow_work_cost`,
+  `sowWorkCost` on the wire, `sow_work_cost` in the client dict). A patch prices exactly *one* crop, so
+  a list of the crops sowable here quoted one work figure against every row while the payoffs beside
+  them moved. The per-entry figure is `forage::crop_field_cost_multiplier` — `field_replaced_share` for
+  **that** crop, through `field_cost_multiplier_at_share` — priced by the ladder's own `build_cost`;
+  `patch_field_cost_multiplier` spends the same private `field_cost_multiplier_for_crop`, so it is one
+  expression and not two. The figure published for the crop a patch is committed to is therefore
+  that patch's `fieldWorkCost`, on the encoded envelope, at declaration and with the leg stamped alike
+  (`sow_share_cost::the_per_crop_sow_price_is_the_price_this_patch_is_charged`).
+- **A crop that cannot climb to a Field here publishes NO figure** (`species_climbs` at
+  `RungKey::PlantField`) — `0`, which a client renders as no row. A measured price is never `0`: the
+  floor clamp is there because laying the rows and putting the seed in costs work on any ground. The
+  **patch's** own price still answers `RUNG_COST_UNSCALED` on ground where nothing climbs, because a
+  published price has to state something.
+- **The per-crop figure is derived in the tile quote memo** (`snapshot/flora_quotes.rs`), off the
+  **tile's** basket rather than a patch's reweighted one, which is the same basket
+  `patch_field_cost_multiplier` reads. The ladder is therefore part of the memo's world-level identity
+  beside the flora and labor handles, by `Arc::ptr_eq` — a rung retune reprices every published crop.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (Intensification Rung 1c)"
 (the animal rung 3 this mirrors), "The Intensification Ladder" (the engine + the config).
