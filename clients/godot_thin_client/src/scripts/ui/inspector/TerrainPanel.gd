@@ -344,6 +344,7 @@ func _setup_terrain_highlight_dropdown() -> void:
 	if terrain_vbox == null:
 		return
 	_terrain_highlight_dropdown = OptionButton.new()
+	HudStyle.apply_option_button(_terrain_highlight_dropdown)
 	_terrain_highlight_dropdown.name = "TerrainHighlightDropdown"
 	_terrain_highlight_dropdown.add_item("Highlight terrain: none", -1)
 	var terrains: Array = TerrainDefinitions.get_terrains().duplicate()

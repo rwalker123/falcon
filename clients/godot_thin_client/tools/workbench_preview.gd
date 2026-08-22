@@ -57,6 +57,12 @@ var _failures := 0
 
 func _ready() -> void:
 	_pin_window()
+	# PIN THE PALETTE, the theme half of the same contamination. `ClientSettings` read the developer's
+	# real `user://client_settings.cfg` at boot and `HudPalette.apply()` has ALREADY installed whatever
+	# theme it found, so a developer running Kiln would re-tint every frame in this set. Re-applying the
+	# default here is safe at any point before UI is built: `HudStyle`/`MapView` and the vocabulary
+	# modules are all re-derived by `apply`, and nothing on screen has read a colour yet.
+	HudPalette.apply(HudPalette.DEFAULT_THEME)
 	DirAccess.make_dir_absolute(OUT_DIR)
 
 	# The project stretches `canvas_items` with an `expand` aspect, so the LOGICAL viewport is not the

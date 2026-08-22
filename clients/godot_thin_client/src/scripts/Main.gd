@@ -400,6 +400,8 @@ func _connect_pause_menu() -> void:
         pause_menu.abandon_requested.connect(_on_pause_abandon)
     if not pause_menu.exit_requested.is_connected(_on_pause_exit):
         pause_menu.exit_requested.connect(_on_pause_exit)
+    if not pause_menu.apply_theme_requested.is_connected(_on_pause_apply_theme):
+        pause_menu.apply_theme_requested.connect(_on_pause_apply_theme)
 
 func _show_pause_menu() -> void:
     if pause_layer != null:
@@ -409,14 +411,30 @@ func _hide_pause_menu() -> void:
     if pause_layer != null:
         pause_layer.visible = false
 
+## Abandon ENDS the run, so the parameters it was built from stop being anybody's answer: the landing
+## screen owns the next world's, and leaving this run's armed would let a later theme apply there
+## rebuild a world the player already walked away from.
 func _on_pause_abandon() -> void:
+    var launch: Node = get_node_or_null("/root/GameLaunch")
+    if launch != null:
+        launch.set("active_new_game", null)
     get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
 
 func _on_pause_exit() -> void:
     get_tree().quit()
 
+## The Options pane's "Apply now" — install the picked theme and rebuild the scene so it shows. This
+## ENDS the run: the reload re-runs `_ready`, which reconnects and sends `new_game`, so the server
+## builds a new world rather than handing this one back. That is what the armed button and its caption
+## warn about. Nothing quits and nothing is spawned.
+func _on_pause_apply_theme() -> void:
+    GameLaunch.apply_theme_now()
+
 ## Build the `new_game <preset> <w> <h> <seed> <profile>` command from the GameLaunch handoff, or
-## the dev default when launched directly. Clears the handoff so a later scene reload starts fresh.
+## the dev default when launched directly. Clears the handoff so a later scene reload starts fresh,
+## and records the RESOLVED parameters as `GameLaunch.active_new_game` — the handoff slot is empty
+## from here on, so that record is the only thing that can tell a later reload (a theme apply) which
+## world this run was configured with rather than sending it to the dev default.
 func _build_new_game_command() -> void:
     var params: Dictionary = DEV_DEFAULT_NEW_GAME
     var launch: Node = get_node_or_null("/root/GameLaunch")
@@ -435,6 +453,16 @@ func _build_new_game_command() -> void:
         "line": "new_game %s %d %d %d %s" % [preset, width, height, seed_value, profile],
         "message": "New game: %s (%dx%d) seed %d." % [preset, width, height, seed_value],
     }
+    # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
+    # got — including when the fallback is what supplied them.
+    if launch != null:
+        launch.set("active_new_game", {
+            "preset_id": preset,
+            "width": width,
+            "height": height,
+            "seed": seed_value,
+            "profile_id": profile,
+        })
 
 ## Send the pending new_game command through the SAME transport MapPanel uses for map_size
 ## (inspector.send_runtime_command → command socket). Retried from _process until it lands, so a

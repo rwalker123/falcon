@@ -598,7 +598,7 @@ static func build_option_picker(entries: Array, selected_index: int, face: Strin
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     button.clip_text = true
     button.fit_to_longest_item = false
-    HudStyle.apply_button(button, "ghost")
+    HudStyle.apply_option_button(button)
     var picks: Array[Callable] = []
     for entry_variant in entries:
         if not (entry_variant is Dictionary):
@@ -1493,11 +1493,19 @@ static func _pill_face_line(text: String, tint: Color, font_size: int) -> Label:
 
 ## Severity → the dot and the text tint, in the raid verdict's own ok/slow/blocked vocabulary. Kept
 ## beside the widget rather than on `SourceForecast`, which states the verdict and owns no palette.
-const VERDICT_SEVERITY_COLORS := {
-    SourceForecast.VERDICT_OK: HudStyle.HEALTHY,
-    SourceForecast.VERDICT_SLOW: HudStyle.WARN,
-    SourceForecast.VERDICT_BLOCKED: HudStyle.DANGER,
-}
+## **BUILT IN `apply_palette`, NOT HERE** — its values are themed `HudStyle` colours, which are
+## `static var`s: a `const` table is a parse error against one, and a static-var initializer would
+## freeze at whatever palette was loaded before the theme was installed.
+static var VERDICT_SEVERITY_COLORS := {}
+
+## Install the current `HudStyle` palette into this file's one themed table. Called by
+## `HudPalette.apply()` after `HudStyle.apply_palette`.
+static func apply_palette() -> void:
+    VERDICT_SEVERITY_COLORS = {
+        SourceForecast.VERDICT_OK: HudStyle.HEALTHY,
+        SourceForecast.VERDICT_SLOW: HudStyle.WARN,
+        SourceForecast.VERDICT_BLOCKED: HudStyle.DANGER,
+    }
 ## The dot leading the verdict — the severity as a mark, so the state is readable before the sentence.
 const VERDICT_DOT := "●"
 const VERDICT_DOT_FONT_SIZE := 9

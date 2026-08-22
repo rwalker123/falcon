@@ -139,11 +139,20 @@ const UNREAD_CUE_TEXT := "a new telling waits"
 # The medium is PRESENTATIONAL ONLY — it changes the title, the accent and the book's CAPABILITIES,
 # never which copy is rendered; per-medium copy is a deliberate non-goal, documented server-side.
 const MEDIUM_ORAL := "oral"
-const MEDIUM_STYLES := {
-	MEDIUM_ORAL: {"title": "AT THE FIRE", "accent": HudStyle.WARN},
-	"painted": {"title": "ON THE WALL", "accent": HudStyle.VOICE_PIGMENT},
-	"written": {"title": "THE RECORD", "accent": HudStyle.VOICE_INK},
-}
+## **BUILT IN `apply_palette`, NOT HERE** — the three accents are themed `HudStyle` colours, which are
+## `static var`s: a `const` table is a parse error against one, and a static-var initializer would
+## freeze at whatever palette was loaded before the theme was installed.
+static var MEDIUM_STYLES := {}
+
+## Install the current `HudStyle` palette into the voice-medium styles. Called by `HudPalette.apply()`
+## after `HudStyle.apply_palette`; the ladder itself (firelight warmth -> cool ink) is the palette's,
+## so this module only names which of its inks each medium speaks in.
+static func apply_palette() -> void:
+	MEDIUM_STYLES = {
+		MEDIUM_ORAL: {"title": "AT THE FIRE", "accent": HudStyle.WARN},
+		"painted": {"title": "ON THE WALL", "accent": HudStyle.VOICE_PIGMENT},
+		"written": {"title": "THE RECORD", "accent": HudStyle.VOICE_INK},
+	}
 
 # ---- collapsed-state preference --------------------------------------------
 # Reuses the file + section `NarrativeForkPanel` already writes the voice register into — one narrative

@@ -34,15 +34,15 @@ signal zoom_changed(zoom_factor: float)
 ## unpainted. (It was `LOGISTICS_COLOR` until the logistics channel was removed with the rest of the
 ## trade substrate — see `docs/plan_contact_and_logistics.md`; the colour was always doing this
 ## second job.)
-const OVERLAY_FALLBACK_COLOR := Color(0.15, 0.45, 1.0, 1.0)
-const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
-const CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
-const CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
-const MILITARY_COLOR := Color(0.36, 0.7, 0.43, 1.0)
-const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
-const ELEVATION_LOW_COLOR := Color(0.16, 0.32, 0.78, 1.0)
-const ELEVATION_MID_COLOR := Color(0.97, 0.82, 0.32, 1.0)
-const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
+static var OVERLAY_FALLBACK_COLOR := Color(0.15, 0.45, 1.0, 1.0)
+static var SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
+static var CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
+static var CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
+static var MILITARY_COLOR := Color(0.36, 0.7, 0.43, 1.0)
+static var CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
+static var ELEVATION_LOW_COLOR := Color(0.16, 0.32, 0.78, 1.0)
+static var ELEVATION_MID_COLOR := Color(0.97, 0.82, 0.32, 1.0)
+static var ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
 # --- PASTURE (graze) overlay -------------------------------------------------------------------
 # The channel paints the LAND'S GRAZE CAPACITY — "how good a pasture is this ground?" — because that
 # is the question the layer exists to answer (is prairie really pasture; is forest really poor?), and
@@ -56,10 +56,10 @@ const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
 # water in a drowned slate (it is not ground), dead land in a bare rock-violet — while ANY positive
 # capacity starts at PASTURE_POOR_COLOR, a visibly-on-the-ramp straw.
 const PASTURE_OVERLAY_KEY := "pasture"
-const PASTURE_POOR_COLOR := Color(0.85, 0.78, 0.42, 1.0)    # marginal grazing — dry straw
-const PASTURE_RICH_COLOR := Color(0.13, 0.62, 0.24, 1.0)    # the reference pasture — deep grass green
-const PASTURE_DEAD_COLOR := Color(0.34, 0.30, 0.38, 1.0)    # land that carries NO pasture (glacier/lava/rock)
-const PASTURE_WATER_COLOR := Color(0.10, 0.16, 0.28, 1.0)   # water — no pasture, and not ground at all
+static var PASTURE_POOR_COLOR := Color(0.85, 0.78, 0.42, 1.0)    # marginal grazing — dry straw
+static var PASTURE_RICH_COLOR := Color(0.13, 0.62, 0.24, 1.0)    # the reference pasture — deep grass green
+static var PASTURE_DEAD_COLOR := Color(0.34, 0.30, 0.38, 1.0)    # land that carries NO pasture (glacier/lava/rock)
+static var PASTURE_WATER_COLOR := Color(0.10, 0.16, 0.28, 1.0)   # water — no pasture, and not ground at all
 # The Water terrain tag (bit 0 of TileState.terrain_tags — see TERRAIN_TAG_KEYS). Server truth, unlike
 # the render-side `blend_class`, so it is what separates "sea" from "dead ground" in the overlay.
 const PASTURE_WATER_TAG := 1 << 0
@@ -75,9 +75,9 @@ const PASTURE_WATER_TAG := 1 << 0
 # glacier, lava) leave the ramp for the single barren fill; there is no "land but no site" middle
 # category (that was the sparse-patch model, replaced by per-tile potential).
 const FORAGE_OVERLAY_KEY := "forage"
-const FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
-const FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
-const FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
+static var FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
+static var FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
+static var FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
 # --- DANGER overlays (Predators Phase 0) -------------------------------------------------------
 # TWO derived-danger channels, both per-ENTITY properties the native decoder projects onto tiles
 # (max over the herds standing on each hex). Neither is a per-tile field or a two-tone ramp: both
@@ -85,9 +85,9 @@ const FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (dee
 # and a hex with a qualifying herd glows. `hunt_danger` (attack × ferocity) is a danger-ORANGE so it
 # reads apart from `threat` (attack × aggression), which keeps the harsher threat-RED.
 const HUNT_DANGER_OVERLAY_KEY := "hunt_danger"
-const HUNT_DANGER_OVERLAY_COLOR := Color(0.93, 0.52, 0.13, 1.0)  # danger orange
+static var HUNT_DANGER_OVERLAY_COLOR: Color = Color()  # DERIVED: HudStyle.HUNT_DANGER_ACCENT
 const THREAT_OVERLAY_KEY := "threat"
-const THREAT_OVERLAY_COLOR := Color(0.85, 0.16, 0.16, 1.0)       # threat red
+static var THREAT_OVERLAY_COLOR: Color = Color()       # DERIVED: HudStyle.THREAT_ACCENT
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
 # only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
@@ -193,7 +193,9 @@ const SECONDARY_ICON_COLOR := Color(0.97, 0.98, 0.94, 1.0)
 #   • a DANGER ring around the herd's slot (the same primitive as the food-harvest ring), and
 #   • a filled DANGER disc badge on the icon's upper-right with a hand-drawn white "!".
 # Driven by `PenStatus.herd_is_starving` — the same test the herd drawer's "⚠ Starving" row uses.
-const HERD_DISTRESS_COLOR := HudStyle.DANGER
+## DERIVED from `HudStyle.DANGER` in `apply_palette` — a `const` here would be a parse error against a
+## themed `static var`, and an initializer would freeze at the palette loaded before the theme.
+static var HERD_DISTRESS_COLOR: Color = Color()
 const HERD_DISTRESS_RING_FACTOR := 0.46        # of hex radius — just outside the food-harvest ring
 const HERD_DISTRESS_RING_WIDTH := 2.5
 const HERD_DISTRESS_RING_SEGMENTS := 24
@@ -471,27 +473,68 @@ const EXPEDITION_GATHER_CUE_FACTOR := 0.30       # red gathering-cue ring radius
 const EXPEDITION_GATHER_CUE_OFFSET := 0.85       # cue offset down-right from marker center, of marker radius
 const EXPEDITION_GATHER_CUE_WIDTH := 2.0
 # Supply-link overlay: faint lines connecting bands sharing a supply network.
-const SUPPLY_LINK_COLOR := Color(0.310, 0.878, 0.812, 0.28)  # dim SIGNAL cyan
+## DERIVED: SIGNAL at `SUPPLY_LINK_OPACITY`. It was a hand-written copy of the console cyan, which
+## would have stayed teal under every other theme.
+const SUPPLY_LINK_OPACITY := 0.28
+static var SUPPLY_LINK_COLOR: Color = Color()
 const SUPPLY_LINK_WIDTH := 2.0
 const SUPPLY_NETWORK_SOLO := 0  # supply_network_id 0 == not in a shared network
 
-const OVERLAY_COLORS := {
-	"sentiment": SENTIMENT_COLOR,
-	"corruption": CORRUPTION_COLOR,
-	"culture": CULTURE_COLOR,
-	"military": MILITARY_COLOR,
-	"crisis": CRISIS_COLOR,
-	"elevation": ELEVATION_HIGH_COLOR,
-	"moisture": Color(0.2, 0.65, 0.95, 1.0),
-	"province": Color(0.52, 0.64, 0.78, 1.0),
-	# The pasture channel paints through `_pasture_color` (a two-tone ramp plus two off-ramp barren
-	# tones), not a single-hue tint; this is the swatch any generic fallback path shows for it.
-	PASTURE_OVERLAY_KEY: PASTURE_RICH_COLOR,
-	# Both danger channels ride the generic lerp path — empty tiles stay grid-colored, a qualifying
-	# herd glows (hunt-danger orange, threat red, so the two read apart).
-	HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
-	THREAT_OVERLAY_KEY: THREAT_OVERLAY_COLOR,
-}
+## Channel key -> the tint its ramp climbs to. BUILT IN `apply_palette`, not here: every value in it is
+## a themed colour, and a dictionary initializer runs at script load, before any theme is installed —
+## it would freeze the whole table at the default palette. Empty until the first `apply_palette`.
+static var OVERLAY_COLORS := {}
+
+# ---- theme installation ----------------------------------------------------
+## Install one theme's MAP ramps. Called by `HudPalette.apply()` AFTER `HudStyle.apply_palette`, which
+## the derivations below depend on.
+##
+## `p` carries the **16 AUTHORED** ramp colours. The five values under `--- derived ---` are the map
+## side of HUD colours (so the two surfaces speak one danger/alert language) plus the table built out
+## of them, and they are assigned HERE rather than as initializers: an initializer runs at script load,
+## before any theme is installed, and would silently freeze at the default palette.
+##
+## The elevation ramp stays THREE stops — only the colours change, from a blue/yellow/red heatmap to a
+## hypsometric lowland-green -> tan -> bone tint.
+static func apply_palette(p: Dictionary) -> void:
+	SENTIMENT_COLOR = p["SENTIMENT_COLOR"]
+	CORRUPTION_COLOR = p["CORRUPTION_COLOR"]
+	CULTURE_COLOR = p["CULTURE_COLOR"]
+	MILITARY_COLOR = p["MILITARY_COLOR"]
+	CRISIS_COLOR = p["CRISIS_COLOR"]
+	OVERLAY_FALLBACK_COLOR = p["OVERLAY_FALLBACK_COLOR"]
+	ELEVATION_LOW_COLOR = p["ELEVATION_LOW_COLOR"]
+	ELEVATION_MID_COLOR = p["ELEVATION_MID_COLOR"]
+	ELEVATION_HIGH_COLOR = p["ELEVATION_HIGH_COLOR"]
+	PASTURE_POOR_COLOR = p["PASTURE_POOR_COLOR"]
+	PASTURE_RICH_COLOR = p["PASTURE_RICH_COLOR"]
+	PASTURE_DEAD_COLOR = p["PASTURE_DEAD_COLOR"]
+	PASTURE_WATER_COLOR = p["PASTURE_WATER_COLOR"]
+	FORAGE_POOR_COLOR = p["FORAGE_POOR_COLOR"]
+	FORAGE_RICH_COLOR = p["FORAGE_RICH_COLOR"]
+	FORAGE_BARREN_COLOR = p["FORAGE_BARREN_COLOR"]
+	# --- derived ---
+	THREAT_OVERLAY_COLOR = HudStyle.THREAT_ACCENT
+	HUNT_DANGER_OVERLAY_COLOR = HudStyle.HUNT_DANGER_ACCENT
+	HERD_DISTRESS_COLOR = HudStyle.DANGER
+	SUPPLY_LINK_COLOR = Color(HudStyle.SIGNAL, SUPPLY_LINK_OPACITY)
+	OVERLAY_COLORS = {
+		"sentiment": SENTIMENT_COLOR,
+		"corruption": CORRUPTION_COLOR,
+		"culture": CULTURE_COLOR,
+		"military": MILITARY_COLOR,
+		"crisis": CRISIS_COLOR,
+		"elevation": ELEVATION_HIGH_COLOR,
+		"moisture": Color(0.2, 0.65, 0.95, 1.0),
+		"province": Color(0.52, 0.64, 0.78, 1.0),
+		# The pasture channel paints through `_pasture_color` (a two-tone ramp plus two off-ramp barren
+		# tones), not a single-hue tint; this is the swatch any generic fallback path shows for it.
+		PASTURE_OVERLAY_KEY: PASTURE_RICH_COLOR,
+		# Both danger channels ride the generic lerp path — empty tiles stay grid-colored, a qualifying
+		# herd glows (hunt-danger orange, threat red, so the two read apart).
+		HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
+		THREAT_OVERLAY_KEY: THREAT_OVERLAY_COLOR,
+	}
 
 const TERRAIN_TAG_KEYS := [
 	1 << 0,  # Water
