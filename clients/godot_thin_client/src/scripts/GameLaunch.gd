@@ -21,6 +21,55 @@ var last_world_epoch: int = 0
 const MIN_VALID_PID := 1
 ## Godot's "run the project at this path" CLI flag — what turns the editor binary into this game.
 const PROJECT_PATH_FLAG := "--path"
+## Godot's own end-of-engine-arguments marker: everything after it is the GAME's, and comes back from
+## `OS.get_cmdline_user_args()`.
+const USER_ARGS_SEPARATOR := "--"
+## Carries the window mode across a restart, so the new process comes up the way the old one was.
+##
+## **ARGV RATHER THAN A SETTINGS KEY, DELIBERATELY.** The render harnesses read the player's real
+## `user://client_settings.cfg` (that is how a developer's saved theme once leaked into preview
+## frames), so a key there could be consumed by a preview run instead of by the restart it was meant
+## for — and applying a window mode inside a harness would fight the `override.cfg` that
+## `scripts/preview.sh` uses to keep its window quiet. An argument reaches ONLY the process we
+## spawned, so a harness is structurally immune rather than immune by remembering to opt out.
+const WINDOW_MODE_FLAG := "--window-mode="
+
+
+func _ready() -> void:
+	_restore_window_mode()
+
+
+## Apply a window mode handed over by the process that spawned this one. Silent when the flag is
+## absent, which is every launch except a restart.
+##
+## This runs from an autoload `_ready`, so the window already exists at `project.godot`'s configured
+## mode and is being moved. That is the earliest a script can reach it, and it is why a restart into
+## a non-default mode shows the default one for a frame first.
+func _restore_window_mode() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if not arg.begins_with(WINDOW_MODE_FLAG):
+			continue
+		var raw := arg.substr(WINDOW_MODE_FLAG.length())
+		if not raw.is_valid_int():
+			push_warning("GameLaunch: ignoring malformed window mode '%s'" % raw)
+			return
+		var mode := int(raw)
+		if mode < DisplayServer.WINDOW_MODE_WINDOWED \
+				or mode > DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
+			push_warning("GameLaunch: ignoring out-of-range window mode %d" % mode)
+			return
+		DisplayServer.window_set_mode(mode)
+		return
+
+
+## The mode to hand the new process. MINIMIZED is deliberately NOT carried: a game that restarts
+## into the dock with no window on screen is indistinguishable from one that failed to start, so it
+## comes back windowed instead.
+func _window_mode_to_carry() -> int:
+	var mode := DisplayServer.window_get_mode()
+	if mode == DisplayServer.WINDOW_MODE_MINIMIZED:
+		return DisplayServer.WINDOW_MODE_WINDOWED
+	return mode
 
 
 ## Relaunch the client process. Returns false if the new process could not be started, in which case
@@ -38,6 +87,12 @@ func restart_client() -> bool:
 	if OS.has_feature("editor"):
 		args.append(PROJECT_PATH_FLAG)
 		args.append(ProjectSettings.globalize_path("res://"))
+	# WITHOUT THIS THE WINDOW MODE IS WHATEVER THE OS FELT LIKE. `project.godot` boots fullscreen, so
+	# a restart from a maximized or windowed session came back in a different mode than it left —
+	# nothing in the project inverts it, but nothing pins it either, and the window manager is free
+	# to place the new process how it likes. Carrying the mode makes the restart continuous.
+	args.append(USER_ARGS_SEPARATOR)
+	args.append(WINDOW_MODE_FLAG + str(_window_mode_to_carry()))
 	var pid := OS.create_process(exe, args)
 	if pid < MIN_VALID_PID:
 		push_warning("GameLaunch: could not restart — spawning '%s' failed (pid %d)" % [exe, pid])

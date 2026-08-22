@@ -169,6 +169,21 @@ placeholder pane. In `pause` the button therefore reads "Restart now — ends th
 variant — the same mark "Abandon and return to menu" wears — and the caption gains "The current run
 will be lost."; in `landing` there is no run, so it is a plain `primary` "Restart now".
 
+**THE RESTART CARRIES THE WINDOW MODE, ON ARGV.** `project.godot` boots fullscreen and nothing in the
+project pins the mode afterwards, so a restart out of a maximized or windowed session came back in
+whatever mode the window manager chose — reported from play as the state simply inverting.
+`restart_client` appends `-- --window-mode=<n>` and the new process's `GameLaunch._ready` applies it,
+so the restart is continuous. **Argv rather than a `ClientSettings` key, and that is the load-bearing
+half**: the render harnesses read the player's real `client_settings.cfg` (the same contamination the
+theme pin exists for), so a key there could be consumed by a preview run rather than by the restart
+it was written for, and applying a window mode inside a harness would fight the `override.cfg`
+`scripts/preview.sh` uses to keep its window quiet. An argument reaches only the process we spawned,
+which makes a harness immune by construction instead of by remembering to opt out. `MINIMIZED` is not
+carried — a game that restarts into the dock with no window is indistinguishable from one that failed
+to start — and a malformed or out-of-range value is warned about and ignored rather than passed to
+`window_set_mode`. The mode is applied from an autoload `_ready`, which is the earliest a script can
+reach the window, so a restart into a non-default mode shows the default one for a frame first.
+
 **The spawn decides whether anything quits.** `restart_client()` returns `false` when
 `OS.create_process` hands back no pid, and the OWNERS (`LandingScreen._on_restart_requested`,
 `Main._on_pause_restart`) quit only on `true` — quitting after a failed spawn would close the game
