@@ -33,6 +33,13 @@ const USER_ARGS_SEPARATOR := "--"
 ## `scripts/preview.sh` uses to keep its window quiet. An argument reaches ONLY the process we
 ## spawned, so a harness is structurally immune rather than immune by remembering to opt out.
 const WINDOW_MODE_FLAG := "--window-mode="
+## How many times to ask for the carried mode before giving up. The ceiling is headroom: the worst
+## case measured on macOS was four.
+const WINDOW_MODE_ATTEMPTS := 8
+## How long to let a transition land before reading the mode back. Below ~300ms the read catches
+## macOS mid-animation and reports the mode the window is LEAVING.
+const WINDOW_MODE_SETTLE_MSEC := 300.0
+const MSEC_PER_SEC := 1000.0
 
 
 func _ready() -> void:
@@ -43,8 +50,7 @@ func _ready() -> void:
 ## absent, which is every launch except a restart.
 ##
 ## This runs from an autoload `_ready`, so the window already exists at `project.godot`'s configured
-## mode and is being moved. That is the earliest a script can reach it, and it is why a restart into
-## a non-default mode shows the default one for a frame first.
+## mode and is being moved.
 func _restore_window_mode() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if not arg.begins_with(WINDOW_MODE_FLAG):
@@ -58,8 +64,35 @@ func _restore_window_mode() -> void:
 				or mode > DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
 			push_warning("GameLaunch: ignoring out-of-range window mode %d" % mode)
 			return
-		DisplayServer.window_set_mode(mode)
+		await _apply_window_mode(mode)
 		return
+
+
+## ASK, WAIT, CHECK, ASK AGAIN — and a single `window_set_mode` is NOT enough, which is the whole
+## reason this function exists rather than one line at the call site.
+##
+## `project.godot` boots the game FULLSCREEN, macOS animates every fullscreen transition, and a mode
+## set while one is in flight is accepted and then silently discarded when the animation lands. The
+## first cut of the carry-over did exactly that and produced the INVERSION it was written to fix —
+## measured, from a fullscreen boot: asking for MAXIMIZED settled at WINDOWED, and asking for
+## WINDOWED settled at FULLSCREEN. Waiting long enough made every transition correct on its own, so
+## this is a race and not a wrong argument.
+##
+## Retrying rather than sleeping a fixed span keeps the window in the wrong mode for as short a time
+## as macOS allows: measured over repeated runs, WINDOWED lands on the first attempt and MAXIMIZED
+## takes three or four, so the ceiling is headroom rather than the expected cost.
+func _apply_window_mode(mode: int) -> void:
+	for attempt in WINDOW_MODE_ATTEMPTS:
+		DisplayServer.window_set_mode(mode)
+		# `ignore_time_scale`, because a harness that froze `Engine.time_scale` would otherwise hang
+		# here. Harnesses never pass the flag that reaches this code, but a timer that can only work
+		# under normal time is a trap for whoever adds one.
+		await get_tree().create_timer(
+			WINDOW_MODE_SETTLE_MSEC / MSEC_PER_SEC, true, false, true).timeout
+		if DisplayServer.window_get_mode() == mode:
+			return
+	push_warning("GameLaunch: window mode %d did not take after %d attempts (now %d)"
+		% [mode, WINDOW_MODE_ATTEMPTS, DisplayServer.window_get_mode()])
 
 
 ## The mode to hand the new process. MINIMIZED is deliberately NOT carried: a game that restarts

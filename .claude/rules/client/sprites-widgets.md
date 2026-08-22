@@ -181,8 +181,21 @@ it was written for, and applying a window mode inside a harness would fight the 
 which makes a harness immune by construction instead of by remembering to opt out. `MINIMIZED` is not
 carried — a game that restarts into the dock with no window is indistinguishable from one that failed
 to start — and a malformed or out-of-range value is warned about and ignored rather than passed to
-`window_set_mode`. The mode is applied from an autoload `_ready`, which is the earliest a script can
-reach the window, so a restart into a non-default mode shows the default one for a frame first.
+`window_set_mode`.
+
+> **ONE `window_set_mode` IS NOT ENOUGH, AND THE FIRST CUT OF THIS SHIPPED THE INVERSION IT WAS
+> WRITTEN TO FIX.** `project.godot` boots the game FULLSCREEN, macOS ANIMATES every fullscreen
+> transition, and a mode set while one is in flight is accepted and then silently discarded when the
+> animation lands. Measured from a fullscreen boot: asking for `MAXIMIZED` settled at `WINDOWED`, and
+> asking for `WINDOWED` settled at `FULLSCREEN` — exactly the "restart flips my window state" report.
+> The same transitions are all correct given enough settling time, so it is a RACE, not a wrong
+> argument, and reading the mode back straight after setting it confirms nothing: the read also
+> catches the animation mid-flight and returns the mode the window is LEAVING.
+>
+> `_apply_window_mode` therefore ASKS, WAITS, CHECKS and ASKS AGAIN, up to `WINDOW_MODE_ATTEMPTS`.
+> Retrying rather than sleeping a fixed span keeps the wrong mode on screen for as short a time as
+> macOS allows — `WINDOWED` lands on the first attempt, `MAXIMIZED` takes three or four, and the
+> ceiling is headroom. **Any future code that moves this window inherits the same rule.**
 
 **The spawn decides whether anything quits.** `restart_client()` returns `false` when
 `OS.create_process` hands back no pid, and the OWNERS (`LandingScreen._on_restart_requested`,
