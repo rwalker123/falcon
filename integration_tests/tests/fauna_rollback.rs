@@ -2,7 +2,7 @@ mod common;
 
 use bevy::math::UVec2;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
-use core_sim::{build_headless_app, FactionId, HerdRegistry};
+use core_sim::{build_test_app, FactionId, HerdRegistry};
 
 /// Regression: the authoritative `HerdRegistry` (biomass / position / movement / domestication)
 /// must round-trip through rollback. Before herd capture/restore was added, only the lossy display
@@ -11,7 +11,7 @@ use core_sim::{build_headless_app, FactionId, HerdRegistry};
 #[test]
 fn herd_registry_biomass_and_position_rewind_on_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Turn 1: worldgen seeds herds and `capture_snapshot` records the ring entry.
     app.update();
@@ -35,7 +35,10 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
             herd.biomass,
             herd.current_pos,
             herd.route.clone(),
-            herd.domestication_progress,
+            herd.rung_work_done(
+                core_sim::RungKey::AnimalPastoral,
+                &core_sim::LadderConfig::builtin(),
+            ),
             herd.owner,
         )
     };
@@ -53,8 +56,10 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
         herd.current_pos = mutated_pos;
         herd.route.push(UVec2::new(23, 15));
         // Part-tamed: banked work against a job it has not paid off.
-        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST / 2.0;
-        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
+        herd.set_ladder_position(
+            core_sim::FABRICATED_BUILD_COST / 2.0,
+            &core_sim::LadderConfig::builtin(),
+        );
         herd.owner = Some(FactionId(7));
     }
     assert_ne!(mutated_pos, pos0, "mutation must actually move the herd");
@@ -70,7 +75,13 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
     assert_eq!(herd.biomass, biomass0, "biomass must rewind");
     assert_eq!(herd.current_pos, pos0, "position must rewind");
     assert_eq!(herd.route, route0, "route must rewind");
-    assert_eq!(herd.domestication_progress, progress0);
+    assert_eq!(
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin()
+        ),
+        progress0
+    );
     assert_eq!(herd.owner, owner0);
 }
 
@@ -85,7 +96,7 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
 #[test]
 fn a_quarry_s_accumulated_wounds_rewind_on_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     /// Damage no default produces, banked on the herd before the checkpoint is taken.
@@ -165,7 +176,7 @@ fn wounds_of(app: &bevy::app::App, herd_id: &str) -> core_sim::DamageLedger {
 #[test]
 fn under_herded_edge_state_rewinds_on_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Turn 1: worldgen seeds herds.
     app.update();
@@ -174,10 +185,12 @@ fn under_herded_edge_state_rewinds_on_rollback() {
     // `advance_husbandry` latches `under_herded = true`.
     let herd_id = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry.herds.iter_mut().next().expect("a herd spawned");
+        let herd = registry.herds.first_mut().expect("a herd spawned");
         herd.owner = Some(FactionId(0));
-        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST;
-        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
+        herd.set_ladder_position(
+            core_sim::FABRICATED_BUILD_COST,
+            &core_sim::LadderConfig::builtin(),
+        );
         herd.upkeep_supplied = 0.0; // no keepers → it will shed
         herd.under_herded = false;
         herd.id.clone()

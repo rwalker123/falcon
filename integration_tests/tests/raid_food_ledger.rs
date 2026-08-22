@@ -17,7 +17,7 @@
 use bevy::prelude::Entity;
 use core_sim::TakeSelection;
 use core_sim::{
-    available_workers, build_headless_app, run_turn, scalar_from_f32, CommandEventKind,
+    available_workers, build_test_app, run_turn, scalar_from_f32, CommandEventKind,
     CommandEventLog, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
     LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, Tile, FOOD,
 };
@@ -34,7 +34,7 @@ const WOLF: &str = "Grey Wolf Pack";
 
 #[test]
 fn the_food_ledger_reconciles_with_a_predator_raid() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
 

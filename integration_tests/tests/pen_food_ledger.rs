@@ -19,7 +19,7 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
+    build_test_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
     GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
     SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
 };
@@ -51,7 +51,7 @@ const EPSILON: f32 = 0.01;
 /// paid) drops — but the ledger identity is over the FOOD store alone, so it must still hold, because
 /// `FODDER` is a separate store that never converts to `FOOD`.
 fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f32) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
 
@@ -95,7 +95,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
                     .then_with(|| b.id.cmp(&a.id))
             })
             .expect("the map must spawn at least one pennable herd");
-        herd.tame_outright(FactionId(0));
+        herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         assert!(
             herd.is_domesticated(),
             "{} must actually tame — a pen is built on a herd you own",
@@ -104,7 +104,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         herd.biomass = herd.carrying_capacity; // at capacity → the largest possible feed demand
                                                // Pen it ON the band's tile: in reach, and it no longer roams.
         assert!(
-            herd.corral_at(band_pos),
+            herd.corral_at(band_pos, &core_sim::LadderConfig::builtin()),
             "{} must actually pen — the ledger identity is about a REAL pen",
             herd.species
         );

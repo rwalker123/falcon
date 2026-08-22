@@ -27,7 +27,7 @@ use sim_runtime::TerrainType;
 
 /// A pinned land-rich earthlike map — coasts (and so `coastal_littoral` tiles) exist on it, and
 /// `spawn_initial_graze` seeds a real, non-empty `GrazeRegistry`.
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 
 /// Turns to run the coupled fauna chain — long enough that a grazing herd's K would have been driven
 /// well down from its spawn max by an overgrazed range, so a K that never moves is meaningful.

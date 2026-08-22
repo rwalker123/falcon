@@ -13,8 +13,8 @@
 use bevy::prelude::Entity;
 use core_sim::TakeSelection;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, ForageRegistry, LaborAllocation,
-    LaborAssignment, LaborTarget, PopulationCohort, SimulationConfig, SnapshotHistory, Tile, FOOD,
+    build_test_app, run_turn, scalar_from_f32, ForageRegistry, LaborAllocation, LaborAssignment,
+    LaborTarget, PopulationCohort, SimulationConfig, SnapshotHistory, Tile, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -64,7 +64,7 @@ fn exported(app: &bevy::app::App) -> (f32, f32) {
 
 #[test]
 fn the_published_runway_is_the_turn_the_larder_really_empties() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
 

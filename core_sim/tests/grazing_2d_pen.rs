@@ -35,7 +35,7 @@ use core_sim::{
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it). Only used to stand up a real
 /// `TileRegistry` + a seeded `GrazeRegistry`; the pen under test is placed by hand.
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 /// Turns per run — well past where the fast pen `r` settles.
 const TURNS: u32 = 200;
 /// The tail-window whose spread proves convergence.
@@ -152,8 +152,11 @@ fn seat_pen(
         r,
         body_mass,
     );
-    herd.tame_outright(FactionId(0));
-    assert!(herd.corral_at(tile), "the fixture species must be pennable");
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+    assert!(
+        herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
+        "the fixture species must be pennable"
+    );
     herd.pen_radius = radius;
     registry.herds.push(herd);
     "pen_0".to_string()
@@ -268,6 +271,14 @@ fn run_pen_turn(app: &mut App, keeper: Entity) {
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_herd_grazing);
     app.world.run_system_once(advance_graze_regrowth);
+    // **THE KEEPER IS ACTUALLY KEEPING THE HERD.** These fixtures are about grazing and fodder, not
+    // about neglect — the keeper is present, feeding and harvesting every turn — but nothing here
+    // staffs the band's `husbandry` role, so the herd read as *wholly unkept*. That was inert while
+    // the shed was a constant fraction (it balanced against the growth curve and the pen persisted);
+    // with the escape rate now accelerating on `Herd::neglect_pressure`, an unkept pen terminates and
+    // the convergence these tests measure never happens. Stamping the bill is what the fixture always
+    // meant by "the keeper tends it".
+    keep_the_penned_herds(app);
     app.world.run_system_once(advance_husbandry);
     app.world.run_system_once(advance_labor_allocation);
 }
@@ -471,6 +482,14 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_herd_grazing);
     app.world.run_system_once(advance_graze_regrowth);
+    // **THE KEEPER IS ACTUALLY KEEPING THE HERD.** These fixtures are about grazing and fodder, not
+    // about neglect — the keeper is present, feeding and harvesting every turn — but nothing here
+    // staffs the band's `husbandry` role, so the herd read as *wholly unkept*. That was inert while
+    // the shed was a constant fraction (it balanced against the growth curve and the pen persisted);
+    // with the escape rate now accelerating on `Herd::neglect_pressure`, an unkept pen terminates and
+    // the convergence these tests measure never happens. Stamping the bill is what the fixture always
+    // meant by "the keeper tends it".
+    keep_the_penned_herds(&mut app);
     app.world.run_system_once(advance_husbandry);
     let feed_time_biomass = biomass_of(&app, &id); // post-regrow, pre-harvest = what FEED charges on
     app.world.run_system_once(advance_labor_allocation);
@@ -696,12 +715,12 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         match rung {
             Rung::Wild => {}
             Rung::Pastoral => {
-                herd.tame_outright(FactionId(0));
+                herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
             }
             Rung::Pen => {
-                herd.tame_outright(FactionId(0));
+                herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
                 assert!(
-                    herd.corral_at(tile),
+                    herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
                     "the fixture herd defaults to the full ladder"
                 );
             }
@@ -783,4 +802,32 @@ fn bare_builders() -> core_sim::KitChoice {
     core_sim::EquipmentConfig::builtin()
         .kit("none")
         .expect("the shipped roster carries the empty kit")
+}
+
+/// **Meet every managed herd's keeping bill for this turn**, as a staffed `husbandry` role would.
+/// Stamped comfortably above the bill because `advance_herds` regrows the herd between this and the
+/// pass that reads it, which raises the keeper load and would otherwise leave it fractionally short.
+fn keep_the_penned_herds(app: &mut App) {
+    const A_FULLY_STAFFED_POOL: f32 = 4.0;
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let bills: Vec<(String, f32)> = app
+        .world
+        .resource::<HerdRegistry>()
+        .entries()
+        .iter()
+        .filter(|herd| herd.owner.is_some())
+        .map(|herd| {
+            (
+                herd.id.clone(),
+                core_sim::herd_upkeep_demand(herd, &fauna, &ladder) * A_FULLY_STAFFED_POOL,
+            )
+        })
+        .collect();
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    for (id, bill) in bills {
+        if let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == id) {
+            herd.upkeep_supplied = bill;
+        }
+    }
 }

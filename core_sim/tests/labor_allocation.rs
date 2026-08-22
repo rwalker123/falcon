@@ -57,7 +57,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -1075,8 +1075,7 @@ fn a_tamed_herd_below_its_collapse_fraction_is_not_overdrawn_by_a_crew_it_out_gr
     let (regrowth, standing, floor) = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.domestication_cost = A_FINISHED_TAMING;
-        herd.domestication_progress = A_FINISHED_TAMING;
+        herd.set_ladder_position(A_FINISHED_TAMING, &core_sim::LadderConfig::builtin());
         assert!(
             herd.is_domesticated(),
             "fixture: the herd must be tamed, or it is on the wild curve legitimately"

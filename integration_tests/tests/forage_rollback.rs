@@ -1,7 +1,7 @@
 mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
-use core_sim::{build_headless_app, FactionId, ForageRegistry};
+use core_sim::{build_test_app, FactionId, ForageRegistry};
 
 /// Regression: the authoritative `ForageRegistry` (per-patch biomass / ecology phase) must
 /// round-trip through the rollback snapshot, mirroring the herd-registry rewind. A mutate-then-
@@ -9,7 +9,7 @@ use core_sim::{build_headless_app, FactionId, ForageRegistry};
 #[test]
 fn forage_registry_biomass_rewinds_on_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Turn 1: worldgen seeds forage patches on every `FoodModuleTag` tile and captures the ring.
     app.update();
@@ -60,7 +60,7 @@ fn forage_registry_biomass_rewinds_on_rollback() {
 #[test]
 fn forage_registry_cultivation_rewinds_on_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     // Turn 1: seed patches (all uncultivated) and capture the ring.
     app.update();

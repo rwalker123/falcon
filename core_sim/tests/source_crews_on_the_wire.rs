@@ -23,7 +23,7 @@ use bevy::math::UVec2;
 
 use core_sim::TakeSelection;
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
+    build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
     SnapshotHistory, StartingUnit, TileRegistry, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR,
@@ -68,7 +68,7 @@ const CROP: &str = "wild_emmer";
 /// on one pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim
 /// the tail and the fixture would publish numbers it never staffed.
 fn world_with_a_keeping_band() -> (App, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // One `update()` runs the whole Startup worldgen chain, which is what seeds the `TileRegistry`
     // the band is homed on and the patches it works.
     let source = {

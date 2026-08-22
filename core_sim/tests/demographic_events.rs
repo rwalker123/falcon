@@ -6,7 +6,7 @@
 //! whole-person events with the tokens the client parses.
 
 use core_sim::{
-    build_headless_app, run_turn, scalar_zero, BandId, CommandEventEntry, CommandEventKind,
+    build_test_app, run_turn, scalar_zero, BandId, CommandEventEntry, CommandEventKind,
     CommandEventLog, DemographicFlowAccumulator, PopulationCohort, ResidentBand, SimulationConfig,
     SimulationTick, FOOD,
 };
@@ -50,7 +50,7 @@ const MAP_SEED: u64 = 119_304_647;
 
 /// A headless world on the pinned seed, not yet generated.
 fn world() -> bevy::app::App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = MAP_SEED;
     app
 }

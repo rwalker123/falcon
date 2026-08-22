@@ -7,7 +7,17 @@
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 
-const CREW_TARGET_ABSENT := -1
+## What `crew_target_count` answers when the pill is not rendered AT ALL.
+##
+## **IT IS DELIBERATELY NOT `-1`.** `SourceForecast.NO_CREW_ANSWER` is `-1` and now rides the meta of
+## a pill that IS rendered — the disabled `✕` one — so a sentinel of `-1` here would make "no pill"
+## and "a pill saying nobody can do this" the same reading, and every `== CREW_TARGET_ABSENT`
+## assertion would pass on the pill it was written to prove was gone.
+const CREW_TARGET_ABSENT := -2
+
+## The glyph an unreachable target's pill leads with, for assertions that want to name it without
+## reaching into the HUD's vocab module twice.
+const CREW_TARGET_UNREACHABLE_FACE := HudComposeVocab.CREW_TARGET_UNREACHABLE_FACE
 
 ## The needle for the aside's teaching line — a lesson still being earned leads with the verb.
 const TEACHING_LESSON_NEEDLE := "Teaching"
@@ -43,6 +53,47 @@ static func crew_target_count(root: Node, key: String) -> int:
 	# old `button.text.split(" ")[0]` finds an empty string here — and `int("")` is 0, which is a REAL
 	# reading of this control ("nothing needs clearing"). It would have passed silently.
 	return int(button.get_meta(HudWidgets.CREW_TARGET_COUNT_META, CREW_TARGET_ABSENT))
+
+## **THE PILL'S LEAD LINE AS IT IS DRAWN** — the count, or `CREW_TARGET_UNREACHABLE_FACE` on the
+## target no crew reaches. `""` when the pill is not rendered, which fails an equality claim rather
+## than satisfying it.
+##
+## Read off the FACE rather than the meta, because the face is the half the meta cannot testify to: a
+## builder that carried the sentinel on the meta and still printed `-1` in the pill would satisfy
+## every `crew_target_count` claim ever written about it.
+static func crew_target_face(root: Node, key: String) -> String:
+	var button := Q.find_crew_target(root, key)
+	if button == null:
+		return ""
+	return _first_label_text(button.get_parent())
+
+## The text of the first `Label` under `root` in draw order, `""` when there is none. The pill's face
+## is a two-Label stack beside an empty-`text` Button, so the LEAD line is what a reader sees first
+## and is what every claim about the face is about.
+static func _first_label_text(root: Node) -> String:
+	if root == null:
+		return ""
+	if root is Label:
+		return (root as Label).text
+	for child in root.get_children():
+		var found := _first_label_text(child)
+		if found != "":
+			return found
+	return ""
+
+## Is this pill refusing the press — `disabled` on the Button the face sits over? `false` when the
+## pill is absent, so a claim of non-interactivity cannot be satisfied by a pill that is not there.
+static func crew_target_is_disabled(root: Node, key: String) -> bool:
+	var button := Q.find_crew_target(root, key)
+	return button != null and button.disabled
+
+## How many handlers are listening to this pill's `pressed`. **The wiring half of "non-interactive"**:
+## Godot swallows a click on a `disabled` Button, so a pill left connected still reads as correct in
+## every driven-press assertion — and one `disabled = false` away from calling `on_pick` with the
+## `NO_CREW_ANSWER` sentinel as a worker count.
+static func crew_target_press_handlers(root: Node, key: String) -> int:
+	var button := Q.find_crew_target(root, key)
+	return -1 if button == null else button.get_signal_connection_list("pressed").size()
 
 ## The READOUT's yields row as one string — every Label in it, joined. The row is found by
 ## `HudWidgets.YIELDS_ROW_META`, its identity: its face is a flow of Labels at three sizes (the
@@ -219,6 +270,21 @@ static func verdict_severity(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.VERDICT_META)
 	return String((node as Control).get_meta(HudWidgets.VERDICT_META, "")) if node != null else ""
 
+## **WHERE THE YIELDS BLOCK SITS AMONG ITS HOST'S CHILDREN** — `-1` when no readout rendered at all,
+## which is what makes an index claim a claim rather than a vacuous pass on an empty sheet.
+##
+## **`0` IS THE "NOTHING ABOVE `NEXT TURN`" CLAIM, ASKED STRUCTURALLY.** The hunt sheet used to mount
+## a take estimate line above the caption — `≈0.75 WILD BOAR/TURN · 0 – 1 · ABOUT ONE EVERY 1.3
+## TURNS` — restating a rate the binding-limit sentence below the rows already carried. Anything put
+## back in that slot takes index 0 and pushes the block to 1, so this reads the DEFECT rather than a
+## string, and a replacement line worded differently cannot slip past it.
+static func yields_block_index(root: Node) -> int:
+	var row := Q.find_meta_node(root, HudWidgets.YIELDS_ROW_META)
+	var block := (row as Node).get_parent() if row != null else null
+	if block == null or block.get_parent() == null:
+		return -1
+	return block.get_index()
+
 ## Every Label text under `root`, in tree order — the rung face's lines as they are stacked.
 static func face_lines(root: Node) -> Array[String]:
 	var lines: Array[String] = []
@@ -335,6 +401,14 @@ static func hunt_gate_line(root: Node) -> String:
 static func hunt_crew_split_line(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.HUNT_CREW_SPLIT_META)
 	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
+
+## **THE KIT ROW'S HINT LINE** — `attack 20.0 · carry 40.0 per hunter · 4 of 6 equipped · spears 74 ·
+## sled 58`. A plain `Label` carrying `KitRoster.KIT_HINT_META`, so a harness makes its claim about
+## the LINE rather than about a string that happens to appear on the sheet. `""` when no kit row
+## rendered at all, which every assertion here distinguishes from a line that rendered differently.
+static func kit_hint_line(root: Node) -> String:
+	var node := Q.find_meta_node(root, KitRoster.KIT_HINT_META)
+	return (node as Label).text if node is Label else ""
 
 ## What `hunt_gate_blocked` answers when NO gate line rendered at all. A third state, not a `false`:
 ## "the sheet says the fight is winnable" and "the sheet says nothing about the fight" are different

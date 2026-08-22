@@ -19,7 +19,7 @@
 
 use bevy::ecs::schedule::{ExecutorKind, NodeId, Schedules};
 use bevy::prelude::*;
-use core_sim::{build_headless_app, run_turn};
+use core_sim::{build_test_app, run_turn};
 use std::collections::{HashMap, HashSet};
 
 /// Pairs that must be free to run concurrently — the point of declaring real edges.
@@ -181,7 +181,7 @@ impl Reach {
 
 #[test]
 fn independent_systems_in_a_stage_are_free_to_run_concurrently() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     run_turn(&mut app);
     let reach = Reach::build(&app);
 
@@ -209,7 +209,7 @@ fn independent_systems_in_a_stage_are_free_to_run_concurrently() {
 /// the boot-time ambiguity gate is structurally unable to detect.
 #[test]
 fn commands_using_systems_are_the_reviewed_set() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     run_turn(&mut app);
 
     let schedules = app.world.resource::<Schedules>();

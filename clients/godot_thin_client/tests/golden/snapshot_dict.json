@@ -431,6 +431,7 @@
     {
       "biomass": 69.25,
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[0].build_destination_rung",
       "build_legs": [
         {
@@ -595,6 +596,7 @@
       "stressed_fraction": 35.610001,
       "tended_fodder": 66.300003,
       "tended_yield": 11.58,
+      "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
       "upkeep_shortfall": 85.980003,
       "upkeep_supplied": 28.360001,
@@ -605,6 +607,7 @@
     {
       "biomass": 74.910004,
       "build_blocked_reason": "forage_patches[1].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[1].build_destination_rung",
       "build_legs": [
         {
@@ -769,6 +772,7 @@
       "stressed_fraction": 11.05,
       "tended_fodder": 52.509998,
       "tended_yield": 86.169998,
+      "tile_capacity": 2.22,
       "upkeep_demand": 10.09,
       "upkeep_shortfall": 34.380001,
       "upkeep_supplied": 37.41,
@@ -920,6 +924,7 @@
       "biomass": 109.120003,
       "body_mass": 32.599998,
       "build_blocked_reason": "herds[0].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[0].build_destination_rung",
       "build_legs": [
         {
@@ -1043,6 +1048,7 @@
       "biomass": 44.529999,
       "body_mass": 55.09,
       "build_blocked_reason": "herds[1].build_blocked_reason",
+      "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[1].build_destination_rung",
       "build_legs": [
         {
@@ -2173,6 +2179,7 @@
           "fauna_id": "populations[0].labor_assignments[0].fauna_id",
           "floor": 110.599998,
           "fodder_yield": 46.790001,
+          "hunt_useful_workers": 43,
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
@@ -2208,6 +2215,7 @@
           "fauna_id": "populations[0].labor_assignments[1].fauna_id",
           "floor": 48.369999,
           "fodder_yield": 0.25,
+          "hunt_useful_workers": 144,
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
@@ -2748,6 +2756,7 @@
           "fauna_id": "populations[1].labor_assignments[0].fauna_id",
           "floor": 71.43,
           "fodder_yield": 0.66,
+          "hunt_useful_workers": 30,
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
@@ -2783,6 +2792,7 @@
           "fauna_id": "populations[1].labor_assignments[1].fauna_id",
           "floor": 95.239998,
           "fodder_yield": 2.93,
+          "hunt_useful_workers": 41,
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",

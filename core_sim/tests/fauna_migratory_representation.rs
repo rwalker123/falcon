@@ -20,7 +20,7 @@ use bevy::app::App;
 use bevy::math::UVec2;
 
 use core_sim::{
-    build_headless_app, classify_food_module, FaunaConfig, FaunaConfigHandle, HerdRegistry,
+    build_test_app, classify_food_module, FaunaConfig, FaunaConfigHandle, HerdRegistry,
     MigratoryAbundanceConfig, SimulationConfig, Tile, TileRegistry,
 };
 
@@ -81,7 +81,7 @@ fn builtin_fauna() -> FaunaConfig {
 ///
 /// `migratory` overrides the shipped budget so one sweep can measure several slot counts.
 fn spawn_world(seed: u64, migratory: MigratoryAbundanceConfig) -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();

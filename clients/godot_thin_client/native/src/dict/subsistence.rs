@@ -375,6 +375,28 @@ pub(crate) fn herds_to_array(
         // drawer reads them for the "Carrying capacity" / "Range" rows + the honest overgrazing test
         // (`biomass > carrying_capacity`), and MapView draws the EXACT ring the sim grazes over.
         let _ = dict.insert("carrying_capacity", herd.carryingCapacity());
+        // **WHAT THIS RANGE WILL CARRY AT THE RUNG THE BUILD IS HEADING FOR** — the same `K` as
+        // above, struck at the DESTINATION's standing (`buildDestinationRung`) instead of the herd's
+        // own, so the two are read as one object. What the rung buys here is `pastoral_density` /
+        // `pen_density`; a CORRAL destination is summed over the `penRadius` disk the herd stands on
+        // rather than the range it walks, a pen being a different piece of land.
+        //
+        // **`sim_schema::NO_BUILD_DESTINATION_CAPACITY` (`-1`) MEANS NO BAND HAS QUEUED THIS HERD,
+        // AND IT CANNOT BE `0`** — an overgrazed range or a rock pen really does carry nothing, so a
+        // zero here would promise that of every unqueued herd on the map. Any `< 0` renders NO
+        // DESTINATION LINE AT ALL, the same reading `build_turns_remaining`'s `-1` takes. Passed
+        // through verbatim: the sentinel is the sim's, and normalising it here would leave GDScript
+        // unable to tell "nothing queued" from "it will hold nothing".
+        //
+        // **IT IS THE DESTINATION'S, NOT NEXT TURN'S.** Next turn's position depends on work nobody
+        // has banked yet; the destination rung is already named, so its gain is known today. The
+        // figure is struck on TODAY'S LAND — the rung moves, the land does not — so it drifts turn to
+        // turn exactly as the live `carrying_capacity` beside it does, and no reader may word it as a
+        // guarantee about the future.
+        let _ = dict.insert(
+            "build_destination_capacity",
+            herd.buildDestinationCapacity(),
+        );
         let _ = dict.insert("graze_range_radius", herd.grazeRangeRadius() as i64);
         // Predators Phase 1a — the carnivore's PREY-SENSE radius (hex radius it reaches to find/feed on
         // prey). Appended strictly after `aggression`; `predators.prey_sense_radius` (4) for a carnivore,
@@ -683,6 +705,25 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("owner", patch.owner() as i64);
         let _ = dict.insert("biomass", patch.biomass());
         let _ = dict.insert("carrying_capacity", patch.carryingCapacity());
+        // **WHAT THE *GROUND* HOLDS** — this tile's own forage `K` off `forage.capacity_by_biome`,
+        // with NO rung gain in it, beside the patch's CURRENT ceiling above. The two are not one
+        // number: `carrying_capacity` is that figure times the interpolated `field_capacity_gain`, so
+        // a standing Field reads ~2.53x the same ground wild. That gain is LIVE STATE THAT CARRIES
+        // THE RUNG — publishing it on a hex the player only REMEMBERS hands over the ladder position
+        // `is_field`/`field_progress` are redacted to hide, and continuously, since it interpolates.
+        // So the client redacts `carrying_capacity` under fog and renders this one instead
+        // (`MapView.FOW_DISCOVERED_HIDDEN_KEYS`); no player action moves a tile's terrain, which is
+        // exactly what makes this safe to remember. It is ALSO the denominator the plant standing
+        // upkeep is quoted per — see the per-rung block below.
+        let _ = dict.insert("tile_capacity", patch.tileCapacity());
+        // The plant twin of the herd row's DESTINATION capacity — this patch's `K` at the rung its
+        // build is heading for, `field_capacity_gain` being what the rung buys on this web. See the
+        // herd block for why `-1` rather than `0` is the "nothing queued" reading, why the figure is
+        // the destination's rather than next turn's, and why it is quoted on today's land.
+        let _ = dict.insert(
+            "build_destination_capacity",
+            patch.buildDestinationCapacity(),
+        );
         if let Some(ecology_phase) = patch.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
@@ -1015,8 +1056,12 @@ pub(crate) fn forage_patches_to_array(
         );
         // **THE STANDING PRICE, PER RUNG** — the plant twin of the herd block's pair; see there for
         // why `upkeep_demand` cannot price a rung nobody has started, and why this is a price rather
-        // than a threshold. Both plant rungs declare `scaled_by: flat`, so these are the ladder's
-        // numbers verbatim (2 and 4 work a turn today) and are the same on every patch in the game.
+        // than a threshold. Both plant rungs declare `scaled_by: source_load` and quote their rate
+        // PER TENDER-LOAD, so the sim strikes each through **this patch's own `tile_capacity`** (the
+        // same measure `patch_upkeep_demand` bills against) before it ships them. They therefore
+        // differ from patch to patch, and reading them as the ladder's bare rates would promise `4.0`
+        // for a Field about to be billed `4.31`. They scale off the TILE's `K`, never the patch's, so
+        // they carry no rung and survive fog — see `tile_capacity` above.
         let _ = dict.insert("cultivation_upkeep_demand", patch.cultivationUpkeepDemand());
         let _ = dict.insert("field_upkeep_demand", patch.fieldUpkeepDemand());
         // **WHAT THE AT-RISK METER IS LOSING PER TURN** — the plant twin, and the one web where it is

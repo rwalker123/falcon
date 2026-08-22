@@ -25,6 +25,22 @@ extends RefCounted
 ## It ends by handing the reference band back, so a chapter appended after it starts where every
 ## other one does.
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 61
+
+## **NEEDLES FOR RETIRED STRINGS, KEPT SO THEY STAY RETIRED.** The forage side of the chip row's
+## consequence line is gone, all three sentences of it: two restated the selection the chips directly
+## above were already showing, and the third spoke the refusal when the last remaining plant was
+## unticked — verbosity over a fact a player discovers by pressing the chip. The refusal itself is
+## untouched and still enforced in `ComposeState`; it is simply silent, and the chips are NOT greyed.
+## Spelled out here because there is no const left to compose them from. The cultivate twins SURVIVE
+## and are asserted below through `HudFloraVocab`: naming the crop the sim would otherwise settle on
+## is a different job from describing a selection.
+const RETIRED_NOTE_FORAGE_ALL := "The whole basket comes home."
+const RETIRED_NOTE_FORAGE_NARROWED := "Everything else is left standing."
+const RETIRED_NOTE_FORAGE_LAST_PLANT := "A gather must carry something home"
+
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -486,8 +502,10 @@ func run(harness) -> void:
 	h._assert_hud("…and each chip quotes the standing biomass the wire published",
 		_sheet_says(HudFloraVocab.FLORA_SHARE_BIOMASS_CLAUSE_FORMAT % int(STANDING_EMMER))
 			and _sheet_says(HudFloraVocab.FLORA_SHARE_BIOMASS_CLAUSE_FORMAT % int(STANDING_MAST)))
-	h._assert_hud("…and the consequence line says the whole basket comes home",
-		_sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_ALL))
+	# **AND THE FORAGE SIDE STATES NO CONSEQUENCE LINE AT ALL.** The chip-row precondition rides
+	# inside the claim: without it the absence passes on a sheet that mounted no take block.
+	h._assert_hud("…and no take-note under the chips — the whole-basket sentence is retired",
+		default_states.size() == 3 and not _sheet_says(RETIRED_NOTE_FORAGE_ALL))
 	# The PRECONDITION every price claim below rests on: the whole basket really does quote a take and
 	# really does state a useful count, so a later "it moved" is a move rather than an appearance.
 	h._assert_hud("…and the whole basket quotes a take and a crew to take it with",
@@ -526,8 +544,8 @@ func run(harness) -> void:
 	h._assert_hud("…and the useful-worker count fell with it, on the same edit",
 		int(narrowed["crew"]) < int(whole_basket["crew"])
 			and int(narrowed["crew"]) > 0)
-	h._assert_hud("…and the consequence line says the rest is left standing",
-		_sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_NARROWED))
+	h._assert_hud("…and a NARROWED forage crew states no take-note either — that sentence is retired too",
+		_chip_states().size() == 3 and not _sheet_says(RETIRED_NOTE_FORAGE_NARROWED))
 	h._assert_hud("…and a priced narrowing states no honest-silence aside at all",
 		not _sheet_says(HudFloraVocab.TAKE_UNQUOTED_NOTE))
 
@@ -727,30 +745,34 @@ func run(harness) -> void:
 	h._assert_hud("…and the plant nobody pressed is exactly where it was",
 		after_press.get(HAY_SPECIES, "") == both_states.get(HAY_SPECIES, ""))
 
-	# ---- …AND THE LAST REMAINING PLANT CANNOT BE UNTICKED, WITH THE REASON ON SCREEN --------------
+	# ---- …AND THE LAST REMAINING PLANT CANNOT BE UNTICKED, IN SILENCE ----------------------------
 	# Carrying nothing home says exactly what assigning zero gatherers already says, so the state is
-	# refused rather than allowed — and the refusal SPEAKS, in the consequence line's own slot, because
-	# a control that declines a click in silence is worse than one that permits the mistake. The claim
-	# is a TRIPLE: the chip did not move, the reason is on the sheet, and the line it replaced is not
-	# (without the last half, "states the reason" passes on a row printing both sentences at once).
+	# refused rather than allowed. **The refusal used to SPEAK, in the consequence line's own slot, and
+	# now says nothing** — a player works out that the last chip will not turn off by pressing it, and
+	# the sentence was more verbosity than the fact is worth. The click is a silent no-op BY DESIGN,
+	# and the chip is deliberately NOT greyed to pre-announce it: the enforcement is unchanged and
+	# lives where it always did, in `ComposeState.toggle_forage_take_species`.
 	#
 	# **THE PRESS IS DRIVEN AND ITS RETURN IS NOT THE WITNESS.** `_press_chip` answers whether it found
 	# a button and pushed a pointer at it, which it did — what is refused is the MODEL's edit, so the
-	# verdict is read off the rendered chip and the rendered sentence.
+	# verdict is read off the rendered chip and the rendered sheet.
 	var pressed_last := await _press_chip(HAY_SPECIES)
 	h._assert_hud("the refusing press reaches a real chip", pressed_last)
 	await h._save("forage_take_last_plant_refused")
 	h._assert_hud("…and the last remaining plant is still selected, the click having changed nothing",
 		_chip_states().get(HAY_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED)
-	h._assert_hud("…and the row SAYS why, rather than appearing to ignore the press",
-		_sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_LAST_PLANT))
-	h._assert_hud("…in the consequence line's own slot, not beside it",
-		not _sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_NARROWED))
-	# And it is a ONE-TRANSACTION memory: the next landing toggle takes the sentence away, or the row
-	# would go on refusing in prose long after the selection it described.
-	await _press_chip(UNQUOTED_SPECIES)
-	h._assert_hud("the next landing toggle clears the refusal",
-		not _sheet_says(HudFloraVocab.TAKE_NOTE_FORAGE_LAST_PLANT))
+	# The chip-count precondition is what stops this passing on a sheet that lost the take block
+	# altogether, in which case NOTHING is said because nothing is drawn.
+	h._assert_hud("…and the refusal is SILENT — neither the retired reason nor a selection sentence",
+		_chip_states().size() == 2
+			and not _sheet_says(RETIRED_NOTE_FORAGE_LAST_PLANT)
+			and not _sheet_says(RETIRED_NOTE_FORAGE_NARROWED))
+	# …and the chip stays a live, ungreyed control: the refusal is enforced in the model and announced
+	# nowhere, which is the shape that was asked for.
+	h._assert_hud("…and the chip it refused still renders SELECTED rather than turning itself off",
+		_chip_states().get(HAY_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED
+			and _chip_states().get(UNQUOTED_SPECIES, "")
+				== HudFloraVocab.TAKE_STATE_UNSELECTED)
 
 	# Hand the reference band back, so a chapter appended after this starts where every other one does.
 	h._hud._drawercompose.close_compose_sheet()

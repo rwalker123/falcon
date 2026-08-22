@@ -6,6 +6,10 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 179
+
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -112,6 +116,17 @@ const EMPTY_TAKE_NEEDLE := "0.00 FOOD"
 
 ## …and the refusal's own words, which become true exactly when they are shown.
 const AT_FLOOR_REFUSAL_NEEDLE := "until it grows past"
+
+## The countdown verdict's two ends, as needles rather than as the format string — the claim is about
+## the SHAPE of the sentence (it opens with the count and stops there), and a `%d` cannot be matched.
+const REACHES_FLOOR_HEAD := "Reaches the floor in "
+const REACHES_FLOOR_TAIL := " turns."
+
+## **A NEEDLE FOR A RETIRED CLAUSE, KEPT SO IT STAYS RETIRED.** The countdown used to close by
+## promising the equilibrium it was counting down to; the readout says that itself, in
+## `VERDICT_HOLDS_AT_FLOOR`, the moment it is true. This is deliberately spelled out here rather than
+## composed from a const, because there is no const left to compose it from.
+const RETIRED_REACHES_AFTERMATH := ", then holds it"
 
 const HAY_OVERDRAW_FORAGERS := 8
 
@@ -1388,12 +1403,25 @@ func run(harness) -> void:
 
 	# `forage_dead_season` is ALSO the CHART's dead-season case (below), so it carries that pair of
 	# assertions rather than a second identical PNG: `perWorkerBiomass` is honestly 0 in deep winter,
-	# so the two crew targets have no denominator and must be ABSENT rather than rendered as a zero
-	# saying "nobody is needed" — while the chart still draws, the patch's stock, its floor and its
-	# growth curve all being real facts about the ground.
+	# so the two crew targets have no denominator and must never be rendered as a zero saying "nobody
+	# is needed" — while the chart still draws, the patch's stock, its floor and its growth curve all
+	# being real facts about the ground.
+	#
+	# **THE PILL STAYS AND SAYS `✕`.** It used to be dropped, and a missing pill reads as the sheet
+	# having nothing to say about clearing at all. The COUNT reading is the precondition — the model
+	# really did answer the unpriceable sentinel — and the FACE is the claim, since a pill carrying
+	# the sentinel on its meta while printing `-1` would satisfy the first alone.
 	h._assert_hud("a dead-season patch prices no crew target rather than dividing by a zero throughput",
 		Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR)
-			== Readout.CREW_TARGET_ABSENT)
+			== SourceForecast.NO_CREW_ANSWER)
+	h._assert_hud("…and says so on a DISABLED pill reading %s, rather than vanishing (got \"%s\")"
+			% [Readout.CREW_TARGET_UNREACHABLE_FACE,
+				Readout.crew_target_face(h._hud._drawercompose._compose_sheet,
+					HudWidgets.CREW_TARGET_CLEAR)],
+		Readout.crew_target_face(h._hud._drawercompose._compose_sheet,
+				HudWidgets.CREW_TARGET_CLEAR) == Readout.CREW_TARGET_UNREACHABLE_FACE
+			and Readout.crew_target_is_disabled(h._hud._drawercompose._compose_sheet,
+				HudWidgets.CREW_TARGET_CLEAR))
 	h._assert_hud("…and still draws its chart, the stock and the curve being facts about the ground",
 		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null)
 
@@ -1981,6 +2009,15 @@ func run(harness) -> void:
 	# **THE PAIR IS THE CLAIM.** A headline that had simply stopped answering zero would satisfy the
 	# first state alone; the second is a patch far enough below its floor that next turn's growth does
 	# not reach it, which really does pay nothing — and only there may the sheet say so.
+	# **THE FACTION IS PUT BACK TO STILL-LEARNING CULTIVATION FOR THESE THREE STATES.** A wild patch
+	# teaches Cultivation, and a source teaches nothing once the faction knows its lesson — so at the
+	# all-complete dial the frames above leave behind, the aside's teaching line is correctly ABSENT
+	# and the claim below (that it may not deny the take) would be asserting about nothing. Restored
+	# at the end of the block, exactly as the chart block above restores it.
+	h._hud.update_intensification([{
+		"faction": 0, "cultivation": FLOOR_CHART_CULTIVATION_LEARNING, "herding": 1.0,
+		"seed_selection": 1.0, "penning": 0.0,
+	}])
 	var at_floor := BaseFx.food_tile_fixture()
 	at_floor["patch_biomass"] = SourceForecast.FLOOR_FOOD_PEAK \
 		* float(at_floor["patch_carrying_capacity"])
@@ -2030,6 +2067,37 @@ func run(harness) -> void:
 			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
 				== SourceForecast.VERDICT_OK)
 
+	# **AND THE TEACHING LINE MAY NOT DENY THE TAKE THE HEADLINE IS QUOTING.** Reported from play
+	# beside the pair above: a patch publishing `+0.71 /turn` rendered *"Teaching nothing: nothing is
+	# being taken."* The predicate was `crew_is_taking`, which tests the room standing right now
+	# against the wire's POST-take biomass — false by construction on any source held at its floor,
+	# which is the intended steady state of a Sustain policy rather than an edge case. The sim was
+	# meanwhile crediting the lesson at full multiplier off its pre-take stock, so BOTH halves of the
+	# sentence were false.
+	#
+	# **THE PRECONDITIONS ARE THE CLAIM'S OTHER HALF, and there are three.** Without them this passes
+	# on a source that is genuinely idle (nothing taken, so the sentence is true), on a rung that
+	# teaches nothing at all (no line, so nothing to be wrong), and on a lesson already learned (also
+	# no line). The at-floor precondition is asserted above; these add the take and the line.
+	var at_floor_teaching := Readout.teaching_line(h._hud._drawercompose._compose_sheet)
+	print("ui_preview: at the floor  teaching | %s" % at_floor_teaching)
+	h._assert_hud("precondition: this patch is publishing a live take, %s foragers standing on its floor"
+			% AT_FLOOR_FORAGERS,
+		held_take > 0.0 and AT_FLOOR_FORAGERS > 0)
+	h._assert_hud("precondition: the rung teaches something and the faction has not learned it, so a line renders",
+		at_floor_teaching != "")
+	h._assert_hud("…and it does NOT claim nothing is being taken (%s)" % at_floor_teaching,
+		not at_floor_teaching.contains(SourceForecast.TEACHING_NOTHING_UNWORKED))
+	# …and the two sentences agree, which is the structural half: both are keyed on
+	# `escapement_room_next_turn` now, so a teaching line saying "nothing is taken" beside a verdict
+	# saying "holding it — taking only what grows back" is no longer expressible.
+	h._assert_hud("…it states the lesson it is earning, at the floor's own multiplier (%s)"
+			% at_floor_teaching,
+		at_floor_teaching.contains(SourceForecast.TEACHING_RATE_FORMAT % [
+			SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_FORAGE][
+				SourceForecast.IMPROVEMENT_NONE],
+			SourceForecast.learn_multiplier(SourceForecast.FLOOR_FOOD_PEAK)]))
+
 	# **THE HALF THAT KEEPS ZERO REACHABLE.** The same patch drawn far enough below its floor that one
 	# turn's growth does not carry it back over: that crew really does bank nothing, and the sentence
 	# it earns is the one the state above must never show.
@@ -2056,6 +2124,38 @@ func run(harness) -> void:
 		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(AT_FLOOR_REFUSAL_NEEDLE)
 			and Readout.verdict_severity(h._hud._drawercompose._compose_sheet)
 				== SourceForecast.VERDICT_BLOCKED)
+
+	# **STATE forage_reaches_floor — THE COUNTDOWN STATES THE TURN COUNT AND NOTHING ELSE.**
+	# It read *"Reaches the floor in N turns, then holds it — taking only what grows back."* The
+	# aftermath clause is the `VERDICT_HOLDS_AT_FLOOR` sentence's own job, said by this same readout
+	# the moment the source arrives, so a countdown that also narrated it answered a question the
+	# player had not reached — and a STRIPPED twin of the sentence existed purely to drop that clause
+	# where there was no aftermath to promise. Both twins went with it (`VERDICT_REACHES_FORMAT`).
+	#
+	# The precondition is that this really is the COUNTDOWN branch: the at-floor and holding verdicts
+	# above carry "grows back" legitimately, so an absence claim made without knowing which branch
+	# rendered is satisfied by every other state in this chapter.
+	var descending := BaseFx.food_tile_fixture()
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._compose_forage(descending)
+	await h._settle()
+	await h._save("forage_reaches_floor")
+	var descending_text := Readout.verdict_text(h._hud._drawercompose._compose_sheet)
+	print("ui_preview: descending  %s" % descending_text)
+	h._assert_hud("precondition: this crew is walking the patch DOWN to its floor (%s)"
+			% descending_text,
+		descending_text.contains(REACHES_FLOOR_HEAD))
+	h._assert_hud("…and the sentence is the turn count alone — no aftermath clause (%s)"
+			% descending_text,
+		descending_text.ends_with(REACHES_FLOOR_TAIL)
+			and not descending_text.contains(RETIRED_REACHES_AFTERMATH))
+
+	# Put the faction's knowledge back where the block before this one left it.
+	h._hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
+	}])
 
 	# ---- THE ROW'S TWO RATES ARE NAMED, BOTH OF THEM (PNG-less) --------------------------------
 	# Appended last, and it renders nothing: the claim is about a HOVER, which no frame carries, and

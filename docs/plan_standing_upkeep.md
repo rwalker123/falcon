@@ -731,13 +731,20 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    that needs a crop, and the move would buy nothing.
 
    **7b — WHAT §4.6b LEFT STANDING, and this slice is where it lands.**
-   Each is reachable in play today and none is a defect in the model. The first three are one shape —
-   a band-level act with no band-level surface — and the fourth is an asymmetry the pending rows
-   introduced.
+   Each is reachable in play today and none is a defect in the model. **The first has since LANDED**;
+   of the three that remain, the first two are one shape — a band-level act with no band-level
+   surface — and the last is an asymmetry the pending rows introduced.
 
    - **Nothing on the Work tab declares a build** (①), so the tile sheet is still the only door.
+     > **LANDED, with §4.7a's ①.** The `⌃` ready mark on a work row is the control that declares, and
+     > the compose sheet keeps the forecast while ceasing to be the commit. **The limit that move left
+     > is STATED rather than closed**, which §4.7a called the defensible answer: a source the band
+     > does not work has no row and therefore no way to declare, and the sheet says *"Send gatherers
+     > here first, then Cultivate this patch from the Work tab."*
    - **The kit override has no home** (②) — the card's picker is deleted, so the derivation currently
-     stands alone and cannot be overridden at all.
+     stands alone and cannot be overridden at all. **Still open, and it is the cross-cutting one**: a
+     kit per queue entry needs a field on `BuildQueueEntry`, a command and a wire field, where the
+     other two are client-only.
    - **The queue cannot be reordered from the UI.** `build_order` is command-line only, as is
      `abandon`; the block caps at three rows plus a `+N more` overflow, chosen so the board keeps
      legible rows in a height-capped horizontal dock. Drag-to-reorder is this slice's, and the cap
@@ -746,6 +753,14 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
      the tail, `○`, no date), but unticking a **confirmed** entry does not leave the block until the
      turn resolves — the queue's positions are wire state and the optimistic overlay carries
      additions only. The asymmetry is visible and should be closed with the row's own controls.
+
+   > **⛔ THE ZONE HAS NO ROOM LEFT, AND THAT IS THIS SLICE'S FIRST DECISION — NOT ITS LAST.** All
+   > three surviving items want pixels in the Work zone, and §4.7's landing spent the last of them:
+   > `PANEL_HEIGHT_WIDE` ships at **456** for a **396px** box, and the zone reads **396 of 396 in
+   > height and 354 of 356 in width**, with assertions that fail loudly rather than clipping silently.
+   > So each item's cost has to be **measured before it is designed**, and the lever that pays for it
+   > — a taller strip, a wider panel, two-abreast pool cards — is **Ray's to pick**. Designing all
+   > three and discovering the overflow at the end is the failure this note exists to prevent.
 
 8. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
    subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has
@@ -808,7 +823,14 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    *"is this worth it"* does not move — but the payoff starts on turn one, which softens the
    commitment considerably. That may be right, given this arc has been about removing cliffs; it
    should be a deliberate smoothing rather than a discovered one.
-   > **LANDED — in full, and it diverged from this plan in three ways worth recording.**
+   > **LANDED ON THE PLANT WEB ONLY — this block said "in full" and that was wrong.** The animal web
+   > kept its two unconnected meters (`domestication_progress`, `corral_progress`), and both its
+   > payouts plus its keeping bill stayed **step functions on a completion predicate**. The claim went
+   > unchecked for a whole slice and was found in §4.11's playtest, so **the failure was the claim, not
+   > the code**: "in full" is a thing to write once both branches are measured, never once one is.
+   > §4.11 completed it — see its own LANDED block. What follows describes the plant half, accurately.
+   >
+   > **It diverged from this plan in three ways worth recording.**
    > A source carries one `ladder_position` in cumulative work units; `RungStanding` is the one
    > producer of "where is this source", stamped on every write so no call site re-derives it;
    > `interpolate` states the delta form once, for the payout and the keeping demand alike. The
@@ -862,6 +884,72 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     hold differs by what it is. The animal web has had this since slice 4 (`SourceLoad`, the herd's
     own keeper load); the plant web needs its own measure, most likely the patch's capacity.
     **Mechanism, not tuning** — it is a scale primitive, and the numbers move in §4.14 regardless.
+    > **LANDED.** The plant's measure is `forage::patch_tender_loads` =
+    > `tile forage capacity / capacity_per_tender`, the exact twin of `head count /
+    > animals_per_herder`, so one rate says *a tender minds this much standing crop*. Both plant
+    > rungs declare `scaled_by: source_load` at unchanged rates of `2.0` and `4.0`.
+    >
+    > **① THE MEASURE READS THE TILE'S K, NOT THE PATCH'S — and the alternative was measured, not
+    > argued.** `ForagePatch::carrying_capacity` is the tile's K *already multiplied* by an
+    > interpolated `field_capacity_gain`, and the demand interpolates on the same position, so the
+    > two compound: under sabotage a Field on `RiverDelta` billed **10.898** work/turn against the
+    > **4.308** it owes — the 2.53× landing on top of the rate's own climb, exactly as predicted.
+    > The tile's K is the size of the *place*; the gain is the rung's *payout*. `labor_config.json`
+    > already stated the first half — *the land owns K and no rung may lower it* (#433) — and this is
+    > the second: **no rung may be billed for the K it raised.**
+    >
+    > **② `capacity_per_tender` IS 195.0, the reference tile's own K**, so the conversion is provably
+    > pacing-neutral on `AlluvialPlain` and nowhere else, which is the point. Measured, work/turn:
+    >
+    > | tile | K | tender-loads | tended | half-raised | Field |
+    > |---|---|---|---|---|---|
+    > | `PrairieSteppe` | 70 | 0.359 | 0.718 | 1.077 | 1.436 |
+    > | `AlluvialPlain` | 195 | 1.000 | **2.000** | **3.000** | **4.000** |
+    > | `RiverDelta` | 210 | 1.077 | 2.154 | 3.231 | 4.308 |
+    >
+    > **The plant demands stop being whole numbers a player can staff on the nose**, which they were
+    > chosen to be. That is the cost of scaling and it was taken deliberately: *"two hands hold a
+    > tended patch"* is now true of one biome rather than of the ladder.
+    >
+    > **③ `UpkeepScale::Flat` AND `UNSCALED_UPKEEP` ARE DELETED — this answers §6's open item.** With
+    > both plant rungs scaled, nothing declared `flat`, and the rung-monotonicity check compares only
+    > adjacent rungs *sharing* a `scaled_by` — so the unused variant was a way for a rung to opt out
+    > of that check silently. With one variant every adjacent pair is now compared. **The `scaled_by`
+    > key stays**: §4.13's `length × terrain` is the next primitive to land in it. One primitive with
+    > a per-branch reading beat a second variant, because the rung already declares its `branch` and
+    > a variant would have restated it.
+    >
+    > **④ THE PRICE QUOTE HAD TO MOVE WITH THE BILL.** `cultivationUpkeepDemand` /
+    > `fieldUpkeepDemand` — what the compose sheet shows *before* you commit — were the bare ladder
+    > rates, identical on every patch. Left alone they would have quoted `4.0` for a Field the
+    > keeping pool bills `4.31`: two producers of one verdict, the failure this arc keeps repeating.
+    > Both now strike off the same patch's tile as the bill, pinned on a **non-reference** tile since
+    > on `AlluvialPlain` the right and wrong answers agree.
+    >
+    > **Every fix was falsified** — the defect restored, the failing assertion named, the fix put
+    > back — including the interpolation test, which had to catch the measure being applied twice
+    > (`3.479` against the correct `3.231`).
+    >
+    > **⑤ AND IT FINISHED §4.10, WHICH HAD ONLY LANDED ON THE PLANT WEB.** A herd now carries one
+    > `ladder_position` like a patch; `herd_density_gain`, `herd_ecology`'s `regrowth_rate` and
+    > `herd_upkeep_demand` interpolate on it; `herd_keeping_meter` is retired and the demand takes no
+    > verb. **The asymmetry this removed was the inverted one:** `owner` is set by the *first* `Tame`
+    > accrual, so a herd owed the **whole** pastoral keeping rate from turn one while `is_domesticated()`
+    > withheld **every** payout until the last — 100% of the cost on day one against 0% of the benefit.
+    > The pen keeps its step through `partial_credit: on_completion` rather than a hand-written
+    > predicate.
+    >
+    > **⛔ AND IT MEASURED THE FLOOR TRAP, WHICH IS WORSE THAN "TAKES NOTHING".** The escapement floor is
+    > `floor_fraction × K` against the density-boosted ceiling, so a rung raises the floor while the herd
+    > stays put. On aurochs starting **exactly on** its floor: the room reaches zero at turn **6** with
+    > one herder, **3** with four, **2** with eight — *building faster starves you sooner* — and because
+    > `eligible` reads that same room, **the tame then never completes at any crew size**. It is the `-4`
+    > escapement stall reached by the floor climbing rather than by over-hunting. **Five of the eleven
+    > tameable species** are on the losing side of that race (aurochs, marsh grazer, reindeer, steppe
+    > runner, wild horse); three clear it only barely; only the fast breeders are safe. Interpolating
+    > turned the cliff into a slide without removing it, which is why the floor gets its own fix: **the
+    > take is the room above the floor OR a share of the turn's growth, whichever is larger**, and the
+    > build's eligibility gate moves with it.
 12. **The RESOURCE HALF of upkeep** (§2.7). Designed and **not built**: upkeep currently costs work
     and nothing else, while the pen's feed runs as its own separate mechanism, deliberately untouched
     so that moving it would not risk the pen-food ledger identity for no behaviour change.
@@ -903,7 +991,21 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     >   rate is an opening value rather than a re-minted one, because the quantum never existed
     >   before. It is the one number in the arc with no prior to be neutral against.
     >
-    > #### AND ONE THAT IS **NOT THIS ARC'S DIAL**, recorded because it was measured here
+    > #### AND TWO THAT ARE **NOT THIS ARC'S DIALS**, recorded because they were measured here
+    >
+    > - **`husbandry_regrowth_cap` SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.** The cap
+    >   is `1.0` and `pen_gain` is `4.0`, so a species whose wild `r` exceeds `0.25` cannot receive the
+    >   whole pen bonus. Of the seven **pennable** species, three lose some of it: **fowl** and **rabbit**
+    >   forfeit **29%** (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
+    >   **The cap never binds at the pastoral rung** — the fastest pastoral rate on the roster is `0.70`
+    >   — so it is a pen-only effect, which is why it reads as the pen underperforming rather than as a
+    >   cap. **It is also a tuning trap for this section**: raising `pen_gain` moves nothing at all for
+    >   those three, so a spread tuned on the big-game rows would silently fail to reach the small ones.
+    >   The mechanism is correct — a breeding rate of `1.0` per turn is already a doubling every turn,
+    >   and an uncapped `1.4` is a discrete-logistic oscillation — but the roster and the cap were
+    >   authored against different assumptions. It is the **fauna** arc's dial, not this one's, and it
+    >   is the same shape as the `engage_rate` finding below: one global number that bites exactly one
+    >   end of the roster.
     >
     > - **`fauna_config.json`'s `engage_rate` INVERTS THE ECONOMY OF SCALE ON BIG GAME.** Wild Boar
     >   sits at **0.33**, and a party that exists always reaches at least one animal, so **every crew
@@ -954,11 +1056,34 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   `0.5` would give ~53, which reads as *"never lost"* while a rung's benefit is still binary. **It
   becomes much less load-bearing once §4's symmetric partial credit lands**, because a rung sliding
   back turns into a fading payout rather than a status you lose — so it is not worth over-tuning now.
-- **The scale primitives' bounded set.** `Flat` and `SourceLoad` ship. A **plant** measure is §4.11's
-  to add and a **route** wants length × terrain (`infrastructure_cost`), which is §4.13's. Whether
-  those are two more primitives or one parameterisation is a question for the code, not for this doc —
-  but note that after §4.11 **no shipped rung uses `Flat`**, which is the point at which to ask
-  whether the variant still earns its place.
+- **ANSWERED in §4.11 — a RUNG RAISING THE CEILING RAISES THE FLOOR WITH IT, and that was fatal.**
+  The escapement floor is `floor_fraction × K` and a rung multiplies `K`, so the floor climbs while the
+  herd stays the size it was. It is not a slow squeeze: because the build's own eligibility gate read
+  the room above the floor, room reaching zero **closed the gate**, and a tame begun on its floor
+  **never completed at any crew size** — turn 6 at one herder, turn 3 at four, turn 2 at eight, so
+  *building faster starved you sooner*. Five of the eleven tameable species are on the losing side of
+  that race; only the fast breeders clear it comfortably.
+  > **The take is now `max(room above the floor, growth × (1 − floor))`, and the build gate reads the
+  > same expression**, which makes *a legal build target that yields nothing* unrepresentable rather
+  > than merely avoided. **No new dial**: the player's own floor scales it — *you keep the share of the
+  > growth you were willing to take* — so `floor = 1.0` still pays nothing at both seams with no special
+  > case. A flat share would have made *leave the whole herd standing* cull every turn.
+  >
+  > **The escapement predicate fed TWO seams and only one moved.** The lesson keeps the pure room:
+  > `learn_multiplier`'s self-limit is deliberate — a floor just under `1.0` learns at nearly ×2 while
+  > taking almost nothing, and its doc forbids clamping it — so widening that seam would have made a
+  > full floor free ×2 learning for ever. Global across both webs, because a build-scoped rule would be
+  > a rung changing the draw.
+- **ANSWERED in §4.11 — the scale primitives' bounded set is ONE primitive with a per-branch
+  reading.** `SourceLoad` is the only variant: the animal branch reads keeper-loads
+  (`head count / animals_per_herder`), the plant branch tender-loads
+  (`tile forage capacity / capacity_per_tender`). A second variant would have restated the `branch`
+  the rung already declares. **`Flat` is deleted** — nothing declared it once both plant rungs moved,
+  and the rung-monotonicity check skips adjacent rungs that do *not* share a `scaled_by`, so an
+  unused variant was a silent opt-out from that check rather than a harmless spare. **The `scaled_by`
+  key stays** for §4.13's `length × terrain` (`infrastructure_cost`), which is the one remaining
+  candidate and is genuinely a different shape: it reads the improvement's own geometry rather than
+  the source it sits on.
 - **Whether the two keeping pools should split further.** Agriculture and husbandry split because the
   webs do. A finer split — a herd keeper's kit versus a field tender's — is only meaningful once a kit
   declares a maintenance contribution, which none does today, so splitting now would invent a

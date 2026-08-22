@@ -433,9 +433,11 @@ const KNOWLEDGE_TRACK_FODDERING := "foddering"
 # food-module tile; animals eat grass and browse off nearly every land tile. Your best farm is
 # usually not your best pasture.
 #
-# Each is rendered ONLY where that web has a stock at all — `patch_carrying_capacity > 0` /
+# Each is rendered ONLY where that web has a stock at all — `DetailFormat.patch_capacity > 0` /
 # `graze_capacity > 0` — so a glacier prints no Grazing row and a moduleless tile no Foraging row,
-# never a "0 / 0" that would read as a starved stock rather than an absent one.
+# never a "0 / 0" that would read as a starved stock rather than an absent one. The forage side asks
+# a HELPER rather than a key because a remembered hex states the tile's ground `K` while a visible one
+# states the patch's boosted ceiling (`MapView.FOW_DISCOVERED_HIDDEN_KEYS` header).
 const FORAGING_KEY := "Foraging"
 
 const GRAZING_KEY := "Grazing"
@@ -511,26 +513,22 @@ const TAKE_CHIP_SEPARATION := 4
 const TAKE_ROW_LABEL := "Carry home"
 const TAKE_ROW_LABEL_SINGLE := "Crop"
 
-# ---- THE CONSEQUENCE LINE — one sentence under the row, and it differs by VERB -------------------
+# ---- THE CONSEQUENCE LINE — CULTIVATE ONLY, and it is the naming that earns it ------------------
 #
-# The row states what is ticked; this states what that COSTS. Foraging and cultivating do opposite
-# things to the plants nobody picked: a gatherer leaves them standing, a cultivator weeds them out. The
-# cultivate-with-nothing-picked line names the crop the sim would settle on, because silence there is
-# the game choosing for the player without saying so.
-const TAKE_NOTE_FORAGE_ALL := "The whole basket comes home."
-const TAKE_NOTE_FORAGE_NARROWED := "Everything else is left standing."
+# A cultivate commits the ground to ONE crop, and with nothing picked the sim settles that crop
+# itself. The default line NAMES it, because silence there is the game choosing for the player
+# without saying so; the narrowed line says what committing costs the rest of the stand.
+#
+# **THE FORAGE SIDE HAS NO LINE AT ALL, and the three sentences it had are retired.** Two described
+# the selection the chips directly above were already showing — *"The whole basket comes home."* /
+# *"Everything else is left standing."* — which is the row restated in prose. The third spoke the
+# refusal when the last remaining plant was unticked, and it went for the same reason: a player finds
+# out that the last chip will not turn off by pressing it, and a sentence is more verbosity than the
+# fact is worth. **The refusal itself is untouched** — `ComposeState.toggle_forage_take_species`
+# still declines the edit and the chip still does not move. The click is a silent no-op by intent,
+# and the chips are NOT greyed to signal it.
 const TAKE_NOTE_CULTIVATE_NARROWED_FORMAT := "%s weeds the rest out of the ground."
 const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground would be committed to %s."
-
-# **THE REFUSAL, AND IT TAKES THE CONSEQUENCE LINE'S OWN SLOT.** Unticking the last remaining plant is
-# refused: a crew that carries nothing home says exactly what assigning zero gatherers already says, so
-# it is a useless state rather than a meaningful one. **A control that refuses without explaining is
-# worse than one that allows the mistake**, so the refusal SPEAKS — it replaces the line that would
-# otherwise say what the selection costs, because in that moment what the player needs is why their
-# click did nothing. It names the equivalent act rather than merely forbidding, the same
-# what's-missing-plus-the-remedy shape every gate reason on this sheet takes.
-const TAKE_NOTE_FORAGE_LAST_PLANT := \
-	"A gather must carry something home — set the gatherers to none instead."
 
 # **THE NUMBERS FOR A NARROWED CREW ARE COMPOSED FROM THE WIRE'S PER-SPECIES RATES.**
 # `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet once sat still

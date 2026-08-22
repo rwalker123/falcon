@@ -194,6 +194,29 @@ pub struct FloraDef {
     /// How far up the plant ladder this species climbs — see [`CultivationCeiling`].
     #[serde(default)]
     pub cultivation_ceiling: CultivationCeiling,
+    /// **Does this species stand in the soil a crew tending or sowing this tile is actually
+    /// working?** `true` for everything rooted in ground — the default, and every row but three.
+    ///
+    /// **It answers a different question from [`CultivationCeiling`], which is why it is its own
+    /// field.** The ceiling says *how far up the ladder you can take this plant*; this says *whether
+    /// working the ground can take the plant away*. Ten shipped rows are `Wild`, and they split
+    /// cleanly on this second question: you genuinely can clear oak mast, pine nut, mesquite,
+    /// cloudberry, rock tripe and arctic greens off ground you are tending, so gating on the ceiling
+    /// would shield those six too and quietly weaken every Cultivate on woodland and scrub. Kelp,
+    /// shellfish and river fish are the ones the ceiling cannot speak for: they are not growing in
+    /// the soil at all, and no amount of weeding a riverbank thins the fish in the channel.
+    ///
+    /// **The two reweight seams both honour it** (`crate::forage`): weeding takes share only from
+    /// members standing in the worked ground and, if those cannot cover the gain, the favored share
+    /// rises by only what was there to take; a Field's crop takes the **remainder** left by the
+    /// members that stand outside it, not the whole basket. Without this, a Sow on a navigable hex
+    /// deleted a river's whole fishery outright.
+    ///
+    /// A species that stands outside the worked ground can never be *committed* to — a crew cannot
+    /// favor what it cannot clear — which [`FloraConfig::validate`] enforces at load rather than
+    /// leaving to a runtime surprise.
+    #[serde(default = "default_stands_in_worked_ground")]
+    pub stands_in_worked_ground: bool,
     /// **Biome → relative affinity WEIGHT, not a capacity.** A weight is meaningful only against the
     /// other weights on the *same* biome: the engine normalizes them into the shares
     /// [`FloraConfig::composition`] publishes, so the only thing an edit here can do is move share
@@ -259,6 +282,15 @@ fn default_realized_species_min() -> usize {
 }
 fn default_realized_species_max() -> usize {
     DEFAULT_REALIZED_SPECIES_MAX
+}
+
+/// **A plant is in the ground unless the row says otherwise** — the default for
+/// [`FloraDef::stands_in_worked_ground`], so every row that omits it keeps the pre-guard behaviour
+/// (weedable, and displaced by a Field) byte for byte. Only the handful of members that are not
+/// growing in soil at all state the exception.
+const DEFAULT_STANDS_IN_WORKED_GROUND: bool = true;
+fn default_stands_in_worked_ground() -> bool {
+    DEFAULT_STANDS_IN_WORKED_GROUND
 }
 
 /// A fixed salt so a tile's realization draw is decorrelated from every other per-tile hash keyed on
@@ -590,6 +622,21 @@ impl FloraConfig {
                 });
             }
 
+            // **A CREW CANNOT FAVOR WHAT IT CANNOT CLEAR.** Committing a patch to a species means
+            // weeding the rest of the basket toward it (rung 2) or sowing over the clearable
+            // remainder (rung 3) — both of which presuppose the crop itself stands in the ground
+            // being worked. A row that is cultivable *and* stands outside the worked ground is
+            // therefore incoherent rather than merely odd, and it would surface as a favored share
+            // that can never be raised. The shipped roster satisfies this by construction (all
+            // three protected rows are `wild`, which cannot be committed to at all), so this is a
+            // load-time rejection rather than a runtime branch nothing exercises.
+            if !def.stands_in_worked_ground && def.cultivation_ceiling.allows_cultivate() {
+                return Err(FloraConfigError::CultivableOutsideWorkedGround {
+                    species: key.clone(),
+                    ceiling: def.cultivation_ceiling,
+                });
+            }
+
             // At `r = 0` the stand's MSY is zero forever: every rung that reads this ecology pays
             // nothing and the species is a dead resource (the `validate_ecology` argument).
             if !def.regrowth_rate.is_finite() || def.regrowth_rate <= 0.0 {
@@ -686,6 +733,22 @@ impl FloraConfig {
             )?;
         }
         Ok(())
+    }
+
+    /// **Can working this tile's ground clear this species out of the basket?** — the roster lookup
+    /// behind both reweight seams (`crate::forage::patch_composition`). See
+    /// [`FloraDef::stands_in_worked_ground`] for what the property means and why it is not the
+    /// cultivation ceiling.
+    ///
+    /// **A species the roster does not name reads `true`.** That is the same answer
+    /// `crate::forage::basket_rate` and `materials_for` give an unknown key — the pre-guard
+    /// behaviour — so a synthetic fixture species weeds exactly as it did before this existed. The
+    /// protection is a stated exception, never an inference from absence.
+    pub fn stands_in_worked_ground(&self, species: &str) -> bool {
+        self.species
+            .get(species)
+            .map(|def| def.stands_in_worked_ground)
+            .unwrap_or(DEFAULT_STANDS_IN_WORKED_GROUND)
     }
 
     /// **The material rows a species gives**, by config key — the plant twin of
@@ -842,6 +905,15 @@ pub enum FloraConfigError {
          must satisfy 1 <= min <= max"
     )]
     InvalidRealizedSpeciesRange { min: usize, max: usize },
+    #[error(
+        "invalid flora config: species `{species}` does not stand in the worked ground yet carries \
+         cultivation_ceiling `{}` — a crew cannot favor a crop it cannot clear the ground for",
+        ceiling.as_str()
+    )]
+    CultivableOutsideWorkedGround {
+        species: String,
+        ceiling: CultivationCeiling,
+    },
 }
 
 impl ConfigLoadError for FloraConfigError {
@@ -1048,6 +1120,87 @@ mod tests {
         let config = FloraConfig::from_json_str(&one_species_json(VALID_BODY))
             .expect("the fixture the rejection tests mutate must itself be valid");
         assert_eq!(config.composition(TerrainType::AlluvialPlain).len(), 1);
+    }
+
+    /// **A crew cannot favor a crop it cannot clear the ground for.** The `VALID_BODY` probe is
+    /// `tended`-ceiling, so marking it as standing outside the worked ground makes it a species the
+    /// player could commit a `Cultivate` to and then never weed toward — the incoherent pair
+    /// [`FloraConfig::validate`] exists to catch at load rather than at play.
+    #[test]
+    fn validate_rejects_a_favored_species_that_stands_outside_the_worked_ground() {
+        let body = VALID_BODY.replace(
+            "\"cultivation_ceiling\": \"tended\"",
+            "\"cultivation_ceiling\": \"tended\", \"stands_in_worked_ground\": false",
+        );
+        assert!(matches!(
+            FloraConfig::from_json_str(&one_species_json(&body)),
+            Err(FloraConfigError::CultivableOutsideWorkedGround {
+                ceiling: CultivationCeiling::Tended,
+                ..
+            })
+        ));
+    }
+
+    /// The same row at `wild` is **accepted** — the shipped shape of all three protected species.
+    /// Without this the rejection above would be indistinguishable from a blanket ban on the flag.
+    #[test]
+    fn a_wild_ceiling_species_may_stand_outside_the_worked_ground() {
+        let body = VALID_BODY.replace(
+            "\"cultivation_ceiling\": \"tended\"",
+            "\"cultivation_ceiling\": \"wild\", \"stands_in_worked_ground\": false",
+        );
+        let config = FloraConfig::from_json_str(&one_species_json(&body))
+            .expect("a gather-only species outside the worked ground is a coherent row");
+        assert!(!config.stands_in_worked_ground("probe"));
+    }
+
+    /// **THE FISHERIES ARE MARKED AND THE CLEARABLE GATHERS ARE NOT** — the split the flag exists
+    /// to make, asserted against the shipped roster rather than against a fixture, because the six
+    /// `wild`-ceiling rows on the clearable side are exactly what a ceiling-based guard would have
+    /// shielded by mistake.
+    #[test]
+    fn only_the_fisheries_stand_outside_the_worked_ground() {
+        let config = FloraConfig::builtin();
+        let outside: Vec<&str> = {
+            let mut keys: Vec<&str> = config
+                .species
+                .iter()
+                .filter(|(_, def)| !def.stands_in_worked_ground)
+                .map(|(key, _)| key.as_str())
+                .collect();
+            keys.sort_unstable();
+            keys
+        };
+        assert_eq!(outside, vec!["kelp", "river_fish", "shellfish_beds"]);
+        // The six gather-only rows a crew genuinely *can* clear off ground it is tending. Each is
+        // `wild`-ceiling, so gating the reweights on the ceiling would have protected all of them.
+        for key in [
+            "oak_mast",
+            "pine_nut",
+            "cloudberry",
+            "mesquite",
+            "rock_tripe",
+            "arctic_greens",
+        ] {
+            assert_eq!(
+                config.species[key].cultivation_ceiling,
+                CultivationCeiling::Wild,
+                "{key} is the gather-only case the ceiling and the flag disagree about"
+            );
+            assert!(
+                config.stands_in_worked_ground(key),
+                "{key} grows in soil — tending the ground genuinely clears it"
+            );
+        }
+        // Samphire is a salt-marsh plant rooted in ground, unlike the mussels beside it.
+        assert!(config.stands_in_worked_ground("sea_kale"));
+    }
+
+    /// A species the roster does not name reads as clearable — the pre-guard behaviour, so a
+    /// synthetic fixture species weeds exactly as it always did.
+    #[test]
+    fn an_unknown_species_stands_in_the_worked_ground() {
+        assert!(FloraConfig::builtin().stands_in_worked_ground("no_such_plant"));
     }
 
     #[test]

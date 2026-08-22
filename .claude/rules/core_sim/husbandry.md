@@ -12,6 +12,99 @@ paths:
 
 # Husbandry — the yield ladder, the `Tame` verb, Corral
 
+## ⛔ THE ANIMAL WEB IS ONE POSITION TOO — read this before any `domestication_progress` reference below
+
+**A herd has ONE number: `Herd::ladder_position`, how far up the animal branch it has been worked, in
+cumulative work units** — the exact twin of `ForagePatch::ladder_position` (`cultivation.md` → "THE
+PLANT WEB IS ONE POSITION"; `docs/plan_standing_upkeep.md` §2.8, landed for plants in §4.10 and for
+animals in §4.11). `domestication_progress` / `domestication_cost` and `corral_progress` /
+`corral_cost` — **four fields, two unconnected meters** — are gone. Prose below that names them is
+describing the retired shape; the seam it points at is `fauna::rung_work_done`, the position clamped
+into a rung's own span, which is what the wire's `domestication` and `corralProgress` meters are still
+published from (**the raw meter fraction** — `partial_credit` governs what a half-built pen is *worth*,
+never what its progress bar reads).
+
+- **`Herd::standing` is derived and re-stamped on every write**, and `set_ladder_position` is the only
+  mutator, so the pair cannot drift. `is_domesticated()` and `is_corralled()` keep their signatures and
+  their call sites.
+- **THE PAYOUTS AND THE COST NOW INTERPOLATE, and that is the whole of §4.11's animal half.**
+  `herd_density_gain` (the `K` multiplier) and `herd_ecology`'s `regrowth_rate` climb continuously with
+  the position, as does `herd_upkeep_demand`. **Before this they were step functions on
+  `is_domesticated()`** — a completion predicate — so a herd paid the *whole* pastoral keeping bill from
+  the first turn of work and received *none* of the benefit until the last: 100% of the cost on day one,
+  0% of the payout until day N, the §2.8 asymmetry inverted.
+- **`herd_keeping_meter` IS RETIRED** (gravestone at its old site). `herd_claims_keeping` answers *does
+  this source claim at all*, and `herd_keeping_rung` reads the standing. The demand takes **no verb**,
+  exactly as `patch_upkeep_demand` stopped taking one — there is no step left for the
+  Population→Logistics carry to straddle. The verb survives only on the *claim*, which is the one-turn
+  carry.
+- **`Herd::upkeep_demanded` is the stamped BILL**, the animal twin of `ForagePatch::upkeep_demanded` and
+  present for the identical reason: an interpolated demand moves *within* the turn, so a fully-staffed
+  keeping would otherwise read permanently short. `herd_keeping_basis` is its one reader.
+- **THE PEN STILL STEPS, and it does so for free.** `animal:pen` declares `partial_credit:
+  on_completion`, and `RungStanding::at` already zeroes `credit` for such a rung — so a herd raising a
+  fence interpolates between wild and *pastoral* and reaches the pen's rate only when the fence closes.
+  No call site tests for the pen. Half a fence is no fence; that is the deliberate difference from the
+  Field, where half a sown field genuinely has half a crop in the ground.
+- **⛔ A PEN HAS ITS OWN CREW CURVE, and it is not the stalking one.** `fauna::hunt_crew_take_curve`
+  branches on `is_corralled()`. A corralled herd is resolved in `advance_labor_allocation`'s own tend
+  branch, which `continue`s before `hunt_take`: **no engagement, no retreat, no fight.** What bounds a
+  pen instead is the room above the floor (crew-independent), the crew's **husbandry** haul tier, and
+  `herd_engage_rate × workers` (the species rate through `husbandry.pen_engage_gain`). That is monotone
+  in the crew and plateaus, so *"would another pair of hands buy me more"* has a real answer for a pen
+  — a different curve, not the absence of one. `low == likely == high` on a pen row, because a
+  slaughter has no fight to be uncertain about.
+  > **THE BRANCH IS AT THE ONE PRODUCER, so both transports inherit it** — the snapshot's
+  > `huntUsefulWorkers` and the compose sheet's query rows. It was briefly the *client* deciding when
+  > to disbelieve the sim (gating the field on an engagement-stage test of its own), which is the
+  > shape this arc exists to remove: a number that does not apply must not be published and then
+  > guarded downstream. **`0` means "no crew is useful here" on every hunt row and never "this row has
+  > no such answer"** — the pen branch is why that collapse does not exist.
+  >
+  > Measured on a bare-handed band against a corralled Wild Aurochs: the stalking curve reads **0**
+  > and the pen's own ceiling is **20** of a 24-hand pool. The guard's liveness assertion is what
+  > earns that test — with the branch removed the whole socket curve is zeroes, so
+  > `plateau == published == 0` and the equality **alone would have passed**.
+- **⛔ THERE ARE TWO KEEPER COUNTS ON THE ANIMAL WEB, and the wire keeps them apart.** They answer
+  different questions and one of them must never interpolate:
+  - **`fauna::herd_upkeep_workers_needed`** — *how many hands does this herd's KEEPING BILL take*, =
+    `ceil(herd_keeping_basis / PER_WORKER_OUTPUT)`. It **does** slide with the ladder position, because
+    the bill does. It is what `upkeepWorkersNeeded` publishes and what the panel's keeper figure prints.
+    The plant twin is `forage::patch_upkeep_workers_needed`; the identity is stated on the wire and the
+    client is told to consume it **without arithmetic**, so a producer that lands between the two breaks
+    a published contract rather than merely a number.
+  - **`fauna::herd_herders_needed`** — *how many keepers does a herd of this species and this size want*,
+    from head count over `animals_per_herder`. It is **not** a function of ladder position and must not
+    become one. Three things pin that: `would_be_herders_needed` has to quote a crew at position **zero**
+    (an interpolated answer there is `0`, the startup-lag bug it was written to close);
+    `stabilize_herders_needed`'s hysteresis damps a **head count**, and a term also sliding with a build
+    meter would be a second undamped flicker source in the same field; and the client's preview harnesses
+    pin `herdersNeededIfManaged == herdersNeeded` on every managed herd, which interpolation breaks on
+    every herd mid-`Tame`.
+
+  > **One function used to answer both**, and §4.11 made that visible: once the demand interpolated and
+  > the crew count did not, the herd card told the player to staff **2** keepers against a bill **1**
+  > covered, at every position from 10% to 90% up the rung. The fix was to **separate them**, not to make
+  > one impersonate the other — collapsing two real questions to satisfy an identity would have traded a
+  > wrong number for a wrong model. **Every client reader of `herdersNeeded` is a boolean gate**
+  > (`> 0` ⇒ *this herd is managed and owes keepers*); the count the panel prints comes from
+  > `upkeepWorkersNeeded`, so the card corrected itself with no GDScript change.
+- **The ecology's PHASE BANDS deliberately do not interpolate.** `r` is a payout and slides;
+  `collapse_fraction` / `stressed_fraction` / `extinction_floor` are the classifier's cut points and are
+  taken from the rung the herd **holds** — blending two definitions of *Collapsing* would invent a third.
+
+> **⛔ AND THE MEASUREMENT THAT CAME OUT OF IT, because it is the reason the escapement floor is being
+> changed.** The floor is `floor_fraction × K` and `K` is the density-boosted ceiling, so raising a
+> rung raises the floor while the herd stays the same size. Measured on aurochs starting **exactly on**
+> its floor, through a full `Tame`: the room above the floor reaches zero at turn **6** with one herder,
+> turn **3** with four and turn **2** with eight — *the faster you build, the sooner you starve* — and
+> because `eligible` reads that same room, **the tame then never completes at any crew size**. It is the
+> `-4` escapement stall reached by the floor climbing rather than by over-hunting. Five of the eleven
+> tameable species sit on the losing side of that race (aurochs, marsh grazer, reindeer, steppe runner,
+> wild horse); only the fast breeders clear it comfortably. Interpolating turned the cliff into a slide
+> and did not remove it.
+
+
 ## The husbandry yield ladder — every rung pays MSY
 
 Authoritative design: `docs/plan_corral_managed_population.md`. **Management buys a *growth rate*, not
@@ -96,6 +189,18 @@ invariant.
   inversion (pastoral `r` = `wild_r × 2.0 > wild_r` for every species). `fauna::herd_ecology` folds the per-species
   rate in; `pen_ecology_for` / `pastoral_ecology_for` are the seams, `managed_regrowth_rate` the `wild_r ×
   gain → capped` map.
+  > **THE CAP IS A PEN-ONLY EFFECT, AND IT SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.**
+  > Any species whose wild `r` exceeds `cap / pen_gain` = **0.25** cannot receive the whole pen bonus.
+  > Of the seven **pennable** species, three lose some of it: **fowl** and **rabbit** forfeit **29%**
+  > (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
+  > `forest_grouse` and `river_fish` are also cap-bound but are `wild`-ceiling, so nothing can pen them
+  > and the loss is unreachable. **The cap never binds at PASTORAL** — the fastest pastoral rate on the
+  > roster is `0.70` — which is why the effect reads in play as the pen underperforming rather than as a
+  > clamp. **It is also a retune trap**: raising `pen_gain` moves those three species not at all, so a
+  > spread tuned on the big-game rows would silently fail to reach the small ones. The mechanism is
+  > right — `r = 1.0` already doubles a herd every turn and an uncapped `1.4` is a discrete-logistic
+  > oscillation — but the roster and the cap were authored against different assumptions. Recorded in
+  > `docs/plan_standing_upkeep.md` §4.14 as a dial that arc measured but does not own.
 - **A penned herd's `K` is its FENCED FOOTPRINT's graze flow** (`hex_range_tiles(corralled_at,
   pen_radius)`), recomputed each turn — penned herds are no longer frozen and `pen.capacity_fraction` /
   `pen_capacity` are **deleted** (a penned herd's `K` is just `herd.carrying_capacity`, so
@@ -137,11 +242,17 @@ invariant.
   roaming and nothing about them has changed. A half-sown Field genuinely has half a crop in the
   ground, which is why `plant:field` is `continuous`; the two are different facts, not an
   inconsistency.
-- **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). `herd_keeping_meter` billed the
-  **pen** rung's upkeep from the first fencing work banked, while every benefit above waited for the
-  fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and it
-  was in the shipped game. The bill is the **pastoral** rate until `is_corralled()`, then the pen's:
-  cost and benefit move together or not at all.
+- **AND SO DOES THE BILL** (`docs/plan_standing_upkeep.md` §2.8). The retired `herd_keeping_meter`
+  billed the **pen** rung's upkeep from the first fencing work banked, while every benefit above waited
+  for the fence — a herd paying to keep a pen that did not exist. That is the asymmetry §2.8 forbids and
+  it was in the shipped game.
+  > **§4.11 CLOSED THE SECOND HALF OF THE SAME ASYMMETRY, on the rung below.** Fixing the pen left
+  > `pastoral` still stepping: `owner` is set by the **first** `Tame` accrual, so a herd owed the whole
+  > pastoral rate from turn one while `is_domesticated()` — a completion predicate — withheld every
+  > payout until the last. `herd_upkeep_demand` now interpolates on the position like everything else,
+  > so a herd a tenth of the way up owes a tenth. **The pen's step survives on its own merits**, through
+  > `partial_credit: on_completion` rather than through a hand-written predicate: cost and benefit still
+  > move together, and at the fence they both move at once.
 - **The pastoral rung is worked, so it cannot be double-paid** (slice 3b). It *used* to pay its owner
   passively, and `advance_husbandry` had to **skip** that payment for any herd a labor assignment
   worked last turn (a `Herd::worked_this_turn` flag) — because without the skip a Red Deer under
@@ -286,8 +397,10 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 > `upkeepShortfall` stays non-zero throughout and `neglectGraceRemaining` reads `0` from the first
 > turn. A surface that renders the demand without one of those two is reporting a recovery.
 >
-> **The plant rungs cannot do this** — both declare `scaled_by: flat`, so a patch's demand is the
-> ladder's own number whatever state the ground is in.
+> **The plant rungs cannot do this even though they are now scaled too.** Both declare
+> `scaled_by: source_load`, but the plant load reads the **tile's** forage capacity — terrain, which
+> no amount of neglect moves — where the herd load reads the flock's live head count. A patch's bill
+> is constant for the ground it stands on; a herd's falls as the herd dies.
 
 ### The shed waits out a NEGLECT GRACE, and the notice does not
 
@@ -296,6 +409,26 @@ it was met — and by a herd not being managed at all, since a wild herd is nobo
 **Animals leave only while that counter exceeds the herd's rung's `upkeep.grace_turns`**
 (`RungDef::upkeep_grace_turns`), resolved through **`fauna::herd_keeping_rung`**: `animal:pen` once
 there is any pen progress, `animal:pastoral` for any other managed herd.
+
+> #### ⛔ THE GRACE AND THE PRESSURE ANSWER TO **ONE** PREDICATE, `fauna::herd_is_neglected`
+>
+> They did not, and the divergence was a herd-killer. `neglect_turns` rose only on
+> `overage_last_turn.is_some()`, which `uncontained_overage` gates at **one whole animal**;
+> `neglect_pressure` rose on any `shortfall_fraction > 0`, fell only on a turn the bill was met, and
+> had **no ceiling** — while being the exponent in `rate × (1 + escape_acceleration)^pressure`.
+>
+> **The failure is silent for as long as you like and then total.** A 3-head herd kept at 90%
+> staffing has an overage of `0.3`, under the whole-animal gate, so `neglect_turns` resets every turn
+> and nothing ever sheds — while pressure climbs `+0.1` a turn for ever. Three hundred such turns put
+> it at `30`; the turn the herd breeds past the gate, the first shed fires at a rate clamped to the
+> whole herd. **A herd the player kept 90% staffed, and that was never once under-contained, is gone
+> in one turn.**
+>
+> **The fix is the shared predicate, and deliberately NOT a cap.** Both terms now ask
+> `herd_is_neglected`, so pressure can only rise on a turn the grace counter also rises and the same
+> reset bounds both. A ceiling on top would be a second mechanism guarding a case the first one
+> already closes — and it would leave the two definitions in place to drift again.
+> `ninety_percent_keeping_never_frays_a_herd_below_the_whole_animal_gate` is the pin.
 
 - **THE SHED IS CONTINUOUS IN THE SHORTFALL.** `uncontained_overage` is the unmet demand converted
   back into animals (`shortfall_in_loads × animals_per_herder`), which is the same number the retired

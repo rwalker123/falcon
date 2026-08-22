@@ -532,7 +532,7 @@ pub fn damage_absorbed(damage: f32, profile: &CombatStats, standing: f32) -> f32
         .min(standing.max(0.0) * profile.durability.max(DURABILITY_EPS))
 }
 
-/// **One blow banked** — [`DamageLedger::strike_blow`]'s pair of answers.
+/// **One blow banked** — [`DamageLedger::strike_blow`]'s three answers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StruckBlow {
     /// Whole units this blow finished, the remainder kept on the ledger.
@@ -540,6 +540,22 @@ pub struct StruckBlow {
     /// How much of the blow the standing bodies could take ([`damage_absorbed`]) — what a wear
     /// charge is scaled by.
     pub absorbed: f32,
+    /// **This blow in whole-unit terms, UN-floored and ledger-free** — `absorbed / durability`.
+    ///
+    /// It is [`Self::units_down`]'s **rate**, and the two answer different questions. `units_down`
+    /// is *bodies on the ground this turn*, which is the quantity a take spends and is `0` for every
+    /// turn a sub-threshold party spends wearing a big animal down. This is the number that turn
+    /// *contributed*, so a party repeating the same blow finishes bodies at exactly this rate — the
+    /// long-run average of `units_down` under a stationary fight, since the ledger keeps every
+    /// remainder rather than discarding it.
+    ///
+    /// **`pending` is deliberately not in it.** Banked damage is a stock the fight has already been
+    /// credited for; folding it in would double-count it on the turn it lands and make the rate a
+    /// function of how long the party has been at it rather than of how hard it hits.
+    ///
+    /// A forecast that must answer *"how many a turn"* reads this; a take that must move whole
+    /// animals reads `units_down`.
+    pub expected_units_down: f32,
 }
 
 /// The relative slop [`DamageLedger::strike`] allows when asking whether banked damage has completed
@@ -651,6 +667,9 @@ impl DamageLedger {
         StruckBlow {
             units_down: down,
             absorbed,
+            // The same quotient `down` floors, reported before the floor — see the field's doc for
+            // why `pending` is not in it.
+            expected_units_down: absorbed / durability,
         }
     }
 

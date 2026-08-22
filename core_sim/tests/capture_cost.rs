@@ -20,7 +20,7 @@
 
 use std::time::Duration;
 
-use core_sim::{build_headless_app, run_turn, turn_profile, HerdRegistry, SimulationConfig};
+use core_sim::{build_test_app, run_turn, turn_profile, HerdRegistry, SimulationConfig};
 
 /// Captures timed per run. Enough to see past a single unlucky turn without making the harness
 /// tedious to sit through in debug.
@@ -50,7 +50,7 @@ fn mean(samples: &[Duration]) -> Duration {
 #[test]
 #[ignore = "measurement harness — run with --ignored --nocapture"]
 fn measure_snapshot_capture() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // **Fully revealed**, because fog is what decides how many herds reach the capture at all: the
     // herd list is filtered against the viewer's visibility, so a fogged map measures a fraction of
     // the work and flatters whatever is being measured. This is the worst case, which is the only

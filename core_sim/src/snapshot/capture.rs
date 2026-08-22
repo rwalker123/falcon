@@ -2222,8 +2222,18 @@ pub fn capture_snapshot(
     let grid = config.grid_size;
     let wrap_horizontal = config.map_topology.wrap_horizontal;
     let mut sow_site_refusals: HashMap<UVec2, SiteRefusal> = HashMap::new();
+    // **The size of the land under each patch** — the tile's own forage `K`, through the one
+    // `forage::tile_forage_capacity` seam. Every plant upkeep figure the patch row publishes is
+    // quoted per **tender-load** of it (`forage::patch_tender_loads`), the plant twin of a herd's
+    // keeper-load, so the row needs the ground and not just the patch. Collected in this sweep for
+    // the same reason `sow_site_refusals` is: the tiles are here and the readout is not.
+    let mut tile_capacities: HashMap<UVec2, f32> = HashMap::new();
     let mut flora_sweep = flora_quotes.sweep(&flora_config, &labor_config, config.map_seed, grid);
     for tile in patch_tiles {
+        tile_capacities.insert(
+            tile.position,
+            crate::forage::tile_forage_capacity(&labor_config.forage, tile),
+        );
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
@@ -2484,6 +2494,15 @@ pub fn capture_snapshot(
                     expedition_delivery,
                     equipment,
                     kit_levers: &kit_levers,
+                    // The take model's roster and the fight's dials, for each hunt row's
+                    // `hunt_useful_workers`.
+                    hunt_crew_levers: &crate::snapshot::population::HuntCrewLevers {
+                        fauna: &fauna_config,
+                        combat: &combat_config,
+                        // The bare carry rate a **corralled** row's collection curve is resolved
+                        // against; a stalked row's kill curve never reads it.
+                        baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+                    },
                     bench,
                     // **This band's faction decides which crafts are known**, so the memo is keyed
                     // per faction and resolved lazily — one entry per faction that owns a band,
@@ -2880,6 +2899,9 @@ pub fn capture_snapshot(
         ),
         grid_size: config.grid_size,
         wrap_horizontal: config.map_topology.wrap_horizontal,
+        // **The graze layer the destination-capacity quote is struck over** — the same registry the
+        // live `K` is summed from, so the two are one seam at two standings.
+        graze: &graze_registry,
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
@@ -2932,6 +2954,7 @@ pub fn capture_snapshot(
         &ladder_config,
         &seasonal_weights,
         &sow_site_refusals,
+        &tile_capacities,
         &flora_quotes,
     );
     drop(forage_patches_scope);

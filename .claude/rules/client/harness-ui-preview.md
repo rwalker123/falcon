@@ -772,6 +772,20 @@ dropping `path_for`'s loaded check fails the two degradation claims **and three 
 `_assert_food_layer_rows`' own** — every species then resolving to a nonexistent flora path that
 displaces the role marks, which is exactly what that older group is there to catch.
 
+### ⛔ A PRECONDITION ASSERTED OVER THE FIXTURE'S OWN CONSTANTS IS NOT A PRECONDITION
+
+A claim whose job is *"the sim effect this whole block depends on is still applying"* has to reach the
+**sim's** number. `land_readouts.gd` asserted a Field's boosted ceiling exceeded the ground under it
+as `FIELD_GROUND_CAPACITY * FIELD_CAPACITY_GAIN > FIELD_GROUND_CAPACITY`, where the gain was a
+harness-local `2.53` — that is `x * 2.53 > x`, arithmetic over two numbers the fixture wrote itself,
+and it stays green with `labor_config.json`'s `field_capacity_gain` set to `1.0`, which is precisely
+the day the block goes vacuous. The gain is now read out of `core_sim/src/data/labor_config.json`
+(`forage.cultivation.field_capacity_gain`) as the sim-side twin
+`climbing_to_field_does_not_compound_the_capacity_gain` already did, and **the read itself is a second
+claim** — a config the harness failed to parse must fail loudly rather than fall back to a literal and
+restore the tautology. The general shape is "a dead field cannot diverge": a fixture that supplies
+both sides of its own comparison is measuring the harness.
+
 ### A flora fixture's `species` must be a real `flora_config.json` id
 
 **The KEY is an asset lookup now, and a wrong one fails SILENTLY.** `FloraSprites` composes
@@ -1581,10 +1595,40 @@ fails **thirteen** — every material claim on both quarries, each naming the cr
 quantum pointed at the published `bodyMass` fails **one**, the edible magnitude claim, at
 `0.1365 against 0.2093`.
 
-**A clean run is 348 frames / 1227 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. This
-arc added one frame and twenty-seven claims. The recorded figure before it was 346 / 1177, and the run
-MEASURED 347 / 1200 before a line of it was touched — one frame and twenty-three `PASS`es had
-accumulated un-recorded, which is this line's own instruction being earned yet again.
+**A clean run is 352 frames / 1302 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+recorded figure before this arc was 346 / 1177, the run MEASURED 347 / 1200 before a line of it was
+touched, and 348 / 1227 was recorded mid-arc — un-recorded drift accumulating every time, which is this
+line's own instruction being earned again.
+
+> #### ⛔ AND THE COUNT IS MACHINE-CHECKED NOW, BECAUSE `EXIT=0` WAS NOT ENOUGH
+>
+> **A GDScript `assert` that fails inside a chapter aborts that chapter and the harness still exited
+> `0`.** It was caught only by comparing the `PASS` count against a run from earlier the same session:
+> a stale-closure regression killed `compose_rungs` partway, **67 claims never ran** — the forage-drawer
+> restate, the herd restate and the whole kit/equipment-tier block — and every other gate was green
+> (build, clippy, `decode-guard`, 1799 Rust tests, and this harness's own exit status).
+>
+> **Godot cannot surface the abort**: nothing in the process can read its own stderr, and an aborted
+> coroutine returns exactly as a finished one does. So the harness asserts **its own work** instead —
+> each chapter declares `const EXPECTED_CHECKPOINTS`, and `ui_preview.gd` samples a counter around
+> `chapter.run(self)` and fails the run if the chapter falls short.
+>
+> - **Checkpoints, not assertions** — `_assert_hud` *and* `_save` both count, because `docks_legend`
+>   makes **zero** assertions and renders ten frames; an assertion-only floor would be `0` there and
+>   leave the one chapter an abort truncates entirely unguarded.
+> - **A floor, not an equality** — adding claims must never fail the run; losing them is the failure.
+> - **A chapter that declares nothing FAILS**, which is what makes it un-bypassable: were a missing
+>   const merely unguarded, deleting it would be the silent bypass and every new chapter would start
+>   unguarded.
+> - **The number lives on the chapter**, never in a roster in `ui_preview.gd` — a table of 22 counts in
+>   the harness is exactly the shared-edit surface the chapter split exists to remove. Read through
+>   `get_script_constant_map()`; a `var` is deliberately not accepted, since the run could move it.
+>
+> Falsified twice, disjointly: the real regression restored, and a planted `assert(false)` at the top of
+> `crafting_bench.run()`. Both `EXIT=1`, each naming the chapter and the count it reached.
+>
+> **So `$?` now covers a chapter dying mid-run.** It still does not cover a claim that is *present and
+> wrong* — that is what the sabotage discipline is for.
 
 > **`compose_band_switch_forage` FLAKED ONCE DURING THIS PASS AND PASSED CLEAN ON RE-RUN** — five
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer

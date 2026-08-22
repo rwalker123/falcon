@@ -64,6 +64,10 @@ pub fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // The ladder the herd nouns read — `nouns::most_domesticated_species` ranks a herd by the
+    // fraction of its **own** branch it has climbed, and a branch's rung prices are the ladder's.
+    app.world
+        .insert_resource(core_sim::LadderConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(SedentarizationScore::default());
     app.world
@@ -154,7 +158,7 @@ pub fn domesticate(app: &mut App, faction: FactionId, count: usize) {
         .filter(|herd| herd.can_domesticate())
         .take(count);
     for herd in tameable {
-        herd.tame_outright(faction);
+        herd.tame_outright(faction, &core_sim::LadderConfig::builtin());
     }
 }
 
@@ -201,7 +205,7 @@ fn events_of(app: &App, kind: CommandEventKind) -> Vec<CommandEventEntry> {
 pub fn undomesticate_all(app: &mut App) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     for herd in registry.herds.iter_mut() {
-        herd.domestication_progress = 0.0;
+        herd.set_ladder_position(0.0, &core_sim::LadderConfig::builtin());
         herd.owner = None;
     }
 }

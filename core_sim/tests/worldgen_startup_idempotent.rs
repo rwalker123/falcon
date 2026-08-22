@@ -26,7 +26,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    build_headless_app, spawn_initial_world, FactionInventory, InventoryEntry, PopulationCohort,
+    build_test_app, spawn_initial_world, FactionInventory, InventoryEntry, PopulationCohort,
     SimulationConfig, Tile, TileRegistry,
 };
 
@@ -42,7 +42,7 @@ const MAP_SEED: u64 = 20_260_721;
 
 /// A headless app configured for a small, reproducible generated map.
 fn app_on_test_map() -> bevy::prelude::App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = MAP_SEED;

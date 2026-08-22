@@ -71,6 +71,45 @@ exactly as the upkeep does:
 | `field_capacity_gain` | the one `carrying_capacity` write in `advance_forage_regrowth` | a sown field is planted densely with the competitors pulled out, so it **holds** more standing crop |
 | `field_regrowth_gain` | `patch_ecology`, the seam that already existed for this | you sowed it and you replant it, so it **comes back** faster |
 
+**The capacity gain is also what a Sow ADVERTISES.** `forage::patch_capacity_at` is the one
+expression behind that write, and `patch_destination_capacity` calls it at
+`RungStanding::arrived_at(build_destination)` — so a running Sow publishes the `K` the Field will
+deliver (`buildDestinationCapacity`), struck through the same seam rather than a second formula.
+That matters because **the escapement floor is a fraction of `K`**, so a Sow raises the floor under
+the player every turn it runs; without the destination they see the take fall with nothing saying
+where it is heading. `-1` means no build in flight and is deliberately not `0`, since a capacity of
+zero is a real reading on barren ground.
+
+> #### ⛔ THE UPKEEP SCALE READS THE **TILE's** K, NEVER `ForagePatch::carrying_capacity`
+>
+> `forage::patch_tender_loads` takes `forage::tile_forage_capacity` — the land's own K — and never
+> the patch's stored `carrying_capacity`, which is that K **already multiplied** by the interpolated
+> `field_capacity_gain`. The demand interpolates on the *same* position the gain does, so a measure
+> reading the boosted number multiplies the keeping bill by **2.53 on top of** the rate's own climb
+> from 2.0 to 4.0 — a Field landing near **10×** a tended patch's upkeep, compounded out of two terms
+> nobody chose to multiply.
+>
+> **⛔ AND IT IS ONE FUNCTION, `forage::patch_land_capacity`, AT ALL FOUR READINGS.** The quote, the
+> claim gate, the published bill and the rot all ask the land the same question, so they cannot answer
+> it differently. That matters most where the tile is **absent from `TileRegistry`** — the synthetic
+> off-map patch a harness builds. `advance_forage_regrowth` deliberately keeps such a patch's *seeded*
+> capacity (`if let Some(tile)`), and `advance_cultivation` resolved the same absence to
+> `NO_FORAGE_CAPACITY` while its comment claimed it matched — so an off-map patch presented
+> `NO_TENDER_LOAD`, owed nothing, never bled, and **kept a finished Cultivate or Field for ever with
+> nobody on it**. Fixing only the one pass would have been worse than leaving it: the patch would have
+> started bleeding while its claim and its published bill still read zero. All four go through the one
+> seam, and `an_off_map_patch_owes_its_keeping_and_reverts_like_any_other` is the pin.
+>
+> **The separation is the model, not a guard.** The tile's K is the size of the *place* and it is what
+> the rung is billed against; the gain is the rung's *payout*. `labor_config.json` already states the
+> half of it that was written first — **the land owns K and no rung may lower it** (issue #433) — and
+> this is the other half: no rung may be billed for the K it raised.
+>
+> Pinned by `climbing_to_field_does_not_compound_the_capacity_gain`, which asserts the demand is
+> `4.0 × tile K / capacity_per_tender` **and** the precondition that `carrying_capacity` really did
+> rise by the gain — without that second assertion the test passes whenever the gain silently stops
+> applying.
+
 **This is the animal web's shape, which is the argument for it** — a herd already gets a regrowth
 multiplier and a density multiplier on the land's capacity at pastoral and again at pen. Plants were
 the odd web out.
@@ -93,9 +132,14 @@ the odd web out.
 - **A Field now needs HANDS.** It holds far more standing crop, so one gatherer brings home a
   gatherer's load off any rung and realizing rung 3 genuinely takes a crew. That is a real new cost
   and it is intended.
-- **Composition and conversion did not move.** A Field's basket is still 100% its crop and rung 3
-  keeps whatever conversion gain it had. Those are what the tile is *made of* and how well it
-  *converts* — separate from how much it grows.
+- **Composition and conversion BOTH moved, and neither is the capacity story.** A Field's basket is
+  `1.0 − Σ(protected)` for the crop, not a flat 100% — the members that do not stand in the worked
+  ground survive the reweight (see the `stands_in_worked_ground` callout below). And rung 3 carried
+  **no conversion gain at all** until `field_conversion_gain`: `favored_conversion_gain` returned the
+  tended gain at `plant:tended` and the identity everywhere else, so a Field converted each unit of
+  biomass at half what the tended patch beneath it did. Those two are what the tile is *made of* and
+  how well it *converts* — still separate axes from how much it grows, which is what the two gains
+  above buy.
 
 **Retired with the model**: `field_provisions`, `field_fodder`, `field_harvest_production`,
 `field_harvest_biomass`, `field_fodder_per_biomass`, `patch_species_quality`,
@@ -109,8 +153,8 @@ untouched** — the pen is its own slice.
 The **plant analog of animal husbandry** (`docs/plan_intensification.md` §3), evolved past the
 mechanical husbandry transpose into **Rung 1a — the worker-tended, place-local tended patch**, and now
 into an **explicit policy with an investment cost**. A patch carries `ladder_position` (in **work units**, with the tended rung
-complete at the top of its span) + `owner: Option<FactionId>` on `ForagePatch` — where a `Herd` still
-carries the retired two-meter shape (`domestication_progress`/`corral_progress`/`owner`); the checkpoint clones the whole `ForageRegistry`
+complete at the top of its span) + `owner: Option<FactionId>` on `ForagePatch` — and a `Herd` carries
+the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoint clones the whole `ForageRegistry`
 (`SimState::forage`), so both rewind with a rollback. A completed patch is a **tended patch**:
 **worker-tended + place-local + higher-output + feral-if-abandoned**. *Sim-only — the client readout is a follow-up.*
 
@@ -387,10 +431,14 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
     `hasNeglectGrace` / `neglectGraceRemaining` — the **countdown**,
     not the counter (`0` = reverting now; a worked patch reads `grace + 1`, the honest *"walk away and
     you have this long"*), published through the *same* `patch_unwinding_rung` seam the pass bleeds
-    through so the wire cannot count down against a rung the sim is not touching. **That seam is
-    `patch_keeping_meter` asked with no verb now** (`NOTHING_IN_FLIGHT`) — one function, so the claim
-    gate, the demand and the supply cannot drift the way they did when a build's first turn drew a
-    share of zero on a staffed role (`intensification.md` → "The band's demand is the SUM"). The
+    through so the wire cannot count down against a rung the sim is not touching. **That seam is the
+    claim's own question asked with NO VERB** (`NOTHING_IN_FLIGHT`) — the same question
+    `patch_claims_keeping` asks *with* one, so the claim gate and the decay pass cannot drift the way
+    they did when a build's first turn drew a share of zero on a staffed role
+    (`intensification.md` → "The band's demand is the SUM"). The retired `patch_keeping_meter` used
+    to be that shared function; its two jobs are now `patch_claims_keeping` (the gate) and
+    `patch_keeping_basis` (the bill), and what holds *those* together is the **stamp**
+    (`upkeep_demanded`), which every reader takes. The
     decay pass and the wire are byte-identical across that change. `hasNeglectGrace =
     false` = a wild patch with nothing at risk, which is most of them — read the bool first, as with
     `owner`/`hasOwner`.
@@ -475,13 +523,16 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
   is why 25 turns is still the reference reading.
 - **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
-  food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn — a
-  whole number a player staffs exactly, out of the band's `agriculture` pool —
+  food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn
+  **per tender-load**, out of the band's `agriculture` pool — a whole number on the reference tile
+  and only there, since the load scales it with the ground (2.0 on `AlluvialPlain`, 0.718 on
+  `PrairieSteppe`, 2.154 on `RiverDelta`) —
   `upkeep.meter_decay` **`{ per_turn 0.5 }`**, what an *unkept* patch loses per turn (its
   `retain_fraction` companion is **deleted** — see "A COMPLETED RUNG *IS* LOST ON THE FIRST BLEEDING
   TURN AGAIN"),
-  `upkeep.scaled_by` **`flat`** (a patch is one tile — there is no head count on the plant web for a
-  rate to ride), **`upkeep.grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
+  `upkeep.scaled_by` **`source_load`** (× the patch's **tender-load**, `tile forage capacity /
+  capacity_per_tender` — one tile is what the load measures, and the tiles are not the same size),
+  **`upkeep.grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
   turns after the crew stops; **`crew_needed` and `yield_fraction_while_building` are both retired**
   — the builders are the band's own pool and the gatherers beside them are untouched, so neither a
   staffing floor nor a dip has anything left to say), so
@@ -497,8 +548,56 @@ carries the retired two-meter shape (`domestication_progress`/`corral_progress`/
   **favored species' whole yield vector**, #433; the term that makes a 25-turn Cultivate pay back in
   the teens of turns instead of the eighties, and the reason a marginal favorite barely moves the
   number while a dominant one pays twice). Both validated finite and `>= 1.0`.
-  **`field_concentration_gain` is RETIRED** — a Field forces the favored share to 1.0, so there is no
-  gain left to tune. Plus the
+
+  **`field_conversion_gain`** (2.0 — the **rung-3 twin**, the same multiplier on the favored crop's
+  whole yield vector once the patch is a sown Field. It exists because **rung 3 had no conversion
+  gain at all**: `forage::favored_conversion_gain` returned the tended gain at `plant:tended` and the
+  identity at every other rung, Field included, so a Field converted each unit of biomass at *half*
+  what the tended patch beneath it did. Reported from play: a completed tended patch paid 2.00
+  food/turn and the same tile sown to a Field paid 1.33 at the same two tenders — a rung paying
+  **less** than the rung it was built on, because rung 3's own rate (`field_provisions_per_biomass`)
+  retired with the managed-harvest model and nothing replaced it. It ships **equal** to the tended
+  rung's, and that is deliberately the minimum: equality restores the invariant and nothing more.
+  Validated finite and `>= tended_conversion_gain`, which makes **a rung may never pay less per unit
+  than the rung beneath it** a load-time rejection rather than a number someone has to remember —
+  the failure it guards is silent, because the Field's capacity and regrowth gains still read like a
+  better rung right up until you count the food. **PLAYTEST DIAL**, §4.14.)
+  > **⛔ NEITHER REWEIGHT MAY TOUCH A MEMBER THAT IS NOT STANDING IN THE WORKED GROUND.**
+  > `FloraDef::stands_in_worked_ground` (default **true**, `false` on `kelp` / `shellfish_beds` /
+  > `river_fish`) names the physical fact, not the mechanic: *does this member stand in the soil the
+  > crew is turning over.* **Weeding** pays its gain only out of the clearable members —
+  > `target = share + min(asked, Σ clearable)` — so the favoured share rises by what was clearable and
+  > **no further**, rather than reaching into the protected ones for the shortfall. **A Field** gives
+  > the crop `1.0 − Σ(protected)` instead of `1.0`, so a Sow beside a channel publishes **two** entries
+  > where it used to publish one.
+  >
+  > **`cultivation_ceiling` IS NOT THE PREDICATE, and that is the whole reason the field exists.** Ten
+  > of the thirty-three species are `ceiling: wild`, and they split two ways: you genuinely *can* clear
+  > oak mast, pine nut, cloudberry, mesquite, rock tripe and arctic greens off ground you are working —
+  > you simply cannot farm them. Gating on the ceiling would have shielded all six and quietly made a
+  > Cultivate much weaker on woodland and scrub. A test asserts that pair — `ceiling: wild` **and**
+  > standing in worked ground — so the two questions cannot be re-merged. `sea_kale` is the judgement
+  > call and is left **clearable**: samphire is a salt-marsh plant rooted in ground, unlike the mussels
+  > beside it.
+  >
+  > **The remainder cannot go negative, by proof rather than by clamp:** a crop must be clearable to be
+  > committable (a load-time rejection), so the crop's own share is never inside the protected sum.
+  >
+  > **Playtest consequence worth knowing:** a Field beside a channel now pays a little food from the
+  > fishery even when the crop is a zero-provision cash crop. That is correct — the fish were always
+  > there — but it is a visible change on navigable tiles.
+
+  **`capacity_per_tender`** (195.0 — **HOW MUCH STANDING CROP ONE TENDER LOOKS AFTER**, the divisor in
+  `forage::patch_tender_loads` and the plant twin of `fauna_config`'s per-species `animals_per_herder`.
+  **One global ratio, deliberately not one per flora species**: a patch's basket is several species
+  and a Field forces it to one, so a per-crop divisor would swing as a patch climbs the ladder —
+  the same compounding the tile-K rule exists to prevent. 195.0 is the **reference tile's own K**
+  (`AlluvialPlain`), which is what makes the move onto the scale provably pacing-neutral there:
+  a tended patch on that ground still owes exactly 2.0 work/turn and a Field 4.0. Validated finite
+  and `> 0` — a zero divisor is a division by zero and a negative one an inverted load, and both
+  read as live dials. **PLAYTEST DIAL**, and the number moves in `plan_standing_upkeep.md` §4.14.)
+  **`field_concentration_gain` is RETIRED** — a Field's favored share is set by the reweight
+  (`1.0 − Σ(protected)`), not by a gain, so there is no gain left to tune. Plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
   per gathered turn *at the food peak*, ~20 turns to know; the floor scales it; since split into the
   ladder's `learn_rate` 1.0 over a `lesson_costs` entry of 20, which is the same number) and
@@ -599,8 +698,8 @@ whose fresh-water rule rung 1 does not carry.
 Once a faction knows **Seed Selection** (`SEED_SELECTION_DISCOVERY_ID` = 2005 — earned by *working
 tended patches*, slice 4's `plant:tended` `earns_knowledge`; earned then, spent here), a crew working
 a tile with **`Improvement::Sow`** in flight builds a **Field** on it. A Field is not a new entity: it is a
-`ForagePatch` **at rung 3**, carrying its own `field_progress` meter beside `cultivation_progress` —
-exactly as a `Herd` carries `corral_progress` beside `domestication_progress`. There is **no "extend
+`ForagePatch` **at rung 3** — its `ladder_position` carried up into that rung's span, exactly as a
+`Herd`'s position carries up into `animal:pen`'s. There is **no "extend
 the field"**: each tile is its own patch, so you sow another field (the pen extends only because one
 herd has one appetite).
 
@@ -721,7 +820,8 @@ herd has one appetite).
 - **Feral if abandoned — one rule for the whole plant web, and rung 3 goes FIRST.**
   `advance_cultivation` bleeds **one** meter per untended turn, the highest rung that still has
   progress on it, each at its own rung's `upkeep.meter_decay.per_turn` and past its own
-  `upkeep.grace_turns` (`plant:field`: `work_cost` **75**, upkeep demand **4.0**/turn `flat`, rot
+  `upkeep.grace_turns` (`plant:field`: `work_cost` **75**, upkeep demand **4.0**/turn per
+  **tender-load**, rot
   **0.75**/turn held to **0.75** of its cost, grace **1** — a standing crop is the most perishable
   thing on the ladder and wants hands every turn; the 75-unit cost is 25 turns at three hands, sowing
   *placing* a source rather than tidying one).

@@ -36,7 +36,7 @@ use core_sim::{
     FODDERING_DISCOVERY_ID, FOOD,
 };
 
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 /// Turns per run — well past where the fast pen `r` settles.
 const TURNS: u32 = 200;
 /// The tail-window whose spread proves convergence.
@@ -165,8 +165,11 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
         WILD_R,
         PEN_BODY_MASS,
     );
-    herd.tame_outright(FactionId(0));
-    assert!(herd.corral_at(tile), "the fixture species must be pennable");
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
+    assert!(
+        herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
+        "the fixture species must be pennable"
+    );
     registry.herds.push(herd);
     "pen_0".to_string()
 }
@@ -260,6 +263,14 @@ fn run_fodder_logistics(app: &mut App, keeper: Entity, id: &str, hay_to_store: f
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_herd_grazing);
     app.world.run_system_once(advance_graze_regrowth);
+    // **THE KEEPER IS ACTUALLY KEEPING THE HERD.** These fixtures are about grazing and fodder, not
+    // about neglect — the keeper is present, feeding and harvesting every turn — but nothing here
+    // staffs the band's `husbandry` role, so the herd read as *wholly unkept*. That was inert while
+    // the shed was a constant fraction (it balanced against the growth curve and the pen persisted);
+    // with the escape rate now accelerating on `Herd::neglect_pressure`, an unkept pen terminates and
+    // the convergence these tests measure never happens. Stamping the bill is what the fixture always
+    // meant by "the keeper tends it".
+    keep_the_penned_herds(app);
     app.world.run_system_once(advance_husbandry);
 }
 
@@ -644,6 +655,8 @@ fn a_lost_pen_drops_its_hay_delivery_rate() {
     }
     let mut despawned = false;
     for _ in 0..300 {
+        // **DELIBERATELY NOT KEPT** — this test is *about* an untended pen bleeding out, so the
+        // keeping stamp the other drivers in this file apply must not be here.
         app.world.run_system_once(advance_husbandry);
         if app.world.resource::<HerdRegistry>().find(&id).is_none() {
             despawned = true;
@@ -655,4 +668,32 @@ fn a_lost_pen_drops_its_hay_delivery_rate() {
         "an untended pen eventually bleeds out and the empty entity despawns — no mobile herd carries \
          a stale hay rate"
     );
+}
+
+/// **Meet every managed herd's keeping bill for this turn**, as a staffed `husbandry` role would.
+/// Stamped comfortably above the bill because `advance_herds` regrows the herd between this and the
+/// pass that reads it, which raises the keeper load and would otherwise leave it fractionally short.
+fn keep_the_penned_herds(app: &mut App) {
+    const A_FULLY_STAFFED_POOL: f32 = 4.0;
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let bills: Vec<(String, f32)> = app
+        .world
+        .resource::<HerdRegistry>()
+        .entries()
+        .iter()
+        .filter(|herd| herd.owner.is_some())
+        .map(|herd| {
+            (
+                herd.id.clone(),
+                core_sim::herd_upkeep_demand(herd, &fauna, &ladder) * A_FULLY_STAFFED_POOL,
+            )
+        })
+        .collect();
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    for (id, bill) in bills {
+        if let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == id) {
+            herd.upkeep_supplied = bill;
+        }
+    }
 }

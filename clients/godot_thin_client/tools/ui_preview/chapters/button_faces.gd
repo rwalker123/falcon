@@ -9,6 +9,10 @@ extends RefCounted
 ## It runs late — after the event dock — and it is OFFSCREEN: every face renders into a `SubViewport`
 ## and no `_save` is taken, so it adds no frame and the frame set's bit-identity claim is untouched.
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 16
+
 const Q := preload("res://tools/ui_preview/node_query.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
@@ -95,7 +99,7 @@ func _two_line_pill_face(disabled: bool) -> Control:
 	var btn := Button.new()
 	btn.disabled = disabled
 	HudStyle.apply_pill_button(btn)
-	return HudWidgets._crew_target_pill(btn, TWO_LINE_FACE_PROBE_HOLD_CREW,
+	return HudWidgets._crew_target_pill(btn, str(TWO_LINE_FACE_PROBE_HOLD_CREW),
 		HudComposeVocab.CREW_TARGET_HOLD_LABEL,
 		HudStyle.button_font_color(TWO_LINE_FACE_PROBE_VARIANT, disabled))
 

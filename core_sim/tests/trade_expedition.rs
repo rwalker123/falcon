@@ -17,7 +17,7 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, scalar_zero, split_band_from_parent, BandId,
+    build_test_app, run_turn, scalar_from_f32, scalar_zero, split_band_from_parent, BandId,
     BandKey, BandTravel, Expedition, ExpeditionMission, ExpeditionPhase, LaborAllocation,
     LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig, SimulationConfig,
     SnapshotHistory, StartingUnit, Tile, TileRegistry, ViewerFaction, FOOD,
@@ -53,7 +53,7 @@ const FINE_AMOUNT: f32 = 3.0;
 const POOR_AMOUNT: f32 = 2.0;
 
 fn spawn_world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = MAP_SEED;
@@ -627,8 +627,13 @@ fn a_destination_that_vanishes_sends_the_party_home_with_its_cargo() {
         .stores
         .material_total(HIDE)
         .to_f32();
+    // **AT LEAST the shipment, not exactly it.** The claim is that the cargo is not *destroyed*, and
+    // the band's hide ledger is not the shipment's private account: this party hunts its way home,
+    // so anything it brings down on the return leg lands in the same total. An equality here was
+    // asserting "and the band did nothing else for the whole journey", which is not the guard and
+    // broke the moment the take's growth-share backstop made a hunt pay slightly more.
     assert!(
-        (held_after - held_before - (FINE_AMOUNT + POOR_AMOUNT)).abs() < EPSILON,
+        held_after - held_before >= FINE_AMOUNT + POOR_AMOUNT - EPSILON,
         "the undelivered shipment comes home whole rather than being destroyed: \
          {held_before} -> {held_after}"
     );

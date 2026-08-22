@@ -16,6 +16,10 @@ extends RefCounted
 ## It leaves the seam EMPTY and the harness's canned answerer reinstalled, so a chapter appended after
 ## it starts where every other one does.
 
+## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
+## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
+const EXPECTED_CHECKPOINTS := 11
+
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.

@@ -36,10 +36,10 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    split_band_from_parent, BandId, BandTravel, Expedition, ExpeditionMission, ExpeditionPhase,
-    LaborAllocation, LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig,
-    SimulationConfig, SnapshotHistory, StartingUnit, Tile, TileRegistry, FOOD,
+    build_test_app, recapture_snapshot_in_place, run_turn, scalar_from_f32, split_band_from_parent,
+    BandId, BandTravel, Expedition, ExpeditionMission, ExpeditionPhase, LaborAllocation,
+    LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig, SimulationConfig,
+    SnapshotHistory, StartingUnit, Tile, TileRegistry, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -156,7 +156,7 @@ fn entity_for_band(app: &mut bevy::prelude::App, wanted: BandId) -> Option<Entit
 }
 
 fn world() -> bevy::prelude::App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
     app

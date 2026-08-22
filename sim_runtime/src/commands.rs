@@ -412,6 +412,7 @@ pub enum CommandPayload {
 pub enum QueryPayload {
     HuntTripForecast(HuntTripForecastQuery),
     DenialRaidForecast(DenialRaidForecastQuery),
+    HuntCrewTake(HuntCrewTakeQuery),
 }
 
 /// *"What does this party, off this band, carrying this kit, take off this herd at this floor?"*
@@ -450,6 +451,30 @@ pub struct DenialRaidForecastQuery {
     pub max_party_workers: u32,
 }
 
+/// *"How many animals does a **resident** band of each crew size bring down off this herd per turn,
+/// at this floor, carrying this kit?"* — the Assign Herders panel's question.
+///
+/// **It is not the trip sheet's question.** [`HuntTripForecastQuery`] answers one party over a whole
+/// detached expedition and prices it at `combat_config.expedition_danger_multiplier` (1.5× lethality
+/// as shipped); a resident band hunting its own range fights at the **base** tuning. The two answers
+/// differ by half again in the fight term, so neither reply may borrow the other's rows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntCrewTakeQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId` — its **live** equipment wear prices the fight.
+    pub band_id: u64,
+    pub herd_id: String,
+    /// An `equipment.json` roster id, **required** — the same rule the trip query follows.
+    pub kit_id: String,
+    /// The composed floor, as a fraction of the herd's `K`. **A term in the answer, not a filter**:
+    /// the escapement room bounds what the party goes after *before* the retreat and the fight
+    /// (`fauna::animals_affordable`), so a curve answered at one floor cannot be reused at another.
+    pub floor: f32,
+    /// **The largest crew this band could put on the herd** — the stepper's own cap, and exactly the
+    /// length of the reply's `per_crew`. `0` asks for nothing and is answered with an empty curve.
+    pub max_workers: u32,
+}
+
 /// **The server → client answer frame**, written back on the command socket as its own
 /// length-prefixed frame. A top-level envelope rather than a `CommandEnvelope` variant: the two
 /// directions carry different vocabularies, and nothing but a query is ever answered.
@@ -466,6 +491,7 @@ pub struct QueryReplyEnvelope {
 pub enum QueryReply {
     HuntTripForecast(HuntTripForecastReply),
     DenialRaidForecast(DenialRaidForecastReply),
+    HuntCrewTake(HuntCrewTakeReply),
     Error(String),
 }
 
@@ -487,6 +513,11 @@ pub mod query_error {
     pub const INVALID_FLOOR: &str = "invalid_floor";
     /// A party of zero. There is no raid to project, so there is no answer to give.
     pub const INVALID_PARTY: &str = "invalid_party";
+    /// A crew-take query asking about more workers than any band could field. The reply is one row
+    /// per crew, so the ask is linear in that number and an unbounded one is a wedged command thread
+    /// rather than a large answer. Refused, never clamped — the same rule an out-of-range floor
+    /// follows, for the same reason: a clamp answers a question nobody asked.
+    pub const INVALID_CREW: &str = "invalid_crew";
 }
 
 /// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s
@@ -593,6 +624,91 @@ pub struct DenialRaidForecastReply {
     /// *raise more people, or pick another quarry*. Render the answered row's `outcome` beside it,
     /// never a blank, and never a stepper seeded at `0`.
     pub party_needed: u32,
+}
+
+/// **One crew size's answer on the hunt take curve.**
+///
+/// `animals_*` is **animals a turn, as an EXPECTED RATE and deliberately not a whole number** —
+/// `fauna::HuntFight::expected_brought_down` for this crew, at the queried floor, against this
+/// herd's current wound ledger. `0.75` is a real and common answer, and it means *three animals
+/// every four turns*.
+///
+/// # It is a rate because the quantised count is a lie on most of the stepper
+///
+/// The sim's take is floored to whole animals and the unfinished damage is **banked** on the quarry
+/// (`combat::DamageLedger`), so a crew below one body a turn genuinely takes `0` on most turns and
+/// `1` on the rest. Publishing that floored count made a Wild Aurochs read `0` for every crew from
+/// **1 to 11** — a plateau no equipment level moves, because the quarry's `durability 150` is capped
+/// against the `0.8` animals its `engage_rate` lets a crew corner. The panel printed *"≈0
+/// animals/turn"* beside a work row quoting `0.84` food from the very same take.
+///
+/// # It is NOT `SourceYield::realized`, and the two are not interchangeable
+///
+/// This is the **instantaneous** rate at the herd's current stock. `realized` is a *forward average*
+/// over `hunt.forecast_horizon_turns` turns of regrow → take, so it prices a herd that moves under
+/// the crew and it sums the quantised kills — which leaves up to one unfinished body uncounted at
+/// the horizon. `realized` therefore sits at or slightly below this curve, and the gap widens with
+/// drawdown. Show one or the other; never present them as one figure.
+///
+/// # It is NOT a per-hunter rate, and must never be multiplied by a crew size
+///
+/// That is the mistake this row exists to make impossible, and the arithmetic does not survive it.
+/// The take is `min(w × fight_rate, staircase(w))`, where the engagement staircase is
+/// `max(floor(w × engage_rate), 1) × stay_fraction` — flat across whole runs of crew sizes and
+/// stepping at integer boundaries. On the shipped Wild Boar (`engage_rate 0.33`) crews of 1 through
+/// 6 all bring down `0.75` animals/turn, so a per-hunter reading spans **6×** across the stepper's
+/// first six positions; on Wild Aurochs the *binding term itself* flips from the fight to the
+/// engagement between crews 8 and 11 and back at 12. Look the row up; do not scale one.
+///
+/// # What is already folded in, so no consumer re-applies it
+///
+/// - the **engagement** bound ([`fauna::animals_engaged`]) — including its `max(…, 1)` floor, which
+///   is why a crew of one is never zero for want of reach;
+/// - the **escapement room** at the queried floor, clamped where the sim clamps it (before the
+///   retreat, `fauna::animals_affordable`) rather than as an outer `min`;
+/// - the **retreat** (`HuntingParty::stayers`), with this kit's `dispersion`;
+/// - the **fight** — damage over durability through `combat::resolve_fight`, at the band's live
+///   attack tier against the quarry's `defense`/`durability`, including the multi-turn wound ledger
+///   the herd is standing there with.
+///
+/// # What is not, because it is the caller's own and stays a linear `min`
+///
+/// The crew's **carry** throughput (`workers × per-worker yield`) and the whole-animal room
+/// `floor(ceiling / body_mass)`. The sim's own take is `min(affordable, carryable, brought_down)`
+/// (`fauna::quantise_animal_take`), so a client that `min`s this row against those two lands on the
+/// **sustained** number the turn pays — still as a rate. Rounding it for display is a presentation
+/// choice; rounding it to `0` and calling that the answer is the defect above.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntCrewTakeRow {
+    /// Echoed so the row is self-describing — a client asserts the answer is for the crew it asked
+    /// about rather than trusting its position in the list. Rows ascend from `1`.
+    pub workers: u32,
+    /// **The band, and it is per row** rather than once on the curve, because the spread is
+    /// `O(√w)` and *shrinks per hunter* as the crew grows: both stochastic stages are binomials
+    /// (`combat::attacks_landed_at`, `fauna::animals_that_stay`) whose standard deviation is
+    /// `√(n·p·q)`. A single per-hunter band multiplied by a crew would overstate the spread by
+    /// exactly `√w`, so it cannot be reconstructed from one figure.
+    ///
+    /// `likely` is the **expectation** over the seed, never a re-draw. Where no stage is stochastic
+    /// — a species at `wariness 0`, at the shipped `combat_config.hit_chance = 1.0` — all three are
+    /// **bit-identical**, because both binomials answer their degenerate identity whatever quantile
+    /// is asked for.
+    pub animals_low: f32,
+    pub animals_likely: f32,
+    pub animals_high: f32,
+}
+
+/// **The hunt take curve** — what each crew size actually brings down, so a pre-commit panel can
+/// move its stepper without re-deriving the take.
+///
+/// It exists because the take is **not linear in crew size** and no scalar can be published that
+/// makes it so; see [`HuntCrewTakeRow`] for the shape and the two shipped species that show it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntCrewTakeReply {
+    /// **One row per crew size**, ascending, `1..=HuntCrewTakeQuery::max_workers`. Empty when
+    /// `max_workers` is `0`. Index `i` is the crew of `i + 1`, and each row echoes its own
+    /// `workers` so a client never has to trust that.
+    pub per_crew: Vec<HuntCrewTakeRow>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1289,6 +1405,16 @@ impl CommandEnvelope {
                                 },
                             )
                         }
+                        QueryPayload::HuntCrewTake(ask) => {
+                            pb::query_command::Query::HuntCrewTake(pb::HuntCrewTakeQuery {
+                                faction_id: ask.faction_id,
+                                band_id: ask.band_id,
+                                herd_id: ask.herd_id.clone(),
+                                kit_id: ask.kit_id.clone(),
+                                floor: ask.floor,
+                                max_workers: ask.max_workers,
+                            })
+                        }
                     }),
                 })
             }
@@ -1647,6 +1773,16 @@ impl CommandEnvelope {
                             max_party_workers: ask.max_party_workers,
                         })
                     }
+                    pb::query_command::Query::HuntCrewTake(ask) => {
+                        QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            herd_id: ask.herd_id,
+                            kit_id: ask.kit_id,
+                            floor: ask.floor,
+                            max_workers: ask.max_workers,
+                        })
+                    }
                 };
                 CommandPayload::Query {
                     request_id: cmd.request_id,
@@ -1698,6 +1834,20 @@ impl QueryReplyEnvelope {
                     party_needed: answer.party_needed,
                 })
             }
+            QueryReply::HuntCrewTake(answer) => {
+                pb::query_reply_envelope::Reply::HuntCrewTake(pb::HuntCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .iter()
+                        .map(|row| pb::HuntCrewTakeRow {
+                            workers: row.workers,
+                            animals_low: row.animals_low,
+                            animals_likely: row.animals_likely,
+                            animals_high: row.animals_high,
+                        })
+                        .collect(),
+                })
+            }
             QueryReply::Error(reason) => pb::query_reply_envelope::Reply::Error(pb::QueryError {
                 reason: reason.clone(),
             }),
@@ -1733,6 +1883,20 @@ impl QueryReplyEnvelope {
                             .ok_or(CommandDecodeError::MissingPayload)?,
                     ),
                     party_needed: answer.party_needed,
+                })
+            }
+            pb::query_reply_envelope::Reply::HuntCrewTake(answer) => {
+                QueryReply::HuntCrewTake(HuntCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .into_iter()
+                        .map(|row| HuntCrewTakeRow {
+                            workers: row.workers,
+                            animals_low: row.animals_low,
+                            animals_likely: row.animals_likely,
+                            animals_high: row.animals_high,
+                        })
+                        .collect(),
                 })
             }
             pb::query_reply_envelope::Reply::Error(error) => QueryReply::Error(error.reason),
@@ -1953,6 +2117,53 @@ mod tests {
             let decoded = CommandEnvelope::decode(&bytes).expect("decode");
             assert_eq!(decoded.payload, payload);
         }
+    }
+
+    /// **The crew-take curve survives the wire, question and answer both.**
+    ///
+    /// Every field is given a DISTINCT value — `low < likely < high`, ascending crews, a floor that
+    /// is not a round number — because the failure this guards is a transposition, and two fields
+    /// that happen to carry the same number cannot detect being swapped. The proto and the Rust
+    /// mirror are hand-written on both sides of a generated struct; nothing but this notices when
+    /// one of them is edited and the other is not.
+    #[test]
+    fn the_crew_take_curve_round_trips_through_the_wire() {
+        let payload = CommandPayload::Query {
+            request_id: 42,
+            query: QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                faction_id: 3,
+                band_id: 9_001,
+                herd_id: "aurochs_north".to_string(),
+                kit_id: "big_game".to_string(),
+                floor: 0.375,
+                max_workers: 12,
+            }),
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            payload
+        );
+
+        let reply = QueryReplyEnvelope {
+            request_id: 42,
+            reply: QueryReply::HuntCrewTake(HuntCrewTakeReply {
+                per_crew: (1..=3)
+                    .map(|workers| HuntCrewTakeRow {
+                        workers,
+                        animals_low: workers as f32 * 0.25,
+                        animals_likely: workers as f32 * 0.5,
+                        animals_high: workers as f32 * 0.75,
+                    })
+                    .collect(),
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
     }
 
     /// **The split rides the wire as a `BandId`**, and it has to survive the envelope intact: the

@@ -1,15 +1,15 @@
 mod common;
 
 use core_sim::{
-    build_headless_app, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, PowerNode,
-    Scalar, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
+    build_test_app, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, PowerNode, Scalar,
+    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
 };
 use sim_runtime::{CorruptionEntry, CorruptionSubsystem};
 
 #[test]
 fn corruption_exposure_updates_sentiment_and_telemetry() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     {
         let mut ledgers = app.world.resource_mut::<CorruptionLedgers>();
@@ -69,8 +69,8 @@ fn corruption_exposure_updates_sentiment_and_telemetry() {
 #[test]
 fn corruption_modifiers_reduce_outputs() {
     common::ensure_test_config();
-    let mut clean = build_headless_app();
-    let mut corrupt = build_headless_app();
+    let mut clean = build_test_app();
+    let mut corrupt = build_test_app();
 
     if let Some(mut metadata) = clean.world.get_resource_mut::<SimulationConfigMetadata>() {
         metadata.set_seed_random(false);

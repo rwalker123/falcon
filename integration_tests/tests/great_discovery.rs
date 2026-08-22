@@ -3,7 +3,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use core_sim::{
-    build_headless_app, run_turn, scalar_one, scalar_zero, ConstellationRequirement,
+    build_test_app, run_turn, scalar_one, scalar_zero, ConstellationRequirement,
     DiscoveryProgressLedger, FactionId, FactionRegistry, GreatDiscoveryDefinition,
     GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryRegistry, GreatDiscoveryTelemetry,
     ObservationLedger, SnapshotHistory,
@@ -15,7 +15,7 @@ const FORCED_PUBLICATION_FLAG: u32 = 1 << 3;
 #[test]
 fn gds_turn_budget_processes_many_constellations_in_single_turn() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     {
         let mut factions = app.world.resource_mut::<FactionRegistry>();
@@ -99,7 +99,7 @@ fn gds_turn_budget_processes_many_constellations_in_single_turn() {
 #[test]
 fn gds_snapshot_stream_carries_resolved_records() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     {
         let mut factions = app.world.resource_mut::<FactionRegistry>();
@@ -188,7 +188,7 @@ fn gds_snapshot_stream_carries_resolved_records() {
 #[test]
 fn gds_forced_publication_marks_discovery_deployed() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     {
         let mut factions = app.world.resource_mut::<FactionRegistry>();

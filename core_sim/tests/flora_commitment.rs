@@ -102,7 +102,7 @@ fn an_uncommitted_patch_reads_the_tiles_whole_basket_and_its_average_rate() {
         let composition = flora.composition(terrain);
         let patch = tended_patch(terrain, None, capacity);
         assert_eq!(
-            core_sim::patch_composition(&patch, composition, &labor.forage).as_ref(),
+            core_sim::patch_composition(&patch, composition, &flora, &labor.forage).as_ref(),
             composition,
             "{terrain:?}: an uncommitted patch holds the tile's basket verbatim"
         );
@@ -146,7 +146,7 @@ fn a_build_in_flight_keeps_its_wild_basket_while_its_rate_has_already_started_to
     let mut building = tended_patch(terrain, Some("wild_emmer"), capacity);
     building.set_ladder_position(ONE_WORK_UNIT, &ladder);
     assert_eq!(
-        core_sim::patch_composition(&building, composition, &labor.forage).as_ref(),
+        core_sim::patch_composition(&building, composition, &flora, &labor.forage).as_ref(),
         composition,
         "a patch still being cleared is still the mixed stand it started as"
     );
@@ -207,7 +207,8 @@ fn a_reweighted_basket_still_sums_to_the_whole_basket() {
                     },
                     &core_sim::LadderConfig::builtin(),
                 );
-                let effective = core_sim::patch_composition(&patch, composition, &labor.forage);
+                let effective =
+                    core_sim::patch_composition(&patch, composition, &flora, &labor.forage);
                 let total: f32 = effective.iter().map(|entry| entry.share).sum();
                 assert!(
                     (total - WHOLE_BASKET).abs() <= EPSILON,

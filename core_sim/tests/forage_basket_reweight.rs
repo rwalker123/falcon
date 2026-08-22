@@ -192,7 +192,12 @@ fn weeding_takes_the_increase_from_the_least_abundant_species_first() {
     // goes entirely, and the middle one gives up only the remaining 0.05.
     let composition = basket(&[("wild_emmer", 0.5), ("hazel", 0.3), ("oak_mast", 0.2)]);
     let tended = patch_on_rung(Some("wild_emmer"), false);
-    let weeded = patch_composition(&tended, &composition, &labor.forage);
+    let weeded = patch_composition(
+        &tended,
+        &composition,
+        &FloraConfig::builtin(),
+        &labor.forage,
+    );
 
     let expected_favored = 0.5 * gain;
     let share_of = |species: &str| {
@@ -239,6 +244,7 @@ fn weeding_saturates_at_the_whole_basket() {
     let weeded = patch_composition(
         &patch_on_rung(Some("wild_emmer"), false),
         &composition,
+        &FloraConfig::builtin(),
         &labor.forage,
     );
 
@@ -263,6 +269,7 @@ fn a_field_is_entirely_its_own_crop() {
     let planted = patch_composition(
         &patch_on_rung(Some("wild_emmer"), true),
         &composition,
+        &FloraConfig::builtin(),
         &labor.forage,
     );
 
@@ -271,6 +278,254 @@ fn a_field_is_entirely_its_own_crop() {
     assert!(
         (planted[0].share - WHOLE_BASKET).abs() <= EPSILON,
         "and all of it: {}",
+        planted[0].share
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// **WHAT WORKING THE GROUND CANNOT CLEAR** — the members a reweight must leave standing.
+//
+// A navigable hex's basket carries `river_fish` at the `navigable_river_forage_bonus`: that share
+// is a *fishery in the channel*, not a plant in the soil. Weeding the reeds on the bank cannot thin
+// it, and sowing the field beside it cannot delete it — which is exactly what both rungs did.
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped protected member — a *fishery*, and the one every fixture below is built around.
+const PROTECTED: &str = "river_fish";
+
+/// The favored crop in the fixtures below: clearable, and `field`-ceiling so it may be committed to
+/// at both rungs under test.
+const CROP: &str = "wild_emmer";
+
+/// **WEEDING CANNOT TAKE A FISHERY'S SHARE — on the very tile where it is the least abundant
+/// member**, which is the basket that would have deleted it. The ranking is by abundance alone, so
+/// before the guard the smallest member was consumed first and to nothing: on this basket that is
+/// the river's whole fishery, weeded away by a crew tending the bank.
+#[test]
+fn weeding_never_takes_share_from_a_member_outside_the_worked_ground() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let gain = labor.forage.cultivation.tended_weeding_gain;
+    let composition = basket(&[(CROP, 0.5), ("hazel", 0.35), (PROTECTED, 0.15)]);
+
+    // **THE PRECONDITION THIS TEST TURNS ON.** If the fishery is not the *least* abundant member the
+    // ranking never reaches it and the fixture proves nothing — it would pass against the defect.
+    let least = composition
+        .iter()
+        .min_by(|a, b| a.share.total_cmp(&b.share))
+        .expect("a non-empty basket");
+    assert_eq!(
+        least.species, PROTECTED,
+        "the fixture must put the protected member FIRST in line to be weeded out: {composition:?}"
+    );
+    assert!(
+        !flora.stands_in_worked_ground(PROTECTED),
+        "and the roster must actually protect it"
+    );
+
+    let weeded = patch_composition(
+        &patch_on_rung(Some(CROP), false),
+        &composition,
+        &flora,
+        &labor.forage,
+    );
+    let share_of = |species: &str| {
+        weeded
+            .iter()
+            .find(|entry| entry.species == species)
+            .map_or(0.0, |entry| entry.share)
+    };
+
+    assert!(
+        (share_of(PROTECTED) - 0.15).abs() <= EPSILON,
+        "you cannot weed fish out of a river by tending the reeds on its bank: {weeded:?}"
+    );
+    // The clearable pool covers the whole ask here (0.35 available against 0.25 owed), so the crop
+    // still reaches `share × gain` — the guard protects the fishery without costing the crew
+    // anything it could have had.
+    assert!(
+        (share_of(CROP) - 0.5 * gain).abs() <= EPSILON,
+        "the favored crop still rises to share × gain out of the clearable pool: {weeded:?}"
+    );
+    assert!(
+        (share_of("hazel") - 0.10).abs() <= EPSILON,
+        "and the whole increase comes out of the one member that stands in the worked ground: \
+         {weeded:?}"
+    );
+    let total: f32 = weeded.iter().map(|entry| entry.share).sum();
+    assert!(
+        (total - WHOLE_BASKET).abs() <= EPSILON,
+        "the shares still make a whole basket: {total}"
+    );
+}
+
+/// **THE GAIN IS AN ASK, NOT A GUARANTEE.** When the members standing in the worked ground cannot
+/// cover what `share × gain` wants, the favored share rises by **only what was there to take** —
+/// the protected members are never reached into for the difference.
+#[test]
+fn weeding_rises_only_as_far_as_the_clearable_members_can_pay_for() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let gain = labor.forage.cultivation.tended_weeding_gain;
+    // 0.5 × 1.5 asks for 0.25; only `hazel`'s 0.10 stands in the worked ground.
+    let composition = basket(&[(CROP, 0.5), (PROTECTED, 0.4), ("hazel", 0.1)]);
+    let asked = 0.5 * gain - 0.5;
+    let available = 0.1;
+    assert!(
+        asked > available,
+        "the fixture must ask for more than the clearable pool holds: {asked} vs {available}"
+    );
+
+    let weeded = patch_composition(
+        &patch_on_rung(Some(CROP), false),
+        &composition,
+        &flora,
+        &labor.forage,
+    );
+    let share_of = |species: &str| {
+        weeded
+            .iter()
+            .find(|entry| entry.species == species)
+            .map_or(0.0, |entry| entry.share)
+    };
+
+    assert!(
+        (share_of(CROP) - (0.5 + available)).abs() <= EPSILON,
+        "the favored share rises by what was clearable and no further: {weeded:?}"
+    );
+    assert!(
+        (share_of(PROTECTED) - 0.4).abs() <= EPSILON,
+        "the shortfall is NOT made up out of the fishery: {weeded:?}"
+    );
+    assert_eq!(
+        share_of("hazel"),
+        0.0,
+        "the clearable member is spent to nothing paying for it"
+    );
+    let total: f32 = weeded.iter().map(|entry| entry.share).sum();
+    assert!(
+        (total - WHOLE_BASKET).abs() <= EPSILON,
+        "the shares still make a whole basket: {total}"
+    );
+}
+
+/// **A FIELD TAKES THE CLEARABLE REMAINDER, NOT THE WHOLE BASKET** — the worse half of the defect.
+/// The rung-3 reweight forced the crop to `1.0` and every other member to nothing with no ranking
+/// involved, so sowing a navigable hex deleted the river's fishery **outright**. A fix to the
+/// weeding path alone would have left this standing.
+#[test]
+fn a_field_leaves_a_member_outside_the_worked_ground_standing() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let composition = basket(&[("hazel", 0.42), (CROP, 0.30), (PROTECTED, 0.28)]);
+    assert!(
+        composition.iter().any(|entry| entry.species == PROTECTED),
+        "the fixture must contain a protected member, or the remainder IS the whole basket"
+    );
+    assert!(!flora.stands_in_worked_ground(PROTECTED));
+
+    let planted = patch_composition(
+        &patch_on_rung(Some(CROP), true),
+        &composition,
+        &flora,
+        &labor.forage,
+    );
+    let share_of = |species: &str| {
+        planted
+            .iter()
+            .find(|entry| entry.species == species)
+            .map_or(0.0, |entry| entry.share)
+    };
+
+    assert!(
+        (share_of(PROTECTED) - 0.28).abs() <= EPSILON,
+        "the fishery keeps its own share through a Sow: {planted:?}"
+    );
+    // **The crop takes the REMAINDER, and asserting that it is not `1.0` is the whole point** — a
+    // Field that still read the whole basket would publish the same 1.0 the defect did.
+    assert!(
+        (share_of(CROP) - (WHOLE_BASKET - 0.28)).abs() <= EPSILON,
+        "the crop takes everything the crew could clear and no more: {planted:?}"
+    );
+    assert!(
+        share_of(CROP) < WHOLE_BASKET - EPSILON,
+        "and that is strictly less than the whole basket: {planted:?}"
+    );
+    assert_eq!(
+        planted.len(),
+        2,
+        "a Field beside a fishery is the crop and the fishery, and nothing else: {planted:?}"
+    );
+    let total: f32 = planted.iter().map(|entry| entry.share).sum();
+    assert!(
+        (total - WHOLE_BASKET).abs() <= EPSILON,
+        "the shares still make a whole basket: {total}"
+    );
+}
+
+/// **INLAND GROUND IS UNCHANGED, AT BOTH RUNGS — and the guard is NOT the cultivation ceiling.**
+/// `oak_mast` and `mesquite` are gather-only, and a crew tending the ground genuinely clears them:
+/// acorns and mesquite pods come out. A guard keyed on `cultivation_ceiling: wild` would have
+/// shielded both and quietly made every Cultivate on woodland and scrub much weaker.
+#[test]
+fn a_basket_with_nothing_outside_the_worked_ground_reweights_exactly_as_before() {
+    let labor = labor();
+    let flora = FloraConfig::builtin();
+    let gain = labor.forage.cultivation.tended_weeding_gain;
+    let composition = basket(&[(CROP, 0.5), ("oak_mast", 0.3), ("mesquite", 0.2)]);
+    for gathered in ["oak_mast", "mesquite"] {
+        assert!(
+            !flora.species[gathered]
+                .cultivation_ceiling
+                .allows_cultivate(),
+            "{gathered} must be gather-only, or this says nothing about the ceiling"
+        );
+        assert!(
+            flora.stands_in_worked_ground(gathered),
+            "{gathered} grows in soil — the ceiling is not the predicate"
+        );
+    }
+
+    let weeded = patch_composition(
+        &patch_on_rung(Some(CROP), false),
+        &composition,
+        &flora,
+        &labor.forage,
+    );
+    let share_of = |species: &str| {
+        weeded
+            .iter()
+            .find(|entry| entry.species == species)
+            .map_or(0.0, |entry| entry.share)
+    };
+    assert!(
+        (share_of(CROP) - 0.5 * gain).abs() <= EPSILON,
+        "the favored crop rises to the full share × gain: {weeded:?}"
+    );
+    assert!(
+        !weeded.iter().any(|entry| entry.species == "mesquite"),
+        "the least abundant gathered plant is consumed to nothing and GONE: {weeded:?}"
+    );
+    assert!(
+        (share_of("oak_mast") - 0.25).abs() <= EPSILON,
+        "and the middle one gives up only the remainder: {weeded:?}"
+    );
+
+    let planted = patch_composition(
+        &patch_on_rung(Some(CROP), true),
+        &composition,
+        &flora,
+        &labor.forage,
+    );
+    assert_eq!(
+        planted.len(),
+        1,
+        "an inland Field is still one plant: {planted:?}"
+    );
+    assert_eq!(planted[0].species, CROP);
+    assert!(
+        (planted[0].share - WHOLE_BASKET).abs() <= EPSILON,
+        "…holding the whole basket: {}",
         planted[0].share
     );
 }
@@ -620,7 +875,7 @@ fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
 /// tests above and what is at stake here is the *published artifact*.
 #[test]
 fn the_published_composition_is_the_patchs_effective_basket() {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_seed = STANDARD_SEED;
     app.world.insert_resource(config);
@@ -691,9 +946,42 @@ fn the_published_composition_is_the_patchs_effective_basket() {
         patch.complete_field(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
     }
     let field = published(&mut app);
-    assert_eq!(field.len(), 1, "a Field publishes one plant: {field:?}");
-    assert_eq!(field[0].0, crop);
-    assert!((field[0].1 - WHOLE_BASKET).abs() <= EPSILON);
+    // **A Field is the crop plus whatever the crew could not clear** — and on this fixture tile
+    // that is not academic: the stand is a navigable hex, so its basket carries the channel's own
+    // fishery (`river_fish`, the `navigable_river_forage_bonus` term). Sowing the valley cannot
+    // drain the river, so the crop takes the **clearable remainder** and the fishery stands. Before
+    // that guard this row published exactly one plant at `1.0` and the fishery was gone.
+    let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let standing_outside: f32 = field
+        .iter()
+        .filter(|(species, _)| *species != crop)
+        .map(|(species, share)| {
+            assert!(
+                !flora.stands_in_worked_ground(species),
+                "a Field's only volunteers are the members working the ground cannot clear: \
+                 {field:?}"
+            );
+            *share
+        })
+        .sum();
+    assert!(
+        standing_outside > EPSILON,
+        "this fixture tile must carry a member outside the worked ground, or the remainder IS the \
+         whole basket and this asserts nothing: {field:?}"
+    );
+    let crop_share = field
+        .iter()
+        .find(|(species, _)| *species == crop)
+        .map_or(0.0, |(_, share)| *share);
+    assert!(
+        (crop_share - (WHOLE_BASKET - standing_outside)).abs() <= EPSILON,
+        "the sown crop takes the clearable remainder, not the whole basket: {field:?}"
+    );
+    let total: f32 = field.iter().map(|(_, share)| *share).sum();
+    assert!(
+        (total - WHOLE_BASKET).abs() <= EPSILON,
+        "…and the published basket is still a whole basket: {total}"
+    );
 }
 
 /// **EACH RUNG'S PAYOFF FUNCTION PROJECTS TO ITS OWN RUNG.** A "what would a Field here pay" quote
@@ -711,7 +999,7 @@ fn the_published_composition_is_the_patchs_effective_basket() {
 /// the defect was actually reachable.
 #[test]
 fn the_published_field_yield_never_inherits_the_tended_rungs_basket() {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_seed = STANDARD_SEED;
     app.world.insert_resource(config);
@@ -835,6 +1123,7 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
         let planted = core_sim::composition_for_rung(
             patch,
             &composition,
+            &FloraConfig::builtin(),
             &labor.forage,
             core_sim::RungKey::PlantField,
         );
@@ -848,6 +1137,7 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
         let weeded = core_sim::composition_for_rung(
             patch,
             &composition,
+            &FloraConfig::builtin(),
             &labor.forage,
             core_sim::RungKey::PlantTended,
         );

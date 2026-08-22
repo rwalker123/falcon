@@ -462,6 +462,248 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
+> #### ⛔ "NOTHING IS BEING TAKEN" AND THE VERDICT MUST READ THE SAME STOCK
+>
+> The teaching line claimed *"Teaching nothing: nothing is being taken"* beside a published
+> **+0.71 /turn**, and it was wrong twice: something was being taken, and the lesson **was** being
+> credited. Two producers, two different stocks — the client tested the wire's **published** biomass,
+> which is **post-take**, while the sim's lesson gate reads `biomass_before`, the **post-regrowth,
+> pre-take** stock. A source sitting at its floor is below the line on the first and 17.8 above it on
+> the second.
+>
+> **It is not an edge case: it is the steady state a Sustain policy is FOR.** And the fix already
+> existed one row up — `harvest_verdict` had been moved onto the forward-looking
+> `escapement_room_next_turn` for this exact reason, which is why the verdict correctly read *"At the
+> floor and holding it"* while the line under it said nothing was happening. `floor_chart_model` now
+> resolves that room **once** and feeds both, so the two cannot disagree again.
+>
+> **AN UNREACHABLE CREW TARGET SHOWS A DISABLED `✕`, NOT ABSENCE.** `clear it now` / `hold it after`
+> used to vanish when no crew in the curve reached them, leaving a hole where a number had been. The
+> pill now renders disabled with `✕` and a tooltip carrying the reason. **`✕` and not `∞`**: infinity
+> reads as a quantity and invites the player to send more hunters, when the curve has plateaued and a
+> quarry that scatters can never be cleared in one turn at any size. `HudWidgets` takes a
+> `count_face: String` rather than an `int` so the render layer never re-decides what the sentinel
+> meant — and the preview's own `CREW_TARGET_ABSENT` had to move off `-1`, because `NO_CREW_ANSWER` is
+> `-1` and now rides a pill that **is** rendered.
+>
+> **The tooltip's first wording was confidently wrong** and is worth recording: the same `✕` renders
+> for a second cause (no throughput to divide by — a dead season on a forage tile), where *"the quarry
+> breaks off and retreats"* is nonsense. The retreat rides a conditional clause now.
+>
+> **The forage take-note line is deleted, all three variants**, including the last-plant refusal. The
+> refusal itself is untouched and the chip is deliberately **not** greyed — Ray: *"a user will figure
+> it out without the verbosity of the text."* The **cultivate** twins survive: naming the crop the sim
+> would otherwise settle on silently is a different job from describing a selection. They share the
+> slot, not the purpose.
+
+> #### ⛔ A CLIMBING FLOOR MUST NAME WHAT IT IS CLIMBING TO
+>
+> The escapement floor is `floor_fraction × K` and **a rung raises `K`**, so the floor climbs every turn
+> a capacity-raising build runs — and that is why the take falls during it. A bare `↑` says only that
+> it moves; the player still reads the falling take as the source being poor rather than as their own
+> investment. The flag states the destination: `leave 50% · ≈11 Red Deer ↑ ≈15 at Corralled`, off the
+> sim's `buildDestinationCapacity`.
+>
+> - **It rides the existing `↑` rather than adding a line** — the Work zone's budgets are full. Measured
+>   on the rendered frame, the pill takes ~167px of a ~197px plot, so a longer species name still fits.
+> - **The rung is NAMED (`at Corralled`) so the second figure cannot be read as a delta or a rate.**
+> - **The quarry is stated once** — `≈11 Red Deer ↑ ≈15 Red Deer` read as *two herds* in the first
+>   render, which is why `stock_face_unqualified` exists.
+> - **The clause rides the climbing flag AND the sentinel**: a parked or blocked build still names a
+>   destination, but nothing is rising toward it.
+> - **`< 0` renders nothing.** It is deliberately not `0`, because a destination that would hold nothing
+>   is a real reading (barren ground, a rock pen) and the two must not collapse.
+> - **The honesty constraint lands in the hover, where there is room for a sentence** — *"would carry ≈30
+>   Red Deer on this ground **as it stands today**"*. The figure is struck on today's land: the rung
+>   moves, the land does not, so it drifts as the live `K` drifts. The flag names a rung and no date, so
+>   neither surface promises a future number.
+>
+> **THE PLANT TWIN IS A FOG LEAK AND IS REDACTED.** `patch_build_destination_capacity` is
+> `tile K × field_capacity_gain` — the same interpolated ladder position `patch_carrying_capacity` is
+> hidden to protect (`land-readouts.md` → "Fog splits a stock from its CAPACITY"). It joined
+> `FOW_DISCOVERED_HIDDEN_KEYS` with it. A new field on a redacted quantity inherits the redaction; it
+> does not get to re-open the hole under a new name.
+
+> #### ⛔ THE CURVE IS FLOOR-DEPENDENT, SO A FLOOR DRAG MUST RE-ASK IT — and the reply must not kill the drag
+>
+> The curve's rows are bounded by the room above the escapement floor, so a sheet holding an answer for
+> the **committed** floor states a stale take for the whole of a drag. It is re-asked during the drag on
+> a **leading-edge rate limit** (`HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC`), not a quiet-window debounce:
+> a quiet window needs a timer this seam has no node to hang off and would answer for a floor the player
+> may already have released, whereas the first motion asks immediately and **the trailing edge is
+> already owned by the release**, which rebuilds and asks at the committed floor.
+>
+> **TWO THINGS MAKE THE OBVIOUS IMPLEMENTATION WRONG, and both are the fix wearing the defect's face.**
+>
+> **① `ForecastQuery.answered` fans out to `refresh_compose_sheet`, which REBUILDS — and a rebuild
+> `queue_free`s the chart the pointer is holding.** Asking during a drag makes that path reachable *on
+> purpose*, so the naive version ends every drag on the first reply it served. A live drag therefore
+> **refills** rather than rebuilds. Consequence, accepted deliberately: a sheet whose subject vanishes
+> mid-drag stays open until the release. A drag is sub-second; killing it is worse.
+> *(The forage sheet got the same guard even though it asks this channel nothing — `answered` fans out
+> to every open sheet, so a raid reply landing under a forager's drag would have ended it. Pre-existing,
+> one line, closed.)*
+>
+> **② The seam's ordinary `view()` cannot be used, because every throttled ask re-stamps `asked_at`** —
+> so the stale-answer window renews for the whole drag and the sheet confidently states the floor the
+> player started from. `view_exact()` closes that arm; while an ask is outstanding the take line shows
+> **pending**, which is the existing rule that an unanswered query renders as waiting rather than
+> falling back to a smoothed derivation.
+>
+> **⛔ AND THE RELEASE PATH READS THROUGH THE SAME ACCESSOR, FOR THE SAME REASON.** `_crew_take_view`
+> is the one seam behind the take, band, cadence and yield rows, the binding-limit sentence *and*
+> `arm_hunt_autofill`'s plateau — so `view()` there hands every one of them the **previous floor's**
+> curve labelled `READY`: the `ask()` three lines earlier stamps `asked_key`/`asked_at`, which is
+> exactly the pair `_view` serves a stale answer on. `take_state_host` stays hidden, so nothing
+> renders "waiting" and the sheet states the wrong floor's numbers with no tell — and the autofill
+> takes a plateau the real reply's `clamp_hunt_count` can only lower, so a floor dragged down leaves a
+> permanently under-staffed party. **A drag and its release are one gesture; only `view()`'s stale
+> window told them apart.** The raid path (`_raid_forecast_view`) keeps `view()` deliberately — its
+> key carries the composed party, so there the stale window is bargained against the stepper gesture
+> itself.
+>
+> **⛔ AND THE CREW BOUND IS CLAMPED ON *BOTH* ASK PATHS, THROUGH ONE CONSTANT.** The sim refuses a
+> `max_workers` above `MAX_CREW_TAKE_WORKERS` (1000) with `query_error::INVALID_CREW` rather than
+> clamping it — the loop resolves a `coverage()` and three `resolve_hunt_engagement` calls per crew
+> and materialises a reply row each, so an unbounded ask wedges the command thread and allocates for
+> as long as it survives. The client mirrors the bound in `HudComposeVocab.HUNT_CREW_TAKE_MAX_WORKERS`
+> and applies it in `_crew_take_workers()`, which **`_crew_take_view` and `_drag_crew_take` both go
+> through**. Clamping one path only is worse than clamping neither: the crew term is half of
+> `ForecastQuery.key_of`, so the two paths would ask under one key and read back under another, and
+> the sheet would **wait for ever on an answer that had already landed**. The native bridge is a pure
+> pass-through, so GDScript is the only place the bound can live.
+>
+> **`invalid_crew` gets no prose of its own, deliberately.** `HudComposeVocab.FORECAST_FAILED_FORMAT`
+> is token-agnostic by an existing decision — a sentence per token would be prose for states the UI is
+> built to make unreachable — so it renders as `No forecast available (invalid_crew).` and the token
+> rides the line for a bug report. The clamp is what makes it unreachable; the message is the backstop.
+>
+> **The client may NOT reconstruct a floor-shifted row locally.** The room clamps the **engagement**,
+> before the retreat — pinned by a sim test — so a local approximation means redoing the fight, which is
+> the whole thing the curve exists to prevent.
+
+> #### ⛔ EVERY CREW QUESTION ON THE HUNT SHEET IS A SEARCH OF THE CURVE
+>
+> Once the sim answers *what does a crew of N take*, every other crew question on that panel is a
+> **lookup in the same table**, not arithmetic beside it: *clear it now* is the smallest crew whose
+> row covers the room, *hold it after* the smallest whose row covers the regrowth at the floor,
+> `max_useful_workers` is where the curve stops rising, and the stock projection walks at the curve's
+> row × body.
+>
+> **It shipped for one slice with only the take line converted, and the panel contradicted itself on
+> screen.** Reported from play: `≈0 WILD AUROCHS/TURN · 0.00 FOOD` sitting two lines under
+> `32 clear it now` and `13 of 37 useful`. The pills were still on `engagement_carry` —
+> `body_mass × animals_stayed(engage_rate, stay)`, with **no attack, defense or durability** — so they
+> were answering *how fast could this stock be drawn down* while never asking **whether the animals can
+> be killed at all**. The client's only fight-awareness was a binary gate (`KitRoster.hunt_gate_closes`,
+> `attack <= defense`), which cannot express `damage ÷ durability` and does not fire at 20 against 6.
+>
+> **THE DOMAIN RULE, because the curve does not cover every crew the panel can name.** It is asked for
+> `1..=the band's pool`, and two readings are deliberately about crews the band *cannot* field
+> (*"free up idle workers to send more"*, and a *clear it now* naming more hands than the band holds).
+> So: **inside the asked range the curve is the only authority; past its last row the closed forms
+> answer.** A curve that **plateaued** below a target has answered — no crew at any size — and the pill
+> declines to render; a curve still **climbing** when the rows ran out has said nothing.
+>
+> **A SUB-ONE RATE IS THE NORMAL CASE AND MUST NOT ROUND TO ZERO.** The whole-animal quantum is a
+> *timing* effect — the wound ledger carries damage between turns, so a party that cannot finish a body
+> this turn still finishes one eventually. Decimal alone reads as *"not quite one, so nothing happens"*
+> — the same conclusion the `≈0` produced — so the rate is stated **with the wait**.
+>
+> **IT IS ONE SENTENCE, ON THE BINDING-LIMIT LINE, AND NOTHING STANDS ABOVE THE `NEXT TURN` CAPTION.**
+> A separate estimate line above the caption shipped for one slice and was reported from play as saying
+> *"pretty much the same text"* twice on one card. The band and the cadence folded onto the survivor:
+> `These hunters bring down ≈0.38 Wild Boar/turn (0.22 – 0.52), about one every 2.7 turns.` — figure →
+> spread → wait. The band is **parenthesised** rather than `·`-separated, since a middot strip read as
+> a fragment of the strip this stopped being; each half suppresses on its own terms (degenerate band,
+> and ≥ 1 animal a turn).
+>
+> **The sentence quotes the CLAMPED take**, not the unclamped kill: they differ only when the haul
+> binds, and quoting the kill would put a figure in the sentence that its own parenthetical band
+> contradicts.
+>
+> **`— add hands to take more` was removed and the other remedies were NOT.** It named no count and sat
+> two lines under `max N workers useful here`, which contradicts it. The ones that survive name a real
+> action: *"more hands would take from the stock, not the surplus"* is a consequence to weigh, and
+> *"lower it, or let the herd grow"* offers two. **A remedy earns its place by being actionable**, not
+> by being a remedy.
+>
+> **The Work board's row `+` gate stays on the closed form** — it prices a worked row with no reply in
+> hand. Both cap twins divide through the one `max_useful_workers` and the curve rides the forecast
+> dict rather than being a parameter only one twin passes, so they cannot come apart by omission — but
+> on a fight-bound quarry the row quotes a smaller ceiling than the sheet until it is given a reply.
+
+> #### ⛔ THE CLIENT NO LONGER DERIVES THE HUNT TAKE — the third arm was a lie by 2.3×
+>
+> `_hunt_delivered_and_waste`'s third bound was `animals_stayed(animals_engaged(workers, rate), stay)`
+> — **engagement and retreat only, no fight.** Measured on a Wild Aurochs at four hunters, the panel
+> printed **1.92 food** where the herd paid **0.84**, and the bone, fibre and hide beside it were over
+> by the same factor, all four being fixed conversions of one biomass. The ratio **is** the fight:
+> `4 × (attack 20 − defense 6) ÷ durability 150`, nothing else.
+>
+> **The client could not have computed it.** `combat_config.hit_chance` is unpublished by design and
+> the schema names the damage-over-durability division as one of the non-linear halves that stay the
+> sim's answer. So the sim publishes a **crew-take curve** (`HuntCrewTakeQuery`, on the command socket,
+> **not** the snapshot): one row per crew size, each the *whole crew's* take with engagement, retreat
+> and fight already resolved. The client's remaining job is a lookup and a `min`.
+>
+> **TWO MEASUREMENTS RULED OUT THE OBVIOUS SHAPE, and both are worth keeping.** A single per-hunter
+> rate cannot represent the curve: on Wild Boar it spans **6×** across crews of one to six, and on
+> Wild Aurochs the binding term flips *inside the stepper's own range* — clean at 1–8, a 28% dip at
+> **11** where `floor(11 × 0.17)` caps reach at one animal, recovered at 12. And the uncertainty band
+> is **`O(√w)`, not `O(w)`**: both stochastic stages are binomials, so the spread *shrinks* per hunter
+> as the crew grows, and a per-hunter band multiplied by crew overstates it by exactly `√w`. At the
+> shipped `hit_chance = 1.0` the band collapses to a point, so that error would have been invisible
+> until someone tuned it.
+>
+> **A degenerate band prints the bare figure with no range.** Range chrome that always renders
+> manufactures doubt the model does not have.
+>
+> **⛔ AND A QUERY ANSWER MUST NEVER CLOSE A COMPOSE SHEET.** `refresh_compose_sheet` is the shared
+> *re-render in place, close only if the subject is gone* path, and it decided *gone* by comparing the
+> sheet's subject against `_selection`. Only the **expedition** branch rode `ForecastQuery.answered`,
+> and an expedition sheet is always opened from the selection, so the two could never disagree. Putting
+> every **local** hunt sheet on that channel made the answer **tear the sheet down** wherever the sheet
+> had been built for a subject that is not the selection. It now takes `may_close`, and the `answered`
+> lambda passes `false`: **a query answers a question the sheet composed and carries no news about
+> whether the subject still exists — only a snapshot can retire a subject.**
+- **⛔ A CURVE OF ZEROES PLATEAUS AT NOBODY, NOT AT ONE — and this walk must agree with the sim's.**
+  `SourceForecast.crew_take_plateau` is a deliberate *second* implementation of
+  `fauna::hunt_useful_crew` (it walks the published rows; the sim walks its own), so the two have to
+  land on the same number everywhere. It seeded `plateau := 1` and scanned from the second row, which
+  is a **false floor** on a curve that never rises — the case the sim names explicitly and answers
+  `NO_USEFUL_CREW` for (*"a bare-handed party against a `defense` it cannot clear lands exactly zero
+  however many people it sends"*). Reported from play on a Rabbit Warren: the sheet printed
+  `max 1 worker useful here — more would be idle` while the same herd's wire row carried
+  `huntUsefulWorkers: 0` — two readings of one curve, disagreeing by the whole of the answer. The scan
+  now starts from `PUBLISHED_NO_USEFUL_CREW` at row **one** and only a row rising above zero names a
+  crew, which is the sim's loop line for line, `is_finite` guard included.
+  > **`max_useful_workers` needs its own refusal beside the published one**, because the two arms are
+  > reached on different sources: the curve arm where a query reply is in hand (a compose sheet), the
+  > published arm where none is (a worked board row). Without it the zero fell through to the
+  > `maxi(plateau, hold)` below and the hold/reach floors staffed a crew against a take of nothing —
+  > the same parking `MAX_USEFUL_BARREN` refuses one account over.
+  >
+  > **The sim-side fix landed with it and is the reason this stopped firing in play**: the crew curve
+  > was resolving against the herd's *post-take* stock, so a worked source read zero at every crew.
+  > See `.claude/rules/core_sim/fauna.md` → "A FORECAST REGROWS FIRST".
+- **⛔ AND THE CAP ITSELF IS FLOORED AT ONE, BECAUSE *"MAY I START THIS"* IS NOT *"WOULD ANOTHER HAND
+  HELP"*.** `max_useful_workers` turns a zero plateau into `MAX_USEFUL_BARREN`, never into `0`.
+  Passing the sim's `NO_USEFUL_CREW` straight through pinned the stepper at `0` with a dead `+` and
+  `max 0 workers useful here` beneath it — reported from play on a Wild Aurochs standing on its floor,
+  a herd that pays one animal every two and a half turns. **A player must always be able to staff a
+  source at or under its floor** and be told the take begins once it grows past it.
+  > **The two numbers answer different questions and are not a divergence to be repaired.**
+  > `fauna::hunt_useful_crew` gates the Work board's `+` on an ALREADY-WORKED row, where
+  > `NO_USEFUL_CREW` is the honest floor; this cap gates whether the sheet may offer a crew at all.
+  > `MAX_USEFUL_BARREN` is the same answer the barren-patch arm one branch down already gives, with
+  > the same argument written out: *we know what this source pays, and it is nothing, so the honest
+  > ceiling is one worker* — and **no floors apply to it**, because `hold` and `reach` can both be
+  > large on a source paying nothing.
+  >
+  > The sim half of this landed beside it: a curve is a **rate**, so its room is no longer rounded to
+  > whole animals and big game at its floor publishes a real per-turn figure instead of a zero. See
+  > `.claude/rules/core_sim/fauna.md` → "THE CURVE IS A RATE ALL THE WAY DOWN".
 - **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
   mins `animals_stayed` into its own kill count; `floor(min(carry, engaged × fpa) / fpa)` is the same
   arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short
@@ -1122,6 +1364,23 @@ number and they diverged the moment the flag learned to count animals while the 
 quoting `grows past 1075` — caught in a rendered frame, not in review — so the cure is that no second
 rendering exists, not two kept in step by hand. `floor_chart_model` binds `body_mass` / `quarry` once
 and passes them BOTH to `harvest_verdict` and out on the model, for the same reason.
+
+> #### ⛔ `stock_face` IS FOR A **STOCK**. A PER-TURN RATE THROUGH IT IS AN OVERSTATEMENT, NOT A ROUNDING
+>
+> Its `animal_count` is `maxi(1, round(biomass / body_mass))`, and the **floor at one** is what makes
+> it right for a standing herd — you cannot have half an animal standing there — and wrong for
+> anything measured *per turn*, where a value below one body is the ordinary case. A mammoth range
+> (`body_mass 400`) peaking at 50 biomass/turn rendered `≈1 Mammoth a turn`: an **8× overstatement**,
+> and the same rate-vs-stock class the sim fixed on the take line with `EngagementQuantum::Rate`.
+> Rates go through `DetailFormat.animal_rate_face` (animals, two decimals, with a `<0.01` guard so a
+> live rate never prints as `0`) or `format_yield` (biomass) — never `stock_face`.
+>
+> **The tell was a doubled `≈`.** `HUSBANDRY_PAYOFF_BREEDING_FORMAT` carried its own `≈` and
+> `stock_face` returns one too, so the hover read `Breeds back up to ≈≈3 Red Deer a turn` on every
+> herd it appeared on. A format string and the formatter it is filled with **each owning a unit or a
+> qualifier** is the shape to look for: the sustainable line beside it had the same fault the other
+> way round, printing `+1.74 /turn a turn`. **One hover, one curve, one rounding** — the two lines
+> disagreed about how to round the same number, which is what made both visible at once.
 
 **THE FLAG LEADS WITH THE PERCENT, ON BOTH WEBS** — ONE `FLOOR_FLAG_FORMAT`, `leave 50% · 98` on a
 patch and `leave 50% · ≈11 Red Deer` on a herd, and **`HarvestFloorChart` branches on nothing**: it
@@ -3461,9 +3720,17 @@ one-off `workCost` cannot state.
 - **`upkeepDemand` keeps its own meaning and its own readers.** It resolves through the AT-RISK rung,
   which is the right answer for *what is this source losing* and the wrong one for *what would this
   rung cost to hold*. Both ship; nothing may substitute one for the other.
-- **The plant pair is still deliberately NOT in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`, and for ONE
-  reason now.** Both plant rungs declare `scaled_by: flat`, so the figure is the ladder's and reads
-  identically on every patch in the game — there is no live patch state in it to leak. The second
+- **The plant pair is still deliberately NOT in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`, and the reason
+  it survives the move onto `scaled_by: source_load` is worth stating.** The pair no longer reads
+  identically on every patch — it is scaled by the patch's **tender-load** — but that load is
+  `tile forage capacity / capacity_per_tender`, a pure function of the tile's **terrain**, which a
+  Discovered tile remembers by definition: no player action moves it, so the figure sent for an
+  unseen hex is the figure that hex last showed. **`patch_carrying_capacity` is NOT the precedent —
+  it is the counter-example**, and it sits in `FOW_DISCOVERED_HIDDEN_KEYS` for precisely the reason
+  the pair stays out: the Field rung *does* move it, so it is live patch state wearing a terrain
+  figure's clothes. **What would break this is a scale term that
+  read live patch state** — `ForagePatch::carrying_capacity`, say, which carries the rung's own gain
+  — and that is a second reason the measure reads the tile's K rather than the patch's. The second
   reason it used to carry — that redacting it would cost the closed form its rate term — died with the
   subtraction. **`patch_meter_rot_per_turn` IS redacted**, beside the shortfall it is derived from,
   and nothing is lost by that: a remembered tile's whole build payload is redacted, so the estimate

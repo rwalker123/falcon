@@ -27,7 +27,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_herds, advance_husbandry, build_headless_app, recapture_snapshot_in_place,
+    advance_herds, advance_husbandry, build_test_app, recapture_snapshot_in_place,
     FaunaConfigHandle, HerdRegistry, HerdTelemetry, SimulationConfig, SnapshotHistory,
 };
 
@@ -52,7 +52,7 @@ const KEEPER_PAID_NOTHING: f32 = 0.0;
 /// unconditionally, so neither the row nor its heading tile can be dropped by fog and turn a
 /// "published nothing" assertion into a pass for the wrong reason.
 fn world_with_a_tame_pennable_herd() -> (App, String, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -82,7 +82,7 @@ fn world_with_a_tame_pennable_herd() -> (App, String, UVec2) {
         herd.body_mass = species.body_mass;
         herd.husbandry_ceiling = species.husbandry_ceiling;
         assert!(
-            herd.tame_outright(viewer),
+            herd.tame_outright(viewer, &core_sim::LadderConfig::builtin()),
             "the fixture species must actually tame"
         );
         herd.position()
@@ -145,7 +145,10 @@ fn a_herds_published_biomass_is_the_stock_the_turns_last_writer_left() {
             .iter_mut()
             .find(|herd| herd.id == id)
             .expect("the fixture herd");
-        assert!(herd.corral_at(pos), "the fixture species must actually pen");
+        assert!(
+            herd.corral_at(pos, &core_sim::LadderConfig::builtin()),
+            "the fixture species must actually pen"
+        );
     }
     // **Logistics, part one.** The pass that ends by rebuilding the display telemetry every row is
     // walked from.
@@ -229,7 +232,10 @@ fn a_herd_penned_this_turn_publishes_no_heading() {
             .iter_mut()
             .find(|herd| herd.id == id)
             .expect("the fixture herd");
-        assert!(herd.corral_at(pos), "the fixture species must actually pen");
+        assert!(
+            herd.corral_at(pos, &core_sim::LadderConfig::builtin()),
+            "the fixture species must actually pen"
+        );
     }
 
     let penned = published_row(&mut app, &id);

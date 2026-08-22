@@ -24,10 +24,10 @@
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::{Entity, With};
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, reconcile_band_culture_layers,
-    scalar_from_f32, seeded_modifiers_for_band, BandId, CultureCorruptionConfig, CultureLayerScope,
-    CultureManager, CultureOwner, CultureTensionKind, InfluencerCultureResonance, PopulationCohort,
-    ResidentBand, SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
+    build_test_app, recapture_snapshot_in_place, reconcile_band_culture_layers, scalar_from_f32,
+    seeded_modifiers_for_band, BandId, CultureCorruptionConfig, CultureLayerScope, CultureManager,
+    CultureOwner, CultureTensionKind, InfluencerCultureResonance, PopulationCohort, ResidentBand,
+    SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
 };
 
 /// The axis every test below writes; any single axis would do, the rollup is per-axis.
@@ -459,7 +459,7 @@ fn two_bands_in_one_province_drift_apart() {
 /// **Worldgen's bands own layers by the time the first snapshot is captured.**
 #[test]
 fn resident_bands_own_culture_layers_after_the_first_update() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     let manager = app.world.resource::<CultureManager>();
@@ -490,7 +490,7 @@ fn resident_bands_own_culture_layers_after_the_first_update() {
 /// from, so the two outcomes cannot be confused.
 #[test]
 fn a_band_whose_tile_cannot_be_resolved_keeps_its_layer_and_its_traits() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
 
     let (band_entity, band) = {
@@ -573,7 +573,7 @@ fn a_band_whose_tile_cannot_be_resolved_keeps_its_layer_and_its_traits() {
 /// all zeroes, on every frame of every game.
 #[test]
 fn the_snapshot_stamps_every_tile_with_its_culture_layer_and_fills_the_raster() {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     recapture_snapshot_in_place(&mut app.world);
 

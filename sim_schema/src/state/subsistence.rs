@@ -95,6 +95,20 @@ pub const BUILD_QUEUE_BLOCKED: i32 = -4;
 /// together.
 pub const NOT_IN_ANY_BUILD_QUEUE: i32 = -1;
 
+/// **"THIS SOURCE IS HEADING NOWHERE"** — the wire value of `buildDestinationCapacity` on a source
+/// **no band has queued**, on the same *"outside the range a real answer lives in"* convention as
+/// the three sentinels above.
+///
+/// **It cannot be `0`, and that is the whole reason it is a sentinel.** A carrying capacity of zero
+/// is a **real reading a real source has** — barren ground, an overgrazed range, a rock pen — so a
+/// zero here would say *"build this and it will hold nothing"* about every unqueued source on the
+/// map. This is the ambiguity `huntUsefulWorkers` had to be untangled from in the other direction,
+/// and the resolution is the same one: a value that means "no answer" must live where no answer can.
+///
+/// A capacity is never negative, so any `< 0` reading is this. A client renders **no destination
+/// line at all** for it, exactly as it renders none for [`NO_BUILD_TURNS_ESTIMATE`].
+pub const NO_BUILD_DESTINATION_CAPACITY: f32 = -1.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SedentarizationState {
     pub faction: u32,
@@ -247,11 +261,18 @@ pub struct HerdTelemetryState {
     // **RETIRED: `trade_per_animal`** (arc #527). The wire slot `tradePerAnimal` is `(deprecated)`
     // in place. A kill rhythm on an inedible species divides body mass by the herd's own biomass
     // terms, never by a currency that may be zero.
-    /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
-    /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
+    /// **How many keepers a flock of this species and this size WANTS** (`fauna::herd_herders_needed`
+    /// = `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
     /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
     /// honest "herders 1 / 6" readout the labor assignment's blended `workers_needed`
     /// (`max(herders_needed, haulers)`) cannot give. Appended last (append-only). `0` if unknown.
+    ///
+    /// **⛔ IT IS THE HEAD-COUNT REQUIREMENT, NOT [`Self::upkeep_workers_needed`].** This one is
+    /// position-**independent** — it does not slide while a `Tame` fills — because
+    /// [`Self::herders_needed_if_managed`] must quote a crew for a herd at position zero, and because
+    /// `herdersNeededIfManaged == herdersNeeded` is pinned on every managed herd. The hands the herd's
+    /// *bill* takes is `upkeepWorkersNeeded`, which is the `ceil` of [`Self::upkeep_demand`] and does
+    /// move with the position. The two agree at the top of a rung and diverge below it.
     #[serde(default)]
     pub herders_needed: u32,
     /// **How well the herd is staffed** — `min(1, assigned / herders_needed)` (`Herd::herded_fraction`).
@@ -346,7 +367,10 @@ pub struct HerdTelemetryState {
     /// left as `demand − supplied` because the sim answers and the client does zero arithmetic.
     #[serde(default)]
     pub upkeep_shortfall: f32,
-    /// **HANDS TO MEET THE DEMAND** — the plant twin's doc has the reasoning.
+    /// **HANDS TO MEET THE DEMAND** — `ceil(upkeep_demand / PER_WORKER_OUTPUT)`
+    /// (`fauna::herd_upkeep_workers_needed`); the plant twin's doc has the reasoning. **Not**
+    /// [`Self::herders_needed`], which answers the head-count question at the rung's bare rate and
+    /// therefore contradicted this identity for most of a `Tame`.
     #[serde(default)]
     pub upkeep_workers_needed: u32,
     /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
@@ -707,6 +731,37 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_legs: Vec<BuildLegState>,
+    /// **THE CARRYING CAPACITY THIS SOURCE WILL HAVE AT THE RUNG ITS BUILD IS HEADING FOR** —
+    /// `None` (→ [`crate::NO_BUILD_DESTINATION_CAPACITY`] on the wire) when no band has queued it,
+    /// because then there is no destination to quote.
+    ///
+    /// # WHY IT SHIPS: THE FLOOR MOVES UNDER THE PLAYER WHILE THEY BUILD
+    ///
+    /// A take is held above `floor_fraction × K`, and a rung **raises `K`** — the plant web through
+    /// `field_capacity_gain`, the animal web through `pastoral_density` / `pen_density`, all three
+    /// interpolated on the source's ladder position. So the floor climbs every turn a build runs and
+    /// the player's take falls. With only the live `K` on the wire, the client can mark that the
+    /// floor is *moving* and nothing more, so a reduced take reads as the source being poor rather
+    /// than as the player's own investment arriving. This is where it is going.
+    ///
+    /// # IT IS THE DESTINATION'S, NOT NEXT TURN'S
+    ///
+    /// Next turn's capacity is not well defined — next turn's position depends on work nobody has
+    /// banked yet. The **destination** is exact: the queue entry already names the rung its climb
+    /// ends on ([`Self::build_destination_rung`]), so the gain at that rung is known today. Read the
+    /// two as one object; this is the capacity *of* that rung.
+    ///
+    /// # THE RUNG MOVES, THE LAND DOES NOT
+    ///
+    /// Struck at capture by the **same seam that writes the live `carrying_capacity`**, at the
+    /// destination standing instead of the source's own — one expression at two standings, never a
+    /// second formula. The land underneath it is today's: a herd's flow is summed over the graze as
+    /// it stands now, a patch's is its tile's own `K`. So the figure moves if the land does, exactly
+    /// as the live capacity beside it moves.
+    ///
+    /// Appended (append-only).
+    #[serde(default)]
+    pub build_destination_capacity: Option<f32>,
 }
 
 impl Default for HerdTelemetryState {
@@ -793,6 +848,9 @@ impl Default for HerdTelemetryState {
             build_blocked_reason: String::new(),
             build_destination_rung: String::new(),
             build_legs: Vec::new(),
+            // **A herd nothing has described is heading nowhere** — the absent reading, never a
+            // capacity of zero.
+            build_destination_capacity: None,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -827,6 +885,18 @@ pub struct ForagePatchState {
     pub owner: Option<u32>,
     #[serde(default)]
     pub biomass: f32,
+    /// **WHAT THIS PATCH HOLDS NOW** — the ground's own `K` already multiplied by the **interpolated**
+    /// `field_capacity_gain` this patch's ladder position has bought
+    /// (`forage::patch_carrying_capacity`). It is **live state that carries the rung**, not a fact
+    /// about the terrain: a standing Field reads ~2.53× the same ground left wild, and a half-raised
+    /// one reads part-way between, continuously.
+    ///
+    /// # ⛔ REDACT IT UNDER FOG — [`Self::tile_capacity`] is what replaces it there
+    ///
+    /// `is_field` and `field_progress` are already withheld on a remembered hex; publishing this one
+    /// unredacted hands back the same ladder position, and in a finer grain than the boolean did —
+    /// being interpolated it states *how far up*, not merely *whether*. Render this where the tile is
+    /// **visible** and [`Self::tile_capacity`] where it is merely **discovered**.
     #[serde(default)]
     pub carrying_capacity: f32,
     #[serde(default)]
@@ -877,7 +947,10 @@ pub struct ForagePatchState {
     /// basket is a pure function of its terrain, the roster's affinity weights and its coordinate
     /// (per-tile realization, §10); the patch then reweights it: a **tended** patch's favored crop
     /// rises to `min(1, share × tended_weeding_gain)` at the expense of the least abundant members,
-    /// and a **Field** publishes a single 100% entry. That is the whole of what a rung below 4 does
+    /// and a **Field** publishes its crop alone. **Both reweights reach only what working the ground
+    /// can clear**: a member that is not growing in the soil — a kelp bed, a mussel bed, a navigable
+    /// river's fish — keeps its share through both, so a Field beside a channel publishes the crop
+    /// *and* the fishery rather than a single 100% entry. That is the whole of what a rung below 4 does
     /// — the tile's capacity itself never moves — so this list is where the client can *see* a
     /// commitment take hold. Zero-share entries are filtered out. The shares sum to `1.0` on any
     /// forage-bearing tile, so `share × forage_capacity` is that plant's own capacity and the parts
@@ -1219,8 +1292,11 @@ pub struct ForagePatchState {
     /// build is in flight — exactly the rule the `*_work_cost` beside it follows. On a patch
     /// mid-build the two agree; on an unstarted one they differ, and that difference was the trap.
     ///
-    /// **Neither scales with anything**, because a patch is one tile: both plant rungs declare
-    /// `scaled_by: flat`, so the rate is what the ladder states. Appended (append-only).
+    /// **Both scale with the size of the land, through the same measure the bill uses.** Both plant
+    /// rungs declare `scaled_by: source_load` and quote their rate **per tender-load** — the tile's
+    /// own forage capacity over `forage.cultivation.capacity_per_tender` — so these are struck at
+    /// capture off *this patch's* tile, exactly as [`Self::upkeep_demand`] is, and not off the
+    /// ladder's bare rate. Appended (append-only).
     #[serde(default)]
     pub cultivation_upkeep_demand: f32,
     /// The rung-3 twin of [`Self::cultivation_upkeep_demand`].
@@ -1292,6 +1368,42 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_legs: Vec<BuildLegState>,
+    /// **WHAT THE GROUND HOLDS** — this tile's own forage `K`, off `forage.capacity_by_biome` through
+    /// `forage::tile_forage_capacity`, with **no rung gain in it**.
+    ///
+    /// # THE SPLIT, AND WHY BOTH SHIP
+    ///
+    /// - [`Self::carrying_capacity`] is what the **patch** holds now — this number × the interpolated
+    ///   `field_capacity_gain`. It moves when the player builds, so it is live state.
+    /// - This is a pure function of the tile's **terrain**. No player action moves it, which is
+    ///   exactly what makes it safe to render on a hex the player has only ever *remembered*.
+    ///
+    /// **The client picks between them on visibility**, and neither is redundant: dropping this one
+    /// as "the same number" is wrong on any patch above rung 2, and dropping
+    /// [`Self::carrying_capacity`] as "derivable" is wrong because the client holds neither the gain
+    /// nor the position it interpolates on. Collapsing either re-opens the fog leak this field closed
+    /// while keeping issue #462's *"both webs state their capacity on a remembered tile"* intact.
+    ///
+    /// It is **also the denominator the plant standing upkeep is quoted per**:
+    /// [`Self::upkeep_demand`] and the `*_upkeep_demand` quote pair are
+    /// `rate × tile_capacity / cultivation.capacity_per_tender` (`forage::patch_tender_loads`), so
+    /// this is the term that explains why two patches on one rung are billed differently.
+    ///
+    /// `0` where the tile is not on the map, the same absent-means-nothing reading
+    /// [`Self::composition`] takes there — never a fabricated capacity. Appended (append-only).
+    #[serde(default)]
+    pub tile_capacity: f32,
+    /// **THE CARRYING CAPACITY THIS PATCH WILL HAVE AT THE RUNG ITS BUILD IS HEADING FOR** — the
+    /// plant twin of [`HerdTelemetryState::build_destination_capacity`], which carries the whole
+    /// rationale. `None` (→ [`crate::NO_BUILD_DESTINATION_CAPACITY`] on the wire) when no band has
+    /// queued it.
+    ///
+    /// **Only rung 3 moves it on this web.** A `Cultivate` buys the ground a faster curve, not a
+    /// denser one, so a Cultivate destination quotes exactly [`Self::carrying_capacity`] — an equal
+    /// reading, honestly, and not a stale one. It is the `Sow` that lifts it by
+    /// `cultivation.field_capacity_gain`. Appended (append-only).
+    #[serde(default)]
+    pub build_destination_capacity: Option<f32>,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from
@@ -1393,7 +1505,8 @@ pub struct FloraShareInfo {
     /// **What committing this tile to this plant pays, against just gathering it wild, at the tended
     /// rung** — the tended payoff over the wild payoff, where tending **weeds** the basket (the
     /// favored share rises to `min(1, share × tended_weeding_gain)`, taken from the least abundant
-    /// first) and converts the favored term at `tended_conversion_gain`
+    /// of the members standing in the worked ground first) and converts the favored term at
+    /// `tended_conversion_gain`
     /// (`docs/plan_flora_roster.md` §4.3).
     ///
     /// `> 1.0` committing beats gathering the whole basket; `< 1.0` it is a **loss the player stays

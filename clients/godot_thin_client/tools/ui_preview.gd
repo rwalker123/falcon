@@ -60,6 +60,38 @@ const CHAPTERS := [
 ## cannot be driven is the same lost run as one that does not load.
 const CHAPTER_ENTRY_METHOD := "run"
 
+## > #### ⛔ THE OTHER THING A CHAPTER OWES: HOW MUCH WORK IT DOES
+## >
+## > **A GDScript `assert` — or any runtime error — inside a chapter ABORTS THAT CHAPTER AND NOTHING
+## > ELSE.** The engine prints `SCRIPT ERROR` to stderr, the coroutine unwinds to the harness, the walk
+## > carries on with the next chapter, and the run exits **0**. Measured: a failed `assert` mid-way
+## > through `compose_rungs` silently dropped ~40 assertions — a whole block of the kit/equipment-tier
+## > claims — and every gate in this arc says to judge this harness by its exit status. It was right to
+## > say so and the status was not earning it.
+## >
+## > There is no way to surface that abort to the exit code from inside the engine: nothing in the
+## > process can read its own stderr, and the failure is indistinguishable, from the caller's side,
+## > from a chapter that simply returned. So the harness asserts its OWN WORK INSTEAD — each chapter
+## > declares how many CHECKPOINTS it reaches and the walk requires at least that many.
+## >
+## > **IT IS A FLOOR, NOT AN EQUALITY.** Adding a claim to a chapter must not fail the run; LOSING
+## > claims is the whole failure mode. Removing one deliberately means lowering the chapter's own
+## > number, which is an edit in the same file as the removal.
+## >
+## > **A CHECKPOINT IS AN ASSERTION *OR* A SAVED FRAME**, and counting both is what leaves no chapter
+## > unguarded. `docks_legend` makes ZERO assertions and renders ten frames — a pure-render chapter is
+## > a legitimate shape — so an assertion-only floor would be `0` there and would guard the one chapter
+## > whose whole output a mid-walk abort silently truncates. Both are checkpoints the chapter reached.
+## >
+## > **A CHAPTER THAT DECLARES NOTHING FAILS THE RUN**, which is what makes this un-bypassable: were a
+## > missing const merely unguarded, deleting the line would be the silent bypass, and a new chapter
+## > would arrive unguarded by default.
+## >
+## > **AND IT LIVES ON THE CHAPTER, never in a table here.** A roster of counts in this file is exactly
+## > the shared-edit surface the chapter split exists to remove — two worktrees on different arcs would
+## > collide in it on every run that changed a claim.
+const CHAPTER_EXPECTED_CHECKPOINTS := "EXPECTED_CHECKPOINTS"
+
 ## The hang guard, a SIBLING node in `ui_preview.tscn` rather than anything this script owns — see
 ## `preview_watchdog.gd` for why that placement is the whole point.
 const WATCHDOG_NODE := "Watchdog"
@@ -68,6 +100,12 @@ const WATCHDOG_PROGRESS_METHOD := "note_progress"
 ## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
 ## the status and the output agree; nothing in `xtask`, CI or `scripts/` consumed this harness's
 ## status before (only agents reading its output did), so there was no consumer to break.
+##
+## **A CHAPTER THAT SILENTLY STOPPED RUNNING IS ONE OF THOSE FAILURES NOW.** It was not: a GDScript
+## `assert` aborts its chapter, the walk carries on, and the status said the run was clean while
+## ~40 claims had simply not been made. See `CHAPTER_EXPECTED_CHECKPOINTS` — without it, judging this
+## harness by `$?` (which every gate in the repo instructs) is judging it by a signal it had not
+## earned.
 const EXIT_OK := 0
 const EXIT_FAILED := 1
 
@@ -145,6 +183,10 @@ var _watchdog: Node = null
 ## Every `FAIL` this run has printed, from any of the sinks below. **The exit status is derived from
 ## it**, so the two signals a reader might use — `grep FAIL` and `$?` — can never disagree.
 var _failures := 0
+## **HOW MANY CHECKPOINTS THIS RUN HAS REACHED** — assertions made (pass or fail) plus frames saved.
+## The completion guard's only evidence that a chapter ran to its end; see
+## `CHAPTER_EXPECTED_CHECKPOINTS` for why the engine can offer nothing better.
+var _checkpoint_count: int = 0
 
 ## Every compose spine captured this run, keyed by the sheet it came from (see `_record_compose_spine`).
 ## A DICT rather than two fields because the parity assertion is about the RELATION between them, and a
@@ -441,9 +483,16 @@ func _ready() -> void:
 	])
 
 	# The state walk, in the ONE order that reproduces the frame set.
+	#
+	# **EACH CHAPTER IS AUDITED THE MOMENT IT RETURNS** — see `CHAPTER_EXPECTED_CHECKPOINTS`. A chapter
+	# that aborted returns exactly as one that finished does, so the delta in the run's own checkpoint
+	# tally is the only thing that can tell them apart, and it is checked here rather than at the end
+	# so the failure names the chapter that lost the work rather than the run that contained it.
 	for chapter in chapters:
 		_note_progress()
+		var checkpoints_before := _checkpoint_count
 		await chapter.run(self)
+		_assert_chapter_completed(chapter, _checkpoint_count - checkpoints_before)
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -602,6 +651,11 @@ func _capture(name: String) -> Image:
 	return null
 
 func _save(name: String) -> void:
+	# **THE OTHER HALF OF THE COMPLETION TALLY** (`CHAPTER_EXPECTED_CHECKPOINTS`) — counted here, at the
+	# TOP, so a chapter is credited for reaching this call rather than for the capture succeeding. A
+	# frame that could not be captured is already its own reported failure; charging the chapter for it
+	# as well would report one fault twice and, under `--headless`, would fail every chapter at once.
+	_checkpoint_count += 1
 	# Check the herd fixtures RENDERING IN THIS FRAME, so a half-set field pair fails against the state
 	# it silently mis-renders rather than against nothing at all.
 	_guard_frame_herd_fields(name)
@@ -776,11 +830,45 @@ func _unhandled_input(event: InputEvent) -> void:
 		_unhandled_press_seen = true
 
 
+## **THE ONE ASSERTION SINK, and therefore one of the two places the run's own work is counted.**
+## Every claim in every chapter — including the ones made through `_assert_compose_sheet_fits` and its
+## siblings, which call this — lands here, so no chapter can make a claim that escapes the completion
+## guard's tally. Its other half is `_save`, which counts the frames.
 func _assert_hud(label: String, ok: bool) -> void:
+	_checkpoint_count += 1
 	if ok:
 		print("ui_preview: PASS hud — ", label)
 	else:
 		_fail("hud — %s" % label)
+
+
+## **DID THIS CHAPTER RUN TO ITS END?** — asked of the only evidence available, the checkpoints it
+## actually reached against the number it declares (see `CHAPTER_EXPECTED_CHECKPOINTS` for why the
+## engine can give no better answer, and why a missing declaration is itself a failure).
+##
+## The message states BOTH numbers and the chapter's path, because the two ways to reach it need
+## opposite responses: a chapter that ABORTED needs the abort found (the engine's own `SCRIPT ERROR`
+## lines above name the line), and one that legitimately lost a claim needs its own const lowered.
+func _assert_chapter_completed(chapter: Object, reached: int) -> void:
+	var script: Variant = chapter.get_script()
+	var path := String((script as Resource).resource_path) if script is Resource else "<unknown>"
+	var constants: Dictionary = (script as GDScript).get_script_constant_map() \
+		if script is GDScript else {}
+	# **A `const` IS NOT A PROPERTY**, so `Object.get()` answers `null` for one however it is spelled;
+	# the script's own constant map is the only reader. A chapter declaring it as a `var` would be
+	# missed here — which is correct rather than unfortunate: the number is a fact about the file, and
+	# a mutable one could be moved by the very run it is meant to judge.
+	if not constants.has(CHAPTER_EXPECTED_CHECKPOINTS):
+		_fail(("chapter — %s declares no `%s`, so a mid-chapter abort in it would go unnoticed and the "
+			+ "run would still exit 0. It reached %d checkpoints this run (assertions + frames); "
+			+ "declare that number, or fewer.") % [path, CHAPTER_EXPECTED_CHECKPOINTS, reached])
+		return
+	var expected := int(constants[CHAPTER_EXPECTED_CHECKPOINTS])
+	if reached < expected:
+		_fail(("chapter — %s reached %d checkpoints of the %d it declares. It did not run to its end: "
+			+ "look for a `SCRIPT ERROR` above naming a line in it. (If a claim or a frame was removed "
+			+ "on purpose, lower `%s` in that file.)")
+			% [path, reached, expected, CHAPTER_EXPECTED_CHECKPOINTS])
 
 # ---- the herd herders_needed FIELD-PAIR guard ---------------------------------------------------
 # The sim exports TWO herder counts per herd and the client reads DIFFERENT ones by rung, so a fixture

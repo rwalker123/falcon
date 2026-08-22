@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use bevy::math::UVec2;
 
 use core_sim::{
-    build_headless_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry,
-    ShoreRequirement, SimulationConfig, Tile, TileRegistry,
+    build_test_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry, ShoreRequirement,
+    SimulationConfig, Tile, TileRegistry,
 };
 use sim_runtime::TerrainTags;
 
@@ -90,7 +90,7 @@ fn seal_sites(seed: u64, turns: u32) -> Vec<SealSite> {
 /// its spawn tile and `step_herd_toward` never moves it — the colony is a fixed haul-out. That is
 /// the whole reason the shore invariant survives a turn, so it is asserted, not assumed.
 fn survey(seed: u64, turns: u32) -> Survey {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();

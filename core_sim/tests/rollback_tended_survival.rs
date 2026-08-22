@@ -24,7 +24,7 @@ use bevy::math::UVec2;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::TakeSelection;
 use core_sim::{
-    available_workers, build_headless_app, run_turn, FactionId, ForageRegistry, HerdRegistry,
+    available_workers, build_test_app, run_turn, FactionId, ForageRegistry, HerdRegistry,
     LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
 };
 
@@ -32,10 +32,10 @@ use core_sim::{
 /// `spawn_initial_herds` / `spawn_initial_forage` — and resolves turn 1), pinned to a deterministic
 /// earthlike map so the registries are populated the same way every run.
 fn spawn_world() -> bevy::app::App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
     app.update();
     app
@@ -80,41 +80,71 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     // plant rung's demand cannot leave this fixture supplying too little.
     {
         let ladder = core_sim::LadderConfig::builtin();
+        // **The bill is quoted per tender-load of this ground** (`forage::patch_tender_loads`), so
+        // the fixture resolves the Field's own tile rather than handing the seam a bare load — a
+        // rich tile owes more than a thin one, and supplying the reference rate on rich ground would
+        // leave this Field short.
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let tile_entity = app
+            .world
+            .resource::<core_sim::TileRegistry>()
+            .index(field_tile.x, field_tile.y)
+            .expect("the Field's tile is on the map");
+        let tile_capacity = core_sim::tile_forage_capacity(
+            &labor.forage,
+            app.world
+                .get::<core_sim::Tile>(tile_entity)
+                .expect("the Field's tile carries a Tile"),
+        );
         let mut forage = app.world.resource_mut::<ForageRegistry>();
         let patch = forage.patch_mut(field_tile).expect("the Field persists");
-        patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
+        patch.upkeep_supplied =
+            core_sim::patch_upkeep_demand(patch, &ladder, tile_capacity, &labor.forage);
     }
 
     // --- Set up a completed, worked corral (pen) on a real herd. --------------------------------
     // Domesticated + corralled at its tile with a grown (radius-1) fence.
     let (herd_id, pen_tile) = {
         let mut herds = app.world.resource_mut::<HerdRegistry>();
+        // **A PENNABLE herd, not simply the first one** — the fixture runs the real accrual now, and
+        // `tame_outright` / `corral_at` both refuse a species whose `husbandry_ceiling` forbids the
+        // rung. Picking by the gate is what makes "you cannot fabricate a penned `wild` herd" hold
+        // here as everywhere else.
         let index = herds
             .herds
             .iter()
-            .position(|h| h.id.starts_with("game_"))
-            .or(if herds.herds.is_empty() {
-                None
-            } else {
-                Some(0)
-            })
-            .expect("worldgen seeds herds");
+            .position(|h| h.id.starts_with("game_") && h.can_pen())
+            .expect(
+                "the harness map must seed at least one pennable herd — this fixture stands up a \
+                 real, completed pen",
+            );
         let herd = &mut herds.herds[index];
         let tile = herd.current_pos;
-        // **Written straight onto the herd, gates and all** — worldgen picks whichever species is
-        // first on the map and it may be `wild`-ceiling, while what is under test is that the
-        // *checkpoint* carries a finished rung. A completed meter is `progress >= cost > 0`, so both
-        // halves are set: the fabricated one-worker-turn job (`FABRICATED_BUILD_COST`) says "this
-        // rung is paid for" without pretending to the ladder's own price.
-        herd.domestication_progress = core_sim::FABRICATED_BUILD_COST;
-        herd.domestication_cost = core_sim::FABRICATED_BUILD_COST;
-        herd.owner = Some(faction);
-        herd.corralled_at = Some(tile);
+        // **THE REAL ACCRUAL, BOTH RUNGS** — `tame_outright` then `corral_at`, which is what
+        // `FABRICATED_BUILD_COST`'s own doc says a fixture wanting a finished rung must do.
+        //
+        // # ⛔ WRITING THE METER DID NOT STAND UP A PEN, AND THE TEST WENT QUIET
+        //
+        // Two byte-identical `set_ladder_position(FABRICATED_BUILD_COST, …)` calls stood here (the
+        // second dead). `FABRICATED_BUILD_COST` is **one worker-turn** while `animal:pastoral`
+        // costs 50 and `animal:pen` 75, so a position of `1.0` leaves the herd holding
+        // `animal:wild`: `is_domesticated()` and `corral_meter_full()` were both **false**, where
+        // the retired two-meter form made both true. What survived was `corralled_at` and
+        // `pen_radius` — two plain fields the fixture had written by hand — so the pen half of this
+        // test would have passed with the pen **rung's** capture and restore entirely broken.
+        let ladder = core_sim::LadderConfig::builtin();
+        assert!(
+            herd.tame_outright(faction, &ladder),
+            "fixture: the herd must be tameable, or there is no pastoral rung under the fence"
+        );
+        assert!(
+            herd.corral_at(tile, &ladder),
+            "fixture: the herd must be pennable, or there is no completed pen to round-trip"
+        );
         herd.pen_radius = 1;
-        herd.corral_progress = core_sim::FABRICATED_BUILD_COST;
-        herd.corral_cost = core_sim::FABRICATED_BUILD_COST;
         herd.biomass = herd.carrying_capacity;
-        // The one-turn "keeper tended it" grace the restore drops:
+        // The one-turn "keeper tended it" grace the restore drops. `corral_at` grants it; restated
+        // here because it is the signal under test rather than a side effect the fixture inherits.
         herd.corralled_tended_this_turn = true;
         (herd.id.clone(), tile)
     };
@@ -172,6 +202,23 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
         Some(pen_tile),
         "the pen should still be corralled immediately after restore"
     );
+    // **AND THE RUNG UNDER IT** — `corralled_at` and `pen_radius` are plain fields the fixture wrote
+    // by hand, so a pen assertion that reads only those passes with the ladder position's capture or
+    // restore entirely broken. The position is what says the fence was *built*.
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd_id)
+            .expect("herd restored")
+            .corral_meter_full(),
+        "the pen RUNG must survive the round-trip, not just the two fence fields beside it \
+         (ladder position = {})",
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd_id)
+            .expect("herd restored")
+            .ladder_position()
+    );
 
     // --- Advance exactly one turn: the post-restore Logistics pass. ------------------------------
     run_turn(&mut app);
@@ -208,10 +255,22 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
          corral_progress = {}",
         herd.corralled_at,
         herd.pen_radius,
-        herd.corral_progress
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPen,
+            &core_sim::LadderConfig::builtin()
+        )
     );
     assert_eq!(
         herd.pen_radius, 1,
         "the pen's ExtendPen radius was thrown away on the post-restore turn"
+    );
+    assert!(
+        herd.corral_meter_full() && herd.is_domesticated(),
+        "…and so was the ladder position both rungs stand on (position = {}, pen work done = {})",
+        herd.ladder_position(),
+        herd.rung_work_done(
+            core_sim::RungKey::AnimalPen,
+            &core_sim::LadderConfig::builtin()
+        )
     );
 }

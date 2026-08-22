@@ -31,8 +31,8 @@
 use bevy::math::UVec2;
 
 use core_sim::{
-    build_headless_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry,
-    HusbandryCeiling, ShoreRequirement, SimulationConfig, Tile, TileRegistry, BUILTIN_FAUNA_CONFIG,
+    build_test_app, classify_food_module, FaunaConfig, FoodModule, HerdRegistry, HusbandryCeiling,
+    ShoreRequirement, SimulationConfig, Tile, TileRegistry, BUILTIN_FAUNA_CONFIG,
 };
 use sim_runtime::TerrainTags;
 
@@ -110,7 +110,7 @@ impl Survey {
 /// doing both double-runs worldgen, and `spawn_initial_world` has no idempotency guard. This survey
 /// reads herds at placement time, so no turn is resolved and `run_schedule` alone is correct.
 fn survey(seed: u64) -> Survey {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();

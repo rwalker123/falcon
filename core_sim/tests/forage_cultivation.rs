@@ -28,7 +28,7 @@ use core_sim::{
     PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    CULTIVATION_DISCOVERY_ID, FOOD, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, UNSCALED_UPKEEP,
+    CULTIVATION_DISCOVERY_ID, FOOD, ONE_TENDER_LOAD, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
     WHOLLY_UNSUPPLIED,
 };
 
@@ -67,7 +67,10 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    // **THE SHARED HARNESS MAP.** This file pinned the seed by hand long before there was a name for
+    // it; the literal is now `core_sim::HARNESS_MAP_SEED`, so the repo has one harness map and not
+    // two that happen to agree.
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -134,8 +137,18 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
         // concentration + conversion — which loses on marginal ground (a low-share crop, e.g. hazel on
         // RollingHills at ~0.68×). The tests below assert `tended > wild`, so the fixture is pinned to
         // ground where the default crop's Cultivate ratio exceeds `1.0` — computed with the sim's own
-        // payoff functions, so "the crop wins" is the sim's verdict, not a re-derivation. On the
-        // standard map this lands on rich river-lowland (AlluvialPlain ~1.35×).
+        // payoff functions, so "the crop wins" is the sim's verdict, not a re-derivation.
+        //
+        // # ⛔ AND IT TAKES THE RICHEST SUCH TILE, NOT THE FIRST
+        //
+        // The plant upkeep is quoted **per tender-load** — the tile's own `K` over
+        // `forage.cultivation.capacity_per_tender` — so what a patch owes is a fact about the
+        // ground. Taking the first qualifying tile in query order landed this file on 25-capacity
+        // tundra, where a tended patch's whole bill is a quarter of one hand: *"covering the demand
+        // takes more than one keeper"*, *"a lone builder is under the rate"* and *"the richer of two
+        // positions owes more"* are then unreachable, and the fixtures that assert them pass or fail
+        // for reasons that have nothing to do with the mechanic. The richest qualifying tile is real
+        // farmland and reaches every one of those states.
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
         let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
@@ -144,7 +157,7 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
         query
             .iter(&app.world)
             .filter(|(tile, _)| registry.patch(tile.position).is_some())
-            .find(|(tile, _)| {
+            .filter(|(tile, _)| {
                 let composition = tile_flora_composition(&flora, &labor.forage, tile, map_seed);
                 let Some(species) =
                     default_species_for_rung(&composition, &flora, RungKey::PlantTended)
@@ -171,6 +184,13 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
                     1.0,
                 );
                 commit_yield_ratio(payoff, wild) > 1.0
+            })
+            .max_by(|(a, _), (b, _)| {
+                tile_forage_capacity(&labor.forage, a)
+                    .total_cmp(&tile_forage_capacity(&labor.forage, b))
+                    // Ties broken on the coord, so the pick is deterministic whatever order the
+                    // query hands the tiles back in.
+                    .then_with(|| (a.position.y, a.position.x).cmp(&(b.position.y, b.position.x)))
             })
             .map(|(tile, _)| tile.position)
             .expect("a FoodModuleTag tile whose default crop out-yields the wild basket")
@@ -458,9 +478,18 @@ fn tended_grace(app: &App) -> u32 {
 /// `maintain <faction> forage <x> <y> <workers>`.
 fn keep_patch_for_a_turn(app: &mut App, coord: UVec2) {
     let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
+    let forage = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .forage
+        .clone();
+    // **The bill is quoted per tender-load of this ground**, so the stand-in has to resolve the
+    // tile the way the labor arm does, not hand the seam a bare one.
+    let tile_capacity = plant_tile_capacity(app, coord);
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch");
-    patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder);
+    patch.upkeep_supplied = core_sim::patch_upkeep_demand(patch, &ladder, tile_capacity, &forage);
 }
 
 /// Turns with no active band: only the Logistics-stage systems run.
@@ -587,7 +616,63 @@ fn published_count(turns: Option<core_sim::BuildTurns>) -> Option<u32> {
 fn tended_keeping_crew() -> u32 {
     core_sim::LadderConfig::builtin()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP)
+        .upkeep_crew_needed(fixture_tender_loads())
+}
+
+/// **THE MEASURE THIS FILE'S PLANT FIXTURES ARE BILLED PER** — both plant rungs quote their
+/// `upkeep.work_per_turn` per **tender-load** (`forage::patch_tender_loads`), so what a fixture owes
+/// depends on the ground [`prime_thriving_patch`] found: the tile's own `K` over
+/// `forage.cultivation.capacity_per_tender`.
+///
+/// **Derived from the fixture's own tile, never assumed to be [`ONE_TENDER_LOAD`].** The reference
+/// tile reads exactly one load by construction, and this file's search does *not* land there — it
+/// takes the first site whose default crop wins, which on the fixture map is thin ground. Memoised
+/// because the search costs a whole worldgen and the answer is a constant of the fixture.
+fn fixture_tender_loads() -> f32 {
+    static LOADS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *LOADS.get_or_init(|| {
+        let mut app = spawn_world();
+        let (_tile, coord) = prime_thriving_patch(&mut app);
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let loads = core_sim::patch_tender_loads(plant_tile_capacity(&app, coord), &labor.forage);
+        assert!(
+            loads > core_sim::NO_TENDER_LOAD,
+            "fixture: the ground these tests work must present land to tend, or every upkeep \
+             number in this file is an honest zero and nothing here asserts anything"
+        );
+        loads
+    })
+}
+
+/// **The ground under `coord`, in the unit the `patch_*` upkeep seams take** — the tile's own forage
+/// `K` (`forage::tile_forage_capacity`), which each of them divides by `capacity_per_tender` to reach
+/// the tender-loads the bill is quoted per.
+fn plant_tile_capacity(app: &App, coord: UVec2) -> f32 {
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let tile_entity = app
+        .world
+        .resource::<core_sim::TileRegistry>()
+        .index(coord.x, coord.y)
+        .expect("the fixture tile is on the map");
+    let ground = app
+        .world
+        .get::<Tile>(tile_entity)
+        .expect("the fixture tile carries a Tile");
+    tile_forage_capacity(&labor.forage, ground)
+}
+
+/// **THE FIXTURE GROUND IS NOT THE REFERENCE TILE, and that is worth pinning** — every upkeep number
+/// in this file is the rung's declared rate times [`fixture_tender_loads`], and a fixture that
+/// happened to sit at exactly one load would make the scaling invisible: every assertion would pass
+/// against the retired flat rate too.
+#[test]
+fn the_fixture_ground_is_priced_off_its_own_tile_and_not_the_reference_one() {
+    let loads = fixture_tender_loads();
+    assert!(
+        (loads - ONE_TENDER_LOAD).abs() > 1e-3,
+        "this file's ground reads {loads} tender-loads — indistinguishable from the reference tile, \
+         so nothing here can tell a scaled bill from a flat one"
+    );
 }
 
 /// The whole `plant:tended` job, in work units — what a build test divides by to get its turns.
@@ -861,7 +946,7 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
     let ground = app.world.get::<Tile>(tile_entity).expect("the tile");
     let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
     assert_eq!(
-        core_sim::patch_composition(&patch, &composition, &labor.forage).as_ref(),
+        core_sim::patch_composition(&patch, &composition, &flora, &labor.forage).as_ref(),
         composition.as_ref(),
         "and it is still the mixed basket it started as"
     );
@@ -1413,7 +1498,7 @@ fn gathering_a_patch_does_not_hold_it_but_one_keeper_does() {
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP);
+        .upkeep_crew_needed(fixture_tender_loads());
     let kept = progress_after(demand_in_hands);
     assert_eq!(
         kept, seated,
@@ -1491,7 +1576,7 @@ fn a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool() {
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP);
+        .upkeep_crew_needed(fixture_tender_loads());
 
     /// The gatherers move to a richer stand — the state the whole defect lives in.
     const THE_GATHERERS_LEAVE: bool = true;
@@ -1588,7 +1673,12 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
             // **THE BILL THE KEEPERS WERE HANDED**, not the live cost — the demand
             // interpolates on the position, and the turn's own accrual has already raised it by the
             // time this reads (`ForagePatch::upkeep_demanded`).
-            demand: core_sim::patch_keeping_basis(patch, &ladder),
+            demand: core_sim::patch_keeping_basis(
+                patch,
+                &ladder,
+                plant_tile_capacity(&app, coord),
+                &app.world.resource::<LaborConfigHandle>().get().forage,
+            ),
         }
     };
 
@@ -1732,7 +1822,12 @@ fn every_band_on_one_patch_is_judged_against_one_bill_in_either_visit_order() {
                 let patch = registry.patch(coord).expect("patch");
                 Held {
                     supplied: patch.upkeep_supplied,
-                    basis: core_sim::patch_keeping_basis(patch, &ladder),
+                    basis: core_sim::patch_keeping_basis(
+                        patch,
+                        &ladder,
+                        plant_tile_capacity(&app, coord),
+                        &app.world.resource::<LaborConfigHandle>().get().forage,
+                    ),
                     neglect: patch.neglect_turns,
                     progress: patch.ladder_position(),
                 }
@@ -1842,7 +1937,12 @@ fn a_builds_first_turn_draws_the_keeping_pool_and_bare_ground_draws_nothing() {
             // **THE BILL THE KEEPERS WERE HANDED**, not the live cost — the demand
             // interpolates on the position, and the turn's own accrual has already raised it by the
             // time this reads (`ForagePatch::upkeep_demanded`).
-            demand: core_sim::patch_keeping_basis(patch, &ladder),
+            demand: core_sim::patch_keeping_basis(
+                patch,
+                &ladder,
+                plant_tile_capacity(app, coord),
+                &app.world.resource::<LaborConfigHandle>().get().forage,
+            ),
             progress: patch.ladder_position(),
         }
     };
@@ -2055,7 +2155,7 @@ fn a_half_staffed_keeping_bleeds_in_proportion_to_the_supply_it_is_short() {
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_demand(UNSCALED_UPKEEP);
+        .upkeep_demand(fixture_tender_loads());
     // The hands that cover the shipped demand outright at this pool's own kit, and one below it —
     // so the pair is *fully kept* against *genuinely short* rather than two arbitrary counts.
     let covering = (1..)
@@ -2108,7 +2208,7 @@ fn a_half_staffed_keeping_bleeds_in_proportion_to_the_supply_it_is_short() {
                 .resource::<LadderConfigHandle>()
                 .get()
                 .rung(RungKey::PlantTended)
-                .upkeep_demand(UNSCALED_UPKEEP),
+                .upkeep_demand(fixture_tender_loads()),
             tended,
             "a rung's demand is the same at {keepers} keepers as at any other staffing"
         );
@@ -2191,7 +2291,7 @@ fn a_kept_cultivate_finishes_in_its_stated_turns_and_an_unkept_one_is_slower() {
         .resource::<LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(UNSCALED_UPKEEP);
+        .upkeep_crew_needed(fixture_tender_loads());
     assert_eq!(
         finished_on(demand_in_hands),
         stated,
@@ -2222,7 +2322,7 @@ fn an_abandoned_part_build_is_owed_the_keeping_pool_and_bleeds_the_rungs_rate() 
     let cost = rung
         .build_cost(RUNG_COST_UNSCALED)
         .expect("the tended rung builds");
-    let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+    let demand = rung.upkeep_demand(fixture_tender_loads());
 
     let mut app = spawn_world();
     let (_tile, coord) = prime_thriving_patch(&mut app);
@@ -2246,22 +2346,31 @@ fn an_abandoned_part_build_is_owed_the_keeping_pool_and_bleeds_the_rungs_rate() 
     // meter carrying work from the first work banked (`docs/plan_standing_upkeep.md` §4.6a), and
     // since §2.8 what it owes interpolates, so a half-built meter asks for half the hands rather
     // than the rung's full count.
+    // **The bill is quoted per tender-load of this ground** — resolved off the tile, so the four
+    // readings below are one source's, not a mix of a patch's and a reference tile's.
+    let tile_capacity = plant_tile_capacity(&app, coord);
+    let forage = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .forage
+        .clone();
     assert_eq!(
-        core_sim::patch_upkeep_workers_needed(&patch, &ladder),
-        core_sim::patch_upkeep_demand(&patch, &ladder).ceil() as u32,
+        core_sim::patch_upkeep_workers_needed(&patch, &ladder, tile_capacity, &forage),
+        core_sim::patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage).ceil() as u32,
         "hands to meet the demand the position actually owes, whoever is supplying it"
     );
     // Nobody is building it and nobody is keeping it, so the whole rate goes unmet.
     assert!(
-        (core_sim::patch_upkeep_shortfall(&patch, &ladder)
-            - core_sim::patch_upkeep_demand(&patch, &ladder))
+        (core_sim::patch_upkeep_shortfall(&patch, &ladder, tile_capacity, &forage)
+            - core_sim::patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage))
         .abs()
             < 1e-6,
         "an abandoned part-build is short by the whole of what it owes — which since §2.8 is the \
          INTERPOLATED bill, not the finished rung's rate"
     );
     assert!(
-        core_sim::patch_upkeep_demand(&patch, &ladder) < demand,
+        core_sim::patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage) < demand,
         "…and that bill really is below the rung's own rate, or nothing about §2.8 is under test"
     );
 
@@ -2348,7 +2457,7 @@ fn probe_the_price_of_holding_a_plant_rung() {
         ("plant:field", RungKey::PlantField),
     ] {
         let rung = ladder.rung(key);
-        let demand = rung.upkeep_demand(UNSCALED_UPKEEP);
+        let demand = rung.upkeep_demand(fixture_tender_loads());
         let cost = rung
             .build_cost(RUNG_COST_UNSCALED)
             .expect("both plant rungs build");
@@ -2356,7 +2465,7 @@ fn probe_the_price_of_holding_a_plant_rung() {
             "  {label}: {demand:.2} work/turn -> {} keeper(s); grace {} turns; \
              the rung is LOST on the first bleeding turn (progress {cost} -> {:.2}, below its own \
              cost), and the ground is fully wild again after {:.0} bleeding turns",
-            rung.upkeep_crew_needed(UNSCALED_UPKEEP),
+            rung.upkeep_crew_needed(fixture_tender_loads()),
             rung.upkeep_grace_turns(),
             cost - demand,
             cost / demand,
@@ -2721,7 +2830,7 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
 /// remaining reads `0` is the **first** turn the meter moves — so the two cannot drift.
 #[test]
 fn the_published_neglect_countdown_hits_zero_on_the_turn_the_meter_moves() {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
     app.update(); // the real Startup chain: worldgen, patch seeding, one capture.
 
     // Any seeded patch will do — the grace is the rung's, not the tile's.
@@ -3080,11 +3189,12 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
     /// order and a tie-break can never be what decides this test.
     const RICH_COST: f32 = 60.0;
     const POOR_COST: f32 = 30.0;
-    /// Short of what two tended patches want between them (2 work each on the shipped ladder), so
-    /// the pool cannot cover both and the two modes must answer differently. **It is short in
-    /// SUPPLY, not in head count** — a keeper's supply reads the pool's kit since §4.8, so the
-    /// fixture asserts the shortfall below rather than assuming it from the number.
-    const KEEPERS: u32 = 2;
+    /// Short of what these two patches want between them, so the pool cannot cover both and the two
+    /// modes must answer differently. **It is short in SUPPLY, not in head count** — a keeper's
+    /// supply reads the pool's kit since §4.8, and since the plant rungs began quoting their rate
+    /// per **tender-load** the total also depends on the ground — so the fixture asserts the
+    /// shortfall below rather than assuming it from the number.
+    const KEEPERS: u32 = 1;
 
     let run = |mode: core_sim::UpkeepFundMode| -> (f32, f32, f32, f32, f32) {
         let mut app = spawn_world();
@@ -3101,9 +3211,24 @@ fn both_fund_modes_split_a_short_pool_and_neither_wastes_a_hand() {
         let (rich, poor) = supplied_on(&app, first, second);
         // The two BILLS, which since §2.8 differ because the two positions do.
         let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let forage = app
+            .world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .clone();
+        // Both patches sit on the SAME tile's ground, so the tender-load is common to the pair and
+        // the two bills differ by their positions alone — which is what this reads them for.
+        let tile_capacity = plant_tile_capacity(&app, first);
         let registry = app.world.resource::<ForageRegistry>();
-        let billed =
-            |coord| core_sim::patch_keeping_basis(registry.patch(coord).expect("patch"), &ladder);
+        let billed = |coord| {
+            core_sim::patch_keeping_basis(
+                registry.patch(coord).expect("patch"),
+                &ladder,
+                tile_capacity,
+                &forage,
+            )
+        };
         (
             rich,
             poor,
@@ -3306,7 +3431,12 @@ fn a_blocked_head_claims_no_keeping_and_the_holding_beside_it_is_paid_in_full() 
                 // **Read the way the CAPTURE reads it** — the BILL the keeping answered, which is
                 // what the published trio is struck from (`forage::patch_keeping_basis`). The live
                 // demand beside it has already been raised by this turn's own accrual.
-                core_sim::patch_keeping_basis(patch, &ladder),
+                core_sim::patch_keeping_basis(
+                    patch,
+                    &ladder,
+                    plant_tile_capacity(&app, coord),
+                    &app.world.resource::<LaborConfigHandle>().get().forage,
+                ),
             )
         };
         let (holding_supplied, holding_demand) = read(holding);
@@ -3463,7 +3593,7 @@ fn the_maintenance_split_survives_a_checkpoint_under_both_modes() {
     ] {
         // **The FULL app**, not this file's minimal harness: `capture_sim_state` reads every
         // resource a checkpoint carries, and a partial world panics on the first one it lacks.
-        let mut app = core_sim::build_headless_app();
+        let mut app = core_sim::build_test_app();
         app.update();
         let (tile, first) = prime_thriving_patch(&mut app);
         seat_tended_patch(&mut app, first);
@@ -3568,8 +3698,20 @@ fn losing_the_tended_rung_to_a_dip_costs_almost_nothing_because_the_rung_interpo
 
     let demand_at = |app: &App| -> f32 {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let forage = app
+            .world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .clone();
+        let tile_capacity = plant_tile_capacity(app, coord);
         let registry = app.world.resource::<ForageRegistry>();
-        core_sim::patch_upkeep_demand(registry.patch(coord).expect("patch"), &ladder)
+        core_sim::patch_upkeep_demand(
+            registry.patch(coord).expect("patch"),
+            &ladder,
+            tile_capacity,
+            &forage,
+        )
     };
     let is_tended = |app: &App| -> bool {
         app.world
@@ -3674,18 +3816,34 @@ fn a_half_built_patch_with_no_builders_is_held_exactly_by_a_staffed_keeping() {
     let band = spawn_forager_of(&mut app, tile, coord, None, FORAGE_WORKERS);
     set_maintain_workers(&mut app, band, tended_keeping_crew());
     run_turns_with_forage(&mut app, 1);
+    let tile_capacity = plant_tile_capacity(&app, coord);
+    let forage = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .forage
+        .clone();
     let patch = app
         .world
         .resource::<ForageRegistry>()
         .patch(coord)
         .expect("patch");
     assert!(
-        core_sim::patch_upkeep_demand(patch, &core_sim::LadderConfig::builtin())
-            > core_sim::NO_UPKEEP_DEMAND,
+        core_sim::patch_upkeep_demand(
+            patch,
+            &core_sim::LadderConfig::builtin(),
+            tile_capacity,
+            &forage,
+        ) > core_sim::NO_UPKEEP_DEMAND,
         "a meter carrying work is BILLED, at any fullness — the pool has something to cover"
     );
     assert_eq!(
-        core_sim::patch_upkeep_shortfall(patch, &core_sim::LadderConfig::builtin()),
+        core_sim::patch_upkeep_shortfall(
+            patch,
+            &core_sim::LadderConfig::builtin(),
+            tile_capacity,
+            &forage,
+        ),
         core_sim::NO_UPKEEP_DEMAND,
         "…and the staffed pool covers it in full: nothing unmet"
     );
@@ -3934,8 +4092,12 @@ fn a_rung_that_erodes_below_its_cost_is_still_held_and_can_be_repaired() {
          a repair job rather than a rung nobody can put a builder on"
     );
     assert!(
-        core_sim::patch_upkeep_demand(&patch, &core_sim::LadderConfig::builtin())
-            > core_sim::NO_UPKEEP_DEMAND,
+        core_sim::patch_upkeep_demand(
+            &patch,
+            &core_sim::LadderConfig::builtin(),
+            plant_tile_capacity(&app, coord),
+            &app.world.resource::<LaborConfigHandle>().get().forage,
+        ) > core_sim::NO_UPKEEP_DEMAND,
         "…and it is still BILLED, so the keeping pool has something to hold — a dip does not move \
          who pays the rate (the holding itself is pinned by \
          `a_half_staffed_keeping_bleeds_at_half_the_rungs_rate`)"
@@ -4226,4 +4388,146 @@ fn bare_builders() -> core_sim::KitChoice {
     core_sim::EquipmentConfig::builtin()
         .kit("none")
         .expect("the shipped roster carries the empty kit")
+}
+
+/// **⛔ THE PUBLISHED KEEPING TRIPLE IS INTERNALLY CONSISTENT WHEN TWO BANDS SHARE ONE SOURCE.**
+///
+/// `snapshot.fbs` states `upkeepDemand − upkeepSupplied == upkeepShortfall` on both the patch and the
+/// herd table, and tells the client to do no arithmetic of its own. That identity is a claim about
+/// **one position**: the bill is stamped first-write-wins (`ForagePatch::upkeep_demanded`) at the
+/// moment the shares are struck, and the build accrual that moves the position runs *later in the
+/// same band's iteration*.
+///
+/// `maintenance_shares` priced each claim off the **live** `patch_upkeep_demand`, so with two bands
+/// on one patch — the first building it, the second keeping it — the second band's share was struck
+/// after the first band's builders had banked their turn. The wire then published the first band's
+/// stamp against the second band's larger payment, `demand − supplied` went **negative** while
+/// `shortfall` clamped at `0`, and the keeping pool spent work the patch never owed.
+///
+/// **The turn a build banks its FIRST work is the sharpest form of it**: bare ground owes nothing, so
+/// the stamp is an honest `0`, and any positive supply at all breaks the identity. The fixture is
+/// therefore a wild patch, a builder band with **no** keepers, and a keeper band with no build —
+/// asserted on the **published rows**, because the identity is a statement about the artifact.
+#[test]
+fn two_bands_on_one_patch_publish_a_consistent_keeping_triple() {
+    /// Keepers enough to cover any bill this ground could present, so a share struck off the wrong
+    /// demand is paid in full rather than clipped by a thin pool.
+    const AMPLE_KEEPERS: u32 = 4;
+    /// The keeping band's take crew — it works the patch, which is what puts it in the loop at all.
+    const A_GATHERER: u32 = 1;
+
+    // **The full app, not this file's `spawn_world`** — the identity under test is a property of
+    // the *published* row, so the fixture needs the capture the rest of the file does without.
+    let mut app = core_sim::build_test_app();
+    app.update();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+
+    // Band A **builds** and keeps nothing: its own `agriculture` role is empty, so every unit of
+    // supply this patch receives comes from band B and the two cannot be confused.
+    let crew = build_crew(&app);
+    spawn_forager_of(&mut app, tile, coord, Some(Improvement::Cultivate), crew);
+    // Band B **keeps** and builds nothing. Spawned second, so it is the band whose share is struck
+    // after band A's builders have banked their turn — the whole mechanism.
+    let keeper = spawn_forager_of(&mut app, tile, coord, None, A_GATHERER);
+    set_maintain_workers(&mut app, keeper, AMPLE_KEEPERS);
+
+    run_turns_with_forage(&mut app, 1);
+
+    // **THE PRECONDITION** — band A really did bank work this turn, so the demand really did move
+    // under band B. Without it the two readings coincide and the test passes on a dead fixture.
+    let banked = progress_of(&app, coord);
+    assert!(
+        banked > core_sim::RUNG_UNSTARTED,
+        "fixture: the builder must have banked work this turn, or the demand never moved under the \
+         keeper ({banked})"
+    );
+
+    app.world
+        .run_system_once(core_sim::recapture_snapshot_in_place);
+    let row = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .last_snapshot()
+        .expect("a capture")
+        .forage_patches
+        .iter()
+        .find(|patch| patch.x == coord.x && patch.y == coord.y)
+        .expect("the fixture patch is on the wire")
+        .clone();
+
+    assert!(
+        (row.upkeep_demand - row.upkeep_supplied - row.upkeep_shortfall).abs() < 1e-4,
+        "the wire states `demand − supplied == shortfall`, and a keeper paying a bill struck at a \
+         later position breaks it: demand {} supplied {} shortfall {}",
+        row.upkeep_demand,
+        row.upkeep_supplied,
+        row.upkeep_shortfall
+    );
+    assert!(
+        row.upkeep_supplied <= row.upkeep_demand + 1e-4,
+        "…and the pool never spends work the source did not owe: supplied {} against a bill of {}",
+        row.upkeep_supplied,
+        row.upkeep_demand
+    );
+}
+
+/// **⛔ AN OFF-MAP PATCH IS SYNTHETIC GROUND, NOT BARREN GROUND — and it bleeds like any other.**
+///
+/// `advance_forage_regrowth` deliberately leaves a patch's `carrying_capacity` alone when its coord
+/// is absent from the `TileRegistry`, *"which is what lets test harnesses build synthetic patches on
+/// tiles that do not exist"*. `advance_cultivation` resolved the same absence to `NO_FORAGE_CAPACITY`
+/// — while its comment claimed it looked the tile up *"exactly as `advance_forage_regrowth` looks it
+/// up"* — so such a patch presented no tender-load, owed **nothing**, was never short, and kept a
+/// finished Cultivate for ever with nobody on it. One absence, read two ways, in two passes of the
+/// same stage.
+///
+/// Both arms are asserted. The on-map patch is the control: it must revert, or *"the off-map one
+/// reverts too"* would be a claim about a pass that does nothing.
+#[test]
+fn an_off_map_patch_owes_its_keeping_and_reverts_like_any_other() {
+    /// A coord well outside the harness map — the synthetic ground the regrowth pass supports.
+    const OFF_THE_MAP: UVec2 = UVec2::new(9_000, 9_000);
+
+    /// Seat a finished, unkept Cultivate and let the decay pass run past its grace. Returns
+    /// `(seated, left)` work units. `off_map` puts the patch on a coord the `TileRegistry` does not
+    /// carry, seeded with the same capacity the on-map ground presents.
+    fn revert(off_map: bool) -> (f32, f32) {
+        let mut app = spawn_world();
+        let (_tile, on_map) = prime_thriving_patch(&mut app);
+        let coord = if off_map { OFF_THE_MAP } else { on_map };
+        if off_map {
+            let capacity = plant_tile_capacity(&app, on_map);
+            let mut patch = core_sim::ForagePatch::new(coord, capacity);
+            patch.biomass = capacity;
+            app.world
+                .resource_mut::<ForageRegistry>()
+                .patches
+                .insert(coord, patch);
+        }
+        seat_tended_patch(&mut app, coord);
+        let seated = progress_of(&app, coord);
+        let turns = tended_grace(&app) + 2;
+        run_turns_untended(&mut app, turns);
+        (seated, progress_of(&app, coord))
+    }
+
+    let (control_seated, control_left) = revert(false);
+    assert!(
+        control_left < control_seated,
+        "control: an unkept ON-MAP patch must revert ({control_seated} -> {control_left}), or this \
+         test measures a pass that does nothing"
+    );
+
+    let (seated, left) = revert(true);
+    assert!(
+        seated > core_sim::RUNG_UNSTARTED,
+        "fixture: the synthetic patch must start with a finished rung on it ({seated})"
+    );
+    assert!(
+        left < seated,
+        "a patch whose coord is off the map owes its keeping off the capacity it was SEEDED with — \
+         reading that absence as barren left it holding a finished rung for ever with nobody on it \
+         ({seated} -> {left})"
+    );
 }

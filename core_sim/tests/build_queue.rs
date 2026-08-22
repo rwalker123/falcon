@@ -24,7 +24,7 @@ use bevy::math::UVec2;
 use bevy::prelude::Entity;
 
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
+    build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     BuildJob, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation, LaborAssignment,
     LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
     TileRegistry,
@@ -148,7 +148,7 @@ fn world_with_a_queue_knowing(
     builders: u32,
     knows_cultivation: bool,
 ) -> (App, Entity, Vec<UVec2>) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let sources: Vec<UVec2> = cultivable_sites_in_one_work_range(&mut app)
         .into_iter()
@@ -323,13 +323,26 @@ const NOT_BLOCKED: &str = "";
 /// **The keeping this band owes for three tended meters in flight** — read off the shipped ladder so
 /// a retune moves the fixture with the game. Staffed wherever an arm must not be measuring rot.
 fn keeping_for(sources: usize) -> u32 {
-    let probe = build_headless_app();
+    let probe = build_test_app();
+    // **THE RATE IS QUOTED PER TENDER-LOAD** (`forage::patch_tender_loads`), and this fixture's
+    // sources sit on whatever ground `a_cultivable_site` picked — so the hands are read at the
+    // RICHEST tile the shipped biome table offers rather than at one load. Over-staffing a keeping
+    // pool costs these arms nothing (a surplus is not a credit); under-staffing would make every
+    // one of them measure rot instead of what it is about.
+    let labor = probe.world.resource::<core_sim::LaborConfigHandle>().get();
+    let richest_capacity = labor
+        .forage
+        .capacity_by_biome
+        .values()
+        .copied()
+        .fold(core_sim::NO_FORAGE_CAPACITY, f32::max);
+    let richest = core_sim::patch_tender_loads(richest_capacity, &labor.forage);
     let hands = probe
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
         .rung(RungKey::PlantTended)
-        .upkeep_crew_needed(core_sim::UNSCALED_UPKEEP);
+        .upkeep_crew_needed(richest);
     hands * sources as u32
 }
 
@@ -772,7 +785,7 @@ const GRACE_SPENT: u32 = 0;
 /// A world with one band **mid-`Tame`** on a domesticable herd it also hunts, its `builders` pool
 /// staffed and its `husbandry` role at `keepers`. Returns the app, the band and the herd id.
 fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, String) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     app.world
         .resource_mut::<core_sim::DiscoveryProgressLedger>()
@@ -827,8 +840,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
         // have to *draw* it away. Seeding a herd already under its floor would stage the stall
         // rather than reproduce it.
         herd.biomass = herd.carrying_capacity;
-        herd.domestication_progress = cost * HALF_BUILT;
-        herd.domestication_cost = cost;
+        herd.set_ladder_position(cost * HALF_BUILT, &core_sim::LadderConfig::builtin());
         // **A half-tamed herd is OWNED** — `accrue_domestication` claims it on the first accrual, so
         // seeding the meter without the owner would be a state the sim cannot produce (and one the
         // fog would hide from the wire).
@@ -960,7 +972,10 @@ fn resolve_an_animal_turn(app: &mut App) {
 fn herd_meter(app: &App, id: &str) -> f32 {
     let r = app.world.resource::<core_sim::HerdRegistry>();
     match r.find(id) {
-        Some(h) => h.domestication_progress,
+        Some(h) => h.rung_work_done(
+            core_sim::RungKey::AnimalPastoral,
+            &core_sim::LadderConfig::builtin(),
+        ),
         None => panic!(
             "herd {id} gone; have {:?}",
             r.herds
@@ -1203,7 +1218,7 @@ fn abandon_drops_the_row_and_its_entry_and_leaves_the_meter_to_rot() {
     // **And then the ground goes back to what it was.** With nobody holding it, the meter rots at
     // the rung's own rate over the following turns.
     let grace = {
-        let probe = build_headless_app();
+        let probe = build_test_app();
         let handle = probe.world.resource::<core_sim::LadderConfigHandle>().get();
         handle.rung(RungKey::PlantTended).upkeep_grace_turns()
     };
@@ -1446,7 +1461,7 @@ const RING_KEEPERS: u32 = 2;
 /// the hunt leash and the patch inside the work range without the fixture having to reason about
 /// either distance.
 fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let source = cultivable_sites_in_one_work_range(&mut app)[0];
     let tile = app
@@ -1546,9 +1561,9 @@ fn seat_a_pen_mid_ring(app: &mut App, tile: UVec2) {
         RING_HERD_REGROWTH,
         RING_HERD_BODY_MASS,
     );
-    herd.tame_outright(FactionId(0));
+    herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     assert!(
-        herd.corral_at(tile),
+        herd.corral_at(tile, &core_sim::LadderConfig::builtin()),
         "fixture: the pen must stand before a ring can widen it"
     );
     assert!(
@@ -1605,6 +1620,12 @@ const FIXTURE_LARDER: f32 = 50_000.0;
 /// arms are about the queue.
 fn resolve_a_pen_turn(app: &mut App) {
     app.world.run_system_once(core_sim::advance_herds);
+    // **The two Logistics decay passes, in stage order, before Population.** They are what clears
+    // `upkeep_supplied` / `upkeep_demanded`; without them a second call to this helper would bank a
+    // second turn's keeping on top of the first against a bill stamped once, and read the pen as
+    // better kept than it is. `advance_labor_allocation` refuses to do that quietly.
+    app.world.run_system_once(core_sim::advance_cultivation);
+    app.world.run_system_once(core_sim::advance_husbandry);
     app.world
         .run_system_once(core_sim::advance_labor_allocation);
     recapture_snapshot_in_place(&mut app.world);
@@ -1683,7 +1704,7 @@ fn a_pool_that_finishes_a_cultivate_in_one_turn() -> u32 {
 /// `plant:tended`'s own `work_cost` — the bar a bare crew strikes, since [`bare_builders`] takes
 /// nothing off it.
 fn tended_work_cost() -> f32 {
-    build_headless_app()
+    build_test_app()
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
@@ -1703,7 +1724,7 @@ const FINISHER_BAND: u64 = FIXTURE_BAND + 1;
 /// worth of builders and one entry; the survivor carries an ordinary pool and a **second** entry
 /// behind the shared one, so the arm can read what the dead head does to the entry below it.
 fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     let sources: Vec<UVec2> = cultivable_sites_in_one_work_range(&mut app)
         .into_iter()

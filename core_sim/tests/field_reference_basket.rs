@@ -1,4 +1,4 @@
-//! **THE REFERENCE BASKET, MEASURED** — the acceptance bar for the rung-3 re-expression.
+//! **THE REFERENCE BASKET, MEASURED** — the acceptance bar for rung 3's yield.
 //!
 //! A Field stopped being a *managed harvest* and became a *production gain*: it is foraged through
 //! the ordinary drawn-down path exactly as a wild stand and a tended patch are, and what rung 3 buys
@@ -26,18 +26,34 @@ const REFERENCE_CROP: &str = "wild_emmer";
 /// Quotes are captured at neutral productivity, as the shipped per-patch forecasts are.
 const QUOTE_MULTIPLIER: f32 = 1.0;
 
-/// **What rung 3 paid on this basket under the retired managed-harvest model**, provisions/turn.
-/// The re-expression has to land here.
-const FIELD_YIELD_BEFORE: f32 = 6.240;
+/// **What rung 3 pays on this basket**, provisions/turn.
+///
+/// # ⛔ IT MOVED, AND THE MOVE IS THE POINT — 6.240 → 12.482
+///
+/// This number held at `6.240` through §4.10 because that change was a **re-expression**: the Field
+/// stopped being a managed harvest and became a production gain, and the two new gains were chosen
+/// to land the measured yield exactly where the retired flat rate had it.
+///
+/// **This change is not a re-expression.** `forage::favored_conversion_gain` returned the tended
+/// rung's gain at `plant:tended` and the **identity** at every other rung, Field included — so rung 3
+/// converted each unit of biomass at *half* the rung beneath it, and the ladder inverted at any crew
+/// the carry limit binds. Reported from play: 2.00 food/turn on a tended patch, **1.33** on the same
+/// tile sown to a Field, same two tenders. `cultivation.field_conversion_gain` restores the term rung
+/// 3 was designed with and lost, so the pin doubles — exactly, because the gain does.
+///
+/// **The value is §4.14's to own from here**, and the epsilon below is deliberately unchanged: a
+/// model change moves the number, it does not loosen the band that guards it.
+const FIELD_YIELD_BEFORE: f32 = 12.482;
 /// **What rung 2 pays**, unchanged by this arc — quoted so the ordering claim is checkable.
 const TENDED_YIELD_BEFORE: f32 = 1.328;
 /// **What the same ground pays left wild**, likewise unchanged.
 const WILD_YIELD_BEFORE: f32 = 0.703;
 
-/// How far the re-expressed Field may land from the number it replaced. A **5%** band: this is a
-/// re-expression, so the product of the two new gains is chosen to hit the old figure, and the slack
-/// is there for the arithmetic reaching it by a different route (capacity × regrowth through the
-/// logistic MSY rather than a flat rate on the standing crop), not for a rebalance to hide in.
+/// How far the Field may land from its pinned figure. A **5%** band, and it has not moved: the slack
+/// is there for the arithmetic reaching the number by a different route (capacity × regrowth through
+/// the logistic MSY rather than a flat rate on the standing crop), **not** for a rebalance to hide
+/// in. When the model changes, the pin moves and this stays — which is what happened when
+/// `field_conversion_gain` restored rung 3's missing conversion term.
 const ACCEPTANCE_BAND: f32 = 0.05;
 
 /// Slack on the two rungs this arc does not touch — tight, because nothing about them moved.
@@ -92,7 +108,7 @@ fn the_re_expressed_field_lands_where_the_managed_rate_did() {
     );
     assert!(
         (field - FIELD_YIELD_BEFORE).abs() <= FIELD_YIELD_BEFORE * ACCEPTANCE_BAND,
-        "rung 3 must land where the managed rate did: {field} against {FIELD_YIELD_BEFORE} \
+        "rung 3 must land on its pinned figure: {field} against {FIELD_YIELD_BEFORE} \
          (wild {wild}, tended {tended})"
     );
     // And the ladder still climbs, which is the claim the yields exist to make.

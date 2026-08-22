@@ -33,8 +33,7 @@ mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state, SimState};
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, SimulationConfig, SimulationConfigMetadata,
-    SnapshotHistory,
+    build_test_app, recapture_snapshot_in_place, SimulationConfigMetadata, SnapshotHistory,
 };
 use serde_json::Value;
 use sim_schema::world::WorldSnapshot;
@@ -48,22 +47,19 @@ const REPLAY_TICKS: usize = 4;
 /// Turns for the forward-determinism comparison. Longer than the checkpoint horizon because
 /// divergence in the forward sim tends to be a slow float drift rather than an immediate flip.
 const FORWARD_TICKS: usize = 12;
-/// Fallback map seed when the loaded config leaves it unset, matching `determinism.rs`.
-const FALLBACK_MAP_SEED: u64 = 0x5EED_F00D;
 /// Longest rendered value in a diff line, so one enormous string field cannot bury the report.
 const MAX_VALUE_CHARS: usize = 48;
 
 fn new_app() -> bevy::prelude::App {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     if let Some(mut metadata) = app.world.get_resource_mut::<SimulationConfigMetadata>() {
         metadata.set_seed_random(false);
     }
-    if let Some(mut config) = app.world.get_resource_mut::<SimulationConfig>() {
-        if config.map_seed == 0 {
-            config.map_seed = FALLBACK_MAP_SEED;
-        }
-    }
+    // **THE SEED IS THE HARNESS BUILDER'S** (`core_sim::HARNESS_MAP_SEED`). This used to carry an
+    // `if config.map_seed == 0 { … }` fallback of its own, because the shipped config leaves the seed
+    // random and a reproducible run needs a number; `build_test_app` pins one for every test now, so
+    // that branch was unreachable and its constant was a value nothing could read.
     app
 }
 

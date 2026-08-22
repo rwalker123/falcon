@@ -185,6 +185,45 @@ const KIT_ITEM_CONDITIONS_KEY := "kit_item_conditions"
 const KIT_ITEM_ID_KEY := "item_id"
 const KIT_ITEM_REMAINING_KEY := "remaining"
 
+# **UNITS THE BAND OWNS** (`KitItemCondition.count`) — the ownership statement, so nothing has to
+# infer it from a condition of zero: a worn-out item and one the band never had both read
+# `remaining 0`, and `count > 0` is what separates them.
+#
+# **IT IS UNITS, AND `KIT_ITEM_WORKERS_HOLDING_KEY` BESIDE IT IS PEOPLE.** The two are the same
+# number only while every item is held by one person, which is true of the whole shipped roster and
+# is not a rule — see `kit_units_owned` for the one place that distinction is deliberately spent.
+const KIT_ITEM_COUNT_KEY := "count"
+
+# **THE BAND HAS NOT STATED HOW MANY IT OWNS** — an item with no published row, or a row from a
+# fixture that predates the field. Distinct from `0`, which is the real and sharp answer *it owns
+# none*, and every reader must withhold rather than render on it.
+const KIT_UNITS_UNSTATED := -1
+
+## **UNITS OF ONE ITEM THE BAND OWNS**, or `KIT_UNITS_UNSTATED` where it states none.
+##
+## > #### ⛔ THIS IS UNITS. `kit_workers_holding` IS PEOPLE, AND THEY ARE NOT INTERCHANGEABLE
+## >
+## > A unit arms `workers_per_unit` people — a per-item config number the wire does not carry — and a
+## > unit needs its FULL crew or it is not used at all. So this may never stand in for
+## > `workers_holding`, which is the sim's own answer for a STAFFED job and is what every
+## > coverage readout on a worked row reads.
+##
+## **The one thing it may answer is a PRE-COMMIT question**, which the sim's people-counts cannot:
+## `workers_on_quoted_job` is the allocation's head count, so on a compose sheet where nobody is
+## assigned yet both published counts are `0` and say nothing about the crew being composed. Counting
+## UNITS against that composed crew is the only honest reading left, and it is exact for every item
+## the game ships (`workers_per_unit` defaults to 1 and no shipped item overrides it).
+static func kit_units_owned(band: Dictionary, item_id: String) -> int:
+    if item_id.is_empty():
+        return KIT_UNITS_UNSTATED
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if String(row.get(KIT_ITEM_ID_KEY, "")) != item_id:
+            continue
+        if not (row as Dictionary).has(KIT_ITEM_COUNT_KEY):
+            return KIT_UNITS_UNSTATED
+        return maxi(int(row[KIT_ITEM_COUNT_KEY]), 0)
+    return KIT_UNITS_UNSTATED
+
 # **HOW MANY PEOPLE AN ITEM ACTUALLY REACHES** (issue #520) — the sim's own answer, resolved through
 # the same `coverage` seam the take runs through. A unit ARMS A PERSON, so owning one is not arming
 # the band: `count` is UNITS and this is PEOPLE, and the two part company the moment the band is
@@ -911,6 +950,26 @@ static func _split_kv(line: String) -> Array:
 static func tile_is_gathering_site(tile_info: Dictionary) -> bool:
     return String(tile_info.get("food_module", "")).strip_edges() != ""
 
+## **THE ONE ANSWER TO "WHAT FORAGE CAPACITY DOES THIS CARD SHOW"** — the patch's live ceiling where
+## the player can see it, the tile's own ground `K` where they only remember it. `0.0` where the
+## ground carries no patch at all, which is every caller's "print no row" test.
+##
+## **The two keys are not interchangeable and the pick is the fog rule** (`MapView.FOW_DISCOVERED_HIDDEN_KEYS`
+## header). `patch_carrying_capacity` is the tile's `K` times the interpolated `field_capacity_gain`,
+## so it carries the ladder position and is REDACTED on a Discovered hex; `patch_tile_capacity` is
+## terrain and survives. Presence therefore IS the visibility here — a card that gets the ceiling is
+## looking at the patch, one that does not falls back to the ground beneath it.
+##
+## **NOBODY ELSE MAY WRITE THIS `or`.** The stock row and the basket's capacity guard both need it,
+## one level apart, and two sites answering one question is precisely how this card ends up stating a
+## ceiling its own decomposition disagrees with. It is a ROW reader only: the harvest-floor arithmetic
+## takes `patch_carrying_capacity` straight, because a floor is a fraction of the stand ACTUALLY
+## standing here and that instrument does not render on a hex the player cannot see.
+static func patch_capacity(tile_info: Dictionary) -> float:
+    if tile_info.has("patch_carrying_capacity"):
+        return float(tile_info["patch_carrying_capacity"])
+    return float(tile_info.get("patch_tile_capacity", 0.0))
+
 ## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's BBCode
 ## hex and the chip's Color, so the two forms cannot drift apart.
 static func sight_is_live(value: String) -> bool:
@@ -1170,6 +1229,102 @@ static func note_under_kept_hover(ctx: Context, row_key: String, src: Dictionary
         return
     ctx.row_tooltips[row_key] = HudWorkVocab.under_kept_tooltip_for_source(kind)
 
+## **WHAT TAMING IS BUYING, ON THE HUSBANDRY ROW ITSELF** — the ceiling, the best breeding rate and the
+## sustainable yield, the three things a rung on this ladder actually moves.
+##
+## **IT BELONGS HERE AND NOT ON THE ASSIGN-HERDERS SHEET.** That panel answers *how many hands, at what
+## floor, for what this turn*; what the LADDER buys is a property of the herd, true whether or not
+## anybody is composing an assignment against it, and the sheet's Work zone has neither the height nor
+## the width to carry three more readings. Collapsed into the row's hover it costs the card nothing.
+##
+## **ALL THREE CLIMB WHILE THE TAME RUNS**, which is the point of stating them together: the take falls
+## during a build because the floor beneath it is rising, and a player reading the take alone reads
+## that as the herd being poor. The rising CLAUSE is stated only while `buildTurnsRemaining` says the
+## climb is under way; no magnitude, the wire publishing no next-turn capacity to quote.
+##
+## `""` — and no hover — for a herd whose curve or body the wire did not describe, which is the same
+## silence every other derived reading on this card keeps.
+const HUSBANDRY_PAYOFF_HEADING := "What taming is buying"
+const HUSBANDRY_PAYOFF_CEILING_FORMAT := "Ceiling %s"
+## **THE BREEDING LINE IS A RATE, AND IT IS ROUNDED AS ONE** (`DetailFormat.animal_rate_face`), which
+## is what the two `%s` are: the fractional head count and the species. It read
+## `HUSBANDRY_PAYOFF_BREEDING_FORMAT % SourceForecast.stock_face(...)` and was wrong twice over —
+## `stock_face` carries its own `≈`, so every herd this hover has ever appeared on rendered
+## `Breeds back up to ≈≈3 Red Deer a turn`; and `stock_face` floors the count at one body, which is
+## right for a STANDING herd and a lie about a per-turn curve (a mammoth on a range peaking at 50
+## biomass a turn read `≈1 Mammoth`, eight times the truth). The sustainable line below rounds the
+## same curve at the same two decimals, so one hover no longer states one curve two ways.
+const HUSBANDRY_PAYOFF_BREEDING_FORMAT := "Breeds back up to ≈%s %s a turn"
+## **AND ITS RATE IS `format_signed`, NOT `format_yield`** — the rule `SourceForecast`'s own
+## `YIELD_TOOLTIP_RATES_FORMAT` states: the unit is carried by the WORDS (*a turn*), so the `/turn`
+## suffix printed it twice in four words (`Sustainable +1.74 /turn a turn at the best-harvest floor`).
+## The MAGNITUDE is untouched — both formatters round at `YIELD_DECIMALS`, which is the half of
+## `format_yield` this line was reaching for.
+const HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT := "Sustainable %s a turn at the best-harvest floor"
+const HUSBANDRY_PAYOFF_CLIMBING := "All three are climbing while the taming runs."
+## **…AND WHERE THE CEILING STOPS CLIMBING**, on a herd whose destination the wire states — the line
+## above with the number the player is actually buying folded into it, rather than a second line
+## beneath it repeating its subject.
+##
+## **IT NAMES THE CEILING, THE RUNG AND THE GROUND, in that order, because all three are the reading.**
+## `buildDestinationCapacity` is this range's `K` at the rung the build was sent to, and it is struck
+## on the land AS IT STANDS TODAY (the rung moves, the land does not) — so it drifts turn to turn
+## exactly as the live `Ceiling` two lines above it does. *"would carry"* and *"as it stands today"*
+## are what keep it a reading of the present rather than a promise about the future; the sim quotes
+## no date and neither may this.
+##
+## **NOTHING IS SAID ABOUT THE OTHER TWO.** The breeding rate and the sustainable yield climb with the
+## ceiling, but the wire quotes a destination for the ceiling ALONE, so the sentence names the one
+## figure it has and leaves the others to the clause they already share.
+const HUSBANDRY_PAYOFF_DESTINATION_FORMAT := \
+        "All three are climbing while the taming runs: %s would carry %s on this ground as it stands today."
+static func husbandry_payoff_hover(herd_data: Dictionary, prefix: String) -> String:
+    var body_mass := float(herd_data.get(prefix + SourceForecast.FORECAST_BODY_MASS_KEY, 0.0))
+    var capacity := float(herd_data.get(prefix + SourceForecast.FORECAST_CAPACITY_KEY, 0.0))
+    var samples := SourceForecast.regrowth_samples(herd_data, prefix)
+    if body_mass <= 0.0 or capacity <= 0.0 or not SourceForecast.has_growth_curve(samples):
+        return ""
+    var quarry := SourceForecast.herd_display_name(herd_data)
+    # The BEST the curve ever pays, at the stock fraction it pays it at — the herd's own peak, not the
+    # rate at whatever floor a sheet happens to be composing. That is what a rung raises.
+    var peak_biomass := maxf(SourceForecast.regrowth_at(samples,
+        SourceForecast.growth_peak_fraction(samples)), 0.0)
+    var lines: Array[String] = [
+        HUSBANDRY_PAYOFF_HEADING,
+        HUSBANDRY_PAYOFF_CEILING_FORMAT % SourceForecast.stock_face(capacity, body_mass, quarry),
+        HUSBANDRY_PAYOFF_BREEDING_FORMAT % [animal_rate_face(peak_biomass / body_mass), quarry],
+    ]
+    # …and what that regrowth is worth in the store, at the floor the ladder is actually run at. A
+    # species that pays no food states no such line rather than a zero.
+    var provisions := float(herd_data.get(
+        prefix + SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+    if provisions > 0.0:
+        lines.append(HUSBANDRY_PAYOFF_SUSTAINABLE_FORMAT % SourceForecast.format_signed(
+            maxf(SourceForecast.regrowth_at(samples, SourceForecast.FLOOR_FOOD_PEAK), 0.0)
+                * provisions))
+    if int(herd_data.get(prefix + SourceForecast.FORECAST_BUILD_TURNS_KEY,
+            SourceForecast.BUILD_TURNS_NONE_TO_STATE)) > SourceForecast.BUILD_TURNS_NONE_TO_STATE:
+        lines.append(husbandry_payoff_climbing_line(herd_data, prefix, body_mass, quarry))
+    return "\n".join(lines)
+
+## The climbing line's two faces — with the destination ceiling where the wire states one, without it
+## where it does not. **A source no band has queued renders NO CLAUSE AT ALL rather than a zero**: a
+## range really can carry nothing, so the sentinel is the only thing that can say *there is nowhere
+## this is heading*, and `states_destination_capacity` is the one test that reads it.
+##
+## The rung is named through `rung_badge_word`, the same table the card's own badges use, so the
+## sentence and the badge beneath it cannot call one rung two things. An unnameable rung falls back to
+## the bare climbing line for the same reason the chart's flag does: a figure with nothing to anchor
+## it to is the bare second number this arc keeps refusing to print.
+static func husbandry_payoff_climbing_line(herd_data: Dictionary, prefix: String, body_mass: float,
+        quarry: String) -> String:
+    var destination := SourceForecast.build_destination_capacity(herd_data, prefix)
+    var rung := rung_badge_word(SourceForecast.build_destination_rung(herd_data, prefix))
+    if not SourceForecast.states_destination_capacity(destination) or rung.is_empty():
+        return HUSBANDRY_PAYOFF_CLIMBING
+    return HUSBANDRY_PAYOFF_DESTINATION_FORMAT % [rung,
+        SourceForecast.stock_face(destination, body_mass, quarry)]
+
 ## **WHAT AN UNDER-KEPT RUNG IS DOING, IN ONE WORD, PER WEB** — the state that rides the built row's
 ## `⚠`. The pair is the work board's two notes reduced to their verb (`WORK_ROW_UNDER_KEPT_NOTE` says
 ## *this ground is slipping*, `WORK_ROW_UNDER_HERDED_NOTE` *animals drifting off*), so the card's word
@@ -1341,6 +1496,38 @@ static func format_work_units(value: float) -> String:
     if is_equal_approx(value, round(value)):
         return "%d" % int(round(value))
     return String.num(value, HudSelectionVocab.BUILD_WORK_DECIMALS)
+
+## Fixed-decimal, then trailing zeros AND a trailing dot stripped. `String.num` keeps a lone ".0", so
+## format fixed and strip the tail ourselves (rstrip stops at the first non-matching char, so integer
+## zeros survive).
+static func format_trimmed(value: float, decimals: int) -> String:
+    var text := ("%." + str(decimals) + "f") % value
+    if "." in text:
+        text = text.rstrip("0")
+        if text.ends_with("."):
+            text = text.rstrip(".")
+    return text
+
+## **A RATE IN ANIMALS PER TURN, AND THE ONE PLACE ONE IS ROUNDED** — `2.3`, `0.13`, `<0.01`. The
+## compose sheet's take sentence, its band and its binding-limit line all read through here, and so
+## does the herd card's payoff hover, so a fractional take and a fractional breeding rate cannot be
+## rounded two different ways on two surfaces describing the same curve.
+##
+## **A POSITIVE RATE NEVER COMES BACK AS `0`** (`HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN`). Two
+## decimals cannot state a rate of `0.004`, and printing the rounded figure told a player that a crew
+## which does eventually bring an animal down brings down none — the reported `≈0 WILD AUROCHS/TURN`.
+## Under the floor the face becomes `<0.01`, which is a small number rather than an absence.
+##
+## **IT IS NOT `SourceForecast.stock_face`, and the difference is the whole reason it exists.** That
+## one counts a STANDING herd and floors at one body, because a fifth of a body is still an animal on
+## the map; a RATE has no such floor — a range that regrows a fifth of a mammoth a turn regrows a
+## fifth of a mammoth, and rounding it up to one overstates the herd eightfold.
+static func animal_rate_face(value: float) -> String:
+    if value > 0.0 and value < HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN:
+        return HudComposeVocab.HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT % format_trimmed(
+            HudComposeVocab.HUNT_ANIMAL_RATE_MIN_SHOWN,
+            HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
+    return format_trimmed(value, HudComposeVocab.HUNT_ANIMAL_RATE_DECIMALS)
 
 ## **WHAT THE JOB COSTS, WHAT IT WOULD TAKE, AND WHAT HOLDING IT COSTS FOREVER — the compose sheet's
 ## pre-commit quote**, as `50 work, ≈25 turns · 2 work a turn from Agriculture to hold` (or `50 work`
@@ -2413,6 +2600,13 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 husbandry_built_label(), tamed, domestication, build_crew, unstaffed_build)])
             note_under_kept_hover(ctx, HUSBANDRY_ROW, herd_data, herd_prefix,
                 SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_TAME)
+            # …and, on a row with no REMEDY to state, what the ladder is buying. The remedy wins the
+            # slot outright when both apply: a herd shedding animals is not asking what a finished
+            # Tame would be worth.
+            if ctx != null and not ctx.row_tooltips.has(HUSBANDRY_ROW):
+                var payoff := husbandry_payoff_hover(herd_data, herd_prefix)
+                if payoff != "":
+                    ctx.row_tooltips[HUSBANDRY_ROW] = payoff
             if not tamed:
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
                 # …and, on a BLOCKED queue alone, what frees it. This is the web the measured case

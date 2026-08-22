@@ -10,6 +10,8 @@
 
   "_comment_cultivation_ceiling": "HOW FAR UP THE PLANT LADDER A SPECIES CAN CLIMB — the exact twin of fauna_config.json's husbandry_ceiling, for the same reason. The ladder is a SEQUENCE (wild -> tended -> field), so a species' reach is a single ceiling and not two independent flags, which makes the incoherent 'sowable but not tendable' state unrepresentable (no validate() combination guard needed). `wild` is a gather-forever stand — an oak's mast is a wild harvest and you do not sow an oak forest on a five-turn horizon; `tended` reaches Cultivate but never Sow; `field` is the full ladder. Not every plant climbs, mirroring the manual's 'not every animal climbs'. LIVE SINCE S1: allows_cultivate()/allows_sow() gate which species a Cultivate/Sow assignment may COMMIT a patch to, and the auto-pick falls to the highest-share species the rung permits. A biome whose whole basket is `wild` therefore cannot be tended or sown at all (the open-water fisheries, the alpine peaks) — that is the ruling working, not a gap. reed_and_root is `field` rather than `tended` because it is the delta/marsh basket's only member: rice and taro on a river delta are the archetypal field crop, and leaving it at `tended` would have made the richest sowable ground in the game unsowable.",
 
+  "_comment_stands_in_worked_ground": "DOES THIS MEMBER STAND IN THE SOIL A CREW TENDING OR SOWING THIS TILE IS ACTUALLY WORKING? Omitted (true) on every row but the three below, which is the ordinary case: a plant is in the ground. The three exceptions are kelp, shellfish_beds and river_fish, and they are NOT growing in soil at all — a kelp bed is on the open shelf, a mussel bed is under the tide, and a navigable river's fish are the CHANNEL (see _comment_river_fish: that 80-unit host row IS the fishery bonus term). BOTH REWEIGHT SEAMS HONOUR IT (core_sim/src/forage.rs): weeding takes share ONLY from members standing in the worked ground, and if those cannot cover the gain the favored share rises by only what was there to take rather than reaching into the rest; a Field's crop takes the CLEARABLE REMAINDER, not the whole basket. Before this guard, a Sow on a navigable hex set the crop to 1.0 and deleted the river's whole fishery outright, and a Cultivate would weed it away wherever it happened to be the least abundant member. THIS IS NOT cultivation_ceiling AND MUST NOT BE FOLDED INTO IT. Ten rows are `wild`, and they split on a different question: you genuinely CAN clear oak_mast, pine_nut, mesquite, cloudberry, rock_tripe and arctic_greens off ground you are tending — acorns and mesquite pods come out — so gating on the ceiling would shield those six too and make Cultivate much weaker on woodland and scrub. SEA_KALE IS DELIBERATELY LEFT CLEARABLE, which is the judgement call a reader will second-guess: samphire is a salt-marsh plant rooted in ground, so a crew working the tidal fringe genuinely displaces it, unlike the mussels beside it. A species outside the worked ground can never be COMMITTED to (a crew cannot favor a crop it cannot clear for) — FloraConfig::validate rejects any row that is both, and the three below are all `wild`, so the shipped roster satisfies it by construction.",
+
   "_comment_regrowth_rate": "PER-SPECIES LOGISTIC REGROWTH — the plant twin of SpeciesDef.regrowth_rate. Every F1 row carries labor_config.json's forage.ecology.regrowth_rate (0.25) VERBATIM, so regrowth is unmoved along with everything else. Per-species divergence (a berry scrub that reseeds hot, a nut grove that does not) is a later slice.",
 
   "_comment_river_fish": "THE CHANNEL ITSELF, NOT THE VALLEY IT WAS CUT THROUGH. A navigable hex's forage capacity is TWO terms, not one (ForageLaborConfig::navigable_forage_capacity): capacity_for(underlying biome) + navigable_river_forage_bonus (80). The NavigableRiver row in forage.capacity_by_biome is vestigial and bypassed, so decomposing that row would name nothing that is actually there — and decomposing only the underlying biome would leave the whole 80-unit fishery UNNAMED, which is exactly the nameless food the coverage validator exists to forbid, leaking in through a path that validator cannot see. So this species is ALONE on NavigableRiver and means precisely the bonus term: a giant river is always a fishery. FloraConfig::navigable_composition blends the two baskets in the same two-term shape as navigable_forage_capacity (each weighted by ITS OWN term, then renormalized), and forage::tile_flora_composition is THE single seam every caller reads, so the capacity and the composition cannot drift.",
@@ -25,6 +27,7 @@
       "adjective": "shellfish",
       "role": "staple",
       "cultivation_ceiling": "wild",
+      "stands_in_worked_ground": false,
       "host_biomes": {
         "TidalFlat": 0.55,
         "ContinentalShelf": 0.5,
@@ -258,6 +261,7 @@
       "adjective": "river-fish",
       "role": "staple",
       "cultivation_ceiling": "wild",
+      "stands_in_worked_ground": false,
       "host_biomes": {
         "NavigableRiver": 1.0
       },
@@ -383,6 +387,7 @@
       "adjective": "kelp",
       "role": "staple",
       "cultivation_ceiling": "wild",
+      "stands_in_worked_ground": false,
       "host_biomes": {
         "ContinentalShelf": 0.35,
         "CoralShelf": 0.4,

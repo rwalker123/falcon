@@ -1217,8 +1217,15 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ##
 ## `quarry` is optional and absent means WILD: a sheet composed before the wire named a source, and
 ## both forage sheets, render exactly as they did.
+##
+## **`crew` IS THE PARTY BEING COMPOSED, AND IT IS WHAT KEEPS THE TIERS FROM SPEAKING FOR IT.** The
+## tiers above describe ONE person; a band holding one spear and composing eight hunters read
+## `attack 20.0` while the sim priced seven of the eight bare-handed inside the take curve. So a
+## caller that has a stepper hands its value here and the line states the coverage beside the tiers
+## — see `_append_coverage` for where the count comes from and what it may not be used for. A caller
+## with no party (`KIT_CREW_UNCOMPOSED`) renders exactly as it did before the clause existed.
 static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String,
-		quarry: Dictionary = {}) -> String:
+		quarry: Dictionary = {}, crew: int = KIT_CREW_UNCOMPOSED) -> String:
 	if kit.is_empty():
 		return ""
 	# **A BAND-WIDE ROLE READS ONE AXIS AND ITS OWN ITEM**, and it takes a branch of its own rather
@@ -1239,6 +1246,9 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 			float(tiers[KIT_ATTACK_KEY])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
 			float(tiers[KIT_HUNT_CARRY_KEY])))
+	# **AFTER EVERY TIER AND BEFORE EVERY CONDITION**, because it qualifies all of the first group and
+	# none of the second: a tier is what one equipped worker gets, a condition is one item's own life.
+	_append_coverage(parts, band, kit, crew)
 	for item_variant in kit_item_ids(kit):
 		_append_condition(parts, band, tiers, String(item_variant))
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
@@ -1291,6 +1301,51 @@ static func _role_effect_phrase(job: String, tier: float) -> String:
 ## have stated its conditions at all. **The item names ITSELF** — the caller is walking the kit's own
 ## list, so there is no axis→item key to keep in step with anything, and an item the kit does not
 ## carry can no longer be reached from here.
+## **NO PARTY IS BEING COMPOSED** — a host with no stepper (the WORKFORCE zone's role cards, a sheet
+## rendered before a count exists). The coverage clause is a statement about a specific crew, so with
+## no crew there is nothing to say and the line is byte-identical to what it was before it existed.
+## `-1` and not `0`: an empty crew is a real composed value, and it equips nobody.
+const KIT_CREW_UNCOMPOSED := -1
+
+## **HOW MANY OF THE COMPOSED CREW THIS KIT REACHES** — appended as `3 of 8 equipped`, or not at all.
+##
+## > #### ⛔ IT COUNTS UNITS, AND THAT IS THE ONE THING THE WIRE CANNOT ANSWER FOR A PRE-COMMIT SHEET
+## >
+## > `KitItemCondition.workersHolding` is the sim's own people-count and is the right reading
+## > everywhere it applies — but it is quoted against `workersOnQuotedJob`, which is
+## > `allocation.workers_on_job(...)`, and that is **0** on a sheet where nobody is assigned yet. Both
+## > published counts are therefore silent about the party the player is building. What is left is
+## > `DetailFormat.kit_units_owned`, and counting units against a composed crew is exact for every
+## > item the roster ships (`workers_per_unit` defaults to 1 and no shipped item overrides it).
+## > **Nothing about the FIGHT is re-derived here** — the attack tier stays the sim's, unblended.
+##
+## **THE COUNT IS THE KIT'S, NOT ONE AXIS'S**, and it is the `min` across the items the kit carries.
+## This file may not map an axis to the component behind it — `big_game` takes its attack from
+## `spears` and `trapping` from `traps`, and guessing that is what once printed the spears' condition
+## on a trap party's row — so *"who gets what this line quotes"* is the only answerable form of the
+## question, and a worker the kit does not fully reach does not get it.
+##
+## Silent in three states, each for its own reason:
+## - **NO PARTY** (`KIT_CREW_UNCOMPOSED`) or an empty one — nothing to be a fraction of.
+## - **A KIT THAT CARRIES NOTHING** (`none`): its tier IS the bare-handed one, which every worker
+##   gets, so `0 of 8 equipped` would report a shortfall against gear the kit never claimed.
+## - **A BAND THAT STATES NO COUNT** for one of the items — the same withholding `_append_condition`
+##   takes over an unstated condition, rather than a client quoting `0` at a ledger it has not read.
+static func _append_coverage(parts: Array[String], band: Dictionary, kit: Dictionary,
+		crew: int) -> void:
+	if crew <= 0:
+		return
+	var items := kit_item_ids(kit)
+	if items.is_empty():
+		return
+	var reached := crew
+	for item_variant in items:
+		var owned := DetailFormat.kit_units_owned(band, String(item_variant))
+		if owned == DetailFormat.KIT_UNITS_UNSTATED:
+			return
+		reached = mini(reached, owned)
+	parts.append(HudComposeVocab.KIT_HINT_COVERAGE_FORMAT % [reached, crew])
+
 static func _append_condition(parts: Array[String], band: Dictionary, tiers: Dictionary,
 		item_id: String) -> void:
 	if not bool(tiers.get("stated", false)) or item_id.is_empty():
@@ -1367,10 +1422,13 @@ static func _tier_face(value: float) -> String:
 ##
 ## Returns `null` when the job offers no kit at all, so a sheet whose verb the roster does not cover
 ## renders exactly as it did before the picker existed.
+## **`crew` IS THE PARTY THE SHEET IS COMPOSING** — the stepper's own value, passed straight to the
+## HINT so the line can state how far the band's gear reaches into it. `KIT_CREW_UNCOMPOSED` (the
+## default) is a host with no stepper, and renders exactly as it did before the clause existed.
 static func build_kit_row(kits: Array, job: String, selected_id: String, default_id: String,
 		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
 		prefix: String = "", key_text: String = HudComposeVocab.COMPOSE_FIELD_KIT,
-		compact_chrome: bool = false) -> VBoxContainer:
+		compact_chrome: bool = false, crew: int = KIT_CREW_UNCOMPOSED) -> VBoxContainer:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return null
@@ -1425,7 +1483,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			HudWorkVocab.WORK_STEPPER_PADDING_V)
 	row.add_child(picker)
 	block.add_child(row)
-	var hint_text := tier_hint(kits, selected, band, job, quarry)
+	var hint_text := tier_hint(kits, selected, band, job, quarry, crew)
 	if hint_text != "":
 		var hint := HudWidgets.alloc_hint_label(hint_text)
 		hint.set_meta(KIT_HINT_META, true)

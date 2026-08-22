@@ -443,6 +443,139 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > `fauna::hunt_escapement_ceiling` is the one source, and it is one expression parameterised by a
 > **floor**: `escapement_ceiling(floor, B, K)` — `max(0, B − floor·K)`, and **nothing else**. The herd
 > hands over the stock standing above the floor; the crew's throughput is the only other term.
+>
+> > **⛔ THE CEILING IS NO LONGER THE WHOLE TAKE — a GROWTH SHARE sits under it** (`§4.11`). The take is
+> > `max(the room above the floor, growth × (1 − floor))`, and **the build's eligibility gate reads the
+> > same expression** so a legal build target that yields nothing is unrepresentable. `escapement_ceiling`
+> > itself is untouched — the backstop is a `max` *around* it, on both webs.
+> >
+> > **Why it exists.** The floor is `floor · K` and a rung RAISES `K`, so a rung raises the floor while
+> > the herd stays the same size. Measured on aurochs begun exactly on its floor, the room reached zero
+> > at turn 6 with one herder, 3 with four and 2 with eight — *building faster starved you sooner* — and
+> > because the gate read that same room, **the tame then never completed at any crew size**. Five of the
+> > eleven tameable species are on the losing side of that race.
+> >
+> > **`(1 − floor)` is the scaling and there is deliberately NO new dial.** The player's own floor governs
+> > it: *you keep the share of the growth you were willing to take.* At `floor = 1.0` it pays **nothing**,
+> > so *leave the whole herd standing* keeps meaning exactly that — at the take **and** at the gate, with
+> > no special case. A flat share would have made a full floor cull every turn.
+> >
+> > **⛔ A FORECAST REGROWS FIRST, BECAUSE THE TAKE IT PRICES RUNS AFTER LOGISTICS.**
+> > `fauna::hunt_crew_take_curve` resolves against `fauna::next_turns_quarry` — a private clone with
+> > one `regrow_biomass` applied — and **not** the herd as the registry holds it. Every caller reads
+> > it after the Population take (the query answers a client between turns; the capture publishes
+> > `hunt_useful_crew` in the Snapshot stage), so the raw herd is a whole turn stale, and on a
+> > **worked** source that staleness is the entire take rather than a rounding:
+> >
+> > - `escapement_ceiling` reads `biomass`, which the take has just drawn back toward the floor, so
+> >   the room left standing is approximately nothing; and
+> > - the growth-share backstop reads `Herd::growth_this_turn`, which is
+> >   `biomass − biomass_before_regrowth` — and the take is subtracted from `biomass` **after**
+> >   `regrow_biomass` stamps the pair. On a source harvested at or above its growth that field is
+> >   **`0`**, so *the backstop that exists to pay a source sitting at its floor is switched off by
+> >   exactly the harvesting that puts it there.*
+> >
+> > Measured in play on a Rabbit Warren (`K 10`, floor `0.5`, one trapper): the row published
+> > `actualYield 0.0216` — four rabbits — with a positive `arrivalSchedule` in **all twenty slots**,
+> > while the curve read **zero at every crew size**, the compose sheet said *"these hunters bring
+> > down ≈0 Rabbit Warren/turn"*, and `huntUsefulWorkers` published `0` for a row that was feeding the
+> > band. The stock the take saw was `5.914`; the stock the curve read was `5.039`.
+> >
+> > **`project_realized_hunt` was right about that herd throughout, and structurally so** — its loop
+> > is `regrow` → read the room → take, every turn — which is why the Work board's `/turn` and the
+> > compose sheet's headline disagreed by 8× rather than by a rounding. `next_turns_quarry` is that
+> > loop's first step, named, so *"a forecast regrows first"* is one expression rather than a rule
+> > each forecast path remembers.
+> >
+> > **⛔ THE RULE IS EVERY FORECAST PATH ON BOTH WEBS, NOT THE CREW CURVE ALONE.** `hunt_forecast` and
+> > `forage_forecast` resolve **both** stock terms forward — the escapement arm as well as the growth
+> > arm — off `fauna::next_turns_quarry` and its plant twin `forage::next_turns_stand`. Threading only
+> > the *growth* into `SourceYieldForecast` was tried first and is **not enough**: it leaves the
+> > escapement arm a turn stale, so on a herd sitting *at* its floor the published row and the take
+> > still disagree, which is the same defect one term smaller. **A forecast either prices the whole
+> > next turn or it prices none of it.**
+> >
+> > **The consequence for harnesses is the part that bites.** A fixture that freezes a stock and reads
+> > a forecast is now quoting a turn the sim has not run, so it must either resolve a turn **in stage
+> > order** (Logistics → Population) or quote the forecast **before** the regrowth. Six did neither
+> > and had to be corrected. Two shapes stopped being available with it: an exact bit-for-bit equality
+> > between a seeded and a resolved realized yield (its old pass came from a frozen herd taking
+> > nothing — it is bounded now, `REALIZED_NO_JUMP_FRACTION`), and *"a stripped patch is barren"* — a
+> > stripped patch **reseeds and pays next turn**, so a barren fixture has to state barren **ground**,
+> > meaning zero capacity.
+> >
+> > **"Regrown" is not "larger".** Below the Allee threshold `regrow_biomass` takes the depensation
+> > branch and the clone comes back *smaller*, which is the honest forecast for a collapsing herd. A
+> > guard asserting the clone never shrinks looks obviously true and fires on the first thin-herd
+> > fixture it meets.
+> >
+> > **The client's room arm was already forward** (`SourceForecast.escapement_room_next_turn`), so
+> > before this the two halves of the sheet's own `min(room, haul, brought_down)` sat a turn apart and
+> > the stale one won. Both halves are next-turn now; `forecast_query`'s
+> > `the_curve_reproduces_the_take_on_a_herd_held_at_its_floor` is the guard, and its precondition —
+> > *the standing room affords zero whole animals* — is what makes it a test of the frame rather than
+> > of a number.
+> >
+> > **⛔ AND THE CURVE IS A RATE ALL THE WAY DOWN — `EngagementQuantum::Rate`, ITS ONLY CALLER.**
+> > Regrowing fixed *which turn* the room is measured in; it does not stop the room being **rounded to
+> > whole animals**, and on heavy-bodied quarry the rounding is the whole reading. `animals_affordable`
+> > floors `room ÷ body_mass`, which is right for a take (bodies hit the ground) and wrong for a rate,
+> > for the reason `SpeciesDef::body_mass`'s config note already states: *"when the herd cannot yet
+> > spare a whole animal the hunt PAUSES and the herd regrows; that wait is constant escapement,
+> > discretised, and the herd's own biomass is the accumulator (there is no credit meter)."* Flooring a
+> > rate against that quantum reports **a cadence as a never**.
+> >
+> > It is the same correction `HuntFight::expected_brought_down` already makes one stage later, in the
+> > same words — the fight arm was floored too, and published a curve of zeroes for crews genuinely
+> > taking `0.75` a turn. The **room** arm simply never got the treatment.
+> >
+> > Reported from play on a **Wild Aurochs** (`body_mass 120`, wild `r 0.09`) standing on its 50% floor
+> > at 1200 of 2400 biomass: one turn's growth is `54` biomass — **0.45 of one body** — which floors to
+> > **zero animals**, so all 24 rows read `0`, the sheet said the hunters bring down nothing, and the
+> > stepper offered **no crew to assign at all**. The herd pays one aurochs about every two and a half
+> > turns.
+> >
+> > **BOTH FLOORS HAD TO GO, and that is the trap.** Un-flooring the room alone changes nothing:
+> > `animals_that_stay` opens with `let stayers = engaged.floor()`, so a `0.45` engagement is handed to
+> > the binomial as `0` one stage later and the curve is zero however the room was measured. Hence
+> > `animals_sparable` **and** `HuntingParty::stayers_at_rate` — the binomial's `n·p` and
+> > `√(n·p·(1−p))` are the continuous extension of the same distribution, so a fractional `n` is the
+> > *same* reading rather than a new model. Both sabotages are pinned separately by
+> > `hunt_useful_crew_on_the_wire::big_game_held_at_its_floor_publishes_a_rate_and_a_crew`.
+> >
+> > **EVERY TAKE PATH KEEPS ITS FLOOR** — `EngagementQuantum::WholeAnimals` is the default at all four
+> > other call sites, `systems::hunt_take` included — which is what makes the change safe: a turn still
+> > resolves in bodies, and only the reading documented as a rate is un-rounded.
+> >
+> > **⛔ AND THE PEN CURVE IS THE SAME CURVE.** `pen_crew_take_curve` published
+> > `quantise_animal_take(…).killed as f32` — whole animals — while every stalking row beside it
+> > published the un-floored rate, and `quantise_animal_take` returns `killed = 0` whenever the
+> > affordable count is below one. So a **penned** aurochs whose next-turn room is 54 biomass read
+> > `0.0` at every crew size, `hunt_useful_crew` fell to `NO_USEFUL_CREW`, and the Work board's `+`
+> > shut on a pen collecting a beast every two and a half turns — the same cadence-as-a-never, one
+> > function over. It publishes the rate now (`animals_sparable`, `ONE_WHOLE_ANIMAL`).
+> >
+> > **The fixture is why it survived the first pass.** The shipped pen fixture stood a **fat** herd up
+> > and then mirrored the curve's own expression to predict it, so it agreed with the bug and could
+> > not have failed. A curve that rounds is only visible on a source whose room is **smaller than one
+> > body** — `a_thin_pen_publishes_a_rate_and_a_crew` is that fixture, and a rounding fixture needs a
+> > thin subject the way a fog fixture needs a remembered hex.
+> >
+> > **A FROZEN-STOCK HARNESS CANNOT MEASURE THIS, and `forecast_query`'s reproduction sweep had to say
+> > so.** `sim_take` holds the herd's biomass level between turns, which is also what discards the
+> > remainder the accumulator lives in: a crew that may spare `3.9` bodies kills `3` and leaves `0.9`
+> > standing, and a reset throws that `0.9` away every turn for ever. So the sweep compares the rate
+> > against the frozen turn as a **bracket** whose slack is exactly the fraction the floor drops,
+> > carried through the retreat — `0` on any fixture whose room divides evenly into bodies. The fight's
+> > remainder needs no such allowance: `hunt_take` writes `herd.wounds` back and the harness keeps it,
+> > so that quantum already integrates. **The room's was the one the harness dropped — the same
+> > asymmetry the curve itself had.**
+> >
+> > **THE ESCAPEMENT PREDICATE WAS SPLIT, and the half that did NOT move is the point.** It fed two
+> > seams. The **lesson** keeps the pure room, because `learn_multiplier`'s self-limit is load-bearing —
+> > a floor just under `1.0` deliberately learns at nearly ×2 while taking almost nothing, and its doc
+> > forbids clamping it. Widening that seam would have made a full floor free ×2 learning for ever. Only
+> > the **build's** gate reads the backstop.
 > **THE BUILD IS NOT IN IT AT ALL** (`docs/plan_standing_upkeep.md` §2.2): a build has its own crew,
 > so neither the ceiling nor the hunters' throughput carries a build term — `hunt_escapement_ceiling`
 > takes no `improvement` and no ladder, and nothing beside it does either. (It carried none even while
@@ -607,7 +740,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   across the boundary — and because the staffing reading lags a turn, the player is told
 >   "staff all 1", then "staff all 2", satisfies neither, and slips the tameness. So the requirement is
 >   now a **persisted, deadband-stabilized `Herd::herders_needed`** (rewound by rollback with the
->   cloned registry, like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
+>   cloned registry, like `ladder_position`), updated every turn by `Herd::stabilize_herders_needed` in
 >   `advance_husbandry`: **up immediately** when the raw need rises (under-herding is harmful), **down
 >   only once the herd falls below `(current − 1)·animals_per_herder − band`** where `band =
 >   animals_per_herder × husbandry.herders_hysteresis_fraction` (**0.25**, `fauna_config.json`, a
@@ -803,7 +936,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   maintain + take.**
 > - **Understaffing SHEDS ANIMALS — it does not touch tameness (neglect-escape arc,
 >   `docs/plan_fauna_neglect_escape.md`).** The tameness-bleed (`decay_under_herded`, and with it
->   `decay_domestication`) is **DELETED**: `domestication_progress` is now permanent stock capital,
+>   `decay_domestication`) is **DELETED**: the herd's `ladder_position` is now permanent stock capital,
 >   monotone-up (earned via `Tame`), never bled by a neglected turn. Instead an under-contained managed
 >   herd (`is_corralled() || owner.is_some()`) **sheds whole animals over its labor capacity** into a
 >   nearby wild herd of the same species. **The overage IS the upkeep shortfall, converted into
@@ -940,21 +1073,26 @@ keeps an overhunted map slowly replenishing (early forager play stays game-rich)
 undoing a local extinction (the crashed group is gone; a *new* group may immigrate
 elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under rollback).
 
-**Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A
-`Herd` carries `domestication_progress` (in **work units**, complete at its stored
-`domestication_cost`) and `owner:
-Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
+**Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A `Herd` carries
+**one private `ladder_position`** (in **work units**, spanning both animal rungs) plus a **stamped
+`standing`** derived from it, and `owner: Option<FactionId>`, exported as
+`HerdTelemetryState.domestication`. The retired two-meter form — `domestication_progress` /
+`corral_progress`, each with its own stamped `*_cost` — is **gone**; both webs are now on the one
+position (`intensification.md` → "The storage: ONE position, and a STAMPED standing beside it").
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
   (Population), a Hunt assignment carrying **`Improvement::Tame`** adds the
   crew's own output in work units against `work_cost × the species' taming_cost_multiplier`, for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
-  husbandry ceiling + something standing above the crew's floor). **There is no health gate** —
+  husbandry ceiling + something standing above the crew's floor); the work lands on the herd's one
+  `ladder_position`, and the stamped `standing` beside it is what says which rung that reaches.
+  **There is no health gate** —
   `docs/plan_harvest_floor.md` §3.2 replaced it with the floor's rate on every rung of both webs, and
-  the "Ecology phase" section above says the same. The herd is domesticated once the meter reaches
-  the cost stored on it, which is what `is_domesticated()` compares; the old normalized `1.0` retired
+  the "Ecology phase" section above says the same. The herd is domesticated once its
+  `ladder_position` carries the stamped `standing` to `animal:pastoral`, which is what
+  `is_domesticated()` reads; the old normalized `1.0` retired
   with `RUNG_COMPLETE`. **A `Sustain` hunt tames nothing** — it only
   *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
-- *Decay*: **there is none.** `domestication_progress` is monotone-up since the neglect-escape arc —
+- *Decay*: **there is none.** `ladder_position` is monotone-up since the neglect-escape arc —
   neglect sheds **animals**, never tameness — and the `decay_fraction_per_turn` the `animal:pastoral`
   rung used to carry has been retired from the ladder outright: on the plant branch the bleed is the
   unmet `upkeep` (`docs/plan_standing_upkeep.md` §2.4), and on this one there is nothing to bleed. What

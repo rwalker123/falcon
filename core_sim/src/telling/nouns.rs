@@ -16,6 +16,7 @@ use crate::{
     components::{LaborTarget, PopulationCohort},
     fauna::{EcologyPhase, HerdRegistry},
     fauna_config::FaunaConfig,
+    intensification::LadderConfig,
     orders::FactionId,
     sites::DiscoveredSiteRecord,
     sites_config::SitesConfig,
@@ -216,6 +217,9 @@ pub struct NounContext<'a> {
     pub bands: &'a [BandView<'a>],
     pub herds: &'a HerdRegistry,
     pub fauna: &'a FaunaConfig,
+    /// The rung prices [`most_domesticated_species`] normalises a herd's position against — a raw
+    /// position is not comparable across species (see [`crate::fauna::Herd::ladder_fraction`]).
+    pub ladder: &'a LadderConfig,
     /// The memory threads, by kind. **Read straight out of the ledger and never re-resolved
     /// against the live world** — that is the whole point of a thread (see `telling::memory`).
     pub threads: &'a BTreeMap<String, Vec<Thread>>,
@@ -291,15 +295,26 @@ fn most_hunted_species(ctx: &NounContext<'_>) -> Option<String> {
         .map(|(species, _)| species)
 }
 
-/// The species with the highest `domestication_progress` among herds this faction owns.
+/// The species this faction has sunk the most work into — the herd standing **furthest up its own
+/// ladder** ([`crate::fauna::Herd::ladder_fraction`]), ties broken by species name so the answer does
+/// not depend on registry order.
+///
+/// # ⛔ THE RANKING IS NORMALISED, BECAUSE RAW POSITIONS ARE NOT COMPARABLE ACROSS SPECIES
+///
+/// And across species is the only case a species-*picking* noun ever sees. `taming_cost_multiplier`
+/// scales `animal:pastoral` alone, so a **fully penned rabbit** stands at `125` work units and a
+/// **merely tamed Steppe Runner** at `250`: an ordering on the raw position hands back the un-penned
+/// steppe runner and calls it the most domesticated animal these people keep. Each herd's fraction of
+/// its **own** branch total is the apples-to-apples reading, and it is what makes the documented
+/// sentence — *a penned herd ranks above a merely tamed one* — actually true.
 fn most_domesticated_species(ctx: &NounContext<'_>) -> Option<String> {
     ctx.herds
         .entries()
         .iter()
         .filter(|herd| herd.owner == Some(ctx.faction))
         .max_by(|a, b| {
-            a.domestication_progress
-                .total_cmp(&b.domestication_progress)
+            a.ladder_fraction(ctx.ladder)
+                .total_cmp(&b.ladder_fraction(ctx.ladder))
                 .then(b.species.cmp(&a.species))
         })
         .map(|herd| herd.species.clone())
@@ -473,6 +488,115 @@ mod tests {
             assert!(is_known_biome_tag(tag), "{tag} should be a known biome tag");
         }
         assert!(!is_known_biome_tag("moonscape"));
+    }
+
+    /// The people whose herds these are.
+    const KEEPER: FactionId = FactionId(0);
+    /// **A `pen`-ceiling species at the CHEAP end of the taming price list** — `taming_cost_multiplier
+    /// 1.0`, so its whole ladder is `50 + 75 = 125` work units.
+    const RABBIT: &str = "Rabbit Warren";
+    /// **A `pastoral`-ceiling species at the DEAR end** — `taming_cost_multiplier 5.0`, so its
+    /// pastoral rung alone costs `250` and its raw position out-numbers a finished rabbit pen.
+    const STEPPE_RUNNER: &str = "Steppe Runners";
+
+    /// **A flock with animals in it** — any positive stock; this noun ranks on ladder position, so
+    /// the size is inert and only has to be non-zero for the herd to be a herd.
+    const A_STANDING_FLOCK: f32 = 100.0;
+
+    /// A herd of `species`, seated on the ladder by the **real** accruals: tamed, and penned too
+    /// where `penned` asks for it and the species allows it.
+    fn kept_herd(
+        id: &str,
+        species: &str,
+        penned: bool,
+        fauna: &FaunaConfig,
+        ladder: &LadderConfig,
+    ) -> crate::fauna::Herd {
+        let def = fauna
+            .species_by_display(species)
+            .expect("the fixture names a shipped species");
+        let mut herd = crate::fauna::Herd::new(
+            id.to_string(),
+            species.to_string(),
+            def.size_class,
+            vec![bevy::math::UVec2::new(1, 1)],
+            A_STANDING_FLOCK,
+            A_STANDING_FLOCK,
+            def.fodder_per_biomass,
+            def.regrowth_rate.unwrap_or_default(),
+            def.body_mass,
+        );
+        herd.husbandry_ceiling = def.husbandry_ceiling;
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(species);
+        assert!(
+            herd.tame_outright(KEEPER, ladder),
+            "fixture: {species} must tame"
+        );
+        if penned {
+            assert!(
+                herd.corral_at(bevy::math::UVec2::new(1, 1), ladder),
+                "fixture: {species} must pen"
+            );
+        }
+        herd
+    }
+
+    /// **⛔ "MOST DOMESTICATED" IS A FRACTION OF EACH SPECIES' OWN LADDER, NOT A RAW POSITION.**
+    ///
+    /// `taming_cost_multiplier` scales `animal:pastoral` and nothing else, so a **fully penned
+    /// rabbit** stands at `125` work units and a **merely tamed Steppe Runner** at `250`. Ranking on
+    /// the raw position therefore answers *steppe runner* — the un-penned herd — for a noun whose
+    /// documented reading is that a penned herd outranks a tamed one. Across species is the only
+    /// case this noun ever sees, so that is not an edge.
+    #[test]
+    fn the_most_domesticated_species_is_the_one_furthest_up_its_own_ladder() {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let mut herds = HerdRegistry::default();
+        herds
+            .herds
+            .push(kept_herd("pen_rabbit", RABBIT, true, &fauna, &ladder));
+        herds.herds.push(kept_herd(
+            "tame_runner",
+            STEPPE_RUNNER,
+            false,
+            &fauna,
+            &ladder,
+        ));
+
+        // **THE PRECONDITION** — the raw positions really are inverted, or this passes on a fixture
+        // where both readings agree.
+        let penned = herds.find("pen_rabbit").expect("seeded");
+        let tamed = herds.find("tame_runner").expect("seeded");
+        assert!(
+            tamed.ladder_position() > penned.ladder_position(),
+            "fixture: the merely tamed herd must carry the LARGER raw position ({} against {}), or \
+             the normalisation is untested",
+            tamed.ladder_position(),
+            penned.ladder_position()
+        );
+
+        let sites = SitesConfig::builtin();
+        let threads = BTreeMap::new();
+        let ctx = NounContext {
+            faction: KEEPER,
+            band_people: 0.0,
+            current_terrain: None,
+            last_discovered_site: None,
+            sites: &sites,
+            bands: &[],
+            herds: &herds,
+            fauna: &fauna,
+            ladder: &ladder,
+            threads: &threads,
+        };
+
+        assert_eq!(
+            most_domesticated_species(&ctx).as_deref(),
+            Some(RABBIT),
+            "the finished pen outranks the bare tame — which is what this noun has always claimed \
+             and what a raw-position ranking got backwards"
+        );
     }
 
     #[test]

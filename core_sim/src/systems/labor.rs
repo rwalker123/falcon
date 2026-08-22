@@ -36,6 +36,35 @@ fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
 /// boundary `max(0, B − floor·K)` is clamped at.
 const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
 
+/// **"Is there anything here for this crew to work with?"** — THE eligibility term a **build** is
+/// gated on, asked of [`crate::fauna::take_room`]: the escapement room **or** the share of this
+/// turn's growth the player's own floor left takeable, whichever is larger.
+///
+/// # ⛔ IT IS A DIFFERENT QUESTION FROM [`crew_is_working_the_source`], AND THE SPLIT IS THE POINT
+///
+/// The two were one bool, and that is what stalled a tame forever. **A rung raises `K`** — a tamed
+/// herd's `pastoral_density`, a sown field's `field_capacity_gain` — so `floor · K` climbs while the
+/// stock does not, and a source standing *exactly* on its floor when a build starts is pushed
+/// **below** it by its own improvement. The build's gate then read that empty room and refused the
+/// very job that had moved it. Measured on an aurochs tame begun on the floor
+/// (`forage::stance_probe`'s `probe_the_tame_floor_squeeze`): the room hit zero on turn 6 at one
+/// herder, turn 3 at four and turn 2 at eight — **more hands made it worse** — and the tame never
+/// completed at any crew size.
+///
+/// **Only this one widened.** [`crew_is_working_the_source`] still gates the **lesson** on the raw
+/// escapement room, because `intensification::learn_multiplier`'s self-limit lives there: *"watching
+/// teaches nothing"* at `floor = 1.0` is what stops a near-`1.0` floor farming knowledge at ×2 for
+/// free, and its own doc forbids clamping it. Widening the shared predicate would have opened that;
+/// widening this one cannot reach it.
+///
+/// **A legal build target that yields nothing is now unrepresentable**, not merely avoided: this
+/// reads the *same* number the take is bounded by, so the two cannot drift apart when either is
+/// retuned. At `floor = 1.0` the growth share is `× 0` and the room is `0`, so this refuses — which
+/// is *"leave the whole source standing"* meaning exactly that, with no special case.
+fn source_is_workable(take_room: f32) -> bool {
+    take_room > NOTHING_STANDS_ABOVE_THE_FLOOR
+}
+
 /// **Credit the lesson the source's rung teaches, at the rate its crew's floor earns.** The caller
 /// side of [`RungDef::knowledge_accrual`]: the rung says *what* is learned and *how much*, this
 /// applies it to the ledger.
@@ -602,11 +631,8 @@ fn head_rung_gate(
                         return BuildGate::Unworked;
                     };
                     let rung = ladder.rung(RungKey::PlantTended);
-                    let working_the_patch = crew_is_working_the_source(forage_escapement_ceiling(
-                        *floor,
-                        patch.biomass,
-                        patch.carrying_capacity,
-                    ));
+                    let working_the_patch =
+                        source_is_workable(crate::forage::patch_take_room(patch, *floor));
                     let has_crop = patch.species.is_some()
                         || resolve_committed_species(
                             species.as_deref(),
@@ -667,13 +693,12 @@ fn head_rung_gate(
             match improvement {
                 Improvement::Tame => {
                     let rung = ladder.rung(RungKey::AnimalPastoral);
-                    let working_the_herd =
-                        crew_is_working_the_source(fauna::hunt_escapement_ceiling(
-                            *floor,
-                            herd.biomass,
-                            herd_capacity(herd, fauna),
-                        ));
-                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), working_the_herd)
+                    // **THE BUILD'S GATE READS WHAT THE TAKE WILL PAY** ([`source_is_workable`]),
+                    // never the raw escapement room: taming raises the herd's `K`, so the floor
+                    // climbs out from under a herd that started on it and the gate would refuse the
+                    // very build that moved it.
+                    let workable = source_is_workable(fauna::herd_take_room(herd, *floor, fauna));
+                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), workable)
                 }
                 Improvement::Corral => {
                     let rung = ladder.rung(RungKey::AnimalPen);
@@ -698,6 +723,11 @@ fn maintenance_shares(
     allocation: &LaborAllocation,
     banking: &SourceBankingFirstWork,
     forage_registry: &ForageRegistry,
+    // **The ground under each plant claim**, resolved by coord: the plant demand is quoted per
+    // tender-load of the TILE's own `K` (`forage::patch_tender_loads`), so a claim cannot be priced
+    // off the patch alone. A tile that is not on the map presents no land and therefore no claim.
+    tile_capacity_of: &dyn Fn(UVec2) -> f32,
+    forage: &crate::labor_config::ForageLaborConfig,
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
@@ -748,7 +778,23 @@ fn maintenance_shares(
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
                     // on the turn its first work is about to land*.
-                    demand: crate::forage::patch_upkeep_demand(patch, ladder),
+                    //
+                    // **⛔ AND IT IS THE STAMPED BILL, NOT THE LIVE DEMAND** — the same
+                    // `patch_keeping_basis` the capture publishes and `advance_cultivation` bleeds
+                    // against. This pass runs inside the **per-band** loop and the build accrual
+                    // that moves the position runs later in the same iteration, so on a source two
+                    // bands work — one keeping it, one building it — a share struck off the *live*
+                    // demand is struck at a position the published bill was never taken at. The
+                    // wire then states `upkeepDemand` from the first band's stamp against an
+                    // `upkeepSupplied` paid at a later one, and `demand − supplied == shortfall` —
+                    // written into `snapshot.fbs` for both webs — is false while the pool spends
+                    // work the source never owed.
+                    demand: crate::forage::patch_keeping_basis(
+                        patch,
+                        ladder,
+                        tile_capacity_of(*tile),
+                        forage,
+                    ),
                     invested: crate::forage::patch_at_risk_cost(patch),
                     tiebreak: format!("{:010}:{:010}", tile.x, tile.y),
                 });
@@ -758,12 +804,21 @@ fn maintenance_shares(
                     continue;
                 };
                 let verb = fauna::herd_build_verb(herd, declared);
-                if fauna::herd_keeping_meter(herd, verb).is_none() {
+                if !fauna::herd_claims_keeping(herd, verb) {
                     continue;
                 }
                 animal.push(Claim {
                     index,
-                    demand: fauna::herd_upkeep_demand(herd, verb, fauna, ladder),
+                    // **The DEMAND takes no verb any more** — it interpolates on the herd's own
+                    // position, so there is no step for the one-turn carry to straddle. The verb
+                    // survives one line up, where it still answers *does this source claim at all
+                    // on the turn its first work is about to land*.
+                    //
+                    // **⛔ AND IT IS THE STAMPED BILL** — `herd_keeping_basis`, for the reason the
+                    // plant arm above states at length: the share and the published demand must be
+                    // struck at one position, or the wire's `demand − supplied == shortfall` is
+                    // false on every source two bands share.
+                    demand: fauna::herd_keeping_basis(herd, fauna, ladder),
                     invested: fauna::herd_at_risk_cost(herd),
                     tiebreak: herd.id.clone(),
                 });
@@ -836,6 +891,57 @@ fn maintenance_shares(
 /// fills the herd's domestication meter, while any *stewardship* policy on a **Thriving** source
 /// earns the faction the knowledge that source's **current rung** teaches (slice 4 — Herding on a
 /// wild herd, Penning on a pastoral one; Cultivation/Seed Selection on the plant side).
+/// **THE FIRST SOURCE THIS PASS HAS ALREADY BANKED KEEPING ON THIS TURN**, or `None` if the slate is
+/// clean — the read behind [`advance_labor_allocation`]'s once-per-turn guard.
+///
+/// **The test is the PAIR — banked supply beside a stamped bill — and each half is load-bearing.**
+/// The two fields are written together, in the same arm, for the same source, and both are wiped a
+/// whole stage earlier by the decay passes (`forage::advance_cultivation`,
+/// `fauna::advance_husbandry`), which walk **every** patch and **every** herd unconditionally, ahead
+/// of any of their own `continue`s. So the pair standing at the *top* of this pass can only have
+/// been written by a previous run of it.
+///
+/// - **The supply alone is not the test.** A harness may seat `upkeep_supplied` by hand to stand a
+///   herd up as *kept last turn* — the state Logistics reads — and that writes no bill. Firing there
+///   would be reporting a fixture's own authorship as a driver fault.
+/// - **The bill alone is not the test either.** It is stamped for every *worked* source, keeping or
+///   none, an honest `Some(0.0)` on a wild patch — so it says only *"a pass has run"*, which is true
+///   of a great many harnesses that stage no keeping and double nothing. Measured: on the strict
+///   reading twenty-four tests trip a guard where no keeping figure moves.
+///
+/// What is left is exactly the misuse: supply this pass banked, about to be added to, against a bill
+/// that is never re-struck.
+///
+/// **Gated to match its only call site.** The guard it serves is `#[cfg(debug_assertions)]`, so
+/// without the same gate here this function is dead code in a release build — and `cargo clippy`
+/// defaults to the dev profile, where the call site compiles and the orphan is invisible.
+#[cfg(debug_assertions)]
+fn source_with_keeping_already_banked(
+    forage: &ForageRegistry,
+    herds: &HerdRegistry,
+) -> Option<String> {
+    if let Some(patch) = forage
+        .patches
+        .values()
+        .find(|patch| patch.upkeep_supplied > NO_UPKEEP_DEMAND && patch.upkeep_demanded.is_some())
+    {
+        return Some(format!(
+            "the patch at ({}, {}) already carries {} keeping work",
+            patch.tile.x, patch.tile.y, patch.upkeep_supplied
+        ));
+    }
+    herds
+        .herds
+        .iter()
+        .find(|herd| herd.upkeep_supplied > NO_UPKEEP_DEMAND && herd.upkeep_demanded.is_some())
+        .map(|herd| {
+            format!(
+                "herd {} already carries {} keeping work",
+                herd.id, herd.upkeep_supplied
+            )
+        })
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
@@ -857,6 +963,37 @@ pub fn advance_labor_allocation(
         Option<&mut BandEquipment>,
     )>,
 ) {
+    // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
+    //
+    // The two accounts this pass writes are deliberately asymmetric. `upkeep_supplied` **accumulates**
+    // (`+=`) across the bands working a source, because the upkeep is per-SOURCE and two bands each
+    // put a fraction of it on the ground; `upkeep_demanded` is stamped **first-write-wins** and is
+    // never re-struck, because the bill has to describe the position the shares were split against.
+    // Both are cleared a whole stage earlier, by the Logistics decay passes.
+    //
+    // So a driver that runs this pass **twice with no Logistics pass between** measures a doubled
+    // supply against one turn's bill. Measured over three consecutive passes, one patch's
+    // `upkeep_supplied` ran `3.7037 → 5.5556 → 7.4074` against a demand stamped once at `1.8519` —
+    // it **overstates keeping**, silently, and everything struck from the pair (the shortfall, the
+    // rot, the neglect counter, the published `upkeepShortfall`) is wrong in the flattering
+    // direction.
+    //
+    // **THE PRODUCTION ORDERING IS NOT THE DEFECT AND MUST NOT BE "FIXED".** The accumulation across
+    // bands within one turn is what makes a multi-band holding add up at all. What must stop being
+    // silent is the **misuse** — so this is a debug-only guard on the driver rather than a runtime
+    // refusal: a guard that quietly skipped the second stamp would leave the doubled supply standing
+    // while claiming the pair was sound, which is the same wrong number with the alarm switched off.
+    #[cfg(debug_assertions)]
+    if let Some(source) = source_with_keeping_already_banked(&forage_registry, &registry) {
+        panic!(
+            "advance_labor_allocation ran twice with no Logistics pass between them: {source} \
+             from the previous run. `upkeep_supplied` accumulates across bands while \
+             `upkeep_demanded` is stamped once and never re-struck, so this pass would measure a \
+             doubled supply against one turn's bill and report the keeping as better met than it \
+             is. Run a whole turn — or `forage::advance_cultivation` + `fauna::advance_husbandry` \
+             — between labour passes."
+        );
+    }
     let fauna = configs.fauna.get();
     let labor = configs.labor.get();
     let flora = configs.flora.get();
@@ -1024,15 +1161,64 @@ pub fn advance_labor_allocation(
                 wrap_horizontal,
             )
         });
+        // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
+        // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
+        // system is (the registry index, then the query), and handed to
+        // `forage::patch_land_capacity` so a coord that is **not on the map** reads the patch's
+        // seeded capacity here exactly as it does in the decay pass that bills against this share.
+        // Ground with no patch on it presents no load and therefore no claim.
+        let tile_capacity_of = |coord: UVec2| {
+            let ground = tile_registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map(|tile| tile_forage_capacity(&labor.forage, tile));
+            forage_registry
+                .patch(coord)
+                .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |patch| {
+                    crate::forage::patch_land_capacity(patch, ground)
+                })
+        };
         let upkeep_shares = maintenance_shares(
             &allocation,
             &banking,
             &forage_registry,
+            &tile_capacity_of,
+            &labor.forage,
             &registry,
             &fauna,
             &ladder,
             &keeping_gear,
         );
+        // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
+        //
+        // The animal keeping demand **interpolates on the herd's position** since the animal web got
+        // its one-position ladder, and the position moves *later this turn* — the band's `builders`
+        // pool is spent below, and a `Tame` banking its first work takes the demand from `0` to a
+        // real number. Judged a turn later against the risen demand, a fully-staffed keeping reads
+        // permanently short.
+        //
+        // **It cannot be stamped inside the per-assignment arm**, unlike the plant web's: the animal
+        // build accrual runs in the build-queue pass *above* that arm, so by the time the arm is
+        // reached the position has already moved. Here — between the split and the first accrual —
+        // is the one point where the bill and the share describe the same position.
+        //
+        // **First write wins**, so several bands working one herd all judge the same bill.
+        for assignment in &allocation.assignments {
+            let LaborTarget::Hunt { fauna_id, .. } = &assignment.target else {
+                continue;
+            };
+            let Some(herd) = registry.herds.iter_mut().find(|herd| &herd.id == fauna_id) else {
+                continue;
+            };
+            if herd.upkeep_demanded.is_some() {
+                continue;
+            }
+            // **Stamped for every worked herd, claiming or not.** The bill is *"what this source owed
+            // at the position its share was struck against"*, and a herd that owed nothing owed
+            // exactly `0` — recording that is what makes `supplied == demand` on the turn a Tame
+            // banks its first work, where the live demand read a turn later is already positive.
+            herd.upkeep_demanded = Some(fauna::herd_upkeep_demand(herd, &fauna, &ladder));
+        }
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
         // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
@@ -1474,6 +1660,16 @@ pub fn advance_labor_allocation(
                         |_| Cow::Owned(Vec::new()),
                         |ground| tile_flora_composition(&flora, &labor.forage, ground, map_seed),
                     );
+                    // **THE SIZE OF THE LAND** — the tile's own `K`, resolved here beside the basket
+                    // and off the same tile, because the standing upkeep is quoted per **tender-load**
+                    // of it (`forage::patch_tender_loads`). Resolved as an `Option` here and folded
+                    // into the patch's own land reading below (`forage::patch_land_capacity`), so a
+                    // coord that is **not on the map** bills off the capacity the patch was seeded
+                    // with at the stamp exactly as it does at the claim and in the decay pass.
+                    let plant_tile_ground = tiles
+                        .get(tile_entity)
+                        .ok()
+                        .map(|ground| tile_forage_capacity(&labor.forage, ground));
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
                     // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
                     // seeded a patch at Startup; a missing one (a dynamically-tagged tile, or ground
@@ -1482,6 +1678,8 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
+                    let plant_tile_capacity =
+                        crate::forage::patch_land_capacity(patch, plant_tile_ground);
                     // **THE LIVE VERB, DERIVED** — the declaration above counts only where the meter
                     // it names is at zero; otherwise the newest meter with progress on it decides.
                     let improvement = crate::forage::patch_build_verb(patch, declared);
@@ -1556,8 +1754,12 @@ pub fn advance_labor_allocation(
                     // its own band's accrual. `advance_cultivation` clears it at the top of every
                     // turn, so "already stamped" always means *this* turn.
                     if patch.upkeep_demanded.is_none() {
-                        patch.upkeep_demanded =
-                            Some(crate::forage::patch_upkeep_demand(patch, &ladder));
+                        patch.upkeep_demanded = Some(crate::forage::patch_upkeep_demand(
+                            patch,
+                            &ladder,
+                            plant_tile_capacity,
+                            &labor.forage,
+                        ));
                     }
                     // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
                     // `WearQuantum::UpkeepWork` charge, billed on what the pool **supplied** to this
@@ -1583,7 +1785,12 @@ pub fn advance_labor_allocation(
                     // **Not stored**: `upkeep_supplied` and `neglect_turns` are, so the capture
                     // re-derives the same number through the same seam — and an *unworked* patch,
                     // which this loop never visits, is then honest rather than reading a stale `0`.
-                    let meter_rot = crate::forage::patch_meter_rot(patch, &ladder);
+                    let meter_rot = crate::forage::patch_meter_rot(
+                        patch,
+                        &ladder,
+                        plant_tile_capacity,
+                        &labor.forage,
+                    );
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
                     // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -1646,7 +1853,12 @@ pub fn advance_labor_allocation(
                     // for the selection rather than for the whole basket a narrowed crew never
                     // touched. Resolved before the take, off the same pre-take state the ceiling is.
                     let selected_share = crate::forage::selected_biomass_share(
-                        &crate::forage::patch_composition(patch, &tile_composition, &labor.forage),
+                        &crate::forage::patch_composition(
+                            patch,
+                            &tile_composition,
+                            &flora,
+                            &labor.forage,
+                        ),
                         take_species,
                     );
                     // **THE WHOLE STAND'S ROOM ABOVE THE FLOOR — what the BUILD is gated on.**
@@ -1662,7 +1874,16 @@ pub fn advance_labor_allocation(
                     // the live one keep answering the same question.
                     let stand_above_floor =
                         forage_escapement_ceiling(*floor, biomass_before, patch.carrying_capacity);
-                    let ground_is_workable = crew_is_working_the_source(stand_above_floor);
+                    // **THE BUILD'S GATE READS WHAT THE TAKE WILL PAY** ([`source_is_workable`]), the
+                    // animal web's rule mirrored: a `Sow` raises the patch's `K` by
+                    // `field_capacity_gain`, so the floor climbs out from under a stand that started
+                    // on it and the raw escapement room would refuse the very job that moved it.
+                    let ground_is_workable = source_is_workable(crate::forage::forage_take_room(
+                        *floor,
+                        biomass_before,
+                        patch.carrying_capacity,
+                        patch.growth_this_turn(),
+                    ));
                     // **AND THE CREW'S OWN ROOM — what the TAKE is measured against**: the whole
                     // stand narrowed to the plants these gatherers came for. It answers the
                     // production the row reports as offered, and the lesson: you learn by working
@@ -2460,11 +2681,10 @@ pub fn advance_labor_allocation(
                         // one draw model means one basis too, or the pen would be harvesting this
                         // turn's regrowth on top of the standing surplus while the range take does
                         // not.
-                        let production = fauna::hunt_escapement_ceiling(
-                            *floor,
-                            herd.biomass,
-                            fauna::herd_capacity(herd, &fauna),
-                        );
+                        // **One draw model means one basis** — the same [`fauna::take_room`] the
+                        // range take is bounded by, growth share and all, so a penned herd below its
+                        // own climbing floor is not quietly harvested on a different rule.
+                        let production = fauna::herd_take_room(herd, *floor, &fauna);
                         // **Collection** (slice 7 — the Field's twin): the keeper still has to carry
                         // the meat home, so the take is capped by the crew's own throughput — the
                         // *same* `per_worker_biomass_capacity` a wild hunt is capped by. The pen
@@ -2792,7 +3012,17 @@ pub fn advance_labor_allocation(
                         biomass_before,
                         herd_capacity(herd, &fauna),
                     );
+                    // **THE LESSON'S GATE — the pure escapement room, deliberately unwidened.**
+                    // `learn_multiplier`'s self-limit lives here: *"watching teaches nothing"* at
+                    // `floor = 1.0` is what stops a near-`1.0` floor farming knowledge at x2 for
+                    // free, and it holds only because the source must stand above the floor.
                     let working_the_herd = crew_is_working_the_source(standing_above_floor);
+                    // **THE BUILD'S GATE — what the take will actually pay.** A herd pushed below
+                    // its floor by the `K` its own taming raised is still a herd, still growing, and
+                    // still a legal thing to gentle. Same number `hunt_take` is bounded by, so a
+                    // legal build target that yields nothing is unrepresentable.
+                    let herd_is_workable =
+                        source_is_workable(fauna::herd_take_room(herd, *floor, &fauna));
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
                     let outcome = hunt_take(
@@ -2898,7 +3128,7 @@ pub fn advance_labor_allocation(
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }),
                             herd.can_domesticate(),
-                            working_the_herd,
+                            herd_is_workable,
                         );
                         let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes, and it
@@ -2936,6 +3166,10 @@ pub fn advance_labor_allocation(
                         // `taming_cost_multiplier` (slice 3c inverted): the rung owns the mechanic,
                         // the species prices it. A Steppe Runner is five times the work, not a crew
                         // five times worse at their job.
+                        // **The species' own price multiplier**, which the herd stamps so it can
+                        // place its own rung boundaries; the work-unit `tame_cost` beside it is what
+                        // the build quote is denominated in.
+                        let tame_multiplier = fauna.taming_cost_multiplier_for(&herd.species);
                         let tame_cost = pastoral_rung
                             .build_cost(fauna.taming_cost_multiplier_for(&herd.species))
                             .expect("a rung a verb builds has a build meter");
@@ -2955,9 +3189,14 @@ pub fn advance_labor_allocation(
                         // offered amount would bleed its gear dry against a meter that never moves.
                         // Its verb is never cleared either (`hunt_rung_already_built` reads
                         // `is_domesticated`), so it would bleed forever.
-                        let progress_before = herd.domestication_progress;
-                        let tamed =
-                            accrual > 0.0 && herd.accrue_domestication(faction, accrual, tame_cost);
+                        let progress_before = herd.ladder_position();
+                        let tamed = accrual > 0.0
+                            && herd.accrue_domestication(
+                                faction,
+                                accrual,
+                                tame_multiplier,
+                                &ladder,
+                            );
                         // Recorded for the band's chain pass, which dates it at its place in the
                         // queue — see the Cultivate arm.
                         // **Only for a source that carries an entry** — see
@@ -2967,7 +3206,7 @@ pub fn advance_labor_allocation(
                                 BuildSource::Herd(herd.id.clone()),
                                 BuildQuote {
                                     cost: tame_cost,
-                                    banked: herd.domestication_progress,
+                                    banked: herd.rung_work_done(RungKey::AnimalPastoral, &ladder),
                                     // The animal web still carries per-rung meters — see the ring's
                                     // note above.
                                     legs: Vec::new(),
@@ -2980,7 +3219,7 @@ pub fn advance_labor_allocation(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &builders_gear.animal.wear_kit,
-                            herd.domestication_progress - progress_before,
+                            herd.ladder_position() - progress_before,
                         );
                         if tamed {
                             completed.push((
@@ -3055,9 +3294,9 @@ pub fn advance_labor_allocation(
                         // owner-lock lives in `accrue_corral`, so a keeper the herd refuses spends
                         // nothing structurally rather than by this site re-checking the gate.
                         let pen_tile = herd.position();
-                        let progress_before = herd.corral_progress;
+                        let progress_before = herd.ladder_position();
                         let penned = accrual > 0.0
-                            && herd.accrue_corral(faction, accrual, pen_cost, pen_tile);
+                            && herd.accrue_corral(faction, accrual, &ladder, pen_tile);
                         // **Only for a source that carries an entry** — see
                         // `entry_declares_a_rung`.
                         if entry_declares_a_rung {
@@ -3065,7 +3304,7 @@ pub fn advance_labor_allocation(
                                 BuildSource::Herd(herd.id.clone()),
                                 BuildQuote {
                                     cost: pen_cost,
-                                    banked: herd.corral_progress,
+                                    banked: herd.rung_work_done(RungKey::AnimalPen, &ladder),
                                     // The animal web still carries per-rung meters — see the ring's
                                     // note above.
                                     legs: Vec::new(),
@@ -3078,7 +3317,7 @@ pub fn advance_labor_allocation(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
                             &builders_gear.animal.wear_kit,
-                            herd.corral_progress - progress_before,
+                            herd.ladder_position() - progress_before,
                         );
                         if penned {
                             completed.push((
@@ -3119,7 +3358,7 @@ pub fn advance_labor_allocation(
                                         (herd.is_domesticated(), BuildGate::RungBelow),
                                         (herd.owner == Some(faction), BuildGate::OwnedByOther),
                                     ]),
-                                    herd.corral_progress,
+                                    herd.rung_work_done(RungKey::AnimalPen, &ladder),
                                     // Penning is a flat job for every species — a fence is a
                                     // fence; only taming varies.
                                     RUNG_COST_UNSCALED,
@@ -3127,13 +3366,16 @@ pub fn advance_labor_allocation(
                                 _ => (
                                     BuildGate::first_refusal(&[
                                         (herd.can_domesticate(), BuildGate::SpeciesCeiling),
-                                        (working_the_herd, BuildGate::Escapement),
+                                        // **The build's own question**, so the wire's blocked reason
+                                        // and the accrual's gate cannot disagree about whether this
+                                        // herd is workable.
+                                        (herd_is_workable, BuildGate::Escapement),
                                         (
                                             herd.owner.is_none_or(|owner| owner == faction),
                                             BuildGate::OwnedByOther,
                                         ),
                                     ]),
-                                    herd.domestication_progress,
+                                    herd.rung_work_done(RungKey::AnimalPastoral, &ladder),
                                     fauna.taming_cost_multiplier_for(&herd.species),
                                 ),
                             };
@@ -5072,7 +5314,7 @@ mod labor_yield_tests {
     }
     use super::advance_labor_allocation;
     use crate::fauna;
-    use crate::intensification::{NO_CREW_ON_THIS_ACTIVITY, UNSCALED_UPKEEP};
+    use crate::intensification::NO_CREW_ON_THIS_ACTIVITY;
     use crate::{FoodSiteEntry, FoodSiteRegistry};
 
     /// **The floor at which `intensification::learn_multiplier` is exactly ×1.0** — the food peak.
@@ -5158,7 +5400,30 @@ mod labor_yield_tests {
     /// count, the padding [`builders_above_the_rate`] explains.
     fn plant_builders(world: &World, key: RungKey) -> u32 {
         let ladder = world.resource::<LadderConfigHandle>().get();
-        the_harness_build_crew(ladder.rung(key), UNSCALED_UPKEEP)
+        the_harness_build_crew(ladder.rung(key), harness_patch_load(world))
+    }
+
+    /// **The keepers that exactly cover a PLANT rung's demand** at the harness patch's own
+    /// tender-load — what a fixture puts on the band's `agriculture` role so the meter it is
+    /// building is **held** while it is raised (§4.6a). The animal twin is
+    /// [`the_harness_keeping_crew`]; it is a second function rather than a `load` argument on that
+    /// one because the two loads are two different measures (a flock's head count against the
+    /// ground's own `K`), and a fixture picking the wrong one would staff a plausible number that
+    /// covers nothing.
+    fn the_harness_plant_keeping_crew(world: &World, key: RungKey) -> u32 {
+        let load = harness_patch_load(world);
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        ladder.rung(key).upkeep_crew_needed(load)
+    }
+
+    /// **The harness patch's own tender-load** — the measure the plant rungs' maintenance rate
+    /// scales by (`forage::patch_tender_loads`), the plant twin of [`harness_herd_load`]. Resolved
+    /// off [`SOURCE_BIOME`]'s own `K` rather than assumed to be one, because this harness stands on
+    /// `PrairieSteppe` and not on the reference tile: thin ground presents well under one load, and
+    /// that is the whole point of the measure.
+    fn harness_patch_load(world: &World) -> f32 {
+        let labor = world.resource::<LaborConfigHandle>().get();
+        crate::forage::patch_tender_loads(labor.forage.capacity_for(SOURCE_BIOME), &labor.forage)
     }
 
     /// **THE BUILD CREW AN ANIMAL FIXTURE STAFFS** — the same [`WORKERS`] the plant fixtures state,
@@ -5179,15 +5444,14 @@ mod labor_yield_tests {
     }
 
     /// **The harness herd's own keeper load** — the measure the animal rungs' maintenance rate
-    /// scales by (`fauna::herd_keeper_load`). A plant source has none, so the plant fixtures pass
-    /// [`crate::intensification::UNSCALED_UPKEEP`].
+    /// scales by (`fauna::herd_keeper_load`). The plant fixtures' twin is [`harness_patch_load`].
     fn harness_herd_load(world: &World) -> f32 {
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let registry = world.resource::<HerdRegistry>();
         registry
             .herds
             .first()
-            .map_or(crate::intensification::UNSCALED_UPKEEP, |herd| {
+            .map_or(crate::fauna::ONE_KEEPER_LOAD, |herd| {
                 fauna::herd_keeper_load(herd, &fauna)
             })
     }
@@ -5223,6 +5487,34 @@ mod labor_yield_tests {
         )
         .expect("a staffed build finishes")
     }
+    /// **ONE WHOLE TURN OF THE HARNESS: the Logistics passes, in stage order, then the labour pass.**
+    ///
+    /// `advance_labor_allocation` writes two accounts of the keeping and writes them differently —
+    /// `upkeep_supplied` **accumulates** across the bands working a source, `upkeep_demanded` is
+    /// stamped **first-write-wins** — and both are wiped a whole stage earlier by the two decay
+    /// passes. A harness that runs the labour pass twice without them therefore measures a **doubled
+    /// supply against one turn's bill**, which the pass itself now refuses to do quietly.
+    ///
+    /// **The regrowth belongs here too, and leaving it out stalls a plant build**: the rung-2 gate
+    /// reads the escapement room, so gatherers on a patch nobody regrows pull it to their floor and
+    /// the Cultivate goes ineligible after a single turn.
+    ///
+    /// **Both webs' passes run, whichever web the caller is exercising.** A real turn runs both, and
+    /// each clears its own scratch ahead of any of its own `continue`s — so a plant harness pays
+    /// nothing for the animal pass and vice versa, while a harness that grows a second source later
+    /// cannot silently fall out of the clear.
+    ///
+    /// It is deliberately **not** a `clear_*` helper that wipes the two fields: a second producer of
+    /// *"what a turn does to the keeping"* is free to disagree with the pass that really does it, and
+    /// the decay these passes apply is exactly the cost a harness ought to be paying for leaving a
+    /// keeping unstaffed.
+    fn advance_one_turn(world: &mut World) {
+        world.run_system_once(advance_forage_regrowth);
+        world.run_system_once(crate::forage::advance_cultivation);
+        world.run_system_once(crate::fauna::advance_husbandry);
+        world.run_system_once(advance_labor_allocation);
+    }
+
     /// The biome under the harness's food-module tile — grassland, matching the
     /// `FoodModule::SavannaGrassland` tag it carries. A forage patch's carrying capacity is the
     /// **tile's** (`forage.capacity_by_biome`, the human food web's per-biome table), so the harness
@@ -5906,7 +6198,10 @@ mod labor_yield_tests {
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             assert!(
-                registry.herds[0].corral_at(UVec2::new(0, 0)),
+                registry.herds[0].corral_at(
+                    UVec2::new(0, 0),
+                    &crate::intensification::LadderConfig::builtin()
+                ),
                 "the fixture species must be pennable"
             );
         }
@@ -6072,7 +6367,7 @@ mod labor_yield_tests {
 
         let with_upkeep = tended_upkeep(serde_json::json!({
             "work_per_turn": 1.0,
-            "scaled_by": "flat",
+            "scaled_by": "source_load",
             "grace_turns": 0,
         }));
         let without_upkeep = tended_upkeep(serde_json::Value::Null);
@@ -6209,6 +6504,10 @@ mod labor_yield_tests {
             quoted.actual > 0.0,
             "liveness: the gatherers must actually take something"
         );
+
+        // **The turn the quote is about** — the forecast prices the stand one Logistics regrowth
+        // from here, so the harness advances it before resolving ([`advance_logistics_regrowth`]).
+        advance_logistics_regrowth(&mut world);
 
         // The resolved turn, with a **Cultivate staffed beside them** out of the same band.
         const BUILDERS: u32 = 3;
@@ -6628,7 +6927,10 @@ mod labor_yield_tests {
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             let herd = &mut registry.herds[0];
-            herd.tame_outright(FactionId(0));
+            herd.tame_outright(
+                FactionId(0),
+                &crate::intensification::LadderConfig::builtin(),
+            );
             assert!(herd.is_domesticated(), "the fixture herd must be tamed");
         }
         let assigned = 3;
@@ -6749,6 +7051,29 @@ mod labor_yield_tests {
         (forecast.ceiling_at(floor).provisions / forecast.per_worker_yield.provisions).ceil() as u32
     }
 
+    /// **THE LOGISTICS REGROWTH THESE HARNESSES OWE THEIR SOURCES.**
+    ///
+    /// A pre-commit forecast prices the source **as next turn's take will find it** — one Logistics
+    /// regrowth on (`forage::next_turns_stand` / `fauna::next_turns_quarry`), because every
+    /// production caller reads it *after* the Population take. A harness that quotes a forecast and
+    /// then runs `advance_labor_allocation` on its own has skipped the stage in between, so
+    /// *"forecast == actual"* would be comparing two different turns and the difference would be
+    /// exactly the growth.
+    ///
+    /// It regrows the registries and nothing else — no movement, no shed, no capacity rewrite from
+    /// the tile — which is the same simplification the projections make, so what the fixture
+    /// advances is precisely what the forecast projected.
+    fn advance_logistics_regrowth(world: &mut World) {
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        for patch in world.resource_mut::<ForageRegistry>().patches.values_mut() {
+            *patch = crate::forage::next_turns_stand(patch, &labor.forage);
+        }
+        for herd in world.resource_mut::<HerdRegistry>().herds.iter_mut() {
+            *herd = crate::fauna::next_turns_quarry(herd, &fauna);
+        }
+    }
+
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
     /// hunt policy ceiling with a single 40-biomass hunter, so a labor-bound hunt needs a bigger one).
     fn reseat_herd(world: &mut World, biomass: f32, cap: f32) {
@@ -6831,6 +7156,8 @@ mod labor_yield_tests {
                     if let Some(declared) = improvement {
                         declare_patch_build(&mut world, band, SOURCE, declared, SWEPT_BUILDERS);
                     }
+                    // The stage the forecast was quoted across ([`advance_logistics_regrowth`]).
+                    advance_logistics_regrowth(&mut world);
                     world.run_system_once(advance_labor_allocation);
                     let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
@@ -6916,6 +7243,9 @@ mod labor_yield_tests {
                         if let Some(declared) = improvement {
                             declare_herd_build(&mut world, band, HERD_ID, declared, SWEPT_BUILDERS);
                         }
+                        // The stage the forecast was quoted across
+                        // ([`advance_logistics_regrowth`]).
+                        advance_logistics_regrowth(&mut world);
                         world.run_system_once(advance_labor_allocation);
                         let actual =
                             world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
@@ -6986,7 +7316,8 @@ mod labor_yield_tests {
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
             assert!(
-                registry.herds[0].corral_at(SOURCE),
+                registry.herds[0]
+                    .corral_at(SOURCE, &crate::intensification::LadderConfig::builtin()),
                 "the fixture species must be pennable"
             );
         }
@@ -7225,7 +7556,7 @@ mod labor_yield_tests {
             let herd = &mut registry.herds[0];
             herd.body_mass = UNSEATABLE_BODY_MASS;
             assert!(
-                herd.corral_at(SOURCE),
+                herd.corral_at(SOURCE, &crate::intensification::LadderConfig::builtin()),
                 "the fixture species must be pennable"
             );
         }
@@ -7407,8 +7738,14 @@ mod labor_yield_tests {
             "a gathering crew supplies nothing toward the keeping"
         );
         let ladder = world.resource::<LadderConfigHandle>().get();
+        let labor_cfg = world.resource::<LaborConfigHandle>().get();
+        // The bill is quoted per tender-load of this ground's own `K` — resolved through the
+        // config rather than assumed, since the harness stands on thin steppe, not the reference
+        // tile.
+        let tile_capacity = labor_cfg.forage.capacity_for(SOURCE_BIOME);
         assert!(
-            crate::forage::patch_upkeep_shortfall(patch, &ladder) > NO_UPKEEP_DEMAND,
+            crate::forage::patch_upkeep_shortfall(patch, &ladder, tile_capacity, &labor_cfg.forage,)
+                > NO_UPKEEP_DEMAND,
             "so a gathered-but-unkept tended patch is running a shortfall"
         );
         // Telemetry: `sustainable` is a *measured* MSY line, and a Sustain take is sustainable by
@@ -7679,8 +8016,13 @@ mod labor_yield_tests {
             let ladder = world.resource::<LadderConfigHandle>().get();
             let tended = ladder.rung(RungKey::PlantTended);
             (
-                build_work_per_turn(tended, FOOD_PEAK_FLOOR, UNSCALED_UPKEEP),
-                turns_to_finish(tended, FOOD_PEAK_FLOOR, RUNG_COST_UNSCALED, UNSCALED_UPKEEP),
+                build_work_per_turn(tended, FOOD_PEAK_FLOOR, harness_patch_load(&world)),
+                turns_to_finish(
+                    tended,
+                    FOOD_PEAK_FLOOR,
+                    RUNG_COST_UNSCALED,
+                    harness_patch_load(&world),
+                ),
             )
         };
 
@@ -7898,7 +8240,10 @@ mod labor_yield_tests {
         );
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let sustain_band = spawn_band(
             &mut world,
@@ -7930,7 +8275,10 @@ mod labor_yield_tests {
         grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let builders = animal_builders(&world, RungKey::AnimalPen);
         let band = spawn_band(
@@ -7995,7 +8343,10 @@ mod labor_yield_tests {
             grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
             {
                 let mut registry = world.resource_mut::<HerdRegistry>();
-                registry.herds[0].tame_outright(BAND_FACTION);
+                registry.herds[0].tame_outright(
+                    BAND_FACTION,
+                    &crate::intensification::LadderConfig::builtin(),
+                );
             }
             let band = spawn_band(
                 &mut world,
@@ -8181,7 +8532,7 @@ mod labor_yield_tests {
                 ladder.rung(RungKey::PlantTended),
                 BUILDER_FLOOR,
                 RUNG_COST_UNSCALED,
-                UNSCALED_UPKEEP,
+                harness_patch_load(&world),
             )
         };
         let builders = plant_builders(&world, RungKey::PlantTended);
@@ -8221,9 +8572,14 @@ mod labor_yield_tests {
         );
 
         // (1) The completing turn still pays the dip, to the number.
-        world.run_system_once(advance_forage_regrowth);
+        //
+        // **Quoted BEFORE the regrowth, because that is where a client reads it**: the pre-commit
+        // forecast prices the stand one Logistics regrowth ahead of the state it is taken from
+        // (`forage::next_turns_stand`), so quoting it *after* the regrowth would project a second
+        // one and promise a turn that never happens.
         let promised_dip =
             forage_expected_take(&world, WORKERS, BUILDER_FLOOR, Some(Improvement::Cultivate));
+        world.run_system_once(advance_forage_regrowth);
         world.run_system_once(advance_labor_allocation);
         let completing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
@@ -8270,9 +8626,10 @@ mod labor_yield_tests {
             "the crop the crew committed 25 turns to survives the handoff"
         );
 
-        // (3) The bug: the next turn pays the tended harvest, not the dip.
-        world.run_system_once(advance_forage_regrowth);
+        // (3) The bug: the next turn pays the tended harvest, not the dip. Quoted before the
+        // regrowth for (1)'s reason — the forecast projects that regrowth itself.
         let promised_harvest = forage_expected_take(&world, WORKERS, BUILDER_FLOOR, None);
+        world.run_system_once(advance_forage_regrowth);
         world.run_system_once(advance_labor_allocation);
         let after = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
@@ -8308,6 +8665,135 @@ mod labor_yield_tests {
     /// **The animal twin, rung 2.** A herd that finishes taming this turn hands its crew to the harvest
     /// rung with the herd id and the crew intact — so the band starts collecting the pastoral payoff
     /// instead of paying the taming dip on an already-tame herd forever.
+    /// **Whole turns run to put real work on the harness patch's meter before anything is
+    /// measured.** The plant keeping demand **interpolates on the position**, so a patch at
+    /// [`RUNG_UNSTARTED`] honestly owes `0` and supplies `0` — a fixture that measured there would
+    /// be comparing two zeroes and would pass with the guard ripped out. Two turns is enough for the
+    /// demand to be positive and still climbing, which the second arm below needs.
+    const WARM_UP_TURNS: usize = 2;
+
+    /// **A patch part-way into a Cultivate with its `agriculture` role staffed**, its meter carrying
+    /// real work and its keeping fully met — the one fixture shape in which the keeping figure
+    /// actually moves, and therefore the only one in which a second labour pass can double it.
+    ///
+    /// The warm-up is driven as **whole turns**, so the world it hands back is one the sim can
+    /// really be in: supply banked, bill stamped, and the next legal thing to do a Logistics clear.
+    fn a_world_keeping_a_patch_it_is_building() -> World {
+        let (mut world, tile) = world_with_source(CAP);
+        world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+        let crop = source_tile_default_crop(&world, RungKey::PlantTended);
+        let builders = plant_builders(&world, RungKey::PlantTended);
+        let keepers = the_harness_plant_keeping_crew(&world, RungKey::PlantTended);
+        assert!(
+            keepers > NO_CREW_ON_THIS_ACTIVITY,
+            "fixture: the rung must cost something to hold, or nothing is being guarded: {keepers}"
+        );
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: SOURCE,
+                        floor: BUILDER_FLOOR,
+                        species: Some(crop),
+                        take_species: TakeSelection::EVERYTHING,
+                    },
+                    workers: WORKERS,
+                    kit: None,
+                },
+                LaborAssignment {
+                    target: LaborTarget::Agriculture,
+                    workers: keepers,
+                    kit: None,
+                },
+            ],
+        );
+        declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
+        for _ in 0..WARM_UP_TURNS {
+            advance_one_turn(&mut world);
+        }
+        world
+    }
+
+    /// The harness patch's keeping accounts as they stand right now.
+    fn patch_keeping(world: &World) -> (f32, f32) {
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("the fixture seeded a patch");
+        (
+            patch.upkeep_supplied,
+            patch.upkeep_demanded.expect("a worked patch is billed"),
+        )
+    }
+
+    /// ⛔ **RUNNING THE LABOUR PASS TWICE WITH NO LOGISTICS BETWEEN IS LOUD, NOT SILENT.**
+    ///
+    /// `upkeep_supplied` accumulates across the bands working a source — deliberately, because the
+    /// upkeep is per-source and two bands each put a fraction of it on the ground — while
+    /// `upkeep_demanded` is stamped first-write-wins and never re-struck. Both are cleared a whole
+    /// stage earlier. So a driver that skips the clear measures a **doubled supply against one
+    /// turn's bill** and reports the keeping as better met than it is, in the flattering direction,
+    /// with nothing anywhere saying so.
+    ///
+    /// The production ordering is not the defect and is not what this pins. What it pins is that the
+    /// **misuse announces itself** — and its rescue arm below is what stops "always panic" from
+    /// satisfying it.
+    #[test]
+    #[should_panic(expected = "ran twice with no Logistics pass")]
+    fn a_second_labour_pass_with_no_logistics_between_is_refused() {
+        let world = a_world_keeping_a_patch_it_is_building();
+        let (supplied, _) = patch_keeping(&world);
+        assert!(
+            supplied > NO_UPKEEP_DEMAND,
+            "fixture: the warm-up must leave real keeping banked, or a second pass has nothing to \
+             double: {supplied}"
+        );
+        // **No clear between this and the warm-up's last pass** — the one thing a driver may not do.
+        let mut world = world;
+        world.run_system_once(advance_labor_allocation);
+    }
+
+    /// **THE RESCUE ARM — the same two passes, driven as two turns, bank ONE turn's keeping each.**
+    ///
+    /// Without this the guard above is satisfied by a pass that panics unconditionally. It also
+    /// states the quantity the guard exists to protect: a fully-staffed keeping supplies **exactly**
+    /// the bill it was handed, on turn two as on turn one. Under the defect the second turn's supply
+    /// is the sum of both turns' shares against a bill stamped once — comfortably past the bill,
+    /// which is precisely the over-statement.
+    #[test]
+    fn two_labour_passes_driven_as_two_turns_each_bank_one_turns_keeping() {
+        let mut world = a_world_keeping_a_patch_it_is_building();
+
+        let (first_supplied, first_billed) = patch_keeping(&world);
+        assert!(
+            first_billed > NO_UPKEEP_DEMAND,
+            "fixture: the rung must cost something to hold: {first_billed}"
+        );
+        assert!(
+            (first_supplied - first_billed).abs() < FORECAST_EPSILON,
+            "a fully-staffed keeping supplies exactly its bill: {first_supplied} vs {first_billed}"
+        );
+
+        advance_one_turn(&mut world);
+        let (second_supplied, second_billed) = patch_keeping(&world);
+        assert!(
+            (second_supplied - second_billed).abs() < FORECAST_EPSILON,
+            "and it still does on the next turn — the supply is this turn's, not both turns': \
+             {second_supplied} vs {second_billed}"
+        );
+        // **The bill MOVED between the two turns**, because the plant demand interpolates on the
+        // position and the builders banked a turn's work in between. Without that the two arms
+        // would be the same reading twice and a stale-basis defect could hide inside the epsilon.
+        assert!(
+            second_billed > first_billed,
+            "fixture: the build must raise the demand between the turns, or the second arm is the \
+             first one restated: {first_billed} -> {second_billed}"
+        );
+    }
+
     #[test]
     fn a_completed_taming_clears_the_improvement_and_leaves_the_stance_alone() {
         const BIG_HERD_CAP: f32 = 1_000.0;
@@ -8386,7 +8872,12 @@ mod labor_yield_tests {
                 "an unfinished build keeps its entry"
             );
             regrow_source_herd(&mut world);
-            world.run_system_once(advance_labor_allocation);
+            // **A WHOLE TURN, because this fixture staffs its keeping.** The band's `husbandry` row
+            // banks `upkeep_supplied` every pass and the Logistics decay passes are what clear it,
+            // so a bare labour pass in this loop would add a second turn's keeping on top of the
+            // first against a bill stamped once — and the pass now says so rather than quietly
+            // reporting the herd better kept than it is.
+            advance_one_turn(&mut world);
             turns_taken += 1;
         }
         assert!(
@@ -8538,7 +9029,7 @@ mod labor_yield_tests {
             .resource::<HerdRegistry>()
             .find(HERD_ID)
             .expect("the fixture herd survives the turn")
-            .domestication_progress;
+            .ladder_position();
         let gear_wear = world
             .get::<crate::components::BandEquipment>(band)
             .expect("the band's ledger survives the turn")
@@ -8860,7 +9351,10 @@ mod labor_yield_tests {
         grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let turns_to_build = {
             let ladder = world.resource::<LadderConfigHandle>().get();
@@ -8975,7 +9469,10 @@ mod labor_yield_tests {
         let (mut world, tile) = world_with_source(CAP);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
         }
         let builders = animal_builders(&world, RungKey::AnimalPen);
         let band = spawn_band(
@@ -8994,7 +9491,8 @@ mod labor_yield_tests {
         world.run_system_once(advance_labor_allocation);
         let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
         assert_eq!(
-            herd.corral_progress, 0.0,
+            herd.rung_work_done(RungKey::AnimalPen, &LadderConfig::builtin()),
+            0.0,
             "Corral without PENNING knowledge builds nothing (the §4.3 gate reshuffle — Herding \
              is no longer enough)"
         );
@@ -9023,7 +9521,8 @@ mod labor_yield_tests {
         world.run_system_once(advance_labor_allocation);
         let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
         assert_eq!(
-            herd.corral_progress, 0.0,
+            herd.rung_work_done(RungKey::AnimalPen, &LadderConfig::builtin()),
+            0.0,
             "a wild herd cannot be penned — tame it first"
         );
     }
@@ -9112,7 +9611,10 @@ mod labor_yield_tests {
         reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].tame_outright(BAND_FACTION);
+            registry.herds[0].tame_outright(
+                BAND_FACTION,
+                &crate::intensification::LadderConfig::builtin(),
+            );
             assert!(
                 registry.herds[0].is_domesticated(),
                 "the herd stands on rung 2"
@@ -9177,7 +9679,10 @@ mod labor_yield_tests {
             let (mut world, tile) = world_with_source(CAP);
             reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
             if tamed {
-                world.resource_mut::<HerdRegistry>().herds[0].tame_outright(BAND_FACTION);
+                world.resource_mut::<HerdRegistry>().herds[0].tame_outright(
+                    BAND_FACTION,
+                    &crate::intensification::LadderConfig::builtin(),
+                );
             }
             hunt_one_turn(&mut world, tile, floor);
             let lesson = if tamed {

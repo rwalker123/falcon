@@ -14,7 +14,7 @@ mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_headless_app, HerdRegistry, SimulationConfig, SnapshotHistory, ViewerFaction,
+    build_test_app, HerdRegistry, SimulationConfig, SnapshotHistory, ViewerFaction,
     VisibilityLedger,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -60,7 +60,7 @@ fn fog_enabled_on_the_wire(bytes: &[u8]) -> bool {
 #[test]
 fn the_encoded_snapshot_publishes_only_herds_the_viewer_can_see() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // Two updates: the first generates the world, the second resolves a turn with visibility
     // computed and a snapshot captured from it.
     app.update();
@@ -135,7 +135,7 @@ fn the_encoded_snapshot_publishes_only_herds_the_viewer_can_see() {
 #[test]
 fn the_encoded_snapshot_publishes_every_herd_when_the_server_disables_fog() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     // First update builds the world; flip the switch before the turn that captures the snapshot.
     app.update();
     app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
@@ -183,7 +183,7 @@ fn the_encoded_snapshot_publishes_every_herd_when_the_server_disables_fog() {
 #[test]
 fn disabling_fog_survives_a_rollback() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     app.update();
 
@@ -209,7 +209,7 @@ fn disabling_fog_survives_a_rollback() {
 #[test]
 fn the_rollback_record_keeps_every_herd_the_display_list_hides() {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.update();
     app.update();
 

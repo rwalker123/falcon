@@ -595,6 +595,7 @@ message QueryCommand {
   oneof query {
     HuntTripForecastQuery hunt_trip_forecast = 2;
     DenialRaidForecastQuery denial_raid_forecast = 3;
+    HuntCrewTakeQuery hunt_crew_take = 4;
   }
 }
 
@@ -648,6 +649,37 @@ message DenialRaidForecastQuery {
   uint32 max_party_workers = 6;
 }
 
+// "How many animals does a RESIDENT band of each crew size bring down off `herd_id` per turn, at
+// `floor`, carrying `kit_id`?"
+//
+// THE ASSIGN-HERDERS PANEL'S QUESTION, AND IT IS NOT THE TRIP SHEET'S. `HuntTripForecastQuery`
+// answers one party over a whole detached expedition and prices it at
+// `combat_config.expedition_danger_multiplier` (1.5x lethality as shipped) - a raid far from home is
+// bloodier. A resident band hunting its own range fights at the BASE tuning, so the two answers
+// differ by 50% in the fight term and neither reply may borrow the other's rows.
+//
+// It is a query rather than a snapshot table for the same reason the trip sheet is: the answer
+// depends on this band's LIVE equipment wear and on the kit the player has selected, and a
+// per-(herd x cohort x crew) table is exactly what the query channel replaced.
+message HuntCrewTakeQuery {
+  uint32 faction_id = 1;
+  // The ASKING band - a durable `BandId`, never an ECS entity handle. Its live wear prices the fight.
+  uint64 band_id = 2;
+  string herd_id = 3;
+  // An `equipment.json` roster id, and REQUIRED - the same rule `HuntTripForecastQuery.kit_id`
+  // follows. Unknown, or one whose `jobs` does not list `hunt`, is a `QueryError`.
+  string kit_id = 4;
+  // The composed floor, as a fraction of the herd's K. It is a TERM IN THE ANSWER, not a filter:
+  // the escapement room bounds what the party goes after BEFORE the retreat and the fight
+  // (`fauna::animals_affordable`), so a curve answered at one floor cannot be re-used at another.
+  float floor = 5;
+  // The largest crew this band could put on the herd - the stepper's own cap. The reply carries one
+  // row per crew size `1..=max_workers`, so this is exactly the length of `per_crew`.
+  //
+  // 0 asks for nothing and is answered with an empty `per_crew`.
+  uint32 max_workers = 6;
+}
+
 // The reply frame, written back on the command socket. A TOP-LEVEL message rather than a member of
 // `CommandEnvelope`: the two directions carry different vocabularies and nothing but a query is ever
 // answered.
@@ -658,6 +690,7 @@ message QueryReplyEnvelope {
     HuntTripForecastReply hunt_trip_forecast = 2;
     DenialRaidForecastReply denial_raid_forecast = 3;
     QueryError error = 4;
+    HuntCrewTakeReply hunt_crew_take = 5;
   }
 }
 
@@ -781,6 +814,68 @@ message DenialRaidForecastReply {
   // raise more people, or pick another quarry. Render at_composed.outcome beside it, never a blank,
   // and never seed a stepper at 0.
   uint32 party_needed = 2;
+}
+
+// ONE CREW SIZE'S ANSWER on the hunt take curve.
+//
+// READ THE UNITS BEFORE USING IT. `animals_*` is WHOLE ANIMALS THIS CREW BRINGS DOWN PER TURN - the
+// take's third bound (`fauna::quantise_animal_take`'s `brought_down` arm), for THIS crew, at the
+// queried floor, against this herd's CURRENT wound ledger.
+//
+// IT IS NOT A PER-HUNTER RATE AND MUST NEVER BE MULTIPLIED BY A CREW SIZE. That is the mistake this
+// row exists to make impossible, and the arithmetic does not survive it: the take is
+// `min(w x fight_rate, staircase(w))`, where the engagement staircase is
+// `max(floor(w x engage_rate), 1) x stay_fraction` - flat across whole runs of crew sizes and
+// stepping at integer boundaries. On the shipped Wild Boar (`engage_rate 0.33`) crews of 1 through 6
+// all bring down 0.75 animals/turn, so the per-hunter figure spans 6x across the stepper's first six
+// positions; on Wild Aurochs the BINDING TERM ITSELF flips from the fight to the engagement between
+// crews 8 and 11 and back at 12. Look the row up. Do not scale one.
+//
+// WHAT IS ALREADY FOLDED IN, so no consumer re-applies it:
+//   - the ENGAGEMENT bound, `fauna::animals_engaged` - including its `max(.., 1)` floor, which is why
+//     a crew of one is never zero for want of reach;
+//   - the ESCAPEMENT ROOM at the queried `floor`, clamped where the sim clamps it (before the
+//     retreat, `fauna::animals_affordable`) rather than as an outer min;
+//   - the RETREAT, `HuntingParty::stayers`, with this kit's `dispersion`;
+//   - the FIGHT, damage-over-durability through `combat::resolve_fight`, at the band's live attack
+//     tier against the quarry's `defense`/`durability`, including the multi-turn wound ledger the
+//     herd is standing there with.
+//
+// WHAT IS NOT, because it is the caller's own and stays a linear min:
+//   - the crew's CARRY throughput (`workers x perWorkerYield`), and
+//   - the whole-animal room `floor(ceiling / bodyMass)`.
+//
+// The sim's own take is `min(affordable, carryable, brought_down)` (`fauna::quantise_animal_take`),
+// so a client that mins this row against those two lands on the number the turn pays.
+message HuntCrewTakeRow {
+  // Echoed so the row is self-describing - a client asserts the answer is for the crew it asked
+  // about rather than trusting its position in the list. Rows ascend from 1.
+  uint32 workers = 1;
+  // THE BAND, and it is ON THIS ROW rather than once on the curve because the spread is O(sqrt(w))
+  // and SHRINKS PER HUNTER as the crew grows: both stochastic stages are binomials
+  // (`combat::attacks_landed_at`, `fauna::animals_that_stay`) whose standard deviation is
+  // `sqrt(n p q)`. A single per-hunter band multiplied by a crew would overstate the spread by
+  // exactly `sqrt(w)`. It cannot be reconstructed from one figure; that is why there is a row.
+  //
+  // `likely` is the EXPECTATION over the seed, never a re-draw. Where no stage is stochastic - a
+  // species at `wariness 0`, at the shipped `combat_config.hit_chance = 1.0` - all three are
+  // BIT-IDENTICAL, because both binomials answer their degenerate identity whatever quantile is
+  // asked for.
+  float animals_low = 2;
+  float animals_likely = 3;
+  float animals_high = 4;
+}
+
+// THE HUNT TAKE CURVE - what each crew size actually brings down, so a pre-commit panel can move its
+// stepper without re-deriving the take.
+//
+// It exists because the take is NOT linear in crew size and no scalar can be published that makes it
+// so. See `HuntCrewTakeRow` for the shape, and for the two shipped species that demonstrate it.
+message HuntCrewTakeReply {
+  // ONE ROW PER CREW SIZE, ascending, `1..=HuntCrewTakeQuery.max_workers`. Empty when `max_workers`
+  // is 0. Index `i` is the crew of `i + 1`, and each row echoes its own `workers` so a client never
+  // has to trust that.
+  repeated HuntCrewTakeRow per_crew = 1;
 }
 
 message CommandEnvelope {

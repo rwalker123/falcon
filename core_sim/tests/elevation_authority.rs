@@ -34,7 +34,7 @@
 //! would otherwise drag it under), so land tiles legitimately quantize onto the sea-level lattice
 //! point. A tile exactly on the coastline contour is a real value.
 
-use core_sim::{build_headless_app, SimulationConfig, SnapshotHistory, Tile, TileRegistry};
+use core_sim::{build_test_app, SimulationConfig, SnapshotHistory, Tile, TileRegistry};
 use sim_runtime::TerrainTags;
 
 /// Seeds swept per preset. Never `0` (the "roll from entropy" sentinel).
@@ -75,7 +75,7 @@ fn is_land(tile: &Tile) -> bool {
 /// Run the REAL Startup chain for `(preset, seed)` and census the **published overlay** against the
 /// published terrain, using the client's own decode-and-compare.
 fn census(preset_id: &str, seed: u64) -> FinalMapCensus {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
 
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = preset_id.to_string();
@@ -236,7 +236,7 @@ fn the_census_sees_a_real_map() {
 #[test]
 fn the_published_sea_level_lies_on_the_sample_quantization_lattice() {
     for preset_id in PRESETS {
-        let mut app = build_headless_app();
+        let mut app = build_test_app();
         let mut config = app.world.resource::<SimulationConfig>().clone();
         config.map_preset_id = preset_id.to_string();
         config.map_seed = SEEDS[0];

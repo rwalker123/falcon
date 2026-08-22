@@ -32,18 +32,18 @@ use bevy::MinimalPlugins;
 const SWEPT_FLOORS: [f32; 6] = [0.0, 0.15, 0.3, 0.5, 0.8, 1.0];
 
 use core_sim::{
-    advance_band_movement, advance_expeditions, advance_herds, available_workers,
-    build_headless_app, herd_hunt_yield, hunt_escapement_ceiling, hunt_source_yield_preview,
-    hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandEquipment,
-    BandId, BandTravel, CombatConfigHandle, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
-    FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound, LaborAllocation, LaborConfigHandle,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_band_movement, advance_expeditions, advance_herds, available_workers, build_test_app,
+    herd_hunt_yield, hunt_escapement_ceiling, hunt_source_yield_preview, hunt_take,
+    hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
+    spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandEquipment, BandId,
+    BandTravel, CombatConfigHandle, CommandEventLog, CultureManager, DiscoveryProgressLedger,
+    Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound,
+    LaborAllocation, LaborConfigHandle, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig,
+    SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
     VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, STRIP_IT_BARE,
 };
@@ -89,7 +89,7 @@ fn spawn_world() -> App {
 
     let mut config = SimulationConfig::builtin();
     config.map_preset_id = "earthlike".to_string();
-    config.map_seed = 119304647;
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
 
     app.world
@@ -408,7 +408,7 @@ const BOAR_R: f32 = 0.10;
 /// twin of [`deterministic_fauna`], for the fixtures that run a real turn instead of calling a pure
 /// helper. See [`FaunaConfig::without_retreat`].
 fn deterministic_headless_app() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
@@ -1326,13 +1326,15 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
 
                 // The sim's real band take (a resident band has no carry limit — it eats/banks the
                 // whole take, so `carry_room_biomass = INFINITY`, exactly as the Hunt labor arm
-                // passes). Clone the herd so each sweep entry sees the same pre-take state.
-                let mut herd = app
-                    .world
-                    .resource::<HerdRegistry>()
-                    .find(id)
-                    .expect("herd present")
-                    .clone();
+                // passes). Cloned so each sweep entry sees the same pre-take state — and **regrown
+                // once**, because that is the turn the preview beside it is about: a pre-commit
+                // forecast prices the herd as the next take will find it (`next_turns_quarry`), and
+                // a real turn runs Logistics before Population. Taking from the un-regrown herd
+                // would compare two turns and call the growth a drift.
+                let mut herd = {
+                    let registry = app.world.resource::<HerdRegistry>();
+                    core_sim::next_turns_quarry(registry.find(id).expect("herd present"), &fauna)
+                };
                 let take = hunt_take(
                     &mut herd,
                     workers,

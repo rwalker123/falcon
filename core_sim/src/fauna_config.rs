@@ -1259,6 +1259,53 @@ pub struct HusbandryConfig {
     /// under rollback — never wall-clock `rand`). `0.25` = the rate varies ±25% turn to turn. Validated
     /// finite & `>= 0` (`0` disables the jitter, i.e. an exactly-constant rate). A **playtest dial**.
     pub escape_fraction_jitter: f32,
+    /// **HOW MUCH FASTER THE HERD LEAVES FOR EVERY TURN OF ACCUMULATED NEGLECT** — the compounding
+    /// factor on the escape rate, applied to the herd's own
+    /// [`crate::fauna::Herd::neglect_pressure`]: `rate × (1 + this)^pressure`, clamped at the whole
+    /// herd.
+    ///
+    /// **It keys off the PRESSURE, not off the grace counter.** The grace resets outright when the
+    /// bill is met — correctly, it is forgiveness — and an acceleration that reset with it could be
+    /// erased by tending once every N turns. See [`Self::neglect_recovery_rate`].
+    ///
+    /// # ⛔ WITHOUT IT A NEGLECTED HERD NEVER LEAVES — IT SETTLES
+    ///
+    /// A constant shed fraction balances against the growth curve: measured, a wholly unkept pastoral
+    /// aurochs herd sat at **64% of `K`, still owned, for ever**. That is not the design. *"If no
+    /// herders are present, eventually, the entire herd leaves and you are left with nothing. The
+    /// longer you don't tend it, the quicker the remaining herd leaves, meaning it isn't linear."*
+    ///
+    /// **Exponential, not linear**, because the ruling is about the *rate* rising and not merely the
+    /// count: a linear ramp still leaves the tail shallow, since the overage it multiplies is itself
+    /// shrinking with the herd. Compounding is what makes the shed certain to out-run any growth
+    /// curve, whatever the species' `r`.
+    ///
+    /// **It compounds the RATE, not the count**, so the fence still matters: a penned herd starts
+    /// from `pen_escape_fraction` and accelerates from there, arriving at nothing later than an
+    /// unfenced one rather than never.
+    ///
+    /// Validated finite and `>= 0`. **Zero is legal and is the off-switch** — it reproduces the
+    /// constant-rate behaviour exactly — because a legible "no acceleration" reading is worth more
+    /// than a rejection. A **playtest dial**; `docs/plan_standing_upkeep.md` §4.14 owns the value.
+    pub escape_acceleration: f32,
+    /// **HOW FAST GOOD KEEPING WORKS OFF ACCUMULATED NEGLECT** — the per-turn fall in
+    /// [`crate::fauna::Herd::neglect_pressure`] on any turn the keeping bill is met.
+    ///
+    /// # ⛔ IT IS DELIBERATELY SLOWER THAN THE RISE, AND THAT ASYMMETRY IS THE DESIGN
+    ///
+    /// The pressure rises by the **shortfall fraction** — `1.0` a turn on a wholly unkept herd — and
+    /// falls by this. Shipping it below `1.0` is the whole model in one number: **N turns of neglect
+    /// take more than N turns of good keeping to work off.** Ship it at the rise and neglect becomes
+    /// free to undo; ship it above and a single good turn erases a season of it.
+    ///
+    /// **This is what closes the token-attention exploit.** With the acceleration keyed to the grace —
+    /// which resets outright — a herd survived indefinitely on **one tended turn in fourteen**, at
+    /// *above* its starting size. The grace still resets (it is forgiveness, and tending earns the
+    /// window back); the *condition* does not.
+    ///
+    /// Validated finite and `>= 0`. A **playtest dial**; `docs/plan_standing_upkeep.md` §4.14 owns it,
+    /// and it is the number the "how many turns of keeping undo a turn of neglect" measurement tunes.
+    pub neglect_recovery_rate: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -1275,6 +1322,8 @@ impl Default for HusbandryConfig {
             pastoral_escape_fraction: DEFAULT_PASTORAL_ESCAPE_FRACTION,
             pen_escape_fraction: DEFAULT_PEN_ESCAPE_FRACTION,
             escape_fraction_jitter: DEFAULT_ESCAPE_FRACTION_JITTER,
+            escape_acceleration: DEFAULT_ESCAPE_ACCELERATION,
+            neglect_recovery_rate: DEFAULT_NEGLECT_RECOVERY_RATE,
         }
     }
 }
@@ -1378,6 +1427,35 @@ const DEFAULT_PEN_ESCAPE_FRACTION: f32 = 0.10;
 /// per-herd RNG varies the effective rate `±25%` turn to turn for playability, drawn from the world
 /// seed stream so it stays deterministic under rollback. A **playtest dial**.
 const DEFAULT_ESCAPE_FRACTION_JITTER: f32 = 0.25;
+
+/// **HOW MUCH FASTER A NEGLECTED HERD LEAVES EACH TURN** — the compounding factor on the escape rate,
+/// per turn of consecutive neglect past the rung's grace. See
+/// [`HusbandryConfig::escape_acceleration`] for the model and for the measurement that forced it.
+///
+/// **Chosen by criterion, not by feel** (`docs/plan_standing_upkeep.md` §4.14): the smallest round
+/// value at which a wholly unkept pastoral herd goes from full to **nothing within ~30 turns of its
+/// grace expiring**, at the shipped `pastoral_escape_fraction` 0.25.
+///
+/// **Measured, and quoted as TURNS PAST THE GRACE** — the pastoral grace is 2 turns, so add 2 for the
+/// turn number: `0.02` takes **59**, **`0.05` takes 29**, `0.10` takes **15**. Stating the basis is
+/// not pedantry: an earlier revision of this comment quoted the two bases interchangeably and drifted
+/// from the measurement by four turns.
+///
+/// **The fence does NOT slow the end-to-end death, and that is worth knowing before retuning it.** A
+/// penned herd at the same `0.05` is gone **28** turns past its own grace — a hair *faster* than the
+/// open-range 29 — because an unfed pen does not regrow at all (`pen_fed_fraction`), so it has no
+/// growth fighting the shed to offset its slower `pen_escape_fraction`. What the fence actually buys
+/// is its **6-turn grace against the pastoral 2**: 34 turns to die against 31. A **playtest dial**.
+const DEFAULT_ESCAPE_ACCELERATION: f32 = 0.05;
+
+/// **HOW FAST GOOD KEEPING WORKS OFF ACCUMULATED NEGLECT** — see
+/// [`HusbandryConfig::neglect_recovery_rate`].
+///
+/// Shipped at **a quarter of the rise**: a wholly unkept turn adds `1.0` of pressure, so this says
+/// **four turns of good keeping undo one turn of neglect**. Chosen to make the asymmetry legible at a
+/// glance rather than fine — §4.14 owns the number, and the measurement it will tune against is *how
+/// many kept turns bring a frayed herd back to zero*. A **playtest dial**.
+const DEFAULT_NEGLECT_RECOVERY_RATE: f32 = 0.25;
 
 /// **The pen's feed cost per unit of biomass — the running cost the arc exists to add.**
 ///
@@ -1873,6 +1951,16 @@ impl FaunaConfig {
         require_non_negative_finite(
             "husbandry.escape_fraction_jitter",
             self.husbandry.escape_fraction_jitter,
+        )?;
+        // **Zero is a legal, legible off-switch** — no acceleration, i.e. the constant rate this
+        // dial replaced — which is why it is a non-negative check rather than a positive one.
+        require_non_negative_finite(
+            "husbandry.escape_acceleration",
+            self.husbandry.escape_acceleration,
+        )?;
+        require_non_negative_finite(
+            "husbandry.neglect_recovery_rate",
+            self.husbandry.neglect_recovery_rate,
         )?;
         require_greater_than(
             "husbandry.pastoral_escape_fraction",

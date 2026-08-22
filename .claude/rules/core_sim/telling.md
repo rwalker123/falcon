@@ -94,7 +94,7 @@ so the result is order-independent.
 | `biome.current_dominant` | the primary band's `current_tile` → `Tile::resource_terrain()` → `TerrainType::as_adjective()` |
 | `site.last_discovered` | the faction's most recent `DiscoveredSites` record, named from the sites catalog |
 | `fauna.most_hunted` | species with the most workers assigned as a `LaborTarget::Hunt` target |
-| `fauna.most_domesticated` | highest `domestication_progress` among herds the faction owns |
+| `fauna.most_domesticated` | furthest along the animal ladder among herds the faction owns, by **`Herd::ladder_fraction`** — the position over the species' own total ladder cost. **Normalised on purpose**: `taming_cost_multiplier` scales `animal:pastoral` only, so a raw-units comparison put a *just-tamed* Steppe Runner (250) above a **fully penned** rabbit (50 + 75), and cross-species is the only case a species-picking noun ever sees |
 | `fauna.most_collapsed` | species of the largest `Collapsing` herd |
 | `thread.<kind>.oldest` / `.recent` | the remembered noun with the earliest / latest `first_seen_tick` of that thread kind, ties by `key` ascending. **Registered generically over the kinds the catalog's `remembers` entries declare** — a modder adding a kind needs no engine change. Using one refreshes that thread's eviction clock. See "Memory threads" |
 

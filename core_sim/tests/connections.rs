@@ -15,11 +15,11 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_headless_app, split_band_from_parent, BandId, Connection, ConnectionKey,
-    ConnectionLedger, ConnectionsConfig, ConnectionsConfigHandle, Expedition, ExpeditionMission,
-    ExpeditionPhase, FactionId, LaborAllocation, PopulationCohort, ResidentBand, Scalar,
-    SettleConfig, SimulationConfig, SimulationMetrics, SimulationTick, SnapshotHistory,
-    StartingUnit, Tile, TileRegistry, ViewerFaction, VisibilityLedger, VisibilityState,
+    build_test_app, split_band_from_parent, BandId, Connection, ConnectionKey, ConnectionLedger,
+    ConnectionsConfig, ConnectionsConfigHandle, Expedition, ExpeditionMission, ExpeditionPhase,
+    FactionId, LaborAllocation, PopulationCohort, ResidentBand, Scalar, SettleConfig,
+    SimulationConfig, SimulationMetrics, SimulationTick, SnapshotHistory, StartingUnit, Tile,
+    TileRegistry, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
 /// A pinned earthlike world, so the terrain under every fixture is the same one every run.
@@ -38,7 +38,7 @@ const PARENT_WORKERS: f32 = 20.0;
 const OUT_OF_SIGHT_TILES: u32 = 24;
 
 fn spawn_world() -> App {
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = MAP_SEED;

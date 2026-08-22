@@ -58,7 +58,7 @@ const BIAS_OFF: f32 = 0.0;
 /// nothing to do with this pass. Both arms hermetic and symmetric; going through the real
 /// deserializer still proves the key is wired.
 fn generated_world(seed: u64, weight: Option<f32>) -> App {
-    let mut app = core_sim::build_headless_app();
+    let mut app = core_sim::build_test_app();
 
     let mut config = app.world.resource::<SimulationConfig>().clone();
     config.map_preset_id = "earthlike".to_string();

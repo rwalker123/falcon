@@ -12,7 +12,6 @@ use crate::forage::{
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_GEAR,
     NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
-    UNSCALED_UPKEEP,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
@@ -226,6 +225,12 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     pub(crate) equipped_haul_rate: f32,
     pub(crate) grid_size: UVec2,
     pub(crate) wrap_horizontal: bool,
+    /// **THE LAND THE DESTINATION CAPACITY IS STRUCK OVER** — the same registry
+    /// `fauna::advance_herds` sums a herd's `K` from, because
+    /// [`crate::fauna::herd_destination_capacity`] *is* that seam at a second standing. Without it
+    /// the row would have to re-derive the flow, and a second producer of a capacity is exactly the
+    /// drift this arc keeps paying for.
+    pub(crate) graze: &'a crate::graze::GrazeRegistry,
     /// The same ledger `visibility_raster_from_ledger` renders the client's fog from, read for the
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
@@ -307,6 +312,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         equipped_haul_rate,
         grid_size,
         wrap_horizontal,
+        graze,
         parties,
         penned_parties,
         fallback_party,
@@ -314,6 +320,20 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
     } = inputs;
     let width = grid_size.x.max(1);
     let height = grid_size.y.max(1);
+    // **The prey layer the CARNIVORE arm of the `K` seam reads**, for the destination quote below.
+    // Built **only when something on the map is actually climbing**, because it is a pass over every
+    // herd and no shipped carnivore can carry a husbandry destination (`husbandry_ceiling: wild`) —
+    // an empty slice would nevertheless quote a pack's destination `K` as zero, so the index is real
+    // whenever any quote is taken rather than assumed unreachable.
+    let prey_index = if registry
+        .herds
+        .iter()
+        .any(|herd| herd.build_destination.is_some())
+    {
+        crate::fauna::build_prey_index(&registry.herds, fauna)
+    } else {
+        Vec::new()
+    };
     telemetry
         .entries
         .iter()
@@ -437,14 +457,26 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // field here.
                 domestication: herd
                     .map(|herd| {
-                        build_fraction(herd.domestication_progress, herd.domestication_cost)
+                        build_fraction(
+                            herd.rung_work_done(RungKey::AnimalPastoral, ladder),
+                            herd.rung_cost(RungKey::AnimalPastoral, ladder),
+                        )
                     })
                     .unwrap_or(entry.domestication),
                 corralled: herd
                     .map(|herd| herd.is_corralled())
                     .unwrap_or(entry.corralled),
+                // **THE RAW METER, not the standing's credit.** `animal:pen` is `on_completion`, so
+                // its credit is `0` until the fence closes — that rule governs what a half-built pen
+                // is *worth*, never what its progress bar reads. A player fencing a range watches it
+                // fill, exactly as the plant web publishes `cultivationProgress`.
                 corral_progress: herd
-                    .map(|herd| build_fraction(herd.corral_progress, herd.corral_cost))
+                    .map(|herd| {
+                        build_fraction(
+                            herd.rung_work_done(RungKey::AnimalPen, ladder),
+                            herd.rung_cost(RungKey::AnimalPen, ladder),
+                        )
+                    })
                     .unwrap_or(entry.corral_progress),
                 per_worker_yield: forecast.per_worker_yield.provisions,
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
@@ -587,12 +619,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
                 food_per_animal: forecast.body_mass_yield.provisions,
-                // Herd staffing — the keepers a MANAGED herd owes this turn (0 for a wild/unmanaged
-                // one, per `herd_herders_needed`) and how well it is kept. Both resolve through the
-                // ladder's `upkeep` now (`docs/plan_standing_upkeep.md` §2.4): the count is the
-                // rung's `upkeep_crew_needed` at this herd's keeper load, and the ratio is derived
-                // from the one stored supply, so the published pair and the shed the sim applies can
-                // never describe different staffings.
+                // Herd staffing — the keepers a flock of this species and this size WANTS (0 for a
+                // wild/unmanaged one, per `herd_herders_needed`) and how well it is kept. Both
+                // resolve through the ladder's `upkeep` now (`docs/plan_standing_upkeep.md` §2.4):
+                // the count is the rung's `upkeep_crew_needed` at this herd's keeper load, and the
+                // ratio is derived from the one stored supply, so the published pair and the shed the
+                // sim applies can never describe different staffings.
+                //
+                // **It is the HEAD-COUNT requirement, not the bill's crew** — position-independent,
+                // so it does not slide while a `Tame` fills. `upkeepWorkersNeeded` below is the hands
+                // the *bill* takes; the two agree at the top of a rung and diverge below it. See
+                // `fauna::herd_herders_needed` for why this one must not interpolate.
                 herders_needed: herd
                     .map(|herd| herd_herders_needed(herd, fauna, ladder))
                     .unwrap_or(0),
@@ -692,12 +729,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `advance_husbandry` sheds through and the grace below counts down against, so a row
                 // cannot bill one rung's demand while the sim judges another's.
                 upkeep_demand: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
-                    crate::fauna::herd_upkeep_demand(
-                        herd,
-                        crate::intensification::NOTHING_IN_FLIGHT,
-                        fauna,
-                        ladder,
-                    )
+                    crate::fauna::herd_keeping_basis(herd, fauna, ladder)
                 }),
                 upkeep_supplied: herd.map_or(NO_UPKEEP_DEMAND, |herd| herd.upkeep_supplied),
                 // **Derived, so the three always describe one turn and one rung** — a stored
@@ -706,16 +738,25 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 upkeep_shortfall: herd.map_or(NO_UPKEEP_DEMAND, |herd| {
                     crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
                 }),
-                // **HANDS TO MEET THE DEMAND** — the same number as `herders_needed` above, and
-                // published while the rung is still being **built** too, where it means exactly the
-                // same thing: the keeping pool owes the rate from the first work banked, so these
-                // are the hands that hold a half-tamed herd as much as a finished one
-                // (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a minimum viable build crew
-                // — a build crew supplies nothing toward the rate — and it read `0` mid-build on the
-                // older premise that an unfinished meter owed no keeping. The take activity's answer
-                // rides `SourceYield::workers_needed`.
+                // **HANDS TO MEET THE DEMAND** — and published while the rung is still being
+                // **built** too, where it means exactly the same thing: the keeping pool owes the
+                // rate from the first work banked, so these are the hands that hold a half-tamed herd
+                // as much as a finished one (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a
+                // minimum viable build crew — a build crew supplies nothing toward the rate — and it
+                // read `0` mid-build on the older premise that an unfinished meter owed no keeping.
+                // The take activity's answer rides `SourceYield::workers_needed`.
+                //
+                // **⛔ IT IS THE `ceil` OF THE BILL DIRECTLY ABOVE, NOT OF `herders_needed`.** The wire
+                // states the identity `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)`
+                // and tells the client to do no arithmetic of its own, so the two terms must come off
+                // one number. This line used to read `herd_herders_needed`, which answers a different
+                // question — the *head-count* requirement at the rung's bare rate — and stopped
+                // agreeing the moment the animal keeping demand began **interpolating on the herd's
+                // position**: a herd a tenth of the way up a Tame was billed `0.185` work and told to
+                // staff **two** keepers. The plant row was already `ceil` of its own basis; this is
+                // the same seam (`fauna::herd_upkeep_workers_needed`).
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
-                    herd_herders_needed(herd, fauna, ladder)
+                    crate::fauna::herd_upkeep_workers_needed(herd, fauna, ladder)
                 }),
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace
@@ -733,12 +774,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // published **whether or not a build is in flight** — the compose sheet has to quote
                 // the price before the player commits, and the herd's *stamped* cost is `0` until
                 // someone starts. Penning takes no species multiplier: a fence is a fence.
-                tame_work_done: herd.map(|herd| herd.domestication_progress).unwrap_or(0.0),
+                tame_work_done: herd
+                    .map(|herd| herd.rung_work_done(RungKey::AnimalPastoral, ladder))
+                    .unwrap_or(0.0),
                 tame_work_cost: ladder
                     .rung(RungKey::AnimalPastoral)
                     .build_cost(fauna.taming_cost_multiplier_for(&entry.species))
                     .unwrap_or(0.0),
-                corral_work_done: herd.map(|herd| herd.corral_progress).unwrap_or(0.0),
+                corral_work_done: herd
+                    .map(|herd| herd.rung_work_done(RungKey::AnimalPen, ladder))
+                    .unwrap_or(0.0),
                 corral_work_cost: ladder
                     .rung(RungKey::AnimalPen)
                     .build_cost(RUNG_COST_UNSCALED)
@@ -753,10 +798,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // keeping owes it whatever the builders do, so `work_cost / crew` really is the
                 // pace. What a build's closed form nets is `meter_rot_per_turn`, published below.
                 //
-                // **`upkeep_demand` above cannot answer this**, and deliberately: it resolves
-                // through the **keeping** rung (`fauna::herd_keeping_rung`), which is what this herd
-                // is *billed* today — `0` on a herd nobody has started, which is exactly the herd a
-                // compose sheet is looking at. The two coincide the moment a build is in flight.
+                // **`upkeep_demand` above cannot answer this**, and deliberately: it is what this
+                // herd is *billed* today — `0` on a herd nobody has started, which is exactly the
+                // herd a compose sheet is looking at.
+                //
+                // **⛔ THE TWO NO LONGER COINCIDE ONCE A BUILD IS IN FLIGHT.** This line used to say
+                // they did, and that stopped being true when the animal keeping demand began
+                // **interpolating on the herd's position**: a herd part-way up the pastoral rung is
+                // billed a *fraction* of that rung's rate, so the bill sits strictly below this quote
+                // for the whole build and meets it only at the rung's top. That is the plant web's
+                // shape exactly, and `build_turns_closed_form` pins it as the ordering
+                // `0 < billed <= quoted` rather than as an equality.
                 //
                 // **At this herd's own keeper load**, because both animal rungs quote their rate per
                 // keeper-load (`scaled_by: source_load`), and the load is ownership-independent —
@@ -799,6 +851,23 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 ),
                 build_legs: herd
                     .map_or_else(Vec::new, |herd| published_build_legs(&herd.build_legs)),
+                // **WHERE THAT DESTINATION LEAVES THIS HERD'S `K`** — `None` (the wire's sentinel)
+                // when no band has queued it, which is a different statement from a capacity of
+                // zero. Read through `fauna::herd_destination_capacity`, i.e. through the **one**
+                // seam that writes the live `carrying_capacity` above, evaluated at the destination
+                // standing — never a second expression that happens to agree today.
+                build_destination_capacity: herd.and_then(|herd| {
+                    crate::fauna::herd_destination_capacity(
+                        herd,
+                        species_def,
+                        graze,
+                        &prey_index,
+                        fauna,
+                        width,
+                        height,
+                        wrap_horizontal,
+                    )
+                }),
                 build_turns_remaining: herd
                     .and_then(|herd| herd.build_turns_remaining)
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -877,7 +946,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// are derived once per tile per world (`snapshot/flora_quotes.rs`, #410). A patch whose tile is
 /// absent from the map ships an **empty** composition — "no named plants here", never a fabricated
 /// one.
-#[allow(clippy::too_many_arguments)] // the registry, three configs, two lookup maps and a rate
+///
+/// `tile_capacities` maps tile coord → that tile's own forage `K` (`forage::tile_forage_capacity`),
+/// filled by the caller (which has the tiles) for the same reason the two maps above are: it is the
+/// **size of the land**, and every plant upkeep figure on the row is quoted per tender-load of it
+/// (`forage::patch_tender_loads`). A coord absent from the map presents [`NO_TENDER_LOAD`] worth of
+/// ground, the same absent-means-nothing convention — never a substituted capacity.
+#[allow(clippy::too_many_arguments)] // the registry, three configs, three lookup maps and a rate
 pub(crate) fn snapshot_forage_patches(
     registry: &ForageRegistry,
     forage: &ForageLaborConfig,
@@ -888,6 +963,7 @@ pub(crate) fn snapshot_forage_patches(
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
     sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
+    tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
@@ -903,6 +979,19 @@ pub(crate) fn snapshot_forage_patches(
             // derives from this one (#433). A patch whose tile is absent from the map names no
             // plants and falls back to the empty-basket defaults.
             let tile_composition = tile_quotes.tile_composition(patch.tile);
+            // **THE SIZE OF THE LAND UNDER THIS PATCH** — the tile's own `K`, which every upkeep
+            // figure on this row is quoted per tender-load of. Through
+            // `forage::patch_land_capacity`, so a patch whose coord is **not on the map** publishes
+            // the bill struck against its seeded capacity — the same reading `advance_cultivation`
+            // bleeds against and `maintenance_shares` claims against, which is what keeps the row's
+            // `demand − supplied == shortfall` a statement about one number.
+            let tile_capacity = crate::forage::patch_land_capacity(
+                patch,
+                tile_capacities.get(&patch.tile).copied(),
+            );
+            // **The measure both rung quotes below are struck per** — one reading, so the price a
+            // compose sheet shows and the bill the patch is handed cannot come from two places.
+            let tender_loads = crate::forage::patch_tender_loads(tile_capacity, forage);
             let neglect_grace = patch_neglect_grace_remaining(patch, ladder);
             // The patch's own ecology — the seam `refresh_ecology_phase` classified the published
             // `ecology_phase` word with, so the bands and the word describe the same source.
@@ -959,6 +1048,11 @@ pub(crate) fn snapshot_forage_patches(
                 is_cultivated: patch.is_cultivated(),
                 owner: patch.owner.map(|faction| faction.0),
                 biomass: patch.biomass,
+                // **WHAT THE PATCH HOLDS NOW — the rung is IN this number.** It is the tile's `K`
+                // times the interpolated `field_capacity_gain` (`patch_carrying_capacity`, written
+                // once per turn by `advance_forage_regrowth`), so a standing Field reads ~2.53× the
+                // same ground wild. **The client must redact it under fog** and render
+                // `tile_capacity` below instead — see that field.
                 carrying_capacity: patch.carrying_capacity,
                 ecology_phase: patch.ecology_phase.as_str().to_string(),
                 // The plant web's forecast is food-only for now — its fodder component is
@@ -1063,14 +1157,19 @@ pub(crate) fn snapshot_forage_patches(
                 // **AND THE RATE THAT EATS IT** — the plant twin; the herd row has the reasoning.
                 // `upkeep_demand` below resolves through the **at-risk** rung
                 // (`forage::patch_unwinding_rung`) and is therefore `0` on a wild patch, which is
-                // precisely the patch a compose sheet is quoting. [`UNSCALED_UPKEEP`] on both,
-                // because a patch is one tile: both plant rungs declare `scaled_by: flat`.
+                // precisely the patch a compose sheet is quoting.
+                //
+                // # ⛔ THE QUOTE MOVES WITH THE BILL, or there are two producers of one verdict
+                //
+                // Both plant rungs declare `scaled_by: source_load` and quote their rate **per
+                // tender-load**, so these are struck through **this patch's own tile capacity** —
+                // the same measure `patch_upkeep_demand` bills against. Quoting the bare ladder rate
+                // would price every patch in the game identically and promise `4.0` for a Field that
+                // will actually be billed `4.31`.
                 cultivation_upkeep_demand: ladder
                     .rung(RungKey::PlantTended)
-                    .upkeep_demand(UNSCALED_UPKEEP),
-                field_upkeep_demand: ladder
-                    .rung(RungKey::PlantField)
-                    .upkeep_demand(UNSCALED_UPKEEP),
+                    .upkeep_demand(tender_loads),
+                field_upkeep_demand: ladder.rung(RungKey::PlantField).upkeep_demand(tender_loads),
                 // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
                 // decay pass will bleed off the at-risk meter, and the term a build's closed form
                 // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
@@ -1084,7 +1183,12 @@ pub(crate) fn snapshot_forage_patches(
                 // rot would read a tidy `0` on exactly the abandoned patches that are bleeding. Both
                 // its inputs — `upkeep_supplied` and `neglect_turns` — are stored, so the number is
                 // the same one the labor arm struck its countdown from.
-                meter_rot_per_turn: crate::forage::patch_meter_rot(patch, ladder),
+                meter_rot_per_turn: crate::forage::patch_meter_rot(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 // **The turns estimate the labor arm stamped this turn** — the running build's, or,
                 // when nothing is being built, the **projection** for the rung this patch would climb
                 // next, so the compose sheet can quote the job before the player commits. Read it
@@ -1102,6 +1206,22 @@ pub(crate) fn snapshot_forage_patches(
                 // staffing the KEEPING rather than by adding builders.
                 build_destination_rung: published_destination_rung(patch.build_destination),
                 build_legs: published_build_legs(&patch.build_legs),
+                // **WHERE THAT DESTINATION LEAVES THIS PATCH'S `K`** — `None` (the wire's sentinel)
+                // when no band has queued it, which is a different statement from a capacity of
+                // zero. Read through `forage::patch_destination_capacity`, i.e. through the **one**
+                // expression `advance_forage_regrowth` writes the live `carrying_capacity` with,
+                // evaluated at the destination standing. A `Cultivate` destination therefore quotes
+                // the capacity the patch already has — only rung 3 raises `K` on this web.
+                build_destination_capacity: crate::forage::patch_destination_capacity(
+                    tile_capacity,
+                    patch,
+                    forage,
+                ),
+                // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
+                // fog-safe twin of `carrying_capacity` above and the denominator every upkeep figure
+                // on this row is quoted per. **The reading already resolved once above**, never a
+                // second lookup: two producers of one number are two numbers.
+                tile_capacity,
                 build_turns_remaining: patch
                     .build_turns_remaining
                     .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
@@ -1146,16 +1266,31 @@ pub(crate) fn snapshot_forage_patches(
                 // (`forage::patch_unwinding_rung`), the same seam `advance_cultivation` bleeds and
                 // the grace below counts down against, so a row cannot bill one rung's demand while
                 // the sim bleeds another's.
-                upkeep_demand: crate::forage::patch_keeping_basis(patch, ladder),
+                upkeep_demand: crate::forage::patch_keeping_basis(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 upkeep_supplied: patch.upkeep_supplied,
                 // **Derived, so the three always describe one turn and one rung.** A stored
                 // shortfall would be stamped only on patches some band is assigned to, and would
                 // therefore read `0` on exactly the abandoned patches that are reverting.
-                upkeep_shortfall: crate::forage::patch_upkeep_shortfall(patch, ladder),
+                upkeep_shortfall: crate::forage::patch_upkeep_shortfall(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 // **The MAINTAIN activity's own `workers_needed`** — the plant twin, and what makes
                 // a standing cost legible: *"this wants 1, you have 0"*. `ceil` of the **same
                 // bill** the three terms above ship, never of the live demand beside it.
-                upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(patch, ladder),
+                upkeep_workers_needed: crate::forage::patch_upkeep_workers_needed(
+                    patch,
+                    ladder,
+                    tile_capacity,
+                    forage,
+                ),
                 // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
                 // `advance_cultivation` bleeds through — so the wire counts down against the rung
                 // that will actually revert, not one the patch merely stands on. `None` = a wild
@@ -1302,7 +1437,7 @@ fn patch_composition_info(
                 .collect(),
         }
     };
-    let effective = patch_composition(patch, tile_composition, forage);
+    let effective = patch_composition(patch, tile_composition, flora, forage);
     let quoted = tile_quotes.composition(patch.tile);
     let Cow::Owned(effective) = effective else {
         // wild: the tile's basket verbatim, shared rather than rebuilt.

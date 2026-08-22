@@ -31,7 +31,7 @@ use core_sim::{
 
 /// A pinned earthlike map (`map_seed` is otherwise entropy — pin it, per §9). Only used to stand up a
 /// real `TileRegistry` + a seeded `GrazeRegistry`; the herds under test are placed by hand.
-const MAP_SEED: u64 = 119304647;
+const MAP_SEED: u64 = core_sim::HARNESS_MAP_SEED;
 
 /// Turns per run — well past the ≥200 the gate requires; the fast/slow regimes both settle far sooner.
 const TURNS: u32 = 300;

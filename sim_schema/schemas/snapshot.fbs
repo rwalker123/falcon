@@ -1582,6 +1582,43 @@ table LaborAssignment {
   // arrival schedule - ALREADY answer for this selection. Render them; never re-derive a per-species
   // take on the client, which holds none of the capacity arithmetic.
   takeSpecies:[string];
+  // --- HOW MANY HANDS THIS QUARRY CAN USE (appended last) ---------------------------------------
+  // THE CREW BEYOND WHICH MORE HANDS ADD NOTHING — the sim's answer to the Work board's `+` gate and
+  // to its "max N workers useful here" note, on a HUNT row. It is the crew at which this quarry's
+  // per-crew take curve STOPS RISING, and it is literally the same number the crew-take query's rows
+  // plateau at: both come out of core_sim `fauna::hunt_crew_take_curve`, one shipped as rows and one
+  // as this scalar, so the compose sheet and the worked row cannot quote two ceilings for one herd.
+  //
+  // **IT ANSWERS FOR THE WAY THIS QUARRY IS ACTUALLY WORKED, AND THE CLIENT NEED NOT ASK WHICH.**
+  // A roaming herd is stalked, so its curve carries the engagement, the retreat and THE FIGHT. A
+  // CORRALLED herd is collected: the sim's Hunt arm resolves a pen in its own tend branch, with no
+  // engagement stage at all, so its curve is the pen's own bounds — the stock above the floor, the
+  // keepers' HUSBANDRY-tier throughput, and the species' handling rate with the pen's gain. Both are
+  // real ceilings in animals a turn; the sim picks the right one off `corralled`. A client must NOT
+  // gate this field on `corralled` or on any engagement-stage test of its own: doing so is the
+  // client deciding when to disbelieve a published number, which is exactly what this field being
+  // sim-resolved is for.
+  //
+  // **WHY THE CLIENT CANNOT DERIVE IT.** A stalked take is bounded by three things — the room above
+  // the escapement floor, what the crew can haul, and WHAT THE PARTY CAN BRING DOWN IN A FIGHT
+  // (damage / durability). The third needs `combat_config.hit_chance`, which is deliberately
+  // unpublished, so a client-side quotient divides by the fightless engagement reach and reads high —
+  // measured at 2.3x on a Wild Aurochs. Read this field; do not re-derive it.
+  //
+  // **THE DOMAIN IS THIS SOURCE'S OWN CREW POOL** — the hands already on the row plus the band's idle
+  // ones, which is every crew the stepper beside it can reach, and the same domain the compose
+  // sheet asks its curve over. A curve still rising at the top of that pool reports the pool itself:
+  // "every hand this band has is still buying take", not a licence to name a crew it cannot field.
+  //
+  // `0` MEANS "NO CREW IS USEFUL HERE", AND IT MEANS EXACTLY THAT ON EVERY HUNT ROW — a bare-handed
+  // party against a defense it cannot clear lands zero however many people it sends; a pen with
+  // nothing above its floor hands over nothing to however many keepers stand in it. It is never
+  // "this row has no such answer": a hunt row always has one, which is why the pen branch exists
+  // rather than a sentinel. It is also the value on every NON-HUNT row (forage, scout, warrior,
+  // agriculture, husbandry, builders), which have no quarry at all: the field is hunt-only
+  // structurally, the way fodderYield is plant-only. Derived per-turn at capture. Appended last
+  // (append-only).
+  huntUsefulWorkers:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1813,6 +1850,8 @@ table SpeciesMaterialRates {
 // `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
 // faction (`hasOwner = false` = a wild/untended patch, since faction 0 is a valid id).
 // `biomass`/`carryingCapacity`/`ecologyPhase` let the client optionally show patch health.
+// `carryingCapacity` is LIVE STATE THAT CARRIES THE RUNG and `tileCapacity` (appended last) is
+// the GROUND — see both fields, and read `tileCapacity` on a remembered hex.
 table ForagePatchState {
   x:uint;
   y:uint;
@@ -1821,6 +1860,19 @@ table ForagePatchState {
   hasOwner:bool = false;
   owner:uint = 0;
   biomass:float = 0;
+  // WHAT THIS PATCH HOLDS *NOW*, in biomass - the ground's own K already multiplied by the
+  // INTERPOLATED `field_capacity_gain` the patch's ladder position has bought
+  // (`forage::patch_carrying_capacity`). So it is LIVE STATE THAT CARRIES THE RUNG, not a fact
+  // about the terrain: a standing Field reads ~2.53x the same ground left wild, and a half-raised
+  // one reads part-way between, continuously.
+  //
+  // ⛔ IT MUST BE REDACTED ON A REMEMBERED HEX, AND `tileCapacity` (appended last) IS WHAT REPLACES
+  // IT THERE. `isField` and `fieldProgress` are already redacted under fog; publishing this one
+  // unredacted hands the same ladder position back, and worse than the boolean did - being
+  // interpolated, it states HOW FAR UP rather than merely whether. The pair exists precisely so the
+  // client can keep stating a capacity on ground it remembers (issue #462) while giving away
+  // nothing a player's own action moved. Render `carryingCapacity` where the tile is VISIBLE and
+  // `tileCapacity` where it is merely DISCOVERED.
   carryingCapacity:float = 0;
   ecologyPhase:string;
   // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
@@ -1906,10 +1958,18 @@ table ForagePatchState {
   // config key (flora_config.json), `displayName` the player-facing name, `share` this plant's
   // fraction of the tile's basket.
   //
-  // DERIVED FROM THE BIOME, NOT PER-PATCH STATE: it is a pure function of the tile's terrain and the
-  // roster's affinity weights — every tile of a biome reads the same composition, and nothing on the
-  // patch can change it. What this PARTICULAR patch has been committed to is a separate pair of
-  // fields (`committedSpecies`/`committedDisplayName`, appended below).
+  // ⛔ IT IS THE PATCH'S OWN REWEIGHTED BASKET, NOT THE BIOME'S. This comment used to say the
+  // opposite — "a pure function of the tile's terrain… nothing on the patch can change it" — and that
+  // has been false since #433: `forage::patch_composition` resolves through `composition_for_rung`,
+  // so a TENDED patch publishes its favored species lifted by `tended_weeding_gain` with the share
+  // taken from the least abundant members first, and a FIELD publishes the crop at 1.0. The take
+  // reads the identical seam, so the card and the yield cannot disagree — but a reader trusting the
+  // old wording will mistake a weeded share for a biome constant and go looking for a second
+  // producer that does not exist. (It cost exactly that during the §4.11 playtest.) The biome's own
+  // realization is what this reweights, not what it publishes.
+  //
+  // What this PARTICULAR patch has been committed to is a separate pair of fields
+  // (`committedSpecies`/`committedDisplayName`, appended below).
   //
   // THE SHARES SUM TO 1 for any tile that bears forage at all — the decomposition ruling made
   // structural, so `share × the tile's forageCapacity` is the plant's own capacity and the parts
@@ -2299,15 +2359,15 @@ table ForagePatchState {
   //                     the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
   //                     wants).
   //
-  //                     ONE FIELD NAME, TWO DOCUMENTED MEANINGS - the HERD table's own
-  //                     upkeepDemand below still reads "what the rung demands this turn", and that
-  //                     wording is still CORRECT there. On a PATCH the demand INTERPOLATES on the
-  //                     position, so the live cost moves between the moment the keepers are billed
-  //                     (before the turn's build accrual) and the moment the next Logistics pass
-  //                     judges what they paid. Judged against the risen number a correctly-staffed
-  //                     keeping reads permanently short - so what ships here is the STAMPED bill,
-  //                     which is what makes `demand - supplied == shortfall` hold and what
-  //                     upkeepWorkersNeeded is the ceil of.
+  //                     ONE FIELD NAME, ONE MEANING ON BOTH WEBS - the HERD table's own
+  //                     upkeepDemand below is the same STAMPED bill, and says so. On BOTH webs the
+  //                     demand INTERPOLATES on the position, so the live cost moves between the
+  //                     moment the keepers are billed (before the turn's build accrual) and the
+  //                     moment the next Logistics pass judges what they paid. Judged against the
+  //                     risen number a correctly-staffed keeping reads permanently short - so what
+  //                     ships here is the STAMPED bill, which is what makes
+  //                     `demand - supplied == shortfall` hold and what upkeepWorkersNeeded is the
+  //                     ceil of.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -2354,9 +2414,16 @@ table ForagePatchState {
   // On a patch mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
   // cannot yet give. `0` only where the rung declares no upkeep.
   //
-  // NEITHER SCALES WITH ANYTHING, because a patch is ONE TILE: both plant rungs declare
-  // `scaled_by: flat`, so the rate is what the ladder states (2 and 4 work per turn today - whole
-  // numbers a player can staff exactly).
+  // BOTH SCALE WITH THE SIZE OF THE LAND, and they scale with the SAME measure the bill does.
+  // Both plant rungs declare `scaled_by: source_load` and quote their rate PER TENDER-LOAD - the
+  // tile's own forage capacity over `forage.cultivation.capacity_per_tender` (the plant twin of a
+  // herd's keeper-load). So these are `rate x this patch's tile's loads`, not the ladder's bare 2
+  // and 4: a Field on rich delta ground quotes ~4.31 and is billed ~4.31, and a thin steppe patch
+  // quotes less than either. Quoting the bare rate here would show one price and charge another,
+  // which is two producers of one verdict.
+  //
+  // The client still does NO arithmetic of its own on these - they are struck at capture off the
+  // same patch's tile as `upkeepDemand`.
   cultivationUpkeepDemand:float = 0;
   fieldUpkeepDemand:float = 0;
   // WHAT THIS PATCH'S AT-RISK METER WILL LOSE ON THE NEXT DECAY PASS, in WORK UNITS (appended,
@@ -2535,6 +2602,58 @@ table ForagePatchState {
   //    0-valued row would read as a crop that pays badly.
   //  - KEY ALWAYS PRESENT: every composition entry has an entry here, empty rows and all.
   compositionMaterialPerBiomass:[SpeciesMaterialRates];
+
+  // WHAT THE *GROUND* HOLDS (appended last, append-only wire) - this tile's own forage K, straight
+  // off `forage.capacity_by_biome` via `forage::tile_forage_capacity`, with NO rung gain in it.
+  //
+  // THE SPLIT, AND WHY BOTH SHIP:
+  //  - `carryingCapacity` above is what the PATCH holds now = this number x the interpolated
+  //    `field_capacity_gain`. It moves when the player builds, so it is live state.
+  //  - `tileCapacity` is a pure function of the tile's terrain. NO PLAYER ACTION MOVES IT, which is
+  //    exactly what makes it safe to render on a hex the player has only ever REMEMBERED.
+  //
+  // SO THE CLIENT PICKS BETWEEN THEM ON VISIBILITY, and neither is redundant. A remembered hex
+  // states `tileCapacity`; a visible one states `carryingCapacity`. Collapsing the two - either by
+  // dropping this field as "the same number" (it is not, on any patch above rung 2) or by dropping
+  // `carryingCapacity` as "derivable" (the client does not hold the gain, nor the position it
+  // interpolates on) - re-opens the leak this field was added to close.
+  //
+  // It is ALSO the denominator the plant standing upkeep is quoted per: `upkeepDemand` and the
+  // `*UpkeepDemand` quote pair are `rate x tileCapacity / cultivation.capacity_per_tender`
+  // (`forage::patch_tender_loads`), so this is the term that explains why two patches on one rung
+  // are billed differently. Deliberately the TILE's K and not the patch's - see those fields.
+  //
+  // `0` where the tile is not on the map at all, the same absent-means-nothing reading `composition`
+  // takes there; never a fabricated capacity.
+  tileCapacity:float = 0;
+
+  // WHAT THIS SOURCE WILL HOLD AT THE RUNG ITS BUILD IS HEADING FOR (appended last, append-only
+  // wire) - the carrying capacity of `buildDestinationRung`, or `-1` when no band has queued this
+  // source and there is therefore NO DESTINATION TO QUOTE.
+  //
+  // WHY IT SHIPS. A take is held above `floorFraction x K`, and A RUNG RAISES `K` - the plant web
+  // through `field_capacity_gain`, the animal web through `pastoral_density` / `pen_density`, all
+  // interpolated on the source's ladder position. So while a build runs THE FLOOR CLIMBS EVERY TURN
+  // underneath the player and their take falls. With only the live `carryingCapacity` on the wire a
+  // client can mark that the floor is MOVING and nothing more, so a reduced take reads as the source
+  // being poor rather than as the player's own investment arriving. This is where it is going.
+  //
+  // IT IS THE DESTINATION'S CAPACITY, NOT NEXT TURN'S. Next turn's is not well defined - next turn's
+  // position depends on work nobody has banked yet. The destination is exact: the entry already
+  // names the rung its climb ends on, so the gain at that rung is known today. Read it as one object
+  // with `buildDestinationRung`.
+  //
+  // `-1` IS "NO DESTINATION", AND IT CANNOT BE `0`. A capacity of zero is a REAL READING a real
+  // source has - barren ground, an overgrazed range, a rock pen - so a `0` here would say "build
+  // this and it will hold nothing" about every unqueued source on the map. A capacity is never
+  // negative, so any `< 0` is the absent reading and a client renders NO DESTINATION LINE AT ALL,
+  // exactly as it does for `buildTurnsRemaining = -1`.
+  //
+  // ONE PRODUCER: struck by the same seam that writes the live `carryingCapacity`, at the
+  // destination standing instead of the source's own. THE RUNG MOVES, THE LAND DOES NOT - the flow
+  // is summed over the land as it stands TODAY, so this moves if the land does, exactly as the live
+  // capacity beside it moves.
+  buildDestinationCapacity:float = -1;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -3136,12 +3255,14 @@ table HerdTelemetryState {
   // sustainableYield` — both in provisions, so dimensionally clean — and it doubles as a "a mammoth is
   // ~16 food" display. 0 if unknown.
   foodPerAnimal:float = 0;
-  // --- Herd staffing (appended last) --- how many herders a MANAGED herd owes this turn to hold its
-  // tameness (`fauna::herd_herders_needed` = ceil((biomass / bodyMass) / animals_per_herder)), and how
-  // well it is currently staffed. Together they let the client show an honest "herders 1 / 6": the
-  // labor assignment's `workersNeeded` blends this with the take crew (`max(herdersNeeded, haulers)`),
-  // so it cannot distinguish an under-HERDING shortfall (tameness bleeds, the herd goes feral) from an
-  // under-CARRYING one (wasted food). `herdersNeeded` is 0 for a wild/unmanaged herd (nobody to staff).
+  // --- Herd staffing (appended last) --- how many keepers a flock of this species and this size WANTS
+  // to hold its tameness (`fauna::herd_herders_needed` = ceil((biomass / bodyMass) /
+  // animals_per_herder)) - the HEAD-COUNT requirement, position-INDEPENDENT, NOT the hands the keeping
+  // bill takes (that is `upkeepWorkersNeeded`) - and how well it is currently staffed. Together they
+  // let the client show an honest "herders 1 / 6": the labor assignment's `workersNeeded` blends this
+  // with the take crew (`max(herdersNeeded, haulers)`), so it cannot distinguish an under-HERDING
+  // shortfall (tameness bleeds, the herd goes feral) from an under-CARRYING one (wasted food).
+  // `herdersNeeded` is 0 for a wild/unmanaged herd (nobody to staff).
   herdersNeeded:uint = 0;
   // `herdedFraction` = `min(1, assigned / herdersNeeded)` — the share of the needed herders present.
   // 1.0 = fully staffed (also the value for a herd that needs nobody); < 1 = under-herded, so
@@ -3609,11 +3730,19 @@ table HerdTelemetryState {
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
   // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
   //
-  //   upkeepDemand    = what the rung demands this turn. Follows penUpkeep's rule: it is ALWAYS
-  //                     MEANINGFUL, never a sentinel - for a rung that declares no upkeep it is
-  //                     honestly 0. It resolves through the rung this source STANDS ON or is
-  //                     RAISING, so a source nobody has started reads 0 - see the
-  //                     `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote wants.
+  //   upkeepDemand    = THE BILL THIS HERD'S KEEPERS WERE HANDED this turn. Follows penUpkeep's
+  //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
+  //                     no upkeep it is honestly 0, and a herd nobody has started taming reads 0
+  //                     (see the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
+  //                     wants).
+  //
+  //                     THE SAME STAMPED BILL THE PATCH TABLE'S upkeepDemand IS, for the same
+  //                     reason: the animal demand INTERPOLATES on the herd's position too, so the
+  //                     live cost moves between the moment the keepers are billed (before the turn's
+  //                     build accrual) and the moment the next Logistics pass judges what they paid.
+  //                     What ships is the stamped number, which is what makes
+  //                     `demand - supplied == shortfall` hold and what upkeepWorkersNeeded is the
+  //                     ceil of.
   //   upkeepSupplied  = what the crew actually paid toward it out of this turn's work budget.
   //   upkeepShortfall = what went unmet - and therefore EXACTLY what the improvement decays by,
   //                     once the shortfall outlasts the rung's own grace. Shortfall IS the decay
@@ -3625,6 +3754,14 @@ table HerdTelemetryState {
   //                     (SourceYield.workersNeeded = hands to haul the offer). A blended count across
   //                     units is what a single worker allocation forced; each activity answers for
   //                     itself now.
+  //
+  //                     IT IS NOT `herdersNeeded`, AND THE TWO ANSWER DIFFERENT QUESTIONS. This is
+  //                     the ceil of the bill directly above, so it MOVES WITH THE HERD'S POSITION up
+  //                     its rung; `herdersNeeded` is the HEAD-COUNT requirement at the rung's bare
+  //                     rate (ceil(animals / animals_per_herder)) and is position-INDEPENDENT. They
+  //                     agree at the top of a rung and diverge below it - a herd a tenth of the way
+  //                     up a Tame is billed 0.185 work, which is one keeper, while its head count
+  //                     wants two. Read THIS one for "staff N to pay the keeping".
   //
   // THERE IS NO `maintain` FLAG. "Stop maintaining this" is ASSIGNING ZERO WORKERS
   // (maintain <faction> <source...> 0) - a boolean beside a crew count would be a second way to say
@@ -3700,6 +3837,20 @@ table HerdTelemetryState {
   // verb names, owing that meter's own remainder. It becomes a real climb when this web moves onto
   // one position, and the field is here now so that move costs the wire nothing.
   buildLegs:[BuildLegState];
+
+  // WHAT THIS HERD WILL HOLD AT THE RUNG ITS BUILD IS HEADING FOR (appended last, append-only wire)
+  // - the animal twin of `ForagePatchState.buildDestinationCapacity`; that field carries the whole
+  // rationale, including why `-1` rather than `0` is the "no destination" reading.
+  //
+  // WHAT THE RUNG BUYS HERE is `pastoral_density` / `pen_density`, the per-species husbandry density
+  // gains - domestication makes the LAND hold more animals.
+  //
+  // A CORRAL DESTINATION PROJECTS ITS FOOTPRINT TOO: a pen is not the roam range with `pen_density`
+  // applied to it, it is a FENCED PIECE OF LAND, so the quote is summed over the `penRadius` disk the
+  // herd is standing on today - which is where `corral_at` anchors the pen when the build lands.
+  // Quoting a Corral over the range the herd walks today would overstate it by the whole ratio
+  // between them.
+  buildDestinationCapacity:float = -1;
 }
 
 table CommandEventState {

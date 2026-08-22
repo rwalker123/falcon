@@ -89,6 +89,13 @@ static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	var biomass := FIXTURE_STOCK_FRACTION * FIXTURE_CAPACITY
 	var room := biomass - SourceForecast.FLOOR_FOOD_PEAK * capacity
 	tile["patch_carrying_capacity"] = capacity
+	# **AND THE GROUND UNDER THAT CEILING** — the tile's own `K`, which the wire ships beside the
+	# patch's and which a REMEMBERED card renders in place of the redacted ceiling
+	# (`MapView.FOW_DISCOVERED_HIDDEN_KEYS` header). Equal to the ceiling here because every fixture
+	# through this seeder stands below the Field rung, where the gain is 1.0 — a fixture that wants the
+	# two to genuinely differ states its own pair, which is why this never clobbers one already set.
+	if not tile.has("patch_tile_capacity"):
+		tile["patch_tile_capacity"] = capacity
 	tile["patch_biomass"] = biomass
 	# **A BARREN PATCH KEEPS ITS RATES AND LOSES ITS STOCK** — the dead-season case, and the whole of
 	# what issue #426 turns on. Its per-biomass vector is a property of what GROWS there and stays

@@ -180,22 +180,26 @@ pub use expedition_config::{
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
-    animals_engaged, animals_that_stay, build_prey_index, cancel_dropped_rings, carnivore_k_at,
-    drop_holding_and_cancel_ring, escapement_ceiling, forecast_expected_take, forecast_take_range,
-    herd_build_verb, herd_capacity, herd_default_hunt_kit, herd_ecology, herd_herded_fraction,
-    herd_herders_needed, herd_hunt_yield, herd_keeper_load, herd_keeper_loads, herd_meter_rot,
-    herd_past_recovery, herd_quarry_fight, herd_rung_already_built, herd_upkeep_demand,
-    herd_upkeep_shortfall, herd_upkeep_supply, hunt_engage_workers, hunt_escapement_ceiling,
-    hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws,
-    hunt_take_workers, pen_upkeep, per_hunter_take_biomass, project_arrivals_hunt,
-    project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrowth_delta_at,
-    repopulate_fauna, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
+    animals_engaged, animals_sparable, animals_that_stay, animals_that_stay_at_rate,
+    build_prey_index, cancel_dropped_rings, carnivore_k_at, drop_holding_and_cancel_ring,
+    escapement_ceiling, forecast_expected_take, forecast_take_range, herd_build_verb,
+    herd_capacity, herd_default_hunt_kit, herd_density_gain, herd_destination_capacity,
+    herd_ecology, herd_engage_rate, herd_herded_fraction, herd_herders_needed, herd_hunt_yield,
+    herd_keeper_load, herd_keeper_loads, herd_keeping_basis, herd_meter_rot, herd_past_recovery,
+    herd_quarry_fight, herd_rung_already_built, herd_take_room, herd_upkeep_demand,
+    herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, hunt_crew_take_curve,
+    hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview,
+    hunt_take_bound, hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, next_turns_quarry,
+    pen_upkeep, per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt,
+    quantise_animal_take, quarry_default_hunt_kit, regrowth_delta_at, repopulate_fauna,
+    resolve_hunt_engagement, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
     species_requires_denial, stay_fraction, unqueue_build_and_cancel_ring, would_be_herders_needed,
-    AnimalTake, EcologyPhase, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntDraw, HuntFight, HuntTakeBound, HuntingParty,
+    AnimalTake, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs,
+    HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntTakeBound, HuntingParty,
     PartyResolution, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
     FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
-    NO_DEATHS_TO_REPORT, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
+    NO_DEATHS_TO_REPORT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -215,16 +219,17 @@ pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_material_payoff,
     commit_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
     forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
-    forage_take_overdraws, patch_build_verb, patch_claims_keeping, patch_composition,
-    patch_keeping_basis, patch_material_yields, patch_meter_rot, patch_provisions_per_biomass,
-    patch_rung_already_built, patch_rung_work_done, patch_species_quality, patch_unwinding_key,
+    forage_take_overdraws, next_turns_stand, patch_build_verb, patch_claims_keeping,
+    patch_composition, patch_destination_capacity, patch_keeping_basis, patch_land_capacity,
+    patch_material_yields, patch_meter_rot, patch_provisions_per_biomass, patch_rung_already_built,
+    patch_rung_work_done, patch_species_quality, patch_tender_loads, patch_unwinding_key,
     patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed, plant_rung_span,
     project_arrivals_forage, project_realized_forage, resolve_committed_species,
     resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
     selected_biomass_share, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
     tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
     ForageRegistry, SpeciesRate, SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID,
-    NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    NO_FORAGE_SEASON, NO_TENDER_LOAD, ONE_TENDER_LOAD, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
@@ -246,12 +251,12 @@ pub use intensification::{
     build_work_per_worker_turn, distribute_upkeep_pool, gear_work_supply, interpolate, knows,
     learn_multiplier, load_intensification_ladder_from_env, pool_work_supply, upkeep_shortfall,
     upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig, LadderConfigHandle,
-    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMeterDecay, RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding,
-    RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
-    FABRICATED_BUILD_COST, FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR,
-    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
-    RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED, UNSCALED_UPKEEP, WHOLLY_UNSUPPLIED,
+    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungKey, RungMeterDecay,
+    RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding, RungUpkeep, SiteRefusal,
+    UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST,
+    FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT,
+    NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
+    RUNG_UNSTARTED, SITE_ACCEPTED, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -1070,6 +1075,58 @@ pub fn build_headless_app() -> App {
         });
     });
 
+    app
+}
+
+/// **THE MAP EVERY TEST RUNS ON.** A `map_seed` a test can rely on, so a fixture that searches the
+/// world for ground with a property finds the *same* ground on every run.
+///
+/// # Why a harness needs one at all
+///
+/// `simulation_config.json` ships `map_seed: 0`, and worldgen reads that as *"draw a seed from
+/// entropy"* (`systems::worldgen`, the `world_seed == 0` branch) — which is the game working
+/// correctly: a New Game gets a random map. But it means [`build_headless_app`] generates **a
+/// different world every call**, and a test that asks the map for "a cultivable gathering site" or
+/// "a bare sowable tile" gets different terrain each run. That produced real intermittent failures:
+/// an assertion satisfied by whichever biome the search happened to land on passes most runs and
+/// fails on the map where it doesn't.
+///
+/// Measured rather than assumed — with the seed free, a hash over every `(x, y, terrain)` differed
+/// on all ten runs and the curated site list moved between 129 and 133 entries; with it pinned, that
+/// hash, the site list (ordered *and* as a set) and the tile a fixture picks are byte-identical
+/// across runs. **Worldgen is deterministic per seed**; it was only ever the seed that moved.
+///
+/// # The number
+///
+/// `119304647` is the seed `map_presets.json`'s `polar_contrast` preset already names and the one
+/// `tests/forage_cultivation.rs` had pinned by hand long before this helper existed — reused rather
+/// than invented so the repo has **one** harness map instead of two.
+///
+/// **⛔ IT IS NOT A TUNING DIAL.** When a test fails on this map, the map is not wrong: the test was
+/// resting on map luck, and the fix is to give that fixture the ground it needs (state its terrain,
+/// the way `tests/build_turns_on_the_wire.rs` does) — never to shop for a seed on which everything
+/// happens to pass, which would put the harness right back on the map it just got off.
+pub const HARNESS_MAP_SEED: u64 = 119304647;
+
+/// **THE ONE WORLD BUILDER A TEST MAY USE** — [`build_headless_app`] with [`HARNESS_MAP_SEED`]
+/// pinned, so the map is the same on every run.
+///
+/// # Why it can pin the seed from out here
+///
+/// [`build_headless_app`] **runs no `update()`** — it only assembles the `App` and inserts the
+/// resources — and it never reads or resolves `map_seed` itself. The seed is resolved inside
+/// `spawn_initial_world`, a **Startup** system, which first runs at the caller's first `update()`.
+/// So writing the resource between the two is in time, and worldgen's `world_seed == 0` branch never
+/// fires. (A preset may still override it — `polar_contrast` names its own seed — and that is
+/// deliberate: a test that asks for a preset is asking for that preset's map.)
+///
+/// **`build_headless_app` is deliberately left exactly as it is.** It is the *production* world
+/// builder (`bin/server.rs` boots the real server with it), so pinning a seed in there would make
+/// every New Game deterministic — changing the game to fix the tooling. The pin belongs here, on the
+/// path only tests take.
+pub fn build_test_app() -> App {
+    let mut app = build_headless_app();
+    app.world.resource_mut::<SimulationConfig>().map_seed = HARNESS_MAP_SEED;
     app
 }
 

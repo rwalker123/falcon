@@ -11,9 +11,9 @@ pub use sim_schema::*;
 pub mod commands;
 /// The query channel — the one direction on the command socket the server *answers*.
 pub use commands::{
-    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow,
-    HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow, QueryPayload, QueryReply,
-    QueryReplyEnvelope,
+    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, HuntCrewTakeQuery,
+    HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow,
+    QueryPayload, QueryReply, QueryReplyEnvelope,
 };
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,

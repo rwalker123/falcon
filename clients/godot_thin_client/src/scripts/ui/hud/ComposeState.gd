@@ -81,12 +81,6 @@ var _forage_species_chosen: bool = false
 # already answered for it, and a comparison against an unsorted list would answer *"different"* for a
 # selection the player never changed.
 var _forage_take_species: PackedStringArray = PackedStringArray()
-# **DID THE LAST TOGGLE GET REFUSED?** `toggle_forage_take_species` will not untick the last remaining
-# plant, and a control that refuses in silence is worse than one that allows the mistake — so the
-# refusal is a fact the render can read back and SAY (the chip row's consequence line). It is a
-# one-transaction memory: any toggle that lands, any outright write of the selection, and any re-seed
-# clears it, so it can only ever describe the click the player just made.
-var _forage_take_refused: bool = false
 # The band-picker selection (actor band entity); `NO_BAND_ENTITY` means "fall back to the resolved band".
 var _forage_band: int = NO_BAND_ENTITY
 # WHICH BAND THE COMPOSITION ABOVE WAS SEEDED FOR. A crew, a floor and a build are all facts about ONE
@@ -164,11 +158,6 @@ func forage_species() -> String:
 func forage_take_species() -> PackedStringArray:
 	return _forage_take_species
 
-## Did the last chip press try to untick the last remaining plant? The chip row's consequence line
-## reads it, so the refusal explains itself instead of the click appearing to do nothing.
-func forage_take_refused() -> bool:
-	return _forage_take_refused
-
 ## Did the crop above come from a PERSON — the player's own pick, or the band's standing row — rather
 ## than from the resolver's fall-back? `false` means the game is choosing, which is the one thing the
 ## chip row has to say out loud.
@@ -229,9 +218,6 @@ func seed_forage(count: int, floor: float, improvement: String, species: String 
 	# already gathering only emmer would silently widen the crew back to the whole basket on the next
 	# commit. The seed is what makes the sheet restate what the band HAS.
 	_forage_take_species = _sorted_species(take_species)
-	# A re-seed is a new composition, so the previous one's refusal is no longer about anything the
-	# player can see — the chips it was refused on may not even be this tile's.
-	_forage_take_refused = false
 	_forage_seeded_band = _forage_band
 
 ## Forget which tile the forage compose belongs to, so the NEXT render takes the source-changed path
@@ -279,8 +265,11 @@ func set_forage_improvement(improvement: String) -> void:
 ##
 ## **THE LAST REMAINING PLANT CANNOT BE UNTICKED.** A crew that carries nothing home says exactly what
 ## assigning zero gatherers already says, so the state is useless rather than meaningful and is refused
-## rather than allowed. The refusal is RECORDED (`forage_take_refused`) because the row has to say why;
-## a control that declines a click in silence is worse than one that permits the mistake.
+## rather than allowed. **The refusal is SILENT and records nothing.** It used to set a
+## `_forage_take_refused` flag the chip row read back as a sentence; the sentence is retired (a player
+## works out that the last chip will not turn off by pressing it), so the flag it existed for went
+## with it. `false` is the whole of the answer, and the chips are NOT greyed to pre-announce it —
+## the refusal stays enforced exactly here and nowhere else.
 func toggle_forage_take_species(species: String,
 		basket: PackedStringArray = PackedStringArray()) -> bool:
 	if species == "":
@@ -290,7 +279,6 @@ func toggle_forage_take_species(species: String,
 		else _sorted_species(basket)
 	var was_selected := standing.has(species)
 	if was_selected and standing.size() <= LAST_PLANT_HOME:
-		_forage_take_refused = true
 		return false
 	var keys := PackedStringArray()
 	for key in standing:
@@ -302,14 +290,12 @@ func toggle_forage_take_species(species: String,
 	if basket.size() > 0 and keys.size() >= basket.size():
 		keys = PackedStringArray()
 	_forage_take_species = _sorted_species(keys)
-	_forage_take_refused = false
 	return true
 
 ## Replace the take selection outright — the harnesses' way of staging a narrowed crew, and the path a
 ## SINGLE-pick (cultivating) chip takes, one plant being the whole selection there.
 func set_forage_take_species(species: PackedStringArray) -> void:
 	_forage_take_species = _sorted_species(species)
-	_forage_take_refused = false
 
 ## Sorted and deduplicated, the wire's own order. Every write goes through it, so the composed
 ## selection and the standing one are comparable by value rather than by an order the player's click

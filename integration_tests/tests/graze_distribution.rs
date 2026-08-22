@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use bevy::math::UVec2;
 use core_sim::{
-    build_headless_app, classify_food_module_from_traits, grid_utils::hex_distance_wrapped,
+    build_test_app, classify_food_module_from_traits, grid_utils::hex_distance_wrapped,
     FaunaConfig, ForageRegistry, GrazeRegistry, LaborConfig, SimulationConfig,
     SimulationConfigMetadata, SnapshotHistory, StartLocation,
 };
@@ -91,7 +91,7 @@ struct GeneratedWorld {
 
 fn generate(seed: u64) -> GeneratedWorld {
     common::ensure_test_config();
-    let mut app = build_headless_app();
+    let mut app = build_test_app();
     if let Some(mut md) = app.world.get_resource_mut::<SimulationConfigMetadata>() {
         md.set_seed_random(false);
     }

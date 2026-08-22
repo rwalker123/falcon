@@ -28,9 +28,15 @@ class_name ForecastQuery
 ## listener re-reads through `view()` and cannot render a reply the seam has already superseded.
 signal answered(subject: String)
 
-# ---- the two questions, spelled as `bridge/query.rs` matches them ---------------------------------
+# ---- the three questions, spelled as `bridge/query.rs` matches them -------------------------------
 const KIND_HUNT_TRIP := "hunt_trip_forecast"
 const KIND_DENIAL_RAID := "denial_raid_forecast"
+## **THE RESIDENT CREW'S TAKE CURVE** — one row per crew size, each row the WHOLE crew's animals per
+## turn with the engagement, the retreat and the FIGHT already resolved. It is the Assign Herders
+## panel's question, and it is not the trip sheet's: a raid is priced at
+## `combat_config.expedition_danger_multiplier` and a band hunting its own range is not, so the two
+## replies differ by half again in the fight term and neither may borrow the other's rows.
+const KIND_HUNT_CREW_TAKE := "hunt_crew_take"
 
 # ---- what a sheet gets back -----------------------------------------------------------------------
 
@@ -58,10 +64,17 @@ const STALE_AFTER_MSEC := 400
 ## **HOW LONG A TRANSPORT FAILURE STANDS BEFORE THE SAME QUESTION MAY BE PUT AGAIN.**
 ##
 ## A refusal the SERVER spelled (`sim_runtime::commands::query_error` — `unknown_herd`, `unknown_kit`,
-## `kit_wrong_job`, `invalid_floor`, `invalid_party`, `unknown_band`, `no_active_world`) is a statement
-## about the QUESTION, and the sheet composed that question out of the band, herd, kit and party it is
-## already rendering. Re-asking cannot change the answer, so a server token is never re-asked at all —
-## `ask` runs once per render, and retrying there would spin the socket instead of fixing anything.
+## `kit_wrong_job`, `invalid_floor`, `invalid_party`, `invalid_crew`, `unknown_band`,
+## `no_active_world`) is a statement about the QUESTION, and the sheet composed that question out of
+## the band, herd, kit and party it is already rendering. Re-asking cannot change the answer, so a
+## server token is never re-asked at all — `ask` runs once per render, and retrying there would spin
+## the socket instead of fixing anything.
+##
+## **NONE OF THEM GETS PROSE OF ITS OWN, and `invalid_crew` did not change that** — see
+## `HudComposeVocab.FORECAST_FAILED_FORMAT`: every one of these is a CLIENT bug if it ever fires in
+## normal play, so the token rides one honest failure line rather than earning a sentence for a state
+## the UI is built to make unreachable. What `invalid_crew` earned instead is the clamp that stops the
+## client asking for it at all (`DrawerComposeController._crew_take_workers`).
 ##
 ## `QUERY_ERROR_TRANSPORT` says nothing about the question. A refused connect, the worker's read
 ## timeout, a decode error, a HUD standing up before `Main` has a command client — every one of them
@@ -100,6 +113,12 @@ static func subject_of(kind: String, band_id: int, herd_id: String) -> String:
 
 ## …and the exact key, which adds everything the answer actually depends on. Two renders with the same
 ## key ask nothing new; any difference is a fresh question.
+##
+## **A CURVE KEYS ON ITS CAP, NOT ON THE COMPOSED CREW** (`KIND_HUNT_CREW_TAKE`). That reply carries
+## one row per crew from 1 to `max_workers`, so stepping the stepper does not change the question —
+## and keying it on the stepper would put a fresh round trip behind every `+` press for an answer the
+## seam is already holding. The parameter is the crew term either way, which is why there is one
+## `key_of` rather than a second spelling of it.
 static func key_of(subject: String, kit_id: String, party_workers: int, floor: float) -> String:
 	return "%s:%s:%d:%f" % [subject, kit_id, party_workers, floor]
 
@@ -137,6 +156,27 @@ func ask(kind: String, subject: String, key: String, params: Dictionary) -> void
 ## saying so would flicker harder than the numbers it apologises for. Past the threshold it is not
 ## returned at all — see the const.
 func view(subject: String, key: String) -> Dictionary:
+	return _view(subject, key, true)
+
+## **THE SAME READ WITH THE STALE ARM CLOSED** — for a control whose MOTION is the question.
+##
+## The stale window is a bargain struck for the STEPPER: a `+` press moves the crew by one, the
+## previous crew's row is within a hand of the new one, and showing it for a frame beats blanking the
+## readout on every press. **A HARVEST-FLOOR DRAG is not that gesture.** The floor bounds the room the
+## whole curve is computed against, so the rows asked at the floor the drag STARTED from are not "one
+## tick behind" — they are the answer to a question the player has already left.
+##
+## And a drag RE-ASKS as it moves, which is what makes the stale arm actively wrong here rather than
+## merely generous: every ask re-stamps `asked_at`, so read through `view` the window would renew for
+## the whole length of the drag and the sheet would state the starting floor's take, confidently, until
+## the player let go. That is the defect the drag-time re-ask exists to close, wearing the fix's face.
+##
+## So a dragging sheet reads HERE: an answer stands only for the key it was actually asked at, and
+## anything else is `STATE_PENDING` — the take line then says it is waiting, which is honest.
+func view_exact(subject: String, key: String) -> Dictionary:
+	return _view(subject, key, false)
+
+func _view(subject: String, key: String, accept_stale: bool) -> Dictionary:
 	var entry: Dictionary = _subjects.get(subject, {})
 	if entry.is_empty():
 		return {"state": STATE_PENDING, "answer": {}, "error": ""}
@@ -145,7 +185,7 @@ func view(subject: String, key: String) -> Dictionary:
 	if String(entry.get("error_key", "")) == key:
 		return {"state": STATE_FAILED, "answer": {}, "error": String(entry.get("error", ""))}
 	var answer: Dictionary = entry.get("answer", {})
-	if not answer.is_empty() and String(entry.get("asked_key", "")) == key \
+	if accept_stale and not answer.is_empty() and String(entry.get("asked_key", "")) == key \
 			and Time.get_ticks_msec() - int(entry.get("asked_at", 0)) < STALE_AFTER_MSEC:
 		return {"state": STATE_READY, "answer": answer, "error": ""}
 	return {"state": STATE_PENDING, "answer": {}, "error": ""}

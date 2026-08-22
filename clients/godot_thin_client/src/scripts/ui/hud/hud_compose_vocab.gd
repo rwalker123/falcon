@@ -34,9 +34,9 @@ const START_ORDER_PENDING_VERB := "Starting"
 # one enumeration — `HudFormat.floor_hint` answers `""` and every consumer renders no line.
 #
 # The other four each state something the number does not. `strip`'s is LOAD-BEARING beyond its own
-# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web, and the
-# reaching verdict DROPS its own "then holds it" clause there on the understanding that this line
-# carries the consequence.
+# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web. The
+# reaching verdict states a bare countdown and nothing about an aftermath (`VERDICT_REACHES_FORMAT`),
+# so this line is the whole of what says what arriving there costs.
 #
 # **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's
 # aside, the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition
@@ -115,6 +115,29 @@ const CREW_TARGET_CLEAR_LABEL := "clear it now"
 const CREW_TARGET_HOLD_LABEL := "hold it after"
 const CREW_TARGET_CLEAR_TOOLTIP := "Enough hands to take everything standing above the floor in a single turn."
 const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back once it is sitting at the floor — any more go idle."
+
+# **A TARGET NO CREW REACHES STILL SHOWS — DISABLED, WITH A ✕ WHERE THE COUNT GOES.** It used to
+# vanish, which reads as the sheet having nothing to say about clearing at all; the pill is the one
+# place that question is answered, so it stays and answers it in the negative.
+#
+# **✕ AND DELIBERATELY NOT ∞.** An infinity is a QUANTITY — it says "an infinite crew would do it" and
+# invites the player to keep adding hunters. They do not help: the take curve plateaus, and a quarry
+# that scatters can never be cleared in one turn by anybody. `✕` says *this cannot be done*, which is
+# the true statement and the only one the model supports.
+const CREW_TARGET_UNREACHABLE_FACE := "✕"
+
+# …and the REASON, on the hover, because the sheet stays quiet while the why stays reachable. One
+# sentence each, because the two targets fail differently: a clear that no crew reaches is often
+# permanent rather than a matter of pool size — a wary quarry breaks off and retreats, so the last of
+# it is never standing there to be taken — while a hold that no crew reaches is the take flattening
+# out below what the source puts back.
+#
+# **EACH LEADS WITH WHAT IS TRUE ON EVERY SOURCE AND QUALIFIES THE REST.** The same `✕` renders for a
+# second reason — a source with no throughput to divide by, a patch in deep winter — and there is no
+# quarry on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
+# than an assertion, and the flat-take half says only that more hands do not lift it.
+const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "No crew this band can field clears it in one turn, and where a quarry breaks off and retreats no crew ever could, at any size."
+const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "No crew this band can field takes what grows back here — more hands do not lift the take past it."
 
 # ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
 # The crew is ONE statement — *this many hands, and here are the two numbers worth matching* — so the
@@ -1311,6 +1334,19 @@ const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
 ## sled collects a pen at the bare rate. It prints on a hunt sheet BESIDE the sled's line rather than
 ## instead of it (a husbandry kit carries both), and only for a kit that actually supplies the axis.
 const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
+## **HOW MANY OF THE COMPOSED CREW THIS KIT ACTUALLY REACHES** — `3 of 8 equipped`, printed after the
+## tier clauses and before the item conditions.
+##
+## **THE TIERS ABOVE IT DESCRIBE A PERSON, NOT THE PARTY, and without this clause the line let the
+## party inherit them.** A band holding ONE spear and composing EIGHT hunters read `attack 20.0`
+## while the sim priced seven of the eight bare-handed inside the take curve: the take was right and
+## the line was wrong about why.
+##
+## **IT STATES THE COVERAGE AND NEVER BLENDS THE ATTACK.** A crew-averaged tier would describe
+## nobody, and it would be a third number for a division the sim has already published
+## (`PopulationCohortState.huntCrews`). The count is the crew the WHOLE kit reaches, not one axis's,
+## because this client may not map an axis to the component behind it — see `KitRoster.tier_hint`.
+const KIT_HINT_COVERAGE_FORMAT := "%d of %d equipped"
 ## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
 ## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
@@ -1463,3 +1499,153 @@ const HUNT_WINDOW_MAX_TURNS := 12
 # Animals-per-turn rate formatting: up to 2 decimals, trailing zeros/dot stripped (1.90→"1.9", 1.00→"1",
 # 0.65→"0.65"). `String.num` already trims (unlike the padded food-rate formatter).
 const HUNT_ANIMAL_RATE_DECIMALS := 2
+
+# **THE SMALLEST RATE TWO DECIMALS CAN STATE, AND THE FACE FOR EVERYTHING UNDER IT.** A positive take
+# rounded to `0` is the one thing this readout may never print: a party that cannot finish a body this
+# turn still finishes one eventually — the wound ledger carries the damage between turns — so `≈0`
+# says *"hunting this is pointless"* about a crew that is genuinely feeding the band. `<0.01` is the
+# honest face; the cadence clause beside it then says how long the wait actually is.
+const HUNT_ANIMAL_RATE_MIN_SHOWN := 0.01
+const HUNT_ANIMAL_RATE_BELOW_MIN_FORMAT := "<%s"
+
+# ---- A FRACTIONAL ANIMAL IS THE NORMAL CASE, SO THE LINE SAYS WHAT IT MEANS --------------------
+# **THE WHOLE-ANIMAL QUANTUM IS A TIMING EFFECT, NOT A CEILING.** A Wild Aurochs (`durability 150`) is
+# engaged one animal at a time by every crew from one hunter to eleven, and the blow such a crew lands
+# is capped by the body in front of it — so `floor(damage / durability)` is `0` for all of them while
+# the expected rate is `0.75` a turn. The sim publishes the rate and carries the remainder on its wound
+# ledger; the panel's job is to make the WAIT legible rather than to round it to nothing.
+#
+# **A DECIMAL ALONE DOES NOT DO THAT.** `≈0.75 Wild Aurochs/turn` is exact and still reads as "not
+# quite one", which a player converts to "nothing happens" — the very reading the `≈0` bug produced.
+# So a take under one animal a turn states its CADENCE too, in the unit the player waits in. Above one
+# a turn nothing is appended: the decimal is self-explanatory there and the line does not grow for the
+# ordinary case.
+#
+# **IT IS AN APPOSITION, NOT A COLUMN.** It closes `HUNT_LIMIT_CREW_FORMAT`'s sentence — the rate
+# restated in the unit the player waits in — rather than standing as a third field of a
+# `·`-separated strip, which is what it was while a take line of its own sat above the yields.
+const HUNT_TAKE_CADENCE_THRESHOLD := 1.0
+const HUNT_TAKE_CADENCE_FORMAT := ", about one every %s turns"
+
+# The cadence's own precision — ONE decimal, trimmed like the rate beside it (1.34→"1.3", 2.00→"2").
+# Two would assert a precision the quantile band underneath it does not have; zero would round a
+# 1.3-turn wait to "every 1 turns", which is the same lie as `≈0` wearing different clothes.
+const HUNT_CADENCE_DECIMALS := 1
+
+# ---- THE PRE-COMMIT TAKE, AND WHY IT IS STATED ONCE (`ForecastQuery.KIND_HUNT_CREW_TAKE`) -------
+# **THE TAKE IS THE SIM'S ANSWER.** The panel lets the player move the crew before committing, so the
+# take has to be re-answered as the stepper moves — and the client cannot answer it: the fight is
+# damage over durability against the quarry's defense and the wound ledger it is standing there with,
+# and `combat_config.hit_chance` is deliberately unpublished. Composed here without it, the sheet read
+# **1.92 food** where a Wild Aurochs paid **0.84** to four hunters, and bone, fibre and hide were over
+# by the same 2.3×.
+#
+# **IT USED TO BE STATED TWICE, WITH THE ACCOUNTS SANDWICHED BETWEEN.** A line of its own led the
+# yields block — `≈0.75 WILD BOAR/TURN · 0 – 1 · ABOUT ONE EVERY 1.3 TURNS` — above a `NEXT TURN` row
+# whose binding-limit sentence, two lines further down, quoted the same rate again. The line is gone.
+# The band below and the cadence above fold into `HUNT_LIMIT_CREW_FORMAT`, which is now the only place
+# the crew's take is stated, and the yields' caption alone says which point of the band they are
+# quoted at (`YIELD_HEADER_AT_LIKELY_SUFFIX`).
+
+## The band, appended to the take that sentence quotes. **IT IS OMITTED ENTIRELY WHERE THE BAND IS
+## DEGENERATE** — which is every reading at the shipped tuning (`combat_config.hit_chance = 1.0`),
+## both stochastic stages answering their degenerate identity at any quantile. Range chrome that
+## always renders manufactures doubt the model does not have, so
+## `SourceForecast.hunt_take_band_is_degenerate` decides whether it appears at all rather than the
+## numbers being printed equal to each other.
+##
+## **PARENTHESES RATHER THAN A `·` FIELD**, for the cadence clause's reason: what it qualifies is a
+## sentence now, and a middot strip inside one reads as a fragment of the strip this stopped being.
+const HUNT_TAKE_BAND_FORMAT := " (%s – %s)"
+
+## **WHILE THE ANSWER IS IN FLIGHT** — the local hunt's twin of `RAID_FORECAST_PENDING`, and separate
+## for that constant's own reason: the two sheets are waiting on different questions, and a shared
+## "waiting…" would be the only word on either that did not name what it was waiting for. It stands in
+## place of the readout's numbers; the chart, the crew targets and the combat gate above it are
+## composed from wire terms and stay.
+const HUNT_TAKE_PENDING := "Costing what this crew brings down…"
+
+## **HOW OFTEN A LIVE FLOOR DRAG MAY PUT THE CURVE QUESTION ON THE SOCKET.**
+##
+## The curve is FLOOR-DEPENDENT — its rows are bounded by the room standing above the escapement
+## floor — so a sheet that asks only at the COMMITTED floor states the take for the floor the player
+## started from for the whole length of a drag. The drag therefore re-asks; `ForecastQuery.key_of`
+## already carries the floor, so a new floor is a new question without anything else changing.
+##
+## **THE SHAPE IS A LEADING-EDGE RATE LIMIT, not a quiet-window debounce, and the release is why.** A
+## quiet window has to fire on a TIMER after the motion stops — a timer this seam has no node to hang
+## off, and one that would answer for a floor the player may already have let go of. A rate limit needs
+## no clock of its own: the first motion asks at once, so the sheet starts converging immediately, and
+## the drag's FINAL floor is guaranteed to be asked whether or not it falls inside a closed window,
+## because releasing the drag rebuilds the sheet and the rebuild asks at the committed floor. The
+## trailing edge is therefore already owned by the commit, and the only thing left to bound is the
+## middle of the gesture.
+##
+## **THE VALUE IS A HUMAN-MOTION FIGURE, not a frame count.** Under it, one ask per emitted step:
+## `HarvestFloorChart` quantises to whole percent, so a fast sweep of the plot puts dozens of distinct
+## questions on the command socket in well under a second. Over it, the number visibly lags the line
+## the player is dragging. Roughly a tenth of a second is the interval at which a readout still reads
+## as "following the drag" while a full-height sweep costs a handful of round trips rather than a
+## hundred.
+const HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC := 120
+
+## **THE LARGEST CREW THE TAKE CURVE MAY BE ASKED ABOUT** — `core_sim`'s own `MAX_CREW_TAKE_WORKERS`,
+## restated on this side because the client composes the ask.
+##
+## **THE SERVER REFUSES ABOVE IT RATHER THAN CLAMPING** (`query_error::INVALID_CREW`), which is the
+## right rule there — a curve silently answered for a smaller crew than was asked about has a last row
+## that is not the plateau the caller thinks it is. It also means an over-large ask costs the player a
+## sheet: the take, band, cadence and yields all drop out and `No forecast available (invalid_crew)`
+## stands in their place. So the CLIENT clamps, at the one place the question is composed, and the
+## question that goes out is one the sim will answer.
+##
+## **NOTHING IN PLAY REACHES IT.** The ask carries the band's own hunt crew pool
+## (`HudBandLaborState.source_crew_pool_hunt` — idle hands plus the ones already on this herd), and a
+## thousand hunters on one herd is an order of magnitude past anything the demographics produce. The
+## bound is a guard against a bug on this side, not a rule the player can feel.
+const HUNT_CREW_TAKE_MAX_WORKERS := 1000
+
+# ---- WHICH LIMIT IS BINDING, AND ITS REMEDY ----------------------------------------------------
+# **IT REPLACES THE `settles at N%` ADVISORY ON THIS WEB.** That sentence is composed from the
+# projection walk, which carries the engagement and the retreat and NOT the fight — so on the one web
+# where the fight is half the answer it named the wrong remedy at the wrong size ("12 herders would
+# reach the floor"). The three limits below are all the take actually has, and the smallest of them is
+# the one worth stating.
+
+## **THE HERD IS UNDER THE FLOOR THE PLAYER SET** (`biomass < floor × carryingCapacity`). The same
+## slot, never an extra block: a herd cannot be below its floor and limited by something else at the
+## same time, so the player is never in both states.
+const HUNT_LIMIT_BELOW_FLOOR := "Below your breeding floor — taking the surplus only."
+
+## THE HERD BINDS — the take already equals what grows back, so hands added past it eat the stock.
+const HUNT_LIMIT_SUSTAINABLE_FORMAT := "The herd breeds back ≈%s %s a turn — more hands would take from the stock, not the surplus."
+
+## THE FLOOR BINDS — there is little standing above it to take, and the floor is the player's own dial.
+const HUNT_LIMIT_ROOM_FORMAT := "Only ≈%s %s stand above your floor — lower it, or let the herd grow."
+
+## **THE CREW BINDS — and this is the one limit whose figure IS the take**, which is why the band and
+## the cadence ride this sentence and no other. It wears the ⚠-amber severity.
+##
+## **IT NAMES NO REMEDY, and the stepper's own `max N useful here — more would be idle` is why.** It
+## used to close *"— add hands to take more"*: a clause naming no count, two lines under a control
+## already stating the exact crew past which a hand is idle, and flatly contradicting it for any crew
+## inside one of that cap. The other three limits keep their tails because each names something to
+## DO (lower the floor, let the herd grow) or a consequence to weigh (hands past this take stock, not
+## surplus); this one named neither.
+##
+## It names the crew NOUN the stepper above it uses (`hunters` / `herders`), so the sentence and the
+## control it describes cannot call one crew two things.
+##
+## **THE RATE IS BUILT FROM THE SHARED FACE/UNIT PAIR, not spelled out as prose.** It read
+## *"≈0.75 Wild Boar a turn"* while the take estimate above the rows carried the `/turn` form, so the
+## one figure the sheet states twice was stated in two different units of English; taking the head
+## from `HUNT_DELIVERED_FORMAT`'s own pieces is what makes that unrepeatable. The trailing `%s` is the
+## band-and-cadence tail, `""` on a certain take of a whole animal or more.
+const HUNT_LIMIT_CREW_FORMAT := "These %s bring down " + HUNT_ANIMAL_RATE_FACE_FORMAT + " " \
+    + HUNT_ANIMAL_RATE_UNIT_FORMAT + "%s."
+
+## **THE CAPTION OVER THE YIELDS SAYS WHICH POINT OF THE BAND THEY ARE QUOTED AT.** They are single
+## numbers by decision — four bands would assert four independent rolls, and the four accounts are
+## fixed conversions of ONE carried biomass — so the caption is what keeps them honest beside a take
+## line that does carry a range.
+const YIELD_HEADER_AT_LIKELY_SUFFIX := " · at the likely take"

@@ -30,7 +30,8 @@
 use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
-    HuntTripForecastQuery, QueryPayload, QueryReply, QueryReplyEnvelope, MAX_PROTO_FRAME,
+    HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, QueryReply, QueryReplyEnvelope,
+    MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -55,10 +56,15 @@ use std::time::Duration;
 /// worker is not wedged for a whole play session.
 const QUERY_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The two questions, spelled as the GDScript seam spells them. They are matched on rather than
+/// The three questions, spelled as the GDScript seam spells them. They are matched on rather than
 /// compared to literals at the call site so a typo cannot become a silently unsent query.
 pub(crate) const QUERY_KIND_HUNT_TRIP: &str = "hunt_trip_forecast";
 pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
+/// The **resident** crew's take curve — the Assign Herders panel's question, and NOT the trip
+/// sheet's: a resident band fights at the base tuning where an expedition is priced at
+/// `combat_config.expedition_danger_multiplier`, so the two replies may never borrow each other's
+/// rows.
+pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
 
 /// **The transport's OWN failure token**, and it is deliberately in the same vocabulary as the
 /// server's `query_error` tokens rather than a free-text string: the seam renders one failure line
@@ -115,6 +121,14 @@ pub(crate) fn dispatch(
             kit_id: dict_string(ask, "kit_id"),
             party_workers: dict_u32(ask, "party_workers"),
             max_party_workers: dict_u32(ask, "max_party_workers"),
+        }),
+        QUERY_KIND_HUNT_CREW_TAKE => QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+            faction_id: dict_u32(ask, "faction_id"),
+            band_id: dict_u64(ask, "band_id"),
+            herd_id: dict_string(ask, "herd_id"),
+            kit_id: dict_string(ask, "kit_id"),
+            floor: dict_f32(ask, "floor"),
+            max_workers: dict_u32(ask, "max_workers"),
         }),
         other => return Err(format!("unknown query kind {other:?}")),
     };
@@ -253,6 +267,15 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             let _ = dict.insert("at_composed", &denial_row_to_dict(&reply.at_composed));
             let _ = dict.insert("party_needed", i64::from(reply.party_needed));
         }
+        Ok(QueryReply::HuntCrewTake(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_HUNT_CREW_TAKE);
+            let mut per_crew = VarArray::new();
+            for row in &reply.per_crew {
+                per_crew.push(&crew_row_to_dict(row).to_variant());
+            }
+            let _ = dict.insert("per_crew", &per_crew);
+        }
         Ok(QueryReply::Error(reason)) => {
             let _ = dict.insert("ok", false);
             let _ = dict.insert("error", reason.as_str());
@@ -298,6 +321,22 @@ fn hunt_row_to_dict(row: &sim_runtime::HuntTripRow) -> VarDictionary {
         materials.push(&entry.to_variant());
     }
     let _ = dict.insert("delivered_material", &materials);
+    dict
+}
+
+/// One crew size's take, **whole-crew and per turn**, with engagement, escapement, retreat and the
+/// fight already resolved by the sim.
+///
+/// **IT IS NOT A PER-HUNTER RATE — never multiply it by `workers`.** The take is not linear in crew
+/// size (on Wild Boar the per-hunter take spans 6× across crews of 1..6), which is the whole reason
+/// a curve is published rather than a scalar. The band travels per row because its spread is
+/// `O(√w)`: it *shrinks per hunter* as the crew grows, so it cannot be reconstructed from one row.
+fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let _ = dict.insert("workers", i64::from(row.workers));
+    let _ = dict.insert("animals_low", f64::from(row.animals_low));
+    let _ = dict.insert("animals_likely", f64::from(row.animals_likely));
+    let _ = dict.insert("animals_high", f64::from(row.animals_high));
     dict
 }
 

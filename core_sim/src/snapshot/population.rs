@@ -21,6 +21,10 @@ pub(crate) fn labor_assignment_to_state(
     // **The kit this row is priced at**, resolved by the caller — `LaborAssignment::kit_choice` for
     // every ordinary row, and the band's own builders resolution for the `builders` role.
     resolved_kit: crate::equipment_config::KitChoice,
+    // **The crew beyond which more hands add nothing on this row, fight included** — see
+    // [`assigned_hunt_useful_crew`], which is where it is answered. Passed in for `build_job`'s
+    // reason: resolving it needs the herd registry and two configs a row has no business holding.
+    hunt_useful_workers: u32,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -70,6 +74,10 @@ pub(crate) fn labor_assignment_to_state(
         // a property of the row: it is derived from the head queue entry's web, which a single
         // assignment cannot see.
         kit_id: resolved_kit.id().to_string(),
+        // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — `0` on every non-hunt row, which
+        // has no quarry to fight. Answered by the sim precisely because the client cannot: the
+        // fight arm needs `combat_config.hit_chance`, which never crosses the wire.
+        hunt_useful_workers,
         ..Default::default()
     };
     match &assignment.target {
@@ -102,6 +110,68 @@ pub(crate) fn labor_assignment_to_state(
         | LaborTarget::Builders => {}
     }
     state
+}
+
+/// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING ON THIS ROW, *FIGHT INCLUDED*** — the sim's
+/// answer to the Work board's `+` gate, published on the row so the board never derives it.
+///
+/// # It is the crew-take curve's plateau, and it is that number *by construction*
+///
+/// [`crate::fauna::hunt_useful_crew`] of [`crate::fauna::hunt_crew_take_curve`] — the very call
+/// `forecast_query::answer_hunt_crew_take` makes to build the rows the compose sheet plateaus
+/// itself. One producer, two transports: the sheet gets the curve because it is asking about a crew
+/// it has not committed yet, and the board gets the scalar because it renders many rows a frame and
+/// cannot round-trip for each of them.
+///
+/// **The defect this closes** is that the board's gate priced an already-worked row with no reply in
+/// hand, so it divided the room by the *fightless* engagement reach — `body_mass × stayed`, with no
+/// attack, no defense and no durability — and quoted a different ceiling from the compose sheet for
+/// the same herd. On a fight-bound quarry that reads 2.3× high.
+///
+/// # The assignment fixes every term, which is why no ask is needed
+///
+/// The row already names the herd and the floor, the band already holds the kit and the wear, and
+/// the reachable crew is the row's own hands plus the band's idle ones — the same pool the compose
+/// sheet's stepper is capped at, and the same domain it asks its curve over.
+///
+/// [`crate::fauna::NO_USEFUL_CREW`] for every non-hunt row (no quarry to fight) and for a herd that
+/// has left the registry.
+fn assigned_hunt_useful_crew(
+    target: &LaborTarget,
+    // This source's own crew pool — the hands on the row plus the band's idle ones.
+    crew_pool: u32,
+    // The kit the row's yields are priced at, already resolved.
+    kit: &crate::equipment_config::KitChoice,
+    // The band's live wear ledger — the curve re-divides it per crew size, so a band with five
+    // spears is quoted the mix it actually fields at each size.
+    wear: &BandEquipment,
+    kit_levers: &BandKitLevers<'_>,
+    hunt_crew_levers: &HuntCrewLevers<'_>,
+    herds: &crate::fauna::HerdRegistry,
+) -> u32 {
+    let LaborTarget::Hunt { fauna_id, floor } = target else {
+        return crate::fauna::NO_USEFUL_CREW;
+    };
+    let Some(herd) = herds.find(fauna_id) else {
+        return crate::fauna::NO_USEFUL_CREW;
+    };
+    crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(
+        &crate::fauna::HuntCrewCurveInputs {
+            herd,
+            fauna: hunt_crew_levers.fauna,
+            equipment: kit_levers.config,
+            kit,
+            wear,
+            intrinsic: kit_levers.person_intrinsic,
+            // **BASE, not `expedition_tuning`** — this is a band hunting its own range.
+            tuning: hunt_crew_levers.combat.tuning(),
+            hunt_injury_damage_per_animal: hunt_crew_levers.combat.hunt_injury_damage_per_animal,
+            range_sigmas: hunt_crew_levers.combat.forecast_range_sigmas,
+            floor: *floor,
+            baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
+            max_workers: crew_pool,
+        },
+    ))
 }
 
 /// Summarize a band's labor allocation into the `activity` string — the dominant assignment's kind,
@@ -258,6 +328,24 @@ pub(crate) struct BandKitLevers<'a> {
     pub(crate) equipped_vantage_range: f32,
 }
 
+/// **The two configs an assigned hunt row's useful-crew cap needs beyond the band's own gear** —
+/// the take model's roster and the fight's severity dials. Bundled exactly as [`BandKitLevers`] is,
+/// and for the same reason: the capture resolves them once and hands one reference down, rather than
+/// threading two config borrows through every per-band call.
+pub(crate) struct HuntCrewLevers<'a> {
+    /// The species roster the engagement, the retreat and the quarry's body all resolve through.
+    pub(crate) fauna: &'a FaunaConfig,
+    /// The severity dials. **The BASE tuning is what a resident band's row is priced at** — a hunt
+    /// on the band's own range is not a raid, and `expedition_tuning` differs by half again in the
+    /// fight term.
+    pub(crate) combat: &'a crate::combat_config::CombatConfig,
+    /// `labor_config.hunt.per_worker_biomass_capacity`, the bare carry rate both animal collection
+    /// tiers are resolved against. **A CORRALLED row needs it and a stalked one does not** — a pen
+    /// is collected rather than fought, so its curve's crew term is the keepers' throughput; see
+    /// `fauna::pen_crew_take_curve`.
+    pub(crate) baseline_haul_rate: f32,
+}
+
 pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) entity: Entity,
     /// The band's durable id, published so a client can address it in a command without sending
@@ -287,6 +375,8 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// is what "not owned" looks like. See [`BandEquipment`].
     pub(crate) equipment: Option<&'a BandEquipment>,
     pub(crate) kit_levers: &'a BandKitLevers<'a>,
+    /// The levers behind each hunt row's `hunt_useful_workers` — see [`HuntCrewLevers`].
+    pub(crate) hunt_crew_levers: &'a HuntCrewLevers<'a>,
     /// **What is on this band's bench.** `None` = no component at all (a hand-rolled fixture), which
     /// reads as an idle bench — the same fallback `equipment` takes.
     pub(crate) bench: Option<&'a crate::components::BandBench>,
@@ -372,6 +462,26 @@ pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
     })
 }
 
+/// **THE SHIPPED ROSTER AND DIALS, for a fixture that asserts on a band's derived readouts** — the
+/// [`HuntCrewLevers`] every capture path resolves out of the loaded configs. Built once, exactly as
+/// [`empty_build_sources`] is.
+#[cfg(test)]
+pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
+    use std::sync::OnceLock;
+    static FAUNA: OnceLock<std::sync::Arc<FaunaConfig>> = OnceLock::new();
+    static COMBAT: OnceLock<std::sync::Arc<crate::combat_config::CombatConfig>> = OnceLock::new();
+    static LEVERS: OnceLock<HuntCrewLevers<'static>> = OnceLock::new();
+    static LABOR: OnceLock<std::sync::Arc<crate::labor_config::LaborConfig>> = OnceLock::new();
+    LEVERS.get_or_init(|| HuntCrewLevers {
+        fauna: FAUNA.get_or_init(FaunaConfig::builtin),
+        combat: COMBAT.get_or_init(crate::combat_config::CombatConfig::builtin),
+        baseline_haul_rate: LABOR
+            .get_or_init(crate::labor_config::LaborConfig::builtin)
+            .hunt
+            .per_worker_biomass_capacity,
+    })
+}
+
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         entity,
@@ -394,6 +504,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_delivery,
         equipment,
         kit_levers,
+        hunt_crew_levers,
         bench,
         craft_inputs,
         build_sources,
@@ -667,17 +778,32 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .iter()
                 .enumerate()
                 .map(|(i, assignment)| {
+                    // **The builders row is the one whose default is not on the row.** Its kit is
+                    // derived from the head queue entry's web, so a card reading this field states
+                    // what the pool is holding this turn rather than a stored `none`.
+                    let resolved_kit = match assignment.target {
+                        LaborTarget::Builders => a.builders_kit(kit_levers.config),
+                        _ => assignment.kit_choice(kit_levers.config),
+                    };
+                    // **The row's own useful-crew ceiling**, over the crew this source can actually
+                    // reach: the hands standing on it plus the band's idle ones. That is the pool
+                    // `assign_labor` judges an add against and the domain the compose sheet asks its
+                    // curve over, so the two surfaces answer the same question.
+                    let hunt_useful_workers = assigned_hunt_useful_crew(
+                        &assignment.target,
+                        assignment.workers.saturating_add(idle_workers),
+                        &resolved_kit,
+                        &kit,
+                        kit_levers,
+                        hunt_crew_levers,
+                        build_sources.herds,
+                    );
                     labor_assignment_to_state(
                         assignment,
                         a.last_yields.get(i).unwrap_or(&NO_YIELD),
                         resolved_build_job(&assignment.target, a, build_sources),
-                        // **The builders row is the one whose default is not on the row.** Its kit
-                        // is derived from the head queue entry's web, so a card reading this field
-                        // states what the pool is holding this turn rather than a stored `none`.
-                        match assignment.target {
-                            LaborTarget::Builders => a.builders_kit(kit_levers.config),
-                            _ => assignment.kit_choice(kit_levers.config),
-                        },
+                        resolved_kit,
+                        hunt_useful_workers,
                     )
                 })
                 .collect()
@@ -1307,6 +1433,7 @@ mod tests {
             // These fixtures assert on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers(),
+            hunt_crew_levers: builtin_hunt_crew_levers(),
             // These fixtures assert on the food ledger, not the bench.
             bench: None,
             craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
