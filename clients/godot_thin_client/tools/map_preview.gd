@@ -511,6 +511,12 @@ func _ready() -> void:
 	# is what makes `UiScaler` and this harness's MapView both take the pinned value.
 	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
 	ClientSettings.changed.emit()
+	# PIN THE PALETTE, the theme half of the same contamination. `ClientSettings` read the developer's
+	# real `user://client_settings.cfg` at boot and `HudPalette.apply()` has ALREADY installed whatever
+	# theme it found, so a developer running Kiln would re-tint every frame in this set. Re-applying the
+	# default here is safe at any point before UI is built: `HudStyle`/`MapView` and the vocabulary
+	# modules are all re-derived by `apply`, and nothing on screen has read a colour yet.
+	HudPalette.apply(HudPalette.DEFAULT_THEME)
 	# And STATE THE INPUT CONDITION — the third of the same family, the treatment `blend_probe` already
 	# carries. This harness renders in a REAL window, so `MapView._unhandled_input` picks up the OS
 	# cursor and draws a faint HOVER hex outline into whichever frame happens to be rendering when the

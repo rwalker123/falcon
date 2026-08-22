@@ -8,41 +8,52 @@ class_name HudStyle
 ## and button should build its styleboxes through here so the surfaces stay
 ## consistent (DRY) — see `PanelCard` (card chrome) and `Hud` (selection panel /
 ## targeting affordances). Pure static helpers; never instantiated.
+##
+## **THE PALETTE IS SWAPPABLE, THE LAYOUT IS NOT.** The colour block below is `static var` rather than
+## `const` so `HudPalette.apply()` can install one of the themes at boot; every other `const` here is a
+## layout number (padding, radius, alpha, font size) or a pure-black wash that works on any ground, and
+## those are NOT themed. A `static var` reads identically at the call site, so no consumer changed —
+## but it is not a constant expression, so `const X := HudStyle.DANGER` in another script is a parse
+## error. See `ui/HudPalette.gd` for the theme roster and the derive-inside-apply rule.
 
 # ---- palette (mirrors the targeting mockup) --------------------------------
-const GROUND        := Color(0.043, 0.067, 0.078, 1.0)   # #0b1114
-const GROUND_2      := Color(0.055, 0.086, 0.102, 1.0)   # #0e161a
-const PANEL         := Color(0.067, 0.102, 0.118, 0.92)  # #111a1e @ 92%
-const PANEL_SOLID   := Color(0.067, 0.102, 0.118, 1.0)
-const LINE          := Color(0.149, 0.212, 0.235, 1.0)   # #26363c
-const LINE_SOFT     := Color(0.106, 0.157, 0.176, 1.0)   # #1b282d
-const INK           := Color(0.914, 0.937, 0.914, 1.0)   # #e9efe9
-const INK_DIM       := Color(0.616, 0.690, 0.678, 1.0)   # #9db0ad
-const INK_FAINT     := Color(0.435, 0.514, 0.502, 1.0)   # #6f8380
-const SIGNAL        := Color(0.310, 0.878, 0.812, 1.0)   # #4fe0cf  targeting cyan
-const SIGNAL_DEEP   := Color(0.122, 0.612, 0.557, 1.0)   # #1f9c8e
-const SIGNAL_WASH   := Color(0.310, 0.878, 0.812, 0.14)
-const WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ETA
-const DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
-const HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
+static var GROUND        := Color(0.043, 0.067, 0.078, 1.0)   # #0b1114
+static var GROUND_2      := Color(0.055, 0.086, 0.102, 1.0)   # #0e161a
+## The card fill IS the solid panel fill, at this opacity — see `apply_palette`, which derives it.
+const PANEL_OPACITY := 0.92
+static var PANEL         := Color(0.067, 0.102, 0.118, 0.92)  # PANEL_SOLID @ PANEL_OPACITY
+static var PANEL_SOLID   := Color(0.067, 0.102, 0.118, 1.0)
+static var LINE          := Color(0.149, 0.212, 0.235, 1.0)   # #26363c
+static var LINE_SOFT     := Color(0.106, 0.157, 0.176, 1.0)   # #1b282d
+static var INK           := Color(0.914, 0.937, 0.914, 1.0)   # #e9efe9
+static var INK_DIM       := Color(0.616, 0.690, 0.678, 1.0)   # #9db0ad
+static var INK_FAINT     := Color(0.435, 0.514, 0.502, 1.0)   # #6f8380
+static var SIGNAL        := Color(0.310, 0.878, 0.812, 1.0)   # #4fe0cf  targeting cyan
+static var SIGNAL_DEEP   := Color(0.122, 0.612, 0.557, 1.0)   # #1f9c8e
+## The faintest tint of SIGNAL a surface can wear — a selected row's backing, not an accent.
+const SIGNAL_WASH_OPACITY := 0.14
+static var SIGNAL_WASH   := Color(0.310, 0.878, 0.812, 0.14)  # SIGNAL @ SIGNAL_WASH_OPACITY
+static var WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ETA
+static var DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
+static var HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
 # The two DANGER-overlay hues (Predators Phase 3), shared by the HUD alert surfaces so the command
 # feed's threat/casualty accents and the band panel's predator-nearby warning speak the SAME danger
 # language as the map's `threat` / `hunt_danger` washes. Values MIRROR MapView.THREAT_OVERLAY_COLOR /
 # HUNT_DANGER_OVERLAY_COLOR (the map layer keeps its own copies for the tile washes; these are the HUD
 # side of the same palette). Crimson = an unprovoked raid/casualty; amber = a hunt-cost caution.
-const THREAT_ACCENT := Color(0.85, 0.16, 0.16, 1.0)      # #d92929  threat red (raid / camp menace)
-const HUNT_DANGER_ACCENT := Color(0.93, 0.52, 0.13, 1.0) # #ed8521  danger orange (cost to hunt)
+static var THREAT_ACCENT := Color(0.85, 0.16, 0.16, 1.0)      # #d92929  threat red (raid / camp menace)
+static var HUNT_DANGER_ACCENT := Color(0.93, 0.52, 0.13, 1.0) # #ed8521  danger orange (cost to hunt)
 ## The `primary` button variant's resting fill. Named because it is the ONLY marker of "this control
 ## is the selected/committing one" — a policy picker's chosen rung wears it and nothing else does —
 ## so a test that asks "which rung is lit?" has to read it back off the stylebox.
-const BUTTON_PRIMARY_BG := Color(0.086, 0.227, 0.204, 1.0)   # #163a34
+static var BUTTON_PRIMARY_BG := Color(0.086, 0.227, 0.204, 1.0)   # #163a34
 ## The three button variants' resting TEXT colours, named because `apply_button` is no longer their
 ## only consumer: a button whose face is built from CHILD LABELS (`HudWidgets.build_policy_picker`'s
 ## two-line rung — two font sizes cannot live in one `Button.text`) cannot use the theme override at
 ## all, since `font_color` reaches a Button's own `text` and nothing else. Such a face reads its tint
 ## from `button_font_color` below, so a hand-built face can never drift from a themed one.
-const BUTTON_PRIMARY_TEXT := Color(0.847, 1.0, 0.973, 1.0)   # #d8fff8
-const BUTTON_ARMED_TEXT := Color(0.941, 0.765, 0.741, 1.0)   # #f0c3bd
+static var BUTTON_PRIMARY_TEXT := Color(0.847, 1.0, 0.973, 1.0)   # #d8fff8
+static var BUTTON_ARMED_TEXT := Color(0.941, 0.765, 0.741, 1.0)   # #f0c3bd
 
 # ---- The Telling: voice-medium accents -------------------------------------
 # The narrator's voice AGES as the civilization crosses medium thresholds (oral -> painted ->
@@ -51,18 +62,67 @@ const BUTTON_ARMED_TEXT := Color(0.941, 0.765, 0.741, 1.0)   # #f0c3bd
 # maturation is carried by the accent, the title and a hairline rule, nothing more. The ladder runs
 # from firelight warmth toward cool ink; `oral` reuses WARN (it IS the ember tone) rather than
 # adding a fourth near-identical amber, so only the two genuinely-new tones are named here.
-const VOICE_PIGMENT := Color(0.784, 0.612, 0.400, 1.0)   # #c89c66  earth pigment on a cave wall
+static var VOICE_PIGMENT := Color(0.784, 0.612, 0.400, 1.0)   # #c89c66  earth pigment on a cave wall
 # Deliberately DESATURATED: the cool end of the ladder must read as a considered accent, never as
 # the SIGNAL cyan (which means "targeting" everywhere else) nor as a greyed-out/disabled control.
-const VOICE_INK     := Color(0.510, 0.635, 0.706, 1.0)   # #82a2b4  cool ink, a written record
+static var VOICE_INK     := Color(0.510, 0.635, 0.706, 1.0)   # #82a2b4  cool ink, a written record
 
-# Hex strings for BBCode-based labels (RichTextLabel headers, command feed).
-const SIGNAL_HEX := "4fe0cf"
-const WARN_HEX := "f2b13f"
-const DANGER_HEX := "e8746a"
-const HEALTHY_HEX := "76cd80"
-const INK_HEX := "e9efe9"
-const INK_DIM_HEX := "9db0ad"
+# Hex strings for BBCode-based labels (RichTextLabel headers, command feed). DERIVED from the
+# colours above by `apply_palette` — never edit one of these to change a tint.
+static var SIGNAL_HEX := "4fe0cf"
+static var WARN_HEX := "f2b13f"
+static var DANGER_HEX := "e8746a"
+static var HEALTHY_HEX := "76cd80"
+static var INK_HEX := "e9efe9"
+static var INK_DIM_HEX := "9db0ad"
+
+# ---- theme installation ----------------------------------------------------
+## Install one theme's palette. Called by `HudPalette.apply()` at boot (an autoload, so BEFORE the
+## first Control exists — the palette is restart-to-apply and nothing here rebuilds live UI).
+##
+## `p` carries the **20 AUTHORED** colours; everything below the assignment block is **DERIVED**, and
+## the derivation lives HERE rather than in a static-var initializer on purpose. An initializer runs
+## when this script is loaded, which is before `apply_palette` has ever been called, so a derived
+## initializer would freeze at the default theme's value and silently never update.
+##
+## Deriving `PANEL` also fixes a drift hazard the two hand-written literals carried: the card fill and
+## the solid panel fill are ONE colour at two opacities, and only one of them was ever edited.
+static func apply_palette(p: Dictionary) -> void:
+	GROUND = p["GROUND"]
+	GROUND_2 = p["GROUND_2"]
+	PANEL_SOLID = p["PANEL_SOLID"]
+	LINE = p["LINE"]
+	LINE_SOFT = p["LINE_SOFT"]
+	INK = p["INK"]
+	INK_DIM = p["INK_DIM"]
+	INK_FAINT = p["INK_FAINT"]
+	SIGNAL = p["SIGNAL"]
+	SIGNAL_DEEP = p["SIGNAL_DEEP"]
+	WARN = p["WARN"]
+	DANGER = p["DANGER"]
+	HEALTHY = p["HEALTHY"]
+	THREAT_ACCENT = p["THREAT_ACCENT"]
+	HUNT_DANGER_ACCENT = p["HUNT_DANGER_ACCENT"]
+	BUTTON_PRIMARY_BG = p["BUTTON_PRIMARY_BG"]
+	BUTTON_PRIMARY_TEXT = p["BUTTON_PRIMARY_TEXT"]
+	BUTTON_ARMED_TEXT = p["BUTTON_ARMED_TEXT"]
+	VOICE_PIGMENT = p["VOICE_PIGMENT"]
+	VOICE_INK = p["VOICE_INK"]
+	# --- derived ---
+	PANEL = Color(PANEL_SOLID, PANEL_OPACITY)
+	SIGNAL_WASH = Color(SIGNAL, SIGNAL_WASH_OPACITY)
+	SIGNAL_HEX = SIGNAL.to_html(false)
+	WARN_HEX = WARN.to_html(false)
+	DANGER_HEX = DANGER.to_html(false)
+	HEALTHY_HEX = HEALTHY.to_html(false)
+	INK_HEX = INK.to_html(false)
+	INK_DIM_HEX = INK_DIM.to_html(false)
+	# The checkbox indicator rasters bake INK/SIGNAL into pixels, so a palette swap has to drop them;
+	# they rebuild on the next styled checkbox.
+	_checkbox_unchecked = null
+	_checkbox_unchecked_disabled = null
+	_checkbox_checked = null
+	_checkbox_checked_disabled = null
 
 # ---- card chrome -----------------------------------------------------------
 static func card_stylebox() -> StyleBoxFlat:

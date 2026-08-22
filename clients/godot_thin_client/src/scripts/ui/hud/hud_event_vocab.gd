@@ -212,20 +212,16 @@ const CHANNEL_BY_KIND := {
 # ---- rung → glyph + accent -------------------------------------------------
 ## The accent a row wears when no kind- or detail-specific style claims it. `HudStyle` is the
 ## palette authority — there are no hexes here.
-const RUNG_STYLE := {
-	RUNG_ALERT: {"glyph": "⚠", "color": HudStyle.DANGER},
-	RUNG_NOTABLE: {"glyph": "✦", "color": HudStyle.SIGNAL},
-	RUNG_ROUTINE: {"glyph": "◦", "color": HudStyle.INK_FAINT},
-}
+## **BUILT IN `apply_palette` BELOW, NOT HERE** — every entry carries a themed `HudStyle` colour, which
+## is a `static var`, so a `const` table is a parse error and a static-var initializer would freeze at
+## whatever palette was loaded before the theme was installed. Same for the two tables under it.
+static var RUNG_STYLE := {}
 
 ## THREAT / CASUALTY kinds carry the SAME danger hue as the map overlay that draws them, so the bar
 ## accent and the map wash speak one danger language. Absorbed verbatim from the retired
 ## `CommandFeedController.KIND_STYLE` (Predators Phase 3). Consulted only for the kinds it names;
 ## every other kind takes its rung's style above.
-const KIND_STYLE := {
-	"predator_raid": {"glyph": "⚔", "color": HudStyle.THREAT_ACCENT},
-	"hunt_danger": {"glyph": "⚠", "color": HudStyle.HUNT_DANGER_ACCENT},
-}
+static var KIND_STYLE := {}
 
 ## **AN INVESTMENT LOST, ON A CHANNEL THAT OTHERWISE CARRIES GOOD NEWS** (issue #442). A rung going
 ## feral, and an assignment dropped because the band ran out of people, ride their VERB's own kind
@@ -240,10 +236,26 @@ const KIND_STYLE := {
 ##
 ## A row this table claims is promoted to the ALERT rung whatever its kind says — that is the whole
 ## point of it, and §02 lists both tokens under Alert.
-const DETAIL_STATUS_STYLE := {
-	"status=feral": {"glyph": "⚠", "color": HudStyle.WARN},
-	"status=lapsed": {"glyph": "⚠", "color": HudStyle.WARN},
-}
+static var DETAIL_STATUS_STYLE := {}
+
+## Install the current `HudStyle` palette into the three style tables above and the turn stamp's ink.
+## Called by `HudPalette.apply()` after `HudStyle.apply_palette`; takes no palette of its own, because
+## every value here is a HUD colour this module only re-states in an event's vocabulary.
+static func apply_palette() -> void:
+	RUNG_STYLE = {
+		RUNG_ALERT: {"glyph": "⚠", "color": HudStyle.DANGER},
+		RUNG_NOTABLE: {"glyph": "✦", "color": HudStyle.SIGNAL},
+		RUNG_ROUTINE: {"glyph": "◦", "color": HudStyle.INK_FAINT},
+	}
+	KIND_STYLE = {
+		"predator_raid": {"glyph": "⚔", "color": HudStyle.THREAT_ACCENT},
+		"hunt_danger": {"glyph": "⚠", "color": HudStyle.HUNT_DANGER_ACCENT},
+	}
+	DETAIL_STATUS_STYLE = {
+		"status=feral": {"glyph": "⚠", "color": HudStyle.WARN},
+		"status=lapsed": {"glyph": "⚠", "color": HudStyle.WARN},
+	}
+	TURN_STAMP_COLOR = HudStyle.INK_DIM
 
 # ---- the detail floor ------------------------------------------------------
 ## A floor admits its own rung and everything LOUDER. Three settings, no more: the preference is a
@@ -364,7 +376,7 @@ const DETAIL_NUMERIC_FORMAT := "%s %s"
 # ---- row chrome ------------------------------------------------------------
 ## The `T47` stamp on every row. `INK_DIM` rather than a bespoke blue: the turn is METADATA beside
 ## the label, and a colour of its own would be a fourth accent competing with the three rungs.
-const TURN_STAMP_COLOR := HudStyle.INK_DIM
+static var TURN_STAMP_COLOR: Color = Color()   # DERIVED in `apply_palette`
 const TURN_STAMP_FORMAT := "T%d"
 ## A client-side note has no sim turn behind it, so it wears the turn the client last saw — and
 ## before the first snapshot there is none. That case prints this instead of a fabricated `T0`.

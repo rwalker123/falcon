@@ -1,10 +1,11 @@
 class_name HudCraftingVocab
 
 ## The MATERIALS & CRAFTING panel's vocabulary leaf (`docs/plan_crafting_and_materials.md` §7) — the
-## wire keys it reads, the words it says, and the geometry the prototype measured. ALL-`const`, zero
-## funcs, zero vars, exactly like `HudWorkVocab` and its siblings: a new label or threshold goes HERE
-## rather than as a fresh `const` on the panel, which is the rule that keeps a const block from
-## regrowing into a merge-conflict surface.
+## wire keys it reads, the words it says, and the geometry the prototype measured. A DECLARATION
+## BLOCK, exactly like `HudWorkVocab` and its siblings: a new label or threshold goes HERE rather than
+## as a fresh `const` on the panel, which is the rule that keeps a const block from regrowing into a
+## merge-conflict surface. Its one function is `apply_palette` — the tints below are `static var`
+## because `HudStyle`'s palette is themed, and they are assigned there rather than initialized.
 ##
 ## **NOTHING HERE IS A REFUSAL, A GRADE, A SHORTFALL OR A LIFE WORDING.** Every one of those is
 ## resolved sim-side and rendered VERBATIM (`snapshot.fbs` → CRAFTING & MATERIALS: *a client must
@@ -325,14 +326,15 @@ const LIFE_SEVERITY_DANGER := "danger"
 ## sim-resolved refusal**: the ledger's offer rows and the bench well's blocked line. A second table
 ## for the bench would be a second opinion about what `danger` looks like, and the bench's severity is
 ## published in this exact vocabulary precisely so it does not need one.
-const REASON_COLORS := {
-	SEVERITY_DANGER: HudStyle.DANGER,
-	SEVERITY_GOOD: HudStyle.SIGNAL,
-}
+## **BUILT IN `apply_palette` AT THE END OF THIS BLOCK, NOT HERE** — its values are themed `HudStyle`
+## colours, which are `static var`s: a `const` table is a parse error against one, and a static-var
+## initializer would freeze at whatever palette was loaded before the theme was installed. Every named
+## tint below it is assigned there for the same reason.
+static var REASON_COLORS := {}
 ## What an unrecognised severity renders in — and `neutral`'s own tint, which is the same answer: a
 ## refusal the sim did not mark as a problem reads QUIET rather than as an alarm. Named so both
 ## readers of `REASON_COLORS` fall back to one ink instead of each spelling the default itself.
-const REASON_COLOR_QUIET := HudStyle.INK_FAINT
+static var REASON_COLOR_QUIET: Color = Color()
 ## How the urgency sort ranks a row: worn first, untouched last. Read off the PUBLISHED life
 ## severity, so the order the player sees is the sim's own reading of what is running out.
 const LIFE_SEVERITY_RANK := {
@@ -346,9 +348,9 @@ const LIFE_SEVERITY_RANK_UNKNOWN := 3
 ## a weakness, and everything between stays quiet. Both ends come from the published legend
 ## (`characteristic_bands`, ascending) rather than from a threshold typed here — the sim owns the cut
 ## points, and a client with its own would disagree with the word beside them.
-const CHIP_HIGH_COLOR := HudStyle.SIGNAL
-const CHIP_LOW_COLOR := HudStyle.INK_FAINT
-const CHIP_NEUTRAL_COLOR := HudStyle.INK_DIM
+static var CHIP_HIGH_COLOR: Color = Color()
+static var CHIP_LOW_COLOR: Color = Color()
+static var CHIP_NEUTRAL_COLOR: Color = Color()
 
 ## **THE OWNED GRADE CHIP'S TINT IS THE BAND'S POSITION IN THE PUBLISHED LEGEND, never a match on its
 ## name.** `characteristic_bands` rides the wire ascending and the rail above already takes its
@@ -358,14 +360,32 @@ const CHIP_NEUTRAL_COLOR := HudStyle.INK_DIM
 ## the ladder has, the rung below it as good work, the first as the bottom of the ladder, and anything
 ## between stays quiet. A grade the legend does not contain renders NO chip at all — a start-stocked
 ## unit publishes `""`, and a spawn's kit was never on a bench and makes no quality claim.
-const OWNED_GRADE_TOP_COLOR := HudStyle.HEALTHY
-const OWNED_GRADE_HIGH_COLOR := HudStyle.SIGNAL
-const OWNED_GRADE_LOW_COLOR := HudStyle.INK_FAINT
-const OWNED_GRADE_MID_COLOR := HudStyle.INK_DIM
+static var OWNED_GRADE_TOP_COLOR: Color = Color()
+static var OWNED_GRADE_HIGH_COLOR: Color = Color()
+static var OWNED_GRADE_LOW_COLOR: Color = Color()
+static var OWNED_GRADE_MID_COLOR: Color = Color()
 
 ## The `ownedNote`'s own tint. It is news rather than an alarm — the band is carrying something older
 ## than what it could now make — so it reads in the warn ink, one step short of a refusal's danger.
-const OWNED_NOTE_COLOR := HudStyle.WARN
+static var OWNED_NOTE_COLOR: Color = Color()
+
+## Install the current `HudStyle` palette into this file's tints. Called by `HudPalette.apply()` after
+## `HudStyle.apply_palette`; it takes no palette of its own, because none of these is a colour in its
+## own right — each is one HUD ink re-stated in the crafting panel's vocabulary.
+static func apply_palette() -> void:
+	REASON_COLORS = {
+		SEVERITY_DANGER: HudStyle.DANGER,
+		SEVERITY_GOOD: HudStyle.SIGNAL,
+	}
+	REASON_COLOR_QUIET = HudStyle.INK_FAINT
+	CHIP_HIGH_COLOR = HudStyle.SIGNAL
+	CHIP_LOW_COLOR = HudStyle.INK_FAINT
+	CHIP_NEUTRAL_COLOR = HudStyle.INK_DIM
+	OWNED_GRADE_TOP_COLOR = HudStyle.HEALTHY
+	OWNED_GRADE_HIGH_COLOR = HudStyle.SIGNAL
+	OWNED_GRADE_LOW_COLOR = HudStyle.INK_FAINT
+	OWNED_GRADE_MID_COLOR = HudStyle.INK_DIM
+	OWNED_NOTE_COLOR = HudStyle.WARN
 
 # ---- geometry, measured off the prototype -------------------------------------------------------
 ## The panel's NOMINAL width. It is a floor, not a cap: the card refits to its content through

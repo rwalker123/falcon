@@ -131,6 +131,15 @@ const SPEED_FORMATTER_META := "speed_formatter"
 ## Same default-in-meta pattern for the Options-pane boolean rows.
 const TOGGLE_DEFAULT_META := "toggle_default"
 
+## The Theme row's caption, in its two states. It is a CAPTION, always on screen, not a tooltip: the
+## row is the one Options control that does not take effect when it is used, and a restart requirement
+## the player has to hover to discover is one they will not discover.
+const THEME_CAPTION_SETTLED := "Takes effect the next time the game starts."
+const THEME_CAPTION_PENDING := "Restart to apply — still showing %s."
+## Roster order for the picker — the earth themes first, the original console palette last, so the
+## list reads as "the current look, and the one it replaced" rather than as an alphabetical set.
+const THEME_ORDER := ["ember", "loam", "kiln", "console"]
+
 # The masthead title tone — warm parchment, the one place the dark console admits a light accent
 # (mirrors the prototype's --parchment / #f2e6bf). Not in HudStyle because nothing else uses it.
 const TITLE_COLOR := Color(0.949, 0.902, 0.749, 1.0)
@@ -162,6 +171,10 @@ var _nav_rows := {}   # id -> {row, item, hover}
 var _speed_sliders: Array = []
 ## The Options-pane boolean rows, same lifetime and same reset contract as `_speed_sliders`.
 var _option_toggles: Array = []
+## The Theme row's two halves, rebuilt with the pane. Held because "Restore defaults" has to move the
+## picker AND re-word the caption, and because the caption is re-derived on every pick.
+var _theme_picker: OptionButton = null
+var _theme_caption: Label = null
 
 
 func set_mode(value: String) -> void:
@@ -550,6 +563,11 @@ func _build_options_pane() -> void:
 		ClientSettings.UI_SCALE_STEP,
 		ClientSettings.set_ui_scale,
 		_format_percent_readout))
+	# Second, beside the scale, because the two answer the same question — how the client LOOKS — and
+	# because this row's caption has to be read in the same glance as the row above it. Like every
+	# other row here it writes `ClientSettings` and stops; unlike them, what it writes is not what is
+	# on screen until the next launch.
+	_pane_body.add_child(_make_theme_row())
 	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
 	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
 	# `ClientSettings.changed` and is the single place that sends `set_fog`, which is also why the
@@ -635,6 +653,75 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	return col
 
 
+## The Theme row: a picker over the palette roster, plus the always-visible caption stating whether a
+## restart is still owed. The palette is installed once at boot (`ClientSettings._ready` →
+## `HudPalette.apply`), so a pick PERSISTS and nothing more — every Control already on screen was
+## built against the palette this session started with.
+func _make_theme_row() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(row)
+
+	var title_label := Label.new()
+	title_label.text = "Theme"
+	title_label.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	title_label.add_theme_color_override("font_color", HudStyle.INK)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title_label)
+
+	_theme_picker = OptionButton.new()
+	_theme_picker.focus_mode = Control.FOCUS_NONE
+	_theme_picker.fit_to_longest_item = false
+	HudStyle.apply_button(_theme_picker, "ghost")
+	for index in THEME_ORDER.size():
+		var id := String(THEME_ORDER[index])
+		_theme_picker.add_item(HudPalette.display_name(id), index)
+		_theme_picker.set_item_metadata(index, id)
+	_theme_picker.select(_theme_item_index(ClientSettings.theme))
+	_theme_picker.item_selected.connect(_on_theme_selected)
+	row.add_child(_theme_picker)
+
+	_theme_caption = Label.new()
+	_theme_caption.add_theme_font_size_override("font_size", HINT_SIZE)
+	_theme_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_theme_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(_theme_caption)
+	_refresh_theme_caption(ClientSettings.theme)
+	return col
+
+
+## The picker index showing `id` — the default's index for an id the roster no longer lists, so a
+## stale settings file still opens the row on something.
+func _theme_item_index(id: String) -> int:
+	var index := THEME_ORDER.find(id)
+	return index if index >= 0 else THEME_ORDER.find(HudPalette.DEFAULT_THEME)
+
+
+func _on_theme_selected(index: int) -> void:
+	var id := String(_theme_picker.get_item_metadata(index))
+	ClientSettings.set_theme(id)
+	_refresh_theme_caption(id)
+
+
+## The caption states the ONE thing the row cannot show: what is actually on screen. `applied_id` is
+## the palette this session installed at boot, and it is a different question from what is saved — so
+## the comparison is against it, never against `ClientSettings.theme` (which is what was just picked).
+func _refresh_theme_caption(selected_id: String) -> void:
+	if _theme_caption == null:
+		return
+	if selected_id == HudPalette.applied_id:
+		_theme_caption.text = THEME_CAPTION_SETTLED
+		_theme_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	else:
+		_theme_caption.text = THEME_CAPTION_PENDING % HudPalette.display_name(HudPalette.applied_id)
+		_theme_caption.add_theme_color_override("font_color", HudStyle.WARN)
+
+
 ## The speed rows' readout unit — a bare multiplier, `1.00×`.
 func _format_speed_readout(value: float) -> String:
 	return SPEED_READOUT_FORMAT % value
@@ -673,6 +760,9 @@ func _make_toggle_row(title: String, value: bool, default_value: bool, on_change
 
 func _on_restore_defaults_pressed() -> void:
 	ClientSettings.restore_defaults()
+	if _theme_picker != null:
+		_theme_picker.select(_theme_item_index(HudPalette.DEFAULT_THEME))
+		_refresh_theme_caption(HudPalette.DEFAULT_THEME)
 	for toggle in _option_toggles:
 		toggle.set_pressed_no_signal(bool(toggle.get_meta(TOGGLE_DEFAULT_META)))
 	for slider in _speed_sliders:

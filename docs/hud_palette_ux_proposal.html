@@ -309,7 +309,7 @@ td.hexcell { font-family: var(--font-mono); font-size: 0.78rem; white-space: now
   --hs-signal:      #cf7a4d;
   --hs-signal-deep: #8c4b2b;
   --hs-warn:        #e3c26a;
-  --hs-danger:      #b8564a;
+  --hs-danger:      #a8453f;
   --hs-healthy:     #7f9455;
   --hs-threat:      #973026;
   --hs-hunt:        #e0a53a;
@@ -822,64 +822,76 @@ footer { border-top: 1px solid var(--rule); padding-block: 2.25rem 3.5rem; color
   <!-- ================= 5. QUESTIONS ================= -->
   <section class="stack">
     <div class="stack-s">
-      <div class="eyebrow">05 — Needs your call</div>
-      <h2>Four open questions</h2>
+      <div class="eyebrow">05 — Decided</div>
+      <h2>All four ship, as themes</h2>
+      <p class="dim">
+        The question this page originally asked was "which one?". The answer turned out to be
+        "all of them", because making the palette swappable costs barely more than hardcoding one.
+      </p>
     </div>
     <div class="qa">
       <div>
         <div class="q-n">01</div>
         <div class="q-b">
-          <div class="q-t">Which direction?</div>
+          <div class="q-t">The palette becomes selectable, not baked in</div>
           <div class="q-d">
-            <strong>A · Loam</strong> is the recommendation: warm umber ground with a single cool
-            lapis signal, so "you can act here" is the one thing on screen that isn't earth. B and
-            C are genuine alternatives, not strawmen — B removes hue from the affordance entirely
-            (chalk-on-stone), C commits hardest and is the riskiest.
+            <code>const SIGNAL</code> becomes <code>static var SIGNAL</code>, which reads
+            identically at the call site — so all 710 <code>HudStyle.*</code> references across 58
+            files are untouched. All four palettes above ship; the Options pane picks between them.
           </div>
         </div>
       </div>
       <div>
         <div class="q-n">02</div>
         <div class="q-b">
-          <div class="q-t">Does <code>SIGNAL</code> collide with the Telling's written voice?</div>
+          <div class="q-t">Ember is the default</div>
           <div class="q-d">
-            In direction A both are cool blues — <code>#79b0d6</code> against
-            <code>#8d9aa4</code>. They never appear on the same surface, and they're separated by
-            chroma rather than hue, but it's the one place the palette is doing two jobs with one
-            family. Say the word and I'll push the voice ladder to a warmer close instead.
+            Console (original) stays selectable, but it is no longer what a new player sees —
+            leaving it as the default would have left the original complaint unfixed. Order in the
+            picker: Ember, Loam, Kiln, Console.
           </div>
         </div>
       </div>
       <div>
         <div class="q-n">03</div>
         <div class="q-b">
-          <div class="q-t">How dark should the ground stay?</div>
+          <div class="q-t">Restart to apply</div>
           <div class="q-d">
-            All three keep the HUD dark, per the existing rule that a light parchment panel reads
-            as a rendering bug. But earth tones tolerate a lighter ground than teal does — there's
-            a version of A about two stops up that feels more like tanned hide and less like a
-            console. Worth prototyping if you want it warmer still.
+            A stylebox already handed to a control keeps its old colour, so live-swapping would
+            mean a rebuild-and-invalidate pass across every HUD module. Applying at boot instead —
+            from the <code>ClientSettings</code> autoload, before any UI exists — makes that pass
+            unnecessary. The Options row says so on screen rather than in a tooltip.
           </div>
         </div>
       </div>
       <div>
         <div class="q-n">04</div>
         <div class="q-b">
-          <div class="q-t">Ramps now or later?</div>
+          <div class="q-t">The ramps ship with the chrome</div>
           <div class="q-d">
-            The chrome and the ramps are separable commits. Doing chrome alone is a smaller, safer
-            change — but it half-fixes the complaint, because the elevation heatmap is the most
-            visible tell on screen. Recommendation is to do both together.
+            Console keeps its original ramps; Loam, Ember and Kiln share the earth set above,
+            including the hypsometric elevation tint. Two hand-copied colours that bypassed
+            <code>HudStyle</code> — the supply link and five overlay badges — get routed through it,
+            or they would have stayed teal under every theme.
           </div>
         </div>
       </div>
     </div>
+    <p class="callout">
+      Still worth your eye once it's running: in <strong>Kiln</strong>, the terracotta
+      <code>SIGNAL</code> and the amber <code>HUNT_DANGER</code> sit closer together than they do
+      in the other three. Its <code>DANGER</code> has been deepened to <code>#a8453f</code> to open
+      the gap, but that one is easier to judge live than from a mockup — which is now possible,
+      because it's a theme rather than a rewrite.
+    </p>
   </section>
 
   <footer>
-    Prototype for review — no client code has changed. Terrain hues measured from the 38 shipped
-    base textures; HUD hues read from <span class="mono">HudStyle.gd</span> and
-    <span class="mono">MapView.gd</span> at <span class="mono">f0ea9622</span>.
+    All four palettes on this page ship as selectable themes, applied at launch from the Options
+    pane. Terrain hues measured from the 38 shipped base textures; HUD hues read from
+    <span class="mono">HudStyle.gd</span> and <span class="mono">MapView.gd</span>.
+    The swatches above are the authored values, so this page and the running client are the same
+    numbers — but the client is the thing to judge.
   </footer>
 </div>
 
@@ -939,7 +951,7 @@ const SCHEMES = {
     tokens: {
       "--hs-ground":"#16161a","--hs-ground2":"#1c1c20","--hs-panel":"#232328","--hs-line":"#40403f",
       "--hs-line-soft":"#2b2b2f","--hs-ink":"#ece6dc","--hs-ink-dim":"#ada79c","--hs-ink-faint":"#7e786e",
-      "--hs-signal":"#cf7a4d","--hs-signal-deep":"#8c4b2b","--hs-warn":"#e3c26a","--hs-danger":"#b8564a",
+      "--hs-signal":"#cf7a4d","--hs-signal-deep":"#8c4b2b","--hs-warn":"#e3c26a","--hs-danger":"#a8453f",
       "--hs-healthy":"#7f9455","--hs-threat":"#973026","--hs-hunt":"#e0a53a","--hs-btn-bg":"#47301f",
       "--hs-btn-text":"#f7e2d4","--hs-armed-text":"#f0cabb","--hs-pigment":"#c99a6b","--hs-voice-ink":"#8f9aa6"
     }

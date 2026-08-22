@@ -19,6 +19,16 @@ extends Node
 ## at. It is not a map setting and does not live in `[map]`: `UiScaler` turns it into the window's
 ## `content_scale_factor`, which shrinks the logical viewport so every UI anchor re-lays-out larger,
 ## and `MapView` counter-scales itself by its reciprocal so the world underneath holds still.
+##
+## Also holds the HUD THEME (`[ui] theme`), and that one is RESTART-TO-APPLY: `_ready` installs the
+## saved palette through `HudPalette.apply()` and the setter deliberately does NOT. This autoload runs
+## before the main scene is instantiated, so the palette is in place before the first Control exists
+## and no panel ever has to be rebuilt for it; applying a theme mid-session would need exactly that
+## rebuild pass, which is why the Options row says so instead.
+
+## `HudPalette` is preloaded rather than reached by its global class name because this script is an
+## autoload with no `class_name` of its own, and the palette has to be installable from `_ready`.
+const HudPalette := preload("res://src/scripts/ui/HudPalette.gd")
 
 const CONFIG_PATH := "user://client_settings.cfg"
 const SECTION := "map"
@@ -29,6 +39,7 @@ const PAN_KEY := "pan_speed_multiplier"
 const ZOOM_KEY := "zoom_speed_multiplier"
 const FOG_OF_WAR_KEY := "fog_of_war_enabled"
 const UI_SCALE_KEY := "ui_scale"
+const THEME_KEY := "theme"
 
 const PAN_SPEED_MIN := 0.25
 const PAN_SPEED_MAX := 3.0
@@ -62,11 +73,20 @@ var pan_speed_multiplier: float = PAN_SPEED_DEFAULT
 var zoom_speed_multiplier: float = ZOOM_SPEED_DEFAULT
 var fog_of_war_enabled: bool = FOG_OF_WAR_DEFAULT
 var ui_scale: float = UI_SCALE_DEFAULT
+## The theme id the player last CHOSE. What is on screen this session is `HudPalette.applied_id`, and
+## between a pick and the next launch the two differ — which is the whole state the Options caption
+## reports.
+var theme: String = HudPalette.DEFAULT_THEME
 
 signal changed
 
 func _ready() -> void:
 	_load()
+	# Restart-to-apply, and this is the restart: an autoload's `_ready` precedes the main scene, so the
+	# palette is installed before any Control is built. It runs even when the saved theme IS the
+	# default, because `HudStyle`/`MapView`'s DERIVED values (the card fill, the `*_HEX` strings, the
+	# overlay table) only exist once `apply_palette` has run.
+	HudPalette.apply(theme)
 
 func _load() -> void:
 	var cfg := ConfigFile.new()
@@ -81,6 +101,7 @@ func _load() -> void:
 	ui_scale = clampf(
 		float(cfg.get_value(UI_SECTION, UI_SCALE_KEY, UI_SCALE_DEFAULT)),
 		UI_SCALE_MIN, UI_SCALE_MAX)
+	theme = _valid_theme(String(cfg.get_value(UI_SECTION, THEME_KEY, HudPalette.DEFAULT_THEME)))
 
 func set_pan_speed_multiplier(v: float) -> void:
 	pan_speed_multiplier = clampf(v, PAN_SPEED_MIN, PAN_SPEED_MAX)
@@ -102,11 +123,27 @@ func set_ui_scale(v: float) -> void:
 	_save()
 	changed.emit()
 
+## Persist the chosen theme. **It does NOT install it** — the palette is read once at boot, so a live
+## swap would leave every already-built Control wearing the old one. The Options row states the
+## restart requirement instead of this setter hiding it.
+func set_theme(v: String) -> void:
+	theme = _valid_theme(v)
+	_save()
+	changed.emit()
+
+
+## A theme id the roster still contains, else the default — a hand-edited or downlevel settings file
+## must not stop the client from starting.
+func _valid_theme(v: String) -> String:
+	return v if HudPalette.ids().has(v) else HudPalette.DEFAULT_THEME
+
+
 func restore_defaults() -> void:
 	pan_speed_multiplier = PAN_SPEED_DEFAULT
 	zoom_speed_multiplier = ZOOM_SPEED_DEFAULT
 	fog_of_war_enabled = FOG_OF_WAR_DEFAULT
 	ui_scale = UI_SCALE_DEFAULT
+	theme = HudPalette.DEFAULT_THEME
 	_save()
 	changed.emit()
 
@@ -117,6 +154,7 @@ func _save() -> void:
 	cfg.set_value(SECTION, ZOOM_KEY, zoom_speed_multiplier)
 	cfg.set_value(SECTION, FOG_OF_WAR_KEY, fog_of_war_enabled)
 	cfg.set_value(UI_SECTION, UI_SCALE_KEY, ui_scale)
+	cfg.set_value(UI_SECTION, THEME_KEY, theme)
 	cfg.save(_config_path())
 
 ## The prefs file actually used — the scratch override when a harness set one, else the player's.
