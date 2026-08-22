@@ -20,11 +20,11 @@ extends Node
 ## `content_scale_factor`, which shrinks the logical viewport so every UI anchor re-lays-out larger,
 ## and `MapView` counter-scales itself by its reciprocal so the world underneath holds still.
 ##
-## Also holds the HUD THEME (`[ui] theme`), and that one is RESTART-TO-APPLY: `_ready` installs the
+## Also holds the HUD THEME (`[ui] theme`), and that one only PERSISTS here: `_ready` installs the
 ## saved palette through `HudPalette.apply()` and the setter deliberately does NOT. This autoload runs
 ## before the main scene is instantiated, so the palette is in place before the first Control exists
-## and no panel ever has to be rebuilt for it; applying a theme mid-session would need exactly that
-## rebuild pass, which is why the Options row says so instead.
+## and no panel is ever restyled afterwards; a pick therefore reaches the screen only when the Options
+## row's "Apply now" re-installs the palette and reloads the scene (`GameLaunch.apply_theme_now`).
 
 ## `HudPalette` is preloaded rather than reached by its global class name because this script is an
 ## autoload with no `class_name` of its own, and the palette has to be installable from `_ready`.
@@ -73,8 +73,8 @@ var pan_speed_multiplier: float = PAN_SPEED_DEFAULT
 var zoom_speed_multiplier: float = ZOOM_SPEED_DEFAULT
 var fog_of_war_enabled: bool = FOG_OF_WAR_DEFAULT
 var ui_scale: float = UI_SCALE_DEFAULT
-## The theme id the player last CHOSE. What is on screen this session is `HudPalette.applied_id`, and
-## between a pick and the next launch the two differ — which is the whole state the Options caption
+## The theme id the player last CHOSE. What is on screen is `HudPalette.applied_id`, and between a
+## pick and the apply that installs it the two differ — which is the whole state the Options caption
 ## reports.
 var theme: String = HudPalette.DEFAULT_THEME
 
@@ -82,8 +82,8 @@ signal changed
 
 func _ready() -> void:
 	_load()
-	# Restart-to-apply, and this is the restart: an autoload's `_ready` precedes the main scene, so the
-	# palette is installed before any Control is built. It runs even when the saved theme IS the
+	# The BOOT install, the twin of `GameLaunch.apply_theme_now`'s: an autoload's `_ready` precedes the
+	# main scene, so the palette is in place before any Control is built. It runs even when the saved theme IS the
 	# default, because `HudStyle`/`MapView`'s DERIVED values (the card fill, the `*_HEX` strings, the
 	# overlay table) only exist once `apply_palette` has run.
 	HudPalette.apply(theme)
@@ -123,9 +123,9 @@ func set_ui_scale(v: float) -> void:
 	_save()
 	changed.emit()
 
-## Persist the chosen theme. **It does NOT install it** — the palette is read once at boot, so a live
-## swap would leave every already-built Control wearing the old one. The Options row states the
-## restart requirement instead of this setter hiding it.
+## Persist the chosen theme. **It does NOT install it** — installing without rebuilding would leave
+## every already-built Control wearing the old palette. The Options row says the pick is not applied
+## yet and offers the rebuild, instead of this setter hiding the question.
 func set_theme(v: String) -> void:
 	theme = _valid_theme(v)
 	_save()

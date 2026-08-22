@@ -17,7 +17,7 @@ func _ready() -> void:
 	_shell.mode = MenuShell.LANDING
 	_shell.new_game_requested.connect(_on_new_game_requested)
 	_shell.exit_requested.connect(_on_exit_requested)
-	_shell.restart_requested.connect(_on_restart_requested)
+	_shell.apply_theme_requested.connect(_on_apply_theme_requested)
 
 
 func _on_new_game_requested(preset_id: String, width: int, height: int, seed: int, profile_id: String) -> void:
@@ -35,11 +35,7 @@ func _on_exit_requested() -> void:
 	get_tree().quit()
 
 
-## The Options pane's "Restart now" — relaunch the client so a theme pick takes effect. The quit is
-## conditional ON THE SPAWN: if no new process started, closing this one would leave the player with
-## nothing, so the menu stays open and the row says what went wrong.
-func _on_restart_requested() -> void:
-	if GameLaunch.restart_client():
-		get_tree().quit()
-	else:
-		_shell.show_restart_failed()
+## The Options pane's "Apply now" — install the picked theme and rebuild this scene so it shows.
+## Nothing quits and nothing is spawned: the landing screen simply comes back in the new palette.
+func _on_apply_theme_requested() -> void:
+	GameLaunch.apply_theme_now()

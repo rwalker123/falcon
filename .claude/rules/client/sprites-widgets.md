@@ -6,7 +6,7 @@ paths:
   - "clients/godot_thin_client/src/ui/MagnifierButton.gd"
   - "clients/godot_thin_client/src/scripts/ui/{TileHabitability,TileClimate,RiverEdges,MinimapPanel}.gd"
   - "clients/godot_thin_client/src/scripts/{SnapshotStream,CommandClient,Typography}.gd"
-  # The Theme row and the restart it now performs — the palette's only player-facing controls.
+  # The Theme row and the apply it performs — the palette's only player-facing controls.
   - "clients/godot_thin_client/src/scripts/ui/MenuShell.gd"
   - "clients/godot_thin_client/src/scripts/GameLaunch.gd"
 ---
@@ -138,71 +138,51 @@ capture. There is no contrast/hue measure here as there is for the checkbox: the
 whole surface reading as the wrong application rather than one indicator drawing nothing, and that is
 a thing to look at.
 
-## The palette is a THEME, chosen in Options and installed at boot
+## The palette is a THEME, chosen in Options and installed at boot or on Apply
 
 `HudStyle`'s colour block is swappable. `ui/HudPalette.gd` holds four themes — `ember` (the
 default), `loam`, `kiln` and `console` (the original cyan-on-slate palette, preserved verbatim) —
 and `HudPalette.apply(id)` installs one. `ClientSettings` persists the chosen id under `[ui] theme`
 in `user://client_settings.cfg` and calls `apply()` from its `_ready`.
 
-**RESTART TO APPLY, and the autoload ordering is what makes that free.** `ClientSettings` is an
-autoload, so its `_ready` runs before the main scene is instantiated and therefore before the first
-Control exists; every panel then reads the installed palette on its first and only build, and there
-is no rebuild pass anywhere in the system. The Options row's setter (`ClientSettings.set_theme`)
-deliberately does NOT re-apply — a live swap would leave every already-built Control wearing the old
-palette — and the row carries an always-visible caption saying so, in `WARN` while the selection and
-`HudPalette.applied_id` disagree.
+**NOTHING RESTYLES A CONTROL AFTER IT IS BUILT, and the autoload ordering is what makes that free.**
+`ClientSettings` is an autoload, so its `_ready` runs before the main scene is instantiated and
+therefore before the first Control exists; every panel then reads the installed palette on its first
+and only build, and there is no rebuild pass anywhere in the system. The Options row's setter
+(`ClientSettings.set_theme`) deliberately does NOT re-apply — a live swap would leave every
+already-built Control wearing the old palette — and the row carries an always-visible caption saying
+whether the pick is what is on screen, in `WARN` while the selection and `HudPalette.applied_id`
+disagree.
 
-**The row also ACTS on that requirement, with a "Restart now" button beside the picker.** Godot has
-no live restart, so `GameLaunch.restart_client()` relaunches the process — `OS.create_process` on
-`OS.get_executable_path()`, passing `--path <project>` under `OS.has_feature("editor")` because there
-the executable is the Godot binary and a bare launch opens the Project Manager instead of the game.
-The button exists only while a restart is owed: `MenuShell._refresh_theme_row` derives its visibility
-from the same `selected_id != HudPalette.applied_id` comparison that words the caption, in that one
-place, so the two can never disagree — and a permanently-present restart control in an options pane
-is a run lost by accident.
+**The row ACTS on that with an "Apply now" button beside the picker, and applying is
+`GameLaunch.apply_theme_now()`: `HudPalette.apply(ClientSettings.theme)` and then
+`get_tree().reload_current_scene()`, in that order.** The order is the same contract the boot path
+relies on — the palette must be installed before the Controls that read it are built, and the reload
+is what builds them. `HudStyle.apply_palette` nulls the generated icon rasters, so no art cached
+against the old palette survives into the new tree either.
 
-**A pause-mode restart ENDS the run, and that is stated on the button rather than in a modal.** The
-client sends `new_game` on every connect (`.claude/rules/core_sim/world-handoff.md`), so a relaunched
-client builds a new world rather than rejoining the running one, and Save Game is still an inert
-placeholder pane. In `pause` the button therefore reads "Restart now — ends this run" in the `armed`
-variant — the same mark "Abandon and return to menu" wears — and the caption gains "The current run
-will be lost."; in `landing` there is no run, so it is a plain `primary` "Restart now".
+**THE CLIENT DOES NOT RELAUNCH ITSELF, and there are two reasons not to.** A process that replaces
+itself has to re-establish its own window state on the way back up, and `project.godot` boots the
+game fullscreen while macOS animates fullscreen transitions, so a mode asked for during one is
+silently discarded and the new process comes up in a mode nobody asked for; an in-process reload
+never touches the window, so the whole class of bug cannot arise. And the client is not always the
+top of its own process tree — on `scripts/run_stack.sh`'s full-stack path it runs in the FOREGROUND
+and its exit triggers the script's cleanup, which stops the server — while a reload spawns no process
+and exits nothing, so it reaches neither. It is also the faster and less disruptive of the two.
 
-**THE RESTART CARRIES THE WINDOW MODE, ON ARGV.** `project.godot` boots fullscreen and nothing in the
-project pins the mode afterwards, so a restart out of a maximized or windowed session came back in
-whatever mode the window manager chose — reported from play as the state simply inverting.
-`restart_client` appends `-- --window-mode=<n>` and the new process's `GameLaunch._ready` applies it,
-so the restart is continuous. **Argv rather than a `ClientSettings` key, and that is the load-bearing
-half**: the render harnesses read the player's real `client_settings.cfg` (the same contamination the
-theme pin exists for), so a key there could be consumed by a preview run rather than by the restart
-it was written for, and applying a window mode inside a harness would fight the `override.cfg`
-`scripts/preview.sh` uses to keep its window quiet. An argument reaches only the process we spawned,
-which makes a harness immune by construction instead of by remembering to opt out. `MINIMIZED` is not
-carried — a game that restarts into the dock with no window is indistinguishable from one that failed
-to start — and a malformed or out-of-range value is warned about and ignored rather than passed to
-`window_set_mode`.
+**The button exists only while the pick is not on screen.** `MenuShell._refresh_theme_row` derives its
+visibility from the same `selected_id != HudPalette.applied_id` comparison that words the caption, in
+that one place, so the two can never disagree — and a permanently-present rebuild button in an options
+pane is a run lost by accident. There is no failure path to report: nothing is spawned, so nothing can
+fail to start.
 
-> **ONE `window_set_mode` IS NOT ENOUGH, AND THE FIRST CUT OF THIS SHIPPED THE INVERSION IT WAS
-> WRITTEN TO FIX.** `project.godot` boots the game FULLSCREEN, macOS ANIMATES every fullscreen
-> transition, and a mode set while one is in flight is accepted and then silently discarded when the
-> animation lands. Measured from a fullscreen boot: asking for `MAXIMIZED` settled at `WINDOWED`, and
-> asking for `WINDOWED` settled at `FULLSCREEN` — exactly the "restart flips my window state" report.
-> The same transitions are all correct given enough settling time, so it is a RACE, not a wrong
-> argument, and reading the mode back straight after setting it confirms nothing: the read also
-> catches the animation mid-flight and returns the mode the window is LEAVING.
->
-> `_apply_window_mode` therefore ASKS, WAITS, CHECKS and ASKS AGAIN, up to `WINDOW_MODE_ATTEMPTS`.
-> Retrying rather than sleeping a fixed span keeps the wrong mode on screen for as short a time as
-> macOS allows — `WINDOWED` lands on the first attempt, `MAXIMIZED` takes three or four, and the
-> ceiling is headroom. **Any future code that moves this window inherits the same rule.**
-
-**The spawn decides whether anything quits.** `restart_client()` returns `false` when
-`OS.create_process` hands back no pid, and the OWNERS (`LandingScreen._on_restart_requested`,
-`Main._on_pause_restart`) quit only on `true` — quitting after a failed spawn would close the game
-with nothing to replace it, the one outcome this path must never produce. On `false` the menu stays
-open and the owner calls `MenuShell.show_restart_failed()`, which puts the row's caption into
-`DANGER` reading "Could not restart — quit and start the game again."
+**A pause-mode apply ENDS the run, and that is stated on the button rather than in a modal.** Reloading
+`Main.tscn` re-runs `Main._ready`, which reconnects and sends `new_game`
+(`.claude/rules/core_sim/world-handoff.md`), so the server builds a fresh world rather than handing
+back the one in progress — and Save Game is still an inert placeholder pane. In `pause` the button
+therefore reads "Apply now — ends this run" in the `armed` variant, the same mark "Abandon and return
+to menu" wears, and the caption reads "Not applied yet. Applying rebuilds the world and ends this
+run."; in `landing` there is no run, so it is a plain `primary` "Apply now" over "Not applied yet."
 
 **`static var`, not `const`, and the call sites did not change.** A `static var` reads identically at
 the call site (`HudStyle.DANGER` is the same expression either way), which is why converting 28

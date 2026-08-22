@@ -14,7 +14,7 @@ class_name MenuShell
 ##
 ## Signals out — the owner (LandingScreen / Main's PauseLayer) wires these:
 ##   new_game_requested(preset_id, width, height, seed, profile_id)
-##   resume_requested / abandon_requested / exit_requested / restart_requested
+##   resume_requested / abandon_requested / exit_requested / apply_theme_requested
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const MapSizes = preload("res://src/scripts/MapSizes.gd")
@@ -23,9 +23,9 @@ signal new_game_requested(preset_id: String, width: int, height: int, seed: int,
 signal resume_requested
 signal abandon_requested
 signal exit_requested
-## The Theme row's "Restart now" button. The relaunch itself is the OWNER's to perform (via the
-## `GameLaunch` autoload) and so is the quit that follows it — this file's items emit, they do not act.
-signal restart_requested
+## The Theme row's "Apply now" button. Installing the palette and rebuilding the scene is the
+## OWNER's to perform (via the `GameLaunch` autoload) — this file's items emit, they do not act.
+signal apply_theme_requested
 
 const LANDING := "landing"
 const PAUSE := "pause"
@@ -135,22 +135,19 @@ const SPEED_FORMATTER_META := "speed_formatter"
 const TOGGLE_DEFAULT_META := "toggle_default"
 
 ## The Theme row's caption, in its two states. It is a CAPTION, always on screen, not a tooltip: the
-## row is the one Options control that does not take effect when it is used, and a restart requirement
-## the player has to hover to discover is one they will not discover.
-const THEME_CAPTION_SETTLED := "Takes effect the next time the game starts."
-const THEME_CAPTION_PENDING := "Restart to apply — still showing %s."
-## The pause-mode pending caption. A relaunched client sends `new_game` on every connect, so it does
-## not rejoin the running world — it builds a new one — and Save Game is still an inert placeholder.
-## The restart therefore ENDS the run, and the caption says so beside a button that says so too.
-const THEME_CAPTION_PENDING_IN_RUN := "Restart to apply — still showing %s. The current run will be lost."
-## Shown when the relaunch could not be spawned: the client is still up, and the player has to do by
-## hand what the button failed to do.
-const THEME_CAPTION_RESTART_FAILED := "Could not restart — quit and start the game again."
+## row is the one Options control that does not take effect the instant it is used, and a state the
+## player has to hover to discover is one they will not discover.
+const THEME_CAPTION_SETTLED := "Applied."
+const THEME_CAPTION_PENDING := "Not applied yet."
+## The pause-mode pending caption. Applying reloads the current scene, which re-runs `Main._ready` and
+## so reconnects and asks for a new world — the run does not survive it, and the caption says so
+## beside a button that says so too.
+const THEME_CAPTION_PENDING_IN_RUN := "Not applied yet. Applying rebuilds the world and ends this run."
 ## The button's two labels. The pause-mode one carries its consequence in its own text, the same way
 ## "Abandon and return to menu" does — that is the house pattern for a destructive action here, and
 ## it is why this row has no modal confirm.
-const THEME_RESTART_LABEL := "Restart now"
-const THEME_RESTART_LABEL_IN_RUN := "Restart now — ends this run"
+const THEME_APPLY_LABEL := "Apply now"
+const THEME_APPLY_LABEL_IN_RUN := "Apply now — ends this run"
 ## Roster order for the picker — the earth themes first, the original console palette last, so the
 ## list reads as "the current look, and the one it replaced" rather than as an alphabetical set.
 const THEME_ORDER := ["ember", "loam", "kiln", "console"]
@@ -190,7 +187,7 @@ var _option_toggles: Array = []
 ## picker AND re-word the caption, and because caption + button are re-derived together on every pick.
 var _theme_picker: OptionButton = null
 var _theme_caption: Label = null
-var _theme_restart: Button = null
+var _theme_apply: Button = null
 
 
 func set_mode(value: String) -> void:
@@ -672,11 +669,11 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	return col
 
 
-## The Theme row: a picker over the palette roster, the always-visible caption stating whether a
-## restart is still owed, and — only while one IS owed — the button that performs it. The palette is
-## installed once at boot (`ClientSettings._ready` → `HudPalette.apply`), so a pick PERSISTS and
-## nothing more — every Control already on screen was built against the palette this session started
-## with, which is why acting on the pick means relaunching the process rather than restyling.
+## The Theme row: a picker over the palette roster, the always-visible caption stating whether the
+## pick is on screen yet, and — only while it is not — the button that puts it there. Picking PERSISTS
+## and nothing more: every Control already built read the palette installed at boot
+## (`ClientSettings._ready` → `HudPalette.apply`) and nothing restyles one afterwards, which is why
+## applying means rebuilding the scene rather than repainting it.
 func _make_theme_row() -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
@@ -706,13 +703,13 @@ func _make_theme_row() -> Control:
 	_theme_picker.item_selected.connect(_on_theme_selected)
 	row.add_child(_theme_picker)
 
-	# The act on the caption's requirement. Hidden while the pick and what is on screen agree — there
-	# is nothing to restart FOR then, and a permanently-present restart button in an options pane is
-	# an invitation to lose a run by accident. `_refresh_theme_row` owns that visibility.
-	_theme_restart = Button.new()
-	_theme_restart.focus_mode = Control.FOCUS_NONE
-	_theme_restart.pressed.connect(func(): emit_signal("restart_requested"))
-	row.add_child(_theme_restart)
+	# The act on the caption's statement. Hidden while the pick and what is on screen agree — there is
+	# nothing to apply then, and a permanently-present rebuild button in an options pane is an
+	# invitation to lose a run by accident. `_refresh_theme_row` owns that visibility.
+	_theme_apply = Button.new()
+	_theme_apply.focus_mode = Control.FOCUS_NONE
+	_theme_apply.pressed.connect(func(): emit_signal("apply_theme_requested"))
+	row.add_child(_theme_apply)
 
 	_theme_caption = Label.new()
 	_theme_caption.add_theme_font_size_override("font_size", HINT_SIZE)
@@ -736,44 +733,29 @@ func _on_theme_selected(index: int) -> void:
 	_refresh_theme_row(id)
 
 
-## The caption states the ONE thing the row cannot show: what is actually on screen. `applied_id` is
-## the palette this session installed at boot, and it is a different question from what is saved — so
-## the comparison is against it, never against `ClientSettings.theme` (which is what was just picked).
+## The caption states the ONE thing the row cannot show: whether the pick is what is on screen.
+## `applied_id` is the palette THIS session installed, and it is a different question from what is
+## saved — so the comparison is against it, never against `ClientSettings.theme` (just picked).
 ##
 ## The button's visibility is derived from that SAME comparison, in this one place, so the caption
-## can never promise a restart the button is not offering (or the reverse). In pause mode both wear
-## the heavier wording: a restart there is a run-ending act, not a cosmetic one.
+## can never promise an apply the button is not offering (or the reverse). In pause mode both wear
+## the heavier wording: applying there rebuilds the world, and is a run-ending act.
 func _refresh_theme_row(selected_id: String) -> void:
 	if _theme_caption == null:
 		return
 	var pending := selected_id != HudPalette.applied_id
 	var in_run := mode == PAUSE
 	if pending:
-		var applied_name := HudPalette.display_name(HudPalette.applied_id)
-		var pending_caption := THEME_CAPTION_PENDING_IN_RUN if in_run else THEME_CAPTION_PENDING
-		_theme_caption.text = pending_caption % applied_name
+		_theme_caption.text = THEME_CAPTION_PENDING_IN_RUN if in_run else THEME_CAPTION_PENDING
 		_theme_caption.add_theme_color_override("font_color", HudStyle.WARN)
 	else:
 		_theme_caption.text = THEME_CAPTION_SETTLED
 		_theme_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	if _theme_restart == null:
+	if _theme_apply == null:
 		return
-	_theme_restart.visible = pending
-	_theme_restart.text = THEME_RESTART_LABEL_IN_RUN if in_run else THEME_RESTART_LABEL
-	HudStyle.apply_button(_theme_restart, "armed" if in_run else "primary")
-
-
-## The owner's report that `GameLaunch.restart_client()` could not spawn the new process — the client
-## is still running, so the row has to say why nothing happened. Public because the owner performs the
-## relaunch and only it knows the outcome; it reaches the row through this, never through the nodes.
-func show_restart_failed() -> void:
-	# `is_instance_valid`, not a null check, because this is the one theme-row entry point reached
-	# from OUTSIDE the pane's lifetime: `_show_pane` frees the row's nodes without clearing these
-	# handles, and a freed Node is not `null`.
-	if not is_instance_valid(_theme_caption):
-		return
-	_theme_caption.text = THEME_CAPTION_RESTART_FAILED
-	_theme_caption.add_theme_color_override("font_color", HudStyle.DANGER)
+	_theme_apply.visible = pending
+	_theme_apply.text = THEME_APPLY_LABEL_IN_RUN if in_run else THEME_APPLY_LABEL
+	HudStyle.apply_button(_theme_apply, "armed" if in_run else "primary")
 
 
 ## The speed rows' readout unit — a bare multiplier, `1.00×`.

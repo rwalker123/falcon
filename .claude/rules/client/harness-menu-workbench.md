@@ -35,7 +35,7 @@ values.
 **The interface scale and BOTH halves of the theme are pinned, by MEMBER assignment.** The Theme row
 compares the saved pick against the applied palette, so pinning only `HudPalette.apply()` left the
 row rendering the developer's own choice: on a machine saved to a non-default theme every Options
-frame came out PENDING — restart caption, restart button — and the settled state had no frame at all.
+frame came out PENDING — not-applied caption, Apply button — and the settled state had no frame at all.
 `ClientSettings.theme` is therefore pinned beside it, and the pending frames set it explicitly. Never
 through a `ClientSettings.set_*` setter: those `_save` over the developer's real config, which is the
 same contamination one step worse. The pending pair also carries the button's two ASSERTIONS —

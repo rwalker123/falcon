@@ -400,8 +400,8 @@ func _connect_pause_menu() -> void:
         pause_menu.abandon_requested.connect(_on_pause_abandon)
     if not pause_menu.exit_requested.is_connected(_on_pause_exit):
         pause_menu.exit_requested.connect(_on_pause_exit)
-    if not pause_menu.restart_requested.is_connected(_on_pause_restart):
-        pause_menu.restart_requested.connect(_on_pause_restart)
+    if not pause_menu.apply_theme_requested.is_connected(_on_pause_apply_theme):
+        pause_menu.apply_theme_requested.connect(_on_pause_apply_theme)
 
 func _show_pause_menu() -> void:
     if pause_layer != null:
@@ -417,15 +417,12 @@ func _on_pause_abandon() -> void:
 func _on_pause_exit() -> void:
     get_tree().quit()
 
-## The Options pane's "Restart now" — relaunch the client so a theme pick takes effect. This ENDS the
-## run: the relaunched client sends `new_game` on connect and builds a new world rather than rejoining
-## this one, which is what the armed button and its caption warn about. The quit is conditional on the
-## spawn succeeding — closing this process after a failed spawn would leave nothing running.
-func _on_pause_restart() -> void:
-    if GameLaunch.restart_client():
-        get_tree().quit()
-    elif pause_menu != null:
-        pause_menu.show_restart_failed()
+## The Options pane's "Apply now" — install the picked theme and rebuild the scene so it shows. This
+## ENDS the run: the reload re-runs `_ready`, which reconnects and sends `new_game`, so the server
+## builds a new world rather than handing this one back. That is what the armed button and its caption
+## warn about. Nothing quits and nothing is spawned.
+func _on_pause_apply_theme() -> void:
+    GameLaunch.apply_theme_now()
 
 ## Build the `new_game <preset> <w> <h> <seed> <profile>` command from the GameLaunch handoff, or
 ## the dev default when launched directly. Clears the handoff so a later scene reload starts fresh.
