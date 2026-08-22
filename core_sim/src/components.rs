@@ -3005,12 +3005,24 @@ impl BuildJob {
     }
 }
 
-/// One declared build: which source, and **where the player said the land should end up**
-/// ([`BuildJob::destination`]).
+/// One declared build: which source, **where the player said the land should end up**
+/// ([`BuildJob::destination`]), and **what this job is raised with** ([`Self::kit`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,
     pub declared: BuildJob,
+    /// **The kit the player NAMED for THIS job, or `None` for "whatever this entry's web wants"** —
+    /// the same distinction [`LaborAllocation::named_kit_on`] draws for a singleton role, moved to
+    /// the one place the builders' default actually varies (`docs/plan_standing_upkeep.md` §4.7a ②).
+    ///
+    /// A single stored id per **band** cannot be right for both food webs — a hoe for a Cultivate,
+    /// hurdles for a `Tame` — so the derivation is per **entry**, and `None` is what leaves it
+    /// reachable. An absent choice already means *"the job's default"* everywhere else; this is what
+    /// lets that default vary per job.
+    ///
+    /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
+    /// sending the builders out bare-handed on one job to conserve gear.
+    pub kit: Option<crate::equipment_config::KitChoice>,
 }
 
 impl LaborAllocation {
@@ -3085,14 +3097,18 @@ impl LaborAllocation {
     }
 
     /// **The kit the player NAMED on a singleton role, or `None` for "whatever the job wants"** —
-    /// [`Self::kit_on`]'s other half, and the distinction the builders' per-entry derivation turns
-    /// on (`docs/plan_standing_upkeep.md` §2.5).
+    /// [`Self::kit_on`]'s other half, and the distinction the two **keeping** pools' per-web
+    /// derivation turns on (`docs/plan_standing_upkeep.md` §4.8).
     ///
     /// `kit_on` collapses *"the player chose `none`"* and *"the player chose nothing"* into one
-    /// answer, which is right for every role whose default is a single id. The builders' default is
-    /// **per queue entry** — a hoe for a Cultivate, hurdles for a `Tame` — so the pool needs to know
-    /// whether the row carries a real selection to override that derivation with. An absent choice
-    /// already means *"the job's default"* everywhere else; this is what lets that default vary.
+    /// answer, which is right for every role whose default is a single id. A keeping role's default
+    /// is the **roster's** answer for its web, so the pool needs to know whether the row carries a
+    /// real selection to override that derivation with. An absent choice already means *"the job's
+    /// default"* everywhere else; this is what lets that default be derived.
+    ///
+    /// ⛔ **The `builders` row is NOT one of these.** Its kit is per **queue entry**
+    /// ([`BuildQueueEntry::kit`]), because one stored id per band cannot be right for both webs —
+    /// see [`Self::builders_kit`].
     ///
     /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
     /// sending the builders out bare-handed to conserve gear.
@@ -3114,19 +3130,25 @@ impl LaborAllocation {
     }
 
     /// **The kit this band's builders are working with**, resolved through the one seam
-    /// ([`crate::equipment_config::EquipmentConfig::builders_kit_for`]) — the row's own choice, else
-    /// the kit the roster says the **head entry's** web wants, else the job default.
+    /// ([`crate::equipment_config::EquipmentConfig::builders_kit_for`]) — the **head entry's** own
+    /// choice, else the kit the roster says that entry's web wants, else the job default.
     ///
-    /// **The wire states this rather than the row's stored id**, on `kit_id`'s existing rule (*"the
-    /// wire states the kit rather than 'the player named none'"*): the builders' default is per
-    /// entry, so a row that named nothing would otherwise publish `none` while the pool was out with
+    /// **It reads the ENTRY, never the `builders` row.** The whole pool goes on the head, so *"what
+    /// are the builders holding"* is a question about the job they are standing on; a kit stored on
+    /// the row would be one per **band** and would pin the animal web's tool onto a plant build with
+    /// no way back (`docs/plan_standing_upkeep.md` §4.7a ②).
+    ///
+    /// **The wire states this rather than a stored id**, on `kit_id`'s existing rule (*"the wire
+    /// states the kit rather than 'the player named none'"*): the builders' default is per entry, so
+    /// an entry that named nothing would otherwise publish `none` while the pool was out with
     /// hurdles.
     pub fn builders_kit(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
     ) -> crate::equipment_config::KitChoice {
+        let head = self.build_queue.first();
         config.builders_kit_for(
-            self.named_kit_on(&LaborTarget::Builders).as_ref(),
+            head.and_then(|entry| entry.kit.as_ref()),
             self.head_build_branch(),
         )
     }
@@ -3272,6 +3294,11 @@ impl LaborAllocation {
     /// correction, and costing the player their position for it would make the queue punish the
     /// thing it exists to let them steer.
     ///
+    /// **AND IT KEEPS THE ENTRY'S KIT**, for the same reason it keeps its place: re-declaring is a
+    /// correction to *what* is being raised, and silently clearing the tool the player picked for
+    /// that job is the same loss as sending it to the back of the line. A new entry starts with
+    /// `kit: None`, i.e. on its own web's derivation.
+    ///
     /// # AN ENTRY REQUIRES A ROW
     ///
     /// The row is the band's *holding* of the source; an entry against ground the band does not work
@@ -3287,8 +3314,38 @@ impl LaborAllocation {
             .find(|entry| entry.source == source)
         {
             Some(entry) => entry.declared = declared,
-            None => self.build_queue.push(BuildQueueEntry { source, declared }),
+            None => self.build_queue.push(BuildQueueEntry {
+                source,
+                declared,
+                kit: None,
+            }),
         }
+        true
+    }
+
+    /// **Name the kit ONE queued job is raised with** — the `build_kit` command's whole effect
+    /// (`docs/plan_standing_upkeep.md` §4.7a ②). Returns whether an entry was there to set it on.
+    ///
+    /// `None` **clears the override** back to the entry's own web derivation, which is the existing
+    /// *"an absent `kitId` means the job's default"* rule and is what lets a client say *"back to
+    /// default"* with no new vocabulary. `Some(<the bare kit>)` is a real selection and stays.
+    ///
+    /// Nothing is invented for a source with no entry: a kit is a property of a declared job, and
+    /// minting an entry here would enrol a build the player never declared — the same refusal
+    /// [`Self::move_build_entry`] makes.
+    pub fn set_build_entry_kit(
+        &mut self,
+        source: &BuildSource,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> bool {
+        let Some(entry) = self
+            .build_queue
+            .iter_mut()
+            .find(|entry| &entry.source == source)
+        else {
+            return false;
+        };
+        entry.kit = kit;
         true
     }
 

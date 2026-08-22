@@ -2087,13 +2087,14 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   (hurdles, animal) and `tillage` (hoes, plant) — and which one a build gets is DERIVED from **that
   queue ENTRY's** own branch (`labor-ui.md` → "A BUILD IS PRICED AT THE **BUILDERS'** KIT"). A card is
   per BAND, so it could only answer a per-ENTRY question with one standing answer; and the only way
-  to *send* that answer, a `kit` token on the `builders` row, is an override the sim honours **over
-  the derivation from then on**. Measured in play: one click put `kit hurdling` on every later
+  to *send* that answer was a `kit` token on the `builders` row, which the sim honoured as an override
+  **over the derivation from then on**. Measured in play: one click put `kit hurdling` on every later
   builders command and pinned a band raising a plant Cultivate to the animal web's tool with no way
   back — `none` being bare-handed rather than a way to un-pin. **The control was the defect, not its
   rendering**, so `KIT_PICKER_ROLES` no longer names the role and `build_kit_row` is never called for
-  it. **The per-entry override lands on the QUEUE ROW** (§7's ② — one job, one kit, `(default)`
-  marked as hunting's is), which is where an entry can answer for itself.
+  it. **THAT TOKEN IS NOW REFUSED BY THE SIM** — `handle_assign_labor` rejects a `kit` on this role by
+  name — and the per-entry override lands on the QUEUE ROW (§4.7b, below: one job, one kit,
+  `(default)` marked as hunting's is), which is where an entry can answer for itself.
 - **…BUT THE CARD STILL STATES WHAT THE POOL IS CARRYING, on a read-only gear line.** Removing the
   selection is not removing the information: `KitRoster.role_gear_line` renders
   `Tillage kit · 8.5 work off a build, per builder · Hoes 38` — the kit's name, then the picker's old
@@ -2333,9 +2334,7 @@ BUILD QUEUE                          3 builders · Tillage kit
 - **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
   identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
   surfaces and there is no second command builder.
-- **DRAG-TO-REORDER IS STILL OPEN.** `build_order` on the command line covers it meanwhile, which is
-  what the overflow row's tooltip says. §4.7 landed the tab's structure; the reorder gesture and the
-  per-entry KIT picker are the slice's remaining half.
+- **THE ROW IS DRAGGED TO REORDER, AND ITS SETTINGS HOLD THE PER-ENTRY KIT** — §4.7b, below.
 
 ### THE DATE IS A COMPLETION TURN, NOT A CHAINED COUNTDOWN (§4.7)
 
@@ -2462,6 +2461,155 @@ marker · mark · face · date · `✕` until the date column learned a verb —
   positive half passed alone. A missing animal row now `_fail`s outright rather than skipping, and the
   needle matches `HudFormat.policy_face` (the compose sheet's *"Tame this herd"* label appears nowhere on
   a queue row, whose face reads `◎ Tame Red Deer`).
+
+### THE QUEUE'S OWN CONTROLS — the kit, the drag, the withdrawal (§4.7b)
+
+`docs/plan_standing_upkeep.md` §4.7b. The block could be READ but barely operated: the kit override
+had no home at all, the order was `build_order` on the command line, and withdrawing a confirmed entry
+did not leave the block until the turn resolved. All three land on the row that already exists.
+
+#### ② THE KIT PICKER, IN THE SETTINGS STRIP, FLOWING
+
+- **EVERY QUEUED ENTRY HAS A KIT, so every queue row expands now** — the hunt/tame rows that carried
+  `legs == 0, crop == false` included. That is not a widening of the *never invite a click that opens
+  nothing* rule; it is that rule reaching its second setting. `_queue_settings_content` returns
+  `{legs, crop, kit}` and the crop stays the plant web's alone.
+- **THE WRAP IS COMPUTED, NEVER DISCOVERED.** `HudWorkVocab.queue_settings_one_line(line_width)` is a
+  WIDTH PREDICATE both sides read: the strip's `custom_minimum_size` and `_work_board_capacity`'s
+  chrome term go through the one `build_queue_settings_height(legs, has_crop, has_kit, one_line)`. A
+  Godot flow container that wrapped at LAYOUT time could not tell the reservation how many lines it
+  drew, and this zone takes the difference off the bottom of the board in silence. **Neither picker
+  ever shrinks** — the widths are fixed (`BUILD_QUEUE_CROP_WIDTH` / `BUILD_QUEUE_KIT_WIDTH`, both 168)
+  and the LINE COUNT is what gives. `BUILD_QUEUE_SETTINGS_KEY_WIDTH` is shared by `CROP` and `KIT` so
+  the two keys share a left edge when they stack.
+- **A LONE CONTROL IS ALWAYS ONE LINE**, whatever the width: an ANIMAL entry has a kit and no crop, so
+  it has nothing to wrap against and the predicate must not answer for it.
+- ⛔ **NO SHIPPED DOCK REACHES THE ONE-LINE SIDE TODAY, and the numbers are the point.** The work zone
+  is one board column wide at every dock the panel ships with — **342px of strip on the tall LEFT dock,
+  368 on the 1920 BOTTOM one, against the 408 the pair needs.** One line arrives when the board earns a
+  SECOND column, which `_affordable_work_columns` needs ~760px of card span for and a 1920 wide shell
+  does not have once both flanks are paid for. So the flow is asserted where it is DECIDED
+  (`band_panel_preview._assert_queue_settings_predicate`, both sides of the threshold plus the height
+  that follows it) and REPORTED at each dock — which is what makes *"which layouts get one line"* a
+  number rather than a look.
+- **IT IS A FIXED-HEIGHT PICKER, NOT `KitRoster.build_kit_row`.** That helper returns a two-child
+  block whose second child — the `tier_hint` line — is present only when the selected kit has
+  something to say, so the row it draws is 22px or ~36px depending on the PICK, and this strip reserves
+  its height before it draws it. The LIST is still the roster's own: `KitRoster.kit_entries` was
+  extracted out of `build_kit_row` so both hosts share the roster order, the `(default)` mark and the
+  greying of a kit that serves the other web, and only the chrome differs.
+- **THE `(default)` MARK IS THE DERIVATION, PER ENTRY** — `KitRoster.build_kit_for_branch` off the
+  entry's own web (`build_branch_for_kind`), which is the answer the sim resolves when the entry
+  reaches the head. **The selection shown is the wire's `build_kit_id`**, the RESOLVED kit, falling
+  back to the derivation for an entry the wire has not placed.
+- **PICKING THE DERIVED DEFAULT EMITS NO `kit` TOKEN, and that is what CLEARS the override.**
+  `Main._kit_token`'s standing rule — omit the token when the selection equals the default — is
+  exactly right here, so there is no `default` literal to invent; `none` is bare-handed and is a real
+  selection. **No optimistic overlay**: `buildKitId` is captured LIVE, so the recapture the command
+  triggers already carries the pick.
+
+#### ③ THE MARKER COLUMN IS THE DRAG HANDLE — no new width
+
+The row's width is spoken for: marker 10 + face + date 168 + `✕` 32 + separations, and the face is
+**already ellipsised** at its widest shipped value (`🐄 Corral Thunder Mammoths` needs 189 of ~126). A
+handle column of its own would come straight out of the one column carrying an unclipped-name
+guarantee. The marker slot is reserved on every row already (that is what lines the faces up) and
+holds nothing on a non-head row.
+
+- **The head keeps `▸`** — that marker is load-bearing, it names the entry the pool is funding — and is
+  still a handle, demotion being the most likely reorder there is. Every other confirmed row draws
+  `BUILD_QUEUE_DRAG_HANDLE` in the quiet ink. **A PENDING row is not draggable**: the wire has not
+  placed it, so there is no position to name and nothing to move it above.
+- **`Control.set_drag_forwarding`, so no per-row script exists.** The grab is forwarded off the marker
+  and the drop off the ROW (a 10px column is not a drop target a player should have to aim at twice).
+  The handle takes `MOUSE_FILTER_PASS`, so a plain click still reaches the row's click-to-open —
+  Godot only asks for drag data past a movement threshold.
+- **THE DROP INDICATOR COSTS NO HEIGHT.** The block's `separation` is 0, so an indicator drawn
+  *between* two rows would need a new term in `build_queue_block_height` on the reservation side as
+  well as the render side. `HudStyle.work_row_drop_stylebox` lights one edge of the target row's OWN
+  stylebox instead, swapped on nodes the controller holds (`_queue_row_nodes`) rather than by
+  re-rendering the block the gesture is standing on.
+- ⛔ **A SNAPSHOT MID-GESTURE KILLS THE DRAG, so the Work zone does not rebuild while one is in
+  flight.** `Main._apply_snapshot` → `update_band_alerts` → `refresh_snapshot()` → `render_band()`
+  rebuilds all three zones and `populations` / `herds` move on essentially every turn; freeing the row
+  the pointer holds ends the gesture on the first pixel of movement, the mechanism
+  `DrawerComposeController` already documents for the floor drag. `_queue_drag_in_flight()` is read at
+  BOTH doors — `_repage_work_zone` (which is also what a window resize comes through) and
+  `render_band` — and `_on_queue_drag_end` re-renders once.
+  - **The cancel is why `QueueDragWatcher` exists.** Godot announces the end of a drag —
+    dropped OR cancelled — as `NOTIFICATION_DRAG_END` to every `Control` and by no other means, and
+    this controller is a `RefCounted`. A suppression lifted only by a successful drop freezes the block
+    for good.
+- **THE QUEUE IS THE RANK.** The drop sends `build_order <faction> <band> <source…> <position>`,
+  0-based — §4.9's priority property stored in the queue itself, so this client keeps no rank beside
+  it. `build_order` is the one of the three verbs that names a BAND; a kit and a withdrawal are
+  properties of an entry every band holding that source shares.
+- **The new order is OPTIMISTIC**, on the same turn-keyed overlay ④ uses: `buildQueuePosition` is
+  turn-written, so without it the list snaps back on the command's own recapture. The overlay states
+  the WHOLE ordering rather than a delta, and `_queue_sort_rank` pushes an entry it does not name
+  behind every entry it does — which is what keeps the sort a TOTAL order under Godot's unstable
+  `sort_custom`.
+
+#### ④ THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED
+
+⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
+**every** command, and that capture still carries the stale turn-written `buildQueuePosition` — so a
+"hide it until the next snapshot" rule flickers the row straight back a frame later.
+`reconcile_pending` already keys additions on *a snapshot with a NEWER turn*, and the withdrawal set
+lives in the same per-band record (beside `assign` / `move` / `order`) so it takes that rule and
+`_prune_pending_entity` with no second lifecycle.
+
+- **IT CLEARS THE IMPROVEMENT; IT DOES NOT DROP THE PENDING RECORD.** `unqueue` withdraws a
+  DECLARATION and leaves the take crew standing — and the same record may hold a pending CREW edit,
+  which dropping it would discard. `effective_worker_map` blanks the effective improvement for the
+  withdrawn key instead, which is what puts the source's work row back to its `⌃` offer face on the
+  same frame, off the one map every readout shares.
+- **The payload carries `pending_entity` and `kind`, neither of them a command token.** `Hud` records
+  the withdrawal BEFORE emitting (this layer's standing rollback precondition — `Main` handles the
+  signal synchronously) and `Main._on_hud_unqueue` hands the payload back to `drop_pending_unqueue`
+  when the send does not go, exactly as `_on_hud_assign_labor` does.
+
+#### ⛔ ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — and it was a live defect
+
+Open a queue row's settings **and** a work row's inspector on a one-column BOTTOM dock — one click
+each, both shipped — and `Zone_work` drew **460 into a 396px box (over by 64)**, with the board already
+at its `maxi(1, …)` floor and nothing left to give back. **No frame caught it because every
+strip-open frame had no inspector and every inspector-open frame had no strip** — two disjoint frame
+families, the defect living in the gap, which is the same shape §4.7 found in the inspector's own
+height.
+
+`_queue_open_key` and `_work_open_key` are MUTUALLY EXCLUSIVE now: opening either closes the other. It
+is the rule both lists already followed internally, read one level up, and it costs nothing. With it
+the same dock reads **396 of 396 — zero spare, and no overflow**. `band_panel_queue_settings_exclusive`
+is the frame, asserting the exclusion BOTH ways (a builder that never opens the strip would pass one
+half) beside `_assert_zone_content_fits`; sabotage-verified by disabling the exclusion, which prints
+the 460 above.
+
+#### TWO CONSTANTS THAT READ LOWER THAN THEY DRAW, corrected here
+
+- **`BUILD_QUEUE_UNQUEUE_WIDTH` 22 → 32.** `HudWidgets.compact` squeezes the type size and the
+  VERTICAL padding — that is what keeps a control inside a 28px row — and leaves the ghost button its
+  horizontal margins, so the reservation was 10px under what the `✕` draws and the row's expanding
+  face paid the difference.
+- **`BUILD_QUEUE_SETTINGS_HEIGHT` 30 → 34** — a 22px compact picker plus the strip's own 12px of
+  `HudStyle.ROLE_CARD_PADDING` (it wears `work_inspector_stylebox`, which is the role card's). A live
+  4px under-reserve every time a strip opened, and correcting it is what makes the flow arithmetic
+  honest: a term wrong by four is wrong by eight the moment the strip wraps.
+
+**Frames:** `band_panel_queue_settings_stacked` (the tall LEFT dock, both pickers, keys aligned) ·
+`band_panel_queue_settings_wide` (the 1920 BOTTOM dock, which stacks too — the measurement that says so
+is printed) · `band_panel_queue_settings_exclusive` · `band_panel_queue_drag` (a drag in flight, with
+the indicator on the target row and the block asserted NOT to have rebuilt under it) ·
+`band_panel_queue_withdrawn` (the row gone, and STILL gone across a re-push of the same fixture on the
+same turn — the command's own recapture).
+
+**`build_kit` and `build_order` are driven in `command_guard`**, both source forms each, because a
+well-formed line that means the wrong thing is exactly what that gate exists for. `build_kit` is the
+first SOURCE-addressed verb it drives — it names no band, every band holding the source holding the
+same entry — so `BandHandle` grew a `SourceAddressed` outcome keyed on the parsed VARIANT rather than
+on the harness's own label, which is what stops a band-addressed command being opted out of the handle
+check by being relabelled. The `builders` role is swept BARE there now: the sim refuses a `kit` token
+on it, and that refusal is in the handler rather than the parser, so a parser-level gate cannot see it.
 
 ### THE HEAD'S KIT DERIVES FROM A **PENDING** ENTRY TOO (§4.7)
 

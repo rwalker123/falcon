@@ -395,6 +395,10 @@ fn create_herds<'a>(
         // *"this source has nothing left to climb"* and *"this source is not queued"* both read as no
         // list, which is what the destination string beside it disambiguates.
         let build_destination_rung = builder.create_string(herd.build_destination_rung.as_str());
+        // **Always written, `""` included** — the empty string is *"no band has this queued"*, and a
+        // client comparing its own selection against an absent field would read every source as a
+        // mismatch, exactly as it would for `defaultKitId` above.
+        let build_kit_id = builder.create_string(herd.build_kit_id.as_str());
         let build_legs = if herd.build_legs.is_empty() {
             None
         } else {
@@ -557,6 +561,10 @@ fn create_herds<'a>(
                 buildDestinationCapacity: herd
                     .build_destination_capacity
                     .unwrap_or(crate::NO_BUILD_DESTINATION_CAPACITY),
+                // **What this herd's build is being raised with** — appended last (append-only
+                // wire). The RESOLVED kit of the winning band's queue entry; `""` when no band has
+                // it queued.
+                buildKitId: Some(build_kit_id),
             },
         );
         entries.push(entry);
@@ -582,6 +590,8 @@ fn create_forage_patches<'a>(
         // *"this source has nothing left to climb"* and *"this source is not queued"* both read as no
         // list, which is what the destination string beside it disambiguates.
         let build_destination_rung = builder.create_string(patch.build_destination_rung.as_str());
+        // Always written, `""` included — see the herd twin.
+        let build_kit_id = builder.create_string(patch.build_kit_id.as_str());
         let build_legs = if patch.build_legs.is_empty() {
             None
         } else {
@@ -745,6 +755,9 @@ fn create_forage_patches<'a>(
                 buildDestinationCapacity: patch
                     .build_destination_capacity
                     .unwrap_or(crate::NO_BUILD_DESTINATION_CAPACITY),
+                // **What this patch's build is being raised with** — appended last (append-only
+                // wire); see the herd twin.
+                buildKitId: Some(build_kit_id),
             },
         );
         entries.push(entry);

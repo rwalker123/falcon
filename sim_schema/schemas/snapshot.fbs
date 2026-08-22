@@ -2654,6 +2654,29 @@ table ForagePatchState {
   // is summed over the land as it stands TODAY, so this moves if the land does, exactly as the live
   // capacity beside it moves.
   buildDestinationCapacity:float = -1;
+
+  // WHAT THIS SOURCE'S BUILD IS BEING RAISED WITH (appended last, append-only wire) - the kit id the
+  // winning band's queue entry RESOLVES TO, and "" when no band has this source queued.
+  //
+  // IT IS THE RESOLVED KIT, NEVER "the player named none". That is `kitId`'s standing rule on the
+  // labor row, and it matters more here: the builders' default is derived PER QUEUE ENTRY from that
+  // entry's own food web (a hoe for a Cultivate, hurdles for a Tame), so an entry that named nothing
+  // would otherwise publish "" while the pool was out with hurdles. An explicit bare-handed pick
+  // crosses as the roster's own bare kit id, which is a real selection and reads differently from the
+  // empty string above.
+  //
+  // THERE IS NO SECOND "what would the default be" FIELD, deliberately: the client mirrors the same
+  // roster derivation (KitRoster.build_kit_for_branch) to draw its `(default)` mark, exactly as the
+  // hunt row does per quarry.
+  //
+  // IT IS CAPTURED LIVE off the band's queue, NOT stamped by the turn like `buildQueuePosition` above.
+  // The server re-captures and broadcasts after every dispatched command, so a live read shows a kit
+  // pick immediately where a turn-written one would lag a whole turn.
+  //
+  // IT RIDES THE SAME WINNING BAND as `buildQueuePosition`: several bands may work one source, and a
+  // kit taken from one band's queue beside a position from another's would be two answers pretending
+  // to be one.
+  buildKitId:string;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -3851,6 +3874,11 @@ table HerdTelemetryState {
   // Quoting a Corral over the range the herd walks today would overstate it by the whole ratio
   // between them.
   buildDestinationCapacity:float = -1;
+
+  // WHAT THIS HERD'S BUILD IS BEING RAISED WITH (appended last, append-only wire) - the animal twin of
+  // `ForagePatchState.buildKitId`; that field carries the whole rationale, including why the wire
+  // states the RESOLVED kit rather than the stored one and why there is no second "default" field.
+  buildKitId:string;
 }
 
 table CommandEventState {

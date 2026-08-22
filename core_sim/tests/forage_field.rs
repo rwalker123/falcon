@@ -452,13 +452,14 @@ fn spawn_forager_of(
                     LaborAssignment {
                         target: LaborTarget::Builders,
                         workers: foragers,
-                        kit: Some(bare_builders()),
+                        kit: None,
                     },
                 ],
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(declared),
+                        kit: Some(bare_builders()),
                     })
                     .into_iter()
                     .collect(),
@@ -1067,8 +1068,12 @@ fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
     );
 }
 
-/// **Put the shipped plant builders' kit on the `builders` row, and NOTHING on the keeping row** —
-/// the isolation the wear arm above needs, since both jobs derive the same kit when a row names none.
+/// **Put the shipped plant builders' kit on the QUEUE ENTRY, and NOTHING on the keeping row** —
+/// the isolation the wear arm above needs, since both jobs derive the same kit when neither names
+/// one.
+///
+/// **The entry, not the `builders` row.** A build's kit is a property of the job since
+/// `docs/plan_standing_upkeep.md` §4.7a ②, and the row carries none at all.
 fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
     let equipment = core_sim::EquipmentConfig::builtin();
     let kit = equipment
@@ -1082,13 +1087,17 @@ fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
         let mut builders = 0;
         for assignment in &mut allocation.assignments {
             match assignment.target {
-                LaborTarget::Builders => {
-                    assignment.kit = Some(kit.clone());
-                    builders = assignment.workers;
-                }
+                LaborTarget::Builders => builders = assignment.workers,
                 LaborTarget::Agriculture => assignment.kit = Some(bare_builders()),
                 _ => {}
             }
+        }
+        assert!(
+            !allocation.build_queue.is_empty(),
+            "fixture: the band must have declared a build for the kit to ride"
+        );
+        for entry in allocation.build_queue.iter_mut() {
+            entry.kit = Some(kit.clone());
         }
         builders
     };
@@ -2050,10 +2059,12 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
     );
 }
 
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
 ///
-/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// It rides the **entry** because that is where a build's kit lives
+/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
+/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
+/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
 /// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
 /// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as

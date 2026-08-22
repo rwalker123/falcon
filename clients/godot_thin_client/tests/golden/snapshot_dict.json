@@ -433,6 +433,7 @@
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[0].build_destination_rung",
+      "build_kit_id": "forage_patches[0].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[0].build_legs[0].rung",
@@ -609,6 +610,7 @@
       "build_blocked_reason": "forage_patches[1].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[1].build_destination_rung",
+      "build_kit_id": "forage_patches[1].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[1].build_legs[0].rung",
@@ -926,6 +928,7 @@
       "build_blocked_reason": "herds[0].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[0].build_destination_rung",
+      "build_kit_id": "herds[0].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[0].build_legs[0].rung",
@@ -1050,6 +1053,7 @@
       "build_blocked_reason": "herds[1].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[1].build_destination_rung",
+      "build_kit_id": "herds[1].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[1].build_legs[0].rung",

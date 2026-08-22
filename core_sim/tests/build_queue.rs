@@ -192,7 +192,9 @@ fn world_with_a_queue_knowing(
     assignments.push(LaborAssignment {
         target: LaborTarget::Builders,
         workers: builders,
-        kit: Some(bare_builders()),
+        // ⛔ A `builders` ROW carries no kit — the bare isolation rides the queue entry
+        // (`docs/plan_standing_upkeep.md` §4.7a ②).
+        kit: None,
     });
     if keepers > 0 {
         assignments.push(LaborAssignment {
@@ -207,6 +209,7 @@ fn world_with_a_queue_knowing(
         .map(|source| core_sim::BuildQueueEntry {
             source: BuildSource::Patch(*source),
             declared: BuildJob::Rung(Improvement::Cultivate),
+            kit: Some(bare_builders()),
         })
         .collect();
 
@@ -864,7 +867,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: BUILDERS,
-            kit: Some(bare_builders()),
+            kit: None,
         },
     ];
     if keepers > 0 {
@@ -915,6 +918,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: BuildSource::Herd(herd_id.clone()),
                     declared: BuildJob::Rung(Improvement::Tame),
+                    kit: Some(bare_builders()),
                 }],
                 ..Default::default()
             },
@@ -1311,6 +1315,36 @@ fn the_build_queue_survives_a_checkpoint_in_the_order_the_player_set() {
         "fixture: the order under test is not insertion order"
     );
 
+    // **AND THE ENTRY'S KIT RIDES WITH IT.** It is a player decision like the order is, so a
+    // restore that dropped it would silently put a job the player sent out bare-handed back on the
+    // roster's geared derivation. The whole `LaborAllocation` is cloned into the record, so this
+    // falls out — which is exactly why it is asserted rather than assumed.
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        assert!(
+            allocation.set_build_entry_kit(&BuildSource::Patch(sources[1]), Some(bare_builders()))
+        );
+        // …and one entry deliberately left on its own web's derivation, so the restore claim is not
+        // satisfied by a constant.
+        assert!(allocation.set_build_entry_kit(&BuildSource::Patch(sources[0]), None));
+    }
+    let expected_kits: Vec<Option<String>> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .build_queue
+        .iter()
+        .map(|entry| entry.kit.as_ref().map(|kit| kit.id().to_string()))
+        .collect();
+    assert!(
+        expected_kits.iter().any(Option::is_some) && expected_kits.iter().any(Option::is_none),
+        "fixture: the queue must mix a named kit with a derived one, or the restore claim is \
+         satisfied by any constant"
+    );
+
     // **The two queues must not compare equal**, which is the `PartialEq` half.
     let reordered = app
         .world
@@ -1352,6 +1386,21 @@ fn the_build_queue_survives_a_checkpoint_in_the_order_the_player_set() {
     assert_eq!(
         landed, expected,
         "a checkpoint restores the queue the player set, in the order they set it"
+    );
+    let landed_kits: Vec<Option<String>> = app
+        .world
+        .query::<&LaborAllocation>()
+        .iter(&app.world)
+        .find(|allocation| !allocation.build_queue.is_empty())
+        .expect("the restored world carries the band's queue")
+        .build_queue
+        .iter()
+        .map(|entry| entry.kit.as_ref().map(|kit| kit.id().to_string()))
+        .collect();
+    assert_eq!(
+        landed_kits, expected_kits,
+        "…and the tool the player picked for each job with it: a restore that dropped the kit \
+         would put a deliberately bare-handed job back on the geared derivation"
     );
 }
 
@@ -1414,10 +1463,12 @@ fn every_build_job_and_source_kind_is_stated() {
     }
 }
 
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
 ///
-/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// It rides the **entry** because that is where a build's kit lives
+/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
+/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
+/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
 /// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
 /// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as
@@ -1500,7 +1551,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
-            kit: Some(bare_builders()),
+            kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
@@ -1526,10 +1577,12 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Herd(RING_HERD.to_string()),
                         declared: BuildJob::ExtendPen,
+                        kit: Some(bare_builders()),
                     },
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(source),
                         declared: BuildJob::Rung(Improvement::Cultivate),
+                        kit: Some(bare_builders()),
                     },
                 ],
                 ..Default::default()
@@ -1757,6 +1810,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
     let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
         source: BuildSource::Patch(source),
         declared: BuildJob::Rung(Improvement::Cultivate),
+        kit: Some(bare_builders()),
     };
 
     let finisher = vec![
@@ -1764,7 +1818,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
-            kit: Some(bare_builders()),
+            kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
@@ -1778,7 +1832,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: BUILDERS,
-            kit: Some(bare_builders()),
+            kit: None,
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
@@ -2264,5 +2318,259 @@ fn a_keeping_pool_wears_its_tools_on_what_it_supplied_and_an_idle_one_wears_noth
         idle_fresh,
         "a pool with nothing to keep supplies nothing and must wear nothing — this is a use \
          count, not a turn clock"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (13) A DECLARATION WITHDRAWN THE SAME TURN NEVER REACHES THE QUEUE
+// ---------------------------------------------------------------------------------------------
+
+/// **DECLARE AND WITHDRAW INSIDE ONE TURN, AND NOTHING SURVIVES THE BOUNDARY.**
+///
+/// [`unqueue_withdraws_the_declaration_and_the_source_stops_publishing_a_job`] withdraws a
+/// **confirmed** entry — one that has already been through a turn and has work on its meter. This is
+/// its sibling for the case reported from play on 2026-08-22: *"clicking `✕` on `Cultivate (61, 29)`
+/// did not remove the row"*, on a declaration made that same turn.
+///
+/// **The two halves are different code paths.** A confirmed entry leaves through the turn's own
+/// publishing (the position stops being stamped); a same-turn one has never been stamped at all, so
+/// what has to be true is that the turn finds no entry to fund, banks nothing, and publishes
+/// [`NOT_IN_ANY_BUILD_QUEUE`] rather than the head's `0`. Pinning it is what makes the remaining
+/// symptom provably the client's.
+#[test]
+fn a_declaration_withdrawn_the_same_turn_never_reaches_the_queue() {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    // The fixture's queue is a declaration made **this** turn: nothing has resolved yet.
+    assert_eq!(
+        meter(&app, sources[0]),
+        0.0,
+        "fixture: the declaration must be unresolved, or this measures a confirmed entry"
+    );
+    assert!(
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .unqueue_build(&BuildSource::Patch(sources[0])),
+        "the entry was there to withdraw"
+    );
+
+    resolve_a_turn(&mut app);
+
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    assert!(
+        allocation.build_queue.is_empty(),
+        "the withdrawn declaration must not come back across the turn boundary"
+    );
+    assert_eq!(
+        meter(&app, sources[0]),
+        0.0,
+        "…and the pool must have banked nothing on it: there was no entry to fund"
+    );
+    assert_eq!(
+        published_position(&app, sources[0]),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "…and the source publishes that it is in nobody's queue, never the head's 0"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (14) THE KIT IS A PROPERTY OF THE ENTRY
+// ---------------------------------------------------------------------------------------------
+
+/// **The plant web's own builders kit** — what the roster derives for a Cultivate, and what an entry
+/// that names nothing is raised with.
+fn plant_build_kit() -> core_sim::KitChoice {
+    core_sim::EquipmentConfig::builtin()
+        .kit("tillage")
+        .expect("the shipped roster carries the plant builders kit")
+}
+
+/// **RE-DECLARING KEEPS THE ENTRY'S KIT**, exactly as it keeps its place in the line.
+///
+/// A second verb on an already-queued source replaces `declared` **in place**
+/// (`build_order`'s *"re-declaring on a queued source does not cost the player their position"*), and
+/// the kit is the same kind of player decision: correcting *what* is being raised must not silently
+/// throw away the tool chosen for it.
+#[test]
+fn re_declaring_a_queued_source_keeps_the_kit_its_entry_carries() {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let source = BuildSource::Patch(sources[0]);
+    let mut allocation = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    assert!(allocation.set_build_entry_kit(&source, Some(plant_build_kit())));
+    assert!(
+        allocation.enqueue_build(source.clone(), BuildJob::Rung(Improvement::Sow)),
+        "re-declaring on a source the band works is accepted"
+    );
+    let entry = allocation
+        .build_queue_entry(&source)
+        .expect("the entry is still in the queue");
+    assert_eq!(
+        entry.declared,
+        BuildJob::Rung(Improvement::Sow),
+        "fixture: the re-declaration must have landed, or the kit claim is vacuous"
+    );
+    assert_eq!(
+        entry.kit.as_ref().map(core_sim::KitChoice::id),
+        Some(plant_build_kit().id()),
+        "re-declaring is a correction to WHAT is being raised — it must not clear the tool the \
+         player chose for it, any more than it costs them their place in the line"
+    );
+}
+
+/// ⛔ **TWO ENTRIES, TWO KITS, AND EACH IS PRICED AND DATED AT ITS OWN.**
+///
+/// The head is the only entry the pool funds, but **every** entry is dated — and now that entries can
+/// carry different kits, a waiting entry must be dated at the gear *it* will be raised with rather
+/// than at its web's derived answer. That is the whole point of a per-entry override: a queue whose
+/// second job is deliberately bare-handed has to say so in its date.
+///
+/// **Both arms are on the plant web**, so the branch is held constant and the only thing that moves
+/// is the entry's own kit — a cross-web pair would confound the two.
+#[test]
+fn two_entries_on_one_band_are_each_priced_and_dated_at_their_own_kit() {
+    /// Both entries geared, or the tail one deliberately bare — the one dial under test.
+    fn queue_with_a_bare_tail(bare_tail: bool) -> (App, Vec<UVec2>) {
+        let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the band keeps its allocation");
+            assert!(allocation
+                .set_build_entry_kit(&BuildSource::Patch(sources[0]), Some(plant_build_kit())));
+            assert!(allocation.set_build_entry_kit(
+                &BuildSource::Patch(sources[1]),
+                Some(if bare_tail {
+                    bare_builders()
+                } else {
+                    plant_build_kit()
+                }),
+            ));
+        }
+        resolve_a_turn(&mut app);
+        (app, sources)
+    }
+
+    let (bare_tail, sources) = queue_with_a_bare_tail(true);
+    let head_gear = published(&bare_tail, sources[0], |patch| patch.buildWorkFromGear());
+    let tail_gear = published(&bare_tail, sources[1], |patch| patch.buildWorkFromGear());
+    assert!(
+        head_gear > 0.0,
+        "fixture: the geared head must actually be geared, or both claims below are vacuous — \
+         got {head_gear}"
+    );
+    assert_eq!(
+        tail_gear, 0.0,
+        "a deliberately bare-handed entry is priced at ITS OWN kit, not at the kit the entry above \
+         it happens to carry — got {tail_gear}"
+    );
+
+    // **And the DATE moves with it**: the same queue with a geared tail finishes sooner.
+    let (geared_tail, geared_sources) = queue_with_a_bare_tail(false);
+    let bare_date = published_turns(&bare_tail, sources[1]);
+    let geared_date = published_turns(&geared_tail, geared_sources[1]);
+    assert!(
+        bare_date > geared_date,
+        "a waiting entry is dated at the gear IT will be raised with: bare tail {bare_date} must \
+         be later than geared tail {geared_date}"
+    );
+}
+
+/// **`none` IS A REAL SELECTION AND DOES NOT COLLAPSE TO "derive".**
+///
+/// The two are different statements — *"send this job's builders out bare-handed to conserve gear"*
+/// versus *"whatever this entry's web wants"* — and an `Option` that lost the distinction would make
+/// the bare-handed choice unexpressible, which is exactly the defect the deleted per-band picker had
+/// in the other direction.
+#[test]
+fn a_bare_kit_on_an_entry_survives_as_bare_handed_rather_than_collapsing_to_derive() {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let source = BuildSource::Patch(sources[0]);
+    assert!(app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_build_entry_kit(&source, Some(bare_builders())));
+    resolve_a_turn(&mut app);
+    assert_eq!(
+        published(&app, sources[0], |patch| patch.buildWorkFromGear()),
+        0.0,
+        "an explicit bare kit must be honoured: collapsing it to the derivation would send the \
+         pool out with the hoes the player just declined"
+    );
+
+    // **Liveness — clearing it back to `None` really does reach the derivation.**
+    assert!(app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_build_entry_kit(&source, None));
+    resolve_a_turn(&mut app);
+    assert!(
+        published(&app, sources[0], |patch| patch.buildWorkFromGear()) > 0.0,
+        "clearing the override returns the entry to its own web's kit — without this the zero \
+         above is also what a dead gear term reports"
+    );
+}
+
+/// **THE WIRE STATES THE RESOLVED KIT, NEVER "the player named none"** — and `""` means *"nobody has
+/// this queued"*, which is a different statement from the roster's own bare kit.
+#[test]
+fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
+    let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
+    let published_kit = |app: &App, source: UVec2| -> String {
+        published(app, source, |patch| {
+            patch.buildKitId().unwrap_or_default().to_string()
+        })
+    };
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        // The head names nothing — the derivation answers for it.
+        assert!(allocation.set_build_entry_kit(&BuildSource::Patch(sources[0]), None));
+        // …and the tail names the bare kit, which is a selection and not an absence.
+        assert!(
+            allocation.set_build_entry_kit(&BuildSource::Patch(sources[1]), Some(bare_builders()))
+        );
+        // Nothing is queued on the third source at all.
+        allocation.build_queue.retain(|entry| {
+            entry.source == BuildSource::Patch(sources[0])
+                || entry.source == BuildSource::Patch(sources[1])
+        });
+    }
+    resolve_a_turn(&mut app);
+
+    assert_eq!(
+        published_kit(&app, sources[0]),
+        plant_build_kit().id(),
+        "an entry naming nothing publishes the kit its own web wants — a row that published the \
+         empty string would say 'no kit' while the pool was out with hoes"
+    );
+    assert_eq!(
+        published_kit(&app, sources[1]),
+        bare_builders().id(),
+        "…and an explicit bare kit publishes the roster's own bare id, which reads differently \
+         from the empty string below"
+    );
+
+    // **An unqueued source says so with the empty string.** Withdraw one and re-publish.
+    assert!(app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .unqueue_build(&BuildSource::Patch(sources[1])));
+    resolve_a_turn(&mut app);
+    assert_eq!(
+        published_kit(&app, sources[1]),
+        "",
+        "a source in nobody's queue is being raised with nothing at all"
     );
 }

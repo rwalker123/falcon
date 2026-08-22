@@ -487,6 +487,7 @@ const FACTION_SHELL_MIN_WIDTH := BandCityPanel.ZONE_BAND_WIDTH + BandCityPanel.Z
 ## issue is about, and the canvas — not just the window — has to be pinned: `project.godot` stretches
 ## `canvas_items`, so a bare window pin renders at the 1920 base width whatever the window says.
 const DOCKROW_CANVAS := Vector2i(1920, 1080)
+
 ## The map the dock-row states seed their minimap from — the DEFAULT size, resolved through the same
 ## registry the New Game pane and the inspector's Map tab use. The rail width the reflow declares is a
 ## function of the minimap's grid ASPECT (`MinimapPanel.resize_to_aspect`: `embedded_height × aspect`,
@@ -12534,12 +12535,331 @@ func _render_build_queue_states() -> void:
 	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
 	_push_bands([_build_queue_band_fixture(3)])
 	await _settle()
+	# The queue's own controls, on the same three-entry fixture: the settings strip's FLOW, the
+	# reorder drag, the optimistic withdrawal and the zone's one-expansion rule.
+	await _render_queue_control_states()
 	_assert_unqueue_command_grammar()
 	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
 	# pushed, and everything below reads whatever this block leaves behind.
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture()])
+	await _settle()
+
+## **THE QUEUE'S OWN CONTROLS — the settings strip's FLOW, the reorder drag, the optimistic
+## withdrawal, and the zone's one-expansion rule** (`docs/plan_standing_upkeep.md` §4.7b).
+##
+## All four run on the SAME three-entry fixture the states above render, because each is a claim about
+## the block as drawn rather than about a fixture of its own — and the last of them is a claim about
+## two lists at once, which no fixture can stage on its own.
+func _render_queue_control_states() -> void:
+	# **(a) THE STRIP AT TWO LINES — the tall LEFT dock, which is the shipped default edge.** The pair
+	# does not fit a ~354px column, so the kit stacks under the crop and the two KEYS line up. The
+	# widths are the claim: neither picker shrinks, which was the whole objection to fitting them in.
+	_panel.set_dock(SIDE_LEFT)
+	var plant_key := _queue_entry_key(false)
+	if plant_key == "":
+		_fail("queue controls — no PLANT entry to open settings on")
+		return
+	_hud._bandpanel._toggle_queue_settings(plant_key)
+	await _settle()
+	await _save("band_panel_queue_settings_stacked")
+	_assert_zone_content_fits()
+	_assert_queue_settings_flow("the tall LEFT dock", false)
+	# **(b) …AND AT ONE LINE, WHERE THE ZONE IS WIDE ENOUGH FOR THE PAIR.** Same strip, same widths,
+	# one line — which is what "it flows" means, and a predicate answering the same either way would
+	# pass (a) alone.
+	#
+	# ⛔ **THE 1920 BOTTOM DOCK IS *NOT* THAT LAYOUT, and the numbers say so** — its work zone is 382px
+	# wide (one board column of `WORK_COLUMN_MIN_WIDTH`), which leaves the strip 368 of the 408 the
+	# pair needs. The zone's width is the board's COLUMN COUNT times a column, so one line arrives when
+	# the board earns a second column: `_affordable_work_columns` needs ~760px of card span for that,
+	# which a 1920 wide shell does not have once both flanks are paid for. It is reported at every dock
+	# above rather than asserted at one, because *which layouts get one line* is a fact about the
+	# widths and is Ray's to move if 1920 should be one of them.
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_queue_settings_wide")
+	_assert_zone_content_fits()
+	_assert_queue_settings_flow("the 1920 BOTTOM dock", false)
+	_assert_queue_settings_predicate()
+	# **(c) ONE EXPANSION AT A TIME IN THE WHOLE ZONE.** With the queue's strip open, opening a WORK
+	# row's inspector must CLOSE it — the defect this closes drew 426 into a 396 box on exactly this
+	# dock, and it was one click each to reach. `_assert_zone_content_fits` is the assertion that
+	# would have caught it, so it runs on the frame where both were asked for.
+	var board_rows := _work_board_rows()
+	if board_rows.is_empty():
+		_fail("queue controls — no WORK board row to open an inspector on")
+	else:
+		_click_control(board_rows[0])
+		await _settle()
+		await _save("band_panel_queue_settings_exclusive")
+		_assert_band_panel("opening a WORK row's inspector CLOSES the queue's settings strip",
+			_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
+		_assert_band_panel("…and the work inspector is the one that is open",
+			_hud._bandpanel._work_open_key != "" and _hud._bandpanel._queue_open_key == "")
+		_assert_zone_content_fits()
+		_report_zone_content_extent("band_panel_queue_settings_exclusive")
+		# …and the exclusion holds in the other direction too, or a builder that simply never opens
+		# the strip passes the half above.
+		_hud._bandpanel._toggle_queue_settings(plant_key)
+		await _settle()
+		_assert_band_panel("…and opening the queue's strip closes the WORK inspector",
+			_hud._bandpanel._work_open_key == ""
+				and _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null)
+		_hud._bandpanel._toggle_queue_settings(plant_key)
+		await _settle()
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	# **(d) A DRAG IN FLIGHT, WITH ITS DROP INDICATOR.** Driven through the REAL drag-forwarding
+	# callables — the ones `set_drag_forwarding` installs — so this is the gesture's own path rather
+	# than a state poke, and the indicator is read off the target row's own handle.
+	await _render_queue_drag_state()
+	# **(e) THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED** (§4.7b ④), where it used
+	# to sit there until the turn resolved. The PAIRED claim is that the OTHER entries stay: a block
+	# that emptied itself would pass "the row is gone".
+	await _render_queue_withdrawal_state()
+
+## One queued entry's key by web, off the block's own model list.
+func _queue_entry_key(animal: bool) -> String:
+	var band := _hud._band_labor.panel_band()
+	for entry_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		var entry: Dictionary = entry_variant
+		var is_animal := String(entry.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT
+		if is_animal == animal:
+			return String(entry.get("key", ""))
+	return ""
+
+## The WORK BOARD's rows themselves. The board row carries no meta of its own — its RUNG SLOT does
+## (`WORK_ROW_RUNG_META`), and that is a Label two levels in, whose `gui_input` toggles nothing. So the
+## row is the slot's nearest `PanelContainer` ancestor, which is the node the click handler is on.
+func _work_board_rows() -> Array[Control]:
+	var rows: Array[Control] = []
+	for slot in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_RUNG_META, []):
+		var node: Node = slot
+		while node != null and not (node is PanelContainer):
+			node = node.get_parent()
+		if node != null and not rows.has(node):
+			rows.append(node as Control)
+	return rows
+
+## **THE FLOW, MEASURED RATHER THAN LOOKED AT.** The claim has three parts and all three are numbers:
+## the two pickers sit on ONE line or TWO (their `global_position.y`), NEITHER is narrower than its
+## declared width (the objection the flow exists to answer), and the strip DREW no taller than
+## `build_queue_settings_height` RESERVED for it — which is the invariant the whole computed-wrap
+## design exists to keep, in a zone that clips rather than overflows.
+func _assert_queue_settings_flow(where: String, want_one_line: bool) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		_fail("%s — the settings strip is not open" % where)
+		return
+	var crop := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) as Control
+	var kit := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) as Control
+	if crop == null or kit == null:
+		_fail("%s — the settings strip is missing a picker (crop %s, kit %s)"
+			% [where, crop != null, kit != null])
+		return
+	var one_line := is_equal_approx(crop.global_position.y, kit.global_position.y)
+	# **THE WIDTH IS REPORTED BESIDE THE VERDICT**, because the verdict is a pure function of it: the
+	# strip flows on the room the WORK ZONE has, and that zone's width is the board's column count
+	# times a column — so *"which layout gets one line"* is answerable from this line alone.
+	print("band_panel_preview: %s — settings strip line width %.0f of the %.0f one line needs"
+		% [where, _hud._bandpanel._queue_settings_line_width(),
+			HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH * 2.0
+				+ HudWorkVocab.BUILD_QUEUE_CROP_WIDTH + HudWorkVocab.BUILD_QUEUE_KIT_WIDTH
+				+ float(HudWorkVocab.WORK_ROW_SEPARATION) * 3.0])
+	_assert_band_panel("%s draws the settings pair on %s — crop y %.0f, kit y %.0f"
+			% [where, "ONE line" if want_one_line else "TWO lines",
+				crop.global_position.y, kit.global_position.y],
+		one_line == want_one_line)
+	_assert_band_panel("…with NEITHER picker shrunk — crop %.0f of %.0f, kit %.0f of %.0f"
+			% [crop.size.x, HudWorkVocab.BUILD_QUEUE_CROP_WIDTH,
+				kit.size.x, HudWorkVocab.BUILD_QUEUE_KIT_WIDTH],
+		crop.size.x >= HudWorkVocab.BUILD_QUEUE_CROP_WIDTH
+			and kit.size.x >= HudWorkVocab.BUILD_QUEUE_KIT_WIDTH)
+	# **RESERVED ≥ DRAWN, which is the one thing a clipping zone cannot check for itself.**
+	var reserved := strip.custom_minimum_size.y
+	_assert_band_panel("…and the strip drew %.0fpx of the %.0f it reserved"
+		% [strip.size.y, reserved], strip.size.y <= reserved + QUEUE_FACE_WIDTH_TOLERANCE)
+
+## **THE FLOW PREDICATE ITSELF, ON BOTH SIDES OF ITS THRESHOLD** — because NO SHIPPED DOCK REACHES
+## the one-line side today and a rendered frame therefore cannot assert it
+## (`docs/plan_standing_upkeep.md` §4.7b ②).
+##
+## **THE WORK ZONE IS ONE BOARD COLUMN WIDE AT EVERY DOCK THE PANEL SHIPS WITH** — 342px of strip on
+## the tall LEFT dock, 368 on the 1920 BOTTOM one, against the 408 the two full-width pickers and
+## their two keys need. One line arrives when the board earns a SECOND column, which needs ~760px of
+## card span the 1920 wide shell does not have once both flanks are paid for.
+##
+## So the wrap is asserted where it is DECIDED. That is the whole point of it being a width predicate
+## both the reservation and the builder read rather than a container behaviour: it is checkable
+## without a layout, and the reserved height moves with it — which is the invariant a clipping zone
+## has no other way to keep.
+func _assert_queue_settings_predicate() -> void:
+	var needed := HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH * 2.0 \
+		+ HudWorkVocab.BUILD_QUEUE_CROP_WIDTH + HudWorkVocab.BUILD_QUEUE_KIT_WIDTH \
+		+ float(HudWorkVocab.WORK_ROW_SEPARATION) * 3.0
+	_assert_band_panel("the flow predicate says ONE line at exactly the width the pair needs — %.0fpx"
+		% needed, HudWorkVocab.queue_settings_one_line(needed))
+	_assert_band_panel("…and TWO a pixel under it, so neither picker is ever asked to shrink",
+		not HudWorkVocab.queue_settings_one_line(needed - 1.0))
+	# **AND THE RESERVATION MOVES WITH IT**, which is the half that keeps the board honest: a strip
+	# that wrapped without the height following would take the second line off the bottom of a zone
+	# that clips.
+	var one := HudWorkVocab.build_queue_settings_height(0, true, true, true)
+	var two := HudWorkVocab.build_queue_settings_height(0, true, true, false)
+	_assert_band_panel("…and the reserved height follows the wrap — %.0fpx on one line, %.0f on two"
+		% [one, two], two > one)
+	# **A LONE CONTROL IS ONE LINE WHATEVER THE WIDTH.** An ANIMAL entry has a kit and no crop, so it
+	# has nothing to wrap against — letting the predicate answer for it would reserve a second line for
+	# a strip that draws one.
+	_assert_band_panel("…while a kit-only strip stays one line even where the pair would wrap — %.0fpx"
+		% HudWorkVocab.build_queue_settings_height(0, false, true, false),
+		is_equal_approx(HudWorkVocab.build_queue_settings_height(0, false, true, false), one))
+
+## **THE REORDER GESTURE, THROUGH ITS OWN CALLABLES.** `set_drag_forwarding` is what a real drag runs,
+## so the drag data, the hover verdict and the drop are asked of the very nodes the block drew — a
+## harness that called the handlers directly would assert its own routing.
+##
+## **THE FRAME IS TAKEN WHILE THE DRAG IS LIVE**, with the indicator on the target row, because that
+## is the state no other frame can reach: the row is styled mid-gesture and the block is deliberately
+## NOT re-rendering (a snapshot mid-drag would free the row the pointer is holding).
+func _render_queue_drag_state() -> void:
+	var rows := _build_queue_rows()
+	if rows.size() < 2:
+		_fail("queue drag — need two queue rows to reorder, found %d" % rows.size())
+		return
+	var head: Control = rows[0]
+	var second: Control = rows[1]
+	var handle := _find_meta_control(head, HudWorkVocab.BUILD_QUEUE_MARKER_META) as Control
+	if handle == null:
+		_fail("queue drag — the head row has no marker column to grab")
+		return
+	# **THE HANDLE'S AFFORDANCES ARE ASSERTED ON THE NODE; THE GESTURE'S LOGIC THROUGH THE
+	# CONTROLLER'S OWN CALLABLES.** Godot exposes no public getter for the callables
+	# `set_drag_forwarding` installs (`_get_drag_data` is a virtual the Viewport calls), so what a
+	# harness CAN read is what the player can see — the move cursor, the tooltip and a mouse filter
+	# that still lets the click through to the row — and what it can DRIVE is the three functions
+	# those callables are bound to.
+	_assert_band_panel("the marker column offers the MOVE cursor, so it reads as a handle",
+		handle.mouse_default_cursor_shape == Control.CURSOR_MOVE)
+	_assert_band_panel("…with its own tooltip, saying what the order decides",
+		handle.tooltip_text == HudWorkVocab.BUILD_QUEUE_DRAG_TOOLTIP)
+	# **`PASS`, so a plain click on the handle still opens the row's settings** — Godot only asks for
+	# drag data past a movement threshold, and a `STOP` filter here would eat the click entirely.
+	_assert_band_panel("…and it PASSES its clicks to the row, so click-to-open still works",
+		handle.mouse_filter == Control.MOUSE_FILTER_PASS)
+	var band := _hud._band_labor.panel_band()
+	var data: Variant = _hud._bandpanel._queue_drag_data(Vector2.ZERO, handle, band,
+		_queue_entry_key(false))
+	_assert_band_panel("the grab hands back a queue-entry payload",
+		data is Dictionary and String((data as Dictionary).get("type", ""))
+			== HudWorkVocab.BUILD_QUEUE_DRAG_TYPE)
+	if not (data is Dictionary):
+		return
+	# Below the target's midpoint, so the drop lands BELOW it — which is the demotion a player
+	# dragging the head down is asking for, and the edge the indicator must name.
+	var below := Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT * 0.75)
+	_assert_band_panel("…and the row below it accepts the drop",
+		_hud._bandpanel._queue_can_drop(below, data, _queue_entry_key(true)))
+	_assert_band_panel("…marking the edge the entry would land on, inside the target row's own height",
+		String(second.get_meta(HudWorkVocab.BUILD_QUEUE_DROP_MARK_META, ""))
+			== HudWorkVocab.BUILD_QUEUE_DRAG_HANDLE)
+	# ⛔ **AND THE ZONE DOES NOT REBUILD WHILE THE GESTURE IS LIVE.** A snapshot mid-drag frees the row
+	# the pointer is holding and Godot ends the drag on the first pixel of movement, which is the whole
+	# reason the suppression exists — so the claim is that a full re-render leaves the rows alone.
+	var before := _build_queue_rows().size()
+	_hud._bandpanel.rerender()
+	_assert_band_panel("…and a snapshot mid-drag does NOT rebuild the zone (rows %d → %d)"
+		% [before, _build_queue_rows().size()], _build_queue_rows().size() == before)
+	# **THE INDICATOR IS A MEASUREMENT TOO, not only a meta.** The line is drawn INSIDE the target
+	# row's own 28px as an edge on its stylebox — an indicator BETWEEN two flush rows would need a new
+	# height term on both sides of a reservation this zone clips against — so the claim is that the
+	# border is on the row and that its width is the one the vocabulary declares.
+	var marked := second.get_theme_stylebox("panel") as StyleBoxFlat
+	_assert_band_panel("…drawn as an edge on the target row's OWN stylebox, costing the block no height — %dpx"
+			% (0 if marked == null else marked.border_width_bottom),
+		marked != null and marked.border_width_bottom == HudWorkVocab.BUILD_QUEUE_DROP_EDGE_WIDTH)
+	await _settle()
+	await _save("band_panel_queue_drag")
+	# The drop itself, read off the REAL command builder: the head dragged below the second entry is
+	# position 1, and `build_order` names the BAND where `unqueue` and `build_kit` do not.
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.build_order_requested.connect(sink)
+	_hud._bandpanel._queue_drop(below, data, band, _queue_entry_key(true))
+	_hud.build_order_requested.disconnect(sink)
+	if seen.is_empty():
+		_fail("queue drag — the drop emitted no build_order")
+	else:
+		var line := String(MAIN_SCRIPT.format_build_order(seen[0] as Dictionary).get("line", ""))
+		var want := "build_order %d %d %d %d 1" % [HudConst.PLAYER_FACTION_ID,
+			int((seen[0] as Dictionary).get("band_id", HudConst.NO_BAND_ID)),
+			QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y]
+		_assert_band_panel("…and the drop sends `%s` (got \"%s\")" % [want, line], line == want)
+		# **THE LIST HOLDS THE NEW ORDER UNTIL THE TURN RESOLVES** — `buildQueuePosition` is
+		# turn-written, so without the overlay the block snaps back on the command's own recapture.
+		_hud._bandpanel._on_queue_drag_end()
+		await _settle()
+		var reordered := _build_queue_rows()
+		_assert_band_panel("…and the block draws the DRAGGED order rather than the wire's",
+			reordered.size() >= 2 and int(reordered[1].get_meta(
+				HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD)
+	_hud._band_labor._pending_labor.clear()
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## **A WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED** (§4.7b ④), and the two other
+## entries stay — the paired claim, without which a block that simply emptied itself would pass.
+func _render_queue_withdrawal_state() -> void:
+	var before := _build_queue_rows().size()
+	var rows := _build_queue_rows()
+	if rows.is_empty():
+		_fail("queue withdrawal — no queue row to withdraw")
+		return
+	var button := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	if button == null:
+		_fail("queue withdrawal — the head row carries no `%s`"
+			% HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH)
+		return
+	button.pressed.emit()
+	# ⛔ **AND THEN THE SNAPSHOT THE COMMAND ITSELF TRIGGERS, ON THE SAME TURN.** The server re-captures
+	# and broadcasts after EVERY command, and that capture still carries the stale turn-written
+	# `buildQueuePosition` — so re-pushing this fixture UNCHANGED is exactly the frame a "hide it until
+	# the next snapshot" rule would flicker the row back on. Keying the withdrawal on the TURN is what
+	# makes it survive this push. It also re-seats the panel band, which an optimistic write on this
+	# layer moves to whatever unit the harness last SELECTED.
+	_push_bands([_build_queue_band_fixture(3)])
+	await _settle()
+	await _save("band_panel_queue_withdrawn")
+	var band_after := _hud._band_labor.panel_band()
+	var modelled_keys: Array = []
+	for entry_variant in _hud._bandpanel._build_queue_models(band_after,
+			_hud._bandpanel._work_source_models(band_after, 0)):
+		modelled_keys.append(String((entry_variant as Dictionary).get("key", "")))
+	print("band_panel_preview: queue withdrawal — entries left ", modelled_keys,
+		" withdrawn ", _hud._band_labor.pending_unqueues_for(
+			int(band_after.get("entity", -1))).keys())
+	var modelled := modelled_keys.size()
+	_assert_band_panel("a withdrawn entry leaves the block the frame the `%s` is pressed, and STAYS gone across the command’s own recapture — %d rows → %d (%d entries modelled)"
+		% [HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH, before, _build_queue_rows().size(), modelled],
+		_build_queue_rows().size() == before - 1)
+	# **AND THE SOURCE'S WORK ROW GOES BACK TO OFFERING THE RUNG**, which is the other half of what a
+	# withdrawal means: `effective_worker_map` blanks the effective improvement, so the `⌃` is an offer
+	# again rather than a build in flight.
+	var band := _hud._band_labor.panel_band()
+	var merged := _hud._band_labor.effective_worker_map(band)
+	var key := _hud._band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
+		QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y, "")
+	_assert_band_panel("…and the source's effective improvement is blank again (got \"%s\")"
+		% String((merged.get(key, {}) as Dictionary).get("improvement", "")),
+		String((merged.get(key, {}) as Dictionary).get("improvement", "")) == "")
+	_assert_zone_content_fits()
+	_hud._band_labor._pending_labor.clear()
+	_hud._bandpanel.rerender()
 	await _settle()
 
 ## The band that owns the queue: the reference band, its forage and hunt rows given the declarations
@@ -12806,6 +13126,53 @@ func _assert_build_queue_leaves_the_board_rows() -> void:
 func _build_queue_rows() -> Array[Control]:
 	return _collect_meta_controls(_panel, HudWorkVocab.BUILD_QUEUE_ROW_META, [])
 
+## One queue row by WEB, re-found from the live tree. **Every click on a queue row re-renders the
+## zone and frees the rows**, so a row captured before a click is a freed object by the time the next
+## one is delivered — and `_click_control` on one raises, which ends an assertion block with no
+## `FAIL` line at all. The needle is the row's own verb face, never the compose sheet's offer label.
+func _find_queue_row(animal: bool) -> Control:
+	for row in _build_queue_rows():
+		var face := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_FACE_META)
+		if face == null:
+			continue
+		var is_animal := String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)).contains(
+			HudFormat.policy_face(SourceForecast.IMPROVEMENT_TAME))
+		if is_animal == animal:
+			return row
+	return null
+
+## **THE KIT PICK'S COMMAND, READ OFF `Main.format_build_kit` — and the claim is the OMISSION.**
+##
+## Picking the DERIVED entry must emit `build_kit <faction> <x> <y>` with NO `kit` token, because an
+## absent token is how the sim is told to go back to deriving; a client that echoed `kit tillage`
+## there would PIN the derivation the player was handing back. Picking anything else must carry its
+## token, or the assertion above passes on a builder that never emits one.
+func _assert_build_kit_command_grammar(picker: OptionButton) -> void:
+	var derived_index := HudWidgets.NO_ENTRY_SELECTED
+	var other_index := HudWidgets.NO_ENTRY_SELECTED
+	for index in picker.item_count:
+		if picker.get_item_text(index).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+			derived_index = index
+		elif not picker.is_item_disabled(index):
+			other_index = index
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.build_kit_requested.connect(sink)
+	if derived_index != HudWidgets.NO_ENTRY_SELECTED:
+		picker.item_selected.emit(derived_index)
+	if other_index != HudWidgets.NO_ENTRY_SELECTED:
+		picker.item_selected.emit(other_index)
+	_hud.build_kit_requested.disconnect(sink)
+	if seen.size() < 2:
+		_fail("the queue row's KIT picker emitted %d build_kit payload(s), not 2" % seen.size())
+		return
+	var derived_line := String(MAIN_SCRIPT.format_build_kit(seen[0] as Dictionary).get("line", ""))
+	var other_line := String(MAIN_SCRIPT.format_build_kit(seen[1] as Dictionary).get("line", ""))
+	_assert_band_panel("…and picking `(default)` emits NO `kit` token, which is what CLEARS the override — `%s`"
+		% derived_line, not derived_line.contains(" kit "))
+	_assert_band_panel("…while picking another kit carries its token — `%s`" % other_line,
+		other_line.contains(" kit %s" % String((seen[1] as Dictionary).get("kit_id", ""))))
+
 ## How many WORK BOARD rows are rendered — the board's own rows, told from the queue's by the meta
 ## only a board row carries (`HudWorkVocab.WORK_ROW_RUNG_META`, its reserved rung slot).
 func _work_board_row_count() -> int:
@@ -12840,6 +13207,13 @@ func _assert_unqueue_command_grammar() -> void:
 	_assert_band_panel("…and on a HERD entry `%s` (got \"%s\")"
 			% [herd_line, String(lines.get(1, ""))],
 		String(lines.get(1, "")) == herd_line)
+	# ⛔ **THE PRESSES ABOVE ARE REAL, SO THEY LEFT REAL WITHDRAWALS ON THE OVERLAY** (§4.7b ④): a
+	# `✕` now hides its row on the frame it is pressed, keyed on the TURN, and the turn does not
+	# advance in a harness. Every state below this one reads the same band, and a withdrawal left
+	# standing blanks those sources' improvements — which is what a build-state fixture and a
+	# pending-queue fixture both derive their whole claim from. `_render_queue_control_states`
+	# asserts the withdrawal ITSELF; this line is the cleanup after a grammar probe.
+	_hud._band_labor._pending_labor.clear()
 
 ## **THE QUEUE HEAD STATES THE KIT ITS OWN ENTRY IMPLIES, and `No kit` when nothing can be derived.**
 ## Three states, PNG-LESS and by EQUALITY, because a resolver stuck on ONE web satisfies any one of
@@ -13059,9 +13433,11 @@ func _assert_queue_row_settings() -> void:
 	# is what `build_queue_block_height`'s open-only term means in arithmetic.
 	_assert_band_panel("no settings strip is open until a row is clicked",
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
-	# **THE ANIMAL HALF OF THE PAIR** — taming commits no species, so its row must not offer a click
-	# that opens nothing. Driven through the REAL `gui_input`, so this is the row's own handler and
-	# not a state poke.
+	# **THE ANIMAL HALF OF THE PAIR, AND IT IS THE OPPOSITE CLAIM NOW** (§4.7a ②). An animal entry
+	# commits no species and it is still RAISED WITH A TOOL, so it expands into a KIT-only strip where
+	# it used to refuse to expand at all — which is the point of moving the override here, not a
+	# regression in the *never invite a click that opens nothing* rule. Driven through the REAL
+	# `gui_input`, so this is the row's own handler and not a state poke.
 	if animal_row == null:
 		# **A SKIPPED HALF IS A FAILED HALF.** The pair is the claim, so a fixture that has stopped
 		# staging an animal entry must say so rather than leave the positive half passing alone.
@@ -13069,12 +13445,34 @@ func _assert_queue_row_settings() -> void:
 	else:
 		_click_control(animal_row)
 		await _settle()
-		# **AND THE CLAIM IS ABOUT THE CROP, not about the web.** §2.8 gave the strip a LEG LIST too,
-		# so an entry with published legs expands on either web — this fixture's herd publishes none,
-		# which is the state a Tame that has never been to the wire is in, and what the row must not do
-		# there is invite a click that opens an empty strip.
-		_assert_band_panel("an ANIMAL entry with no published legs does not expand — a Tame commits no species",
-			_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
+		var animal_strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+		_assert_band_panel("an ANIMAL entry EXPANDS now — every queued job derives its own builders kit",
+			animal_strip != null)
+		if animal_strip != null:
+			_assert_band_panel("…into a KIT picker",
+				_find_meta_control(animal_strip, HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) != null)
+			# …and the crop half stays the PLANT web's, which is what keeps this a pair rather than
+			# "everything expands into everything".
+			_assert_band_panel("…and NO crop picker — a Tame commits no species",
+				_find_meta_control(animal_strip, HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) == null)
+			# **THE KIT IS THE ANIMAL WEB'S, DERIVED FROM THIS ENTRY'S OWN BRANCH.** A picker that
+			# answered the plant web's tool here would be the per-BAND mistake the override exists to
+			# undo, restored one surface over.
+			var animal_kit := _find_meta_control(animal_strip,
+				HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) as OptionButton
+			if animal_kit != null:
+				_assert_band_panel("…deriving the ANIMAL web's tool, not the plant web's — \"%s\""
+						% animal_kit.text,
+					String(animal_kit.get_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META))
+						== BandFx.KIT_ID_HURDLING)
+	# **RE-FIND THE PLANT ROW: the click above re-rendered the zone and freed every row this function
+	# was holding.** `_click_control` on a freed object raises, which ends the block with no `FAIL`
+	# line and leaves the strip open over every state that follows — the exact failure the CLOSER
+	# below already documents, reached one click earlier now that the animal row expands too.
+	plant_row = _find_queue_row(false)
+	if plant_row == null:
+		_fail("declare — the PLANT queue row is gone after the animal row expanded")
+		return
 	_click_control(plant_row)
 	await _settle()
 	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
@@ -13086,10 +13484,34 @@ func _assert_queue_row_settings() -> void:
 			== String((_hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
 				_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0))[0]
 					as Dictionary).get("key", "")))
-	var picker := _find_first_of_type(strip, "OptionButton") as OptionButton
+	var picker := _find_meta_control(strip,
+		HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) as OptionButton
 	if picker == null:
 		_fail("the settings strip carries no crop picker")
 		return
+	# **THE PLANT ENTRY CARRIES BOTH CONTROLS**, which is what makes the strip *the job's settings*
+	# rather than *the crop's home*. Its kit is the PLANT web's, derived from this entry's own branch.
+	var plant_kit := _find_meta_control(strip,
+		HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) as OptionButton
+	if plant_kit == null:
+		_fail("the PLANT settings strip carries no kit picker")
+		return
+	_assert_band_panel("the PLANT entry's kit derives the plant web's tool — \"%s\"" % plant_kit.text,
+		String(plant_kit.get_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META))
+			== BandFx.KIT_ID_TILLAGE)
+	# **AND IT IS MARKED `(default)` ON THE ENTRY ITSELF**, which is what makes an override legible as
+	# one: the mark names the kit the player gets by touching nothing.
+	var marked_default := ""
+	for index in plant_kit.item_count:
+		if plant_kit.get_item_text(index).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+			marked_default = plant_kit.get_item_text(index)
+	_assert_band_panel("…and the derived answer wears `(default)` in the list — \"%s\"" % marked_default,
+		marked_default.begins_with(KitRoster.display_name_for_id(
+			_hud._band_labor.kits(), BandFx.KIT_ID_TILLAGE)))
+	# **PICKING THE DERIVED DEFAULT SENDS NO `kit` TOKEN, AND THAT IS WHAT CLEARS THE OVERRIDE.**
+	# Read off the REAL builder, because a client that emitted `kit tillage` here would PIN the very
+	# derivation the player was handing the choice back to.
+	_assert_build_kit_command_grammar(plant_kit)
 	# It opens on the band's own committed crop rather than on the list's first entry — the picker's
 	# `select` contract, and the difference between stating a choice and inventing one.
 	_assert_band_panel("…opening on the crop the band's own row carries — \"%s\"" % picker.text,
@@ -13137,13 +13559,7 @@ func _assert_queue_row_settings() -> void:
 	# `Hud._emit_assign_labor`, which re-renders the zone and frees every row this function is holding
 	# — and `_click_control` on a freed object raises, which ends this assertion block with no `FAIL`
 	# line and leaves the strip open over every state that follows.
-	var closer: Control = null
-	for row in _build_queue_rows():
-		var face := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_FACE_META)
-		if face != null and not String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)).contains(
-				HudFormat.policy_face(SourceForecast.IMPROVEMENT_TAME)):
-			closer = row
-			break
+	var closer: Control = _find_queue_row(false)
 	if closer == null:
 		_fail("declare — the PLANT queue row is gone, so its settings strip cannot be closed")
 		return
@@ -13656,6 +14072,15 @@ func _assert_pending_queue_row() -> void:
 		MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
 	var patch_line := "unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
 		PENDING_QUEUE_TILE.x, PENDING_QUEUE_TILE.y]
+	# ⛔ **THE PRESS ABOVE IS REAL, SO IT WITHDREW THE DECLARATION IT WAS PROBING** (§4.7b ④): a `✕`
+	# now hides its row on the frame it is pressed, keyed on the TURN, and the turn does not advance
+	# between the states below. Restoring it here is what keeps this a GRAMMAR probe rather than a
+	# state change every later state inherits — the wide dock's own pending row is the very next one.
+	_hud._band_labor.drop_pending_unqueue(
+		int(_hud._band_labor.panel_band().get("entity", -1)),
+		_hud._band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
+			PENDING_QUEUE_TILE.x, PENDING_QUEUE_TILE.y, ""))
+	_hud._bandpanel.rerender()
 	_assert_band_panel("…and its `%s` still withdraws the declaration — `%s` (got \"%s\")"
 			% [HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH, patch_line, line], line == patch_line)
 

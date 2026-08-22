@@ -266,52 +266,88 @@ spends handling animals.
 - **It does NOT touch `yield_fraction_while_building`.** The payoff already compounds — a faster
   build pays the dip for fewer turns — and a second lever on the same turns would be a rate axis with
   nothing asking for one.
-- **THE DECISION IS THE KIT, NOT THE DURABILITY.** A kit is chosen **per JOB, not per assignment**,
-  and a builders kit carries nothing but its tool: a pool sent out with `tillage` has no hurdles for
-  the `Tame` behind the Cultivate in its queue, and a band that wants both webs' tools has to hold
-  both. That trade — and not the gear's life — is what the axis exists to create.
+- **THE DECISION IS THE KIT, NOT THE DURABILITY.** A kit is chosen **per QUEUE ENTRY**, and a
+  builders kit carries nothing but its tool: a band that wants both webs' tools has to hold both.
+  That trade — and not the gear's life — is what the axis exists to create.
 - **The ring reads it too.** `ExtendPen`'s accrual moved *inside* the band loop to get it, so a
   keeper who brought hurdles raises a ring as they build the original pen.
 
-> #### THE BUILDERS' KIT IS DERIVED PER QUEUE ENTRY — a default, not a lock
+> #### THE BUILDERS' KIT IS A PROPERTY OF THE QUEUE ENTRY — a default, not a lock
 >
 > **A queue item is one job, so a kit per job is exactly following the row.** With two builders kits
 > a single stored id cannot be right for both webs, and the hunt had already solved the same problem
 > one axis over: it derives a per-quarry default and lets the player override, greying kits that
 > genuinely cannot do the job.
 >
-> `systems::labor` resolves the pool's gear **per branch**, once per band per turn
-> (`BuildersGear`), and each build arm reads its own web's answer — so the **head** entry's branch is
-> the one actually funded and everything below it is *dated* at the gear it will be raised with:
+> `systems::labor` resolves the pool's gear **per branch**, once per band per turn, plus **one
+> reading per entry that named a kit of its own** (`BuildersGear`). Each build arm reads
+> `for_source`, so the **head** entry's branch is the one actually funded and everything below it is
+> *dated* at the gear **it** will be raised with — an overridden entry at its own kit, never at its
+> web's derived one. The precedence for one entry (`EquipmentConfig::builders_kit_for`) is:
 >
-> 1. **A kit named on the `builders` row WINS**, `none` included. An absent `kitId` already means
->    *"the job's default"* everywhere else, and this is what preserves deliberately sending the pool
->    out bare-handed to conserve gear.
-> 2. **Otherwise the ROSTER answers** — `EquipmentConfig::build_kit_for_branch`, the earliest entry
->    in file order whose `build_work` serves that web at the fresh tier. It is
+> 1. **The kit named on THIS ENTRY wins**, `none` included. An absent `kitId` already means *"the
+>    job's default"* everywhere else, and this is what preserves deliberately sending the pool out
+>    bare-handed on one job to conserve gear.
+> 2. **Otherwise the ROSTER answers for that entry's web** — `EquipmentConfig::build_kit_for_branch`,
+>    the earliest entry in file order whose `build_work` serves that web at the fresh tier. It is
 >    `kit_supplying(job, PenCarry)`'s shape, with the branch the extra axis a build has and a pen
 >    does not, and it is what keeps a kit id out of the sim: ⛔ **there is no `BuildJob → kit` match
 >    anywhere in Rust**, so a third build tool is a roster edit.
-> 3. **`default_kits.builders` (`none`) is the FALL-BACK**, reached when the row named nothing and
->    either the queue is empty (nothing is being raised, so no tool is out) or no entry serves that
->    web. `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` is what stops the third
->    rung from becoming the answer by accident.
+> 3. **`default_kits.builders` (`none`) is the FALL-BACK**, reached when the entry named nothing and
+>    either there is no entry at all (nothing is being raised, so no tool is out) or no roster entry
+>    serves that web. `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` is what
+>    stops the third rung from becoming the answer by accident.
+>
+> > ⛔ **A KIT ON THE `builders` ROW IS NOT AN INPUT, AND `assign_labor` REFUSES ONE.**
+> > It was rule ① until `docs/plan_standing_upkeep.md` §4.7a ②, and it is the one thing the
+> > derivation cannot express: a single stored id is per **BAND**, so one pick pinned `hurdling`
+> > onto every later builders command and locked a band raising a *plant* Cultivate to the animal
+> > web's tool with no way back (`none` means bare-handed, which is a different statement, not an
+> > undo). §4.6b deleted the client picker rather than leave it harmful; §4.7 gave the override its
+> > home. The refusal is by name — a silently-dropped token is the same class of defect as the
+> > pinning it replaces. **The two KEEPING roles are untouched**: `agriculture` / `husbandry` are
+> > standing pools over a whole web, so one answer per band is right there and the selection stays
+> > on the row (`keeping_kit_for`).
+>
+> **THE COMMAND IS `build_kit <faction> <source…> [kit <id>]`** — the fourth member of the queue
+> family, addressing a source through the same `BuildSourceRef` as `abandon` / `unqueue` /
+> `build_order` and reaching every band of the faction that has it queued. **An absent `kit` token
+> CLEARS the override** back to the derivation, which is what lets the client say *"back to default"*
+> with no new vocabulary (`Main._kit_token` already omits the token when the selection equals the
+> default). A source nothing of yours has queued, an unknown id, and a kit that does not list
+> `builders` are each refused by name.
 >
 > **THE WIRE STATES THE DERIVED KIT, not the stored one.** `LaborAssignmentState.kit_id` on the
-> `builders` row is resolved through `LaborAllocation::builders_kit` at capture — the existing rule
-> *"the wire states the kit rather than 'the player named none'"*, which a per-entry default would
-> otherwise break by publishing `none` while the pool was out with hurdles. Beside it, every
-> `kitTiers[]` row carries **`buildWorkBranch`** so a picker can grey a builders kit whose tool does
-> not serve the entry in front of it, exactly as it greys a snare against a Red Deer.
+> `builders` row is the **head entry's** resolved kit (`LaborAllocation::builders_kit` at capture) —
+> the existing rule *"the wire states the kit rather than 'the player named none'"*, which a
+> per-entry default would otherwise break by publishing `none` while the pool was out with hurdles.
+> Per source, `ForagePatchState.buildKitId` / `HerdTelemetryState.buildKitId` state **that entry's**
+> resolved kit, `""` for a source in nobody's queue. Both are **captured LIVE off the bands' queues**
+> (`snapshot::subsistence::resolve_build_kit_ids`), not stamped by the turn like `buildQueuePosition`
+> beside them: the server re-captures and broadcasts after every dispatched command, so a
+> turn-written field would show a kit pick a whole turn late. There is deliberately **no second
+> "what would the default be" field** — the client mirrors the same roster derivation
+> (`KitRoster.build_kit_for_branch`) to draw its `(default)` mark. Beside them, every `kitTiers[]`
+> row carries **`buildWorkBranch`** so a picker can grey a builders kit whose tool does not serve the
+> entry in front of it, exactly as it greys a snare against a Red Deer.
 >
 > **WEAR FOLLOWS THE WORK ACTUALLY DONE, so the charge is narrowed too.** A player who names
 > `hurdling` and then raises a Cultivate takes *nothing* off that job, so the hurdles are charged
 > nothing: `charge_build_wear` is handed `EquipmentConfig::build_gear_kit`, the same kit holding only
 > the items whose `build_work` served this branch.
 >
+> **A FIXTURE HOLDS THE GEAR AXIS AT ITS IDENTITY ON THE ENTRY, NOT ON THE ROW.** Every pace fixture
+> that measures the ladder rather than a tool writes `kit: Some(bare_builders())` on its
+> `BuildQueueEntry`; a bare kit on the `builders` row is now simply ignored, and a source with **no**
+> entry has nowhere to carry one — such a fixture holds the axis with an empty `BandEquipment`
+> instead, since an *absent* ledger is read as a fully stocked band.
+>
 > **THE SHIPPED OPENING MOVES HERE, deliberately.** `default_kits.builders` was `none` and *meant*
 > it, so every build in the game was bare-handed unless the player named a kit; the derivation makes
-> a start-stocked band's builders geared from turn one on both webs. A band holds
+> a start-stocked band's builders geared from turn one on both webs. A **global** configurable
+> "default builders kit" was considered and rejected — the per-entry derivation is right per web
+> automatically, so a configured default would be a coarser second answer competing with a working
+> one, and `default_kits.builders` already exists for the blunt version. A band holds
 > `ceil(workers × start_stock_fraction)` of each tool, so a pool of `n` **delivers `n × 1.5` a turn
 > instead of `n × 1.0`** until the units run out — which on the shipped 50- and 75-unit rungs is a large pacing move and is
 > the point of the slice rather than a side effect.

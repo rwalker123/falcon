@@ -308,6 +308,20 @@ static func work_row_stylebox(open: bool) -> StyleBoxFlat:
 	sb.content_margin_bottom = WORK_ROW_PADDING_V
 	return sb
 
+## **THE BUILD QUEUE'S DROP INDICATOR — the SAME row backing with one edge lit**
+## (`docs/plan_standing_upkeep.md` §4.7b ③). The queue's rows are flush (the block's `separation` is
+## 0), so an indicator drawn BETWEEN them would need a height term on both sides of a reservation the
+## work zone clips against. Lighting the target row's own top or bottom edge costs the block nothing:
+## the content margins are stated explicitly here, so a border added to this box moves no child.
+static func work_row_drop_stylebox(open: bool, above: bool, edge_width: int) -> StyleBoxFlat:
+	var sb := work_row_stylebox(open)
+	if above:
+		sb.border_width_top = edge_width
+	else:
+		sb.border_width_bottom = edge_width
+	sb.border_color = SIGNAL
+	return sb
+
 ## The inspector strip under a work-board / parties row — the role card's chrome, reused so a strip
 ## and a card read as the same kind of raised surface.
 static func work_inspector_stylebox() -> StyleBoxFlat:

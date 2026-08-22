@@ -731,9 +731,9 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    that needs a crop, and the move would buy nothing.
 
    **7b — WHAT §4.6b LEFT STANDING, and this slice is where it lands.**
-   Each is reachable in play today and none is a defect in the model. **The first has since LANDED**;
-   of the three that remain, the first two are one shape — a band-level act with no band-level
-   surface — and the last is an asymmetry the pending rows introduced.
+   Each was reachable in play and none was a defect in the model. **All four have LANDED** — ① with
+   §4.7a, the other three together; the middle two were one shape, a band-level act with no
+   band-level surface, and the last was an asymmetry the pending rows introduced.
 
    - **Nothing on the Work tab declares a build** (①), so the tile sheet is still the only door.
      > **LANDED, with §4.7a's ①.** The `⌃` ready mark on a work row is the control that declares, and
@@ -761,6 +761,68 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > So each item's cost has to be **measured before it is designed**, and the lever that pays for it
    > — a taller strip, a wider panel, two-abreast pool cards — is **Ray's to pick**. Designing all
    > three and discovering the overflow at the end is the failure this note exists to prevent.
+
+   > **LANDED — all three, and the measurement is what shrank the problem.** Only ② ever wanted
+   > pixels: ③'s grab handle is the **marker column already reserved on every row** (10px, an empty
+   > `MOUSE_FILTER_IGNORE` label on every row that is not the head) and its drop indicator draws
+   > inside a row's own 28px, and ④ is client state with nothing new drawn. **The cap needed no
+   > re-measure either**: on the wide dock `build_queue_rows_max` already answers **1 row plus
+   > `+N more`** from the box, and on the tall LEFT dock it affords **14–27** against a cap of 3 —
+   > so `BUILD_QUEUE_ROWS_MAX` binds on exactly one dock and is dead arithmetic on the other. It
+   > **stays at 3**: raising it to 4 is free at four entries (the overflow row already holds that
+   > slot) and first bites at five, where the block grows 28px and the tall dock's board goes 9 rows
+   > to 7 — one to the row and a second to the pager it then needs.
+   >
+   > **THE KIT PICKER FLOWS, AND THE WRAP IS COMPUTED RATHER THAN DISCOVERED.** Ray's call, against
+   > both drawn alternatives: shrinking the pickers to share a line truncates long names, and a fixed
+   > second line spends a lever on docks that do not need one. So the strip lays the pair on one line
+   > where the width allows and stacks them where it does not — but **not** through a flow container.
+   > This zone `clip_contents` and `build_queue_settings_height` is reserved *before* the strip is
+   > drawn, so a container that wrapped at layout time would leave the reservation unable to know how
+   > many lines drew, and the difference comes silently off the bottom of the board.
+   > `queue_settings_one_line(line_width)` is the one predicate both the reservation and the builder
+   > read. **No shipped dock reaches the one-line state today** — 342px of strip on the tall LEFT
+   > dock and 368 on a 1920 BOTTOM one, against the 408 the pair needs — because the work zone is one
+   > board column wide at every dock; one line arrives when the board earns a **second column**, which
+   > is a source-count answer and not a monitor one.
+   >
+   > **AND THE 30px WAS PAID BY A RULE, NOT BY A LEVER: ONE EXPANSION AT A TIME IN THE WORK ZONE.**
+   > `_queue_open_key` and `_work_open_key` are mutually exclusive now — the one-at-a-time rule both
+   > lists already followed internally, read one level up. The wide dock reads **396 of 396** with the
+   > strip flowed to two lines, so `PANEL_HEIGHT_WIDE` did not move and the height stays out of
+   > travel. **It also closed a live defect this arc shipped**: a settings strip and a work inspector
+   > open together — one click each — drew **460 into the 396 box**, sabotage-verified by disabling
+   > the exclusion. No harness frame could catch it, every strip-open frame having had no inspector
+   > and every inspector-open frame no strip: two disjoint frame families with the defect in the gap,
+   > which is the same shape as the inspector-height defect §4.7 found.
+   >
+   > **Two constants read lower than they drew and are corrected** — `BUILD_QUEUE_UNQUEUE_WIDTH`
+   > 22 → **32** (`HudWidgets.compact` leaves the ghost button's horizontal padding) and
+   > `BUILD_QUEUE_SETTINGS_HEIGHT` 30 → **34** (22px picker + 12px `ROLE_CARD_PADDING`). The second
+   > was a live under-reserve, and correcting it is what makes the flow arithmetic honest.
+   >
+   > **② RETIRED THE ROW KIT RATHER THAN LAYERING ON IT.** `assign_labor` **refuses** a `kit` token on
+   > the `builders` role by name; a stored id per band is the one thing the per-entry derivation
+   > cannot express, and leaving it beneath the new field would have kept the pinning defect reachable
+   > from the command line. `build_kit <faction> <source…> [kit <id>]` is the fourth member of the
+   > `abandon` / `unqueue` / `build_order` family and shares their `BuildSourceRef`; **an absent `kit`
+   > token clears the override**, which is *"an absent `kitId` means the job's default"* read as an
+   > edit. `buildKitId` is captured **live** from the band's allocation rather than from a turn-written
+   > cache, so a pick shows on the recapture the command triggers and needs no overlay at all.
+   >
+   > **④'s TOMBSTONE KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT**, and that is the whole trap. The
+   > server re-captures and broadcasts after **every** dispatched command, and that snapshot still
+   > carries the stale turn-written `buildQueuePosition` — so *"hide until the next snapshot"* flickers
+   > the row straight back. `reconcile_pending` already keys additions on a snapshot with a NEWER turn;
+   > the withdrawal and ③'s optimistic ordering take the identical rule, in the same per-band record.
+   > **The withdrawal clears the improvement rather than dropping the record**, because `unqueue`
+   > leaves the take crew standing and the same record may hold a pending crew edit.
+   >
+   > **THE PLAY REPORT WAS THE COSMETIC HALF ALONE — §4.6b's clearing defect was NOT live.** It was
+   > closed when `unqueue` became its own verb, and the `✕` was already wired to it; the sim now
+   > carries a test for the exact reported sequence (declare and withdraw within one turn, then
+   > resolve) and the entry never reaches the queue. What survived its own withdrawal was the overlay
+   > row, `_on_hud_unqueue` having only sent.
 
 8. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
    subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has

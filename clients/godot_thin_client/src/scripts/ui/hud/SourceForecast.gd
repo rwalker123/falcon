@@ -889,6 +889,19 @@ const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
 # above it against a build queue this client cannot see. Reconstructing either would be a second
 # producer of a verdict that already has one, which is the failure the whole `buildTurnsRemaining`
 # family exists to prevent.
+# **WHAT THE QUEUED ENTRY IS BEING RAISED WITH** — the builders kit id that entry RESOLVES to, `""`
+# when the source is in nobody's queue (`docs/plan_standing_upkeep.md` §4.7a ②). It rides the SAME
+# winning band as the four fields above it.
+#
+# **IT IS THE RESOLVED KIT, NEVER THE STORED OVERRIDE**, which is what makes it renderable: the
+# builders' default is derived per entry from that entry's own food web, so an entry naming nothing
+# would read EMPTY while the pool was out with hurdles. The `(default)` mark beside it is the
+# client's own — `KitRoster.build_kit_for_branch` mirrors the sim's roster derivation — exactly as
+# the hunt row's per-quarry default mark is.
+#
+# **AND IT IS CAPTURED LIVE**, so the recapture the `build_kit` command triggers already carries the
+# new value and the pick needs no optimistic overlay of its own.
+const FORECAST_BUILD_KIT_KEY := "build_kit_id"
 const FORECAST_BUILD_DESTINATION_KEY := "build_destination_rung"
 const FORECAST_BUILD_LEGS_KEY := "build_legs"
 # **WHAT THE SOURCE WILL CARRY AT THAT DESTINATION** — the same `K` as `FORECAST_CAPACITY_KEY`,
@@ -4324,6 +4337,12 @@ static func build_queue_position(src: Dictionary, prefix: String) -> int:
 ## refused (`docs/plan_standing_upkeep.md` §4.6b). Passed through verbatim, unrecognised keys
 ## included — the wording table is the client's and answers an unknown key honestly rather than
 ## dropping it, exactly as `HudFloraVocab.SOW_REFUSAL_FALLBACK` does for a site refusal.
+## **THE BUILDERS KIT THE WINNING BAND'S QUEUE ENTRY RESOLVES TO** — `""` for a source no band has
+## queued, which is also the honest answer for a wire that says nothing. Read it BESIDE
+## `build_queue_position`: this is a property of the ENTRY, so a source with no position has no kit.
+static func build_kit_id(src: Dictionary, prefix: String) -> String:
+    return String(src.get(prefix + FORECAST_BUILD_KIT_KEY, "")).strip_edges()
+
 static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
     return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
 

@@ -762,6 +762,12 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub build_destination_capacity: Option<f32>,
+    /// **WHAT THIS HERD'S BUILD IS BEING RAISED WITH** — the animal twin of
+    /// [`ForagePatchState::build_kit_id`], which carries the whole rationale: the wire states the
+    /// **resolved** kit rather than the stored one, there is no second *"what the default would be"*
+    /// field, and it is captured live off the winning band's queue. Appended (append-only).
+    #[serde(default)]
+    pub build_kit_id: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -851,6 +857,9 @@ impl Default for HerdTelemetryState {
             // **A herd nothing has described is heading nowhere** — the absent reading, never a
             // capacity of zero.
             build_destination_capacity: None,
+            // A herd in nobody's queue is being raised with nothing — the "not queued" reading, and
+            // a different statement from the roster's own bare kit.
+            build_kit_id: String::new(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1404,6 +1413,35 @@ pub struct ForagePatchState {
     /// `cultivation.field_capacity_gain`. Appended (append-only).
     #[serde(default)]
     pub build_destination_capacity: Option<f32>,
+    /// **WHAT THIS SOURCE'S BUILD IS BEING RAISED WITH** — the kit id the winning band's queue entry
+    /// **resolves to**, and `""` when no band has this source queued
+    /// (`docs/plan_standing_upkeep.md` §4.7a ②).
+    ///
+    /// # IT IS THE RESOLVED KIT, NEVER "the player named none"
+    ///
+    /// That is [`LaborAssignmentState::kit_id`](crate::LaborAssignmentState::kit_id)'s standing
+    /// rule, and it matters more here: the builders' default is derived **per queue entry** from
+    /// that entry's own food web — a hoe for a Cultivate, hurdles for a `Tame` — so an entry that
+    /// named nothing would otherwise publish `""` while the pool was out with hurdles. An explicit
+    /// bare-handed pick crosses as the roster's own bare kit id, which is a real selection and reads
+    /// differently from the empty string.
+    ///
+    /// # THERE IS NO SECOND "what the default WOULD be" FIELD
+    ///
+    /// The client mirrors the same roster derivation (`KitRoster.build_kit_for_branch`) to draw its
+    /// `(default)` mark, exactly as the hunt row does per quarry. A second field would be the same
+    /// answer twice, from two producers.
+    ///
+    /// # CAPTURED LIVE, unlike [`Self::build_queue_position`] beside it
+    ///
+    /// The position is stamped by the turn; this is read off the band's live queue at capture. The
+    /// server re-captures and broadcasts after **every** dispatched command, so a live read shows a
+    /// kit pick immediately where a turn-written one would lag a whole turn.
+    ///
+    /// **It rides the same winning band** as the position: a kit taken from one band's queue beside
+    /// a position from another's would be two answers pretending to be one. Appended (append-only).
+    #[serde(default)]
+    pub build_kit_id: String,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from

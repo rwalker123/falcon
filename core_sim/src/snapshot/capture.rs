@@ -2885,6 +2885,18 @@ pub fn capture_snapshot(
             &quoted_wear,
         ),
     );
+    // **THE LIVE BUILDERS KIT PER QUEUED SOURCE**, resolved once for both source tables
+    // (`docs/plan_standing_upkeep.md` §4.7a ②). It is read off the bands' **queues**, not off the
+    // patch/herd scratch beside it: a `build_kit` command is answered by a recapture in the same
+    // dispatch, so a turn-written field would show the pick a whole turn late.
+    let build_kit_ids = crate::snapshot::subsistence::resolve_build_kit_ids(
+        populations
+            .iter()
+            .filter_map(|(_, _, allocation, ..)| allocation),
+        &forage_registry,
+        &herd_registry,
+        &equipment_config,
+    );
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2918,6 +2930,7 @@ pub fn capture_snapshot(
         parties: &quoted_parties,
         penned_parties: &penned_parties,
         fallback_party: &quoted_fallback,
+        build_kits: &build_kit_ids,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
@@ -2956,6 +2969,7 @@ pub fn capture_snapshot(
         &sow_site_refusals,
         &tile_capacities,
         &flora_quotes,
+        &build_kit_ids,
     );
     drop(forage_patches_scope);
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);

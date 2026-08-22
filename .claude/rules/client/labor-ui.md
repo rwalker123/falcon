@@ -2633,14 +2633,13 @@ ENTRY"). Three client consequences, and the first is a defect the sheets shipped
   no new wire field was needed to know which web a sheet is composing for.
 - **`kit_offer` WITHHOLDS A BUILDERS KIT WHOSE TOOL SERVES THE OTHER WEB**, with its reason, and that
   is the same rule as the snare against a Red Deer asked one job over: it takes a `build_branch`
-  parameter rather than a quarry, because the builders stand on no source. **What it feeds is a
-  RESOLUTION, not a picker.** It reached a control while the Builders role card mounted one, which
-  greyed the inapplicable kit and stated why; that card now states its kit on a read-only line
-  (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"), so the rule's one live reader
-  is `KitRoster.resolve_selection`'s selectable list — which is what keeps the card and the build
-  queue's header off a kit the entry's web cannot use. `build_kit_row` no longer takes the parameter
-  at all, no caller having one to pass. `none` is still never withheld, carrying nothing to be
-  inapplicable with.
+  parameter rather than a quarry, because the builders stand on no source. **ITS PICKER IS THE QUEUE
+  ROW'S** (`docs/plan_standing_upkeep.md` §4.7a ②): the per-entry override lives in that row's
+  settings strip, and `_queue_kit_listing` hands the entry's own branch down, so a hoe in front of a
+  `Tame` is greyed WITH ITS REASON rather than hidden. The other live reader is
+  `KitRoster.resolve_selection`'s selectable list, which is what keeps the BUILD QUEUE head off a kit
+  the entry's web cannot use. `none` is still never withheld, carrying nothing to be inapplicable
+  with.
 
 > #### THE ROW PUBLISHES THE **RESOLVED** KIT, AND ONE CASE IS THEREFORE UNRESOLVABLE HERE
 >
@@ -2950,6 +2949,19 @@ retires, so no rung of that picker can be disabled.
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
 
+> #### ⛔ AND THE `builders` ROW TAKES NO `kit` TOKEN AT ALL (§4.7a ②)
+>
+> The builders' kit is a property of the **queue ENTRY**, derived from that entry's own food web, and
+> one stored id per band is the single thing that derivation cannot express — which the sim honoured
+> as a permanent override, so one click pinned a band raising a plant Cultivate to the animal web's
+> tool with no way back. `handle_assign_labor` **refuses a `kit` token on this role by name** now, and
+> `BandPanelController._commanded_role_kit_id` answers `NO_KIT_ID` on that branch so the stepper emits
+> `assign_labor … builders <n>` with no tail. The override's home is the queue row's settings strip
+> (`build_kit`, `band-city-panel.md` → "THE QUEUE'S OWN CONTROLS").
+>
+> **The refusal is in the HANDLER, not the parser**, so `command_guard` — a parser-level gate — cannot
+> see it; the `builders` role is swept BARE there for that reason.
+>
 > #### ⛔ THERE IS NO CHECKBOX ANY MORE — THE SHEET JUDGES A RUNG, THE WORK TAB DECLARES IT (§4.7a ①)
 >
 > Every state above is a `Label` now (the OFFERED one a `RichTextLabel`, see below). The passages in

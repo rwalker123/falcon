@@ -290,6 +290,10 @@ func _ready() -> void:
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("unqueue_requested") and not hud.is_connected("unqueue_requested", Callable(self, "_on_hud_unqueue")):
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
+        if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
+            hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
+        if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
+            hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
             hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
         if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
@@ -1321,6 +1325,79 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
         "message": "Withdraw the build queued on (%d, %d)." % [x, y],
     }
 
+## **`build_kit <faction> <x> <y> [kit <id>]` | `build_kit <faction> <herd_id> [kit <id>]` — THE
+## PER-ENTRY BUILDERS KIT** (`docs/plan_standing_upkeep.md` §4.7a ②). It names a SOURCE and sets a
+## property of that source's QUEUE ENTRY on every band of the faction that has it queued; the row, its
+## take crew and the banked meter are untouched.
+##
+## **ITS OWN BUILDER BECAUSE THE BUILDERS' KIT IS PER ENTRY, NOT PER BAND.** `assign_labor` REFUSES a
+## `kit` token on the `builders` role now: a build's default is derived from that entry's own food web
+## — a hoe for a Cultivate, hurdles for a Tame — and one stored id per band is the one thing that
+## derivation cannot express.
+##
+## ⛔ **AN ABSENT `kit` TOKEN CLEARS THE OVERRIDE back to the derivation, and `_kit_token` is what
+## produces it.** Its standing rule — omit the token when the selection equals the default — is
+## exactly right here, so a player picking the `(default)` entry emits `build_kit 0 12 34` and the sim
+## goes back to deriving. There is no `default` literal to invent, and `none` (bare-handed) survives
+## the round trip as the real selection it is.
+##
+## The two source shapes are told apart the way `format_unqueue` tells them apart, which is the way
+## the sim's own parser does: a non-empty herd id is the herd form, else two integer tokens are a tile.
+static func format_build_kit(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var kit_face := String(payload.get("kit_id", "")).strip_edges()
+    var token := _kit_token(payload)
+    var message_kit := kit_face if token != "" else BUILD_KIT_DERIVED_NOTE
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "build_kit %d %s%s" % [faction, herd_id, token],
+            "message": "Raise the build on %s with %s." % [herd_id, message_kit],
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "build_kit %d %d %d%s" % [faction, x, y, token],
+        "message": "Raise the build on (%d, %d) with %s." % [x, y, message_kit],
+    }
+
+## What the command FEED says when the line carries no `kit` token — the player handed the choice
+## back, and *"with "* followed by nothing states nothing at all.
+const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
+
+## **`build_order <faction> <band> <x> <y> <position>` | `build_order <faction> <band> <herd_id>
+## <position>` — THE REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), emitted by the BUILD QUEUE
+## block's drag.
+##
+## **THE ORDER IS THE FUNDING DECISION**: the whole `builders` pool stands on the HEAD entry until its
+## meter fills, then on the next — so a position is not a label, it is when the job gets built.
+##
+## **IT NAMES A BAND where `build_kit` and `unqueue` do not**, and the asymmetry is the sim's: a queue
+## belongs to a band, while a kit and a withdrawal are properties of the entry every band holding that
+## source has. `position` is 0-based and the sim clamps it to the queue's length.
+static func format_build_order(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var position: int = max(0, int(payload.get("position", 0)))
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "build_order %d %d %s %d" % [faction, band_id, herd_id, position],
+            "message": "Move the build on %s to position %d in the queue." % [herd_id, position],
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "build_order %d %d %d %d %d" % [faction, band_id, x, y, position],
+        "message": "Move the build on (%d, %d) to position %d in the queue." % [x, y, position],
+    }
+
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
 ## (`docs/plan_crafting_and_materials.md` §7).
 ##
@@ -1492,8 +1569,31 @@ func _on_hud_improvement(payload: Dictionary) -> void:
 
 ## WITHDRAW a declaration — the undo for the verb above, and its own handler because its own command
 ## and its own grammar (it names a SOURCE, not a rung). See `format_unqueue`.
+## **A SEND THAT DID NOT GO TAKES THE HUD'S OPTIMISTIC WITHDRAWAL WITH IT**
+## (`docs/plan_standing_upkeep.md` §4.7b ④), the same shape `_on_hud_assign_labor` has: the HUD
+## records the withdrawal BEFORE emitting, the outcome is known only here, and the payload carries
+## `pending_entity` so the drop names that one entry. `format_unqueue` reads neither that key nor
+## `kind`.
 func _on_hud_unqueue(payload: Dictionary) -> void:
-    _send_formatted_command(format_unqueue(payload))
+    if not _send_formatted_command(format_unqueue(payload)):
+        _hud_invoke("drop_pending_unqueue", [payload])
+
+## NAME THE KIT one queued build is raised with (`docs/plan_standing_upkeep.md` §4.7a ②) — its own
+## handler because its own command and its own scope: it names a SOURCE and sets a property of that
+## source's queue ENTRY, where `assign_labor` names a band and a role.
+##
+## **NO ROLLBACK, because there is no optimistic write to roll back.** `buildKitId` is captured LIVE
+## rather than turn-written, so the recapture this command triggers carries the new value — the one
+## field in the queue block that needs no client-side shadow.
+func _on_hud_build_kit(payload: Dictionary) -> void:
+    _send_formatted_command(format_build_kit(payload))
+
+## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③). `buildQueuePosition` IS
+## turn-written, so this one does carry an optimistic ordering — recorded in the controller before the
+## emit, and dropped here when the send does not go.
+func _on_hud_build_order(payload: Dictionary) -> void:
+    if not _send_formatted_command(format_build_order(payload)):
+        _hud_invoke("drop_pending_order", [payload])
 
 ## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a
 ## standing policy on the band's allocation, not part of any source's commit.

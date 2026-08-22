@@ -318,6 +318,7 @@ fn spawn_the_farming_band(
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Patch(source),
                 declared: core_sim::BuildJob::Rung(declared),
+                kit: None,
             }],
             ..Default::default()
         },
@@ -700,6 +701,7 @@ fn spawn_the_herding_band(
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Herd(herd_id.to_string()),
                 declared: core_sim::BuildJob::Rung(declared),
+                kit: None,
             }],
             ..Default::default()
         },

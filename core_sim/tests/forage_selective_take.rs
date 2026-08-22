@@ -1145,6 +1145,7 @@ fn spawn_band(
                     vec![core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
+                        kit: None,
                     }]
                 } else {
                     Vec::new()

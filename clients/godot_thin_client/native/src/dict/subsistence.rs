@@ -252,6 +252,16 @@ pub(crate) fn herds_to_array(
         // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
         // sooner estimate wins, and all three come from that band, so the three are read as one set.
         let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
+        // **WHAT THIS HERD'S BUILD IS BEING RAISED WITH** — the kit id the winning band's queue
+        // entry RESOLVES to, `""` when no band has it queued
+        // (`docs/plan_standing_upkeep.md` §4.7a ②). It states the RESOLVED kit, never *"the player
+        // named none"*: the builders' default is derived per entry from that entry's own food web,
+        // so an entry naming nothing would otherwise read empty while the pool was out with hurdles.
+        // The `(default)` mark beside it is the client's own — `KitRoster.build_kit_for_branch`
+        // mirrors the same roster derivation, exactly as the hunt row's per-quarry default works.
+        if let Some(build_kit_id) = herd.buildKitId() {
+            let _ = dict.insert("build_kit_id", build_kit_id);
+        }
         // **WHY THAT QUEUE IS BLOCKED HERE** — `""` whenever this herd is not a blocked build, else a
         // short lowercase cause key (`escapement`, `knowledge`, `rung_below`, `species_ceiling`,
         // `owned_by_other`, `ring_idle`, `undeclared`, `unworked`; the `.fbs` comment on
@@ -775,6 +785,12 @@ pub(crate) fn forage_patches_to_array(
         // there for why the countdown beside it is a CHAINED date and why the three build fields are
         // read as one set off one winning band.
         let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
+        // The plant twin of the herd row's — the RESOLVED builders kit of the winning band's queue
+        // entry, `""` when nobody has it queued. See there for why the wire states the resolved kit
+        // and why the `(default)` mark is the client's own derivation.
+        if let Some(build_kit_id) = patch.buildKitId() {
+            let _ = dict.insert("build_kit_id", build_kit_id);
+        }
         // The plant twin of the herd row's blocked CAUSE — `""` when this patch is not a blocked
         // build, else the key naming the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
         // `site`, `owned_by_other`, `undeclared`, `unworked`). See the herd block for why it is read

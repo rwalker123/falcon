@@ -551,7 +551,7 @@ fn begin_extension(
             None => allocation.assignments.push(LaborAssignment {
                 target: LaborTarget::Builders,
                 workers: KEEPER_WORKERS,
-                kit: Some(bare_builders()),
+                kit: None,
             }),
         }
         assert!(
@@ -560,6 +560,13 @@ fn begin_extension(
                 core_sim::BuildJob::ExtendPen,
             ),
             "the keeper band works the herd whose pen it is widening"
+        );
+        assert!(
+            allocation.set_build_entry_kit(
+                &core_sim::BuildSource::Herd(id.to_string()),
+                Some(bare_builders()),
+            ),
+            "the entry just declared takes the bare kit"
         );
     }
     began
@@ -789,10 +796,12 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
     );
 }
 
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
 ///
-/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// It rides the **entry** because that is where a build's kit lives
+/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
+/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
+/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
 /// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
 /// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as

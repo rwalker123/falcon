@@ -244,11 +244,12 @@ pub struct LaborConfigs<'w> {
 /// serve every rung on both ladders (which is how the husbandry kit came to be offered for a
 /// Cultivate).
 ///
-/// # The kit is DERIVED PER ENTRY, and the row's own choice OVERRIDES it
+/// # The kit is DERIVED PER ENTRY, and the ENTRY's own choice OVERRIDES it
 ///
-/// 1. **A kit named on the `builders` row wins**, `none` included — that is how a player sends the
-///    pool out bare-handed to conserve gear, and it is the same *"an absent `kitId` means the job's
-///    default"* rule every other row follows.
+/// 1. **A kit named on the queue ENTRY wins**, `none` included — that is how a player sends the pool
+///    out bare-handed on one job to conserve gear, and it is the same *"an absent `kitId` means the
+///    job's default"* rule every other selection follows
+///    (`docs/plan_standing_upkeep.md` §4.7a ②).
 /// 2. **Otherwise the roster answers**, per branch, through
 ///    [`EquipmentConfig::build_kit_for_branch`] — the shape `fauna::kit_supplying` already uses for a
 ///    penned herd's default kit. ⛔ **No `BuildJob → kit id` match exists in Rust**, so a third build
@@ -256,12 +257,23 @@ pub struct LaborConfigs<'w> {
 /// 3. **`default_kits.builders` is the fall-back**, not the answer: a roster with no kit serving a
 ///    web leaves that web's builds on whatever the job's default is (`none` today).
 ///
-/// A source's own branch decides which reading it gets — a patch is plant, a herd is animal — so the
-/// **head** entry is the one whose branch is actually funded, and everything below it is *dated* at
-/// the gear it would be raised with when its turn comes.
+/// ⛔ **The `builders` ROW's kit is not an input.** It was rule ① until §4.7 and it is the one thing
+/// the derivation cannot express: a single stored id per **band** pinned one web's tool onto every
+/// later build of the other with no way back.
+///
+/// A source's own branch decides which **derived** reading it gets — a patch is plant, a herd is
+/// animal — so the **head** entry is the one whose branch is actually funded, and everything below
+/// it is *dated* at the gear it would be raised with when its turn comes. An entry carrying its own
+/// kit is dated at **that** kit rather than at its web's derived one, which is the whole point of
+/// the override.
 struct BuildersGear {
     plant: BuildersBranchGear,
     animal: BuildersBranchGear,
+    /// **The entries that named a kit of their own**, one resolved answer each, keyed by source.
+    ///
+    /// A plain `Vec` walked linearly rather than a map: a band's queue is a handful of entries and
+    /// only the overridden ones are here, so the probe is cheaper than hashing a `BuildSource`.
+    overrides: Vec<(BuildSource, BuildersBranchGear)>,
 }
 
 /// One web's answer: the kit the pool works it with, and what that kit is worth over the pool.
@@ -291,26 +303,48 @@ struct BuildersBranchGear {
 impl BuildersGear {
     fn resolve(
         equipment: &crate::equipment_config::EquipmentConfig,
-        row_kit: Option<crate::equipment_config::KitChoice>,
+        build_queue: &[crate::components::BuildQueueEntry],
         builders: u32,
         band_kit: &BandEquipment,
     ) -> Self {
-        let on = |branch: crate::intensification::RungBranch| {
-            let kit = equipment.builders_kit_for(row_kit.as_ref(), Some(branch));
+        // One kit, priced over the whole pool on one web. The two derived answers and every
+        // override are struck through it, so a named kit and a derived one are quoted the same way.
+        let priced = |kit: &crate::equipment_config::KitChoice,
+                      branch: crate::intensification::RungBranch| {
             // **The coverage is over the POOL**, so the rate the wire publishes and the rate the
             // accrual is struck at are one number for the whole band.
-            let coverage = equipment.coverage(&kit, builders as f32, band_kit);
+            let coverage = equipment.coverage(kit, builders as f32, band_kit);
             let work_per_worker = coverage
                 .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
             BuildersBranchGear {
-                wear_kit: equipment.build_gear_kit(&kit, band_kit, branch),
+                wear_kit: equipment.build_gear_kit(kit, band_kit, branch),
                 work_per_worker,
                 gear_supply: gear_work_supply(work_per_worker, builders),
             }
         };
+        let derived = |branch: crate::intensification::RungBranch| {
+            priced(&equipment.builders_kit_for(None, Some(branch)), branch)
+        };
+        // **Only the entries that named a kit are resolved individually** — everything else is
+        // served by its web's derived answer above, which is the same number it would resolve to.
+        let overrides = build_queue
+            .iter()
+            .filter_map(|entry| {
+                let named = entry.kit.as_ref()?;
+                let branch = source_branch(&entry.source);
+                Some((
+                    entry.source.clone(),
+                    priced(
+                        &equipment.builders_kit_for(Some(named), Some(branch)),
+                        branch,
+                    ),
+                ))
+            })
+            .collect();
         Self {
-            plant: on(crate::intensification::RungBranch::Plant),
-            animal: on(crate::intensification::RungBranch::Animal),
+            plant: derived(crate::intensification::RungBranch::Plant),
+            animal: derived(crate::intensification::RungBranch::Animal),
+            overrides,
         }
     }
 
@@ -321,13 +355,24 @@ impl BuildersGear {
         }
     }
 
-    /// **The web a source belongs to is a fact about the source**, so the chain pass needs no second
-    /// authority to decide which reading a queued entry is stamped with.
+    /// **This source's entry's own answer, else its web's derived one.** The web a source belongs to
+    /// is a fact about the source, so nothing needs a second authority to decide which derived
+    /// reading a queued entry is stamped with — and an entry that named a kit is priced and dated at
+    /// **that** kit, which is what makes the override mean anything below the head.
     fn for_source(&self, source: &BuildSource) -> &BuildersBranchGear {
-        self.on(match source {
-            BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
-            BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
-        })
+        self.overrides
+            .iter()
+            .find(|(key, _)| key == source)
+            .map_or_else(|| self.on(source_branch(source)), |(_, gear)| gear)
+    }
+}
+
+/// **THE FOOD WEB A BUILD SOURCE BELONGS TO** — a patch is plant, a herd is animal. One expression,
+/// because three copies of this match are three places a third source kind has to be remembered.
+fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
+    match source {
+        BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
+        BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
     }
 }
 
@@ -1236,16 +1281,12 @@ pub fn advance_labor_allocation(
         // The queue as it stands for this turn, read inside the assignment loop (which borrows the
         // allocation's assignments) and walked again by the chain pass after it.
         let build_queue = allocation.build_queue.clone();
-        // **THE BUILDERS' OWN GEAR, ONE READING PER FOOD WEB.** It is read off their own row like
-        // every other role's (§2.2 of the slice brief) — it used to ride the *source* row's kit,
-        // because the builders stood on the tile — but *which* kit is a question the row can decline
-        // to answer, and then the entry being worked answers it. See [`BuildersGear`].
-        let builders_gear = BuildersGear::resolve(
-            &equipment_cfg,
-            allocation.named_kit_on(&LaborTarget::Builders),
-            builders,
-            &band_kit,
-        );
+        // **THE BUILDERS' OWN GEAR, ONE READING PER FOOD WEB PLUS ONE PER OVERRIDDEN ENTRY.** The
+        // question *"which kit"* is the **entry's** — a queue item is one job — so the two derived
+        // per-web answers serve every entry that named nothing and an entry that named a kit is
+        // resolved on its own (§4.7a ②). See [`BuildersGear`].
+        let builders_gear =
+            BuildersGear::resolve(&equipment_cfg, &build_queue, builders, &band_kit);
         // **WHAT EACH SOURCE CONTRIBUTED TO THE CHAIN**, recorded as the loop goes and evaluated in
         // **queue order** afterwards — the loop visits assignments, and the queue's order is the
         // player's.
@@ -1508,6 +1549,11 @@ pub fn advance_labor_allocation(
                     let Some(tile_entity) = tile_registry.index(tile.x, tile.y) else {
                         continue;
                     };
+                    // **THE GEAR THIS SOURCE'S OWN ENTRY IS RAISED WITH** — the kit it named, else
+                    // the plant web's derived answer. Resolved once for the arm, because the
+                    // accrual, the balance, the projection and the wear charge must all be struck at
+                    // one number or the countdown and the meter disagree.
+                    let entry_gear = builders_gear.for_source(&BuildSource::Patch(*tile));
                     // The **gather** season is the food module's. A tile with no module offers no
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
                     // exactly right — and, since slice 5, a real state rather than an impossible one:
@@ -2042,7 +2088,7 @@ pub fn advance_labor_allocation(
                                 improvement,
                                 eligible,
                                 build_workers,
-                                builders_gear.plant.work_per_worker,
+                                entry_gear.work_per_worker,
                             );
                         // **THE SIGNED TWIN, NET OF THE ROT** — what the countdown is struck from. A
                         // meter may only be *added* to and the bleed is the decay pass's, so the
@@ -2057,7 +2103,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             builders,
-                            builders_gear.plant.work_per_worker,
+                            entry_gear.work_per_worker,
                             meter_rot,
                         );
                         // **THE JOB'S PRICE**, in work units — `RUNG_COST_UNSCALED` because a patch
@@ -2119,7 +2165,7 @@ pub fn advance_labor_allocation(
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_gear.plant.wear_kit,
+                            &entry_gear.wear_kit,
                             crate::forage::patch_rung_work_done(
                                 patch,
                                 RungKey::PlantTended,
@@ -2173,11 +2219,11 @@ pub fn advance_labor_allocation(
                             *tile,
                             build_workers,
                             builders,
-                            builders_gear.plant.work_per_worker,
+                            entry_gear.work_per_worker,
                             &ladder,
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_gear.plant.wear_kit,
+                            &entry_gear.wear_kit,
                             &mut build_quotes,
                             entry_declares_a_rung,
                             meter_rot,
@@ -2280,7 +2326,7 @@ pub fn advance_labor_allocation(
                                 RUNG_COST_UNSCALED,
                                 banked,
                                 builders,
-                                builders_gear.plant.work_per_worker,
+                                entry_gear.work_per_worker,
                                 gate,
                                 // **The SOURCE's live bleed**, not the quoted rung's rate — a build
                                 // crew supplies nothing toward the rate, so what nets off a quote is
@@ -2466,6 +2512,10 @@ pub fn advance_labor_allocation(
                         lapsed.push(idx);
                         continue;
                     }
+                    // **THE GEAR THIS SOURCE'S OWN ENTRY IS RAISED WITH** — the animal twin of the
+                    // Forage arm's, resolved once so the accrual, the balance, the projection and
+                    // the wear charge are all struck at one number.
+                    let entry_gear = builders_gear.for_source(&BuildSource::Herd(fauna_id.clone()));
                     let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == *fauna_id)
                     else {
                         continue;
@@ -2830,7 +2880,7 @@ pub fn advance_labor_allocation(
                             Some(Improvement::Corral),
                             ring_in_flight,
                             ring_workers,
-                            builders_gear.animal.work_per_worker,
+                            entry_gear.work_per_worker,
                         );
                         // A ring costs what the pen it widens costs — the same rung record, so the
                         // two can never drift — and the same keepers' tools raise both at the same
@@ -2845,7 +2895,7 @@ pub fn advance_labor_allocation(
                             Some(Improvement::Corral),
                             ring_in_flight,
                             builders,
-                            builders_gear.animal.work_per_worker,
+                            entry_gear.work_per_worker,
                             meter_rot,
                         );
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
@@ -2865,7 +2915,7 @@ pub fn advance_labor_allocation(
                             charge_build_wear(
                                 band_equipment.as_deref_mut(),
                                 &equipment_cfg,
-                                &builders_gear.animal.wear_kit,
+                                &entry_gear.wear_kit,
                                 pen_extend_accrual,
                             );
                         }
@@ -3149,7 +3199,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             build_workers,
-                            builders_gear.animal.work_per_worker,
+                            entry_gear.work_per_worker,
                         );
                         // **The countdown's signed twin** — the Cultivate arm's rule, net of the
                         // meter's rot, which on the animal web is always `0` (no `meter_decay`: an
@@ -3159,7 +3209,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             builders,
-                            builders_gear.animal.work_per_worker,
+                            entry_gear.work_per_worker,
                             meter_rot,
                         );
                         // **THE JOB'S PRICE** — the rung's `work_cost` times this species' own
@@ -3218,7 +3268,7 @@ pub fn advance_labor_allocation(
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_gear.animal.wear_kit,
+                            &entry_gear.wear_kit,
                             herd.ladder_position() - progress_before,
                         );
                         if tamed {
@@ -3274,7 +3324,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             build_workers,
-                            builders_gear.animal.work_per_worker,
+                            entry_gear.work_per_worker,
                         );
                         // **The countdown's signed twin** — the Cultivate arm's rule, at the full
                         // pool.
@@ -3282,7 +3332,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             builders,
-                            builders_gear.animal.work_per_worker,
+                            entry_gear.work_per_worker,
                             meter_rot,
                         );
                         // Penning is a flat job for every species — a fence is a fence — so the pen
@@ -3316,7 +3366,7 @@ pub fn advance_labor_allocation(
                         charge_build_wear(
                             band_equipment.as_deref_mut(),
                             &equipment_cfg,
-                            &builders_gear.animal.wear_kit,
+                            &entry_gear.wear_kit,
                             herd.ladder_position() - progress_before,
                         );
                         if penned {
@@ -3395,7 +3445,7 @@ pub fn advance_labor_allocation(
                                 cost_multiplier,
                                 banked,
                                 builders,
-                                builders_gear.animal.work_per_worker,
+                                entry_gear.work_per_worker,
                                 gate,
                                 // The source's live bleed — always `0` on the animal web, whose
                                 // rungs declare no `meter_decay`. See the Forage arm.
@@ -5641,25 +5691,32 @@ mod labor_yield_tests {
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
             target: LaborTarget::Builders,
-            // ⛔ **THE HARNESS'S BUILDERS GO OUT BARE, AND THAT IS AN ISOLATION RATHER THAN A
-            // DEFAULT.** An absent kit means *derive per entry*, and the roster's answer — `tillage`
-            // on a plant build, `hurdling` on an animal one — adds `+0.5` work **per covered worker
-            // per turn** on top of their own hands. A start-stocked band holds
-            // `ceil(workers × start_stock_fraction)` of each tool, so at [`WORKERS`] hands the whole
-            // pool is armed and delivers `10 × 1.5 = 15` a turn against `10`: every pace fixture
-            // below would run half again as fast as the number it asserts.
-            //
-            // Naming `none` holds the gear axis at its identity so these fixtures measure the
-            // *meter*, exactly as `FaunaConfig::without_retreat` holds the retreat at its identity
-            // across the hunt suites. **The geared default has its own tests** —
-            // `the_builders_pool_derives_its_kit_from_the_head_entry`, and
-            // `equipment_config::tests::a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound`.
-            kit: Some(bare_builders()),
+            // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit is a
+            // property of the queue ENTRY, and `assign_labor` refuses a token here. The isolation
+            // below rides the entry instead.
+            kit: None,
             workers: builders,
         });
         assert!(
-            allocation.enqueue_build(source, declared),
+            allocation.enqueue_build(source.clone(), declared),
             "fixture: a build is declared on a source the band already works"
+        );
+        // ⛔ **THE HARNESS'S BUILDERS GO OUT BARE, AND THAT IS AN ISOLATION RATHER THAN A DEFAULT.**
+        // An absent kit means *derive per entry*, and the roster's answer — `tillage` on a plant
+        // build, `hurdling` on an animal one — adds `+0.5` work **per covered worker per turn** on
+        // top of their own hands. A start-stocked band holds
+        // `ceil(workers × start_stock_fraction)` of each tool, so at [`WORKERS`] hands the whole
+        // pool is armed and delivers `10 × 1.5 = 15` a turn against `10`: every pace fixture below
+        // would run half again as fast as the number it asserts.
+        //
+        // Naming `none` **on the entry** holds the gear axis at its identity so these fixtures
+        // measure the *meter*, exactly as `FaunaConfig::without_retreat` holds the retreat at its
+        // identity across the hunt suites. **The geared default has its own tests** —
+        // `the_builders_pool_derives_its_kit_from_the_head_entry`, and
+        // `equipment_config::tests::a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound`.
+        assert!(
+            allocation.set_build_entry_kit(&source, Some(bare_builders())),
+            "fixture: the entry just declared takes the bare kit"
         );
     }
 
@@ -8996,14 +9053,12 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: Some(kit.clone()),
                 },
-                // **THE KIT UNDER TEST RIDES THE BUILDERS' ROW**, because that is where a build's
-                // gear offset is read from since `docs/plan_standing_upkeep.md` §2.5. It used to
-                // ride the source row, and asserting the offset off *that* row now would be a guard
-                // over a dead term.
+                // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
+                // because a build's gear is a property of the queue ENTRY and not of the band.
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: builders,
-                    kit: Some(kit),
+                    kit: None,
                 },
             ],
         );
@@ -9015,6 +9070,12 @@ mod labor_yield_tests {
                 BuildSource::Herd(HERD_ID.to_string()),
                 BuildJob::Rung(Improvement::Tame),
             ));
+            // **THE KIT UNDER TEST RIDES THE QUEUE ENTRY**, which is where a build's gear offset is
+            // read from: naming it on the row is the per-BAND answer §4.7a deleted, and asserting
+            // the offset off that row now would be a guard over a dead term.
+            assert!(
+                allocation.set_build_entry_kit(&BuildSource::Herd(HERD_ID.to_string()), Some(kit),)
+            );
         }
         // `spawn_band` builds no ledger, and wear is only charged on an item the band owns — an
         // absent entry is NOT OWNED since the count slice.

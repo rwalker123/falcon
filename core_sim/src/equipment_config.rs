@@ -1475,8 +1475,12 @@ impl EquipmentConfig {
     }
 
     /// **THE KIT A BAND'S KEEPING POOL IS ACTUALLY WORKING WITH** — [`Self::builders_kit_for`]'s
-    /// twin, on the same three rules: a kit named on the role's row wins (`none` included), else the
-    /// roster answers for this web, else the job's own default.
+    /// twin, on the same three rules: a named kit wins (`none` included), else the roster answers
+    /// for this web, else the job's own default.
+    ///
+    /// **The selection is on the ROW here, and that is not an inconsistency**: a keeping role is a
+    /// standing pool over every source on its web, so *"which tool are the keepers holding"* has one
+    /// answer per band. A build is one job, so the builders' selection is on the **entry**.
     ///
     /// It takes no `Option<branch>` where the builders' seam does, because a keeping role **is** a
     /// web: `agriculture` keeps plants and nothing else, so there is no *"nothing is being worked"*
@@ -1504,22 +1508,28 @@ impl EquipmentConfig {
             .find(|kit| self.build_work_per_worker(kit, &fresh, branch) > NO_BUILD_GEAR)
     }
 
-    /// **THE KIT THE BAND'S BUILDERS ARE ACTUALLY WORKING WITH** — the one seam the turn, the wear
-    /// charge and the wire all resolve through, so a card cannot state a kit the pool is not using.
+    /// **THE KIT ONE QUEUE ENTRY IS RAISED WITH** — the one seam the turn, the wear charge and the
+    /// wire all resolve through, so a card cannot state a kit the pool is not using.
     ///
-    /// 1. **A kit named on the `builders` row wins**, `none` included — that is how a player sends
-    ///    the pool out bare-handed to conserve gear, and *"an absent `kitId` means the job's
-    ///    default"* is the rule every other row already follows.
-    /// 2. **Otherwise the roster answers for this web** ([`Self::build_kit_for_branch`]).
-    /// 3. **`default_kits.builders` is the FALL-BACK, not the answer** — reached when the row named
-    ///    nothing and either the queue is empty (`branch` is `None`: nothing is being raised, so no
-    ///    tool is out) or no roster entry serves that web.
+    /// 1. **The kit named on THIS ENTRY wins**, `none` included — that is how a player sends the
+    ///    pool out bare-handed on one job to conserve gear, and *"an absent `kitId` means the job's
+    ///    default"* is the rule every other selection already follows.
+    /// 2. **Otherwise the roster answers for this entry's web** ([`Self::build_kit_for_branch`]).
+    /// 3. **`default_kits.builders` is the FALL-BACK, not the answer** — reached when the entry
+    ///    named nothing and either there is no entry at all (`branch` is `None`: nothing is being
+    ///    raised, so no tool is out) or no roster entry serves that web.
+    ///
+    /// ⛔ **A kit on the `builders` ROW is not an input, and the row cannot carry one**
+    /// (`docs/plan_standing_upkeep.md` §4.7a ②). It was rule ① until §4.7: a single stored id per
+    /// **band** is the one thing the per-entry derivation cannot express, so one pick pinned the
+    /// animal web's tool onto every later plant build with no way back. `assign_labor` refuses a
+    /// `kit` token on that role rather than storing one nothing reads.
     pub fn builders_kit_for(
         &self,
-        row_kit: Option<&KitChoice>,
+        entry_kit: Option<&KitChoice>,
         branch: Option<crate::intensification::RungBranch>,
     ) -> KitChoice {
-        row_kit
+        entry_kit
             .cloned()
             .or_else(|| branch.and_then(|branch| self.build_kit_for_branch(branch)))
             .unwrap_or_else(|| self.default_kit(KitJob::Builders))

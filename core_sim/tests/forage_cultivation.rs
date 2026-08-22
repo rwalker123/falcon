@@ -288,7 +288,7 @@ fn set_forage_improvement(
                 None => allocation.assignments.push(LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: builders,
-                    kit: Some(bare_builders()),
+                    kit: None,
                 }),
             }
         }
@@ -433,7 +433,7 @@ fn spawn_forager_at(
                             LaborAssignment {
                                 target: LaborTarget::Builders,
                                 workers: foragers,
-                                kit: Some(bare_builders()),
+                                kit: None,
                             },
                         ]
                     })
@@ -442,6 +442,7 @@ fn spawn_forager_at(
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(declared),
+                        kit: Some(bare_builders()),
                     })
                     .into_iter()
                     .collect(),
@@ -2771,8 +2772,16 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
             .push(LaborAssignment {
                 target: LaborTarget::Builders,
                 workers,
-                kit: Some(bare_builders()),
+                kit: None,
             });
+        // ⛔ **AN EMPTY LEDGER IS WHAT HOLDS THE GEAR AXIS AT ITS IDENTITY HERE.** Nothing is
+        // queued on this patch, so there is no entry to carry the bare kit the pace fixtures use
+        // (`docs/plan_standing_upkeep.md` §4.7a ②) — and an *absent* `BandEquipment` is read as a
+        // fully stocked band, so the projection would quote the roster-derived `tillage` and finish
+        // half again as fast as the rung's own number. A band owning nothing has no tool to bring.
+        app.world
+            .entity_mut(band)
+            .insert(core_sim::BandEquipment::default());
         run_turns_with_forage(&mut app, 1);
         published_count(
             app.world
@@ -3316,13 +3325,14 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
         allocation.assignments.push(LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
-            kit: Some(bare_builders()),
+            kit: None,
         });
         let headroom = allocation.assigned_total() + keepers;
         allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
         allocation.build_queue.push(core_sim::BuildQueueEntry {
             source: core_sim::BuildSource::Patch(build),
             declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
+            kit: Some(bare_builders()),
         });
         headroom
     };
@@ -4231,7 +4241,7 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
         allocation.assignments.push(LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
-            kit: Some(bare_builders()),
+            kit: None,
         });
         assert!(allocation.enqueue_build(
             core_sim::BuildSource::Patch(coord),
@@ -4375,10 +4385,12 @@ fn a_fully_feral_patch_clears_its_owner_species_and_rung_together() {
     );
 }
 
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
 ///
-/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
+/// It rides the **entry** because that is where a build's kit lives
+/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
+/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
+/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
 /// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
 /// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
 /// the gear axis at its identity so these arms measure the **crew**, exactly as

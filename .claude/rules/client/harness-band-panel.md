@@ -1057,6 +1057,53 @@ loudly refusing its own precondition rather than passing.
 baseline (captured by stashing the change and re-rendering), plus the new
 `band_panel_compose_hunt_empty`.
 
+## The QUEUE's controls, and the two traps they walked into (`docs/plan_standing_upkeep.md` §4.7b)
+
+`_render_queue_control_states` runs inside `_render_build_queue_states`, on the SAME three-entry
+fixture the states above render, because each of its four claims is about the block as drawn rather
+than about a fixture of its own — and the exclusion claim is about two lists at once, which no fixture
+can stage alone.
+
+> ### ⛔ A CLICK ON A QUEUE ROW FREES EVERY ROW, so a row captured before one is a freed object
+>
+> `_toggle_queue_settings` → `_repage_work_zone` rebuilds the block, and `_click_control` on a freed
+> `Control` **raises**: the assertion block ends with no `FAIL` line, the strip is left open over every
+> state that follows, and the run reports failures several states later that have nothing to do with
+> the cause. `_find_queue_row(animal)` re-finds a row from the LIVE tree by its verb face, and every
+> click in these blocks goes through it. The closer at the end of `_assert_queue_row_settings` already
+> documented this for its own click; §4.7a ②'s kit made the ANIMAL row expandable, which reached the
+> same trap one click earlier.
+
+> ### ⛔ A `✕` GRAMMAR PROBE IS NOW A STATE CHANGE, and it is inherited by every state below
+>
+> The withdrawal is OPTIMISTIC and keyed on the TURN, which does not advance in a harness — so
+> `_assert_unqueue_command_grammar` and `_assert_pending_queue_row`, which press the real button to
+> read the line it emits, leave real withdrawals on the overlay. Both restore what they withdrew
+> (`_pending_labor.clear()` / `drop_pending_unqueue`) so they stay grammar probes. Without that, the
+> pending-queue states one block down lose their rows and fail for a reason nothing in them names.
+
+**The FLOW is asserted where it is DECIDED, not where it is drawn.** No shipped dock is wide enough
+for the settings pair on one line (342px of strip on the tall LEFT dock, 368 on the 1920 BOTTOM one,
+against 408), so a rendered one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
+`HudWorkVocab.queue_settings_one_line` on both sides of its threshold and that the reserved height
+follows the wrap, and `_assert_queue_settings_flow` REPORTS the width at every dock it renders. That
+is the payoff of the wrap being a predicate both the reservation and the builder read: it is checkable
+without a layout.
+
+**The DRAG is driven through the controller's own callables, and the handle through the node.** Godot
+exposes no public getter for what `set_drag_forwarding` installs (`_get_drag_data` is a virtual the
+Viewport calls), so what the harness reads off the marker is what the PLAYER can see — the move
+cursor, the tooltip, and a `MOUSE_FILTER_PASS` that still lets the click through to the row — and what
+it drives is `_queue_drag_data` / `_queue_can_drop` / `_queue_drop`. The frame is taken **while the
+drag is live**, and the block is asserted NOT to have rebuilt under a `rerender()`, which is the state
+no other frame reaches.
+
+**The withdrawal state re-pushes the same fixture on the same turn**, which is the command's own
+recapture: the server broadcasts after every command and that capture still carries the stale
+`buildQueuePosition`, so a row that only survives until the next snapshot fails here. It doubles as
+the re-seat this layer needs — an optimistic write runs `_after_pending_change`, which re-renders the
+SELECTED unit, and in this harness that is a stale reference band rather than the queue fixture.
+
 ## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
 
 Three blocks land at the end of the run, after `_render_build_queue_states`. Order is load-bearing
