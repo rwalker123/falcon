@@ -161,7 +161,7 @@ const THEMES := {
 		"map": EARTH_MAP,
 	},
 	"console": {
-		"name": "Console (original)",
+		"name": "Console",
 		"hud": {
 			"GROUND": Color(0.043, 0.067, 0.078, 1.0),
 			"GROUND_2": Color(0.055, 0.086, 0.102, 1.0),
