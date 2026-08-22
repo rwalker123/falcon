@@ -855,12 +855,13 @@ footer { border-top: 1px solid var(--rule); padding-block: 2.25rem 3.5rem; color
       <div>
         <div class="q-n">03</div>
         <div class="q-b">
-          <div class="q-t">Restart to apply</div>
+          <div class="q-t">Applied by rebuilding, not by restarting</div>
           <div class="q-d">
-            A stylebox already handed to a control keeps its old colour, so live-swapping would
-            mean a rebuild-and-invalidate pass across every HUD module. Applying at boot instead —
-            from the <code>ClientSettings</code> autoload, before any UI exists — makes that pass
-            unnecessary. The Options row says so on screen rather than in a tooltip.
+            A stylebox already handed to a control keeps its old colour, so nothing can be
+            re-tinted in place. The Options row's <strong>Apply now</strong> installs the palette
+            and then reloads the scene, in that order, so every control is built once against the
+            new values — the same ordering the boot path already relies on. In a running game that
+            rebuilds the world and ends the run, which the button says on its own face.
           </div>
         </div>
       </div>

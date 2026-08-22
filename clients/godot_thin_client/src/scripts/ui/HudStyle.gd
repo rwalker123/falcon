@@ -90,8 +90,11 @@ static var INK_HEX := "e9efe9"
 static var INK_DIM_HEX := "9db0ad"
 
 # ---- theme installation ----------------------------------------------------
-## Install one theme's palette. Called by `HudPalette.apply()` at boot (an autoload, so BEFORE the
-## first Control exists — the palette is restart-to-apply and nothing here rebuilds live UI).
+## Install one theme's palette. Called by `HudPalette.apply()`, and NOTHING HERE REBUILDS LIVE UI: a
+## Control reads these values when it is BUILT, so the palette has to be installed before the tree that
+## will read it. At boot that tree is the main scene and the caller is the `ClientSettings` autoload,
+## which runs before the first Control exists; from the Options pane it is a reloaded scene, and
+## `GameLaunch.apply_theme_now` installs the palette first and reloads second for exactly that reason.
 ##
 ## `p` carries the **26 AUTHORED** colours; everything below the assignment block is **DERIVED**, and
 ## the derivation lives HERE rather than in a static-var initializer on purpose. An initializer runs

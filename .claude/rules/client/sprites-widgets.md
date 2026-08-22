@@ -184,6 +184,31 @@ therefore reads "Apply now — ends this run" in the `armed` variant, the same m
 to menu" wears, and the caption reads "Not applied yet. Applying rebuilds the world and ends this
 run."; in `landing` there is no run, so it is a plain `primary` "Apply now" over "Not applied yet."
 
+**THE REBUILT WORLD IS THE RUN'S OWN, and that costs a second slot on `GameLaunch`.** `pending_new_game`
+is consumed AND CLEARED by the first `Main._ready`, so the `_ready` a reload runs finds it empty and
+falls through to `Main.DEV_DEFAULT_NEW_GAME` — a theme apply would have replaced the player's preset,
+size, seed and profile with an 80x52 `earthlike` while the button warned only that the run would end.
+`Main._build_new_game_command` therefore records the parameters it ACTUALLY used — after the
+dev-default fallback and the seed clamp have resolved, so the record is populated on every path into
+`Main.tscn` — as `GameLaunch.active_new_game`, and `apply_theme_now` re-arms `pending_new_game` from it
+immediately before the reload. Consume-and-clear is untouched for every other caller: nothing else
+writes the pending slot, `LandingScreen` still stashes fresh parameters for New Game, and a bare
+`Main.tscn` launch still gets the dev default because `active_new_game` is null until a run exists.
+`_on_pause_abandon` clears it, so a theme apply on the landing screen after abandoning arms nothing.
+A run whose seed was 0 ("derive from the run clock") still lands on a different map — 0 is what gets
+re-sent — which is consistent with the reload asking for a NEW world either way. `last_world_epoch` is
+a separate field and is deliberately NOT touched: the reveal gate needs it to survive the reload.
+
+**THE ROSTER HAS ONE OWNER, `HudPalette.THEMES`, INCLUDING ITS DISPLAY ORDER.** `MenuShell` builds the
+picker from `HudPalette.ids()` and holds no list of its own. It briefly held a `THEME_ORDER` constant
+existing only to put `ember` first, and a second hand-maintained roster fails in one direction that
+nothing catches: a fifth theme added to `THEMES` alone is accepted by `ClientSettings._valid_theme`,
+installed by `apply()` and reported by `applied_id`, but never listed — and `_theme_item_index` then
+falls back to the default's row, so the picker reads "Ember" with a different palette on screen and the
+caption reads "Applied.". Declaration order in `THEMES` is now the picker's order (earth themes first,
+`console` last); `DEFAULT_THEME` is a named id, so reordering cannot change which theme a fresh install
+wears.
+
 **`static var`, not `const`, and the call sites did not change.** A `static var` reads identically at
 the call site (`HudStyle.DANGER` is the same expression either way), which is why converting 28
 colours and 6 hex strings left ~710 references across 58 files untouched. What it forbids is

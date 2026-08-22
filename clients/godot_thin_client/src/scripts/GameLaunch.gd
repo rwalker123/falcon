@@ -15,6 +15,18 @@ var pending_new_game = null
 ## (fresh launch, nothing revealed yet); `Main` writes the revealed epoch here on reveal.
 var last_world_epoch: int = 0
 
+## The parameters the CURRENT run's world was actually built from — what `Main._build_new_game_command`
+## resolved AFTER the dev-default fallback, so it is populated on every path into `Main.tscn`, handoff
+## or not. `pending_new_game` cannot answer this: it is consumed and cleared on the first `_ready`, and
+## a scene reload re-runs that `_ready` with an empty slot. `apply_theme_now` re-arms the pending slot
+## from this so a mid-run apply rebuilds THE RUN'S world (its preset, size, seed and profile) instead
+## of the dev default. Null before the first run, and cleared when a run is abandoned — the landing
+## screen owns the parameters again from there.
+##
+## Same shape as `pending_new_game`. A run whose seed is 0 ("derive from the run clock") still lands on
+## a different map, because 0 is what gets re-sent — the request is for a NEW world either way.
+var active_new_game = null
+
 
 ## Install the saved theme and rebuild the scene so it takes effect now.
 ##
@@ -35,6 +47,16 @@ var last_world_epoch: int = 0
 ## A pause-mode apply ENDS THE RUN. Reloading `Main.tscn` re-runs `Main._ready`, which reconnects
 ## and sends `new_game` (`.claude/rules/core_sim/world-handoff.md`), so the server builds a fresh
 ## world rather than handing back the one in progress.
+##
+## **WHICH world it builds is re-armed here.** That second `_ready` finds `pending_new_game` already
+## consumed by the first one, and would fall through to `Main.DEV_DEFAULT_NEW_GAME` — a theme apply
+## would silently swap an 80x52 `earthlike` in for the preset, size, seed and profile the player chose.
+## Re-stashing `active_new_game` makes the rebuilt world the run's own. Consume-and-clear stays intact
+## for every other caller: nothing else writes the pending slot, and on the landing screen
+## `active_new_game` is null (fresh boot) or cleared (a run was abandoned), so nothing is armed and a
+## direct `Main.tscn` launch still gets the dev default.
 func apply_theme_now() -> void:
+	if active_new_game is Dictionary:
+		pending_new_game = active_new_game
 	HudPalette.apply(ClientSettings.theme)
 	get_tree().reload_current_scene()

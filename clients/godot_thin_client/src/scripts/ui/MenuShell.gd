@@ -148,9 +148,6 @@ const THEME_CAPTION_PENDING_IN_RUN := "Not applied yet. Applying rebuilds the wo
 ## it is why this row has no modal confirm.
 const THEME_APPLY_LABEL := "Apply now"
 const THEME_APPLY_LABEL_IN_RUN := "Apply now — ends this run"
-## Roster order for the picker — the earth themes first, the original console palette last, so the
-## list reads as "the current look, and the one it replaced" rather than as an alphabetical set.
-const THEME_ORDER := ["ember", "loam", "kiln", "console"]
 
 # The masthead title tone — warm parchment, the one place the dark console admits a light accent
 # (mirrors the prototype's --parchment / #f2e6bf). Not in HudStyle because nothing else uses it.
@@ -580,8 +577,8 @@ func _build_options_pane() -> void:
 		_format_percent_readout))
 	# Second, beside the scale, because the two answer the same question — how the client LOOKS — and
 	# because this row's caption has to be read in the same glance as the row above it. Like every
-	# other row here it writes `ClientSettings` and stops; unlike them, what it writes is not what is
-	# on screen until the next launch.
+	# other row here it writes `ClientSettings` and stops; unlike them, what it writes is not what is on
+	# screen until its own "Apply now" installs the palette and rebuilds the scene against it.
 	_pane_body.add_child(_make_theme_row())
 	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
 	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
@@ -695,8 +692,13 @@ func _make_theme_row() -> Control:
 	_theme_picker.focus_mode = Control.FOCUS_NONE
 	_theme_picker.fit_to_longest_item = false
 	HudStyle.apply_option_button(_theme_picker)
-	for index in THEME_ORDER.size():
-		var id := String(THEME_ORDER[index])
+	# The roster and its display order both come from `HudPalette.ids()` — the picker keeps no list of
+	# its own. A second, hand-maintained order here would accept a fifth theme everywhere else in the
+	# system (validated, installed, reported by `applied_id`) while never listing it, and the picker
+	# would then sit on some other theme's row while that palette was on screen.
+	var roster := HudPalette.ids()
+	for index in roster.size():
+		var id := String(roster[index])
 		_theme_picker.add_item(HudPalette.display_name(id), index)
 		_theme_picker.set_item_metadata(index, id)
 	_theme_picker.select(_theme_item_index(ClientSettings.theme))
@@ -723,8 +725,9 @@ func _make_theme_row() -> Control:
 ## The picker index showing `id` — the default's index for an id the roster no longer lists, so a
 ## stale settings file still opens the row on something.
 func _theme_item_index(id: String) -> int:
-	var index := THEME_ORDER.find(id)
-	return index if index >= 0 else THEME_ORDER.find(HudPalette.DEFAULT_THEME)
+	var roster := HudPalette.ids()
+	var index := roster.find(id)
+	return index if index >= 0 else roster.find(HudPalette.DEFAULT_THEME)
 
 
 func _on_theme_selected(index: int) -> void:

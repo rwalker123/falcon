@@ -3,11 +3,13 @@ extends RefCounted
 
 ## THE THEME ROSTER — the four palettes the HUD can wear, and the one entry point that installs one.
 ##
-## **RESTART TO APPLY, BY DESIGN.** A theme is chosen in the Options pane, persisted to
-## `ClientSettings` (`[ui] theme`) and installed at the NEXT launch — never live. That is what makes
-## the whole system free of a rebuild pass: `ClientSettings` is an autoload, so its `_ready` runs
-## before the main scene is instantiated and therefore before a single Control has been built. Every
-## panel then reads the theme's colours the same way it always did, on its first and only build.
+## **A CONTROL READS THE PALETTE WHEN IT IS BUILT, AND NEVER AGAIN.** Nothing here restyles a live
+## Control, which is what keeps the whole system free of a rebuild pass — so `apply()` must run before
+## the tree that will read it is built. Two paths satisfy that. At boot, `ClientSettings._ready` calls
+## it from an autoload, before the main scene is instantiated and therefore before a single Control
+## exists. From the Options pane, `GameLaunch.apply_theme_now()` calls it and THEN reloads the current
+## scene, so the reload is what builds the Controls that read the new values. Either way every panel
+## reads the theme's colours the same way it always did, on its first and only build.
 ##
 ## **WHY `HudStyle`'s PALETTE IS `static var` AND NOT `const`.** A `static var` reads IDENTICALLY at
 ## the call site — `HudStyle.DANGER` is the same expression either way — so swapping the storage class
@@ -63,39 +65,14 @@ const EARTH_MAP := {
 ## `console` is the original palette, and its values are the ORIGINAL `Color(...)` literals rather
 ## than hex re-spellings of them: round-tripping a float triple through 8-bit hex is a drift, and the
 ## one theme whose job is to be unchanged must be exactly unchanged.
+##
+## **KEY ORDER IS THE PICKER'S ORDER** — `ids()` hands these keys to `MenuShell`'s Options row in this
+## sequence, so the earth themes come first and the palette they replaced comes last, and the list
+## reads as "the current look, and the one it replaced" rather than as an alphabetical set. There is no
+## second roster to keep in step: a theme added here reaches the picker, `applied_id` and
+## `ClientSettings`' validation together, which is the point. `DEFAULT_THEME` is named, not positional,
+## so reordering never changes which theme a fresh install wears.
 const THEMES := {
-	"loam": {
-		"name": "Loam",
-		"hud": {
-			"GROUND": Color("17130f"),
-			"GROUND_2": Color("1e1813"),
-			"PANEL_SOLID": Color("241d17"),
-			"LINE": Color("443528"),
-			"LINE_SOFT": Color("2e251c"),
-			"INK": Color("f2e9da"),
-			"INK_DIM": Color("b7a893"),
-			"INK_FAINT": Color("8a7c6a"),
-			"SIGNAL": Color("79b0d6"),
-			"SIGNAL_DEEP": Color("40708f"),
-			"WARN": Color("d9a441"),
-			"DANGER": Color("c8664e"),
-			"HEALTHY": Color("8fa363"),
-			"THREAT_ACCENT": Color("b03426"),
-			"HUNT_DANGER_ACCENT": Color("d2842f"),
-			"BUTTON_PRIMARY_BG": Color("2b3f4e"),
-			"BUTTON_PRIMARY_TEXT": Color("dceaf4"),
-			"BUTTON_ARMED_TEXT": Color("f0cfc3"),
-			"GHOST_BG": Color("1f1a15"),
-			"GHOST_BG_HOVER": Color("2c2620"),
-			"PRIMARY_BG_HOVER": Color("365064"),
-			"ARMED_BG": Color("2a1a15"),
-			"ARMED_BG_HOVER": Color("331f19"),
-			"ARMED_BORDER": Color("5a3a30"),
-			"VOICE_PIGMENT": Color("c89c66"),
-			"VOICE_INK": Color("8d9aa4"),
-		},
-		"map": EARTH_MAP,
-	},
 	"ember": {
 		"name": "Ember",
 		"hud": {
@@ -125,6 +102,38 @@ const THEMES := {
 			"ARMED_BORDER": Color("5c3a2e"),
 			"VOICE_PIGMENT": Color("d0a468"),
 			"VOICE_INK": Color("93a0a8"),
+		},
+		"map": EARTH_MAP,
+	},
+	"loam": {
+		"name": "Loam",
+		"hud": {
+			"GROUND": Color("17130f"),
+			"GROUND_2": Color("1e1813"),
+			"PANEL_SOLID": Color("241d17"),
+			"LINE": Color("443528"),
+			"LINE_SOFT": Color("2e251c"),
+			"INK": Color("f2e9da"),
+			"INK_DIM": Color("b7a893"),
+			"INK_FAINT": Color("8a7c6a"),
+			"SIGNAL": Color("79b0d6"),
+			"SIGNAL_DEEP": Color("40708f"),
+			"WARN": Color("d9a441"),
+			"DANGER": Color("c8664e"),
+			"HEALTHY": Color("8fa363"),
+			"THREAT_ACCENT": Color("b03426"),
+			"HUNT_DANGER_ACCENT": Color("d2842f"),
+			"BUTTON_PRIMARY_BG": Color("2b3f4e"),
+			"BUTTON_PRIMARY_TEXT": Color("dceaf4"),
+			"BUTTON_ARMED_TEXT": Color("f0cfc3"),
+			"GHOST_BG": Color("1f1a15"),
+			"GHOST_BG_HOVER": Color("2c2620"),
+			"PRIMARY_BG_HOVER": Color("365064"),
+			"ARMED_BG": Color("2a1a15"),
+			"ARMED_BG_HOVER": Color("331f19"),
+			"ARMED_BORDER": Color("5a3a30"),
+			"VOICE_PIGMENT": Color("c89c66"),
+			"VOICE_INK": Color("8d9aa4"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -211,13 +220,15 @@ const THEMES := {
 	},
 }
 
-## The theme actually installed THIS session — `""` until `apply()` has run. The Options row compares
-## the player's SELECTION against it to decide whether a restart is still owed, which is a different
+## The theme currently ON SCREEN — `""` until `apply()` has run, and re-written by every `apply()`,
+## including the one `GameLaunch.apply_theme_now()` performs mid-session. The Options row compares the
+## player's SELECTION against it to decide whether an apply is still owed, which is a different
 ## question from "what is saved" and cannot be answered by `ClientSettings.theme` alone.
 static var applied_id: String = ""
 
 
-## The roster, in the order the Options row lists it.
+## The roster, in the order the Options row lists it — `THEMES` declaration order, which is the ONLY
+## place that order is stated (see the `THEMES` note above).
 static func ids() -> PackedStringArray:
 	var out := PackedStringArray()
 	for id in THEMES.keys():

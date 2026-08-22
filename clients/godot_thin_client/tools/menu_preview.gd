@@ -118,8 +118,8 @@ func _ready() -> void:
 	# it is the only frame that can show it. The pick is made by assigning the MEMBER
 	# `ClientSettings.theme` and rebuilding the pane, never by driving `_on_theme_selected`: that path
 	# calls `set_theme`, which SAVES over the developer's real `user://client_settings.cfg` — the same
-	# contamination the interface-scale pin above exists to avoid, and this one would change what the
-	# developer's next launch looks like. Rendered from PAUSE, where the button is `armed` and says the
+	# contamination the interface-scale pin above exists to avoid, and this one would overwrite the
+	# developer's own saved theme. Rendered from PAUSE, where the button is `armed` and says the
 	# run will be lost. NOTHING PRESSES IT: applying reloads the current scene, which would tear down
 	# the tree this harness is capturing.
 	ClientSettings.theme = PENDING_THEME
