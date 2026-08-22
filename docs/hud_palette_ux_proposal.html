@@ -1,0 +1,1121 @@
+<title>Ground Truth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+/* ==========================================================================
+   PAGE CHROME — deliberately single-theme.
+   A colour-proofing page cannot let the viewer's theme move the ground behind
+   the swatches: a dark HUD panel judged against a cream page is judged wrong.
+   So this page commits to one neutral dark stage and paints every colour
+   explicitly. That is a decision, not a missing dark-mode block.
+   ========================================================================== */
+:root {
+  --page:        #131315;
+  --page-2:      #191a1c;
+  --page-3:      #202124;
+  --rule:        #2c2d31;
+  --rule-soft:   #232427;
+  --text:        #e6e4e0;
+  --text-dim:    #a3a19c;
+  --text-faint:  #74726e;
+  --stage:       #0c0c0d;
+
+  --font-ui:   "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --step--1: 0.78rem;
+  --step-0:  0.975rem;
+  --step-1:  1.2rem;
+  --step-2:  1.6rem;
+  --step-3:  2.3rem;
+  --step-4:  clamp(2.6rem, 6vw, 4.2rem);
+
+  --gap:   1.5rem;
+  --gap-s: 0.75rem;
+  --gap-l: 3.5rem;
+  --measure: 68ch;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--step-0);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(1.1rem, 4vw, 2.75rem);
+}
+
+h1, h2, h3 { text-wrap: balance; margin: 0; line-height: 1.14; letter-spacing: -0.022em; }
+h1 { font-size: var(--step-4); font-weight: 700; }
+h2 { font-size: var(--step-3); font-weight: 700; }
+h3 { font-size: var(--step-1); font-weight: 600; letter-spacing: -0.01em; }
+p  { margin: 0; max-width: var(--measure); }
+
+a { color: inherit; }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.lede { font-size: var(--step-1); line-height: 1.5; color: var(--text-dim); }
+.dim  { color: var(--text-dim); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--page-3);
+  border: 1px solid var(--rule-soft);
+  border-radius: 4px;
+  padding: 0.08em 0.34em;
+}
+
+section { padding-block: var(--gap-l); border-top: 1px solid var(--rule); }
+section:first-of-type { border-top: 0; }
+
+.stack   { display: flex; flex-direction: column; gap: var(--gap); }
+.stack-s { display: flex; flex-direction: column; gap: var(--gap-s); }
+.stack-l { display: flex; flex-direction: column; gap: var(--gap-l); }
+
+/* ---- hero ---------------------------------------------------------------- */
+.hero { padding-block: clamp(3.5rem, 9vw, 6.5rem) var(--gap-l); }
+.hero h1 { margin-block: 1.1rem 1.4rem; }
+
+.verdict {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 2.25rem;
+}
+.verdict > div { background: var(--page-2); padding: 1.15rem 1.25rem; }
+.verdict dt {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 0.5rem;
+}
+.verdict dd { margin: 0; font-size: 1.05rem; line-height: 1.45; }
+.verdict .num {
+  font-family: var(--font-mono);
+  font-size: 1.85rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  display: block;
+  margin-bottom: 0.1rem;
+}
+
+/* ---- hue axis (the evidence) --------------------------------------------- */
+.hue-axis { display: flex; flex-direction: column; gap: 0.55rem; }
+.hue-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 132px) 1fr;
+  align-items: center;
+  gap: 1rem;
+}
+.hue-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: right;
+}
+.hue-track {
+  position: relative;
+  height: 30px;
+  border-radius: 5px;
+  background: linear-gradient(90deg,
+    hsl(0 42% 34%), hsl(30 42% 34%), hsl(60 42% 34%), hsl(90 42% 34%),
+    hsl(120 42% 34%), hsl(150 42% 34%), hsl(180 42% 34%), hsl(210 42% 34%),
+    hsl(240 42% 34%), hsl(270 42% 34%), hsl(300 42% 34%), hsl(330 42% 34%), hsl(360 42% 34%));
+  opacity: 0.34;
+}
+.hue-track .pip {
+  position: absolute;
+  top: -4px;
+  width: 12px;
+  height: 38px;
+  margin-left: -6px;
+  border-radius: 3px;
+  border: 1.5px solid rgba(0,0,0,0.55);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.18);
+}
+.hue-row.live .hue-track { opacity: 1; background: var(--page-3); }
+.hue-scale {
+  display: grid;
+  grid-template-columns: minmax(96px, 132px) 1fr;
+  gap: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--text-faint);
+}
+.hue-ticks { display: flex; justify-content: space-between; }
+
+/* ---- swatch strips ------------------------------------------------------- */
+.strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipswatch {
+  width: 74px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  background: var(--page-2);
+}
+.chipswatch .sw { height: 46px; }
+.chipswatch .lb {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  padding: 4px 5px 5px;
+  color: var(--text-faint);
+  line-height: 1.3;
+  word-break: break-all;
+}
+
+/* ---- token table --------------------------------------------------------- */
+.table-scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; min-width: 720px; }
+thead th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 500;
+  padding: 0.7rem 0.85rem;
+  background: var(--page-2);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+tbody td { padding: 0.52rem 0.85rem; border-bottom: 1px solid var(--rule-soft); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+td.tok { font-family: var(--font-mono); font-size: 0.78rem; white-space: nowrap; }
+td.hexcell { font-family: var(--font-mono); font-size: 0.78rem; white-space: nowrap; }
+.dot {
+  display: inline-block;
+  width: 15px; height: 15px;
+  border-radius: 4px;
+  vertical-align: -3px;
+  margin-right: 0.5rem;
+  border: 1px solid rgba(255,255,255,0.14);
+}
+.was { color: var(--text-faint); text-decoration: line-through; text-decoration-color: rgba(255,255,255,0.28); }
+
+/* ==========================================================================
+   THE STAGE — mock HUD surfaces, driven entirely by scheme tokens.
+   Every rule below reads a --hs-* custom property, so switching the
+   data-scheme attribute re-themes the whole mock with no other change.
+   That is the point: it is the same relationship HudStyle.gd has to the HUD.
+   ========================================================================== */
+.scheme {
+  --hs-ground:      #0b1114;
+  --hs-ground2:     #0e161a;
+  --hs-panel:       #111a1e;
+  --hs-line:        #26363c;
+  --hs-line-soft:   #1b282d;
+  --hs-ink:         #e9efe9;
+  --hs-ink-dim:     #9db0ad;
+  --hs-ink-faint:   #6f8380;
+  --hs-signal:      #4fe0cf;
+  --hs-signal-deep: #1f9c8e;
+  --hs-warn:        #f2b13f;
+  --hs-danger:      #e8746a;
+  --hs-healthy:     #76cd80;
+  --hs-threat:      #d92929;
+  --hs-hunt:        #ed8521;
+  --hs-btn-bg:      #163a34;
+  --hs-btn-text:    #d8fff8;
+  --hs-armed-text:  #f0c3bd;
+  --hs-pigment:     #c89c66;
+  --hs-voice-ink:   #82a2b4;
+}
+
+.scheme[data-scheme="loam"] {
+  --hs-ground:      #17130f;
+  --hs-ground2:     #1e1813;
+  --hs-panel:       #241d17;
+  --hs-line:        #443528;
+  --hs-line-soft:   #2e251c;
+  --hs-ink:         #f2e9da;
+  --hs-ink-dim:     #b7a893;
+  --hs-ink-faint:   #8a7c6a;
+  --hs-signal:      #79b0d6;
+  --hs-signal-deep: #40708f;
+  --hs-warn:        #d9a441;
+  --hs-danger:      #c8664e;
+  --hs-healthy:     #8fa363;
+  --hs-threat:      #b03426;
+  --hs-hunt:        #d2842f;
+  --hs-btn-bg:      #2b3f4e;
+  --hs-btn-text:    #dceaf4;
+  --hs-armed-text:  #f0cfc3;
+  --hs-pigment:     #c89c66;
+  --hs-voice-ink:   #8d9aa4;
+}
+
+.scheme[data-scheme="ember"] {
+  --hs-ground:      #14100d;
+  --hs-ground2:     #1b1611;
+  --hs-panel:       #221b15;
+  --hs-line:        #46372a;
+  --hs-line-soft:   #2f261d;
+  --hs-ink:         #f4ead7;
+  --hs-ink-dim:     #bdab90;
+  --hs-ink-faint:   #8d7e68;
+  --hs-signal:      #efe3cd;
+  --hs-signal-deep: #a08d6d;
+  --hs-warn:        #e0a63c;
+  --hs-danger:      #c05a41;
+  --hs-healthy:     #94a361;
+  --hs-threat:      #a83125;
+  --hs-hunt:        #d98a2b;
+  --hs-btn-bg:      #3d3226;
+  --hs-btn-text:    #fbf3e2;
+  --hs-armed-text:  #f2cbbc;
+  --hs-pigment:     #d0a468;
+  --hs-voice-ink:   #93a0a8;
+}
+
+.scheme[data-scheme="kiln"] {
+  --hs-ground:      #16161a;
+  --hs-ground2:     #1c1c20;
+  --hs-panel:       #232328;
+  --hs-line:        #40403f;
+  --hs-line-soft:   #2b2b2f;
+  --hs-ink:         #ece6dc;
+  --hs-ink-dim:     #ada79c;
+  --hs-ink-faint:   #7e786e;
+  --hs-signal:      #cf7a4d;
+  --hs-signal-deep: #8c4b2b;
+  --hs-warn:        #e3c26a;
+  --hs-danger:      #b8564a;
+  --hs-healthy:     #7f9455;
+  --hs-threat:      #973026;
+  --hs-hunt:        #e0a53a;
+  --hs-btn-bg:      #47301f;
+  --hs-btn-text:    #f7e2d4;
+  --hs-armed-text:  #f0cabb;
+  --hs-pigment:     #c99a6b;
+  --hs-voice-ink:   #8f9aa6;
+}
+
+/* mock surfaces */
+.stage {
+  background: var(--hs-ground);
+  border: 1px solid var(--hs-line-soft);
+  border-radius: 12px;
+  padding: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  color: var(--hs-ink);
+  font-size: 0.85rem;
+  container-type: inline-size;
+}
+.stage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 1rem; }
+
+.card {
+  background: var(--hs-panel);
+  border: 1px solid var(--hs-line);
+  border-radius: 10px;
+  padding: 0.85rem 0.9rem 0.95rem;
+  box-shadow: 0 8px 10px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+}
+.card-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-weight: 600;
+  font-size: 0.94rem;
+  letter-spacing: -0.005em;
+}
+.card-h .sub {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hs-ink-faint);
+  font-weight: 400;
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; font-size: 0.8rem; }
+.row .k { color: var(--hs-ink-dim); }
+.row .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.meter { height: 5px; border-radius: 3px; background: var(--hs-line-soft); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 3px; }
+
+.hr { height: 1px; background: var(--hs-line-soft); }
+
+.btns { display: flex; flex-wrap: wrap; gap: 7px; }
+.btn {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 6px 13px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  cursor: default;
+  background: transparent;
+}
+.btn.primary { background: var(--hs-btn-bg); color: var(--hs-btn-text); border-color: var(--hs-signal-deep); }
+.btn.ghost   { background: transparent; color: var(--hs-ink-dim); border-color: var(--hs-line); }
+.btn.armed   { background: rgba(0,0,0,0.25); color: var(--hs-armed-text); border-color: var(--hs-danger); }
+
+.rungs { display: flex; gap: 6px; }
+.rung {
+  flex: 1;
+  border-radius: 7px;
+  border: 1px solid var(--hs-line);
+  background: transparent;
+  padding: 7px 8px;
+  text-align: left;
+  color: var(--hs-ink-dim);
+  font: inherit;
+  cursor: default;
+}
+.rung b { display: block; font-size: 0.78rem; font-weight: 600; color: var(--hs-ink); }
+.rung span { font-family: var(--font-mono); font-size: 0.6rem; color: var(--hs-ink-faint); }
+.rung.on { background: var(--hs-btn-bg); border-color: var(--hs-signal-deep); }
+.rung.on b, .rung.on span { color: var(--hs-btn-text); }
+
+.banner {
+  align-self: flex-start;
+  background: rgba(0,0,0,0.45);
+  border: 1px solid var(--hs-signal-deep);
+  border-radius: 11px;
+  padding: 8px 14px;
+  font-size: 0.8rem;
+  box-shadow: 0 8px 14px rgba(0,0,0,0.55);
+}
+.banner b { color: var(--hs-signal); }
+
+.feed { display: flex; flex-direction: column; gap: 1px; }
+.ev {
+  display: grid;
+  grid-template-columns: 3px 1fr auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 6px 0 6px 0;
+  border-bottom: 1px solid var(--hs-line-soft);
+  font-size: 0.79rem;
+}
+.ev:last-child { border-bottom: 0; }
+.ev .bar { align-self: stretch; border-radius: 2px; }
+.ev .when { font-family: var(--font-mono); font-size: 0.63rem; color: var(--hs-ink-faint); white-space: nowrap; }
+.ev .txt { color: var(--hs-ink-dim); }
+.ev .txt b { color: var(--hs-ink); font-weight: 600; }
+
+.voice { display: flex; flex-direction: column; gap: 0.4rem; }
+.voice .vt { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; }
+.voice .vr { height: 1px; }
+.voice p { font-size: 0.79rem; color: var(--hs-ink-dim); font-style: italic; margin: 0; }
+
+/* ---- switcher ------------------------------------------------------------ */
+.switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 5px;
+  background: var(--page-2);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  align-self: flex-start;
+}
+.switch button {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 7px 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background 120ms ease, color 120ms ease;
+}
+.switch button:hover { background: var(--page-3); color: var(--text); }
+.switch button:focus-visible { outline: 2px solid #7f9fbf; outline-offset: 2px; }
+.switch button[aria-pressed="true"] { background: var(--page-3); color: var(--text); border-color: var(--rule); }
+.switch .key {
+  width: 11px; height: 11px; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+.sticky-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(9px);
+  border-bottom: 1px solid var(--rule);
+  padding-block: 0.7rem;
+  margin-bottom: var(--gap);
+}
+.sticky-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
+
+/* ---- ramps --------------------------------------------------------------- */
+.ramp-set { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.4rem; }
+.ramp { display: flex; flex-direction: column; gap: 0.4rem; }
+.ramp-h { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; }
+.ramp-h .name { font-size: 0.86rem; font-weight: 600; }
+.ramp-h .ends { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-faint); }
+.ramp-bar { height: 30px; border-radius: 5px; border: 1px solid var(--rule); }
+.ramp-pair { display: flex; flex-direction: column; gap: 3px; }
+.ramp-tag {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cats { display: flex; flex-wrap: wrap; gap: 5px; }
+.cat {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 0.66rem;
+  padding: 3px 9px 3px 4px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+.cat i { width: 13px; height: 13px; border-radius: 3px; display: block; }
+
+/* ---- notes / questions --------------------------------------------------- */
+.qa { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.qa > div { background: var(--page-2); padding: 1.05rem 1.2rem; display: flex; gap: 1rem; align-items: flex-start; }
+.qa .q-n { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-faint); padding-top: 0.22rem; min-width: 1.6rem; }
+.qa .q-b { display: flex; flex-direction: column; gap: 0.3rem; }
+.qa .q-t { font-weight: 600; font-size: 0.95rem; }
+.qa .q-d { font-size: 0.87rem; color: var(--text-dim); max-width: 62ch; }
+
+.callout {
+  border-left: 2px solid var(--text-faint);
+  padding: 0.15rem 0 0.15rem 1.1rem;
+  color: var(--text-dim);
+  font-size: 0.93rem;
+  max-width: var(--measure);
+}
+
+footer { border-top: 1px solid var(--rule); padding-block: 2.25rem 3.5rem; color: var(--text-faint); font-size: 0.82rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+</style>
+
+<div class="wrap">
+
+  <!-- ================= HERO ================= -->
+  <header class="hero">
+    <div class="eyebrow">Shadow-Scale · Issue #565 · HUD palette proposal</div>
+    <h1>The HUD is painted<br>the colour of water.</h1>
+    <p class="lede">
+      Every chrome token in <code>HudStyle.gd</code> — the ground, the panels, the hairlines —
+      sits at a hue of about 193°. That is the hue of <code>00_deep_ocean</code>. The land the
+      game is actually played on sits at 19–34°. The interface and the map have been drawn from
+      two different worlds, and the seam is what playtesters are reading as machine-made.
+    </p>
+
+    <dl class="verdict">
+      <div>
+        <dt>Current chrome hue</dt>
+        <dd><span class="num mono">193°</span><span class="dim">deep ocean, applied to every panel</span></dd>
+      </div>
+      <div>
+        <dt>Terrain hue, measured</dt>
+        <dd><span class="num mono">19–34°</span><span class="dim">ochre · umber · terracotta</span></dd>
+      </div>
+      <div>
+        <dt>Shared hue between them</dt>
+        <dd><span class="num mono">none</span><span class="dim">the accents don't overlap either</span></dd>
+      </div>
+      <div>
+        <dt>Directions to choose from</dt>
+        <dd><span class="num mono">3</span><span class="dim">all dark; all anchored to sampled art</span></dd>
+      </div>
+    </dl>
+  </header>
+
+  <!-- ================= 1. THE EVIDENCE ================= -->
+  <section class="stack">
+    <div class="stack-s">
+      <div class="eyebrow">01 — The measurement</div>
+      <h2>Where the two palettes actually sit</h2>
+      <p class="dim">
+        The top row is the average colour of all 38 shipped terrain textures, sampled from
+        <code>assets/terrain/textures/base/</code>. The bottom row is the current HUD's tokens.
+        They occupy different halves of the wheel, and no amount of taste-argument is needed to
+        see it.
+      </p>
+    </div>
+
+    <div class="hue-axis">
+      <div class="hue-row">
+        <div class="hue-label">The map</div>
+        <div class="hue-track" id="hue-map"></div>
+      </div>
+      <div class="hue-row">
+        <div class="hue-label">The HUD, now</div>
+        <div class="hue-track" id="hue-hud"></div>
+      </div>
+      <div class="hue-row">
+        <div class="hue-label">Proposed</div>
+        <div class="hue-track" id="hue-new"></div>
+      </div>
+      <div class="hue-scale">
+        <div></div>
+        <div class="hue-ticks">
+          <span>0°</span><span>60°</span><span>120°</span><span>180°</span><span>240°</span><span>300°</span><span>360°</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack-s" style="margin-top:1rem">
+      <div class="eyebrow">Sampled terrain — the anchor</div>
+      <div class="strip" id="terrain-strip"></div>
+    </div>
+
+    <p class="callout">
+      This is the part worth keeping even if you reject all three directions below: the palette
+      should be <em>derived</em> from the art rather than chosen beside it. Every colour proposed
+      on this page traces back to a hex in that strip.
+    </p>
+  </section>
+
+  <!-- ================= 2. THE DIRECTIONS ================= -->
+  <section class="stack">
+    <div class="stack-s">
+      <div class="eyebrow">02 — Three directions</div>
+      <h2>Same HUD, three grounds</h2>
+      <p class="dim">
+        Everything below re-themes live. The surfaces are the real ones — a selection card with
+        chips and meters, a policy picker, the event dock, the targeting banner, the button
+        variants, and the Telling's voice accents — so a direction has to survive the HUD's actual
+        demands, not a swatch grid.
+      </p>
+    </div>
+
+    <div class="sticky-bar">
+      <div class="sticky-inner">
+        <div class="switch" role="group" aria-label="Palette direction">
+          <button type="button" data-set="current" aria-pressed="false"><i class="key" style="background:#0b1114"></i>Current</button>
+          <button type="button" data-set="loam"    aria-pressed="true"><i class="key" style="background:#241d17"></i>A · Loam</button>
+          <button type="button" data-set="ember"   aria-pressed="false"><i class="key" style="background:#221b15"></i>B · Ember</button>
+          <button type="button" data-set="kiln"    aria-pressed="false"><i class="key" style="background:#232328"></i>C · Kiln</button>
+        </div>
+        <div class="mono" style="font-size:0.72rem;color:var(--text-faint)" id="scheme-note"></div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <h3 id="scheme-title">A · Loam</h3>
+      <p class="dim" id="scheme-blurb" style="margin-top:-0.4rem"></p>
+    </div>
+
+    <div class="scheme" data-scheme="loam" id="scheme">
+      <div class="stage">
+
+        <div class="banner">Choose a tile to <b>move the band</b> — Esc cancels</div>
+
+        <div class="stage-grid">
+
+          <!-- selection card -->
+          <div class="card">
+            <div class="card-h"><span>Reed Hollow</span><span class="sub">Band · 34</span></div>
+            <div class="chips">
+              <span class="chip" style="color:var(--hs-healthy);border-color:color-mix(in srgb,var(--hs-healthy) 40%,transparent)">Sheltered</span>
+              <span class="chip" style="color:var(--hs-warn);border-color:color-mix(in srgb,var(--hs-warn) 40%,transparent)">Dry</span>
+              <span class="chip" style="color:var(--hs-ink-dim);border-color:color-mix(in srgb,var(--hs-ink-dim) 40%,transparent)">Floodplain</span>
+              <span class="chip" style="color:var(--hs-hunt);border-color:color-mix(in srgb,var(--hs-hunt) 40%,transparent)">Wolves near</span>
+            </div>
+            <div class="hr"></div>
+            <div class="row"><span class="k">Food</span><span class="v" style="color:var(--hs-healthy)">+6 / turn</span></div>
+            <div class="meter"><i style="width:72%;background:var(--hs-healthy)"></i></div>
+            <div class="row"><span class="k">Morale</span><span class="v" style="color:var(--hs-warn)">Uneasy</span></div>
+            <div class="meter"><i style="width:38%;background:var(--hs-warn)"></i></div>
+            <div class="row"><span class="k">Pasture</span><span class="v">0.61</span></div>
+            <div class="meter"><i style="width:61%;background:var(--hs-ink-dim)"></i></div>
+            <div class="btns" style="margin-top:0.25rem">
+              <button class="btn primary" type="button">Move band</button>
+              <button class="btn ghost" type="button">Compose</button>
+              <button class="btn armed" type="button">Abandon</button>
+            </div>
+          </div>
+
+          <!-- policy picker + feed -->
+          <div class="card">
+            <div class="card-h"><span>Hunting policy</span><span class="sub">Aurochs · herd 12</span></div>
+            <div class="rungs">
+              <button class="rung" type="button"><b>Sustain</b><span>+3 food</span></button>
+              <button class="rung on" type="button"><b>Market</b><span>+7 food</span></button>
+              <button class="rung" type="button"><b>Deplete</b><span>+11 food</span></button>
+            </div>
+            <div class="hr"></div>
+            <div class="feed">
+              <div class="ev">
+                <i class="bar" style="background:var(--hs-threat)"></i>
+                <span class="txt"><b>Raid</b> — two lost at the ford</span>
+                <span class="when">T 142</span>
+              </div>
+              <div class="ev">
+                <i class="bar" style="background:var(--hs-hunt)"></i>
+                <span class="txt"><b>Hunt cost</b> — wolves shadow the herd</span>
+                <span class="when">T 141</span>
+              </div>
+              <div class="ev">
+                <i class="bar" style="background:var(--hs-signal)"></i>
+                <span class="txt"><b>Scouts</b> returned from the high plateau</span>
+                <span class="when">T 140</span>
+              </div>
+              <div class="ev">
+                <i class="bar" style="background:var(--hs-ink-faint)"></i>
+                <span class="txt">Emmer stores rose to 48</span>
+                <span class="when">T 139</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- voice + accents -->
+          <div class="card">
+            <div class="card-h"><span>The Telling</span><span class="sub">Painted</span></div>
+            <div class="voice">
+              <div class="vt" style="color:var(--hs-pigment)">Painted on the cave wall</div>
+              <div class="vr" style="background:var(--hs-pigment);opacity:0.5"></div>
+              <p>They followed the water down, and the water did not end.</p>
+            </div>
+            <div class="hr"></div>
+            <div class="voice">
+              <div class="vt" style="color:var(--hs-voice-ink)">Written and kept</div>
+              <div class="vr" style="background:var(--hs-voice-ink);opacity:0.5"></div>
+              <p>In the ninth winter the ford was held, and the count was kept.</p>
+            </div>
+            <div class="hr"></div>
+            <div class="chips">
+              <span class="chip" style="color:var(--hs-signal);border-color:color-mix(in srgb,var(--hs-signal) 40%,transparent)">signal</span>
+              <span class="chip" style="color:var(--hs-warn);border-color:color-mix(in srgb,var(--hs-warn) 40%,transparent)">warn</span>
+              <span class="chip" style="color:var(--hs-danger);border-color:color-mix(in srgb,var(--hs-danger) 40%,transparent)">danger</span>
+              <span class="chip" style="color:var(--hs-healthy);border-color:color-mix(in srgb,var(--hs-healthy) 40%,transparent)">healthy</span>
+              <span class="chip" style="color:var(--hs-threat);border-color:color-mix(in srgb,var(--hs-threat) 40%,transparent)">threat</span>
+              <span class="chip" style="color:var(--hs-hunt);border-color:color-mix(in srgb,var(--hs-hunt) 40%,transparent)">hunt</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="stack-s">
+      <div class="eyebrow">Token diff against today</div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Token</th><th>Role</th><th>Now</th><th>Proposed</th></tr>
+          </thead>
+          <tbody id="token-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 3. DATA RAMPS ================= -->
+  <section class="stack">
+    <div class="stack-s">
+      <div class="eyebrow">03 — The map's data colours</div>
+      <h2>The ramps are the louder half</h2>
+      <p class="dim">
+        These live in <code>MapView.gd</code>, not <code>HudStyle.gd</code>, and they cover whole
+        hexes rather than hairlines — so they carry more of the "AI-generated" read than the
+        chrome does. The elevation ramp is the worst offender: blue&#8202;→&#8202;yellow&#8202;→&#8202;red
+        is a default heatmap, not a map. Replacing it with a hypsometric tint — the convention
+        every printed atlas uses — is the single change that most makes this look drawn by a
+        person. These are proposed once and shared by all three directions.
+      </p>
+    </div>
+
+    <div class="ramp-set" id="ramp-set"></div>
+
+    <div class="stack-s" style="margin-top:0.6rem">
+      <div class="eyebrow">Overlay channels — categorical, must stay separable</div>
+      <div class="cats" id="cats"></div>
+    </div>
+  </section>
+
+  <!-- ================= 4. SCOPE ================= -->
+  <section class="stack">
+    <div class="stack-s">
+      <div class="eyebrow">04 — What changes if you approve</div>
+      <h2>Where the colours live</h2>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>File</th><th>What moves</th><th>Risk</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="tok">ui/HudStyle.gd</td>
+            <td>All chrome + accent consts, the four <code>*_HEX</code> strings, button variant fills</td>
+            <td class="dim">Low — single source of truth, already respected</td>
+          </tr>
+          <tr>
+            <td class="tok">MapView.gd</td>
+            <td>Pasture, forage, elevation, overlay channels, threat / hunt-danger washes</td>
+            <td class="dim">Low — all named consts</td>
+          </tr>
+          <tr>
+            <td class="tok">Stray <code>Color(…)</code> literals</td>
+            <td>Sweep the panels that bypass <code>HudStyle</code> and route them through it</td>
+            <td class="dim">Medium — this is the part that finds surprises</td>
+          </tr>
+          <tr>
+            <td class="tok">ui_preview baselines</td>
+            <td>Every HUD frame changes by design; baselines re-taken in one commit</td>
+            <td class="dim">Low, but noisy — the diff will be ~270 PNGs</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="callout">
+      Terrain textures and the blend shader are deliberately <strong>out of scope</strong>. The map
+      art is the reference the HUD moves toward — retinting it would move the target while aiming
+      at it.
+    </p>
+  </section>
+
+  <!-- ================= 5. QUESTIONS ================= -->
+  <section class="stack">
+    <div class="stack-s">
+      <div class="eyebrow">05 — Needs your call</div>
+      <h2>Four open questions</h2>
+    </div>
+    <div class="qa">
+      <div>
+        <div class="q-n">01</div>
+        <div class="q-b">
+          <div class="q-t">Which direction?</div>
+          <div class="q-d">
+            <strong>A · Loam</strong> is the recommendation: warm umber ground with a single cool
+            lapis signal, so "you can act here" is the one thing on screen that isn't earth. B and
+            C are genuine alternatives, not strawmen — B removes hue from the affordance entirely
+            (chalk-on-stone), C commits hardest and is the riskiest.
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="q-n">02</div>
+        <div class="q-b">
+          <div class="q-t">Does <code>SIGNAL</code> collide with the Telling's written voice?</div>
+          <div class="q-d">
+            In direction A both are cool blues — <code>#79b0d6</code> against
+            <code>#8d9aa4</code>. They never appear on the same surface, and they're separated by
+            chroma rather than hue, but it's the one place the palette is doing two jobs with one
+            family. Say the word and I'll push the voice ladder to a warmer close instead.
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="q-n">03</div>
+        <div class="q-b">
+          <div class="q-t">How dark should the ground stay?</div>
+          <div class="q-d">
+            All three keep the HUD dark, per the existing rule that a light parchment panel reads
+            as a rendering bug. But earth tones tolerate a lighter ground than teal does — there's
+            a version of A about two stops up that feels more like tanned hide and less like a
+            console. Worth prototyping if you want it warmer still.
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="q-n">04</div>
+        <div class="q-b">
+          <div class="q-t">Ramps now or later?</div>
+          <div class="q-d">
+            The chrome and the ramps are separable commits. Doing chrome alone is a smaller, safer
+            change — but it half-fixes the complaint, because the elevation heatmap is the most
+            visible tell on screen. Recommendation is to do both together.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Prototype for review — no client code has changed. Terrain hues measured from the 38 shipped
+    base textures; HUD hues read from <span class="mono">HudStyle.gd</span> and
+    <span class="mono">MapView.gd</span> at <span class="mono">f0ea9622</span>.
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* --- sampled terrain averages, the anchor for everything proposed --------- */
+const TERRAIN = [
+  ["deep_ocean","#0a242c"], ["continental_shelf","#1e4853"], ["inland_sea","#47605c"],
+  ["tidal_flat","#7d6e54"], ["river_delta","#958c68"], ["freshwater_marsh","#1f2d1d"],
+  ["floodplain","#383f2a"], ["alluvial_plain","#453225"], ["prairie_steppe","#94693b"],
+  ["mixed_woodland","#2a3524"], ["boreal_taiga","#232b15"], ["peat_heath","#21201b"],
+  ["hot_desert_erg","#d5ae71"], ["rocky_reg","#6f4a35"], ["semi_arid_scrub","#9e794c"],
+  ["salt_flat","#cbc5bf"], ["oasis_basin","#3f4d29"], ["tundra","#687a6e"],
+  ["glacier","#b5c5d1"], ["rolling_hills","#32451d"], ["high_plateau","#b1987b"],
+  ["alpine_mountain","#9aadbc"], ["karst_highland","#8a8c84"], ["canyon_badlands","#ab582d"],
+  ["ash_plain","#333636"], ["sinkhole_field","#5f573d"]
+];
+
+const HUD_NOW = ["#0b1114","#0e161a","#111a1e","#26363c","#1b282d","#4fe0cf","#1f9c8e","#f2b13f","#e8746a","#76cd80","#163a34"];
+
+const SCHEMES = {
+  current: {
+    title: "Current",
+    blurb: "What ships today: a dark teal console with a cyan affordance and an amber success state. Shown here for comparison, on the same surfaces.",
+    note: "hue 172–193° · shares nothing with the terrain",
+    tokens: {}
+  },
+  loam: {
+    title: "A · Loam",
+    blurb: "Warm umber ground pulled straight from alluvial_plain, with a single cool lapis signal. The affordance is the one thing on screen that isn't earth, which is exactly what makes it findable. Recommended.",
+    note: "hue 26–34° ground · 205° signal",
+    tokens: {
+      "--hs-ground":"#17130f","--hs-ground2":"#1e1813","--hs-panel":"#241d17","--hs-line":"#443528",
+      "--hs-line-soft":"#2e251c","--hs-ink":"#f2e9da","--hs-ink-dim":"#b7a893","--hs-ink-faint":"#8a7c6a",
+      "--hs-signal":"#79b0d6","--hs-signal-deep":"#40708f","--hs-warn":"#d9a441","--hs-danger":"#c8664e",
+      "--hs-healthy":"#8fa363","--hs-threat":"#b03426","--hs-hunt":"#d2842f","--hs-btn-bg":"#2b3f4e",
+      "--hs-btn-text":"#dceaf4","--hs-armed-text":"#f0cfc3","--hs-pigment":"#c89c66","--hs-voice-ink":"#8d9aa4"
+    }
+  },
+  ember: {
+    title: "B · Ember",
+    blurb: "Firelight. The ground goes warmer still, and the affordance drops hue entirely — 'you can act here' reads as chalk on stone, so every remaining colour is free to mean something semantic. The most disciplined of the three.",
+    note: "hue 24–33° throughout · achromatic signal",
+    tokens: {
+      "--hs-ground":"#14100d","--hs-ground2":"#1b1611","--hs-panel":"#221b15","--hs-line":"#46372a",
+      "--hs-line-soft":"#2f261d","--hs-ink":"#f4ead7","--hs-ink-dim":"#bdab90","--hs-ink-faint":"#8d7e68",
+      "--hs-signal":"#efe3cd","--hs-signal-deep":"#a08d6d","--hs-warn":"#e0a63c","--hs-danger":"#c05a41",
+      "--hs-healthy":"#94a361","--hs-threat":"#a83125","--hs-hunt":"#d98a2b","--hs-btn-bg":"#3d3226",
+      "--hs-btn-text":"#fbf3e2","--hs-armed-text":"#f2cbbc","--hs-pigment":"#d0a468","--hs-voice-ink":"#93a0a8"
+    }
+  },
+  kiln: {
+    title: "C · Kiln",
+    blurb: "Cool stone rather than warm soil — a grey-brown slate ground with a terracotta affordance taken from canyon_badlands. The most committed and the riskiest: terracotta signal and amber hunt-danger sit close, so the semantics need watching.",
+    note: "hue ~240° neutral ground · 20° signal",
+    tokens: {
+      "--hs-ground":"#16161a","--hs-ground2":"#1c1c20","--hs-panel":"#232328","--hs-line":"#40403f",
+      "--hs-line-soft":"#2b2b2f","--hs-ink":"#ece6dc","--hs-ink-dim":"#ada79c","--hs-ink-faint":"#7e786e",
+      "--hs-signal":"#cf7a4d","--hs-signal-deep":"#8c4b2b","--hs-warn":"#e3c26a","--hs-danger":"#b8564a",
+      "--hs-healthy":"#7f9455","--hs-threat":"#973026","--hs-hunt":"#e0a53a","--hs-btn-bg":"#47301f",
+      "--hs-btn-text":"#f7e2d4","--hs-armed-text":"#f0cabb","--hs-pigment":"#c99a6b","--hs-voice-ink":"#8f9aa6"
+    }
+  }
+};
+
+const TOKEN_ROWS = [
+  ["GROUND",            "Map-edge ground behind everything",    "#0b1114", "--hs-ground"],
+  ["PANEL",             "Card and dock fill",                   "#111a1e", "--hs-panel"],
+  ["LINE",              "Card border, hairline rules",          "#26363c", "--hs-line"],
+  ["INK",               "Primary text",                         "#e9efe9", "--hs-ink"],
+  ["INK_DIM",           "Labels, secondary text",               "#9db0ad", "--hs-ink-dim"],
+  ["SIGNAL",            "Targeting; 'you can act here'",        "#4fe0cf", "--hs-signal"],
+  ["WARN",              "Success, ETA, caution",                "#f2b13f", "--hs-warn"],
+  ["DANGER",            "Destructive, armed controls",          "#e8746a", "--hs-danger"],
+  ["HEALTHY",           "Well-supplied, good",                  "#76cd80", "--hs-healthy"],
+  ["THREAT_ACCENT",     "Raid, casualty — mirrors the map",     "#d92929", "--hs-threat"],
+  ["HUNT_DANGER_ACCENT","Cost to hunt — mirrors the map",       "#ed8521", "--hs-hunt"],
+  ["BUTTON_PRIMARY_BG", "The one 'this is selected' marker",    "#163a34", "--hs-btn-bg"],
+  ["VOICE_PIGMENT",     "The Telling: painted",                 "#c89c66", "--hs-pigment"],
+  ["VOICE_INK",         "The Telling: written",                 "#82a2b4", "--hs-voice-ink"]
+];
+
+const RAMPS = [
+  { name: "Elevation",
+    ends: "low → high",
+    now:  ["#2951c7","#f7d152","#c72326"],
+    next: ["#4a5f43","#8a8a5c","#c2a56f","#e6ded0"],
+    why:  "blue→yellow→red heatmap → hypsometric tint" },
+  { name: "Pasture",
+    ends: "poor → rich",
+    now:  ["#d9c76b","#219e3d"],
+    next: ["#c2ab7a","#8a9457","#4f7038"],
+    why:  "dry straw → moss, no neon" },
+  { name: "Forage",
+    ends: "poor → rich",
+    now:  ["#e0cc70","#2eb861"],
+    next: ["#d0bd8a","#93a166","#5c7f3c"],
+    why:  "wheat → leaf, no neon" },
+  { name: "Water & dead ground",
+    ends: "barren · water",
+    now:  ["#33313d","#1a293f"],
+    next: ["#3a352e","#16242b"],
+    why:  "matches deep_ocean and peat_heath" }
+];
+
+const CATS = [
+  ["sentiment",  "#c8674e", "#ff594040"],
+  ["corruption", "#b58a3f", ""],
+  ["culture",    "#9d7fa8", ""],
+  ["military",   "#6b8b6a", ""],
+  ["crisis",     "#a8404a", ""]
+];
+
+/* --- colour helpers ------------------------------------------------------- */
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function hue(h) {
+  const [r, g, b] = hexToRgb(h).map(v => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d === 0) return null;                       // neutral: no hue to plot
+  let x;
+  if (max === r)      x = ((g - b) / d) % 6;
+  else if (max === g) x = (b - r) / d + 2;
+  else                x = (r - g) / d + 4;
+  return ((x * 60) + 360) % 360;
+}
+function chroma(h) {
+  const [r, g, b] = hexToRgb(h).map(v => v / 255);
+  return Math.max(r, g, b) - Math.min(r, g, b);
+}
+
+function plotHues(el, hexes) {
+  el.textContent = "";
+  hexes.forEach(hx => {
+    const hu = hue(hx);
+    if (hu === null || chroma(hx) < 0.045) return; // don't fake a hue for a neutral
+    const pip = document.createElement("i");
+    pip.className = "pip";
+    pip.style.left = (hu / 360 * 100) + "%";
+    pip.style.background = hx;
+    pip.title = hx + " · " + Math.round(hu) + "°";
+    el.appendChild(pip);
+  });
+}
+
+/* --- build the static evidence ------------------------------------------- */
+const mapHues = TERRAIN.map(t => t[1]);
+plotHues(document.getElementById("hue-map"), mapHues);
+plotHues(document.getElementById("hue-hud"), HUD_NOW);
+
+const strip = document.getElementById("terrain-strip");
+TERRAIN.forEach(([name, hx]) => {
+  const d = document.createElement("div");
+  d.className = "chipswatch";
+  d.innerHTML = '<div class="sw" style="background:' + hx + '"></div>' +
+                '<div class="lb">' + name.replace(/_/g, " ") + "<br>" + hx + "</div>";
+  strip.appendChild(d);
+});
+
+/* --- ramps ---------------------------------------------------------------- */
+const rampSet = document.getElementById("ramp-set");
+RAMPS.forEach(r => {
+  const grad = a => "linear-gradient(90deg," + a.join(",") + ")";
+  const d = document.createElement("div");
+  d.className = "ramp";
+  d.innerHTML =
+    '<div class="ramp-h"><span class="name">' + r.name + '</span><span class="ends">' + r.ends + "</span></div>" +
+    '<div class="ramp-pair"><span class="ramp-tag">now</span>' +
+      '<div class="ramp-bar" style="background:' + grad(r.now) + '"></div></div>' +
+    '<div class="ramp-pair"><span class="ramp-tag">proposed</span>' +
+      '<div class="ramp-bar" style="background:' + grad(r.next) + '"></div></div>' +
+    '<div class="ends mono" style="font-size:0.66rem;color:var(--text-faint)">' + r.why + "</div>";
+  rampSet.appendChild(d);
+});
+
+const catsEl = document.getElementById("cats");
+CATS.forEach(([name, hx]) => {
+  const d = document.createElement("span");
+  d.className = "cat";
+  d.innerHTML = '<i style="background:' + hx + '"></i>' + name + " " + hx;
+  catsEl.appendChild(d);
+});
+
+/* --- the switcher --------------------------------------------------------- */
+const scheme  = document.getElementById("scheme");
+const titleEl = document.getElementById("scheme-title");
+const blurbEl = document.getElementById("scheme-blurb");
+const noteEl  = document.getElementById("scheme-note");
+const tbody   = document.getElementById("token-body");
+const buttons = Array.from(document.querySelectorAll(".switch button"));
+
+function renderTokens(key) {
+  const t = SCHEMES[key].tokens;
+  tbody.textContent = "";
+  TOKEN_ROWS.forEach(([tok, role, now, varName]) => {
+    const next = t[varName];
+    const tr = document.createElement("tr");
+    const nowCell = next
+      ? '<span class="dot" style="background:' + now + '"></span><span class="was">' + now + "</span>"
+      : '<span class="dot" style="background:' + now + '"></span>' + now;
+    const nextCell = next
+      ? '<span class="dot" style="background:' + next + '"></span>' + next
+      : '<span class="dim">unchanged — this is the current set</span>';
+    tr.innerHTML =
+      '<td class="tok">' + tok + "</td>" +
+      '<td class="dim">' + role + "</td>" +
+      '<td class="hexcell">' + nowCell + "</td>" +
+      '<td class="hexcell">' + nextCell + "</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+function apply(key) {
+  const s = SCHEMES[key];
+  scheme.setAttribute("data-scheme", key);
+  titleEl.textContent = s.title;
+  blurbEl.textContent = s.blurb;
+  noteEl.textContent  = s.note;
+  buttons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.set === key)));
+  renderTokens(key);
+
+  const hexes = key === "current" ? HUD_NOW : Object.values(s.tokens);
+  plotHues(document.getElementById("hue-new"), hexes);
+
+  try { localStorage.setItem("ss-palette-choice", key); } catch (e) { /* private mode: fine */ }
+}
+
+buttons.forEach(b => b.addEventListener("click", () => apply(b.dataset.set)));
+
+let start = "loam";
+try {
+  const saved = localStorage.getItem("ss-palette-choice");
+  if (saved && SCHEMES[saved]) start = saved;
+} catch (e) { /* no storage: keep the default */ }
+apply(start);
+</script>
