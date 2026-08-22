@@ -837,6 +837,21 @@ number. Sabotage-verified — stubbing `SourceForecast.off_axis_useful_workers` 
 fails exactly the three cap claims and leaves every material and fodder claim green, the two defects
 being independent.
 
+**`forage_cash_crop_field` is that tile ONE RUNG UP, and it carries the 2026-08-22 report** — a
+completed 100%-tobacco Field with two tenders committed, which read `TENDERS 0` and `max 0 workers
+useful here`. It is cut from `_no_food_basket_tile_fixture` so the only things that move are the
+Field's own flags, the commitment, and the basket narrowing to the one crop a sown Field is
+(`#433`). **Six `PASS` plus the chapter's two fit claims**, and each answers a different link of the
+chain: the fixture really is a built Field paying no food and one material (without it every claim
+below is about a wild patch); its material CEILING is composed rather than structurally empty (the
+mechanism — a cap claim alone passes on a client that floors the cap and still has no ceiling); the
+cap clears `MAX_USEFUL_BARREN`; and ⛔ **the STAGED count reaches the committed crew**, which is the
+dangerous half and the one thing the frame cannot show, a `TENDERS 0` stepper being a perfectly
+ordinary control. That claim is read off `ComposeState.forage_count()` — what the COMMIT sends —
+rather than off the arithmetic above it, `clamp_forage_count` sitting between the two. Its scope is
+`SourceForecast.pays_any_account`, asserted on this Field and paired against the dead-season patch,
+which must still cap at one worker however many hands stand on it.
+
 **`forage_cash_crop_gather` carries five `PASS`**: the crew composes at all,
 each of the tile's two materials is quoted, **each has a ROW OF ITS OWN**, and the FOOD row still
 reads. That last one is not padding — "quote the materials" is satisfied by a sheet that stopped
@@ -1448,6 +1463,7 @@ compared against a constant the fixture also states.
 | `forage_take_narrowed` | the sheet OPENS on the selection the band's own row carries, and prices it IDENTICALLY to the ticked one |
 | `forage_take_zero_food` | a plant paying `0.0` food is PRICED — a live `1.22 → 0.18 FODDER`, no food row, no *not priced* aside |
 | `forage_take_unquoted` | a selection the WIRE priced no rate for quotes nothing, in words |
+| `forage_take_absent` | **the OTHER silence, and the pair is the claim** — a selection naming plants this tile no longer grows says THAT, with the remedy, and does not blame the wire's pricing. Judged with the frame above and with a third claim neither may swallow: a crop paying `0.0` food is FULLY QUOTED |
 | `forage_take_cultivate` | single-pick: exactly one chip lit, and the line NAMES the crop the game would settle on |
 | `forage_take_cultivate_picked` | picking a crop MOVES the lit pill — it picks the basket's OTHER `can_cultivate` member, since picking the crop the resolver had already settled on would light the pill that was already lit — and the line says cultivating weeds the rest out |
 | `forage_take_cash_narrowed` | **the case the feature was argued on** — tick cotton, see `3.55 FIBRE · 1.52 TOBACCO` where the *not priced* apology used to be, and no FOOD row |

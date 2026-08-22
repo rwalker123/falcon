@@ -105,6 +105,12 @@ const UNQUOTED_SPECIES := "wild_emmer"
 ## alone means unticking the other two, and this is the second of them.
 const MIDDLE_SPECIES := "wild_tubers"
 
+## …and a species this tile's basket does NOT carry — the ABSENT state, which is what a standing take
+## selection becomes when the roster changes or the composition shifts a plant out from under it. It
+## is deliberately a plausible flora key rather than a nonsense one: the sentence it produces is about
+## a plant that no longer grows here, not about a malformed selection.
+const ABSENT_SPECIES := "wild_barley"
+
 ## The crew the priced states dial in. Above the mast-only selection's useful count and inside the
 ## whole basket's, so the tick has room to move the stepper DOWN — which is the useful-worker
 ## count moving, and the half of the claim a food figure alone cannot make.
@@ -612,6 +618,44 @@ func run(harness) -> void:
 		_sheet_says(HudFloraVocab.TAKE_UNQUOTED_NOTE))
 	h._assert_hud("…and quotes no take at all, rather than the whole basket's",
 		_quote(SourceForecast.YIELD_ACCOUNT_FOOD)["food"] == Readout.YIELDS_ACCOUNT_ABSENT)
+	h._assert_hud("…and it is the UNPRICED reason, not the absent one, that the composer states",
+		String(SourceForecast.selection_rates(
+			SourceForecast.flora_basket_entries(unpriced.get("patch_composition", [])),
+			PackedStringArray([UNQUOTED_SPECIES])).get(SourceForecast.SELECTION_REASON, ""))
+			== SourceForecast.SELECTION_REASON_UNPRICED)
+
+	# ---- …AND A SELECTION OF PLANTS THAT DO NOT GROW HERE says a DIFFERENT thing -----------------
+	# `selection_rates` answers its unquotable dict for two states and this sheet printed ONE sentence
+	# for both — so a crew whose ticked plants had simply stopped growing on this ground was told the
+	# SERVER had not priced them, which names no remedy and is not what happened. Reported 2026-08-22.
+	#
+	# **THE PAIR IS THE CLAIM.** The state above and this one differ in nothing a frame can show — an
+	# unquotable sheet renders the same shape either way — so what is asserted is that the two
+	# sentences are BOTH reachable and are NOT each other. A client that printed the new sentence for
+	# both passes either half alone.
+	#
+	# **REACHABLE RATHER THAN SYNTHETIC.** A commitment now prunes a crew's stale `take_species`
+	# sim-side, so the common route in is closed; a roster change, or a natural composition shift that
+	# drops a plant a standing selection still names, is what still reaches it.
+	var absent := _gather_tile()
+	h._hud._compose.reset_forage_source()
+	h._show_tile(absent)
+	_compose_selection(absent, PackedStringArray([ABSENT_SPECIES]), BASKET_WORKERS)
+	await h._settle()
+	await h._save("forage_take_absent")
+	h._assert_hud("a selection naming plants this tile no longer grows says THAT, with the remedy",
+		_sheet_says(HudFloraVocab.TAKE_ABSENT_NOTE))
+	h._assert_hud("…and does NOT blame the wire's pricing, which is the other sentence entirely",
+		not _sheet_says(HudFloraVocab.TAKE_UNQUOTED_NOTE))
+	h._assert_hud("…and quotes no take, the two silences differing in words rather than in numbers",
+		_quote(SourceForecast.YIELD_ACCOUNT_FOOD)["food"] == Readout.YIELDS_ACCOUNT_ABSENT)
+	# **AND THE THIRD STATE THE TWO MUST NOT SWALLOW**: a cash crop paying `0.0` is FULLY QUOTED. It
+	# is asserted here rather than beside the cash frames because that is the claim this fork could
+	# break — a reason arm that fired on a zero rate would print an aside on every cash narrowing.
+	h._assert_hud("…while a crop that honestly pays 0.0 food is QUOTED, not silenced",
+		bool(SourceForecast.selection_rates(
+			SourceForecast.flora_basket_entries(_cash_tile().get("patch_composition", [])),
+			PackedStringArray([CASH_COTTON])).get(SourceForecast.SELECTION_KNOWN, false)))
 
 	# ---- CULTIVATING takes ONE, and the LIT COUNT is what says so ---------------------------------
 	# The same chips in the same place, doing a different thing: a Cultivate commits the ground to one

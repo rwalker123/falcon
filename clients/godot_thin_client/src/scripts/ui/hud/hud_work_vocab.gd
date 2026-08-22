@@ -1741,9 +1741,63 @@ const RUNG_TRACK_COST_FORMAT := "%s work · %s"
 
 const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
 
+# ---- THE PRICE'S OWN REASON, on the row that states the price ------------------------------------
+#
+# **A SOW'S PRICE MOVES WITH THE CROP'S SHARE OF THE TILE and nothing said so.** `plant:field`'s build
+# cost is scaled by how much of the chosen crop already stands here — sowing a crop that holds most of
+# the ground is mostly tidying, sowing one that holds a tenth means replacing the tile — so two Sows
+# on two tiles are quoted at wildly different work with no stated cause. The reason belongs where the
+# price is, which on the declaration path is the destination track's own Field row.
+#
+# ⛔ **IT STATES THE SHARE AS A CAUSE AND NEVER AS AN INPUT.** `fieldWorkCost` on the wire already
+# carries the scaled number; this client quotes THAT and must never re-derive a cost from the share.
+# The sentence is deliberately directional rather than a verdict — the client cannot say *dear* or
+# *cheap* without the sim's reference share, which is a config lever and is not on the wire, and a
+# guessed verdict beside an exact number is worse than no verdict.
+const RUNG_TRACK_SOW_PRICE_NOTE_FORMAT := "Priced on %s, %d%% of this ground — the less of the crop already standing, the more a Sow has to replace."
+
+# ---- THE CROP STEP — the second page of the same card (`docs/plan_standing_upkeep.md` §2.8) --------
+#
+# **A PLANT RUNG DOES NOT COMMIT UNTIL A CROP IS NAMED.** The `⌃` used to declare in one click and
+# send no species token, so every Sow took the sim's default — the HIGHEST-SHARE legal plant, which
+# considers neither what it pays nor the player's take selection — and that is how fertile ground got
+# committed to a zero-food cash crop. Picking the rung now opens this step and the CROP is the
+# declaration.
+#
+# ⛔ **THE ROWS STATE WHAT EACH CROP PAYS, and that is the actual repair.** Forcing the choice only
+# relocates the trap if the list is names and shares: the player picks the dominant plant again,
+# because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to
+# *this field feeds nobody* states the zero unless a row does.
+const RUNG_CROP_TITLE := "WHAT TO GROW"
+
+## **`Sim picks` STAYS AN OPTION AND STOPS BEING THE DEFAULT.** `""` is a real instruction on the wire
+## — *take the tile's dominant legal plant* — and choosing it deliberately is fine. It is rendered
+## LAST rather than first (a leading default is the thing a hurried player takes) and its aside names
+## the plant it would actually resolve to, so it is no quieter about the consequence than any other
+## row.
+const RUNG_CROP_SIM_PICKS_LABEL := "Sim picks"
+
+## …and what that pick would land on, stated in the row's own aside slot.
+const RUNG_CROP_SIM_PICKS_NOTE_FORMAT := "→ %s"
+
+## Back to the rung list. The card is a Window and dismisses on a click outside, but a step the player
+## cannot leave without losing the rung they picked is a step they will avoid using.
+const RUNG_CROP_BACK_LABEL := "‹ Back"
+
+## A patch whose basket carries no plant this rung may legally take. The rung is still offered — the
+## sim accepts a Sow with no species token and settles it itself — so this states the fact rather than
+## refusing the climb.
+const RUNG_CROP_NONE_NOTE := "No plant here can climb this rung — the sim will settle it."
+
 ## The card's stable handles. Every claim the track owes is a string composed at render time, so a
 ## harness that found a row by its text would only confirm the string it had already assumed.
 const RUNG_TRACK_META := "rung_track"
+## The crop step's own row handle, valued the SPECIES key the press would send (`""` for `Sim picks`,
+## which is a real instruction and not an absent one). Spelled apart from `RUNG_TRACK_ROW_META` so a
+## harness asking *which rung* can never be answered by a crop row that happens to be on screen.
+const RUNG_CROP_ROW_META := "rung_crop_row"
+## …and the step itself, so *is the card showing rungs or crops* is one read.
+const RUNG_CROP_STEP_META := "rung_crop_step"
 ## Valued the rung's own improvement VERB, which is also what a press emits — so an assertion reads
 ## the destination the row would send rather than the words it happens to print.
 const RUNG_TRACK_ROW_META := "rung_track_row"

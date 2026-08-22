@@ -3309,6 +3309,94 @@ ONE row on the card quotes a price) · `band_panel_rung_track_climbing` (a two-l
 EQUALITY) · `band_panel_queue_legs` (the queue row opened into its climb). The four are judged as a
 SET: a card that marked every rung `open` passes any one of the state claims alone.
 
+### …AND A PLANT RUNG DOES NOT COMMIT UNTIL A CROP IS NAMED (§4.15)
+
+Ray, from play: *"User selects the crop to keep … maybe we default to nothing and force them."* The
+`⌃` declared in ONE click and sent **no species token**, so every Sow took the sim's own default — the
+**highest-share legal plant**, which considers neither what that plant pays nor the player's take
+selection. That is how a fertile tile got committed to a zero-food cash crop.
+
+So picking a plant rung on the track opens a **second page of the same card**, and the CROP is the
+declaration:
+
+```
+WHAT TO GROW
+  🌾 Wild Grain 78%
+     3.40 food
+  🚬 Tobacco 22%
+     0.00 food · 1.12 tobacco
+  Sim picks
+     → 🌾 Wild Grain 78%
+  ‹ Back
+```
+
+- ⛔ **THE ROWS STATE WHAT EACH CROP PAYS, AND THAT IS THE ACTUAL REPAIR.** Forcing the choice only
+  RELOCATES the trap if the list is names and shares: the player picks the dominant plant again,
+  because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to *this
+  field feeds nobody* states the zero unless a row does — so the FOOD clause is the one clause in
+  `HudFloraVocab` exempt from the render-only-when-non-zero rule and prints `0.00 food` outright.
+- **THE FIGURES ARE THE RUNG'S OWN, per plant** — `sow_payoff` / `cultivate_payoff` and their fodder
+  and material twins off the composition entry, which is what THIS rung would pay once it stands. The
+  per-biomass rates beside them describe the wild stand being gathered today and answer a different
+  question; the two rungs differ in KIND rather than by a factor, so the rung is passed in.
+- **ONE CLAUSE PER MATERIAL, never a summed materials figure** — the retired trade axis under a new
+  name, which the crop picker is the last surface that could reintroduce.
+- **`Sim picks` STAYS AND STOPS BEING THE DEFAULT.** `""` is a real instruction on the wire and
+  choosing it deliberately is fine. It renders **LAST** (a leading default is what a hurried player
+  takes) and its aside names the plant it would resolve to, so it is no quieter about the consequence
+  than the rows above it.
+- **ANIMAL RUNGS STAY ONE CLICK.** `tame` and `corral` commit no species, so a second step there would
+  be a click that answers nothing — `RungLadder.rung_commits_a_crop` is the fork. So does a plant rung
+  on a basket carrying no plant it may legally take: the sim accepts a Sow with no token and settles
+  it itself, and a step with nothing in it is worse than none.
+- **THE CROP GOES FIRST AND THE RUNG SECOND**, which is the commands' own order: the crop rides
+  `assign_labor`'s `species` token on the band's existing forage row (`_emit_work_assign`, the queue
+  row's picker's path — **no second builder and no wire change**), and the declaration follows so its
+  optimistic overlay is the one the rebuilt board reads.
+- **IT COSTS THE ZONE NOTHING**, being the same `PopupPanel`; both rendered states run
+  `_assert_zone_content_fits` with the card up.
+- **THE QUEUE ROW'S OWN CROP PICKER IS UNTOUCHED.** This adds the choice at DECLARATION; changing it
+  before the job starts is still the settings strip's.
+
+### …AND THE FIELD ROW SAYS WHY A SOW IS DEAR OR CHEAP (§4.15)
+
+`plant:field`'s build cost is scaled by the crop's share of the tile — sowing a crop that already
+holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the tile —
+so two Sows are quoted at wildly different work and **nothing on any surface said why**. The reason
+goes where the price is stated, which on the declaration path is this card's Field row:
+
+```
+▦ Field                            150 work
+  Priced on Tobacco, 22% of this ground — the less of the
+  crop already standing, the more a Sow has to replace.
+```
+
+- ⛔ **THE PRICE IS THE WIRE'S AND IS NEVER RE-DERIVED.** `fieldWorkCost` already carries the scaled
+  number; the share is stated as its CAUSE. The two frames are the same basket at two wire prices, so
+  a client that re-derived a cost from the share would have to disagree with one of them.
+- **IT NAMES THE CROP THE FIGURE WAS MEASURED AGAINST** — the patch's commitment where it has one, the
+  rung's own auto-pick where it has not (`forage::patch_field_cost_multiplier`'s resolution, restated).
+  Naming a different plant would explain the number with a cause that did not produce it.
+- **IT IS DIRECTIONAL RATHER THAN A VERDICT.** The client cannot say *dear* or *cheap*: that needs the
+  sim's `field_reference_crop_share`, a config lever not on the wire, and a guessed verdict beside an
+  exact number is worse than no verdict.
+- **THE SHARE QUOTED IS THE PUBLISHED `composition` SHARE.** The sim measures against the WEEDED share
+  (standing share × the tending gain), which is a second number for one plant and is what no other
+  surface in this client shows.
+- **Only the Sow rung carries one.** Cultivate's cost is unscaled and both animal rungs' multiplier is
+  the species', which the row already names.
+
+**Frames, judged as a SET:** `band_panel_rung_price_cheap` (uncommitted ground, priced on the dominant
+staple at `38 work`) · `band_panel_rung_crop` (the step that rung opens, every payoff stated) ·
+`band_panel_rung_price_dear` (the SAME two plants COMMITTED to the minority crop at `150 work`). A
+note that named one crop whatever the patch was committed to passes either price frame alone.
+
+> **KNOWN GAP — the price quoted at declaration is the one struck for the crop the patch is on.**
+> `fieldWorkCost` is a single per-patch figure, re-measured at the leg boundary, so a player who picks
+> a crop OTHER than the one the note names will see the price re-quoted once the leg starts. Closing it
+> is server-side: a per-crop `fieldWorkCost` on each composition entry, beside the payoffs already
+> there.
+
 ## DENIAL is a third MISSION on the parties footer, not a floor on the hunt form
 
 `docs/plan_denial_raid.md`, slice 2. The parties zone's footer offers **three** verbs now — `⚑ Scout`,

@@ -277,6 +277,21 @@ const FLORA_CROP_RATIO_CLAUSE_FORMAT := " · %.1f×"
 # (`SourceForecast.picker_products` → `0.96 food · 0.40 fodder`).
 const FLORA_CROP_HAY_CLAUSE_FORMAT := " · %.2f hay"
 
+# The separator every clause on a crop row leads with, named because a row that begins WITH one has
+# to trim it and two spellings of the same three characters is how the trim comes to miss.
+const FLORA_CROP_CLAUSE_LEAD := " · "
+
+# > #### ⛔ THE ONE CLAUSE ON A CROP ROW THAT RENDERS **AT ZERO**
+#
+# Every other clause here obeys the render-only-when-non-zero rule, and this one must not: the crop
+# picker exists because nothing on the path from *this ground is fertile* to *this field feeds nobody*
+# stated the zero. A cash crop's `sowPayoff` is exactly `0` (a sown Field is 100% its crop), so an
+# omitted clause there is the silence that let a fertile tile be committed to tobacco.
+#
+# It is TWO decimals like its non-food neighbours rather than the ratio's one, because it is an
+# absolute per-turn rate and is read against them.
+const FLORA_CROP_FOOD_CLAUSE_FORMAT := FLORA_CROP_CLAUSE_LEAD + "%.2f food"
+
 # ---- WHAT A CASH CROP PAYS: ONE CLAUSE PER MATERIAL (arc #527) ----------------------------------
 # **A VECTOR, NOT A SCALAR, IS THE WHOLE DIFFERENCE.** The retired `· %.2f trade` clause answered
 # *"how much trade"* — a number a market could total and a player could not act on. This answers
@@ -546,6 +561,23 @@ const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground woul
 # shipped before. **A `0.0` rate is NOT this case**: a cash crop pays no food and says so, and the
 # selection is fully quoted.
 const TAKE_UNQUOTED_NOTE := "This selection is not priced yet — no take is quoted for it."
+
+# The SECOND silence, and it is a different fact with a different remedy. `selection_rates` answered
+# both with the sentence above until 2026-08-22, so a player whose ticked plants had simply stopped
+# growing here was told the SERVER had not priced them — a sentence with nothing to act on, about a
+# state whose remedy is one click away and is not mentioned.
+#
+# **IT NAMES THE REMEDY, which is the whole repair.** The chips directly above this line are the
+# control: tick something that grows here and the sheet prices it.
+#
+# **REACHABLE, AND RARER THAN IT WAS.** A commitment now prunes a crew's stale `take_species` and adds
+# the committed crop, so the common route into this state is closed; what still reaches it is a roster
+# change, or a NATURAL composition shift that drops a plant a standing selection still names. A wrong
+# sentence about a rare state is worse than a right one, not better.
+#
+# **A CASH CROP PAYING `0.0` IS NEITHER OF THESE** — the note above says so and it must stay true:
+# that selection is fully quoted, and its zero is a real reading rather than a silence.
+const TAKE_ABSENT_NOTE := "None of the plants you picked grow here any more — pick one from the row above."
 
 # **THE MATERIAL ACCOUNT IS NO LONGER ONE OF THESE SILENCES.** It was, for exactly as long as
 # `materialPerBiomass` was the only material rate on the wire — a basket average with nothing finer

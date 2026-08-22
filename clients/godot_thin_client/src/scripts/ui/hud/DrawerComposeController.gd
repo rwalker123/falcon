@@ -1235,14 +1235,28 @@ func _forage_take_source(tile_info: Dictionary, take: Dictionary) -> Dictionary:
         take.get(TAKE_SELECTION_RATES, {}) as Dictionary)
 
 ## The asides a narrowed take owes — `[]` for the whole basket AND for a fully priced narrowing, which
-## is what keeps every other sheet on this controller unchanged. **ONE silence survives**: a plant the
-## wire priced no per-species rate for, which makes the whole weighted mean unquotable.
+## is what keeps every other sheet on this controller unchanged.
+##
+## **TWO SILENCES, AND THEY ARE NOT THE SAME SENTENCE.** `selection_rates` returns its unquotable dict
+## for two states with different remedies — the wire priced no per-species rate for a plant that IS in
+## the basket, and the ticked plants are not in this tile's basket at all — so the aside is picked off
+## the reason the composer states rather than printed once for both. The second is the one that had
+## the obvious remedy the shared sentence never mentioned; see `HudFloraVocab.TAKE_ABSENT_NOTE`.
+##
+## **THE REASON IS READ OFF THE RATES, NOT RE-DERIVED HERE.** `_selective_take_state` carries the same
+## dict the quoted/unquoted verdict was taken from, so the sentence and the verdict cannot disagree
+## about which state this is.
 func _take_notes(take: Dictionary) -> Array[String]:
     var notes: Array[String] = []
     if not bool(take.get(TAKE_SELECTION_NARROWED, false)):
         return notes
     if not bool(take.get(TAKE_SELECTION_QUOTED, false)):
-        notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
+        var rates: Dictionary = take.get(TAKE_SELECTION_RATES, {}) as Dictionary
+        var reason := String(rates.get(SourceForecast.SELECTION_REASON,
+            SourceForecast.SELECTION_REASON_ABSENT))
+        notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE \
+            if reason == SourceForecast.SELECTION_REASON_UNPRICED \
+            else HudFloraVocab.TAKE_ABSENT_NOTE)
     return notes
 
 ## A model with NO numbers in it — the shape every "there is nothing this sheet may state" path
@@ -1479,6 +1493,26 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
 ## against. It briefly had the sheet's own proposed BUILDERS subtracted from it, and the note took a
 ## `build_crew` argument so it could name that nearer lever; the build is a band-level role now
 ## (`docs/plan_standing_upkeep.md` §2.5), so there is one stepper and one remedy.
+## > #### ⛔ THERE IS NO STANDING-CREW FLOOR HERE, AND ONE WAS TRIED AND REVERTED
+## >
+## > `clamp_forage_count` / `clamp_hunt_count` clamp the STAGED count into this cap and the commit
+## > sends the staged count, so a cap below the committed crew stages fewer workers than are assigned
+## > and confirming the sheet **silently drops the difference** — reported from play 2026-08-22 on a
+## > completed 100%-tobacco Field reading `max 0 workers useful here` with two tenders on it. **What
+## > closes that is the CAP being right**, and it is (`SourceForecast.FORECAST_MANAGED_FLAG_KEYS`
+## > carries the autopsy); a floor on the committed crew was written here, failed, and must not come
+## > back.
+## >
+## > **It makes a LEGITIMATE cap-fall impossible.** Unticking a species chip narrows the stand the
+## > cap divides, so the useful crew genuinely falls — and a cap floored on the committed crew cannot
+## > follow it, which is the panel refusing to price the very edit the player just made. Caught by
+## > `forage_take_chip_priced`'s *"the useful-worker count fell with it, on the same edit"*.
+## >
+## > The distinction the floor cannot draw is *the sheet opened wrong* against *the player narrowed
+## > it*, and both arrive at this function as one render. So the guard is an ASSERTION rather than a
+## > clamp — `forage_cash_crop_field` pins that the staged count reaches the committed crew on a
+## > source paying into any account — and a real cap regression fails there rather than being papered
+## > over here.
 func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     # **NO KEEPER FLOOR UNDER THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2). This used to be
     # raised to a managed herd's `herdersNeeded`, because one crew both hunted the animals and held

@@ -1199,6 +1199,38 @@ rung's meter renders a perfectly plausible row:
 - **the animal twin** (`band_panel_queue_leg_animal`), a `corral` on an untamed herd: the two webs
   share no fixture and no rung table, so a fix reaching only the plant one passes every claim above.
 
+## THE CROP STEP AND THE SOW'S PRICE ARE ONE BASKET AT TWO WIRE PRICES (§4.15)
+
+`_crop_patch_row(field_work_cost, committed)` is the whole fixture family for the three states
+`band_panel_rung_price_cheap` / `band_panel_rung_crop` / `band_panel_rung_price_dear`, and **the two
+things it varies are the two the claims are about**: what the WIRE quotes for the Field rung, and
+which crop the patch is committed to.
+
+**THE BASKET IS MIXED, and a single-plant one cannot make the claim at all.** A staple holding 78% and
+paying food sits beside a cash crop holding 22% and paying **none** — which is the tile that got
+committed to tobacco in play, and the shape a picker of names and shares cannot warn about. The
+`0.00 food` clause is asserted by EQUALITY against `HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT`, so a
+row that suppressed the zero (which every other clause on a crop row correctly does) fails.
+
+**THE PRICE PAIR IS THE CLAIM.** `38 work` on uncommitted ground priced against the dominant staple,
+`150 work` on the SAME two plants committed to the minority crop — so a note naming one crop whatever
+the patch carries passes either state alone, and a client that re-derived a cost from the share would
+have to disagree with one of the two wire figures. Both are asserted against the fixture's own
+`fieldWorkCost` through `RUNG_TRACK_COST_UNDATED_FORMAT`, never against anything computed from a share.
+
+**`_assert_ready_mark_declares` WALKS THE STEP RATHER THAN ASSUMING EITHER SHAPE.** The declare board
+carries a `sow`, a `tame` and a `corral`, and only the first asks for a crop — so after pressing the
+track's target row the harness looks for `_rung_crop_rows()` and, where the card offers one, asserts
+**no declaration escaped yet** and then presses the first crop. That negative is the one worth having:
+*the step is open* and *the rung committed anyway* are not mutually exclusive, and only the second is
+the defect. It is made on the SIGNAL (`improvement_requested`) rather than on the card, a declaration
+being what actually escapes.
+
+`_rung_crop_rows` keys on `HudWorkVocab.RUNG_CROP_ROW_META`, spelled apart from `RUNG_TRACK_ROW_META`
+so a harness asking *which rung* can never be answered by a crop row that happens to be on screen;
+`_rung_crop_payoffs` reads each row's aside by POSITION (the sibling that follows it), a payoff
+carrying no identity beyond the row it explains.
+
 Sabotage-verified by returning the destination reading: **exactly six fail** — both readouts on the
 two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,
 while the single-leg control stays green.

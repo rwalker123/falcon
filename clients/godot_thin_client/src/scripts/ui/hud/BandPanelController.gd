@@ -3125,12 +3125,61 @@ func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> v
     # is the exact shape this shipped in for one run of the harness.
     var margin := _rung_track_body
     HudWidgets.clear_children(margin)
-    # **THE PRESS CLOSES THE CARD BEFORE IT EMITS.** The declaration writes the optimistic overlay and
-    # re-renders the whole zone, which frees the very row this card is anchored to; a card left up
-    # over the rebuilt board would be showing the track it had just made stale.
     margin.add_child(RungLadder.build_track(rows, func(rung: String) -> void:
-        _dismiss_rung_track()
-        _emit_ready_declaration(band, model, rung)))
+        _pick_rung(band, model, source, rung, anchor)))
+    track.popup(_rung_track_anchor_rect(anchor))
+
+## **A PICKED RUNG EITHER DECLARES OR ASKS FOR A CROP, and which it does is a property of the RUNG.**
+##
+## **THE PRESS CLOSES THE CARD BEFORE IT EMITS.** The declaration writes the optimistic overlay and
+## re-renders the whole zone, which frees the very row this card is anchored to; a card left up over
+## the rebuilt board would be showing the track it had just made stale.
+##
+## **AN ANIMAL RUNG STAYS ONE CLICK** — `tame` and `corral` commit no species, so there is nothing for
+## a second step to ask — and so does a plant rung on a patch whose basket carries no plant it may
+## legally take: the sim accepts a Sow with no species token and settles it itself, and a step with
+## nothing in it is a click that answers nothing.
+func _pick_rung(band: Dictionary, model: Dictionary, source: Dictionary, rung: String,
+        anchor: Control) -> void:
+    if RungLadder.rung_commits_a_crop(rung):
+        var crops := RungLadder.crop_choices(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung)
+        if not crops.is_empty():
+            _open_crop_step(band, model, source, rung, crops, anchor)
+            return
+    _dismiss_rung_track()
+    _emit_ready_declaration(band, model, rung)
+
+## **THE SECOND PAGE OF THE SAME CARD — the crop the plant rung commits to** (§4.15).
+##
+## **IT DEFAULTS TO NOTHING AND THE PICK IS THE DECLARATION.** The `⌃` used to declare in one click
+## and send no species token, so every Sow took the sim's own default — the highest-share legal plant,
+## which considers neither what it pays nor the player's take selection — which is how a fertile tile
+## got committed to a zero-food cash crop. `Sim picks` is still on the list, last, stating the plant it
+## would land on; it is a deliberate choice now rather than what happens when nobody looks.
+##
+## **IT REUSES THE SAME WINDOW, which is what keeps it free.** The work zone reads 396 of 396 in
+## height and both budgets ASSERT rather than clip, so a step drawn as a block would slice the board;
+## a Window costs the zone nothing, and rebuilding its CONTENT is the card's standing rule.
+##
+## **THE CROP GOES FIRST AND THE RUNG SECOND**, and the order is the commands': the crop rides
+## `assign_labor`'s own `species` token on the band's existing forage row (`_emit_work_assign`, the
+## queue row's picker's path — there is no second builder and no wire change), and the declaration
+## follows so its optimistic overlay is the one the rebuilt board reads.
+func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, rung: String,
+        crops: Array[Dictionary], anchor: Control) -> void:
+    var track := _ensure_rung_track()
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    margin.add_child(RungLadder.build_crop_step(crops,
+        func(species: String) -> void:
+            _dismiss_rung_track()
+            _emit_work_assign(band, model, int(model.get("workers", 0)),
+                RESTATE_STANDING_FLOOR, species)
+            _emit_ready_declaration(band, model, rung),
+        # **BACK REBUILDS THE TRACK RATHER THAN RESTORING IT**, the card's own never-patched rule: the
+        # source's position, the faction's knowledge and whatever entry is queued all move per
+        # snapshot, and a step left up across one of those would offer a rung already climbed.
+        func() -> void: _open_rung_track(band, model, anchor)))
     track.popup(_rung_track_anchor_rect(anchor))
 
 ## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.

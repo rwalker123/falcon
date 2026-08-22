@@ -64,10 +64,33 @@ const ROW_WORK_KEY := "work_remaining"
 const ROW_TURNS_KEY := "turns_remaining"
 const ROW_REASONS_KEY := "reasons"
 const ROW_SELECTABLE_KEY := "selectable"
+## **WHY THIS RUNG COSTS WHAT IT COSTS — an aside beneath the row, `""` on every rung with no cause to
+## state.** It shares `_build_aside`'s shape with a locked rung's REASON and is a different kind of
+## sentence: a reason says the rung is refused, a note says the price beside it has a cause. Only the
+## Sow rung has one today (`HudWorkVocab.RUNG_TRACK_SOW_PRICE_NOTE_FORMAT`).
+const ROW_NOTE_KEY := "note"
 
 ## A rung whose owing this layer cannot state at all — the wire prices no such job on this source.
 ## Distinct from `0.0`, which is a real reading meaning *nothing left to pay*.
 const WORK_UNKNOWN := -1.0
+
+# ---- THE CROP STEP'S KEYS ------------------------------------------------------------------------
+#
+# The two SOURCE keys this layer reads for a plant rung's crop, spelled once because they take the
+# caller's `prefix` and a bare read on a `patch_`-prefixed `tile_info` silently answers nothing —
+# the trap `hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form of.
+const CROP_COMPOSITION_KEY := "composition"
+const CROP_COMMITTED_SPECIES_KEY := "committed_species"
+
+## The row keys `crop_choices` publishes and `build_crop_step` renders, `track`'s own convention.
+const CROP_SPECIES_KEY := "species"
+const CROP_LABEL_KEY := "label"
+const CROP_PAYOFF_KEY := "payoff"
+
+## **THE WIRE'S OWN SPELLING OF *let the sim choose*** — a real instruction rather than an absent one,
+## which is why it is a named empty string and not a sentinel. `Main.format_assign_labor` omits the
+## species token for it, and the sim then commits to the tile's dominant legal plant.
+const CROP_SIM_PICKS := ""
 
 ## **THE WHOLE BRANCH, BOTTOM RUNG FIRST — one row per rung, in CLIMB order.**
 ##
@@ -110,6 +133,7 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
             ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
             ROW_REASONS_KEY: [] as Array[String],
             ROW_SELECTABLE_KEY: false,
+            ROW_NOTE_KEY: "",
         }
         if index < standing:
             row[ROW_STATE_KEY] = STATE_BANKED
@@ -141,8 +165,61 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
         else:
             row[ROW_STATE_KEY] = STATE_OPEN
             row[ROW_SELECTABLE_KEY] = true
+        # **THE PRICE'S REASON RIDES A ROW THAT STATES A PRICE**, i.e. never a banked, standing or
+        # locked one (those three return above, or state their refusal instead of a figure).
+        row[ROW_NOTE_KEY] = _price_note(kind, source, prefix, verb) \
+            if String(row[ROW_STATE_KEY]) != STATE_LOCKED else ""
         rows.append(row)
     return rows
+
+## **WHY THIS RUNG IS PRICED AS IT IS — `""` for every rung with no cause worth stating.**
+##
+## Only the Sow rung has one: `plant:field`'s build cost is scaled by the chosen crop's WEEDED share
+## of the tile, so the same rung is quoted at wildly different work on two tiles and nothing else on
+## the card says why. Everything above the plant web — Cultivate's flat cost, both animal rungs'
+## species multiplier — is either unscaled or already carried by the species name on the row.
+##
+## ⛔ **IT NAMES THE CROP THE WIRE'S FIGURE WAS MEASURED AGAINST**, which is the patch's commitment
+## where it has one and the rung's own auto-pick where it has not — the sim's `patch_field_cost_
+## multiplier` resolution, restated. Naming a different plant would explain the number with a cause
+## that did not produce it.
+##
+## **THE SHARE IS THE PUBLISHED `composition` SHARE, and it is a CAUSE rather than a term.** The sim
+## measures against the WEEDED share (the standing share times the tending gain), which is a second
+## number for one plant and is not what any other surface in this client shows; stating the standing
+## share as the direction of the price is honest, and quoting an arithmetic input would invite the
+## re-derivation the wire's `fieldWorkCost` exists to make unnecessary.
+static func _price_note(kind: String, source: Dictionary, prefix: String,
+        improvement: String) -> String:
+    if kind != SourceForecast.LABOR_KIND_FORAGE \
+            or improvement != SourceForecast.IMPROVEMENT_SOW:
+        return ""
+    var entry := _priced_crop_entry(source, prefix, improvement)
+    if entry.is_empty():
+        return ""
+    return HudWorkVocab.RUNG_TRACK_SOW_PRICE_NOTE_FORMAT % [
+        String(entry.get("display_name", "")), int(entry.get("percent", 0))]
+
+## The basket entry a plant rung's price was struck against — the patch's COMMITTED crop where it has
+## one, else the highest-share entry this rung may legally take. The wire's composition order is
+## share-DESC, so the first legal entry IS the sim's own `default_species_for_rung` answer and no sort
+## is done here. `{}` where nothing can climb.
+static func _priced_crop_entry(source: Dictionary, prefix: String,
+        improvement: String) -> Dictionary:
+    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(improvement, ""))
+    if flag == "":
+        return {}
+    var committed := String(source.get(prefix + CROP_COMMITTED_SPECIES_KEY, "")).strip_edges()
+    var fallback := {}
+    for entry in SourceForecast.flora_basket_entries(
+            source.get(prefix + CROP_COMPOSITION_KEY, [])):
+        if not bool(entry.get(flag, false)):
+            continue
+        if committed != "" and String(entry.get("species", "")) == committed:
+            return entry
+        if fallback.is_empty():
+            fallback = entry
+    return fallback
 
 ## **IS THERE ANY DESTINATION TO OFFER ON THIS SOURCE?** — the one test a caller asks before opening a
 ## track, so an empty card is never floated. It is deliberately NOT `next_rung_ready`: that answer is
@@ -176,7 +253,12 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable) -> VBoxConta
     for row in rows:
         column.add_child(_build_row(row, on_pick))
         for reason in (row.get(ROW_REASONS_KEY, []) as Array):
-            column.add_child(_build_reason(String(reason)))
+            column.add_child(_build_aside(String(reason)))
+        # The PRICE's own cause, beneath the row that states the price. A locked rung never carries
+        # one, so the reason and the note can never stack into two asides on one row.
+        var note := String(row.get(ROW_NOTE_KEY, ""))
+        if note != "":
+            column.add_child(_build_aside(note))
     return column
 
 ## One rung's line: its name on the left, its state or its price on the right.
@@ -223,9 +305,10 @@ static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     line.add_child(pick)
     return line
 
-## A locked rung's reason, beneath its own row and in the aside's quiet ink — the shape a gate reason
-## takes everywhere else in this client.
-static func _build_reason(text: String) -> Label:
+## An aside beneath a row, in the quiet ink a gate reason takes everywhere else in this client — used
+## for a locked rung's REASON, for a priced rung's NOTE and for a crop row's PAYOFF, which are three
+## different sentences in one shape rather than one sentence with three meanings.
+static func _build_aside(text: String) -> Label:
     var label := Label.new()
     label.text = text
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -234,6 +317,146 @@ static func _build_reason(text: String) -> Label:
     label.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_REASON_FONT_SIZE)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     return label
+
+# ---- THE CROP STEP — the second page of the same card --------------------------------------------
+
+## **IS THIS RUNG'S DECLARATION INCOMPLETE WITHOUT A CROP?** — the ONE test a caller asks before
+## sending a picked rung straight to the command builder.
+##
+## **PLANT RUNGS ONLY, and the asymmetry is the model rather than an unfinished half.** `tame` and
+## `corral` commit no species at all: an animal rung names the herd it is raised on and there is
+## nothing left to choose, so making them ask would be a click that answers nothing.
+static func rung_commits_a_crop(improvement: String) -> bool:
+    return RungGates.CROP_LEGALITY_FLAGS.has(improvement)
+
+## **THE CROPS THIS RUNG MAY BE COMMITTED TO, EACH BESIDE WHAT IT PAYS — one row per legal plant,
+## `Sim picks` LAST.**
+##
+## ⛔ **THE PAYOFF IS WHY THIS LIST EXISTS.** A list of names and shares relocates the trap rather than
+## closing it: the player picks the dominant plant again, because it looks like the obvious answer,
+## and a 100%-tobacco tile is exactly the ground where that is the worst choice available. Every row
+## therefore states its FOOD at two decimals **including a zero** (`HudFloraVocab
+## .FLORA_CROP_FOOD_CLAUSE_FORMAT`, the one clause here exempt from the render-only-when-non-zero
+## rule), its fodder when it pays any, and ONE CLAUSE PER MATERIAL — never a summed materials figure,
+## which is the retired trade axis under a new name.
+##
+## **THE FIGURES ARE THE RUNG'S OWN, read off the composition entry.** `sow_payoff` /
+## `cultivate_payoff` and their fodder and material twins are what THIS rung would pay once it stands,
+## per plant, on this ground; the per-biomass rates beside them describe the wild stand being gathered
+## today and would answer a different question. The two rungs differ in KIND rather than by a factor
+## (a sown Field is 100% its crop; a tended patch keeps its volunteers), so one never implies the
+## other and the rung is passed in rather than guessed.
+##
+## `[]` where the rung commits no crop at all, or where the basket carries no plant it may legally
+## take — the caller declares outright in both cases, which is what the sim does with an absent token.
+static func crop_choices(source: Dictionary, prefix: String,
+        improvement: String) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var flag := String(RungGates.CROP_LEGALITY_FLAGS.get(improvement, ""))
+    if flag == "":
+        return rows
+    for entry in SourceForecast.flora_basket_entries(
+            source.get(prefix + CROP_COMPOSITION_KEY, [])):
+        if not bool(entry.get(flag, false)):
+            continue
+        rows.append({
+            CROP_SPECIES_KEY: String(entry.get("species", "")),
+            CROP_LABEL_KEY: _crop_label(entry),
+            CROP_PAYOFF_KEY: _crop_payoff_face(entry, improvement),
+        })
+    if rows.is_empty():
+        return rows
+    # **`Sim picks` IS LAST AND NAMES WHAT IT WOULD LAND ON.** Leading the list is what a hurried
+    # player takes, and the whole defect was a default nobody had to look at; stating the plant it
+    # resolves to (the first legal entry, the wire's share-DESC order being the sim's own auto-pick)
+    # makes it exactly as loud about the consequence as the rows above it.
+    rows.append({
+        CROP_SPECIES_KEY: CROP_SIM_PICKS,
+        CROP_LABEL_KEY: HudWorkVocab.RUNG_CROP_SIM_PICKS_LABEL,
+        CROP_PAYOFF_KEY: HudWorkVocab.RUNG_CROP_SIM_PICKS_NOTE_FORMAT % String(
+            (rows[0] as Dictionary).get(CROP_LABEL_KEY, "")),
+    })
+    return rows
+
+## `🌾 Wild Emmer 62%` — the plant written EXACTLY as the tile card and the compose sheet's chips
+## write it, composed from those surfaces' own consts rather than a second spelling. One plant reads
+## one way in this client, or the card and this list start disagreeing about the same stand.
+static func _crop_label(entry: Dictionary) -> String:
+    var name := HudFloraVocab.FLORA_SHARE_FORMAT % [
+        String(entry.get("display_name", "")), int(entry.get("percent", 0))]
+    var role := FoodIcons.for_crop_role(String(entry.get("role", "")))
+    return name if role == "" else "%s %s" % [role, name]
+
+## What committing THIS plant on THIS rung pays, per turn, per account.
+static func _crop_payoff_face(entry: Dictionary, improvement: String) -> String:
+    var sow := improvement == SourceForecast.IMPROVEMENT_SOW
+    # **THE FOOD CLAUSE RENDERS AT ZERO.** See `crop_choices` — a cash crop's payoff is exactly `0`,
+    # and the unstated zero is the whole reason this step exists.
+    var face := HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT % float(
+        entry.get("sow_payoff" if sow else "cultivate_payoff", 0.0))
+    var fodder := float(entry.get("sow_fodder_payoff" if sow else "cultivate_fodder_payoff", 0.0))
+    if SourceForecast.has_component(fodder):
+        face += HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT % fodder
+    for row_variant in (entry.get(
+            "sow_material_payoff" if sow else "cultivate_material_payoff", []) as Array):
+        var row: Dictionary = row_variant
+        var amount := float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
+        if not SourceForecast.has_component(amount):
+            continue
+        face += HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT % [
+            amount, String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))]
+    # The leading separator belongs between clauses, not before the first one.
+    return face.trim_prefix(HudFloraVocab.FLORA_CROP_CLAUSE_LEAD)
+
+## **THE CROP STEP AS CONTROLS** — a pressable row per crop over its payoff aside, and a Back row.
+##
+## `on_pick` takes the row's SPECIES key, which is what the command carries; `on_back` returns to the
+## rung list. Both are `Callable`s, `build_track`'s own treatment — this layer holds no state.
+static func build_crop_step(rows: Array[Dictionary], on_pick: Callable,
+        on_back: Callable) -> VBoxContainer:
+    var column := VBoxContainer.new()
+    column.set_meta(HudWorkVocab.RUNG_CROP_STEP_META, true)
+    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
+    column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
+    var title := Label.new()
+    title.text = HudWorkVocab.RUNG_CROP_TITLE
+    title.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
+    column.add_child(title)
+    if rows.is_empty():
+        column.add_child(_build_aside(HudWorkVocab.RUNG_CROP_NONE_NOTE))
+    for row in rows:
+        column.add_child(_build_crop_row(row, on_pick))
+        column.add_child(_build_aside(String(row.get(CROP_PAYOFF_KEY, ""))))
+    column.add_child(_build_back_row(on_back))
+    return column
+
+## One crop's pressable row. Full width — a crop name plus its share is the whole face and there is no
+## second column to line up, unlike a rung's name-beside-its-price.
+static func _build_crop_row(row: Dictionary, on_pick: Callable) -> Button:
+    var pick := Button.new()
+    pick.text = String(row.get(CROP_LABEL_KEY, ""))
+    pick.set_meta(HudWorkVocab.RUNG_CROP_ROW_META, String(row.get(CROP_SPECIES_KEY, "")))
+    pick.focus_mode = Control.FOCUS_NONE
+    pick.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(pick, "ghost")
+    HudWidgets.compact(pick, HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    var species := String(row.get(CROP_SPECIES_KEY, ""))
+    pick.pressed.connect(func() -> void: on_pick.call(species))
+    return pick
+
+static func _build_back_row(on_back: Callable) -> Button:
+    var back := Button.new()
+    back.text = HudWorkVocab.RUNG_CROP_BACK_LABEL
+    back.focus_mode = Control.FOCUS_NONE
+    back.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(back, "ghost")
+    HudWidgets.compact(back, HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    back.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    back.pressed.connect(func() -> void: on_back.call())
+    return back
 
 ## **WHAT THE RIGHT-HAND SLOT SAYS.** A rung at or below where the source stands states its STATE and
 ## no figure at all — that is the receipt-not-discount property, rendered: a banked rung is not a

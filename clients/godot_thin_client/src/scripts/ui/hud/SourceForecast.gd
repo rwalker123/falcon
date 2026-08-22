@@ -726,20 +726,34 @@ const FORECAST_STRESSED_FRACTION_KEY := "stressed_fraction"
 const ECOLOGY_PHASE_COLLAPSING := "collapsing"
 const ECOLOGY_PHASE_STRESSED := "stressed"
 const ECOLOGY_PHASE_THRIVING := "thriving"
-# **A RUNG-3 MANAGED SOURCE HAS NO ESCAPEMENT ROOM AND IGNORES THE FLOOR ENTIRELY** (sim
-# `SourceYieldForecast::managed`): a Field and a Pen are YOURS — you control their reproduction, so
-# there is no wild stock to stop short of and the axis honestly collapses onto the one managed
-# production they hand over. The wire still carries their raw `biomass`/`carrying_capacity`/rates
-# (they are facts about the herd or the crop), so composing an escapement ceiling on one is silently
-# wrong; the managed production is the rung's own payoff field, which for a BUILT rung is the live
-# number the sim pays. Rung 2 (a Tended Patch, a pastoral herd) is still a wild stand being drawn
-# down, so it takes the composition like rung 1.
+# **A MANAGED SOURCE HAS NO ESCAPEMENT ROOM AND IGNORES THE FLOOR ENTIRELY** (sim
+# `SourceYieldForecast::managed`): a built Pen is YOURS — you control its reproduction, so there is no
+# wild stock to stop short of and the axis honestly collapses onto the one managed production it hands
+# over. The wire still carries its raw `biomass`/`carrying_capacity`/rates (they are facts about the
+# herd), so composing an escapement ceiling on one is silently wrong; the managed production is the
+# rung's own payoff field, which for a BUILT rung is the live number the sim pays. Rung 2 (a pastoral
+# herd) is still a wild stand being drawn down, so it takes the composition like rung 1.
+#
+# > #### ⛔ THE PLANT WEB HAS NO MANAGED RUNG. A FIELD IS DRAWN DOWN LIKE ANY OTHER STAND.
+# >
+# > `SOURCE_KIND_FORAGE: "is_field"` sat in this table until `forage.rs`'s **RETIRED: the whole rung-3
+# > MANAGED HARVEST** landed — *"A Field is now foraged through the ordinary `forage_take` path exactly
+# > as a tended patch and a wild stand are — floor-live, worker-capped, drawn down"* — and the entry
+# > outliving that retirement is what made a completed cash-crop Field read `max 0 workers useful
+# > here` beneath a tile card stating two tenders. The chain: a Field took the managed branch of
+# > `forecast_inputs`, whose material ceiling comes from `FORECAST_PAYOFF_MATERIAL_KEYS`, which has no
+# > plant entry by design (a plant's materials are per PLANT), so its ceiling was structurally `[]`;
+# > `off_axis_useful_workers` then divided a `0` room by a live 1.12 tobacco/worker and answered `0`,
+# > while `hold_crew` / `reach_crew` — §7.2's rescue for exactly that shape — returned `0` because the
+# > source was "managed". Reported from play 2026-08-22.
+# >
+# > **`field_yield` is still a real quote and is still read** — it is the MSY skim on the Field rung's
+# > own curve (`forage::rung_payoff`), i.e. what the rung PAYS, which is what `FORECAST_PAYOFF_KEYS`
+# > asks it for. What it is not is a per-turn production a crew collects off a stock nobody draws down.
 const FORECAST_MANAGED_FLAG_KEYS := {
-    SOURCE_KIND_FORAGE: "is_field",
     SOURCE_KIND_HERD: "corralled",
 }
 const FORECAST_MANAGED_IMPROVEMENTS := {
-    SOURCE_KIND_FORAGE: IMPROVEMENT_SOW,
     SOURCE_KIND_HERD: IMPROVEMENT_CORRAL,
 }
 # The PAYOFF an IMPROVEMENT buys — the food/turn the source pays once the rung is built (one worker
@@ -2134,9 +2148,9 @@ static func escapement_room_next_turn(src: Dictionary, prefix: String, floor: fl
         0.0, capacity)
     return maxf(0.0, grown - clamp_floor(floor) * capacity)
 
-## Is this source RUNG-3 MANAGED — a Field, or a built Pen? Such a source is never drawn down, so it
-## pays its managed production at EVERY floor and the escapement composition does not apply to it (see
-## `FORECAST_MANAGED_FLAG_KEYS`).
+## Is this source MANAGED — a built Pen? Such a source is never drawn down, so it pays its managed
+## production at EVERY floor and the escapement composition does not apply to it. **The plant web
+## answers `false` at every rung**, a Field included: see `FORECAST_MANAGED_FLAG_KEYS`.
 ##
 ## **IT IS THE STANDING RUNG THAT DECIDES THIS, NEVER THE COMPOSED ONE.** The wire flag is the only
 ## input, and a source the crew is merely BUILDING toward rung 3 — mid-`Sow`, mid-`Corral` — is
@@ -2780,10 +2794,12 @@ static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float
 ## to name, because this answer is only ever a FLOOR on a cap: a dead-season patch prices no crew, and
 ## a floor of "unpriceable" is a floor of none.
 ##
-## **A RUNG-3 MANAGED SOURCE IS EXCLUDED**, on the same grounds its ceiling is: the sim never draws a
-## Field or a built Pen down, so "the crew that takes what grows back" is not a question its wire
-## curve answers — its cap is `production / per_worker`, and flooring that on a wild-drawdown number
-## would staff a source against a projection it does not follow.
+## **A MANAGED SOURCE IS EXCLUDED**, on the same grounds its ceiling is: the sim never draws a built
+## Pen down, so "the crew that takes what grows back" is not a question its wire curve answers — its
+## cap is `production / per_worker`, and flooring that on a wild-drawdown number would staff a source
+## against a projection it does not follow. **A FIELD IS NOT SUCH A SOURCE** — the plant web's managed
+## rung is retired and a Field is drawn down like any other stand, so this floor answers for one; see
+## `FORECAST_MANAGED_FLAG_KEYS` for what a Field reading `0` here cost.
 static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float,
         per_crew: Array = []) -> int:
     if source_is_managed(src, kind, prefix):
@@ -2808,8 +2824,9 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
 ## quotient's (they draw the stock further down every turn instead of settling above the floor), so
 ## capping there reported them useless while the verdict was naming them as the remedy.
 ##
-## A RUNG-3 MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a
-## Field or a built Pen down, so a drawdown projection says nothing about how many hands it can use.
+## A MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a built Pen
+## down, so a drawdown projection says nothing about how many hands it can use. A Field is NOT one —
+## see `FORECAST_MANAGED_FLAG_KEYS`.
 static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float,
         per_crew: Array = []) -> int:
     if source_is_managed(src, kind, prefix):
@@ -3585,8 +3602,10 @@ static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
 ## (retired) and the old herd witness was the per-worker pair — which reads zero on a herd stripped to
 ## its floor, the exact state the sheet most needs to report.
 ##
-## A MANAGED source is described by its payoff instead: a Field's stock is not what it pays from, so
-## its per-biomass vector is beside the point and may honestly be anything.
+## A MANAGED source is described by its payoff instead: a built Pen's stock is not what it pays from,
+## so its per-biomass vector is beside the point and may honestly be anything. **No plant rung takes
+## that arm** — a Field is drawn down and answers this question through its own rate vector, exactly
+## as a wild stand does.
 static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> bool:
     if source_is_managed(src, kind, prefix):
         return true
@@ -3628,9 +3647,11 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
 static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor: float,
         per_crew: Array = []) -> Dictionary:
     # ---- THE CEILING, PER ACCOUNT ---------------------------------------------------------------
-    # A rung-3 MANAGED source (a Field, a built Pen) is never drawn down: it pays its managed
-    # production at every floor, so it reads the rung's own payoff fields instead of composing an
-    # escapement room out of a stock the sim does not touch.
+    # A MANAGED source (a built Pen) is never drawn down: it pays its managed production at every
+    # floor, so it reads the rung's own payoff fields instead of composing an escapement room out of a
+    # stock the sim does not touch. **A FIELD IS NOT ONE** — every plant rung takes the composition
+    # below, which is what gives a cash Field a material ceiling at all
+    # (`FORECAST_MANAGED_FLAG_KEYS`).
     var ceiling := 0.0
     var ceiling_fodder := 0.0
     # …AND THE CEILING ONCE THE SOURCE IS SITTING AT THE FLOOR, which is a DIFFERENT quantity and the
@@ -4924,6 +4945,35 @@ static func off_axis_useful_workers(forecast: Dictionary) -> int:
         crew = maxi(crew, ceili(room / rate))
     return crew
 
+## **DOES THIS SOURCE PRICE A WORKER IN ANY ACCOUNT AT ALL?** — a test on the RATES alone, deliberately
+## not on the rooms: it asks what this source PAYS, which is a structural fact, where every ceiling
+## above is a function of the floor and of what happens to be standing there this turn.
+##
+## **IT IS THE PREDICATE THE STAGED-CREW GUARD IS SCOPED BY**, and that guard is an ASSERTION rather
+## than a clamp — `ui_preview`'s `forage_cash_crop_field` pins that a sheet stages at least the crew
+## already committed on a source paying into any account, and `DrawerComposeController
+## ._forecast_worker_cap` records why a runtime floor there was tried and reverted.
+##
+## **THE SCOPE IS WHAT KEEPS `MAX_USEFUL_BARREN` REACHABLE.** A source that genuinely pays nothing in
+## any account answers `false`, so the barren cap of one worker still binds however many hands are
+## standing on it — the same argument `max_useful_workers` makes for withholding its own crew floors
+## there.
+static func pays_any_account(forecast: Dictionary) -> bool:
+    if float(forecast.get("axis_per_worker", forecast.get("per_worker", 0.0))) \
+            >= FORECAST_MIN_PER_WORKER:
+        return true
+    if float(forecast.get("per_worker_fodder", 0.0)) >= FORECAST_MIN_PER_WORKER:
+        return true
+    # **THE MATERIAL ACCOUNT IS ASKED ROW BY ROW, never summed** — the standing rule for this account,
+    # and here any single paying row is enough to answer the question.
+    for row_variant in forecast.get(FORECAST_PER_WORKER_MATERIAL_KEY, []):
+        if not (row_variant is Dictionary):
+            continue
+        if float((row_variant as Dictionary).get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)) \
+                >= FORECAST_MIN_PER_WORKER:
+            return true
+    return false
+
 ## Workers beyond this produce nothing at this source under the selected policy —
 ## ceil(ceiling / per_worker). A tended patch / corralled herd reports every ceiling == per_worker, so
 ## this collapses to 1 (policy irrelevant).
@@ -5637,6 +5687,25 @@ const SELECTION_PROVISIONS := "provisions"
 const SELECTION_FODDER := "fodder"
 const SELECTION_MATERIAL := "material"
 
+## **AND WHY IT IS UNQUOTABLE, BECAUSE THERE ARE TWO REASONS AND THEY HAVE DIFFERENT REMEDIES.** The
+## key is meaningless on a QUOTED selection and is present regardless, so a reader never has to know
+## which arm produced the dict.
+##
+## `SELECTION_REASON_UNPRICED` — the wire priced no per-species rate for something the player ticked.
+## Nothing the player can do fixes it; the sheet says so and quotes nothing.
+##
+## `SELECTION_REASON_ABSENT` — the ticked plants are not in this tile's basket at all, or carry no
+## share of it. **That state has an obvious remedy the unpriced sentence never mentions** — tick a
+## plant that grows here — and it is reachable through a roster change or a natural composition shift
+## that drops a plant a standing selection still names. (A commitment now prunes a crew's stale
+## `take_species`, which is what made it rare rather than what made it impossible.)
+##
+## **A CASH CROP PAYING `0.0` IS NEITHER OF THESE.** It is fully quoted, and `yield_rows`' own
+## render-where-it-pays rule decides whether a FOOD row exists at all.
+const SELECTION_REASON := "reason"
+const SELECTION_REASON_UNPRICED := "unpriced"
+const SELECTION_REASON_ABSENT := "absent"
+
 ## Compose `selection` (species keys, EMPTY meaning the whole basket) against `basket` —
 ## `flora_basket_entries`' answer for the same tile.
 ##
@@ -5655,8 +5724,12 @@ static func selection_rates(basket: Array[Dictionary],
         selection: PackedStringArray) -> Dictionary:
     var unquoted := {SELECTION_KNOWN: false, SELECTION_SHARE: 0.0,
         SELECTION_PROVISIONS: 0.0, SELECTION_FODDER: 0.0,
-        SELECTION_MATERIAL: ([] as Array[Dictionary])}
+        SELECTION_MATERIAL: ([] as Array[Dictionary]),
+        SELECTION_REASON: SELECTION_REASON_ABSENT}
     if selection.is_empty() or basket.is_empty():
+        # Nothing ticked, or a tile whose basket the wire does not describe. Neither is a NARROWING,
+        # so no caller renders an aside for it — the reason stands at its default rather than
+        # claiming the wire priced something badly.
         return unquoted
     var share_sum := 0.0
     var provisions := 0.0
@@ -5680,6 +5753,10 @@ static func selection_rates(basket: Array[Dictionary],
         if not bool(entry.get("has_provisions_per_biomass", false)) \
                 or not bool(entry.get("has_fodder_per_biomass", false)) \
                 or not bool(entry.get("has_material_per_biomass", false)):
+            # **THIS PLANT IS IN THE BASKET AND THE WIRE PRICED IT BADLY** — the one arm that is
+            # genuinely about the SERVER rather than about the selection, so it is the one arm that
+            # overwrites the default reason.
+            unquoted[SELECTION_REASON] = SELECTION_REASON_UNPRICED
             return unquoted
         var share := maxf(float(entry.get("share", 0.0)), 0.0)
         matched += 1
@@ -5696,7 +5773,8 @@ static func selection_rates(basket: Array[Dictionary],
             material_weighted[material_id] = float(material_weighted[material_id]) \
                 + share * float((row as Dictionary).get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
     # A selection naming nothing this tile grows, or naming only plants the tile carries no share of,
-    # divides by zero — there is no stand to price and no mean to take.
+    # divides by zero — there is no stand to price and no mean to take. **The remedy is the player's**
+    # (tick a plant that grows here), which is why this reason is worded apart from the unpriced one.
     if matched == 0 or share_sum <= 0.0:
         return unquoted
     # **THE DENOMINATOR IS THE WHOLE SELECTION'S SHARE, on every material.** A plant that pays no fibre
