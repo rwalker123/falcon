@@ -22,14 +22,27 @@ The shell harnesses: the shared `MenuShell` and the workbench plus its budget ga
 
 Dev-only preview harness for the shared **`MenuShell`** (landing + pause), the menu twin of
 `ui_preview`: instances the real `MenuShell.tscn` over a flat ground/scrim ColorRect, walks it
-through its states and dumps `menu_landing.png` / `menu_pause.png` / **`menu_options.png`** to
-`ui_preview_out/`. No server, no network. The **Options** state drives `_activate_item("options")` —
+through its states and dumps `menu_landing.png` / `menu_pause.png` / **`menu_options.png`**, the
+theme dropdown open (`menu_options_theme_popup.png`) and the Theme row's CHANGED state in both modes
+(`menu_options_theme_pending_pause.png` / `..._landing.png`) to `ui_preview_out/`. No server, no network. The **Options** state drives `_activate_item("options")` —
 the same entry point the nav rail calls — so the pane is built exactly as a click builds it, and it
 is rendered from PAUSE mode only because the shared `ITEMS` registry gives the landing menu the
 identical pane. It is the frame the client-settings rows are judged on (the **Fog of war** toggle +
 the two speed sliders + Restore defaults), and it reads whatever is in the real
 `user://client_settings.cfg` — the slider readouts vary by machine, so judge the ROWS, not the
-values. Same `_settle` (`process_frame` → `force_draw` → `process_frame`) + `_save` contract as
+values.
+
+**The interface scale and BOTH halves of the theme are pinned, by MEMBER assignment.** The Theme row
+compares the saved pick against the applied palette, so pinning only `HudPalette.apply()` left the
+row rendering the developer's own choice: on a machine saved to a non-default theme every Options
+frame came out PENDING — restart caption, restart button — and the settled state had no frame at all.
+`ClientSettings.theme` is therefore pinned beside it, and the pending frames set it explicitly. Never
+through a `ClientSettings.set_*` setter: those `_save` over the developer's real config, which is the
+same contamination one step worse. The pending pair also carries the button's two ASSERTIONS —
+visible when the pick differs, absent when it does not — because a frame that quietly lost the button
+still looks like a deliberate layout. **Nothing here ever presses it**: it relaunches the process.
+
+Same `_settle` (`process_frame` → `force_draw` → `process_frame`) + `_save` contract as
 `ui_preview`, and the same rule: `scripts/preview.sh res://tools/menu_preview.tscn`, **NOT
 `--headless`** (the dummy renderer yields a null viewport texture and the frames are skipped with a
 warning)

@@ -6,6 +6,9 @@ paths:
   - "clients/godot_thin_client/src/ui/MagnifierButton.gd"
   - "clients/godot_thin_client/src/scripts/ui/{TileHabitability,TileClimate,RiverEdges,MinimapPanel}.gd"
   - "clients/godot_thin_client/src/scripts/{SnapshotStream,CommandClient,Typography}.gd"
+  # The Theme row and the restart it now performs — the palette's only player-facing controls.
+  - "clients/godot_thin_client/src/scripts/ui/MenuShell.gd"
+  - "clients/godot_thin_client/src/scripts/GameLaunch.gd"
 ---
 
 <!-- Extracted verbatim from lines 195-200;202-202;204-210 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -149,6 +152,29 @@ is no rebuild pass anywhere in the system. The Options row's setter (`ClientSett
 deliberately does NOT re-apply — a live swap would leave every already-built Control wearing the old
 palette — and the row carries an always-visible caption saying so, in `WARN` while the selection and
 `HudPalette.applied_id` disagree.
+
+**The row also ACTS on that requirement, with a "Restart now" button beside the picker.** Godot has
+no live restart, so `GameLaunch.restart_client()` relaunches the process — `OS.create_process` on
+`OS.get_executable_path()`, passing `--path <project>` under `OS.has_feature("editor")` because there
+the executable is the Godot binary and a bare launch opens the Project Manager instead of the game.
+The button exists only while a restart is owed: `MenuShell._refresh_theme_row` derives its visibility
+from the same `selected_id != HudPalette.applied_id` comparison that words the caption, in that one
+place, so the two can never disagree — and a permanently-present restart control in an options pane
+is a run lost by accident.
+
+**A pause-mode restart ENDS the run, and that is stated on the button rather than in a modal.** The
+client sends `new_game` on every connect (`.claude/rules/core_sim/world-handoff.md`), so a relaunched
+client builds a new world rather than rejoining the running one, and Save Game is still an inert
+placeholder pane. In `pause` the button therefore reads "Restart now — ends this run" in the `armed`
+variant — the same mark "Abandon and return to menu" wears — and the caption gains "The current run
+will be lost."; in `landing` there is no run, so it is a plain `primary` "Restart now".
+
+**The spawn decides whether anything quits.** `restart_client()` returns `false` when
+`OS.create_process` hands back no pid, and the OWNERS (`LandingScreen._on_restart_requested`,
+`Main._on_pause_restart`) quit only on `true` — quitting after a failed spawn would close the game
+with nothing to replace it, the one outcome this path must never produce. On `false` the menu stays
+open and the owner calls `MenuShell.show_restart_failed()`, which puts the row's caption into
+`DANGER` reading "Could not restart — quit and start the game again."
 
 **`static var`, not `const`, and the call sites did not change.** A `static var` reads identically at
 the call site (`HudStyle.DANGER` is the same expression either way), which is why converting 28

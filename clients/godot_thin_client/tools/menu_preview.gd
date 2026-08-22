@@ -22,6 +22,10 @@ const PREVIEW_SIZE := Vector2i(1500, 900)
 const MAP_TONE := Color(0.10, 0.15, 0.16)
 # Nav id of the client-settings pane in MenuShell.ITEMS.
 const OPTIONS_PANE_ID := "options"
+# A roster theme that is NOT the one this harness pins as applied, so the Theme row renders its
+# CHANGED state — caption in WARN, "Restart now" button present. Any id but `HudPalette.DEFAULT_THEME`
+# would do; the frames are named for the state, not for this palette.
+const PENDING_THEME := "kiln"
 
 ## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
 ## the status and the output agree — a harness that printed an error and still exited 0 was
@@ -54,6 +58,13 @@ func _ready() -> void:
 	# default here is safe at any point before UI is built: `HudStyle`/`MapView` and the vocabulary
 	# modules are all re-derived by `apply`, and nothing on screen has read a colour yet.
 	HudPalette.apply(HudPalette.DEFAULT_THEME)
+	# …AND THE SAVED PICK, which is a SECOND setting from the same contaminated file. The Theme row
+	# compares the saved pick against the applied palette, so pinning only the palette left the row
+	# rendering whatever the developer last chose: on a machine saved to any non-default theme every
+	# Options frame came out in the row's PENDING state — restart caption, restart button — and the
+	# settled state had no frame at all. Same MEMBER assignment, for the same reason: `set_theme`
+	# would write the developer's config.
+	ClientSettings.theme = HudPalette.DEFAULT_THEME
 	DirAccess.make_dir_absolute(OUT_DIR)
 
 	_root = Control.new()
@@ -88,6 +99,10 @@ func _ready() -> void:
 	# identical pane, so one frame covers both.
 	_shell._activate_item(OPTIONS_PANE_ID)
 	await _settle()
+	# The saved pick and the applied palette agree here, so there is nothing to restart for and the
+	# Theme row must offer nothing to press. This is the settled half of the pair asserted below.
+	if _shell._theme_restart != null and _shell._theme_restart.visible:
+		_fail("theme row: the Restart now button is showing with no pending pick")
 	await _save("menu_options")
 
 	# …AND THE THEME DROPDOWN OPEN. Its own frame because a dropdown is TWO surfaces: the popup is a
@@ -99,7 +114,36 @@ func _ready() -> void:
 	await _save("menu_options_theme_popup")
 	_shell._theme_picker.get_popup().hide()
 
+	# …AND THE ROW IN ITS CHANGED STATE — the only state in which the "Restart now" button exists, so
+	# it is the only frame that can show it. The pick is made by assigning the MEMBER
+	# `ClientSettings.theme` and rebuilding the pane, never by driving `_on_theme_selected`: that path
+	# calls `set_theme`, which SAVES over the developer's real `user://client_settings.cfg` — the same
+	# contamination the interface-scale pin above exists to avoid, and this one would change what the
+	# developer's next launch looks like. Rendered from PAUSE, where the button is `armed` and says the
+	# run will be lost.
+	ClientSettings.theme = PENDING_THEME
+	_shell._activate_item(OPTIONS_PANE_ID)
+	await _settle()
+	_assert_restart_visible("pause")
+	await _save("menu_options_theme_pending_pause")
+
+	# The same row in LANDING mode, where no run exists: shorter label, `primary` variant, and the
+	# caption without the run-loss clause. `set_mode` rebuilds the active pane, so the row re-derives
+	# its wording for the new mode rather than keeping the pause one.
+	_bg.color = HudStyle.GROUND
+	_shell.mode = MenuShell.LANDING
+	await _settle()
+	_assert_restart_visible("landing")
+	await _save("menu_options_theme_pending_landing")
+
 	_finish()
+
+
+## The button is BUILT hidden and shown only while the pick differs from what is on screen, so a
+## frame that silently lost it would look like a deliberate layout and pass review. Checked, not eyeballed.
+func _assert_restart_visible(mode_name: String) -> void:
+	if _shell._theme_restart == null or not _shell._theme_restart.visible:
+		_fail("theme row (%s): a pending pick did not surface the Restart now button" % mode_name)
 
 
 ## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
