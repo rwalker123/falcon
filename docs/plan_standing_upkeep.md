@@ -939,6 +939,55 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > passing tests that could not distinguish the defect from the fix. Every fix in this slice was
    > therefore **falsified** — the defect restored, the failing assertions counted and named — and
    > that is the practice to keep, not the fixtures.
+   > **⛔ AND IT LANDED ON THE PLANT WEB'S *RATES* AND NOT ITS *MIX* — the unfinished half, closed
+   > later.** The composition seam (`forage::patch_composition`) went on resolving at the rung
+   > **achieved**, under an explicit note that a basket "is the one thing that cannot be
+   > interpolated": mixing two baskets would invent shares of plants that are not growing there. The
+   > smoothing, it said, was carried by the rates.
+   >
+   > **Both halves of that were wrong, and the second is what play found.** Reported by Ray: a tile
+   > paid `+0.35 food · +0.07 fibre` one turn and `+0.00` with no material clause the next — the turn
+   > its Sow completed. It had been committed to **tobacco**, a cash crop paying no food and no
+   > fodder, and completion forced the tile's mix to 100% tobacco in a single step.
+   >
+   > - **The rates it delegated to do not move across a Sow.** `favored_conversion_gain` is flat by
+   >   design (`tended_conversion_gain` 2.0 → `field_conversion_gain` 2.0), and
+   >   `field_capacity_gain` / `field_regrowth_gain` land on the take **ceiling**, which sits above
+   >   the worker cap on any normally-staffed row. Every smoothed term was inert, and the one term
+   >   that decides what the ground pays — the mix — was the one that cliffed. **The discontinuity
+   >   §4.10 exists to remove survived in the place nobody looked.**
+   > - **The "invents plants" objection does not hold for this pair.** `planted` is a reweighting of
+   >   `weeded`, which is a reweighting of the tile's own realized mix: every species in the later
+   >   basket is already in the earlier one, so a blend only raises the favored share and lowers the
+   >   others, and the shares still sum to one. It names no plant the ground was not already growing.
+   >   That is ① above stated on the mix rather than on the meter — *"a half-sown field genuinely has
+   >   half a crop in the ground"* — so refusing to interpolate the basket contradicted the very
+   >   reason `animal:pen` is `partial_credit`'s only member. **The objection is retained where it is
+   >   still true**: a material's *characteristic vector* cannot be averaged, which is why the
+   >   material account is decomposed per species rather than blended.
+   >
+   > **So the mix interpolates on BOTH plant rungs**, through `intensification::interpolate_composition`
+   > — [`interpolate`]'s vector twin, blending the held basket with the raising one per species at
+   > `RungStanding::credit`. Reading `credit` is the *only* test of `RungPartialCredit`, so an
+   > `on_completion` rung's basket still steps at completion for free. Weeding was smoothed with
+   > sowing: leaving Cultivate stepped would make the ladder smooth on one rung and cliffed on the one
+   > below it. **The blend is re-sorted into the wire's total order**, because
+   > `default_species_for_rung` reads a basket's first entry as its dominant plant.
+   >
+   > **AND THE TAKE SELECTION HAD NO REPAIR PATH, which is what turned the cliff into a zero.**
+   > `LaborTarget::Forage::take_species` has one writer (`assign_labor`) and nothing pruned it, so a
+   > crew that had named the plants a Sow displaced held a selection summing to **zero share** — and
+   > a zero selected share is a zero take *ceiling*, in food and materials alike. Interpolation makes
+   > that a fade rather than a cliff, but it still arrives at zero, so the commitment now **prunes**
+   > the selection and adds the crop it committed to. **Prunes, never overwrites**: a `planted`
+   > basket keeps whatever stands outside the worked ground, so a sown tile with a fishery still has
+   > fish in it, and a blanket reset would re-tick plants the player had deliberately unticked.
+   > Nothing surviving the prune falls back to the whole basket rather than to the crop alone.
+   >
+   > **The command boundary was judging the wrong basket, and freshly, not stalely.**
+   > `validate_take_selection` resolved against the tile's raw wild realization while the take path
+   > narrows against the rung-reweighted mix, so on any tended or sown patch it accepted a selection
+   > the very next turn valued at zero. It now judges the same mix the take will narrow.
 11. **Plant upkeep SCALES WITH THE SOURCE.** Both plant rungs ship `scaled_by: flat`, so a rich
     alluvial patch and a thin one cost the same to hold. Ray: *"the flora track should scale by size,
     just like animals."* The whole-number demands were an explicit short-term step, not the model —

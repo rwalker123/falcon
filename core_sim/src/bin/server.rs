@@ -28,15 +28,15 @@ use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     herd_build_verb, hunt_source_yield_preview, knows, load_simulation_config_for_new_world,
-    output_multiplier, patch_build_verb, resolve_active_profile, resolve_committed_species,
-    resolve_take_selection, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
-    ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle,
-    CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
-    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
-    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
-    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
-    StartProfileOverrides, TakeSelection, UpkeepFundMode, WellbeingConfigHandle,
+    output_multiplier, patch_build_verb, patch_composition, resolve_active_profile,
+    resolve_committed_species, resolve_take_selection, rung_site_refusal, tile_flora_composition,
+    tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce,
+    BeatCatalogHandle, BeatConfigHandle, BeatLedger, BuildJob, BuildSource, CampaignLabel,
+    CombatConfigHandle, CreaturesConfigHandle, Expedition, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError,
+    HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
+    MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
+    StartProfile, StartProfileOverrides, TakeSelection, UpkeepFundMode, WellbeingConfigHandle,
     DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
@@ -2560,10 +2560,18 @@ fn validate_sow(
 /// **May this crew gather these plants HERE?** — the take selection's gate, phrased for the player.
 ///
 /// It resolves through the *same* `forage::resolve_take_selection` seam the take path narrows with,
-/// against the tile's own basket via `forage::tile_flora_composition` (never
-/// `FloraConfig::composition` on a raw terrain), so a selection this accepts is one the turn can
-/// actually gather. **There is no rung in it**: a take selection says what the crew carries home
-/// from the stand that is standing, so a `wild`-ceiling plant is a perfectly good answer.
+/// against **the mix that take will narrow** — `forage::patch_composition`, the patch's live
+/// rung-reweighted basket, falling back to the tile's own realization
+/// (`forage::tile_flora_composition`, never `FloraConfig::composition` on a raw terrain) where no
+/// patch stands yet. **There is no rung *asked* in it**: a take selection says what the crew carries
+/// home from the stand that is standing, so a `wild`-ceiling plant is a perfectly good answer — but
+/// the stand that is standing on a tended or sown patch is the reweighted one, not the wild
+/// realization it grew out of.
+///
+/// **Judging the wild basket was a defect, not a simplification.** The two baskets differ on every
+/// committed patch, so a selection naming a plant weeding or sowing had already displaced was
+/// accepted at the command boundary — freshly typed, no staleness involved — and then valued at
+/// exactly zero by the very next turn's take.
 ///
 /// The whole basket (an empty selection) is always accepted — it names no plant to be wrong about.
 fn validate_take_selection(
@@ -2589,7 +2597,13 @@ fn validate_take_selection(
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let flora = app.world.resource::<FloraConfigHandle>().get();
     let map_seed = app.world.resource::<SimulationConfig>().map_seed;
-    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+    let tile_composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+    // The patch's own mix where one stands — the same seam `forage_take` narrows against.
+    let registry = app.world.resource::<ForageRegistry>();
+    let composition = registry.patch(tile).map_or_else(
+        || Cow::Borrowed(tile_composition.as_ref()),
+        |patch| patch_composition(patch, &tile_composition, &flora, &labor.forage),
+    );
     match resolve_take_selection(take, &composition, &flora) {
         Ok(()) => Ok(()),
         Err((species, SpeciesRefusal::Unknown)) => {
@@ -10236,6 +10250,83 @@ mod tests {
         assert!(
             forage_failure_detail_contains(&app, "know no plant"),
             "one unknown plant refuses the whole selection; it is not silently narrowed"
+        );
+    }
+
+    /// **A TAKE SELECTION IS JUDGED AGAINST THE MIX THE TAKE WILL NARROW**, which on a sown patch is
+    /// not the tile's wild realization.
+    ///
+    /// The command used to validate against `tile_flora_composition` while the take path narrows
+    /// against `forage::patch_composition` — the rung-reweighted mix. On any tended or sown patch
+    /// those differ, so the boundary **accepted** a selection the very next turn's take valued at
+    /// exactly zero: freshly typed, no staleness involved, and a `+0.00 /turn` row with nothing said.
+    ///
+    /// The control is asserted from the same fixture: the crop the ground was sown to is still a
+    /// perfectly good thing to gather, so the refusal cannot be the sown patch refusing everything.
+    #[test]
+    fn assign_labor_judges_a_take_selection_against_the_patchs_own_mix() {
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let displaced = {
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let flora = app.world.resource::<FloraConfigHandle>().get();
+            let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+            let ground = app
+                .world
+                .resource::<TileRegistry>()
+                .index(coord.x, coord.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .expect("the fixture seeded this tile");
+            let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+            // The least abundant clearable member — the first thing a Sow displaces, and still a
+            // legal selection against the *wild* basket, which is the whole point.
+            composition
+                .iter()
+                .filter(|entry| flora.stands_in_worked_ground(&entry.species))
+                .min_by(|a, b| a.share.total_cmp(&b.share))
+                .expect("the fixture tile grows something clearable")
+                .species
+                .clone()
+        };
+        let crop = a_species_growing_at(&app, coord);
+        assert_ne!(
+            crop, displaced,
+            "fixture: the crop must displace a different plant, or nothing is being judged"
+        );
+
+        // Sow the ground to `crop`: `planted` takes the whole basket less whatever stands outside
+        // the worked ground, so `displaced` is no longer standing here.
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry
+                .patch_mut(coord)
+                .expect("the fixture seeded a patch here");
+            patch.species = Some(crop.clone());
+            patch.complete_field(faction, &ladder);
+        }
+
+        assign_forage_take(&mut app, faction, coord, &[displaced.as_str()]);
+        assert!(
+            forage_failure_detail_contains(&app, "does not grow at"),
+            "a plant the Sow displaced is refused — the take would value it at zero"
+        );
+
+        let mut app = forage_ground_with_baskets(faction, coord);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry
+                .patch_mut(coord)
+                .expect("the fixture seeded a patch here");
+            patch.species = Some(crop.clone());
+            patch.complete_field(faction, &ladder);
+        }
+        assign_forage_take(&mut app, faction, coord, &[crop.as_str()]);
+        assert!(
+            !forage_failure_detail_contains(&app, "does not grow at"),
+            "control: the sown crop is what the patch is made of, so gathering it is legal"
         );
     }
 

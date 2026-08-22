@@ -243,6 +243,22 @@ pub struct FloraShare {
     pub share: f32,
 }
 
+/// **THE WIRE'S TOTAL ORDER FOR A BASKET** — share DESC, then species key ASC — applied in place.
+///
+/// Stated once because it is a *total* order that other code depends on being one: the first entry
+/// of a sorted basket is its dominant plant, which is what `forage::default_species_for_rung` reads
+/// without a second sort, and a basket reaches the snapshot, where a differently-ordered f32
+/// addition is a hash flake. Every seam that builds or reshapes a basket — the affinity blend, the
+/// per-tile realization, both rung reweights and the standing interpolation — ends on this call, so
+/// none of them can come to disagree about what "sorted" means.
+pub fn sort_basket(shares: &mut [FloraShare]) {
+    shares.sort_by(|a, b| {
+        b.share
+            .total_cmp(&a.share)
+            .then_with(|| a.species.cmp(&b.species))
+    });
+}
+
 /// Root flora configuration: the species table plus the **derived** per-biome composition.
 ///
 /// The composition table is built by [`FloraConfig::from_species`], which every construction path —
@@ -457,11 +473,7 @@ impl FloraConfig {
                 share: weight / total,
             })
             .collect();
-        blended.sort_by(|a, b| {
-            b.share
-                .total_cmp(&a.share)
-                .then_with(|| a.species.cmp(&b.species))
-        });
+        sort_basket(&mut blended);
         blended
     }
 
@@ -559,11 +571,7 @@ impl FloraConfig {
             })
             .collect();
         // Publish in the wire order every basket uses: share DESC, then species key ASC.
-        realized.sort_by(|a, b| {
-            b.share
-                .total_cmp(&a.share)
-                .then_with(|| a.species.cmp(&b.species))
-        });
+        sort_basket(&mut realized);
         realized
     }
 

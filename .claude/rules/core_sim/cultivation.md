@@ -29,9 +29,13 @@ which is what the wire's two per-rung meters are still published from.
   the tended rung's ends — so the reported *"Field above 0% while Cultivation reads 99%"* is
   unrepresentable rather than forbidden.
 - **Every rate on a patch interpolates on that position**: a Field 40% raised converts at a whole
-  tended patch's rate plus 40% of the Field's extra, and owes its keeping on the same shape. **The
-  BASKET does not** — `patch_composition` resolves at `standing.held`, because a half-weeded basket is
-  not a blend of two baskets.
+  tended patch's rate plus 40% of the Field's extra, and owes its keeping on the same shape. **So does
+  the BASKET** — `patch_composition` blends the held mix with the raising one per species at
+  `standing.credit`, through `intensification::interpolate_composition`. A Field 40% raised is 40% of
+  the way from its weeded basket to its sown one: the crop's share climbs and the volunteers' falls,
+  turn by turn. See `flora.md` → "THE MIX INTERPOLATES TOO" for why the earlier *"a half-weeded basket
+  is not a blend of two baskets"* ruling was overturned, and for the take-selection repair that rides
+  the commitment.
 - **A QUEUE ENTRY NAMES A DESTINATION, so `sow` on untended ground costs the WHOLE BRANCH — 125 work
   units, not 75.** It lays two legs (`plant:tended`, then `plant:field`), passes through Cultivated on
   the way — announced on Cultivate's own channel — and holds the head of the queue until it arrives.

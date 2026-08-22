@@ -57,6 +57,7 @@
 //! rung needing a *new* primitive codes that one primitive once, after which it too is config.
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
@@ -73,7 +74,8 @@ use crate::{
     components::Improvement,
     fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
     fauna_config::HusbandryCeiling,
-    forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
+    flora_config::{sort_basket, FloraShare},
+    forage::{CULTIVATION_DISCOVERY_ID, NO_SHARE, SEED_SELECTION_DISCOVERY_ID},
     labor_config::NO_FORAGE_CAPACITY,
     orders::FactionId,
     resources::DiscoveryProgressLedger,
@@ -1349,6 +1351,85 @@ pub fn interpolate<F: Fn(RungKey) -> f32>(standing: &RungStanding, value_at: F) 
         Some(raising) => held + standing.credit * (value_at(raising) - held),
         None => held,
     }
+}
+
+/// **A PER-RUNG *BASKET* AT A SOURCE'S STANDING — [`interpolate`]'s VECTOR TWIN.** `composition_at`
+/// answers the species mix a rung would make of the source; the mix a part-raised source actually
+/// stands in is the two blended **per species** at [`RungStanding::credit`], over the union of their
+/// keys:
+///
+/// ```text
+/// shareᵢ(held) + credit × (shareᵢ(raising) − shareᵢ(held))
+/// ```
+///
+/// # A BASKET *CAN* BE BLENDED — WHEN ONE IS A REWEIGHTING OF THE OTHER
+///
+/// `forage::patch_composition` used to resolve at [`RungStanding::held`] alone, on the argument that
+/// mixing two baskets invents shares of plants that are not growing there. **That argument does not
+/// hold for the plant rungs, which is why this exists.** A tended basket is a reweighting of the
+/// tile's own mix and a sown one a reweighting of that: every species in the later basket is already
+/// in the earlier one, so the blend only raises the favored share and lowers the others — it names
+/// no plant the ground was not already growing. It is the *shares* that move, and shares are exactly
+/// what a rate-style lerp is for.
+///
+/// **The rung's partial-credit mode is honoured by reading `credit`, and nowhere else.**
+/// [`RungPartialCredit::OnCompletion`] is already pinned to [`NO_RUNG_CREDIT`] in
+/// [`RungStanding::at`], so an all-or-nothing rung's mix steps at completion for free and no call
+/// site tests the flag — [`interpolate`]'s discipline, unchanged.
+///
+/// **The result is re-sorted into the wire's total order** ([`sort_basket`]) and entries blended
+/// away to nothing are dropped. Both matter: a blend reorders shares, and `default_species_for_rung`
+/// reads the first entry of a basket as its dominant plant.
+///
+/// The `held` basket is returned **borrowed and untouched** wherever there is nothing to blend
+/// toward — the top of a branch, or no credit banked — which is the >99% case and the reason the
+/// closure hands back a [`Cow`] rather than a `Vec`.
+///
+/// Quadratic in the basket's length, deliberately: a realized tile mix is a handful of species, and
+/// a key-indexed map here would cost an allocation on every call to avoid a dozen comparisons.
+pub fn interpolate_composition<'a, F>(
+    standing: &RungStanding,
+    composition_at: F,
+) -> Cow<'a, [FloraShare]>
+where
+    F: Fn(RungKey) -> Cow<'a, [FloraShare]>,
+{
+    let held = composition_at(standing.held);
+    let Some(raising) = standing.raising else {
+        return held;
+    };
+    if standing.credit <= NO_RUNG_CREDIT {
+        return held;
+    }
+    let toward = composition_at(raising);
+    let share_in = |basket: &[FloraShare], species: &str| {
+        basket
+            .iter()
+            .find(|entry| entry.species == species)
+            .map_or(NO_SHARE, |entry| entry.share)
+    };
+    let mut blended: Vec<FloraShare> = held
+        .iter()
+        .map(|entry| FloraShare {
+            species: entry.species.clone(),
+            share: entry.share
+                + standing.credit * (share_in(&toward, &entry.species) - entry.share),
+        })
+        // A member of the raising basket the held one does not name — a crop sown onto ground that
+        // was not growing it — enters from nothing at the same fraction.
+        .chain(
+            toward
+                .iter()
+                .filter(|entry| share_in(&held, &entry.species) <= NO_SHARE)
+                .map(|entry| FloraShare {
+                    species: entry.species.clone(),
+                    share: standing.credit * entry.share,
+                }),
+        )
+        .filter(|entry| entry.share > NO_SHARE)
+        .collect();
+    sort_basket(&mut blended);
+    Cow::Owned(blended)
 }
 
 /// How a source at this rung moves — **the proximity spine, far → near → fixed**
@@ -3144,6 +3225,123 @@ pub fn load_intensification_ladder_from_env() -> (Arc<LadderConfig>, LadderConfi
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    /// A two-rung standing part-way up, for the basket blend below.
+    fn part_way_up(credit: f32) -> RungStanding {
+        RungStanding {
+            held: RungKey::PlantWild,
+            raising: Some(RungKey::PlantTended),
+            credit,
+            banked: 1.0,
+        }
+    }
+
+    fn basket(entries: &[(&str, f32)]) -> Vec<FloraShare> {
+        let mut shares: Vec<FloraShare> = entries
+            .iter()
+            .map(|(species, share)| FloraShare {
+                species: (*species).to_string(),
+                share: *share,
+            })
+            .collect();
+        sort_basket(&mut shares);
+        shares
+    }
+
+    /// **A BLENDED BASKET IS RE-SORTED, STILL WHOLE, AND STILL A SET OF PLANTS THAT GROW THERE.**
+    ///
+    /// The re-sort is the trap this test exists for: the blend reorders shares, and
+    /// `forage::default_species_for_rung` reads a basket's **first entry** as its dominant plant
+    /// without a second sort. A blend that came back in the held basket's order would silently
+    /// change which plant a commitment falls to.
+    #[test]
+    fn a_blended_basket_is_re_sorted_and_still_sums_to_one() {
+        // `flax` starts dominant and `emmer` overtakes it part-way up, so the order genuinely
+        // has to change rather than merely being allowed to.
+        let held = basket(&[("flax", 0.6), ("emmer", 0.3), ("kelp", 0.1)]);
+        let toward = basket(&[("emmer", 0.9), ("kelp", 0.1)]);
+        let at = |credit: f32| {
+            interpolate_composition(&part_way_up(credit), |rung| match rung {
+                RungKey::PlantWild => Cow::Borrowed(held.as_slice()),
+                _ => Cow::Borrowed(toward.as_slice()),
+            })
+            .into_owned()
+        };
+
+        for credit in [0.25_f32, 0.5, 0.75, 0.9] {
+            let blend = at(credit);
+            let total: f32 = blend.iter().map(|entry| entry.share).sum();
+            assert!(
+                (total - 1.0).abs() <= 1e-5,
+                "a blend at {credit} must still be a whole basket, not {total}"
+            );
+            for pair in blend.windows(2) {
+                assert!(
+                    pair[0].share > pair[1].share
+                        || (pair[0].share == pair[1].share && pair[0].species < pair[1].species),
+                    "a blend at {credit} must come back sorted: {:?} before {:?}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+            // The blend invents nothing: every member is in one of the two baskets.
+            for entry in &blend {
+                assert!(
+                    held.iter()
+                        .chain(toward.iter())
+                        .any(|other| other.species == entry.species),
+                    "the blend named {}, which neither basket grows",
+                    entry.species
+                );
+            }
+        }
+
+        // The order really did flip, which is what makes the sort assertion above load-bearing.
+        assert_eq!(at(0.25)[0].species, "flax");
+        assert_eq!(at(0.9)[0].species, "emmer");
+        // A plant only the raising basket names would enter from nothing; a plant only the held one
+        // names fades toward it. `flax` is the latter.
+        assert!(
+            at(0.9)
+                .iter()
+                .find(|entry| entry.species == "flax")
+                .expect("flax has not vanished at 90%")
+                .share
+                < 0.1
+        );
+    }
+
+    /// **NO CREDIT MEANS THE HELD BASKET, UNTOUCHED AND UNALLOCATED** — which is how an
+    /// [`RungPartialCredit::OnCompletion`] rung gets its all-or-nothing mix for free.
+    /// [`RungStanding::at`] has already pinned such a rung's credit to [`NO_RUNG_CREDIT`], so this
+    /// seam never tests the flag and no two call sites can come to disagree about it.
+    #[test]
+    fn a_basket_with_no_credit_banked_is_the_held_one_verbatim() {
+        let held = basket(&[("flax", 0.6), ("emmer", 0.4)]);
+        let toward = basket(&[("emmer", 1.0)]);
+        let resolve = |standing: &RungStanding| {
+            interpolate_composition(standing, |rung| match rung {
+                RungKey::PlantWild => Cow::Borrowed(held.as_slice()),
+                _ => Cow::Borrowed(toward.as_slice()),
+            })
+        };
+
+        let none_banked = resolve(&part_way_up(NO_RUNG_CREDIT));
+        assert_eq!(none_banked.as_ref(), held.as_slice());
+        assert!(
+            matches!(none_banked, Cow::Borrowed(_)),
+            "and it is not copied"
+        );
+
+        // The top of a branch raises nothing, so there is nothing to blend toward.
+        let topped_out = resolve(&RungStanding {
+            held: RungKey::PlantWild,
+            raising: None,
+            credit: 0.5,
+            banked: NO_RUNG_WORK_BANKED,
+        });
+        assert_eq!(topped_out.as_ref(), held.as_slice());
+    }
 
     /// **The floor at which [`learn_multiplier`] is exactly ×1.0** — the food peak. Every accrual
     /// assertion that is *not about the floor* passes it, so the call reads the crew's own output

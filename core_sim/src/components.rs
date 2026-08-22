@@ -1617,6 +1617,43 @@ impl TakeSelection {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.species.iter().map(String::as_str)
     }
+
+    /// **THE SELECTION A NEW COMMITMENT LEAVES THIS CREW** — the one repair path for a stale
+    /// selection, and the reason this type needs anything beyond [`Self::from_keys`].
+    ///
+    /// A `Cultivate`/`Sow` reweights the ground out from under whatever the crew named: the crop's
+    /// share climbs and the plants it displaces fall away. Nothing pruned this, so a crew that had
+    /// named those plants went on asking for a share that had gone to zero — and a zero share is a
+    /// zero take ceiling, in **every** account at once: food, fodder and materials alike. That is a
+    /// tile paying `+0.00 /turn` with a full crew on it and no readout saying why.
+    ///
+    /// - `stands` — is this species still in the patch's mix? Passed as a predicate so this type
+    ///   stays free of the plant web's basket (`forage::patch_composition` is the caller's).
+    /// - `crop` — the plant just committed to, **added**, because it is what the ground is becoming.
+    ///
+    /// **It prunes; it does not overwrite.** A `planted` basket keeps whatever stands outside the
+    /// worked ground (a kelp bed, a river's fish), so a sown tile with a fishery still has fish in
+    /// it — and blanket-resetting to the whole basket would start carrying home the very plants a
+    /// player had deliberately unticked, overriding a stated preference in the other direction.
+    ///
+    /// **Nothing surviving the prune falls back to the whole basket** ([`Self::EVERYTHING`]) rather
+    /// than to the crop alone: the player's stated preference is entirely gone, and inventing a
+    /// narrower one for them out of the commitment is a decision this seam has no standing to make.
+    ///
+    /// The whole basket prunes to itself — it names no plant to go stale.
+    pub fn pruned_for_commitment<F>(&self, stands: F, crop: &str) -> Self
+    where
+        F: Fn(&str) -> bool,
+    {
+        if self.is_everything() {
+            return Self::EVERYTHING;
+        }
+        let surviving: Vec<&str> = self.keys().filter(|species| stands(species)).collect();
+        if surviving.is_empty() {
+            return Self::EVERYTHING;
+        }
+        Self::from_keys(surviving.into_iter().chain(std::iter::once(crop)))
+    }
 }
 
 /// A single labor demand a band can staff from its working-age pool (Early-Game Labor, slice 3a):
@@ -3898,6 +3935,55 @@ impl Default for Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A COMMITMENT PRUNES THE SELECTION AND NAMES THE NEW CROP** — the repair that keeps a crew
+    /// from asking for plants its own `Cultivate`/`Sow` displaced, which is a zero selected share
+    /// and therefore `+0.00` in **every** account at once.
+    ///
+    /// **It prunes; it does not overwrite.** The fishery a `planted` basket keeps standing is not
+    /// re-ticked for a player who unticked it, and the food plant that survives the reweight stays
+    /// named.
+    #[test]
+    fn a_commitment_prunes_the_stale_names_and_adds_the_crop() {
+        let standing = ["emmer", "kelp"];
+        let stands = |species: &str| standing.contains(&species);
+
+        let selection = TakeSelection::from_keys(["emmer", "cotton"]);
+        let pruned = selection.pruned_for_commitment(stands, "emmer");
+        assert_eq!(
+            pruned.keys().collect::<Vec<_>>(),
+            vec!["emmer"],
+            "cotton is gone from the ground, so it goes from the selection"
+        );
+
+        let with_new_crop =
+            TakeSelection::from_keys(["kelp"]).pruned_for_commitment(stands, "emmer");
+        assert_eq!(
+            with_new_crop.keys().collect::<Vec<_>>(),
+            vec!["emmer", "kelp"],
+            "the crop joins what the crew already carries; the fishery is not un-ticked for them"
+        );
+    }
+
+    /// **NOTHING SURVIVING THE PRUNE FALLS BACK TO THE WHOLE BASKET**, not to the crop alone: the
+    /// player's stated preference is entirely gone, and narrowing it for them out of the commitment
+    /// is a decision this seam has no standing to make. And the whole basket prunes to itself — it
+    /// names no plant to go stale.
+    #[test]
+    fn a_selection_with_nothing_left_standing_falls_back_to_the_whole_basket() {
+        let stands = |species: &str| species == "emmer";
+
+        let stranded =
+            TakeSelection::from_keys(["cotton", "flax"]).pruned_for_commitment(stands, "emmer");
+        assert!(
+            stranded.is_everything(),
+            "a selection with nothing left standing opens back up to the whole basket"
+        );
+
+        assert!(TakeSelection::EVERYTHING
+            .pruned_for_commitment(stands, "emmer")
+            .is_everything());
+    }
 
     /// **The ⚠ predicate is the food peak, stated over the whole legal range** rather than at the
     /// four floors the retired stance axis could reach: a crew that stops at or above the peak

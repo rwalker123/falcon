@@ -77,7 +77,7 @@ use crate::{
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
-        interpolate, rung_span, upkeep_shortfall, BuildLeg, LadderConfig, LadderConfigHandle,
+        self, interpolate, rung_span, upkeep_shortfall, BuildLeg, LadderConfig, LadderConfigHandle,
         RungBranch, RungDef, RungKey, RungStanding, SiteRefusal, LEG_ALREADY_PAID, NEGLECT_NONE,
         NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
         RUNG_COST_UNSCALED, RUNG_UNSTARTED,
@@ -280,9 +280,9 @@ pub struct ForagePatch {
     /// [`patch_provisions_per_biomass`]): it **reweights** the tile's basket toward this one plant
     /// (weeding at rung 2, planting at rung 3 — the tile's `K` never moves, because the land owns
     /// it), and it changes how well biomass **converts** in every account (the tended rung's
-    /// `tended_conversion_gain`, on this species' term alone). Both take effect only once the
-    /// improvement is *complete* — while a crew is still preparing, the stand is still the mixed
-    /// basket it started as.
+    /// `tended_conversion_gain`, on this species' term alone). **Both come on gradually**, at the
+    /// fraction of the rung the crew has actually raised: half a sown field is half the crop's
+    /// share, and the volunteers it displaces fade rather than vanish.
     pub species: Option<String>,
     /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
@@ -785,10 +785,20 @@ impl ForagePatch {
     /// committed keeps its plant, because *"which crop is this ground"* is exactly the decision the
     /// rung exists to make and re-deciding it for free every turn would erase it. The commitment is
     /// released only by going fully feral ([`Self::reconcile_owner`]).
-    pub(crate) fn commit_species(&mut self, species: &str) {
-        if self.species.is_none() {
-            self.species = Some(species.to_string());
+    ///
+    /// **Returns whether THIS call is the commitment** — `false` on every later turn of the same
+    /// build. The distinction is load-bearing rather than informational: the commitment is what
+    /// repairs the crew's take selection
+    /// ([`crate::components::TakeSelection::pruned_for_commitment`]), and repeating that repair
+    /// every turn would go on quietly deleting names from the player's selection as the mix faded
+    /// under it. So the edge is reported here, where it is known, instead of being re-derived from
+    /// the field at a call site.
+    pub(crate) fn commit_species(&mut self, species: &str) -> bool {
+        if self.species.is_some() {
+            return false;
         }
+        self.species = Some(species.to_string());
+        true
     }
 
     /// Hold the `owner is Some ⟺ some improvement remains` invariant: ownership lapses only once
@@ -1133,22 +1143,25 @@ pub fn patch_composition<'a>(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> Cow<'a, [FloraShare]> {
-    // **⛔ THE BASKET IS RESOLVED AT `held`, AND IT IS THE ONE THING THAT CANNOT BE INTERPOLATED.**
-    // Every *rate* on this patch now lerps across the rung it is raising (see [`patch_interpolate`]),
-    // but this returns a **species basket**, not a number, and a half-weeded basket is not a blend of
-    // two baskets — mixing them would invent shares of plants that are not growing there, which is
-    // the same objection that keeps a material's characteristic vector out of `basket_rate`.
+    // **THE BASKET INTERPOLATES ACROSS THE RUNG BEING RAISED, exactly as every rate on this patch
+    // does** ([`crate::intensification::interpolate_composition`]). A half-sown field is a field
+    // half sown: the crop's share climbs and the volunteers' fall, turn by turn, and the ground goes
+    // on paying what is still standing on it.
     //
-    // So the composition steps at the rung actually **achieved** and the *rates* carry the smoothing:
-    // a Field at 40% is priced on a tended patch's weeded basket at a rate 40% of the way to the
-    // Field's. This is deliberate, not an oversight.
-    composition_for_rung(
-        patch,
-        tile_composition,
-        flora,
-        forage,
-        patch.standing().held,
-    )
+    // **This reverses an explicit earlier ruling** that a basket "cannot be interpolated" because
+    // mixing two baskets invents shares of plants that are not growing there. That objection is
+    // sound for a material's characteristic vector (see [`patch_material_yields`]) and unsound here:
+    // `planted` is a reweighting of `weeded`, which is a reweighting of the tile's own mix, so every
+    // species in the later basket is already in the earlier one and a blend names no new plant. What
+    // the old ruling cost is on the record: it leaned on the rates to carry the smoothing, and
+    // across a Sow they do not — `favored_conversion_gain` is flat by design
+    // (`tended_conversion_gain` == `field_conversion_gain`) and the capacity and regrowth gains land
+    // on a take *ceiling* that sits above the worker cap on any normally-staffed row. So the mix was
+    // the only term that moved, and it moved in one step: a tile committed to a cash crop went from
+    // paying food and fibre to paying nothing at all on the turn its Sow completed.
+    intensification::interpolate_composition(&patch.standing(), |rung| {
+        composition_for_rung(patch, tile_composition, flora, forage, rung)
+    })
 }
 
 /// **A PER-RUNG QUANTITY AT THIS PATCH'S STANDING** — [`interpolate`] bound to the patch, so no rate
@@ -1179,8 +1192,10 @@ fn patch_interpolate(patch: &ForagePatch, value_at: impl Fn(RungKey) -> f32) -> 
 /// standing crop and the forecast's separate `ceiling_cultivate`/`ceiling_sow` already encode — **two
 /// investment rungs on one branch never share a number.**
 ///
-/// [`patch_composition`] is this seam at the patch's own [`standing_rung`], which is the *live*
-/// reading the take path and the wire's published basket want.
+/// [`patch_composition`] is this seam **interpolated across the rung the patch is raising**, which is
+/// the *live* reading the take path and the wire's published basket want. That difference is the
+/// whole reason both exist: a quote is about one rung, while the ground a crew is standing on is
+/// part-way between two.
 pub fn composition_for_rung<'a>(
     patch: &ForagePatch,
     tile_composition: &'a [FloraShare],
@@ -1539,15 +1554,17 @@ pub fn patch_material_yields_taking(
     forage: &ForageLaborConfig,
     take: &TakeSelection,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
-    // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES.** A row's `per_biomass` is a rate and
-    // lerps like every other rate on this patch, but the *rows themselves* come from a basket, and a
-    // half-weeded basket is not a blend of two baskets — see [`patch_composition`].
+    // **THE BASKET AND THE GAIN BOTH INTERPOLATE** — the rows come off [`patch_composition`], the
+    // patch's live mix, so a half-sown field's fibre row fades with the plant that pays it instead
+    // of vanishing on the turn the meter fills.
+    //
+    // **What still cannot be blended is a material's characteristic vector**, and that is why this
+    // account is *decomposed* rather than averaged: each row keeps its own species' exact reading
+    // and carries that species' (now interpolated) share.
     rung_material_yields_at(
         patch,
-        tile_composition,
+        &patch_composition(patch, tile_composition, flora, forage),
         flora,
-        forage,
-        patch.standing().held,
         patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage)),
         take,
     )
@@ -1582,8 +1599,8 @@ pub fn patch_species_rates(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> Vec<SpeciesRate> {
-    // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES** — `patch_material_yields`' rule, and for
-    // its reason: a rate lerps across the rung being raised, a *basket* cannot be blended.
+    // **THE BASKET AND THE GAIN BOTH INTERPOLATE** — `patch_material_yields`' rule, and for its
+    // reason: the mix lerps across the rung being raised exactly as the rate on it does.
     let composition = patch_composition(patch, tile_composition, flora, forage);
     let favored_gain = patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage));
     composition
@@ -1664,30 +1681,26 @@ pub fn rung_material_yields(
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
     rung_material_yields_at(
         patch,
-        tile_composition,
+        &composition_for_rung(patch, tile_composition, flora, forage, rung),
         flora,
-        forage,
-        rung,
         favored_conversion_gain(rung, forage),
         &TakeSelection::EVERYTHING,
     )
 }
 
-/// The decomposition itself: one row per species per material, at `basket_rung`'s shares and the
-/// stated `favored_gain`. Split out so the live reading (an interpolated gain) and a per-rung quote
-/// (that rung's own gain) cannot come to be two decompositions.
-#[allow(clippy::too_many_arguments)] // the patch, the basket, both configs, the rung, the gain and the selection
+/// The decomposition itself: one row per species per material, at the **already resolved** `standing`
+/// basket's shares and the stated `favored_gain`. Split out so the live reading (the patch's
+/// interpolated mix and gain) and a per-rung quote (that rung's own mix and gain) cannot come to be
+/// two decompositions — and it takes the basket rather than a rung precisely so neither caller can
+/// pair one rung's mix with another's gain.
 fn rung_material_yields_at(
     patch: &ForagePatch,
-    tile_composition: &[FloraShare],
+    standing: &[FloraShare],
     flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-    basket_rung: RungKey,
     favored_gain: f32,
     take: &TakeSelection,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
-    let standing = composition_for_rung(patch, tile_composition, flora, forage, basket_rung);
-    let composition = narrowed(&standing, take);
+    let composition = narrowed(standing, take);
     let mut rows = Vec::new();
     for entry in composition.iter() {
         let Some(def) = flora.species.get(&entry.species) else {
@@ -1847,8 +1860,21 @@ pub fn species_is_legal_here(
 }
 
 /// **The share a species must exceed to count as present in a tile's basket.** A zero-share entry is
-/// a plant that is named on the tile and takes none of it — nothing to commit to.
-const NO_SHARE: f32 = 0.0;
+/// a plant that is named on the tile and takes none of it — nothing to commit to, nothing to gather,
+/// and nothing to publish. Shared with `intensification::interpolate_composition`, which drops the
+/// members a blend has faded away to nothing on exactly this bar.
+pub(crate) const NO_SHARE: f32 = 0.0;
+
+/// **IS THIS PLANT ACTUALLY STANDING IN THIS BASKET?** — named on it *and* holding more than
+/// [`NO_SHARE`] of it. The one spelling of the test, so the command boundary's take-selection gate
+/// ([`resolve_take_selection`]) and the commitment's prune of that same selection
+/// ([`crate::components::TakeSelection::pruned_for_commitment`]) cannot come to disagree about what
+/// "it grows there" means.
+pub fn species_stands_in(composition: &[FloraShare], species: &str) -> bool {
+    composition
+        .iter()
+        .any(|entry| entry.species == species && entry.share > NO_SHARE)
+}
 
 /// **The plant a commitment falls to when the player named none** — the highest-share species in this
 /// tile's basket that the rung permits. The composition is already sorted share-DESC then key-ASC (a
@@ -1954,10 +1980,7 @@ pub fn resolve_take_selection<'a>(
     flora: &FloraConfig,
 ) -> Result<(), (&'a str, SpeciesRefusal)> {
     for species in take.keys() {
-        if composition
-            .iter()
-            .any(|entry| entry.species == species && entry.share > NO_SHARE)
-        {
+        if species_stands_in(composition, species) {
             continue;
         }
         return Err((

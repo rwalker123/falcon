@@ -1158,6 +1158,17 @@ pub fn advance_labor_allocation(
         let mult_f = mult.to_f32();
 
         let mut lapsed: Vec<usize> = Vec::new();
+        // **TAKE SELECTIONS A COMMITMENT REPAIRED THIS TURN** — `(assignment index, the pruned
+        // selection)`. `LaborTarget::Forage::take_species` has exactly one other writer (the
+        // `assign_labor` command) and nothing used to prune it, so a `Cultivate`/`Sow` reweighting
+        // the ground could leave a crew asking for plants it had displaced — a zero selected share,
+        // and therefore a zero take ceiling in every account at once
+        // (`TakeSelection::pruned_for_commitment`).
+        //
+        // Collected rather than applied in place for `completed`'s reason: the loop borrows the
+        // allocation's assignments immutably. Applied **before** the `lapsed` removal below, so
+        // these indices are still the ones this loop saw.
+        let mut repaired_takes: Vec<(usize, TakeSelection)> = Vec::new();
         // **Builds that COMPLETED this turn** — the source has climbed its rung, so there is
         // nothing left to raise and its **queue entry retires** after the loop, handing the pool to
         // whatever the player put next (`docs/plan_standing_upkeep.md` §2.4: *"at its cost, the
@@ -1735,7 +1746,28 @@ pub fn advance_labor_allocation(
                     // (weeding + conversion) when the improvement *completes* — while the crew
                     // is still clearing, the stand is still the basket it started as.
                     if let Some(chosen) = committing.as_deref() {
-                        patch.commit_species(chosen);
+                        // **AND THE COMMITMENT REPAIRS THE CREW'S TAKE SELECTION**, on the turn it
+                        // is made and only that turn (`ForagePatch::commit_species` reports the
+                        // edge). The ground is now becoming one crop, so a selection naming the
+                        // plants it displaces is a selection of nothing — see
+                        // [`TakeSelection::pruned_for_commitment`], which prunes the stale names,
+                        // adds the crop, and leaves whatever still stands (a fishery the hoe never
+                        // reaches) exactly as the player set it.
+                        if patch.commit_species(chosen) {
+                            let mix = crate::forage::patch_composition(
+                                patch,
+                                &tile_composition,
+                                &flora,
+                                &labor.forage,
+                            );
+                            let repaired = take_species.pruned_for_commitment(
+                                |species| crate::forage::species_stands_in(&mix, species),
+                                chosen,
+                            );
+                            if &repaired != take_species {
+                                repaired_takes.push((idx, repaired));
+                            }
+                        }
                     }
                     // **NOTHING LEFT TO BUILD needs no test any more.** A declaration is honoured
                     // only where the meter it names is at zero (`forage::patch_build_verb`), so a
@@ -3749,6 +3781,16 @@ pub fn advance_labor_allocation(
                 format!("{named} is built — your builders move to the next job"),
                 Some(format!("status=complete action=build_complete job={verb}")),
             ));
+        }
+        // **THE REPAIRED TAKE SELECTIONS, written back** — before the `lapsed` removal shuffles the
+        // indices they were collected against.
+        for (idx, repaired) in repaired_takes {
+            let Some(assignment) = allocation.assignments.get_mut(idx) else {
+                continue;
+            };
+            if let LaborTarget::Forage { take_species, .. } = &mut assignment.target {
+                *take_species = repaired;
+            }
         }
         // Drop lapsed sources — Forage (tile out of work range) or Hunt (herd past the leash or
         // gone) — in reverse order to keep indices valid; workers return to the pool.

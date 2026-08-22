@@ -936,8 +936,8 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         patch.carrying_capacity, capacity_before,
         "a patch still being prepared carries the tile's full K — nothing is displaced yet"
     );
-    // The tile's own basket, resolved the way the sim does: a patch under construction has weeded
-    // nothing, so it must still read the whole thing and convert at its plain average.
+    // The tile's own basket, resolved the way the sim does — the *from* end of the interpolation
+    // the part-built patch reads between.
     let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
     let tile_entity = app
         .world
@@ -946,15 +946,52 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         .expect("tile entity resolves");
     let ground = app.world.get::<Tile>(tile_entity).expect("the tile");
     let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-    assert_eq!(
-        core_sim::patch_composition(&patch, &composition, &flora, &labor.forage).as_ref(),
-        composition.as_ref(),
-        "and it is still the mixed basket it started as"
+    // **THE BASKET SLIDES AND SO DOES THE RATE** (`docs/plan_standing_upkeep.md` §2.8). One turn of
+    // weeding is one turn's *fraction* of the weeding: the favored crop's share has started to climb
+    // and the volunteers' to fall, so the basket is neither the mixed stand it started as nor the
+    // weeded one it is heading for.
+    let in_flight =
+        core_sim::patch_composition(&patch, &composition, &flora, &labor.forage).into_owned();
+    let weeded = core_sim::composition_for_rung(
+        &patch,
+        &composition,
+        &flora,
+        &labor.forage,
+        core_sim::RungKey::PlantTended,
     );
-    // **THE BASKET STEPS, THE RATE SLIDES** (`docs/plan_standing_upkeep.md` §2.8). The crew has
-    // displaced nothing, so the basket is still the mixed stand; the *rate* has already started to
-    // climb, because the payoff of a build begins on turn one instead of arriving all at once. It is
-    // strictly between the two rungs, never either of them.
+    assert_ne!(
+        in_flight.as_slice(),
+        composition.as_ref(),
+        "one turn of weeding has already moved the mix off the stand it started as"
+    );
+    assert_ne!(
+        in_flight.as_slice(),
+        weeded.as_ref(),
+        "…and has not finished the job either"
+    );
+    let favored_before = composition
+        .iter()
+        .find(|entry| entry.species == committed)
+        .map_or(0.0, |entry| entry.share);
+    let favored_now = in_flight
+        .iter()
+        .find(|entry| entry.species == committed)
+        .map_or(0.0, |entry| entry.share);
+    let favored_weeded = weeded
+        .iter()
+        .find(|entry| entry.species == committed)
+        .map_or(0.0, |entry| entry.share);
+    assert!(
+        favored_before < favored_now && favored_now < favored_weeded,
+        "the crop's share is part-way up: {favored_before} < {favored_now} < {favored_weeded}"
+    );
+    // A basket that stopped summing to one would silently rescale every rate derived from it.
+    let total: f32 = in_flight.iter().map(|entry| entry.share).sum();
+    assert!(
+        (total - core_sim::WHOLE_BASKET).abs() <= 1e-5,
+        "a part-weeded basket is still a whole basket, not {total}"
+    );
+    // And the *rate* climbs with it, strictly between the two rungs and never either of them.
     let wild_patch = core_sim::ForagePatch::new(coord, patch.carrying_capacity);
     let wild_rate =
         core_sim::patch_provisions_per_biomass(&wild_patch, &composition, &flora, &labor.forage);

@@ -393,6 +393,81 @@ fn a_narrowed_gather_never_stalls_the_build_beside_it() {
     );
 }
 
+/// **THE COMMITMENT REPAIRS THE SELECTION IT WOULD OTHERWISE STRAND.**
+///
+/// `LaborTarget::Forage::take_species` has exactly one other writer — the `assign_labor` command —
+/// and nothing used to prune it. So a `Cultivate`/`Sow` reweighting the ground out from under a
+/// narrowed crew left that crew asking for a share heading to zero, and a zero selected share is a
+/// zero take **ceiling**: `+0.00 /turn`, in food and materials alike, with a full crew on the tile
+/// and nothing on any readout saying why. It was reported from play as a tile that paid
+/// `+0.35 food · +0.07 fibre` one turn and nothing at all the next.
+///
+/// The turn the ground is committed, the crop joins the selection — so what the crew carries home
+/// follows the ground as the mix slides toward the crop instead of falling off it.
+///
+/// **The rest of the selection is pruned, not overwritten**: a plant still standing stays named. A
+/// blanket reset to the whole basket would start carrying home the very plants the player unticked.
+#[test]
+fn a_commitment_adds_its_crop_to_the_crew_take_selection() {
+    let mut app = world();
+    let (tile_entity, coord) = a_mixed_patch_tile(&mut app);
+    stock_patch(&mut app, coord, STOCKED_STANDING_CROP);
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(
+            FactionId(0),
+            core_sim::CULTIVATION_DISCOVERY_ID,
+            scalar_one(),
+        );
+
+    // A plant that is standing here and is **not** the one the auto-pick will commit to, so the
+    // "pruned, not overwritten" half has something to survive.
+    let named = tile_composition(&app, coord)
+        .iter()
+        .min_by(|a, b| a.share.total_cmp(&b.share))
+        .expect("the fixture tile names plants")
+        .species
+        .clone();
+    let band = spawn_forager_building(
+        &mut app,
+        tile_entity,
+        coord,
+        TWO_HANDS,
+        TakeSelection::from_keys([named.as_str()]),
+    );
+    app.world.run_system_once(advance_labor_allocation);
+
+    let crop = patch_at(&app, coord)
+        .species
+        .expect("the first Cultivate turn commits the ground to a plant");
+    assert_ne!(
+        crop, named,
+        "fixture: the crop must differ from what the crew named, or nothing is being repaired"
+    );
+    let selection: Vec<String> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments
+        .iter()
+        .find_map(|assignment| match &assignment.target {
+            LaborTarget::Forage { take_species, .. } => {
+                Some(take_species.keys().map(str::to_string).collect())
+            }
+            _ => None,
+        })
+        .expect("the forage row survives the turn");
+
+    assert!(
+        selection.contains(&crop),
+        "the committed crop joins the selection: {selection:?} should name {crop}"
+    );
+    assert!(
+        selection.contains(&named),
+        "…and what the crew already named is pruned, not overwritten: {selection:?}"
+    );
+}
+
 /// A roster plant this tile does **not** grow — the input for *"the crew's share of the stand is
 /// zero"*. Resolved against the live roster and the tile's own realized basket so it cannot go
 /// stale, and asserted rather than defaulted: a fixture that silently found nothing would measure
