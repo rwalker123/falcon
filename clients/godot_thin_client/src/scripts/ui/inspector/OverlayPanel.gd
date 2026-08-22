@@ -90,6 +90,7 @@ func _ensure_overlay_selector() -> void:
 	if container == null:
 		return
 	_overlay_selector = OptionButton.new()
+	HudStyle.apply_option_button(_overlay_selector)
 	_overlay_selector.name = "OverlaySelector"
 	_overlay_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_overlay_selector.focus_mode = Control.FOCUS_ALL

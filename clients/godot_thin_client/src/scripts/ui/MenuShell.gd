@@ -433,7 +433,9 @@ func _nav_stylebox(active: bool, hover: bool, danger: bool) -> StyleBox:
 		sb.bg_color = HudStyle.SIGNAL_WASH
 		sb.border_color = HudStyle.SIGNAL_DEEP
 	else:  # hover
-		sb.bg_color = Color(0.075, 0.129, 0.122, 1.0)
+		# The ghost button's resting fill, READ from the palette rather than repeated as a literal —
+		# a hovered nav row and a secondary button are the same "this is actionable" surface.
+		sb.bg_color = HudStyle.GHOST_BG
 		sb.border_color = HudStyle.DANGER if danger else HudStyle.SIGNAL_DEEP
 	return sb
 
@@ -634,6 +636,7 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	slider.max_value = max_v
 	slider.step = step
 	slider.value = value
+	HudStyle.apply_slider(slider)
 	slider.set_meta(SPEED_DEFAULT_META, default_value)
 	row.add_child(slider)
 
@@ -677,7 +680,7 @@ func _make_theme_row() -> Control:
 	_theme_picker = OptionButton.new()
 	_theme_picker.focus_mode = Control.FOCUS_NONE
 	_theme_picker.fit_to_longest_item = false
-	HudStyle.apply_button(_theme_picker, "ghost")
+	HudStyle.apply_option_button(_theme_picker)
 	for index in THEME_ORDER.size():
 		var id := String(THEME_ORDER[index])
 		_theme_picker.add_item(HudPalette.display_name(id), index)

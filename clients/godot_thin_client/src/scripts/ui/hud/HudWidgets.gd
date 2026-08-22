@@ -598,7 +598,7 @@ static func build_option_picker(entries: Array, selected_index: int, face: Strin
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     button.clip_text = true
     button.fit_to_longest_item = false
-    HudStyle.apply_button(button, "ghost")
+    HudStyle.apply_option_button(button)
     var picks: Array[Callable] = []
     for entry_variant in entries:
         if not (entry_variant is Dictionary):

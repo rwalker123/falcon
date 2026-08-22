@@ -5,9 +5,15 @@ extends Control
 ## Main.tscn (which consumes them into its `new_game` command); "Exit" quits.
 
 @onready var _shell: MenuShell = $MenuShell
+## The full-bleed backdrop. Its colour is set HERE, not in `LandingScreen.tscn`: a scene file's
+## `color = Color(...)` is a baked literal that no theme can reach, and this one was console `GROUND`
+## — so the landing screen stayed slate-blue under every palette while the shell on top of it turned
+## warm. A scene may hold the NODE; the palette holds its colour.
+@onready var _ground: ColorRect = $Ground
 
 
 func _ready() -> void:
+	_ground.color = HudStyle.GROUND
 	_shell.mode = MenuShell.LANDING
 	_shell.new_game_requested.connect(_on_new_game_requested)
 	_shell.exit_requested.connect(_on_exit_requested)

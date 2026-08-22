@@ -14,9 +14,11 @@ const OUT_DIR := "res://ui_preview_out"
 
 # Window the shell renders into.
 const PREVIEW_SIZE := Vector2i(1500, 900)
-# Ground behind the landing shell (mirrors HudStyle.GROUND). A mid terrain tone stands in behind
-# the pause scrim so the scrim + card chrome read against something non-black.
-const GROUND_TONE := Color(0.043, 0.067, 0.078)
+# Ground behind the landing shell: `HudStyle.GROUND` itself, READ at its use site. It was a
+# hand-copied literal of the console palette's value, so these frames kept rendering the retired
+# palette's backdrop under every theme — the harness telling the same lie the shipped code was fixed
+# for. A mid terrain tone stands in behind the pause scrim so the scrim + card chrome read against
+# something non-black; that one is a stand-in for the WORLD, not a palette entry.
 const MAP_TONE := Color(0.10, 0.15, 0.16)
 # Nav id of the client-settings pane in MenuShell.ITEMS.
 const OPTIONS_PANE_ID := "options"
@@ -61,7 +63,7 @@ func _ready() -> void:
 
 	_bg = ColorRect.new()
 	_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_bg.color = GROUND_TONE
+	_bg.color = HudStyle.GROUND
 	_root.add_child(_bg)
 
 	_shell = MENU_SHELL.instantiate()
@@ -69,7 +71,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 
 	# Landing: full-bleed over the dark ground.
-	_bg.color = GROUND_TONE
+	_bg.color = HudStyle.GROUND
 	_shell.mode = MenuShell.LANDING
 	await _settle()
 	await _save("menu_landing")
@@ -87,6 +89,15 @@ func _ready() -> void:
 	_shell._activate_item(OPTIONS_PANE_ID)
 	await _settle()
 	await _save("menu_options")
+
+	# …AND THE THEME DROPDOWN OPEN. Its own frame because a dropdown is TWO surfaces: the popup is a
+	# `PopupMenu` on a separate embedded `Window`, which nothing set on the face reaches, so an
+	# unstyled one renders Godot's stock light-grey menu over the console and no closed-face frame can
+	# show it. It lands in the capture the way `band_panel_preview`'s confirm dialogs do.
+	_shell._theme_picker.show_popup()
+	await _settle()
+	await _save("menu_options_theme_popup")
+	_shell._theme_picker.get_popup().hide()
 
 	_finish()
 

@@ -56,7 +56,7 @@ const EARTH_MAP := {
 	"FORAGE_BARREN_COLOR": Color("26241f"),
 }
 
-## Every theme: `name` is what the Options row says, `hud` is the 20 authored `HudStyle` colours and
+## Every theme: `name` is what the Options row says, `hud` is the 26 authored `HudStyle` colours and
 ## `map` the 16 authored `MapView` data-ramp colours. Everything else in either script is DERIVED —
 ## see the rule at the top of this file.
 ##
@@ -85,6 +85,12 @@ const THEMES := {
 			"BUTTON_PRIMARY_BG": Color("2b3f4e"),
 			"BUTTON_PRIMARY_TEXT": Color("dceaf4"),
 			"BUTTON_ARMED_TEXT": Color("f0cfc3"),
+			"GHOST_BG": Color("1f1a15"),
+			"GHOST_BG_HOVER": Color("2c2620"),
+			"PRIMARY_BG_HOVER": Color("365064"),
+			"ARMED_BG": Color("2a1a15"),
+			"ARMED_BG_HOVER": Color("331f19"),
+			"ARMED_BORDER": Color("5a3a30"),
 			"VOICE_PIGMENT": Color("c89c66"),
 			"VOICE_INK": Color("8d9aa4"),
 		},
@@ -111,6 +117,12 @@ const THEMES := {
 			"BUTTON_PRIMARY_BG": Color("3d3226"),
 			"BUTTON_PRIMARY_TEXT": Color("fbf3e2"),
 			"BUTTON_ARMED_TEXT": Color("f2cbbc"),
+			"GHOST_BG": Color("1d1812"),
+			"GHOST_BG_HOVER": Color("2b2419"),
+			"PRIMARY_BG_HOVER": Color("4c4030"),
+			"ARMED_BG": Color("2a1a14"),
+			"ARMED_BG_HOVER": Color("332018"),
+			"ARMED_BORDER": Color("5c3a2e"),
 			"VOICE_PIGMENT": Color("d0a468"),
 			"VOICE_INK": Color("93a0a8"),
 		},
@@ -137,6 +149,12 @@ const THEMES := {
 			"BUTTON_PRIMARY_BG": Color("47301f"),
 			"BUTTON_PRIMARY_TEXT": Color("f7e2d4"),
 			"BUTTON_ARMED_TEXT": Color("f0cabb"),
+			"GHOST_BG": Color("1e1e22"),
+			"GHOST_BG_HOVER": Color("2b2b30"),
+			"PRIMARY_BG_HOVER": Color("573c27"),
+			"ARMED_BG": Color("2a1c1a"),
+			"ARMED_BG_HOVER": Color("33221f"),
+			"ARMED_BORDER": Color("5a3a34"),
 			"VOICE_PIGMENT": Color("c99a6b"),
 			"VOICE_INK": Color("8f9aa6"),
 		},
@@ -163,6 +181,12 @@ const THEMES := {
 			"BUTTON_PRIMARY_BG": Color(0.086, 0.227, 0.204, 1.0),
 			"BUTTON_PRIMARY_TEXT": Color(0.847, 1.0, 0.973, 1.0),
 			"BUTTON_ARMED_TEXT": Color(0.941, 0.765, 0.741, 1.0),
+			"GHOST_BG": Color(0.075, 0.129, 0.122, 1.0),
+			"GHOST_BG_HOVER": Color(0.090, 0.188, 0.161, 1.0),
+			"PRIMARY_BG_HOVER": Color(0.110, 0.275, 0.251, 1.0),
+			"ARMED_BG": Color(0.165, 0.110, 0.102, 1.0),
+			"ARMED_BG_HOVER": Color(0.200, 0.122, 0.114, 1.0),
+			"ARMED_BORDER": Color(0.353, 0.227, 0.212, 1.0),
 			"VOICE_PIGMENT": Color(0.784, 0.612, 0.400, 1.0),
 			"VOICE_INK": Color(0.510, 0.635, 0.706, 1.0),
 		},
@@ -230,4 +254,10 @@ static func apply(id: String) -> void:
 	HudCraftingVocab.apply_palette()
 	HudWidgets.apply_palette()
 	TellingPanel.apply_palette()
+	# THE WINDOW'S OWN BACKGROUND, and the third kind of baked colour this system has to reach.
+	# `project.godot` sets `rendering/environment/defaults/default_clear_color` to the console
+	# `GROUND` literal, and a project setting is read once at startup — so every pixel no Control
+	# covers (the landing backdrop, a letterboxed preview window) stayed slate-blue under a warm
+	# theme. Pushed here rather than left in the .godot file, which no palette can reach.
+	RenderingServer.set_default_clear_color(HudStyle.GROUND)
 	applied_id = theme_id

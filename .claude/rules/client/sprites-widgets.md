@@ -151,7 +151,7 @@ palette — and the row carries an always-visible caption saying so, in `WARN` w
 `HudPalette.applied_id` disagree.
 
 **`static var`, not `const`, and the call sites did not change.** A `static var` reads identically at
-the call site (`HudStyle.DANGER` is the same expression either way), which is why converting 22
+the call site (`HudStyle.DANGER` is the same expression either way), which is why converting 28
 colours and 6 hex strings left ~710 references across 58 files untouched. What it forbids is
 `const X := HudStyle.DANGER` in another script: a static variable is not a constant expression, so
 such a declaration is a **parse error** — loud, at load, never a silently wrong colour. The same
@@ -174,7 +174,7 @@ few stubbornly cyan accents in it. What is derived rather than authored:
 | `MapView.SUPPLY_LINK_COLOR` | `HudStyle.SIGNAL` at `SUPPLY_LINK_OPACITY` |
 | `MapView.OVERLAY_COLORS` | the ramp colours above it — a whole table rebuilt, not a value |
 
-A theme authors **20 HUD colours** and **16 map ramp colours**; the three earth themes share one
+A theme authors **26 HUD colours** and **16 map ramp colours**; the three earth themes share one
 `EARTH_MAP` ramp set, since a data ramp answers "how much of X is here?" and does not vary with the
 chrome's warmth. `console` keeps its own. Everything else in either script stays `const`: paddings,
 radii, alphas, font sizes, the two pure-black washes (`CHIP_BG`, `READOUT_BG`) that work on any
@@ -187,6 +187,49 @@ own argument-less `apply_palette()` hook that `HudPalette.apply()` calls after `
 `HudCraftingVocab` (`REASON_COLORS` and the chip/grade tints), `HudWidgets`
 (`VERDICT_SEVERITY_COLORS`) and `TellingPanel` (`MEDIUM_STYLES`). A module that grows a themed table
 needs a hook and a line in `HudPalette.apply()`, not an initializer.
+
+**A THEMED COLOUR LIVES IN THE PALETTE. IT NEVER LIVES AS A LITERAL INSIDE A STYLING HELPER** — and
+that is not a style preference, it is the failure mode that survived the first pass. `apply_button`
+built its variants from palette entries for *some* colours and from inline `Color(...)` literals for
+six others, so a `primary` button read correctly AT REST (it took `BUTTON_PRIMARY_BG`) and snapped
+back to console teal the instant it was hovered, while a `ghost` button — every secondary control in
+the client — was console teal always. The six are palette entries now (`GHOST_BG`, `GHOST_BG_HOVER`,
+`PRIMARY_BG_HOVER`, `ARMED_BG`, `ARMED_BG_HOVER`, `ARMED_BORDER`), authored per theme rather than
+derived: how quiet a secondary fill is, how far a hover lifts it and how warm the armed fill runs are
+real decisions a palette makes. **The exception that is legitimate is a PURE BLACK OR WHITE WASH at
+low alpha** — `CHIP_BG`, `READOUT_BG`, `SHADOW_COLOR`, the nav backing — because those darken
+whatever ground they sit on rather than stating a colour, which is true under every theme. A TINTED
+literal never qualifies; `banner_stylebox`'s fill was a hand-written near-copy of `GROUND` and is
+`Color(GROUND, BANNER_OPACITY)` now.
+
+**THREE KINDS OF COLOUR LIVE OUTSIDE GDSCRIPT, AND NONE OF THEM CAN FOLLOW A THEME.** A `.tscn`
+`color = Color(...)` is baked into the scene file (`LandingScreen.tscn`'s full-bleed `Ground` was
+console `GROUND`, so the landing backdrop stayed slate-blue while the shell on top of it turned
+warm); `project.godot`'s `rendering/environment/defaults/default_clear_color` is read once at
+startup and paints every pixel no Control covers; and `boot_splash/bg_color` is drawn before any
+script runs at all. The first two are now assigned from the palette in code —
+`LandingScreen._ready` sets `_ground.color`, and `HudPalette.apply` calls
+`RenderingServer.set_default_clear_color` — so **a scene may hold the NODE, but the palette holds
+its colour**. The boot splash is genuinely unreachable and stays as it is. Sweep with
+`grep -rn 'color = Color(' src --include '*.tscn'` when adding a scene.
+
+**A GENERATED ICON RASTER IS ALREADY PIXELS, so `apply_palette` DROPS IT.** The `CheckBox`
+indicators and the slider grabber bake `INK`/`SIGNAL` into an `ImageTexture` cached in a `static
+var`; re-assigning a palette colour cannot reach a raster built before it, so `HudStyle.apply_palette`
+nulls all five caches and each rebuilds on the next styled control. Any new generated art joins that
+list — it is the one thing in the file the derive-inside-apply rule does not cover on its own.
+
+**A DROPDOWN IS TWO SURFACES, AND A SLIDER IS THREE PIECES ONE OF WHICH IS ART.** Both are the
+`apply_checkbox` trap in a new widget: the client applies no `Theme` resource, so anything not
+overridden per-control wears Godot's stock light-grey. An `OptionButton`'s face is a `Button`, but
+its LIST is a `PopupMenu` on a separate embedded `Window` reached through `get_popup()`, and nothing
+set on the OptionButton reaches it — hence `apply_option_button(picker)`, which installs the ghost
+chrome on the face (from `button_styleboxes`, the same five boxes `apply_button` uses, so the two
+cannot drift) and the console's own panel/hover/ink on the popup. Call it at every
+`OptionButton.new()`. A `Slider`'s groove and filled part are styleboxes, but its HANDLE is a theme
+ICON and so unmodulated stock art — `apply_slider(slider)` styles the two and swaps in the generated
+`INK` grabber. **`menu_options_theme_popup.png` exists because no closed-face frame can show a
+popup**; judge the list surface there.
 
 **The offline harnesses pin the theme**, the same contamination `interface-scale.md` records for
 `ui_scale`: `ClientSettings` has already installed the developer's own theme by the time a harness
