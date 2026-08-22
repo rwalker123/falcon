@@ -194,6 +194,28 @@ pub enum CommandPayload {
         herd_id: Option<String>,
         position: u32,
     },
+    /// **NAME THE KIT ONE QUEUED BUILD IS RAISED WITH** — on every band of the faction that has the
+    /// source queued (`docs/plan_standing_upkeep.md` §4.7a ②). The row, its take crew and the meter
+    /// are untouched; this sets a property of the **queue entry**.
+    ///
+    /// **The builders' kit is per ENTRY, not per band.** A build's default is derived from that
+    /// entry's own food web — a hoe for a Cultivate, hurdles for a `Tame` — so one stored id per band
+    /// is the one thing the derivation cannot express: naming a kit on the `builders` labor row
+    /// pinned the animal web's tool onto every later plant build with no way back. `assign_labor`
+    /// refuses a `kit` token on that role, and this is where the override lives.
+    ///
+    /// **An absent [`Self::BuildKit::kit_id`] CLEARS the override** back to the derivation — the same
+    /// *"an absent `kitId` means the job's default"* rule every other selection follows, and what lets
+    /// a client say *"back to default"* with no new vocabulary. An explicit bare-handed kit is a
+    /// **real** selection and survives the round trip.
+    BuildKit {
+        faction_id: u32,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        herd_id: Option<String>,
+        /// Absent = clear the override; present = this roster kit, the bare one included.
+        kit_id: Option<String>,
+    },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
@@ -1152,6 +1174,19 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 position: *position,
             }),
+            CommandPayload::BuildKit {
+                faction_id,
+                target_x,
+                target_y,
+                herd_id,
+                kit_id,
+            } => pb::command_envelope::Command::BuildKit(pb::BuildKitCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                herd_id: herd_id.clone(),
+                kit_id: kit_id.clone(),
+            }),
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -1613,6 +1648,13 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 position: cmd.position,
+            },
+            pb::command_envelope::Command::BuildKit(cmd) => CommandPayload::BuildKit {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                herd_id: cmd.herd_id,
+                kit_id: cmd.kit_id,
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,

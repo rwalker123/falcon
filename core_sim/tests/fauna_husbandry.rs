@@ -1091,6 +1091,7 @@ fn spawn_crew_of(
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(herd_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
+                        kit: None,
                     })
                     .into_iter()
                     .collect(),
@@ -4823,6 +4824,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Herd(build.clone()),
                     declared: core_sim::BuildJob::Rung(Improvement::Tame),
+                    kit: None,
                 }],
                 ..Default::default()
             },

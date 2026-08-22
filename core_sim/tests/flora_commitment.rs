@@ -82,6 +82,39 @@ fn commit_value(patch: &ForagePatch, terrain: TerrainType, composition: &[FloraS
         * core_sim::patch_provisions_per_biomass(patch, composition, &flora, &labor.forage)
 }
 
+/// `species`' share of `basket` — `0.0` for a plant the basket does not name, which is exactly what
+/// a species blended away to nothing (or not yet arrived) holds.
+fn share_of(basket: &[FloraShare], species: &str) -> f32 {
+    basket
+        .iter()
+        .find(|entry| entry.species == species)
+        .map_or(0.0, |entry| entry.share)
+}
+
+/// **A basket sums to the whole of itself** — the invariant every reweight and every blend owes.
+fn assert_basket_is_whole(basket: &[FloraShare], what: &str) {
+    let total: f32 = basket.iter().map(|entry| entry.share).sum();
+    assert!(
+        (total - WHOLE_BASKET).abs() <= EPSILON,
+        "{what} must still be a whole basket, not {total}"
+    );
+}
+
+/// **A basket is in the wire's total order** — share DESC, then species key ASC. Load-bearing beyond
+/// presentation: `default_species_for_rung` reads the first entry as the basket's dominant plant, so
+/// a blend that came back unsorted would silently change which plant a commitment falls to.
+fn assert_basket_is_sorted(basket: &[FloraShare], what: &str) {
+    for pair in basket.windows(2) {
+        let ordered = pair[0].share > pair[1].share
+            || (pair[0].share == pair[1].share && pair[0].species < pair[1].species);
+        assert!(
+            ordered,
+            "{what} must be sorted share DESC then key ASC: {:?} before {:?}",
+            pair[0], pair[1]
+        );
+    }
+}
+
 /// The share-weighted food rate of a raw basket — what a **wild** patch on it converts at. Stated
 /// here so the assertions below can name the wild baseline without re-deriving `basket_rate`.
 fn wild_basket_rate(flora: &FloraConfig, labor: &LaborConfig, composition: &[FloraShare]) -> f32 {
@@ -122,16 +155,19 @@ fn an_uncommitted_patch_reads_the_tiles_whole_basket_and_its_average_rate() {
     }
 }
 
-/// **THE BASKET STEPS AND THE RATE SLIDES** — the two halves of a commitment no longer switch on
-/// together, and that is `docs/plan_standing_upkeep.md` §2.8 paying out.
+/// **THE BASKET SLIDES AND SO DOES THE RATE** — both halves of a commitment interpolate on the
+/// position, which is `docs/plan_standing_upkeep.md` §2.8 paying out on the plant web's *mix* and
+/// not only on its rates.
 ///
-/// A patch still being cleared has displaced nothing, so its **basket** is the mixed stand it
-/// started as: a half-weeded basket is not a blend of two baskets, so the composition resolves at
-/// the rung actually *achieved*. Its **rate**, though, interpolates on the position — the payoff of
-/// a build starts on turn one instead of arriving all at once at the end, which is the whole point
-/// of the arc. A hair up the rung is a hair above wild.
+/// A patch a hair up the tended rung is a hair weeded: the favored crop's share has climbed by that
+/// fraction of the step and the least abundant volunteers have given up that fraction of what
+/// weeding would take from them. Its rate is a hair above wild for the same reason.
+///
+/// **This reverses the earlier ruling that a basket "cannot be interpolated."** `weeded` is a
+/// reweighting of the tile's own mix, so a blend names no plant the ground was not already growing
+/// — and leaving the mix stepped left the one term that actually moves across a Sow as a cliff.
 #[test]
-fn a_build_in_flight_keeps_its_wild_basket_while_its_rate_has_already_started_to_climb() {
+fn a_build_in_flight_is_part_of_the_way_to_its_weeded_basket_and_its_tended_rate() {
     let labor = labor();
     let flora = FloraConfig::builtin();
     let terrain = TerrainType::AlluvialPlain;
@@ -145,16 +181,47 @@ fn a_build_in_flight_keeps_its_wild_basket_while_its_rate_has_already_started_to
     let composition = flora.composition(terrain);
     let mut building = tended_patch(terrain, Some("wild_emmer"), capacity);
     building.set_ladder_position(ONE_WORK_UNIT, &ladder);
-    assert_eq!(
-        core_sim::patch_composition(&building, composition, &flora, &labor.forage).as_ref(),
+    let (_, tended_span) = core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
+    let share = ONE_WORK_UNIT / tended_span;
+
+    // The mix, species by species, against the two baskets it is between. Asserted as the delta
+    // form — `wild + credit × (weeded − wild)` — so a retune of `tended_weeding_gain` moves the
+    // fixture with the game rather than failing it.
+    let in_flight =
+        core_sim::patch_composition(&building, composition, &flora, &labor.forage).into_owned();
+    let weeded = core_sim::composition_for_rung(
+        &building,
         composition,
-        "a patch still being cleared is still the mixed stand it started as"
+        &flora,
+        &labor.forage,
+        RungKey::PlantTended,
     );
+    assert_ne!(
+        in_flight, composition,
+        "a patch part-way up the rung has already started to weed"
+    );
+    assert_ne!(
+        in_flight.as_slice(),
+        weeded.as_ref(),
+        "…and has not finished weeding either"
+    );
+    for entry in &in_flight {
+        let from = share_of(composition, &entry.species);
+        let to = share_of(&weeded, &entry.species);
+        let expected = from + share * (to - from);
+        assert!(
+            (entry.share - expected).abs() <= EPSILON,
+            "{}: {} is not {from} plus {share} of the way to {to}",
+            entry.species,
+            entry.share
+        );
+    }
+    assert_basket_is_whole(&in_flight, "a basket part-way up a rung");
+    assert_basket_is_sorted(&in_flight, "a basket part-way up a rung");
 
     let wild = wild_basket_rate(&flora, &labor, composition);
     let rate =
         core_sim::patch_provisions_per_biomass(&building, composition, &flora, &labor.forage);
-    let (_, tended_span) = core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
     let mut finished = tended_patch(terrain, Some("wild_emmer"), capacity);
     finished.complete_cultivation(core_sim::FactionId(0), &ladder);
     let tended =
@@ -166,7 +233,12 @@ fn a_build_in_flight_keeps_its_wild_basket_while_its_rate_has_already_started_to
 
     // The rate is wild plus its share of the step — asserted as the delta form rather than as a
     // literal, so a retune of `tended_conversion_gain` moves the fixture with the game.
-    let share = ONE_WORK_UNIT / tended_span;
+    //
+    // **The basket and the gain are one interpolation, not two**: the rate is the blended mix
+    // priced at the blended gain, and because `basket_rate` is bilinear in the two the product of
+    // the blends is not the blend of the products in general. It is here because only the favored
+    // term carries a gain and only the favored share moves in step with it — which is what makes
+    // this identity a statement about the model rather than about f32 slack.
     let expected = wild + share * (tended - wild);
     assert!(
         (rate - expected).abs() <= EPSILON,

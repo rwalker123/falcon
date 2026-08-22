@@ -77,7 +77,7 @@ use crate::{
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
-        interpolate, rung_span, upkeep_shortfall, BuildLeg, LadderConfig, LadderConfigHandle,
+        self, interpolate, rung_span, upkeep_shortfall, BuildLeg, LadderConfig, LadderConfigHandle,
         RungBranch, RungDef, RungKey, RungStanding, SiteRefusal, LEG_ALREADY_PAID, NEGLECT_NONE,
         NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
         RUNG_COST_UNSCALED, RUNG_UNSTARTED,
@@ -180,6 +180,32 @@ pub struct ForagePatch {
     ///
     /// It is not a cache anyone may refresh: there is one writer, and it writes the pair.
     standing: RungStanding,
+    /// **WHAT THE `plant:field` RUNG COSTS ON THIS GROUND**, as a multiple of the rung's declared
+    /// `work_cost` — this patch's own entry in the ladder's one per-source price list
+    /// ([`RungStanding::at`]'s `cost_at`), and the exact plant twin of `Herd::taming_cost_multiplier`
+    /// (`docs/plan_standing_upkeep.md` §4.15). A Sow is priced by how much of the tile it has to
+    /// **replace** ([`field_cost_multiplier_at_share`]).
+    ///
+    /// # ⛔ `None` IS "THE FIELD LEG HAS NOT STARTED", AND THE PRICE IS THEN A QUOTE
+    ///
+    /// It is stamped once, at the moment work first lands on the Field rung, and held for the whole
+    /// of that leg ([`Self::price_field_rung`]); it is cleared again if the position ever falls back
+    /// to the rung's base ([`Self::set_ladder_position`]). So `Some` ⟺ *this patch has Field work
+    /// banked at a price somebody was quoted*, and while it is `None` the width of the Field rung
+    /// cannot affect anything the patch derives — the position is at or below the rung's base, so
+    /// [`Self::standing`] and [`patch_rung_work_done`] answer the same at any multiplier.
+    ///
+    /// **Every forward-looking quote resolves the live measure instead** ([`patch_field_cost_multiplier`]),
+    /// which is what lets a compose sheet price a Sow before the player commits — and what makes a
+    /// two-leg Sow re-quote its Field leg after the Cultivate leg has weeded the ground under it.
+    ///
+    /// # ⛔ AND IT IS MEASURED ONCE PER LEG RATHER THAN LIVE
+    ///
+    /// The basket **interpolates across the rung being raised** ([`patch_composition`]), so a Sow
+    /// raises its own crop's share continuously as it proceeds: a live price would shrink the
+    /// remaining work as the work was done — a self-accelerating job — and it would turn §4.6b's
+    /// chained finish date from an exact construction into an estimate that drifts.
+    field_cost_multiplier: Option<f32>,
     /// **How many more turns a build on this patch needs, at the crew, floor and kit that worked it
     /// this turn** — stamped by the labor arm and published as
     /// `ForagePatchState.buildTurnsRemaining`.
@@ -280,9 +306,9 @@ pub struct ForagePatch {
     /// [`patch_provisions_per_biomass`]): it **reweights** the tile's basket toward this one plant
     /// (weeding at rung 2, planting at rung 3 — the tile's `K` never moves, because the land owns
     /// it), and it changes how well biomass **converts** in every account (the tended rung's
-    /// `tended_conversion_gain`, on this species' term alone). Both take effect only once the
-    /// improvement is *complete* — while a crew is still preparing, the stand is still the mixed
-    /// basket it started as.
+    /// `tended_conversion_gain`, on this species' term alone). **Both come on gradually**, at the
+    /// fraction of the rung the crew has actually raised: half a sown field is half the crop's
+    /// share, and the volunteers it displaces fade rather than vanish.
     pub species: Option<String>,
     /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
@@ -503,6 +529,10 @@ impl ForagePatch {
             // The pair is written together here as everywhere else — `unstarted` is the walk's own
             // answer for a position of zero, stated ladder-free so worldgen needs no config.
             standing: RungStanding::unstarted(RungBranch::Plant),
+            // **Unquoted, which is not the same as unscaled**: the Field leg has not started, so
+            // every forward-looking price is the live measure and nothing this patch derives can
+            // depend on the Field rung's width yet.
+            field_cost_multiplier: None,
             build_turns_remaining: None,
             build_work_from_gear: NO_BUILD_GEAR,
             build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
@@ -568,10 +598,51 @@ impl ForagePatch {
     /// half-written: the standing is what a hundred ladder-free readers see, and a stale one would be
     /// a patch that pays a rung its position no longer reaches. Ownership lapses on the same call
     /// ([`Self::reconcile_owner`]) — a patch worked back to nothing is a wild stand again.
+    ///
+    /// **The Field rung's quoted price lapses on the same call.** A patch worked back down to the
+    /// rung's base has nothing banked on it, so the price somebody was quoted is spent: the next Sow
+    /// re-measures the ground as it now stands ([`Self::field_cost_multiplier`]). The base is the
+    /// tended rung's top and is the ladder's own, never this patch's — the multiplier scales
+    /// `plant:field` alone, so nothing below it can move.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
         self.ladder_position = position.max(RUNG_UNSTARTED);
-        self.standing = plant_standing(self.ladder_position, ladder);
+        if self.ladder_position <= plant_rung_span(RungKey::PlantField, ladder).0 {
+            self.field_cost_multiplier = None;
+        }
+        self.standing = plant_standing(self.ladder_position, ladder, self.field_cost_in_force());
         self.reconcile_owner();
+    }
+
+    /// **THE PRICE THIS PATCH'S FIELD LEG WAS QUOTED**, or `None` while that leg has not started —
+    /// see [`Self::field_cost_multiplier`] the field.
+    pub fn quoted_field_cost_multiplier(&self) -> Option<f32> {
+        self.field_cost_multiplier
+    }
+
+    /// **THE FIELD RUNG'S PRICE AS THIS PATCH DERIVES AGAINST IT** — the stamp once the leg has
+    /// started, [`RUNG_COST_UNSCALED`] before. The default is not a guess: with nothing banked on the
+    /// rung the position sits at or below its base, where its width changes nothing this patch can
+    /// answer.
+    fn field_cost_in_force(&self) -> f32 {
+        self.field_cost_multiplier.unwrap_or(RUNG_COST_UNSCALED)
+    }
+
+    /// **FIX THE FIELD LEG'S PRICE FOR THE WHOLE OF THE LEG** — called by the Sow arm on the turn it
+    /// is about to bank work toward `plant:field`, with the multiplier that arm quoted
+    /// ([`patch_field_cost_multiplier`]).
+    ///
+    /// **Idempotent, exactly as [`Self::commit_species`] is, and for the same reason**: re-deciding
+    /// the price every turn would make it live, and a live price on a rung whose own progress raises
+    /// the crop's share is a job that accelerates itself. Returns whether *this* call is the quote.
+    pub(crate) fn price_field_rung(&mut self, multiplier: f32, ladder: &LadderConfig) -> bool {
+        if self.field_cost_multiplier.is_some() {
+            return false;
+        }
+        self.field_cost_multiplier = Some(multiplier);
+        // Re-derived rather than assumed unchanged: the standing is only *provably* unmoved while the
+        // position is at or below the rung's base, and there is one seam that writes the pair.
+        self.standing = plant_standing(self.ladder_position, ladder, self.field_cost_in_force());
+        true
     }
 
     /// A fully-cultivated ("tended crop") patch: pays the band that tends it a higher-than-wild yield
@@ -686,7 +757,10 @@ impl ForagePatch {
             return Vec::new();
         }
         let was = self.standing.held;
-        let (base, width) = plant_rung_span(target, ladder);
+        // **THIS PATCH'S OWN TOP, not the ladder's** — the destination's span on the price list this
+        // patch is climbing at, so a Sow quoted dear has more rung to cover and one quoted cheap has
+        // less.
+        let (base, width) = patch_rung_span(self, target, ladder);
         let top = base + width;
         self.set_ladder_position((self.ladder_position + amount).min(top), ladder);
         // **EVERY rung this call crossed, not just the destination.** A queue entry names a
@@ -740,7 +814,7 @@ impl ForagePatch {
         if self.owner != Some(faction) {
             return false;
         }
-        let (base, width) = plant_rung_span(rung, ladder);
+        let (base, width) = patch_rung_span(self, rung, ladder);
         self.set_ladder_position(base + width, ladder);
         self.standing.held.is_at_or_above(rung)
     }
@@ -785,10 +859,20 @@ impl ForagePatch {
     /// committed keeps its plant, because *"which crop is this ground"* is exactly the decision the
     /// rung exists to make and re-deciding it for free every turn would erase it. The commitment is
     /// released only by going fully feral ([`Self::reconcile_owner`]).
-    pub(crate) fn commit_species(&mut self, species: &str) {
-        if self.species.is_none() {
-            self.species = Some(species.to_string());
+    ///
+    /// **Returns whether THIS call is the commitment** — `false` on every later turn of the same
+    /// build. The distinction is load-bearing rather than informational: the commitment is what
+    /// repairs the crew's take selection
+    /// ([`crate::components::TakeSelection::pruned_for_commitment`]), and repeating that repair
+    /// every turn would go on quietly deleting names from the player's selection as the mix faded
+    /// under it. So the edge is reported here, where it is known, instead of being re-derived from
+    /// the field at a call site.
+    pub(crate) fn commit_species(&mut self, species: &str) -> bool {
+        if self.species.is_some() {
+            return false;
         }
+        self.species = Some(species.to_string());
+        true
     }
 
     /// Hold the `owner is Some ⟺ some improvement remains` invariant: ownership lapses only once
@@ -833,26 +917,66 @@ fn rungs_between(floor: RungKey, ceiling: RungKey) -> Vec<RungKey> {
     crossed
 }
 
-/// **THIS PATCH'S OWN COST FOR A RUNG** — the resolver [`RungStanding::at`] and [`rung_span`] take.
-/// Always [`RUNG_COST_UNSCALED`]: the ladder's one per-source cost multiplier is a species'
-/// `taming_cost_multiplier`, and a plant has no species. It is a named function rather than a closure
-/// at four call sites so *"the plant web is unscaled"* is stated once.
-fn plant_rung_cost(rung: RungKey, ladder: &LadderConfig) -> Option<f32> {
-    ladder.rung(rung).build_cost(RUNG_COST_UNSCALED)
+/// **A PLANT RUNG'S COST AT ONE PRICE LIST** — the resolver [`RungStanding::at`] and [`rung_span`]
+/// take, bound to a Field multiplier.
+///
+/// `plant:tended` is **never** scaled: clearing wild ground is clearing wild ground, and Cultivate's
+/// price is deliberately untouched by the Sow arc (`docs/plan_standing_upkeep.md` §4.15). It is a
+/// named function rather than a closure at four call sites so *"only the Field is priced per patch"*
+/// is stated once — the exact shape `Herd::standing_at` uses for `taming_cost_multiplier` on
+/// `animal:pastoral`.
+fn plant_rung_cost(
+    rung: RungKey,
+    ladder: &LadderConfig,
+    field_cost_multiplier: f32,
+) -> Option<f32> {
+    ladder.rung(rung).build_cost(match rung {
+        RungKey::PlantField => field_cost_multiplier,
+        _ => RUNG_COST_UNSCALED,
+    })
 }
 
-/// **WHERE A PLANT RUNG STARTS AND HOW WIDE IT IS**, in cumulative work units —
-/// [`crate::intensification::rung_span`] at this web's own costs. `plant:tended` is `(0, 50)` and
-/// `plant:field` `(50, 75)` on the shipped ladder.
+/// **WHERE A PLANT RUNG STARTS AND HOW WIDE IT IS AT THE LADDER'S OWN PRICE**, in cumulative work
+/// units — [`crate::intensification::rung_span`] at [`RUNG_COST_UNSCALED`]. `plant:tended` is
+/// `(0, 50)` and `plant:field` `(50, 75)` on the shipped ladder.
+///
+/// **This is the REFERENCE span, not any patch's.** A Sow's price varies with how much of the tile
+/// it replaces, so a patch with a quoted Field leg is wider than this; ask [`patch_rung_span`] for
+/// that patch's own. The tended rung is the same on both, always.
 pub fn plant_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
-    rung_span(rung, &|key| plant_rung_cost(key, ladder))
+    plant_rung_span_at(rung, ladder, RUNG_COST_UNSCALED)
+}
+
+/// [`plant_rung_span`] at a named Field price.
+fn plant_rung_span_at(
+    rung: RungKey,
+    ladder: &LadderConfig,
+    field_cost_multiplier: f32,
+) -> (f32, f32) {
+    rung_span(rung, &|key| {
+        plant_rung_cost(key, ladder, field_cost_multiplier)
+    })
+}
+
+/// **WHERE A RUNG STARTS AND HOW WIDE IT IS ON THIS PATCH'S OWN PRICE LIST**, in cumulative work
+/// units — the plant twin of `Herd::rung_span`, and what every reading of this patch's meters is
+/// clamped into.
+///
+/// It differs from [`plant_rung_span`] only on `plant:field`, and only once that leg has been quoted
+/// ([`ForagePatch::quoted_field_cost_multiplier`]).
+pub fn patch_rung_span(patch: &ForagePatch, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
+    plant_rung_span_at(rung, ladder, patch.field_cost_in_force())
 }
 
 /// **RESOLVE A PLANT POSITION INTO A STANDING** — the one call
 /// [`ForagePatch::set_ladder_position`] makes, so no other seam constructs a plant standing.
-fn plant_standing(position: f32, ladder: &LadderConfig) -> RungStanding {
+fn plant_standing(
+    position: f32,
+    ladder: &LadderConfig,
+    field_cost_multiplier: f32,
+) -> RungStanding {
     RungStanding::at(ladder, RungBranch::Plant, position, |key| {
-        plant_rung_cost(key, ladder)
+        plant_rung_cost(key, ladder, field_cost_multiplier)
     })
 }
 
@@ -872,10 +996,17 @@ fn plant_standing(position: f32, ladder: &LadderConfig) -> RungStanding {
 ///
 /// **A rung the player's order does not reach is not a leg**: `cultivate` on wild ground names
 /// `plant:tended` and stops there, so the Field is absent rather than present at zero.
+///
+/// **`field_cost_multiplier` IS THE PRICE THE FIELD LEG IS QUOTED AT**, and the caller resolves it
+/// through [`patch_field_cost_multiplier`] rather than this reading the patch's own stamp. That is the
+/// whole of *"the quote must move with the charge"*: while the leg has not started there is no stamp
+/// to read, and a leg list that fell back to the ladder's declared price would publish a work figure
+/// and a chained date for a job the sim will charge something else for.
 pub fn patch_build_legs(
     patch: &ForagePatch,
     destination: RungKey,
     ladder: &LadderConfig,
+    field_cost_multiplier: f32,
 ) -> Vec<BuildLeg> {
     if destination.branch() != RungBranch::Plant {
         // A rung the animal web owns can never stand on ground.
@@ -888,7 +1019,7 @@ pub fn patch_build_legs(
         if !destination.is_at_or_above(rung) {
             break;
         }
-        let (base, width) = plant_rung_span(rung, ladder);
+        let (base, width) = plant_rung_span_at(rung, ladder, field_cost_multiplier);
         // What is left of THIS rung from where the source stands: the whole of it when the position
         // has not reached its base, part of it mid-rung, none of it once the position is past its top.
         let owed = (base + width - position.max(base)).clamp(LEG_ALREADY_PAID, width);
@@ -910,7 +1041,7 @@ pub fn patch_build_legs(
 /// **A readout, not a second authority.** Nothing in the sim branches on it; the position and its
 /// standing decide everything, and this only restates them in the shape the client already reads.
 pub fn patch_rung_work_done(patch: &ForagePatch, rung: RungKey, ladder: &LadderConfig) -> f32 {
-    let (base, width) = plant_rung_span(rung, ladder);
+    let (base, width) = patch_rung_span(patch, rung, ladder);
     (patch.ladder_position() - base).clamp(RUNG_UNSTARTED, width)
 }
 
@@ -1133,22 +1264,25 @@ pub fn patch_composition<'a>(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> Cow<'a, [FloraShare]> {
-    // **⛔ THE BASKET IS RESOLVED AT `held`, AND IT IS THE ONE THING THAT CANNOT BE INTERPOLATED.**
-    // Every *rate* on this patch now lerps across the rung it is raising (see [`patch_interpolate`]),
-    // but this returns a **species basket**, not a number, and a half-weeded basket is not a blend of
-    // two baskets — mixing them would invent shares of plants that are not growing there, which is
-    // the same objection that keeps a material's characteristic vector out of `basket_rate`.
+    // **THE BASKET INTERPOLATES ACROSS THE RUNG BEING RAISED, exactly as every rate on this patch
+    // does** ([`crate::intensification::interpolate_composition`]). A half-sown field is a field
+    // half sown: the crop's share climbs and the volunteers' fall, turn by turn, and the ground goes
+    // on paying what is still standing on it.
     //
-    // So the composition steps at the rung actually **achieved** and the *rates* carry the smoothing:
-    // a Field at 40% is priced on a tended patch's weeded basket at a rate 40% of the way to the
-    // Field's. This is deliberate, not an oversight.
-    composition_for_rung(
-        patch,
-        tile_composition,
-        flora,
-        forage,
-        patch.standing().held,
-    )
+    // **This reverses an explicit earlier ruling** that a basket "cannot be interpolated" because
+    // mixing two baskets invents shares of plants that are not growing there. That objection is
+    // sound for a material's characteristic vector (see [`patch_material_yields`]) and unsound here:
+    // `planted` is a reweighting of `weeded`, which is a reweighting of the tile's own mix, so every
+    // species in the later basket is already in the earlier one and a blend names no new plant. What
+    // the old ruling cost is on the record: it leaned on the rates to carry the smoothing, and
+    // across a Sow they do not — `favored_conversion_gain` is flat by design
+    // (`tended_conversion_gain` == `field_conversion_gain`) and the capacity and regrowth gains land
+    // on a take *ceiling* that sits above the worker cap on any normally-staffed row. So the mix was
+    // the only term that moved, and it moved in one step: a tile committed to a cash crop went from
+    // paying food and fibre to paying nothing at all on the turn its Sow completed.
+    intensification::interpolate_composition(&patch.standing(), |rung| {
+        composition_for_rung(patch, tile_composition, flora, forage, rung)
+    })
 }
 
 /// **A PER-RUNG QUANTITY AT THIS PATCH'S STANDING** — [`interpolate`] bound to the patch, so no rate
@@ -1179,8 +1313,10 @@ fn patch_interpolate(patch: &ForagePatch, value_at: impl Fn(RungKey) -> f32) -> 
 /// standing crop and the forecast's separate `ceiling_cultivate`/`ceiling_sow` already encode — **two
 /// investment rungs on one branch never share a number.**
 ///
-/// [`patch_composition`] is this seam at the patch's own [`standing_rung`], which is the *live*
-/// reading the take path and the wire's published basket want.
+/// [`patch_composition`] is this seam **interpolated across the rung the patch is raising**, which is
+/// the *live* reading the take path and the wire's published basket want. That difference is the
+/// whole reason both exist: a quote is about one rung, while the ground a crew is standing on is
+/// part-way between two.
 pub fn composition_for_rung<'a>(
     patch: &ForagePatch,
     tile_composition: &'a [FloraShare],
@@ -1201,6 +1337,166 @@ pub fn composition_for_rung<'a>(
         )),
         _ => Cow::Borrowed(tile_composition),
     }
+}
+
+/// **WHAT A SOW COSTS ON GROUND THE CROP ALREADY HOLDS `crop_share` OF**, as a multiple of the
+/// `plant:field` rung's declared `work_cost` (`docs/plan_standing_upkeep.md` §4.15).
+///
+/// ```text
+/// replacement = 1 - crop_share
+/// share_load  = replacement / (1 - field_reference_crop_share)
+/// multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling)
+/// ```
+///
+/// Sowing a crop that already holds most of the ground is **tidying**; sowing one that holds a tenth
+/// is **replacing the tile**. That is the fact this prices, and until now the crop's share was
+/// invisible except as the auto-picker's hidden criterion.
+///
+/// # ⛔ IT IS A RATIO AGAINST A REFERENCE, NOT A PENALTY
+///
+/// [`CultivationConfig::field_reference_crop_share`] is the reference basket's own **weeded** share,
+/// so the shipped `plant:field` price is what a Sow costs on ordinary sowable ground and moving the
+/// anchor retunes the whole curve without touching the rung. A bare penalty would make the ladder's
+/// declared 75 units the *cheapest* case and inflate the entire plant branch; a bare discount would
+/// deflate it. Exactly `capacity_per_tender`'s argument, one account over.
+///
+/// **Both clamps are load-bearing.** Without the floor, ground already wholly the crop is *free* to
+/// sow — and you still lay the rows, still put the seed in, and still collect the Field's capacity
+/// and regrowth gains. Without the ceiling a marginal crop's price is bounded only by the anchor.
+pub fn field_cost_multiplier_at_share(
+    crop_share: f32,
+    cultivation: &crate::labor_config::CultivationConfig,
+) -> f32 {
+    let replacement = WHOLE_BASKET - crop_share.clamp(NO_SHARE, WHOLE_BASKET);
+    // Non-zero by config rejection — the reference share is validated strictly below the whole
+    // basket precisely because it is a denominator (`labor_config::validate`).
+    let reference_replacement = WHOLE_BASKET - cultivation.field_reference_crop_share;
+    (replacement / reference_replacement).clamp(
+        cultivation.field_share_cost_floor,
+        cultivation.field_share_cost_ceiling,
+    )
+}
+
+/// **THE SHARE A FIELD LEG IS ABOUT TO REPLACE** — `crop`'s share of the basket the ground holds at
+/// the rung **below** the Field, i.e. the weeded mix a completed Cultivate leaves behind.
+///
+/// # ⛔ THE RUNG BELOW'S BASKET, NEVER THE PATCH'S LIVE ONE
+///
+/// [`patch_composition`] **interpolates across the rung being raised**, so the instant a Sow banks
+/// work its own crop's share has already climbed toward [`planted`]. A turn's accrual routinely
+/// *overshoots* the rung boundary, so a live reading taken when the leg starts would be taken after
+/// the build had already moved it — and the build would then be pricing itself. That is the trap
+/// `capacity_per_tender`'s note records one account over (*"the measure reads the TILE's `K` and
+/// never the patch's `carrying_capacity`, which has already been multiplied"*).
+///
+/// The rung below's basket is free of it and is also **exact**: a Field leg can only begin from a
+/// full tended rung, and a full tended rung's mix is [`weeded`] by construction. So the quote struck
+/// before a two-leg Sow starts and the price stamped when its Field leg finally begins are the same
+/// number — which is what keeps §4.6b's chained date exact rather than an estimate that drifts.
+fn field_replaced_share(
+    tile_composition: &[FloraShare],
+    crop: &str,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    weeded(
+        tile_composition,
+        crop,
+        forage.cultivation.tended_weeding_gain,
+        flora,
+    )
+    .iter()
+    .find(|entry| entry.species == crop)
+    .map_or(NO_SHARE, |entry| entry.share)
+}
+
+/// **WHAT THIS PATCH'S FIELD RUNG IS PRICED AT** — the stamp once the leg has started
+/// ([`ForagePatch::quoted_field_cost_multiplier`]), the live measure before it.
+///
+/// **Every surface that states what a Sow will cost reads this one seam** — the arm that charges it,
+/// the leg list, the chained date and the published `fieldWorkCost` — so the sheet cannot quote a
+/// price the job does not charge.
+///
+/// The crop is the patch's commitment where it has one, and the rung's auto-pick where it has not
+/// ([`default_species_for_rung`]) — the same plant a Sow ordered here would actually commit to, so a
+/// patch nobody has worked still quotes the price it would really be sold at. **Ground where nothing
+/// climbs to a Field** has no crop to measure and prices at [`RUNG_COST_UNSCALED`]: the rung is
+/// unbuildable there, and the ladder's declared figure is the honest thing to publish.
+pub fn patch_field_cost_multiplier(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
+) -> f32 {
+    // **ONCE THE LEG HAS TAKEN WORK, THIS PATCH'S OWN PRICE LIST IS THE AUTHORITY** — whatever it
+    // says. Not merely the stamp: the published `fieldWorkDone` is the position clamped into the
+    // span the patch actually climbed ([`patch_rung_work_done`]), so a quote resolved from any other
+    // number would state one meter from two denominators. A patch carrying Field work with no stamp
+    // is a fixture that seated the position directly; it climbed at the ladder's own price and its
+    // readout must divide by that.
+    if patch.ladder_position() > plant_rung_span(RungKey::PlantField, ladder).0 {
+        return patch.field_cost_in_force();
+    }
+    let crop = match patch.species.as_deref() {
+        Some(committed) => Cow::Borrowed(committed),
+        None => match default_species_for_rung(tile_composition, flora, RungKey::PlantField) {
+            Some(picked) => Cow::Owned(picked),
+            None => return RUNG_COST_UNSCALED,
+        },
+    };
+    field_cost_multiplier_for_crop(tile_composition, &crop, flora, forage)
+}
+
+/// **WHAT A SOW COMMITTING THIS GROUND TO `crop` WOULD BE CHARGED**, as a multiple of the
+/// `plant:field` rung's declared `work_cost` — the *per-crop* reading of the price
+/// [`patch_field_cost_multiplier`] states once per patch (`docs/plan_standing_upkeep.md` §4.15).
+///
+/// **The crop picker is what it is for.** A patch prices exactly one crop — its commitment, or the
+/// auto-pick where it has none — so a list of the crops a player could sow here showed the same work
+/// figure against every one of them, and the true figure only appeared once the leg had started and
+/// re-quoted. The picker exists to weigh work against payoff *before* committing, so the work half
+/// has to answer per crop exactly as `commit_payoff` and its siblings do.
+///
+/// **[`None`] when `crop` cannot climb to a Field here** — the same [`species_climbs`] gate the
+/// per-crop payoff quotes take, and it must render as *no row*, never as a `0`: a zero here would
+/// read as a Sow that costs nothing. A patch's own [`patch_field_cost_multiplier`] still answers
+/// [`RUNG_COST_UNSCALED`] in that case, because a published price has to state *something* and the
+/// ladder's declared figure is the honest thing for ground the rung cannot be built on.
+///
+/// It is the **live** measure, which is what a quote for a job nobody has started should be; a patch
+/// whose leg is already running holds its stamped price instead ([`patch_field_cost_multiplier`]'s
+/// first arm), and the two coincide because both read the basket of the rung below.
+pub fn crop_field_cost_multiplier(
+    tile_composition: &[FloraShare],
+    crop: &str,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> Option<f32> {
+    species_climbs(
+        crop,
+        share_of(tile_composition, crop),
+        flora,
+        RungKey::PlantField,
+    )
+    .then(|| field_cost_multiplier_for_crop(tile_composition, crop, flora, forage))
+}
+
+/// **The price expression itself, stated once** — the share this crop has to replace, priced by
+/// [`field_cost_multiplier_at_share`]. Both the patch's price and the picker's per-crop quote go
+/// through it, so the number a player is shown per crop and the number the job charges on the crop
+/// they pick are one computation rather than two that agree today (`docs/plan_flora_roster.md`
+/// §4.3's rule).
+fn field_cost_multiplier_for_crop(
+    tile_composition: &[FloraShare],
+    crop: &str,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    field_cost_multiplier_at_share(
+        field_replaced_share(tile_composition, crop, flora, forage),
+        &forage.cultivation,
+    )
 }
 
 /// **WHAT WORKING THIS GROUND CANNOT REMOVE** — the members of `composition` a Cultivate or a Sow
@@ -1539,15 +1835,17 @@ pub fn patch_material_yields_taking(
     forage: &ForageLaborConfig,
     take: &TakeSelection,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
-    // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES.** A row's `per_biomass` is a rate and
-    // lerps like every other rate on this patch, but the *rows themselves* come from a basket, and a
-    // half-weeded basket is not a blend of two baskets — see [`patch_composition`].
+    // **THE BASKET AND THE GAIN BOTH INTERPOLATE** — the rows come off [`patch_composition`], the
+    // patch's live mix, so a half-sown field's fibre row fades with the plant that pays it instead
+    // of vanishing on the turn the meter fills.
+    //
+    // **What still cannot be blended is a material's characteristic vector**, and that is why this
+    // account is *decomposed* rather than averaged: each row keeps its own species' exact reading
+    // and carries that species' (now interpolated) share.
     rung_material_yields_at(
         patch,
-        tile_composition,
+        &patch_composition(patch, tile_composition, flora, forage),
         flora,
-        forage,
-        patch.standing().held,
         patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage)),
         take,
     )
@@ -1582,8 +1880,8 @@ pub fn patch_species_rates(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> Vec<SpeciesRate> {
-    // **THE BASKET STEPS AT `held`; THE GAIN INTERPOLATES** — `patch_material_yields`' rule, and for
-    // its reason: a rate lerps across the rung being raised, a *basket* cannot be blended.
+    // **THE BASKET AND THE GAIN BOTH INTERPOLATE** — `patch_material_yields`' rule, and for its
+    // reason: the mix lerps across the rung being raised exactly as the rate on it does.
     let composition = patch_composition(patch, tile_composition, flora, forage);
     let favored_gain = patch_interpolate(patch, |rung| favored_conversion_gain(rung, forage));
     composition
@@ -1664,30 +1962,26 @@ pub fn rung_material_yields(
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
     rung_material_yields_at(
         patch,
-        tile_composition,
+        &composition_for_rung(patch, tile_composition, flora, forage, rung),
         flora,
-        forage,
-        rung,
         favored_conversion_gain(rung, forage),
         &TakeSelection::EVERYTHING,
     )
 }
 
-/// The decomposition itself: one row per species per material, at `basket_rung`'s shares and the
-/// stated `favored_gain`. Split out so the live reading (an interpolated gain) and a per-rung quote
-/// (that rung's own gain) cannot come to be two decompositions.
-#[allow(clippy::too_many_arguments)] // the patch, the basket, both configs, the rung, the gain and the selection
+/// The decomposition itself: one row per species per material, at the **already resolved** `standing`
+/// basket's shares and the stated `favored_gain`. Split out so the live reading (the patch's
+/// interpolated mix and gain) and a per-rung quote (that rung's own mix and gain) cannot come to be
+/// two decompositions — and it takes the basket rather than a rung precisely so neither caller can
+/// pair one rung's mix with another's gain.
 fn rung_material_yields_at(
     patch: &ForagePatch,
-    tile_composition: &[FloraShare],
+    standing: &[FloraShare],
     flora: &FloraConfig,
-    forage: &ForageLaborConfig,
-    basket_rung: RungKey,
     favored_gain: f32,
     take: &TakeSelection,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
-    let standing = composition_for_rung(patch, tile_composition, flora, forage, basket_rung);
-    let composition = narrowed(&standing, take);
+    let composition = narrowed(standing, take);
     let mut rows = Vec::new();
     for entry in composition.iter() {
         let Some(def) = flora.species.get(&entry.species) else {
@@ -1847,8 +2141,21 @@ pub fn species_is_legal_here(
 }
 
 /// **The share a species must exceed to count as present in a tile's basket.** A zero-share entry is
-/// a plant that is named on the tile and takes none of it — nothing to commit to.
-const NO_SHARE: f32 = 0.0;
+/// a plant that is named on the tile and takes none of it — nothing to commit to, nothing to gather,
+/// and nothing to publish. Shared with `intensification::interpolate_composition`, which drops the
+/// members a blend has faded away to nothing on exactly this bar.
+pub(crate) const NO_SHARE: f32 = 0.0;
+
+/// **IS THIS PLANT ACTUALLY STANDING IN THIS BASKET?** — named on it *and* holding more than
+/// [`NO_SHARE`] of it. The one spelling of the test, so the command boundary's take-selection gate
+/// ([`resolve_take_selection`]) and the commitment's prune of that same selection
+/// ([`crate::components::TakeSelection::pruned_for_commitment`]) cannot come to disagree about what
+/// "it grows there" means.
+pub fn species_stands_in(composition: &[FloraShare], species: &str) -> bool {
+    composition
+        .iter()
+        .any(|entry| entry.species == species && entry.share > NO_SHARE)
+}
 
 /// **The plant a commitment falls to when the player named none** — the highest-share species in this
 /// tile's basket that the rung permits. The composition is already sorted share-DESC then key-ASC (a
@@ -1954,10 +2261,7 @@ pub fn resolve_take_selection<'a>(
     flora: &FloraConfig,
 ) -> Result<(), (&'a str, SpeciesRefusal)> {
     for species in take.keys() {
-        if composition
-            .iter()
-            .any(|entry| entry.species == species && entry.share > NO_SHARE)
-        {
+        if species_stands_in(composition, species) {
             continue;
         }
         return Err((
@@ -4228,6 +4532,245 @@ mod tests {
 
     fn test_forage_config() -> ForageLaborConfig {
         LaborConfig::builtin().forage.clone()
+    }
+
+    // ---- A SOW IS PRICED BY WHAT IT REPLACES (`docs/plan_standing_upkeep.md` §4.15) ------------
+
+    /// How close two work-unit figures have to be to be the same job. Pure f32 slack: the multiplier
+    /// is a ratio of two subtractions and the cost is that times a config figure.
+    const SAME_JOB: f32 = 1e-3;
+
+    /// The reference basket resolved the one way this module resolves a basket.
+    fn reference_basket() -> Vec<FloraShare> {
+        crate::flora_config::FloraConfig::builtin()
+            .realized_composition(TEST_BIOME, REF_TILE, REF_SEED)
+    }
+
+    /// A patch on the reference tile, committed to the reference crop and standing wherever the
+    /// caller seats it — the fixture every price assertion below is struck on.
+    fn reference_patch(position: f32, ladder: &LadderConfig) -> ForagePatch {
+        let forage = test_forage_config();
+        let mut patch = ForagePatch::new(REF_TILE, forage.capacity_for(TEST_BIOME));
+        patch.commit_species(REF_CROP);
+        patch.set_ladder_position(position, ladder);
+        patch
+    }
+
+    /// ⛔ **ORDINARY SOWABLE GROUND STILL COSTS EXACTLY WHAT IT COSTS TODAY.**
+    ///
+    /// This is the pacing-neutrality claim asserted rather than asserted in prose: the anchor
+    /// (`field_reference_crop_share`) is the reference basket's own **weeded** share, so a Sow on the
+    /// reference tile is the `plant:field` rung's declared `work_cost` and nothing else. Move the
+    /// anchor and this fails, which is the point of it — the shipped number means *"what a Sow costs
+    /// on ordinary ground"*, and it stops meaning that silently otherwise.
+    #[test]
+    fn a_sow_on_the_reference_basket_costs_the_rungs_declared_price() {
+        let forage = test_forage_config();
+        let flora = crate::flora_config::FloraConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let composition = reference_basket();
+        // **PRECONDITION** — the anchor really is this basket's weeded share, so the equality below
+        // is the reference doing its job and not two arbitrary numbers meeting.
+        let weeded_share = field_replaced_share(&composition, REF_CROP, &flora, &forage);
+        assert!(
+            (weeded_share - forage.cultivation.field_reference_crop_share).abs() < SAME_JOB,
+            "PRECONDITION: the anchor {} must be the reference basket's own weeded share of \
+             {REF_CROP} ({weeded_share}), or this test proves nothing about pacing",
+            forage.cultivation.field_reference_crop_share
+        );
+
+        let patch = reference_patch(RUNG_UNSTARTED, &ladder);
+        let multiplier =
+            patch_field_cost_multiplier(&patch, &composition, &flora, &forage, &ladder);
+        assert!(
+            (multiplier - RUNG_COST_UNSCALED).abs() < SAME_JOB,
+            "the reference basket must price a Sow at the ladder's own figure, got {multiplier}"
+        );
+        let declared = plant_rung_span(RungKey::PlantField, &ladder).1;
+        let here = plant_rung_span_at(RungKey::PlantField, &ladder, multiplier).1;
+        assert!(
+            (here - declared).abs() < SAME_JOB,
+            "and therefore the same span in work units: {here} against {declared}"
+        );
+    }
+
+    /// **A CROP THAT ALREADY HOLDS THE GROUND IS CHEAP; ONE THAT BARELY STANDS THERE IS DEAR** — and
+    /// both ends are clamped.
+    ///
+    /// The floor exists because ground already wholly the crop replaces **nothing**, so an unclamped
+    /// ratio is exactly zero there — and you still lay the rows, still put the seed in, and still
+    /// collect the Field's capacity and regrowth gains. The ceiling exists because a marginal crop's
+    /// price would otherwise be bounded only by the anchor, which is a tuning dial.
+    #[test]
+    fn a_sows_price_rises_with_what_it_replaces_and_is_clamped_at_both_ends() {
+        let cultivation = &test_forage_config().cultivation;
+        let anchor = cultivation.field_reference_crop_share;
+
+        let dominant = field_cost_multiplier_at_share((anchor + WHOLE_BASKET) / 2.0, cultivation);
+        let marginal = field_cost_multiplier_at_share(anchor / 2.0, cultivation);
+        assert!(
+            dominant < RUNG_COST_UNSCALED,
+            "a crop holding more than the reference is TIDYING and must cost less: {dominant}"
+        );
+        assert!(
+            marginal > RUNG_COST_UNSCALED,
+            "a crop holding less than the reference is REPLACING the tile and must cost more: \
+             {marginal}"
+        );
+
+        // **PRECONDITION for the ceiling**: the unclamped ratio at a crop that stands nowhere on the
+        // tile has to exceed the ceiling, or the clamp below is dead and this proves nothing.
+        let unclamped_worst = WHOLE_BASKET / (WHOLE_BASKET - anchor);
+        assert!(
+            unclamped_worst > cultivation.field_share_cost_ceiling,
+            "PRECONDITION: the ceiling {} must actually bind ({unclamped_worst} unclamped)",
+            cultivation.field_share_cost_ceiling
+        );
+        assert!(
+            (field_cost_multiplier_at_share(NO_SHARE, cultivation)
+                - cultivation.field_share_cost_ceiling)
+                .abs()
+                < SAME_JOB,
+            "a crop the tile does not grow is priced at the ceiling and no dearer"
+        );
+        assert!(
+            (field_cost_multiplier_at_share(WHOLE_BASKET, cultivation)
+                - cultivation.field_share_cost_floor)
+                .abs()
+                < SAME_JOB,
+            "ground already wholly the crop is priced at the floor — never free"
+        );
+    }
+
+    /// ⛔ **THE PRICE DOES NOT MOVE WHILE THE LEG IS BEING RAISED**, even though the mix underneath it
+    /// is interpolating the whole time.
+    ///
+    /// This is the invariant the *measure once per leg* rule exists to protect, and it is the one a
+    /// future change is most likely to break in silence. [`patch_composition`] interpolates across the
+    /// rung being raised, so a Sow raises its own crop's share continuously as it proceeds: a live
+    /// measure would shrink the remaining work as the work was done — a job that accelerates itself —
+    /// and it would turn the chained finish date from an exact construction into a drifting estimate.
+    #[test]
+    fn a_running_sows_price_holds_while_the_mix_moves_under_it() {
+        let forage = test_forage_config();
+        let flora = crate::flora_config::FloraConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let composition = reference_basket();
+        let field_base = plant_rung_span(RungKey::PlantField, &ladder).0;
+
+        // A Sow that began on ground the crop barely holds — priced dear, and stamped.
+        const A_DEAR_SOW: f32 = 1.8;
+        let mut patch = reference_patch(field_base, &ladder);
+        assert!(
+            patch.price_field_rung(A_DEAR_SOW, &ladder),
+            "the first quote is the quote"
+        );
+        let quoted_span = patch_rung_span(&patch, RungKey::PlantField, &ladder).1;
+
+        let mut shares = Vec::new();
+        let mut prices = Vec::new();
+        for step in 1..=4 {
+            patch.set_ladder_position(field_base + quoted_span * (step as f32 / 5.0), &ladder);
+            shares.push(
+                patch_composition(&patch, &composition, &flora, &forage)
+                    .iter()
+                    .find(|entry| entry.species == REF_CROP)
+                    .map_or(NO_SHARE, |entry| entry.share),
+            );
+            prices.push(patch_field_cost_multiplier(
+                &patch,
+                &composition,
+                &flora,
+                &forage,
+                &ladder,
+            ));
+        }
+        // **PRECONDITION: the mix really is moving**, or a frozen price is frozen for no reason.
+        assert!(
+            shares.windows(2).any(|pair| pair[1] > pair[0] + 1e-4),
+            "PRECONDITION: the crop's share must climb as the Sow proceeds — {shares:?}"
+        );
+        assert!(
+            prices
+                .iter()
+                .all(|price| (price - A_DEAR_SOW).abs() < SAME_JOB),
+            "the leg's price is fixed for the whole of the leg: {prices:?} against {A_DEAR_SOW}"
+        );
+        // …and re-quoting a leg already in flight is refused rather than silently honoured.
+        assert!(
+            !patch.price_field_rung(RUNG_COST_UNSCALED, &ladder),
+            "a leg in flight cannot be re-priced"
+        );
+    }
+
+    /// **THE PRICE LAPSES ONLY WHEN THE LEG DOES.** A Field bled back to the rung's base has nothing
+    /// banked on it, so the quote it was sold at is spent and the next Sow measures the ground as it
+    /// then stands — which is what makes the rule *"re-measure when the leg starts"* true of a
+    /// re-attempt as well as of a first attempt.
+    #[test]
+    fn a_field_bled_back_to_its_base_is_re_quoted() {
+        let ladder = LadderConfig::builtin();
+        let field_base = plant_rung_span(RungKey::PlantField, &ladder).0;
+        const A_DEAR_SOW: f32 = 1.8;
+        let mut patch = reference_patch(field_base, &ladder);
+        patch.price_field_rung(A_DEAR_SOW, &ladder);
+        patch.set_ladder_position(field_base + 1.0, &ladder);
+        assert_eq!(
+            patch.quoted_field_cost_multiplier(),
+            Some(A_DEAR_SOW),
+            "work banked on the leg holds its price"
+        );
+        patch.set_ladder_position(field_base, &ladder);
+        assert_eq!(
+            patch.quoted_field_cost_multiplier(),
+            None,
+            "a leg with nothing left on it is unquoted again"
+        );
+    }
+
+    /// ⛔ **HOLDING A FIELD COSTS WHAT THE PLACE IS BIG, NEVER WHAT USED TO GROW ON IT.**
+    ///
+    /// `plant:field`'s upkeep is `scaled_by: source_load`, which reads the **tile's** `K`. A Sow's own
+    /// price is a second scale term, and billing the hold against both is exactly the failure
+    /// `capacity_per_tender`'s note records one account over. So a Field that was dear to sow and one
+    /// that was cheap owe the identical rate once they stand.
+    #[test]
+    fn the_field_upkeep_is_the_same_however_dear_the_sow_was() {
+        let forage = test_forage_config();
+        let ladder = LadderConfig::builtin();
+        let tile_capacity = test_tile_capacity();
+        let field_base = plant_rung_span(RungKey::PlantField, &ladder).0;
+
+        let demands: Vec<f32> = [
+            forage.cultivation.field_share_cost_floor,
+            RUNG_COST_UNSCALED,
+            forage.cultivation.field_share_cost_ceiling,
+        ]
+        .into_iter()
+        .map(|multiplier| {
+            let mut patch = reference_patch(field_base, &ladder);
+            patch.price_field_rung(multiplier, &ladder);
+            // Each one a FINISHED Field — its own top, at its own price.
+            let (base, width) = patch_rung_span(&patch, RungKey::PlantField, &ladder);
+            patch.set_ladder_position(base + width, &ladder);
+            assert!(
+                patch.is_field(),
+                "the fixture must actually stand on rung 3"
+            );
+            patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage)
+        })
+        .collect();
+
+        assert!(
+            demands[0] > NO_UPKEEP_DEMAND,
+            "PRECONDITION: a standing Field must owe something, or this compares zeroes: {demands:?}"
+        );
+        assert!(
+            demands
+                .windows(2)
+                .all(|pair| (pair[0] - pair[1]).abs() < SAME_JOB),
+            "the hold is the tile's size and nothing else: {demands:?}"
+        );
     }
 
     /// The biome the patch-mechanics tests stand their patch on. Any positive-capacity biome works

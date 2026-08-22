@@ -433,6 +433,7 @@
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[0].build_destination_rung",
+      "build_kit_id": "forage_patches[0].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[0].build_legs[0].rung",
@@ -497,6 +498,7 @@
             }
           ],
           "sow_payoff": 15.1,
+          "sow_work_cost": 34.66,
           "sow_yield_ratio": 69.620003,
           "species": "forage_patches[0].composition[0].species",
           "standing_biomass": 104.809998
@@ -544,6 +546,7 @@
             }
           ],
           "sow_payoff": 63.709999,
+          "sow_work_cost": 59.470001,
           "sow_yield_ratio": 44.119999,
           "species": "forage_patches[0].composition[1].species",
           "standing_biomass": 87.099998
@@ -609,6 +612,7 @@
       "build_blocked_reason": "forage_patches[1].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[1].build_destination_rung",
+      "build_kit_id": "forage_patches[1].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[1].build_legs[0].rung",
@@ -673,6 +677,7 @@
             }
           ],
           "sow_payoff": 43.549999,
+          "sow_work_cost": 8.31,
           "sow_yield_ratio": 97.620003,
           "species": "forage_patches[1].composition[0].species",
           "standing_biomass": 51.740002
@@ -720,6 +725,7 @@
             }
           ],
           "sow_payoff": 37.689999,
+          "sow_work_cost": 6.5,
           "sow_yield_ratio": 27.1,
           "species": "forage_patches[1].composition[1].species",
           "standing_biomass": 9.46
@@ -926,6 +932,7 @@
       "build_blocked_reason": "herds[0].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[0].build_destination_rung",
+      "build_kit_id": "herds[0].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[0].build_legs[0].rung",
@@ -1004,6 +1011,7 @@
         }
       ],
       "pastoral_yield": 90.18,
+      "pen_extend_cost": 91.480003,
       "pen_extend_progress": 34.240002,
       "pen_fed_fraction": 2.26,
       "pen_footprint_tiles": 167,
@@ -1050,6 +1058,7 @@
       "build_blocked_reason": "herds[1].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[1].build_destination_rung",
+      "build_kit_id": "herds[1].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[1].build_legs[0].rung",
@@ -1128,6 +1137,7 @@
         }
       ],
       "pastoral_yield": 53.27,
+      "pen_extend_cost": 39.439999,
       "pen_extend_progress": 58.25,
       "pen_fed_fraction": 94.949997,
       "pen_footprint_tiles": 24,

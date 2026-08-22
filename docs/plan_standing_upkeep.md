@@ -731,9 +731,9 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    that needs a crop, and the move would buy nothing.
 
    **7b — WHAT §4.6b LEFT STANDING, and this slice is where it lands.**
-   Each is reachable in play today and none is a defect in the model. **The first has since LANDED**;
-   of the three that remain, the first two are one shape — a band-level act with no band-level
-   surface — and the last is an asymmetry the pending rows introduced.
+   Each was reachable in play and none was a defect in the model. **All four have LANDED** — ① with
+   §4.7a, the other three together; the middle two were one shape, a band-level act with no
+   band-level surface, and the last was an asymmetry the pending rows introduced.
 
    - **Nothing on the Work tab declares a build** (①), so the tile sheet is still the only door.
      > **LANDED, with §4.7a's ①.** The `⌃` ready mark on a work row is the control that declares, and
@@ -761,6 +761,68 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > So each item's cost has to be **measured before it is designed**, and the lever that pays for it
    > — a taller strip, a wider panel, two-abreast pool cards — is **Ray's to pick**. Designing all
    > three and discovering the overflow at the end is the failure this note exists to prevent.
+
+   > **LANDED — all three, and the measurement is what shrank the problem.** Only ② ever wanted
+   > pixels: ③'s grab handle is the **marker column already reserved on every row** (10px, an empty
+   > `MOUSE_FILTER_IGNORE` label on every row that is not the head) and its drop indicator draws
+   > inside a row's own 28px, and ④ is client state with nothing new drawn. **The cap needed no
+   > re-measure either**: on the wide dock `build_queue_rows_max` already answers **1 row plus
+   > `+N more`** from the box, and on the tall LEFT dock it affords **14–27** against a cap of 3 —
+   > so `BUILD_QUEUE_ROWS_MAX` binds on exactly one dock and is dead arithmetic on the other. It
+   > **stays at 3**: raising it to 4 is free at four entries (the overflow row already holds that
+   > slot) and first bites at five, where the block grows 28px and the tall dock's board goes 9 rows
+   > to 7 — one to the row and a second to the pager it then needs.
+   >
+   > **THE KIT PICKER FLOWS, AND THE WRAP IS COMPUTED RATHER THAN DISCOVERED.** Ray's call, against
+   > both drawn alternatives: shrinking the pickers to share a line truncates long names, and a fixed
+   > second line spends a lever on docks that do not need one. So the strip lays the pair on one line
+   > where the width allows and stacks them where it does not — but **not** through a flow container.
+   > This zone `clip_contents` and `build_queue_settings_height` is reserved *before* the strip is
+   > drawn, so a container that wrapped at layout time would leave the reservation unable to know how
+   > many lines drew, and the difference comes silently off the bottom of the board.
+   > `queue_settings_one_line(line_width)` is the one predicate both the reservation and the builder
+   > read. **No shipped dock reaches the one-line state today** — 342px of strip on the tall LEFT
+   > dock and 368 on a 1920 BOTTOM one, against the 408 the pair needs — because the work zone is one
+   > board column wide at every dock; one line arrives when the board earns a **second column**, which
+   > is a source-count answer and not a monitor one.
+   >
+   > **AND THE 30px WAS PAID BY A RULE, NOT BY A LEVER: ONE EXPANSION AT A TIME IN THE WORK ZONE.**
+   > `_queue_open_key` and `_work_open_key` are mutually exclusive now — the one-at-a-time rule both
+   > lists already followed internally, read one level up. The wide dock reads **396 of 396** with the
+   > strip flowed to two lines, so `PANEL_HEIGHT_WIDE` did not move and the height stays out of
+   > travel. **It also closed a live defect this arc shipped**: a settings strip and a work inspector
+   > open together — one click each — drew **460 into the 396 box**, sabotage-verified by disabling
+   > the exclusion. No harness frame could catch it, every strip-open frame having had no inspector
+   > and every inspector-open frame no strip: two disjoint frame families with the defect in the gap,
+   > which is the same shape as the inspector-height defect §4.7 found.
+   >
+   > **Two constants read lower than they drew and are corrected** — `BUILD_QUEUE_UNQUEUE_WIDTH`
+   > 22 → **32** (`HudWidgets.compact` leaves the ghost button's horizontal padding) and
+   > `BUILD_QUEUE_SETTINGS_HEIGHT` 30 → **34** (22px picker + 12px `ROLE_CARD_PADDING`). The second
+   > was a live under-reserve, and correcting it is what makes the flow arithmetic honest.
+   >
+   > **② RETIRED THE ROW KIT RATHER THAN LAYERING ON IT.** `assign_labor` **refuses** a `kit` token on
+   > the `builders` role by name; a stored id per band is the one thing the per-entry derivation
+   > cannot express, and leaving it beneath the new field would have kept the pinning defect reachable
+   > from the command line. `build_kit <faction> <source…> [kit <id>]` is the fourth member of the
+   > `abandon` / `unqueue` / `build_order` family and shares their `BuildSourceRef`; **an absent `kit`
+   > token clears the override**, which is *"an absent `kitId` means the job's default"* read as an
+   > edit. `buildKitId` is captured **live** from the band's allocation rather than from a turn-written
+   > cache, so a pick shows on the recapture the command triggers and needs no overlay at all.
+   >
+   > **④'s TOMBSTONE KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT**, and that is the whole trap. The
+   > server re-captures and broadcasts after **every** dispatched command, and that snapshot still
+   > carries the stale turn-written `buildQueuePosition` — so *"hide until the next snapshot"* flickers
+   > the row straight back. `reconcile_pending` already keys additions on a snapshot with a NEWER turn;
+   > the withdrawal and ③'s optimistic ordering take the identical rule, in the same per-band record.
+   > **The withdrawal clears the improvement rather than dropping the record**, because `unqueue`
+   > leaves the take crew standing and the same record may hold a pending crew edit.
+   >
+   > **THE PLAY REPORT WAS THE COSMETIC HALF ALONE — §4.6b's clearing defect was NOT live.** It was
+   > closed when `unqueue` became its own verb, and the `✕` was already wired to it; the sim now
+   > carries a test for the exact reported sequence (declare and withdraw within one turn, then
+   > resolve) and the entry never reaches the queue. What survived its own withdrawal was the overlay
+   > row, `_on_hud_unqueue` having only sent.
 
 8. **Gear as productivity.** A kit raises what a supplier delivers **per turn** rather than
    subtracting from the job. Decided because a job is a pile and an upkeep is a rate: subtraction has
@@ -877,6 +939,55 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > passing tests that could not distinguish the defect from the fix. Every fix in this slice was
    > therefore **falsified** — the defect restored, the failing assertions counted and named — and
    > that is the practice to keep, not the fixtures.
+   > **⛔ AND IT LANDED ON THE PLANT WEB'S *RATES* AND NOT ITS *MIX* — the unfinished half, closed
+   > later.** The composition seam (`forage::patch_composition`) went on resolving at the rung
+   > **achieved**, under an explicit note that a basket "is the one thing that cannot be
+   > interpolated": mixing two baskets would invent shares of plants that are not growing there. The
+   > smoothing, it said, was carried by the rates.
+   >
+   > **Both halves of that were wrong, and the second is what play found.** Reported by Ray: a tile
+   > paid `+0.35 food · +0.07 fibre` one turn and `+0.00` with no material clause the next — the turn
+   > its Sow completed. It had been committed to **tobacco**, a cash crop paying no food and no
+   > fodder, and completion forced the tile's mix to 100% tobacco in a single step.
+   >
+   > - **The rates it delegated to do not move across a Sow.** `favored_conversion_gain` is flat by
+   >   design (`tended_conversion_gain` 2.0 → `field_conversion_gain` 2.0), and
+   >   `field_capacity_gain` / `field_regrowth_gain` land on the take **ceiling**, which sits above
+   >   the worker cap on any normally-staffed row. Every smoothed term was inert, and the one term
+   >   that decides what the ground pays — the mix — was the one that cliffed. **The discontinuity
+   >   §4.10 exists to remove survived in the place nobody looked.**
+   > - **The "invents plants" objection does not hold for this pair.** `planted` is a reweighting of
+   >   `weeded`, which is a reweighting of the tile's own realized mix: every species in the later
+   >   basket is already in the earlier one, so a blend only raises the favored share and lowers the
+   >   others, and the shares still sum to one. It names no plant the ground was not already growing.
+   >   That is ① above stated on the mix rather than on the meter — *"a half-sown field genuinely has
+   >   half a crop in the ground"* — so refusing to interpolate the basket contradicted the very
+   >   reason `animal:pen` is `partial_credit`'s only member. **The objection is retained where it is
+   >   still true**: a material's *characteristic vector* cannot be averaged, which is why the
+   >   material account is decomposed per species rather than blended.
+   >
+   > **So the mix interpolates on BOTH plant rungs**, through `intensification::interpolate_composition`
+   > — [`interpolate`]'s vector twin, blending the held basket with the raising one per species at
+   > `RungStanding::credit`. Reading `credit` is the *only* test of `RungPartialCredit`, so an
+   > `on_completion` rung's basket still steps at completion for free. Weeding was smoothed with
+   > sowing: leaving Cultivate stepped would make the ladder smooth on one rung and cliffed on the one
+   > below it. **The blend is re-sorted into the wire's total order**, because
+   > `default_species_for_rung` reads a basket's first entry as its dominant plant.
+   >
+   > **AND THE TAKE SELECTION HAD NO REPAIR PATH, which is what turned the cliff into a zero.**
+   > `LaborTarget::Forage::take_species` has one writer (`assign_labor`) and nothing pruned it, so a
+   > crew that had named the plants a Sow displaced held a selection summing to **zero share** — and
+   > a zero selected share is a zero take *ceiling*, in food and materials alike. Interpolation makes
+   > that a fade rather than a cliff, but it still arrives at zero, so the commitment now **prunes**
+   > the selection and adds the crop it committed to. **Prunes, never overwrites**: a `planted`
+   > basket keeps whatever stands outside the worked ground, so a sown tile with a fishery still has
+   > fish in it, and a blanket reset would re-tick plants the player had deliberately unticked.
+   > Nothing surviving the prune falls back to the whole basket rather than to the crop alone.
+   >
+   > **The command boundary was judging the wrong basket, and freshly, not stalely.**
+   > `validate_take_selection` resolved against the tile's raw wild realization while the take path
+   > narrows against the rung-reweighted mix, so on any tended or sown patch it accepted a selection
+   > the very next turn valued at zero. It now judges the same mix the take will narrow.
 11. **Plant upkeep SCALES WITH THE SOURCE.** Both plant rungs ship `scaled_by: flat`, so a rich
     alluvial patch and a thin one cost the same to hold. Ray: *"the flora track should scale by size,
     just like animals."* The whole-number demands were an explicit short-term step, not the model —
@@ -1018,6 +1129,109 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     >   `HuntTakeBound::Engagement` exists to make it visible. **The mechanism is correct and the
     >   number is not**; at a rate near 1.0 the minimum-of-one stops being a bonus and party size
     >   means what it looks like it means. It is the **fauna** arc's edit, not this one's.
+
+15. **A SOW IS PRICED BY HOW MUCH OF THE TILE IT REPLACES.** A **scale primitive**, of §4.11's and
+    §4.13's kind and not §4.14's — the numbers below are §4.14's to own, the shape is not. It is the
+    ladder's existing per-source price hook (`RungStanding::at`'s `cost_at`, which the animal web
+    already spends on a species' `taming_cost_multiplier`) claimed by the plant web, which passed
+    `RUNG_COST_UNSCALED` with a comment saying a plant has no species. **`plant:field` only** —
+    `plant:tended` is untouched, because clearing wild ground is clearing wild ground.
+
+    Ray: *"I think maybe it should take more work to sow a field based on what % the crop is on the
+    tile."* Sowing a crop that already holds most of the ground is **tidying**; sowing one that holds
+    a tenth is **replacing the tile**. Until this the crop's share was invisible except as the
+    auto-picker's hidden criterion — it now has a job, and the crop choice becomes a decision on the
+    **cost** axis as well as the payoff one. It also reads correctly against the play report that
+    prompted it: a tile offering 100% tobacco is *cheap* to sow and feeds nobody, while sowing grain
+    there is dear and feeds you.
+    > **THE SHAPE IS A RATIO AGAINST A REFERENCE, NEVER A PENALTY.**
+    >
+    > ```text
+    > replacement = 1 - crop_share
+    > share_load  = replacement / (1 - field_reference_crop_share)
+    > field_cost  = work_cost x clamp(share_load, field_share_cost_floor, field_share_cost_ceiling)
+    > ```
+    >
+    > `field_reference_crop_share` is **0.5625, the reference basket's own weeded share** —
+    > `wild_emmer` holds `0.375` of `AlluvialPlain`'s realized basket and a Cultivate weeds it to
+    > `0.375 × 1.5` — so the shipped `plant:field` price of 75 work units is **provably
+    > pacing-neutral there**, exactly as `capacity_per_tender` is 195.0 for being that same tile's own
+    > `K`. A bare penalty would make the ladder's declared cost the *cheapest* case and inflate the
+    > whole plant branch; a bare discount would deflate it. With an anchor, ordinary sowable ground
+    > costs what the ladder already said, and §4.14 moves the anchor rather than re-tuning the rung.
+    >
+    > **Both clamps are load-bearing.** Floor `0.25` (18.75 units, ~6 turns at the rung's reference
+    > crew of three): ground already wholly the crop replaces *nothing*, and a free Sow there would
+    > still collect `field_capacity_gain` and `field_regrowth_gain` for having laid the rows and put
+    > the seed in. Ceiling `2.0` (150 units, ~50 turns), binding below a crop share of about an
+    > eighth: without it a marginal crop's price is bounded only by the anchor, which is a dial and
+    > not a promise.
+    >
+    > **⛔ ① THE SHARE IS MEASURED ONCE, WHEN THE LEG STARTS, AND HELD FOR THAT LEG.** It is stamped
+    > on the **patch** (`ForagePatch::field_cost_multiplier`, the exact twin of
+    > `Herd::taming_cost_multiplier`) rather than on the queue entry, because the patch's own standing
+    > is derived from its rung spans: a price the source could not see would leave the position's
+    > meaning and the job's price in two places. `None` is *the leg has not started*, and while it is
+    > `None` the Field rung's width provably changes nothing the patch derives — the position is at or
+    > below the rung's base.
+    >
+    > **It is NOT live.** §4.10 made the mix interpolate across the rung being raised, so a Sow raises
+    > its own crop's share continuously as it proceeds: a live price would shrink the remaining work
+    > as the work was done — a job that accelerates itself — and it would turn §4.6b's chained finish
+    > date from an exact construction into an estimate that drifts under the player.
+    >
+    > **And it is NOT stamped once at declaration either.** A `Sow` on untended ground is two legs
+    > (§2.8), and the Cultivate leg genuinely weeds toward the crop before the Field leg begins. Ray's
+    > ruling is that the mechanism *"doesn't care if it was cultivate"* — it reads the current share —
+    > so the price is re-quoted **at the leg boundary**. A discrete re-quote, not a drift: fixed for
+    > the whole of the leg it prices. It lapses again if the position ever bleeds back to the rung's
+    > base, which is the same rule applied to a re-attempt.
+    >
+    > **⛔ ② IT READS THE BASKET OF THE RUNG *BELOW*, NOT THE PATCH'S LIVE MIX.** A turn's accrual
+    > routinely overshoots the rung boundary, so a live reading taken when the leg starts is taken
+    > *after* the build has already moved it — the build pricing itself, which is `capacity_per_tender`'s
+    > ① one account over (*"the measure reads the TILE's `K` and never the patch's
+    > `carrying_capacity`, which has already been multiplied"*). The rung below's basket is free of it
+    > **and is exact**: a Field leg can only begin from a full tended rung, and a full tended rung's mix
+    > is `weeded` by construction. So the number quoted before a two-leg Sow starts and the number
+    > stamped when its Field leg finally begins are the same number, which is what keeps the chained
+    > date a construction.
+    >
+    > **⛔ ③ IT DOES NOT TOUCH THE UPKEEP, AND THAT IS THE §4.11 RULE.** `plant:field`'s hold cost is
+    > `scaled_by: source_load`, which reads the **tile's** `K` — holding a field is about how big the
+    > place is, never about what used to grow there. Two scale terms on one bill is exactly the
+    > compounding §4.11 ① measured (a Field billing 10.898 against the 4.308 it owed), so a Field that
+    > was dear to sow and one that was cheap owe the identical rate once they stand.
+    >
+    > **④ AND THE QUOTE MOVED WITH THE CHARGE**, on §4.3's rule. Every surface that states what a Sow
+    > will cost resolves through one seam (`forage::patch_field_cost_multiplier`): the arm that charges
+    > it, `patch_build_legs`' work figures and their chained dates, the pre-commit projection the `⌃`
+    > mark and the compose sheet read, and the published `fieldWorkCost`. **The patch's own price
+    > added no wire field** — `fieldWorkCost` already carried it and now carries the scaled one, so
+    > the client quotes what the sim charges without re-deriving anything. The **per-crop** half below
+    > is a different question, and it is the one thing here that did add a field.
+    >
+    > **⑤ AND THE PICKER PRICES EVERY CROP, NOT ONLY THE ONE THE PATCH ALREADY NAMES.** A patch
+    > prices exactly *one* crop — its commitment, or the rung's auto-pick — so the crop picker on the
+    > `⌃`'s destination-rung popover, which lists each legal crop beside what it would pay
+    > (`sowPayoff` / `sowFodderPayoff` / `sowMaterialPayoff`), had the *same* work figure against
+    > every row while only the payoffs moved, and the true figure appeared only once the leg started
+    > and re-quoted. **That defeats the picker**, whose whole job is to let work be weighed against
+    > payoff *before* committing.
+    >
+    > So the work half answers per crop exactly as the payoffs do: `FloraShareInfo.sowWorkCost`, one
+    > figure per composition entry, in the same work units as `fieldWorkCost`. It is
+    > `field_cost_multiplier_at_share` over **that crop's own** `field_replaced_share`, priced by the
+    > ladder's own `build_cost` — *one expression* with the patch's own price
+    > (`forage::crop_field_cost_multiplier`, which `patch_field_cost_multiplier` goes through), so the
+    > figure quoted for the crop a patch is committed to **is** that patch's `fieldWorkCost` rather
+    > than a second derivation that happens to agree. Asserted on the encoded envelope, at
+    > declaration, at the commitment and again with the leg stamped.
+    >
+    > **Empty for a crop that cannot climb to a Field here** (`species_climbs` at `plant:field`),
+    > which renders as *no row*: a `0` would read as a free Sow, and a real price never is one — the
+    > floor clamp exists precisely because laying the rows and putting the seed in costs work on any
+    > ground.
 
 > **Every number in this arc is provisional until §4.14.** The plant demands of `2.0` / `4.0` are
 > whole-number placeholders chosen to be legible, not balanced; the graces of `2` and `1` are

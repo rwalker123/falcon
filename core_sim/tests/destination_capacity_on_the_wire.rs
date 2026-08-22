@@ -59,9 +59,15 @@ const SAME_NUMBER: f32 = 1e-3;
 /// rung's own gate is about the staffing rather than about an empty patch.
 const STOCKED_STANDING_CROP: f32 = 0.8;
 
-/// A build pool big enough to lay a rung's work units in a handful of turns — these tests are about
-/// the number a build advertises, not about its pace.
-const A_LARGE_BUILD_POOL: u32 = 30;
+/// A build pool that lays the plant rung's work units over a **handful** of turns — these tests are
+/// about the number a build advertises, not about its pace, but the advertised figure has to be read
+/// on more than one frame for its *stability* to be asserted at all.
+///
+/// **It came down from 30 when a Sow started being priced by what it replaces**
+/// (`docs/plan_standing_upkeep.md` §4.15): the fixture commits the patch to the tile's *dominant*
+/// legal crop, which weeds to a share high enough to put the job on its cost floor — and 30 hands
+/// laid the whole of that in one turn, leaving the loop with no queued frame to read.
+const A_LARGE_BUILD_POOL: u32 = 8;
 
 /// One gatherer beside the build, so the patch is a worked source.
 const A_GATHERER: u32 = 1;
@@ -318,6 +324,7 @@ fn spawn_the_farming_band(
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Patch(source),
                 declared: core_sim::BuildJob::Rung(declared),
+                kit: None,
             }],
             ..Default::default()
         },
@@ -700,6 +707,7 @@ fn spawn_the_herding_band(
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Herd(herd_id.to_string()),
                 declared: core_sim::BuildJob::Rung(declared),
+                kit: None,
             }],
             ..Default::default()
         },

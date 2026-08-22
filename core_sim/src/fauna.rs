@@ -393,14 +393,17 @@ pub struct Herd {
     /// count) so β only has to grow it. Authoritative sim state — rewound by rollback with the cloned
     /// registry.
     pub pen_radius: u32,
-    /// Pen-**extension** build progress `[0.0, 1.0]` for the in-flight ring (the `ExtendPen` labor
-    /// ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at that crew's own work
-    /// output; at [`Self::pen_extend_cost`] the ring completes (`pen_radius += 1`, this meter and its
-    /// cost reset, `pen_extending` clears). Exported as `penExtendProgress` for a "Fencing N%"
-    /// badge. Authoritative sim state, alongside `pen_radius`.
+    /// Pen-**extension** build progress **in absolute work units** for the in-flight ring (the
+    /// `ExtendPen` labor ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at that
+    /// crew's own work output; at [`Self::pen_extend_cost`] the ring completes (`pen_radius += 1`,
+    /// this meter and its cost reset, `pen_extending` clears). Authoritative sim state, alongside
+    /// `pen_radius`.
     ///
-    /// **In absolute work units**, completing at [`Self::pen_extend_cost`] — a ring rides the *same*
-    /// `animal:pen` rung as the pen it widens, so it cannot drift from the initial build.
+    /// **It is not a `0..1` fraction** — it was one before `docs/plan_standing_upkeep.md` §4.8 priced
+    /// improvements in work — so it is exported as `penExtendProgress` **together with its
+    /// denominator** `penExtendCost`, and a "Fencing N%" badge is the quotient of the two. A ring
+    /// rides the *same* `animal:pen` rung as the pen it widens, so its cost cannot drift from the
+    /// initial build's.
     pub pen_extend_progress: f32,
     /// **What the in-flight fence ring costs, in work units** — the `animal:pen` rung's own
     /// `work_cost`, stamped when the ring is worked. Reset with the meter when a ring completes.
@@ -1138,9 +1141,11 @@ impl Herd {
     }
 
     /// Accrue one turn of pen-**extension** progress (2d-β), the twin of [`accrue_corral`] on an
-    /// already-penned herd: while `pen_extending`, add `amount` to `pen_extend_progress`; at `1.0` the
-    /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
-    /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
+    /// already-penned herd: while `pen_extending`, add `amount` (**work units**) to
+    /// `pen_extend_progress` and **stamp `cost` into [`Self::pen_extend_cost`]**, so the meter always
+    /// ships with the denominator it completes against; at `cost` the ring completes — `pen_radius +=
+    /// 1` (saturating at `radius_max`), both meter and cost reset and the extending state clears.
+    /// Returns `true` on the completion turn so the caller can announce it.
     /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
     pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
         if !self.pen_extending {

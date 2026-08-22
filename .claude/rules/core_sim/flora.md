@@ -233,9 +233,22 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   a rollback rewinds *which crop* a farm is, not just how far along it is. **On the wire** (append-only,
   `ForagePatchState.committedSpecies` / `committedDisplayName`, slots 48/50 — strictly after
   `composition`'s 46): the key plus a server-resolved display name, because the client holds no
-  roster. `""` means **the wild mixed basket**, not "unknown". Note the pair is *recorded before it
-  takes effect* — a patch still being prepared names its crop while still reading full `K` and the
-  wild rate.
+  roster. `""` means **the wild mixed basket**, not "unknown". The pair is *recorded before it has fully taken
+  effect*: a patch still being prepared names its crop while its mix and its rate are only part of the
+  way there (see "THE MIX INTERPOLATES TOO" below).
+  > **⛔ THE COMMITMENT ALSO REPAIRS THE CREW'S TAKE SELECTION, and it is the only thing that does.**
+  > `LaborTarget::Forage::take_species` has one other writer (`assign_labor`) and nothing else prunes
+  > it, so a `Cultivate`/`Sow` reweighting the ground left a narrowed crew asking for plants it had
+  > displaced — a selection summing to **zero share**, which is a zero take *ceiling* and therefore
+  > `+0.00 /turn` in food **and** materials at once, with nothing on any readout saying why.
+  > `ForagePatch::commit_species` reports whether *this* call is the commitment, and on that turn
+  > only, `TakeSelection::pruned_for_commitment` drops the names no longer standing in
+  > `patch_composition` and **adds the crop**. **It prunes, never overwrites**: a `planted` basket
+  > keeps whatever stands outside the worked ground, so a sown tile with a fishery still has fish in
+  > it and a blanket reset would re-tick plants the player deliberately unticked. Nothing surviving
+  > the prune falls back to the whole basket rather than to the crop alone. Repeating the prune every
+  > turn would go on deleting names as the mix faded under them, which is why the edge is reported
+  > from the mutator rather than re-derived at the call site.
 - **The selection rides the labor assignment** — `LaborTarget::Forage { tile, floor, species }`,
   beside the floor and for the same reason (a mutable property of the same source). It crosses the
   wire as `AssignLaborCommand.species` (proto field 9, append-only) and the text form
@@ -310,6 +323,44 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   comparing a food rate against a fodder rate against a material's characteristic vector — exchange
   rates this codebase does not have — and `hay_grass` (0 food, 0.2 fodder) has no non-arbitrary rank
   against a grain at all.
+
+#### THE MIX INTERPOLATES TOO — a part-built rung is part-weeded ground
+
+`forage::patch_composition` blends the **held** rung's basket with the **raising** rung's, per
+species, at `RungStanding::credit` — `intensification::interpolate_composition`, the vector twin of
+`intensification::interpolate`. A Sow 40% raised gives the crop 40% of the share it will end with and
+leaves the volunteers 60% of theirs. Both plant rungs are `Continuous`, so Cultivate is as gradual as
+Sow.
+
+- **`RungPartialCredit` is honoured by reading `credit`, and by nothing else.** `RungStanding::at`
+  already pins an `on_completion` rung to `NO_RUNG_CREDIT`, so `animal:pen`'s all-or-nothing mix is
+  free here and no call site tests the mode.
+- **⛔ THE BLEND IS RE-SORTED into the wire's total order** (`flora_config::sort_basket`, share DESC
+  then key ASC — the one definition, shared by the affinity blend, the per-tile realization and both
+  reweights). It is not presentation: `forage::default_species_for_rung` reads a basket's **first**
+  entry as its dominant plant without a second sort, so an unsorted blend would silently change which
+  plant a commitment falls to. The shares still sum to `WHOLE_BASKET`, exactly, because the blend is
+  linear in two baskets that each do.
+- **A member blended away to nothing is dropped** on `NO_SHARE`, the same bar `resolve_take_selection`
+  and `species_stands_in` use for *"is this plant standing here"*.
+- **The material account rides the same mix** (`patch_material_yields`), so a half-sown field's fibre
+  row fades with the plant that pays it. What is still not blendable is a material's **characteristic
+  vector**, which is why that account is decomposed per species instead of averaged.
+
+> **⛔ THIS OVERTURNED AN EXPLICIT EARLIER RULING, and the reasoning matters.** `patch_composition`
+> used to resolve at `standing.held` under a note saying a basket *"is the one thing that cannot be
+> interpolated"* — mixing two baskets would invent shares of plants that are not growing there — with
+> the *rates* carrying the smoothing. Both halves were wrong for this pair. `planted` is a
+> reweighting of `weeded`, which is a reweighting of the tile's own realized mix, so every species in
+> the later basket is already in the earlier one: a blend raises the favored share, lowers the others,
+> and names no new plant. And the rates it delegated to **do not move across a Sow** —
+> `tended_conversion_gain` and `field_conversion_gain` are both `2.0` by design, and
+> `field_capacity_gain` / `field_regrowth_gain` land on the take *ceiling*, which sits above the
+> worker cap on any normally-staffed row. Every smoothed term was inert and the one term that decides
+> what the ground pays was the one that cliffed: reported from play as a tile committed to **tobacco**
+> (0 food, 0 fodder) paying `+0.35 food · +0.07 fibre` one turn and `+0.00` with no material clause
+> the next — the turn its Sow completed. `docs/plan_standing_upkeep.md` §4.10 carries the full record.
+
 - **Conversion — a share-weighted average of the patch's own basket, at EVERY rung.**
   `forage::patch_provisions_per_biomass` and its fodder twin are `Σ share × the member's yield
   component` over `patch_composition`, so *what is growing there* finally decides what the tile pays.
@@ -329,8 +380,11 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
 - **EACH RUNG'S PAYOFF PROJECTS TO ITS OWN RUNG — never to the rung the patch happens to stand on.**
   `forage::composition_for_rung(patch, tile_composition, forage, rung)` is the one seam, and
   `favored_conversion_gain` is keyed on the *same* `rung`, so the basket and the gain that multiplies
-  it can never come from different rungs. `patch_composition` is then just
-  `composition_for_rung(.., standing_rung(patch))`. **The bug this shape exists to prevent, caught in
+  it can never come from different rungs. `patch_composition` is then the same seam
+  **interpolated across the rung being raised** rather than read at one rung —
+  `intensification::interpolate_composition(&patch.standing(), |rung| composition_for_rung(.., rung))`.
+  `composition_for_rung` itself is unchanged, because a per-rung *quote* wants exactly the rung it
+  asked about. **The bug this shape exists to prevent, caught in
   the #433 slice itself:** `patch_species_quality` keyed off the patch's own meter, so
   `snapshot_forage_patches` — which publishes `fieldYield` for *every* patch, tended ones included —
   quoted a Sow on a tended patch against the **weeded** basket *with rung 2's conversion gain in it*,
@@ -497,13 +551,19 @@ becomes a real decision beside **how hard do I press** (the harvest floor).
   ~50%-of-runs `deterministic_snapshots_match` flake — see the share-denominator note in the
   `flora_config.json` row above. Sorting the *output* is not the fix; not being able to hold an
   unsorted one is.
-- **Legality is judged against THIS TILE's basket** (`forage::resolve_take_selection`, the take-side
-  twin of `resolve_committed_species`) — through `tile_flora_composition`, never
-  `FloraConfig::composition` on a raw terrain, so a navigable hex is judged on the two-term basket it
-  actually has. The refusals reuse `SpeciesRefusal` (`unknown_species` / `species_not_here`); no new
-  variant was needed. **There is no rung gate**: a selection says what the crew carries home from the
-  stand that is standing, so a `wild`-ceiling plant is a perfectly good answer where naming it as a
-  *crop* would be `CeilingTooLow`.
+- **Legality is judged against THE MIX THE TAKE WILL NARROW** (`forage::resolve_take_selection`, the
+  take-side twin of `resolve_committed_species`) — `patch_composition` where a patch stands, falling
+  back to `tile_flora_composition` where none does, never `FloraConfig::composition` on a raw terrain,
+  so a navigable hex is judged on the two-term basket it actually has. The refusals reuse
+  `SpeciesRefusal` (`unknown_species` / `species_not_here`); no new variant was needed. **There is no
+  rung *asked* in it**: a selection says what the crew carries home from the stand that is standing, so
+  a `wild`-ceiling plant is a perfectly good answer where naming it as a *crop* would be
+  `CeilingTooLow` — but on a tended or sown patch the stand that is standing is the reweighted one.
+  > **⛔ IT USED TO JUDGE THE WILD REALIZATION WHILE THE TAKE NARROWED THE REWEIGHTED MIX**, and the
+  > two differ on every committed patch. So the boundary accepted — freshly typed, no staleness
+  > involved — a selection the very next turn's take valued at exactly zero. Pinned by
+  > `server::tests::assign_labor_judges_a_take_selection_against_the_patchs_own_mix`. The commit-side
+  > half of the same defect is the take-selection prune under "Committing a patch to one plant".
   > **It fails closed at the command**, exactly as `floor_is_valid` does, and that is the whole reason
   > it is validated at all: a silently dropped selection produces the identical take, crew count and
   > row that *"take everything"* produces, so the mistake would be undiagnosable from any readout the

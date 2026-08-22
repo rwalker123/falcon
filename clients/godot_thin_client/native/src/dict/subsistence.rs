@@ -5,6 +5,12 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
+/// **The wire's "this crop cannot be sown here"** for `FloraShareInfo.sowWorkCost` — a Sow price is
+/// never legitimately `0` (the sim's multiplier is floored, because laying the rows and putting the
+/// seed in costs work on any ground), so the schema default reads as *no figure* and the key is
+/// simply not inserted.
+const NO_SOW_WORK_COST: f32 = 0.0;
+
 /// The `regrowthSamples` vector both source tables publish, as the packed float array GDScript
 /// interpolates over. **An ABSENT vector stays EMPTY** rather than becoming a run of zeros:
 /// "published no curve" and "does not grow" are different claims, and only the first may leave the
@@ -252,6 +258,16 @@ pub(crate) fn herds_to_array(
         // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
         // sooner estimate wins, and all three come from that band, so the three are read as one set.
         let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
+        // **WHAT THIS HERD'S BUILD IS BEING RAISED WITH** — the kit id the winning band's queue
+        // entry RESOLVES to, `""` when no band has it queued
+        // (`docs/plan_standing_upkeep.md` §4.7a ②). It states the RESOLVED kit, never *"the player
+        // named none"*: the builders' default is derived per entry from that entry's own food web,
+        // so an entry naming nothing would otherwise read empty while the pool was out with hurdles.
+        // The `(default)` mark beside it is the client's own — `KitRoster.build_kit_for_branch`
+        // mirrors the same roster derivation, exactly as the hunt row's per-quarry default works.
+        if let Some(build_kit_id) = herd.buildKitId() {
+            let _ = dict.insert("build_kit_id", build_kit_id);
+        }
         // **WHY THAT QUEUE IS BLOCKED HERE** — `""` whenever this herd is not a blocked build, else a
         // short lowercase cause key (`escapement`, `knowledge`, `rung_below`, `species_ceiling`,
         // `owned_by_other`, `ring_idle`, `undeclared`, `unworked`; the `.fbs` comment on
@@ -415,13 +431,20 @@ pub(crate) fn herds_to_array(
         //   `pen_pasture_fraction` = the share of the pen's feed its footprint covered (0..1); with
         //                            `pen_upkeep` (the OFFSET larder bill) this drives the "Fed by pasture
         //                            NN% · larder N.N food/turn" split in the herd drawer.
-        //   `pen_extend_progress`  = the in-flight fence ring's build meter (0..1) for a "Fencing N%" badge.
+        //   `pen_extend_progress`  = the in-flight fence ring's build meter, in WORK UNITS (the same
+        //                            unit-costed meter `tame_work_done`/`corral_work_done` carry, NOT a
+        //                            0..1 fraction), and
+        //   `pen_extend_cost`      = the work that ring completes at. A "Fencing N%" badge is the
+        //                            QUOTIENT of the two; both read 0 with no ring in flight (and on the
+        //                            turn one is begun, before the sim stamps the cost), so the zero
+        //                            denominator must be guarded — 0/0 is "no ring", not "0%".
         // Read by Hud's herd drawer (feed-split + footprint rows, Extend affordance) and MapView's pen
         // footprint highlight.
         let _ = dict.insert("pen_radius", herd.penRadius() as i64);
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
+        let _ = dict.insert("pen_extend_cost", herd.penExtendCost());
         // `fodder_draw` = the hay this pen drew from its keeper's fodder store last turn (Flora roster
         // F3). NOTE THE UNITS: this is in FODDER units (`fodder_per_biomass × biomass` scale, ~25× the
         // food-unit scale for deer), NOT food-equivalent — so it CANNOT sit in the feed-split row beside
@@ -775,6 +798,12 @@ pub(crate) fn forage_patches_to_array(
         // there for why the countdown beside it is a CHAINED date and why the three build fields are
         // read as one set off one winning band.
         let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
+        // The plant twin of the herd row's — the RESOLVED builders kit of the winning band's queue
+        // entry, `""` when nobody has it queued. See there for why the wire states the resolved kit
+        // and why the `(default)` mark is the client's own derivation.
+        if let Some(build_kit_id) = patch.buildKitId() {
+            let _ = dict.insert("build_kit_id", build_kit_id);
+        }
         // The plant twin of the herd row's blocked CAUSE — `""` when this patch is not a blocked
         // build, else the key naming the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
         // `site`, `owned_by_other`, `undeclared`, `unworked`). See the herd block for why it is read
@@ -962,6 +991,26 @@ pub(crate) fn forage_patches_to_array(
                     "cultivate_material_payoff",
                     &material_payoffs_to_array(share.cultivateMaterialPayoff()),
                 );
+                // WHAT SOWING THIS CROP WOULD COST, in work units (§4.15) — the COST half of the
+                // crop decision, and the only figure on this entry that is not a payoff. A Sow is
+                // priced by how much of the tile the chosen crop still has to replace, and the
+                // patch's own `field_work_cost` prices exactly ONE crop (its commitment, or the
+                // rung's auto-pick) — so a crop picker showed the same work figure against every
+                // row while the payoffs beside them moved. This one moves with the crop.
+                //
+                // Same units as the patch's `field_work_cost`, and for the crop the patch is
+                // ACTUALLY committed to it is the identical number: both come out of one sim-side
+                // expression. Compare them, never re-derive one from the other.
+                //
+                // **ABSENT MEANS NO FIGURE, NEVER A FREE SOW** — the key is only inserted when the
+                // plant can climb to a Field on this ground, the `role` convention rather than the
+                // `sow_material_payoff` one, because a `0` work cost is not a readable answer: a
+                // real price is floored at `field_share_cost_floor` since laying the rows and
+                // putting the seed in costs work even on ground already wholly the crop. Render no
+                // row where the key is missing.
+                if share.sowWorkCost() > NO_SOW_WORK_COST {
+                    let _ = share_dict.insert("sow_work_cost", share.sowWorkCost());
+                }
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

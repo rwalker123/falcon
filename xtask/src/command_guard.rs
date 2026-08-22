@@ -200,6 +200,18 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         // report PASS for exactly the regression it exists to catch.
         let sent = match band_handle(&payload) {
             BandHandle::Named(id) => id,
+            // **A SOURCE-ADDRESSED VERB NAMES NO BAND, AND THAT IS CORRECT** — `build_kit` sets a
+            // property of a queue ENTRY, which every band holding that source holds. The handle
+            // assertion has nothing to check, so it is skipped; the KIT assertion below is not, and
+            // for this verb it is the whole point. **The exemption is keyed on the parsed VARIANT,
+            // never on the Godot half's own label**, so a band-addressed command cannot be opted out
+            // of the handle check by being relabelled.
+            BandHandle::SourceAddressed => {
+                if let Some(failure) = kit_failure(&label, &line, &payload, &expected_kit) {
+                    failures.push(failure);
+                }
+                continue;
+            }
             BandHandle::Omitted => {
                 failures.push(format!(
                     "{label}: emitted a band-addressed command with NO band handle. The server \
@@ -327,6 +339,11 @@ enum BandHandle {
     Omitted,
     /// A variant that names no band at all.
     NotBandAddressed,
+    /// A variant that addresses a SOURCE rather than a band, deliberately — `build_kit`, whose
+    /// subject is one queue entry and which therefore reaches every band holding that source. It is
+    /// its own outcome rather than [`Self::NotBandAddressed`] so that *"this verb has no band"* stays
+    /// a stated fact about one variant instead of a hole any un-listed command falls through.
+    SourceAddressed,
 }
 
 /// The band handle a payload names, whatever the variant calls it.
@@ -353,6 +370,12 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),
+        // **THE QUEUE BELONGS TO A BAND, so its reorder names one** — and its handle is REQUIRED
+        // rather than optional, which is why it is wrapped here (`docs/plan_standing_upkeep.md`
+        // §4.7b ③).
+        CommandPayload::BuildOrder { band_id, .. } => Some(*band_id),
+        // …while the per-entry kit names a SOURCE and no band at all (§4.7a ②).
+        CommandPayload::BuildKit { .. } => return BandHandle::SourceAddressed,
         _ => return BandHandle::NotBandAddressed,
     };
     match optional {
@@ -384,6 +407,7 @@ enum KitToken {
 fn kit_token(payload: &CommandPayload) -> KitToken {
     let optional = match payload {
         CommandPayload::AssignLabor { kit_id, .. }
+        | CommandPayload::BuildKit { kit_id, .. }
         | CommandPayload::SendDenialRaid { kit_id, .. }
         | CommandPayload::SendHuntExpedition { kit_id, .. }
         | CommandPayload::SendTradeExpedition { kit_id, .. } => kit_id.clone(),

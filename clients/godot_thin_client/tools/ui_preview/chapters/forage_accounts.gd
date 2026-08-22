@@ -688,6 +688,77 @@ func _no_food_basket_tile_fixture() -> Dictionary:
 	]
 	return tile
 
+## **THE COMPLETED CASH-CROP FIELD FROM THE 2026-08-22 REPORT — a 100% tobacco Field with two tenders
+## on it, reading `TENDERS 0` and `max 0 workers useful here`.**
+##
+## It is the same basket one rung up: the wire's `is_field`, a commitment to the crop, and a
+## composition the Sow has narrowed to that one plant. Every account rate is the no-food basket's, so
+## the FOOD term is a structural zero and the tobacco is the only thing this ground pays.
+##
+## **THE PATCH IS DRAWN DOWN LIKE ANY OTHER STAND, which is what the client had stopped believing.**
+## `forage.rs`'s retired rung-3 managed harvest says so in as many words — *"A Field is now foraged
+## through the ordinary `forage_take` path exactly as a tended patch and a wild stand are"* — so the
+## fixture states a real stock above a real floor and expects an escapement composition, not a payoff
+## figure.
+func _cash_crop_field_tile_fixture() -> Dictionary:
+	var tile := _no_food_basket_tile_fixture()
+	tile["x"] = 64
+	tile["y"] = 11
+	tile["patch_is_field"] = true
+	tile["patch_is_cultivated"] = true
+	tile["patch_committed_species"] = FIELD_CROP_SPECIES
+	tile["patch_committed_display_name"] = FIELD_CROP_NAME
+	# **BOTH METERS ARE FULL, and that is the frame rather than tidiness.** The chapter's base tile
+	# carries a part-built Cultivate, and `build_verb` reads a meter — so a Field inheriting one reads
+	# as a patch still being tended, which is a different state with a different readout. This frame is
+	# the rung DONE.
+	tile["patch_cultivation_progress"] = 1.0
+	tile["patch_field_progress"] = 1.0
+	tile["patch_cultivation_work_done"] = float(tile.get("patch_cultivation_work_cost", 0.0))
+	tile["patch_field_work_done"] = float(tile.get("patch_field_work_cost", 0.0))
+	# **A SOWN FIELD IS 100% ITS CROP** (#433), so the basket narrows with the commitment and the
+	# fodder the wild meadow paid goes with the hay grass that paid it.
+	tile["patch_fodder_per_biomass"] = 0.0
+	tile["patch_material_per_biomass"] = [
+		{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": NO_FOOD_BASKET_TOBACCO_PER_BIOMASS}]
+	tile["patch_per_worker_material"] = [{"material_id": NO_FOOD_BASKET_TOBACCO_ID,
+		"amount": NO_FOOD_BASKET_CARRY * NO_FOOD_BASKET_TOBACCO_PER_BIOMASS}]
+	tile["patch_composition"] = [
+		{"species": FIELD_CROP_SPECIES, "role": "cash", "display_name": FIELD_CROP_NAME,
+			"share": 1.0, "can_cultivate": true, "can_sow": true,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_material_payoff": [
+				{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": 0.31}],
+			"sow_material_payoff": [{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": 0.78}]},
+	]
+	return tile
+
+## The crop the Field is committed to, and the crew standing on it. **TWO, not one**: the reported
+## defect staged the cap at `0`, and a floor asserted against a crew of one cannot tell a cap that
+## reaches the standing crew from `MAX_USEFUL_BARREN`'s own one worker.
+const FIELD_CROP_SPECIES := "tobacco"
+const FIELD_CROP_NAME := "Tobacco"
+const FIELD_TENDERS := 2
+
+## …and the band working it, with no hands to spare. The pool the stepper is capped against is
+## `idle + this source's own crew`, so a band with idle workers would let a labor-bound cap stand in
+## for the usefulness one and the claim would be about the wrong ceiling.
+func _cash_crop_field_band_fixture() -> Dictionary:
+	var tile := _cash_crop_field_tile_fixture()
+	var band: Dictionary = BandFx.forage_range_bands()[0]
+	band["working_age"] = FIELD_TENDERS
+	band["idle_workers"] = 0
+	band["labor_assignments"] = [{
+		"kind": "forage", "workers": FIELD_TENDERS,
+		"target_x": int(tile["x"]), "target_y": int(tile["y"]),
+		"floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"improvement": "", "species": FIELD_CROP_SPECIES,
+		"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+		"overdraws": false,
+	}]
+	return band
+
 ## **A DESCRIBED PATCH THAT PAYS NOTHING — the state issue #426 is named after.** Deep winter on the
 ## same meadow: the wire carries a full per-policy row for every rung and every cell in it is zero.
 ##
@@ -1912,6 +1983,89 @@ func run(harness) -> void:
 	Q.find_crew_target(no_food_sheet, HudWidgets.CREW_TARGET_CLEAR).pressed.emit()
 	h._assert_hud("…so pressing *clear it now* lands the stepper on the crew it names",
 		h._hud._compose.forage_count() == no_food_clear)
+
+	# State forage_cash_crop_field — **THE SAME BASKET ONE RUNG UP, and the reported 2026-08-22
+	# defect.** A completed 100%-tobacco Field with TWO tenders committed read `TENDERS 0` and
+	# `max 0 workers useful here — more would be idle`, beside a tile card and a Work board both
+	# stating the two.
+	#
+	# **THE CHAIN, and every link is client-side.** `FORECAST_MANAGED_FLAG_KEYS` still carried
+	# `is_field`, so a Field took `forecast_inputs`' MANAGED branch — whose material ceiling comes from
+	# `FORECAST_PAYOFF_MATERIAL_KEYS`, which has no plant entry by design — so the ceiling was
+	# structurally `[]`; `off_axis_useful_workers` divided a `0` room by a live tobacco rate and
+	# answered `0`, while `hold_crew`/`reach_crew` returned `0` for a "managed" source and §7.2's crew
+	# floors could not rescue it. The plant web's managed rung is retired sim-side
+	# (`forage.rs`, "RETIRED: the whole rung-3 MANAGED HARVEST"), and the client now follows.
+	#
+	# ⛔ **THE DANGEROUS HALF IS THE STAGED COUNT, NOT THE NOTE.** The cap clamps
+	# `ComposeState.clamp_forage_count`, so the sheet staged `0` while two tenders were committed —
+	# and confirming it sends `assign_labor` with `0`, silently dropping both, from a panel that never
+	# showed the player a `2`.
+	var field_tile := _cash_crop_field_tile_fixture()
+	var prior_field_band = h._hud._band_labor.player_band()
+	var prior_field_bands = h._hud._band_labor._player_bands
+	h._hud._band_labor._player_band = _cash_crop_field_band_fixture()
+	h._hud._band_labor._player_bands = [h._hud._band_labor.player_band()]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(field_tile)
+	h._compose_forage(field_tile)
+	await h._settle()
+	await h._save("forage_cash_crop_field")
+	h._assert_compose_sheet_fits("forage_cash_crop_field")
+	var field_sheet = h._hud._drawercompose._compose_sheet
+	var field_forecast := SourceForecast.forecast_inputs(
+		ForageFx.floorify(field_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK)
+	# (0) **THE FIXTURE REALLY IS THE REGIME**: a BUILT Field, paying no food and a live material rate.
+	# Without this the claims below are about an ordinary wild patch, which never had the defect.
+	h._assert_hud("the fixture is a built Field that pays no food and does pay a material",
+		bool(field_tile["patch_is_field"])
+			and float(field_forecast["per_worker"]) == 0.0
+			and not (field_forecast[SourceForecast.FORECAST_PER_WORKER_MATERIAL_KEY]
+				as Array).is_empty())
+	# (1) **THE MECHANISM**: the material ceiling is composed rather than structurally empty. Asserted
+	# on the ROOM because that is the term the divide answered `0` on — a cap assertion alone passes
+	# on a client that floors the cap and still has no ceiling.
+	h._assert_hud("a Field composes a material ceiling from its own stand, not an empty payoff vector",
+		not (field_forecast["material_ceiling"] as Array).is_empty())
+	# (2) …so the cap is a real ceiling rather than the reported zero, AND it is not the barren one —
+	# `MAX_USEFUL_BARREN` is what a source that pays nothing at all answers, and this one pays tobacco.
+	var field_cap := SourceForecast.max_useful_workers(field_forecast)
+	h._assert_hud("a Field paying 1 material/worker reports a real ceiling (cap %d)" % field_cap,
+		field_cap > SourceForecast.MAX_USEFUL_BARREN)
+	# (3) ⛔ **AND THE STAGED COUNT NEVER FALLS BELOW THE COMMITTED ONE** — the assertion the silent
+	# drop needs, and the one thing a frame of this sheet cannot show, a `TENDERS 0` stepper being a
+	# perfectly ordinary control. Read off the compose model the COMMIT sends rather than off the
+	# arithmetic above it, because `clamp_forage_count` sits between the two and is where the drop
+	# happened. **It is an assertion rather than a runtime clamp on purpose** — see
+	# `DrawerComposeController._forecast_worker_cap`, which records the floor that was tried here and
+	# the legitimate cap-fall it broke.
+	h._assert_hud("the sheet stages at least the %d tenders already committed (staged %d)"
+		% [FIELD_TENDERS, h._hud._compose.forage_count()],
+		h._hud._compose.forage_count() >= FIELD_TENDERS)
+	# (4) **THE SCOPE, and it is what stops (3) reading as *never cap anything*.** The claim is made
+	# of a source that PAYS — `pays_any_account`, the predicate it is worded in terms of — and the
+	# pairing is a patch that pays into nothing at all, which must still cap at one worker however
+	# many hands are standing on it.
+	h._assert_hud("…and this Field is a source that pays into some account, which is the claim's scope",
+		SourceForecast.pays_any_account(field_forecast))
+	var dead_forecast := SourceForecast.forecast_inputs(
+		ForageFx.floorify(_dead_season_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK)
+	h._assert_hud("…while a patch that pays into no account at all is still capped at one worker",
+		not SourceForecast.pays_any_account(dead_forecast)
+			and SourceForecast.max_useful_workers(dead_forecast)
+				== SourceForecast.MAX_USEFUL_BARREN)
+	# (5) …and the sheet quotes the tobacco those tenders bring home, so the cap was widened rather
+	# than the readout silenced.
+	h._assert_hud("…and the Field's readout names the tobacco it pays",
+		Readout.yields_account_number(field_sheet, NO_FOOD_BASKET_TOBACCO_ID)
+			!= Readout.YIELDS_ACCOUNT_ABSENT)
+	h._hud._band_labor._player_band = prior_field_band
+	h._hud._band_labor._player_bands = prior_field_bands
+
 	# Hand the chapter's subject back, so the states after this one open on the tile they were written
 	# against rather than on a patch nobody after them works.
 	h._hud._compose.reset_forage_source()

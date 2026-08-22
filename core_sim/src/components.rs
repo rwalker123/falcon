@@ -1617,6 +1617,43 @@ impl TakeSelection {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.species.iter().map(String::as_str)
     }
+
+    /// **THE SELECTION A NEW COMMITMENT LEAVES THIS CREW** — the one repair path for a stale
+    /// selection, and the reason this type needs anything beyond [`Self::from_keys`].
+    ///
+    /// A `Cultivate`/`Sow` reweights the ground out from under whatever the crew named: the crop's
+    /// share climbs and the plants it displaces fall away. Nothing pruned this, so a crew that had
+    /// named those plants went on asking for a share that had gone to zero — and a zero share is a
+    /// zero take ceiling, in **every** account at once: food, fodder and materials alike. That is a
+    /// tile paying `+0.00 /turn` with a full crew on it and no readout saying why.
+    ///
+    /// - `stands` — is this species still in the patch's mix? Passed as a predicate so this type
+    ///   stays free of the plant web's basket (`forage::patch_composition` is the caller's).
+    /// - `crop` — the plant just committed to, **added**, because it is what the ground is becoming.
+    ///
+    /// **It prunes; it does not overwrite.** A `planted` basket keeps whatever stands outside the
+    /// worked ground (a kelp bed, a river's fish), so a sown tile with a fishery still has fish in
+    /// it — and blanket-resetting to the whole basket would start carrying home the very plants a
+    /// player had deliberately unticked, overriding a stated preference in the other direction.
+    ///
+    /// **Nothing surviving the prune falls back to the whole basket** ([`Self::EVERYTHING`]) rather
+    /// than to the crop alone: the player's stated preference is entirely gone, and inventing a
+    /// narrower one for them out of the commitment is a decision this seam has no standing to make.
+    ///
+    /// The whole basket prunes to itself — it names no plant to go stale.
+    pub fn pruned_for_commitment<F>(&self, stands: F, crop: &str) -> Self
+    where
+        F: Fn(&str) -> bool,
+    {
+        if self.is_everything() {
+            return Self::EVERYTHING;
+        }
+        let surviving: Vec<&str> = self.keys().filter(|species| stands(species)).collect();
+        if surviving.is_empty() {
+            return Self::EVERYTHING;
+        }
+        Self::from_keys(surviving.into_iter().chain(std::iter::once(crop)))
+    }
 }
 
 /// A single labor demand a band can staff from its working-age pool (Early-Game Labor, slice 3a):
@@ -3005,12 +3042,24 @@ impl BuildJob {
     }
 }
 
-/// One declared build: which source, and **where the player said the land should end up**
-/// ([`BuildJob::destination`]).
+/// One declared build: which source, **where the player said the land should end up**
+/// ([`BuildJob::destination`]), and **what this job is raised with** ([`Self::kit`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,
     pub declared: BuildJob,
+    /// **The kit the player NAMED for THIS job, or `None` for "whatever this entry's web wants"** —
+    /// the same distinction [`LaborAllocation::named_kit_on`] draws for a singleton role, moved to
+    /// the one place the builders' default actually varies (`docs/plan_standing_upkeep.md` §4.7a ②).
+    ///
+    /// A single stored id per **band** cannot be right for both food webs — a hoe for a Cultivate,
+    /// hurdles for a `Tame` — so the derivation is per **entry**, and `None` is what leaves it
+    /// reachable. An absent choice already means *"the job's default"* everywhere else; this is what
+    /// lets that default vary per job.
+    ///
+    /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
+    /// sending the builders out bare-handed on one job to conserve gear.
+    pub kit: Option<crate::equipment_config::KitChoice>,
 }
 
 impl LaborAllocation {
@@ -3085,14 +3134,18 @@ impl LaborAllocation {
     }
 
     /// **The kit the player NAMED on a singleton role, or `None` for "whatever the job wants"** —
-    /// [`Self::kit_on`]'s other half, and the distinction the builders' per-entry derivation turns
-    /// on (`docs/plan_standing_upkeep.md` §2.5).
+    /// [`Self::kit_on`]'s other half, and the distinction the two **keeping** pools' per-web
+    /// derivation turns on (`docs/plan_standing_upkeep.md` §4.8).
     ///
     /// `kit_on` collapses *"the player chose `none`"* and *"the player chose nothing"* into one
-    /// answer, which is right for every role whose default is a single id. The builders' default is
-    /// **per queue entry** — a hoe for a Cultivate, hurdles for a `Tame` — so the pool needs to know
-    /// whether the row carries a real selection to override that derivation with. An absent choice
-    /// already means *"the job's default"* everywhere else; this is what lets that default vary.
+    /// answer, which is right for every role whose default is a single id. A keeping role's default
+    /// is the **roster's** answer for its web, so the pool needs to know whether the row carries a
+    /// real selection to override that derivation with. An absent choice already means *"the job's
+    /// default"* everywhere else; this is what lets that default be derived.
+    ///
+    /// ⛔ **The `builders` row is NOT one of these.** Its kit is per **queue entry**
+    /// ([`BuildQueueEntry::kit`]), because one stored id per band cannot be right for both webs —
+    /// see [`Self::builders_kit`].
     ///
     /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
     /// sending the builders out bare-handed to conserve gear.
@@ -3114,19 +3167,25 @@ impl LaborAllocation {
     }
 
     /// **The kit this band's builders are working with**, resolved through the one seam
-    /// ([`crate::equipment_config::EquipmentConfig::builders_kit_for`]) — the row's own choice, else
-    /// the kit the roster says the **head entry's** web wants, else the job default.
+    /// ([`crate::equipment_config::EquipmentConfig::builders_kit_for`]) — the **head entry's** own
+    /// choice, else the kit the roster says that entry's web wants, else the job default.
     ///
-    /// **The wire states this rather than the row's stored id**, on `kit_id`'s existing rule (*"the
-    /// wire states the kit rather than 'the player named none'"*): the builders' default is per
-    /// entry, so a row that named nothing would otherwise publish `none` while the pool was out with
+    /// **It reads the ENTRY, never the `builders` row.** The whole pool goes on the head, so *"what
+    /// are the builders holding"* is a question about the job they are standing on; a kit stored on
+    /// the row would be one per **band** and would pin the animal web's tool onto a plant build with
+    /// no way back (`docs/plan_standing_upkeep.md` §4.7a ②).
+    ///
+    /// **The wire states this rather than a stored id**, on `kit_id`'s existing rule (*"the wire
+    /// states the kit rather than 'the player named none'"*): the builders' default is per entry, so
+    /// an entry that named nothing would otherwise publish `none` while the pool was out with
     /// hurdles.
     pub fn builders_kit(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
     ) -> crate::equipment_config::KitChoice {
+        let head = self.build_queue.first();
         config.builders_kit_for(
-            self.named_kit_on(&LaborTarget::Builders).as_ref(),
+            head.and_then(|entry| entry.kit.as_ref()),
             self.head_build_branch(),
         )
     }
@@ -3272,6 +3331,11 @@ impl LaborAllocation {
     /// correction, and costing the player their position for it would make the queue punish the
     /// thing it exists to let them steer.
     ///
+    /// **AND IT KEEPS THE ENTRY'S KIT**, for the same reason it keeps its place: re-declaring is a
+    /// correction to *what* is being raised, and silently clearing the tool the player picked for
+    /// that job is the same loss as sending it to the back of the line. A new entry starts with
+    /// `kit: None`, i.e. on its own web's derivation.
+    ///
     /// # AN ENTRY REQUIRES A ROW
     ///
     /// The row is the band's *holding* of the source; an entry against ground the band does not work
@@ -3287,8 +3351,38 @@ impl LaborAllocation {
             .find(|entry| entry.source == source)
         {
             Some(entry) => entry.declared = declared,
-            None => self.build_queue.push(BuildQueueEntry { source, declared }),
+            None => self.build_queue.push(BuildQueueEntry {
+                source,
+                declared,
+                kit: None,
+            }),
         }
+        true
+    }
+
+    /// **Name the kit ONE queued job is raised with** — the `build_kit` command's whole effect
+    /// (`docs/plan_standing_upkeep.md` §4.7a ②). Returns whether an entry was there to set it on.
+    ///
+    /// `None` **clears the override** back to the entry's own web derivation, which is the existing
+    /// *"an absent `kitId` means the job's default"* rule and is what lets a client say *"back to
+    /// default"* with no new vocabulary. `Some(<the bare kit>)` is a real selection and stays.
+    ///
+    /// Nothing is invented for a source with no entry: a kit is a property of a declared job, and
+    /// minting an entry here would enrol a build the player never declared — the same refusal
+    /// [`Self::move_build_entry`] makes.
+    pub fn set_build_entry_kit(
+        &mut self,
+        source: &BuildSource,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> bool {
+        let Some(entry) = self
+            .build_queue
+            .iter_mut()
+            .find(|entry| &entry.source == source)
+        else {
+            return false;
+        };
+        entry.kit = kit;
         true
     }
 
@@ -3841,6 +3935,55 @@ impl Default for Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A COMMITMENT PRUNES THE SELECTION AND NAMES THE NEW CROP** — the repair that keeps a crew
+    /// from asking for plants its own `Cultivate`/`Sow` displaced, which is a zero selected share
+    /// and therefore `+0.00` in **every** account at once.
+    ///
+    /// **It prunes; it does not overwrite.** The fishery a `planted` basket keeps standing is not
+    /// re-ticked for a player who unticked it, and the food plant that survives the reweight stays
+    /// named.
+    #[test]
+    fn a_commitment_prunes_the_stale_names_and_adds_the_crop() {
+        let standing = ["emmer", "kelp"];
+        let stands = |species: &str| standing.contains(&species);
+
+        let selection = TakeSelection::from_keys(["emmer", "cotton"]);
+        let pruned = selection.pruned_for_commitment(stands, "emmer");
+        assert_eq!(
+            pruned.keys().collect::<Vec<_>>(),
+            vec!["emmer"],
+            "cotton is gone from the ground, so it goes from the selection"
+        );
+
+        let with_new_crop =
+            TakeSelection::from_keys(["kelp"]).pruned_for_commitment(stands, "emmer");
+        assert_eq!(
+            with_new_crop.keys().collect::<Vec<_>>(),
+            vec!["emmer", "kelp"],
+            "the crop joins what the crew already carries; the fishery is not un-ticked for them"
+        );
+    }
+
+    /// **NOTHING SURVIVING THE PRUNE FALLS BACK TO THE WHOLE BASKET**, not to the crop alone: the
+    /// player's stated preference is entirely gone, and narrowing it for them out of the commitment
+    /// is a decision this seam has no standing to make. And the whole basket prunes to itself — it
+    /// names no plant to go stale.
+    #[test]
+    fn a_selection_with_nothing_left_standing_falls_back_to_the_whole_basket() {
+        let stands = |species: &str| species == "emmer";
+
+        let stranded =
+            TakeSelection::from_keys(["cotton", "flax"]).pruned_for_commitment(stands, "emmer");
+        assert!(
+            stranded.is_everything(),
+            "a selection with nothing left standing opens back up to the whole basket"
+        );
+
+        assert!(TakeSelection::EVERYTHING
+            .pruned_for_commitment(stands, "emmer")
+            .is_everything());
+    }
 
     /// **The ⚠ predicate is the food peak, stated over the whole legal range** rather than at the
     /// four floors the retired stance axis could reach: a crew that stops at or above the peak

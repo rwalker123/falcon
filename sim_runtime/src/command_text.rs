@@ -160,6 +160,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "build_order <faction_id> <band_id> <x> <y> <position> | build_order <faction_id> <band_id> <herd_id> <position>",
     },
     CommandVerbHelp {
+        verb: "build_kit",
+        aliases: &[],
+        summary: "NAME THE KIT ONE QUEUED BUILD IS RAISED WITH, on every band of the faction that has the source queued. THE BUILDERS' KIT IS PER QUEUE ENTRY, NOT PER BAND: a build's default kit is derived from that entry's own food web - hoes for a Cultivate or Sow, hurdles for a Tame or Corral - so `assign_labor <faction> <band> builders <n>` takes NO `kit` token at all, and this is the only place the derivation is overridden. OMIT the `kit` token to CLEAR the override back to that derivation; name `none` to send the pool out bare-handed on this job alone, which is a real selection and not the same statement. A kit the roster does not carry, or one whose `jobs` does not list `builders`, is refused by name. Two integer tokens name a TILE; one token names a HERD id.",
+        usage: "build_kit <faction_id> <x> <y> [kit <kit_id>] | build_kit <faction_id> <herd_id> [kit <kit_id>]",
+    },
+    CommandVerbHelp {
         verb: "upkeep_mode",
         aliases: &[],
         summary: "Say how one band splits its MAINTENANCE POOL when it cannot cover everything it holds. Maintenance is a band-level standing role, not a per-source crew: staff it with `assign_labor <faction> <band> agriculture <n>` for the plant web and `husbandry <n>` for the animal one, and the band's demand is the SUM over every tended patch, Field, tamed herd and pen it works. When the pool falls short, 'spread' funds every source in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
@@ -828,6 +834,26 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     herd_id: source.herd_id,
                 })
             }
+        }
+        // **The fourth queue verb, and the only one carrying a kit.** The `kit` token is lifted out
+        // of the tail before the source's own shape is read — the same `take_named_token` idiom
+        // `assign_labor` uses — so the two source forms below need no room made for it, and an
+        // ABSENT token is *"clear the override"* rather than a parse error.
+        "build_kit" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let faction_id = parse_u32(faction_str, "build_kit faction")?;
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "build_kit kit id")?;
+            let source = parse_build_source(&tail)?;
+            Ok(CommandPayload::BuildKit {
+                faction_id,
+                target_x: source.target_x,
+                target_y: source.target_y,
+                herd_id: source.herd_id,
+                kit_id,
+            })
         }
         "build_order" => {
             let faction_str = parts
@@ -1616,6 +1642,52 @@ fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParse
 mod tests {
     use super::*;
     use crate::commands::{TradeCargoItem, FOOD_CARGO_KEY};
+
+    /// **`build_kit` READS BOTH SOURCE FORMS AND AN OPTIONAL `kit` TOKEN**, and an absent token is
+    /// *"clear the override"* rather than a parse error.
+    ///
+    /// The absent case is the load-bearing one: `Main._kit_token` omits `kit <id>` whenever the
+    /// selection equals the default, so *"back to default"* has to be a legal line rather than a
+    /// missing-argument failure.
+    #[test]
+    fn parse_build_kit_reads_both_source_forms_and_an_optional_kit() {
+        assert_eq!(
+            parse_command_line("build_kit 0 12 34 kit tillage").unwrap(),
+            CommandPayload::BuildKit {
+                faction_id: 0,
+                target_x: Some(12),
+                target_y: Some(34),
+                herd_id: None,
+                kit_id: Some("tillage".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command_line("build_kit 0 game_deer_07 kit none").unwrap(),
+            CommandPayload::BuildKit {
+                faction_id: 0,
+                target_x: None,
+                target_y: None,
+                herd_id: Some("game_deer_07".to_string()),
+                kit_id: Some("none".to_string()),
+            },
+            "`kit none` is a REAL selection — bare-handed — and must reach the sim as one"
+        );
+        assert_eq!(
+            parse_command_line("build_kit 0 12 34").unwrap(),
+            CommandPayload::BuildKit {
+                faction_id: 0,
+                target_x: Some(12),
+                target_y: Some(34),
+                herd_id: None,
+                kit_id: None,
+            },
+            "an ABSENT `kit` token clears the override back to the entry's own derivation"
+        );
+        assert!(
+            parse_command_line("build_kit 0 12 34 kit").is_err(),
+            "a `kit` token with no id names nothing and must not read as 'clear it'"
+        );
+    }
 
     #[test]
     fn parse_follow_herd_optional_args() {

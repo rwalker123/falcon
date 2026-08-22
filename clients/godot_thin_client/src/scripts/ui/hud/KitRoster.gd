@@ -1445,32 +1445,9 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	# HERD's would have the picker contradict itself on every small-game herd: Trapping selected,
 	# `(default)` printed on Stalking.
 	var effective_default := default_kit_for(job, quarry, default_id)
-	var entries: Array = []
-	# **THE SELECTION IS AN INDEX, because an `OptionButton` marks the current entry itself.** The
-	# roster order IS the list order (this layer sorts nothing), so the index of the resolved kit is
-	# the whole of what the control needs to open on it and to draw its radio dot.
-	var selected_index := HudWidgets.NO_ENTRY_SELECTED
-	for kit_variant in offered:
-		var kit: Dictionary = kit_variant
-		var kit_id := String(kit.get(KIT_ID_KEY, ""))
-		var label := kit_display_name(kit)
-		if kit_id == effective_default:
-			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
-		if kit_id == selected_id:
-			selected_index = entries.size()
-		var offer := kit_offer(kits, kit, job, quarry, prefix)
-		var reason := String(offer[OFFER_REASON_KEY])
-		# The reason rides the ENTRY'S OWN FACE, not only its tooltip: a disabled popup row is the one
-		# control in this HUD a player cannot hover to interrogate on every platform, and a grey row
-		# with no words is the invisibility this test exists to end.
-		if not bool(offer[OFFER_OFFERED_KEY]):
-			label = HudComposeVocab.KIT_WITHHELD_ENTRY_FORMAT % [label, reason]
-		entries.append({
-			"label": label,
-			"disabled": not bool(offer[OFFER_OFFERED_KEY]),
-			"tooltip": reason,
-			"on_pick": func() -> void: on_pick.call(kit_id),
-		})
+	var listing := kit_entries(kits, job, selected_id, effective_default, on_pick, quarry, prefix)
+	var entries: Array = listing[KIT_ENTRIES_KEY]
+	var selected_index := int(listing[KIT_ENTRIES_SELECTED_KEY])
 	# The face carries the JOB GLYPH and no default suffix, which is why it is stated separately from
 	# the list: the glyph says what this crew is walking out to do (one per sheet, so repeating it down
 	# every row would be noise), and `(default)` is a note about an entry rather than about the choice.
@@ -1489,3 +1466,51 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 		hint.set_meta(KIT_HINT_META, true)
 		block.add_child(hint)
 	return block
+
+const KIT_ENTRIES_KEY := "entries"
+const KIT_ENTRIES_SELECTED_KEY := "selected"
+
+## **THE KIT LIST ITSELF — `build_option_picker` entries plus the index to open on**, lifted out of
+## `build_kit_row` so a host that cannot use that row's LAYOUT still gets its SEMANTICS: the roster
+## order, the `(default)` mark, the greying of a kit that cannot change this job's outcome, and the
+## reason on the greyed entry's own face.
+##
+## **ITS SECOND CALLER IS THE BUILD QUEUE ROW'S SETTINGS STRIP** (`docs/plan_standing_upkeep.md`
+## §4.7a ②), which needs a FIXED-HEIGHT control: `build_kit_row` returns a two-child block whose
+## second child (`tier_hint`) appears only sometimes, and this zone reserves its heights before it
+## draws them. Sharing the list rather than the row is what keeps one answer to *which kits, marked
+## how* while the two hosts differ in what they can spend on chrome.
+##
+## `default_id` here is the EFFECTIVE default — already resolved by the caller — because the two hosts
+## resolve it differently: a hunt sheet's is the quarry's, and a queue entry's is the roster's answer
+## for that entry's own food web.
+static func kit_entries(kits: Array, job: String, selected_id: String, default_id: String,
+		on_pick: Callable, quarry: Dictionary = {}, prefix: String = "",
+		build_branch: String = BUILD_BRANCH_NONE) -> Dictionary:
+	var entries: Array = []
+	# **THE SELECTION IS AN INDEX, because an `OptionButton` marks the current entry itself.** The
+	# roster order IS the list order (this layer sorts nothing), so the index of the resolved kit is
+	# the whole of what the control needs to open on it and to draw its radio dot.
+	var selected_index := HudWidgets.NO_ENTRY_SELECTED
+	for kit_variant in kits_for_job(kits, job):
+		var kit: Dictionary = kit_variant
+		var kit_id := String(kit.get(KIT_ID_KEY, ""))
+		var label := kit_display_name(kit)
+		if kit_id == default_id:
+			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
+		if kit_id == selected_id:
+			selected_index = entries.size()
+		var offer := kit_offer(kits, kit, job, quarry, prefix, build_branch)
+		var reason := String(offer[OFFER_REASON_KEY])
+		# The reason rides the ENTRY'S OWN FACE, not only its tooltip: a disabled popup row is the one
+		# control in this HUD a player cannot hover to interrogate on every platform, and a grey row
+		# with no words is the invisibility this test exists to end.
+		if not bool(offer[OFFER_OFFERED_KEY]):
+			label = HudComposeVocab.KIT_WITHHELD_ENTRY_FORMAT % [label, reason]
+		entries.append({
+			"label": label,
+			"disabled": not bool(offer[OFFER_OFFERED_KEY]),
+			"tooltip": reason,
+			"on_pick": func() -> void: on_pick.call(kit_id),
+		})
+	return {KIT_ENTRIES_KEY: entries, KIT_ENTRIES_SELECTED_KEY: selected_index}

@@ -1057,6 +1057,53 @@ loudly refusing its own precondition rather than passing.
 baseline (captured by stashing the change and re-rendering), plus the new
 `band_panel_compose_hunt_empty`.
 
+## The QUEUE's controls, and the two traps they walked into (`docs/plan_standing_upkeep.md` §4.7b)
+
+`_render_queue_control_states` runs inside `_render_build_queue_states`, on the SAME three-entry
+fixture the states above render, because each of its four claims is about the block as drawn rather
+than about a fixture of its own — and the exclusion claim is about two lists at once, which no fixture
+can stage alone.
+
+> ### ⛔ A CLICK ON A QUEUE ROW FREES EVERY ROW, so a row captured before one is a freed object
+>
+> `_toggle_queue_settings` → `_repage_work_zone` rebuilds the block, and `_click_control` on a freed
+> `Control` **raises**: the assertion block ends with no `FAIL` line, the strip is left open over every
+> state that follows, and the run reports failures several states later that have nothing to do with
+> the cause. `_find_queue_row(animal)` re-finds a row from the LIVE tree by its verb face, and every
+> click in these blocks goes through it. The closer at the end of `_assert_queue_row_settings` already
+> documented this for its own click; §4.7a ②'s kit made the ANIMAL row expandable, which reached the
+> same trap one click earlier.
+
+> ### ⛔ A `✕` GRAMMAR PROBE IS NOW A STATE CHANGE, and it is inherited by every state below
+>
+> The withdrawal is OPTIMISTIC and keyed on the TURN, which does not advance in a harness — so
+> `_assert_unqueue_command_grammar` and `_assert_pending_queue_row`, which press the real button to
+> read the line it emits, leave real withdrawals on the overlay. Both restore what they withdrew
+> (`_pending_labor.clear()` / `drop_pending_unqueue`) so they stay grammar probes. Without that, the
+> pending-queue states one block down lose their rows and fail for a reason nothing in them names.
+
+**The FLOW is asserted where it is DECIDED, not where it is drawn.** No shipped dock is wide enough
+for the settings pair on one line (342px of strip on the tall LEFT dock, 368 on the 1920 BOTTOM one,
+against 408), so a rendered one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
+`HudWorkVocab.queue_settings_one_line` on both sides of its threshold and that the reserved height
+follows the wrap, and `_assert_queue_settings_flow` REPORTS the width at every dock it renders. That
+is the payoff of the wrap being a predicate both the reservation and the builder read: it is checkable
+without a layout.
+
+**The DRAG is driven through the controller's own callables, and the handle through the node.** Godot
+exposes no public getter for what `set_drag_forwarding` installs (`_get_drag_data` is a virtual the
+Viewport calls), so what the harness reads off the marker is what the PLAYER can see — the move
+cursor, the tooltip, and a `MOUSE_FILTER_PASS` that still lets the click through to the row — and what
+it drives is `_queue_drag_data` / `_queue_can_drop` / `_queue_drop`. The frame is taken **while the
+drag is live**, and the block is asserted NOT to have rebuilt under a `rerender()`, which is the state
+no other frame reaches.
+
+**The withdrawal state re-pushes the same fixture on the same turn**, which is the command's own
+recapture: the server broadcasts after every command and that capture still carries the stale
+`buildQueuePosition`, so a row that only survives until the next snapshot fails here. It doubles as
+the re-seat this layer needs — an optimistic write runs `_after_pending_change`, which re-renders the
+SELECTED unit, and in this harness that is a stale reference band rather than the queue fixture.
+
 ## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
 
 Three blocks land at the end of the run, after `_render_build_queue_states`. Order is load-bearing
@@ -1152,9 +1199,52 @@ rung's meter renders a perfectly plausible row:
 - **the animal twin** (`band_panel_queue_leg_animal`), a `corral` on an untamed herd: the two webs
   share no fixture and no rung table, so a fix reaching only the plant one passes every claim above.
 
+## THE CROP STEP AND THE SOW'S PRICE ARE ONE BASKET AT TWO WIRE PRICES (§4.15)
+
+`_crop_patch_row(field_work_cost, committed)` is the whole fixture family for the three states
+`band_panel_rung_price_cheap` / `band_panel_rung_crop` / `band_panel_rung_price_dear`, and **the two
+things it varies are the two the claims are about**: what the WIRE quotes for the Field rung, and
+which crop the patch is committed to.
+
+**THE BASKET IS MIXED, and a single-plant one cannot make the claim at all.** A staple holding 78% and
+paying food sits beside a cash crop holding 22% and paying **none** — which is the tile that got
+committed to tobacco in play, and the shape a picker of names and shares cannot warn about. The
+`0.00 food` clause is asserted by EQUALITY against `HudFloraVocab.FLORA_CROP_FOOD_CLAUSE_FORMAT`, so a
+row that suppressed the zero (which every other clause on a crop row correctly does) fails.
+
+**THE PRICE PAIR IS THE CLAIM.** `38 work` on uncommitted ground priced against the dominant staple,
+`150 work` on the SAME two plants committed to the minority crop — so a note naming one crop whatever
+the patch carries passes either state alone, and a client that re-derived a cost from the share would
+have to disagree with one of the two wire figures. Both are asserted against the fixture's own
+`fieldWorkCost` through `RUNG_TRACK_COST_UNDATED_FORMAT`, never against anything computed from a share.
+
+**`_assert_ready_mark_declares` WALKS THE STEP RATHER THAN ASSUMING EITHER SHAPE.** The declare board
+carries a `sow`, a `tame` and a `corral`, and only the first asks for a crop — so after pressing the
+track's target row the harness looks for `_rung_crop_rows()` and, where the card offers one, asserts
+**no declaration escaped yet** and then presses the first crop. That negative is the one worth having:
+*the step is open* and *the rung committed anyway* are not mutually exclusive, and only the second is
+the defect. It is made on the SIGNAL (`improvement_requested`) rather than on the card, a declaration
+being what actually escapes.
+
+`_rung_crop_rows` keys on `HudWorkVocab.RUNG_CROP_ROW_META`, spelled apart from `RUNG_TRACK_ROW_META`
+so a harness asking *which rung* can never be answered by a crop row that happens to be on screen;
+`_rung_crop_payoffs` reads each row's aside by POSITION (the sibling that follows it), a payoff
+carrying no identity beyond the row it explains.
+
 Sabotage-verified by returning the destination reading: **exactly six fail** — both readouts on the
 two-leg sow, the first turn and the animal twin — printing the played `Sowing 0% · turn 64` and `▦0%`,
 while the single-leg control stays green.
+
+**A FIFTH STATE SITS BESIDE THEM AND IS NOT ONE OF THE FOUR: `band_panel_queue_ring`**, the pen
+extension the leg re-pointing cannot reach at all. A ring widens the rung its herd already stands on,
+so it has no leg and the ladder credit is structurally zero for its whole life — the row read
+`🐄 Corral Wild Fowl   turn 151 (0%)` in play. Its percentage is the herd's own
+`pen_extend_progress / pen_extend_cost`, and the state carries a PNG because a queue row for a
+completed rung is a shape the four above never render. Three claims, the first a PRECONDITION without
+which the other two pass for free: that the pen rung is full with no rung in flight, that the face
+still names the widened rung's verb, and the date column by EQUALITY. Its fixture pair (30 of 40 work
+⇒ 75%) differs from the herd drawer's `herd_pen_extending` (42 of 70 ⇒ 60%) on purpose, so a row that
+reached for the wrong ring fails on the number instead of coinciding with it.
 
 **`_report_queue_row_columns` PRINTS the row's two columns and both worst cases**, the
 `_report_work_row_name_column` rule one block over: the verb made the date column longer, and what a

@@ -56,6 +56,23 @@ signal upkeep_mode_requested(payload: Dictionary)
 # is what lets one command builder serve both surfaces: an unqueue names a SOURCE, and a source has
 # one grammar whichever control withdrew it.
 signal unqueue_requested(payload: Dictionary)
+# The KIT one queued build is raised with was picked (`docs/plan_standing_upkeep.md` §4.7a ②) —
+# relayed to HudLayer.build_kit_requested and formatted by `Main.format_build_kit`.
+#
+# **ITS OWN SIGNAL BECAUSE ITS OWN GRAMMAR AND ITS OWN SCOPE.** `assign_labor` names a BAND and a
+# role; this names a SOURCE and sets a property of that source's QUEUE ENTRY, which is the one thing
+# a per-band `kit` token could not say — and the sim now refuses a `kit` token on the `builders` row
+# outright. `{ faction, x, y, herd_id, kit_id, default_kit_id }`: the last pair is `_kit_token`'s, so
+# picking the DERIVED answer omits the token and CLEARS the override rather than pinning it.
+signal build_kit_requested(payload: Dictionary)
+# The band's build queue was DRAGGED into a new order (`docs/plan_standing_upkeep.md` §4.7b ③) —
+# relayed to HudLayer.build_order_requested and formatted by `Main.format_build_order`.
+#
+# **THE QUEUE IS THE PRIORITY PROPERTY'S STORAGE** (§4.9), so the payload names a POSITION in that one
+# list rather than a rank of the client's own: `{ faction, band_id, x, y, herd_id, position }`,
+# 0-based. `pending_entity` and `order` ride it for the optimistic overlay's write and its rollback,
+# and no `format_*` builder reads either.
+signal build_order_requested(payload: Dictionary)
 # A build was DECLARED from a work row's `⌃` (`docs/plan_standing_upkeep.md` §4.7a ①) — relayed to
 # HudLayer.improvement_requested and formatted by `Main.format_improvement`, which is unchanged.
 #
@@ -150,6 +167,25 @@ var _party_open_key: String = ""
 ## setting today (the crop); the key is dropped on any render where its entry has left the queue or
 ## has nothing to show, exactly as `_work_open_key` is dropped for a source that leaves the board.
 var _queue_open_key: String = ""
+## **THE QUEUE ENTRY CURRENTLY BEING DRAGGED ("" = none), AND THE ROW THE DROP WOULD LAND ON**
+## (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## ⛔ **`_queue_drag_key` IS ALSO THE RENDER SUPPRESSOR, and a snapshot mid-gesture is why.**
+## `Main._apply_snapshot` → `update_band_alerts` → `refresh_snapshot()` → `render_band()` rebuilds all
+## three zones, and `populations` / `herds` move on essentially every turn — so freeing the rows under
+## a live drag ends the gesture on the first pixel of movement, which is the mechanism
+## `DrawerComposeController` already documents for the floor drag. The Work zone's rebuild is held off
+## while this is set and runs on the drop or the cancel.
+var _queue_drag_key: String = ""
+var _queue_drop_key: String = ""
+var _queue_drop_above: bool = true
+## The drawn queue rows by entry key, kept for the drag alone: the drop indicator is a STYLEBOX swap
+## on the target row, so it must reach that row without re-rendering the block it is dragging over.
+var _queue_row_nodes: Dictionary = {}
+## The one node whose only job is to hear `NOTIFICATION_DRAG_END` — Godot sends it to every Control in
+## the tree and to nothing else, and this controller is a `RefCounted`. Without it a CANCELLED drag
+## leaves the suppression flag set and the block frozen.
+var _queue_drag_watcher: Control = null
 ## The DESTINATION PICKER's card (`docs/plan_standing_upkeep.md` §2.8), built lazily on the first
 ## press of a work row's build slot and reused thereafter.
 ##
@@ -1319,11 +1355,12 @@ const ROLE_CARD_KIT_KEY_TEXT := ""
 ## ⛔ **THE BUILDERS ARE ABSENT FOR THE OPPOSITE REASON: a pick there moves too much, permanently.**
 ## The roster carries two builders kits, one per web, and the sim derives which one a build gets from
 ## **that queue ENTRY's** own branch — a per-ENTRY fact this per-BAND control could not express. The
-## one thing it COULD say, a `kit` token on the `builders` row, is an override that wins over the
-## derivation from then on: reported from play, one click put `kit hurdling` on every later builders
-## command and pinned a band raising a plant Cultivate to the animal web's tool with no way back
-## (`none` means bare-handed, which is a different statement). The per-entry override belongs on the
-## QUEUE ROW, where each entry can answer for itself.
+## one thing it COULD say was a `kit` token on the `builders` row, and the sim honoured that as an
+## override that won over the derivation from then on: reported from play, one click put
+## `kit hurdling` on every later builders command and pinned a band raising a plant Cultivate to the
+## animal web's tool with no way back (`none` means bare-handed, which is a different statement).
+## **THAT TOKEN IS RETIRED — `assign_labor` REFUSES it on this role now** (§4.7a ②), and the per-entry
+## override lives on the QUEUE ROW, where each entry answers for itself.
 ##
 ## **AND THE CARD NO LONGER STATES THE DERIVED KIT EITHER** (`docs/plan_standing_upkeep.md` §4.7). It
 ## carried the picker's old help text on a read-only line, which was one of TWO surfaces stating one
@@ -1392,10 +1429,13 @@ func _composed_role_kit_id(band: Dictionary, kind: String) -> String:
 ##
 ## Every other role publishes either the kit named on its row or its job's default, so re-stating it
 ## on a `+` is a no-op. The builders row is not that: the sim resolves it **per queue entry** and
-## publishes the DERIVED answer (`equipment.md` → "THE WIRE STATES THE DERIVED KIT"), while a named
-## `kit` token on that row WINS over the derivation from then on. Echoing the derived id back would
-## therefore PIN the pool to whichever web it happened to be building the moment the player touched
-## the stepper — the derivation defeated by the one control that was not choosing a kit at all.
+## publishes the DERIVED answer (`equipment.md` → "THE WIRE STATES THE DERIVED KIT"), so echoing the
+## derived id back would state a choice the player never made.
+##
+## **AND THE ROW'S OVERRIDE IS RETIRED OUTRIGHT** (`docs/plan_standing_upkeep.md` §4.7a ②):
+## `assign_labor` now REFUSES a `kit` token on the `builders` role, so a token sent here is a command
+## failure rather than a pin that wins. The per-entry override lives on the queue row
+## (`_emit_build_kit` → `build_kit`), which is where an entry can answer for itself.
 ##
 ## `Main._kit_token` omits an empty selection, so the line carries no `kit` token and the sim keeps
 ## deriving.
@@ -1404,8 +1444,8 @@ func _composed_role_kit_id(band: Dictionary, kind: String) -> String:
 ## "simplify" it away.** With the picker gone nothing writes `_role_kit_ids` for `builders`, so
 ## `_composed_role_kit_id` has nothing to return and the stepper emits `assign_labor … builders <n>`
 ## with no tail at all. The fork is what STATES that the omission is deliberate rather than an
-## oversight: collapsing it to the other roles' `_role_kit_id` would echo the DERIVED id back and pin
-## the pool to whichever web it happened to be building the moment the player pressed `+`.
+## oversight: collapsing it to the other roles' `_role_kit_id` would echo the DERIVED id back — and
+## the sim REFUSES a `kit` token on this role now, so the line would fail outright.
 func _commanded_role_kit_id(band: Dictionary, kind: String) -> String:
     if kind == HudConst.LABOR_KIND_BUILDERS:
         return _composed_role_kit_id(band, kind)
@@ -1544,12 +1584,28 @@ func _band_zone_tier_for(zone_height: float) -> int:
 ## Re-page the live work board against the panel's new zone box. Only the board is rebuilt — the
 ## other two zones are untouched.
 func _repage_work_zone() -> void:
+    if _queue_drag_in_flight():
+        return
     if _work_zone_host == null or not is_instance_valid(_work_zone_host) or _work_zone_band.is_empty():
         return
     HudWidgets.clear_children(_work_zone_host)
     _fill_work_zone(_work_zone_host, _work_zone_band)
 
+## ⛔ **IS A QUEUE ROW BEING DRAGGED RIGHT NOW? Then this zone MUST NOT REBUILD**
+## (`docs/plan_standing_upkeep.md` §4.7b ③). `Main._apply_snapshot` → `update_band_alerts` →
+## `refresh_snapshot()` → `render_band()` rebuilds all three zones, and the band's `populations` /
+## `herds` move on essentially every turn — so a snapshot arriving mid-gesture FREES the row the
+## pointer is holding and Godot ends the drag on the first pixel of movement. It is the same mechanism
+## `DrawerComposeController` documents for the floor drag.
+##
+## **ONE FLAG, READ AT BOTH DOORS.** `_repage_work_zone` is the resize/toggle path (so a window resize
+## cannot do it either) and `render_band` is the snapshot path; `_on_queue_drag_end` re-renders once
+## the gesture is over, whether it dropped or was cancelled.
+func _queue_drag_in_flight() -> bool:
+    return _queue_drag_key != ""
+
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
+    _ensure_queue_drag_watcher()
     # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8). The
     # card is anchored to a row this pass is about to free, and its every figure is a function of the
     # source's position, the faction's knowledge and the queue — so a card left up over the rebuilt
@@ -1607,7 +1663,8 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
     var capacity := _work_board_capacity(filtered.size(), inspected, queued.size(),
         queue_rows_max, bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)),
-        int(queue_settings["legs"]), bool(queue_settings["crop"]))
+        int(queue_settings["legs"]), bool(queue_settings["crop"]),
+        bool(queue_settings["kit"]), bool(queue_settings["one_line"]))
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1639,11 +1696,12 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## one more separation for the gap. Unlike the queue's it is ALWAYS charged: the block always renders.
 func _work_board_capacity(count: int, inspected: Dictionary, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_legs: int = 0,
-        queue_settings_crop: bool = false) -> Dictionary:
+        queue_settings_crop: bool = false, queue_settings_kit: bool = false,
+        queue_settings_one_line: bool = true) -> Dictionary:
     var box := _zone_box()
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
-        queue_settings_legs, queue_settings_crop)
+        queue_settings_legs, queue_settings_crop, queue_settings_kit, queue_settings_one_line)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
@@ -1923,8 +1981,9 @@ func _queued_keeping_load(queued: Array, labor_kind: String) -> Dictionary:
 ##
 ## **NO KIT PICKER, because none of the three has one and neither reason is this card's to revisit**:
 ## the keeping pair's pick would move no number the player can see and its `(default)` mark would be a
-## guess, and a `builders` pick is an override that wins over the sim's per-entry derivation
-## permanently (§4.6b deleted that picker rather than leave it harmful). **No gear line either** — the
+## guess, and a `builders` pick could only ever answer a per-ENTRY question with one standing answer
+## (§4.6b deleted that picker rather than leave it harmful, and §4.7a ② gave the override its correct
+## home on the queue row — where it changes that job alone). **No gear line either** — the
 ## fact it stated, which kit the pool is carrying, is stated one block below by the BUILD QUEUE head
 ## through the same `_role_kit_id`, adjacent to the jobs that kit prices.
 ##
@@ -2044,12 +2103,24 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## after its build completed; `building_glyph` is `RungGates.rung_in_progress`'s already-resolved
 ## answer, which goes empty the moment the meter does.
 func _build_queue_models(band: Dictionary, models: Array) -> Array:
+    # **A WITHDRAWAL TAKES ITS ROW OUT ON THE FRAME THE `✕` IS PRESSED**
+    # (`docs/plan_standing_upkeep.md` §4.7b ④). `buildQueuePosition` is turn-written and the server
+    # re-captures after every command, so the entry is still at its old position on the very snapshot
+    # the `unqueue` triggers; without this filter the row leaves and comes straight back. The set is
+    # keyed on the TURN like every other optimistic write, so it reconciles away with them.
+    var withdrawn := _band_labor.pending_unqueues_for(int(band.get("entity", -1)))
     var queued: Array = models.filter(func(m):
         return int(m.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) \
-            >= SourceForecast.BUILD_QUEUE_HEAD)
+            >= SourceForecast.BUILD_QUEUE_HEAD \
+            and not withdrawn.has(String(m.get("key", ""))))
+    # **AND A DRAG ORDERS THEM UNTIL THE TURN RESOLVES** (§4.7b ③), for the identical reason: the
+    # position the drag moved is turn-written too, so the wire's order is stale until the tick. The
+    # overlay states the WHOLE ordering rather than a delta; an entry it does not name (one queued
+    # since the drag) sorts behind everything it does, by its own wire position.
+    var order := _band_labor.pending_order_for(int(band.get("entity", -1)))
     queued.sort_custom(func(a, b):
-        var pa := int((a as Dictionary).get("build_queue_position", 0))
-        var pb := int((b as Dictionary).get("build_queue_position", 0))
+        var pa := _queue_sort_rank(a as Dictionary, order)
+        var pb := _queue_sort_rank(b as Dictionary, order)
         if pa != pb:
             return pa < pb
         return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
@@ -2057,7 +2128,8 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
     var awaiting: Array = models.filter(func(m):
         return _build_queue_row_is_pending(m as Dictionary) \
             and bool(m.get("pending", false)) \
-            and String(m.get("building_glyph", "")) != "")
+            and String(m.get("building_glyph", "")) != "" \
+            and not withdrawn.has(String(m.get("key", ""))))
     awaiting.sort_custom(func(a, b):
         var ia := declared.find(String((a as Dictionary).get("key", "")))
         var ib := declared.find(String((b as Dictionary).get("key", "")))
@@ -2066,6 +2138,20 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
         return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
     queued.append_array(awaiting)
     return queued
+
+## **WHERE ONE CONFIRMED ENTRY SORTS** — its place in the drag overlay's ordering when that overlay
+## names it, else its wire position pushed behind every entry the overlay does name.
+##
+## **THE PUSH IS WHAT KEEPS IT A TOTAL ORDER.** An entry queued since the drag has a wire position
+## that would collide with an overlay index; offsetting by the overlay's own length makes the two
+## ranges disjoint, so the tiebreak below never has to arbitrate between two different meanings of a
+## number.
+func _queue_sort_rank(model: Dictionary, order: Array) -> int:
+    var key := String(model.get("key", ""))
+    var index := order.find(key)
+    if index >= 0:
+        return index
+    return order.size() + int(model.get("build_queue_position", 0))
 
 ## **IS THIS ENTRY ONE THE WIRE HAS NOT PLACED?** The one derivation of it, so the block's filter, the
 ## head marker's suppression and the row's date can never disagree about which rows are pending. A
@@ -2093,7 +2179,11 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     var settings := _queue_settings_state(band, queued, drawn)
     var open_index := int(settings["index"])
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
-        queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"])))
+        queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"]),
+        bool(settings["kit"]), bool(settings["one_line"])))
+    # The drag reaches its target rows through this map rather than through the tree, because the
+    # drop indicator is a stylebox swap and must not re-render the block it is hovering over.
+    _queue_row_nodes.clear()
     # **THE BUILDERS COUNT IS PENDING-AWARE**, the rule every compose sheet on this panel follows: a
     # player who has just staffed the role must not read a header telling them nobody is on it.
     var builders := int(_band_labor.effective_role_workers(
@@ -2104,9 +2194,11 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         # **A PENDING ROW NEVER WEARS THE HEAD MARKER, not even when it is the only row.** The head is
         # the entry the builders pool is actually standing on, which the sim decides; an entry the sim
         # has not placed is not that yet, and a `▸` on it would promise funding nobody has committed.
-        block.add_child(_build_build_queue_row(band, entry,
+        var row := _build_build_queue_row(band, entry,
             index == SourceForecast.BUILD_QUEUE_HEAD and not _build_queue_row_is_pending(entry),
-            builders))
+            builders)
+        _queue_row_nodes[String(entry.get("key", ""))] = row
+        block.add_child(row)
         # …and its SETTINGS strip directly beneath the row it belongs to, which is what makes the
         # expansion read as that row's rather than as a panel of its own.
         if index == open_index:
@@ -2128,7 +2220,8 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
 ## an entry that finished, was withdrawn or scrolled past the row cap takes its expansion with it
 ## rather than leaving a strip pinned to nothing.
 func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dictionary:
-    var closed := {"index": -1, "legs": 0, "crop": false}
+    var closed := {"index": -1, "legs": 0, "crop": false, "kit": false,
+        "one_line": _queue_settings_one_line()}
     if _queue_open_key == "":
         return closed
     for index in range(drawn):
@@ -2136,12 +2229,23 @@ func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dicti
         if String(entry.get("key", "")) != _queue_open_key:
             continue
         var state := _queue_settings_content(band, entry)
-        if int(state["legs"]) <= 0 and not bool(state["crop"]):
+        if int(state["legs"]) <= 0 and not bool(state["crop"]) and not bool(state["kit"]):
             break
         state["index"] = index
         return state
     _queue_open_key = ""
     return closed
+
+## **THE WIDTH THE SETTINGS STRIP ACTUALLY GETS**, and the ONE derivation of it — the zone's own box
+## less the strip's chrome (`HudStyle.work_inspector_stylebox` is the role card's, so its content
+## margin is `ROLE_CARD_PADDING` on each side). The reservation and the builder both read this, which
+## is what stops the flow predicate being asked about one width and answered for another.
+func _queue_settings_line_width() -> float:
+    return _zone_box().x - float(HudStyle.ROLE_CARD_PADDING) * 2.0
+
+## …and the predicate itself, so no caller spells the arithmetic.
+func _queue_settings_one_line() -> bool:
+    return HudWorkVocab.queue_settings_one_line(_queue_settings_line_width())
 
 ## **WHAT ONE ENTRY'S STRIP WOULD HOLD** — `{legs, crop}`, and `{0, false}` for an entry with nothing
 ## to show. ONE predicate decides the row's clickability, the strip's existence and its height, so a
@@ -2150,10 +2254,17 @@ func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dicti
 ## **A ONE-LEG ENTRY STILL LISTS ITS LEG.** The list is what says how far this job goes, and an entry
 ## that showed nothing until it was two legs long would make the single-leg case the odd one out —
 ## which is the common case on the animal web, whose entries are always one leg.
+## **EVERY QUEUED ENTRY HAS A KIT, SO EVERY QUEUE ROW EXPANDS NOW** — including the hunt/tame rows
+## that carried `legs == 0, crop == false` and therefore did not (`docs/plan_standing_upkeep.md`
+## §4.7a ②). That is not a regression in the *only expandable when there is something to show* rule;
+## it is that rule reaching its second setting. A `Tame` commits no species and it is still raised
+## with a tool.
 func _queue_settings_content(band: Dictionary, model: Dictionary) -> Dictionary:
     return {
         "legs": (model.get("build_legs", []) as Array).size(),
         "crop": not _queue_crop_choices(band, model).is_empty(),
+        "kit": not _queue_kit_choices(band, model).is_empty(),
+        "one_line": _queue_settings_one_line(),
     }
 
 ## Open this entry's settings, or close them if they are already open — the queue's twin of
@@ -2161,6 +2272,11 @@ func _queue_settings_content(band: Dictionary, model: Dictionary) -> Dictionary:
 ## the board would otherwise have as rows.
 func _toggle_queue_settings(key: String) -> void:
     _queue_open_key = "" if _queue_open_key == key else key
+    # ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WHOLE ZONE**, not one per list
+    # (`docs/plan_standing_upkeep.md` §4.7b). See `_toggle_work_inspector` for the defect this closes.
+    if _queue_open_key != "":
+        _work_open_key = ""
+        _work_floor_open = false
     _repage_work_zone()
 
 ## **THE OPEN ENTRY'S SETTINGS — the crop today, the KIT beside it in §4.7a ②.** That is the reason
@@ -2176,7 +2292,8 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     strip.set_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META, String(model.get("key", "")))
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
-        int(content["legs"]), bool(content["crop"])))
+        int(content["legs"]), bool(content["crop"]), bool(content["kit"]),
+        bool(content["one_line"])))
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", 0)
@@ -2192,21 +2309,55 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
         for index in range(legs.size()):
             column.add_child(_build_queue_leg_line(legs[index] as Dictionary,
                 index == SourceForecast.BUILD_QUEUE_HEAD))
-    if not bool(content["crop"]):
-        return strip
+    # **THE TWO CONTROLS FLOW: one line where the strip is wide enough for both, two where it is
+    # not** (`docs/plan_standing_upkeep.md` §4.7b ②). Ray, on the layout: *"make it flow, so on
+    # horizontal layouts it would be 1 line and vertical 2, most likely because of space available."*
+    #
+    # ⛔ **THE WRAP IS THE PREDICATE'S, NEVER A CONTAINER'S.** `HudWorkVocab.queue_settings_one_line`
+    # answers off the strip's width, and the RESERVATION above reads the same answer — a flow
+    # container that wrapped at layout time would leave `build_queue_settings_height` unable to know
+    # how many lines were drawn, and this zone takes that difference off the bottom of the board in
+    # silence. Neither picker ever shrinks: the widths are fixed and the LINE COUNT is what gives.
+    var one_line := bool(content["one_line"])
+    var line: HBoxContainer = null
+    if bool(content["crop"]):
+        line = _build_queue_settings_line(column, HudWorkVocab.BUILD_QUEUE_SETTINGS_CROP_KEY)
+        var crop_picker := _build_queue_crop_picker(band, model)
+        if crop_picker != null:
+            line.add_child(crop_picker)
+    if bool(content["kit"]):
+        # The kit shares the crop's line only where the pair fits; otherwise it opens its own, and the
+        # two KEYS line up because both declare `BUILD_QUEUE_SETTINGS_KEY_WIDTH`.
+        if line == null or not one_line:
+            line = _build_queue_settings_line(column, HudWorkVocab.BUILD_QUEUE_SETTINGS_KIT_KEY)
+        else:
+            line.add_child(_build_queue_settings_key(
+                HudWorkVocab.BUILD_QUEUE_SETTINGS_KIT_KEY))
+        var kit_picker := _build_queue_kit_picker(band, model)
+        if kit_picker != null:
+            line.add_child(kit_picker)
+    return strip
+
+## One control line inside the settings strip: a fixed-height row led by its declared-width key. The
+## height is `BUILD_QUEUE_SETTINGS_HEIGHT`'s control half — the strip's own padding is counted once by
+## `build_queue_settings_height` and must not be charged again per line.
+func _build_queue_settings_line(column: VBoxContainer, key_text: String) -> HBoxContainer:
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     column.add_child(line)
+    line.add_child(_build_queue_settings_key(key_text))
+    return line
+
+## A settings key — `CROP` / `KIT` — at the ONE declared width both take, so the two pickers share a
+## left edge whether they sit side by side or stacked.
+func _build_queue_settings_key(key_text: String) -> Label:
     var key := Label.new()
-    key.text = HudWorkVocab.BUILD_QUEUE_SETTINGS_CROP_KEY
+    key.text = key_text
+    key.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH, 0.0)
     key.add_theme_color_override("font_color", HudStyle.INK_FAINT)
     key.add_theme_font_size_override("font_size", HudWorkVocab.WORK_CHIP_FONT_SIZE)
     key.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(key)
-    var picker := _build_queue_crop_picker(band, model)
-    if picker != null:
-        line.add_child(picker)
-    return strip
+    return key
 
 ## The leg list's own key, in the CROP key's register — so the two halves of the strip read as one
 ## expansion rather than as two panels that happened to open together.
@@ -2307,7 +2458,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # — a Tame committing no species — was therefore never expandable; §2.8's LEGS are the second
     # thing an entry always has, so both webs open now and the strip's content is what differs.
     var content := _queue_settings_content(band, model)
-    var expandable := int(content["legs"]) > 0 or bool(content["crop"])
+    var expandable := int(content["legs"]) > 0 or bool(content["crop"]) or bool(content["kit"])
     var open := expandable and String(model.get("key", "")) == _queue_open_key
     row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
     if expandable:
@@ -2320,14 +2471,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     row.add_child(line)
-    var marker := Label.new()
-    marker.set_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META, is_head)
-    marker.text = HudWorkVocab.BUILD_QUEUE_HEAD_MARKER if is_head else ""
-    marker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
-    marker.add_theme_color_override("font_color", HudStyle.SIGNAL)
-    marker.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(marker)
+    line.add_child(_build_queue_row_marker(band, model, is_head))
+    # **AND THE ROW IS THE DROP TARGET, where the marker alone is the grab** — a drop that only
+    # landed on a 10px column would be a gesture the player has to aim at twice.
+    if not _build_queue_row_is_pending(model):
+        row.set_drag_forwarding(Callable(), _queue_can_drop.bind(String(model.get("key", ""))),
+            _queue_drop.bind(band, String(model.get("key", ""))))
     # **THE SOURCE MARK LEFT THIS ROW WHEN THE DATE COLUMN LEARNED A VERB** (§2.8). The queue row was
     # five slots on a ~338px line and the pair of columns that carry information — the job face and
     # the date — measured 291 of the 274 the icon left them: the face is a shipped, play-reported
@@ -2368,9 +2517,22 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # `Cultivating 18% · turn 83`: the title still names what was ordered, the date is still the whole
     # climb's, and the verb is what makes the percentage attributable to a rung the title does not
     # name. A single-leg entry's leg IS its destination, so it names its own rung unchanged.
+    #
+    # **AND A RING'S PERCENTAGE IS ITS OWN METER, NOT A LADDER CREDIT.** `BuildJob::ExtendPen` widens
+    # the pen rung its herd already stands on, so the entry climbs nothing: the herd reads
+    # `Corralled 100%`, the ladder has no leg in flight to credit, and the column read
+    # `Corral <herd> — turn 151 (0%)` for the ring's entire life. The wire already distinguishes the
+    # two — `resolved_build_job` publishes `extend_pen` rather than a rung verb, because a built pen
+    # carries no meter for a verb to name — so the branch is on the token the model already holds, and
+    # the number it swaps in is `SourceForecast.pen_extend_fraction`'s, the same division the herd
+    # drawer's "Fencing N%" badge quotes. The FACE is untouched: a ring derives the verb of the rung it
+    # widens, which is why the row is still titled `Corral <herd>`. The DATE is untouched too — the sim
+    # publishes a dedicated ring countdown, and only the percentage was ever missing.
     var pending := _build_queue_row_is_pending(model)
     var turns := int(model.get("build_turns", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
-    var percent := HudFormat.progress_percent(float(model.get("building_progress", 0.0)))
+    var is_ring := String(model.get("improvement", "")) == SourceForecast.BUILD_JOB_EXTEND_PEN
+    var percent := HudFormat.progress_percent(float(model.get(
+        "build_ring_progress" if is_ring else "building_progress", 0.0)))
     var value := FoodIcons.for_status(HudWorkVocab.BUILD_QUEUE_PENDING_STATUS) if pending \
         else DetailFormat.build_completion_value(turns, builders, percent,
             _band_labor.current_turn(), String(model.get("building_policy", "")))
@@ -2421,6 +2583,12 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if price != "":
         tooltip_lines.append(price)
     tooltip_lines.append_array(blocked_lines)
+    # **A ROW THAT OPENS HAS TO SAY SO**, the board row's `WORK_ROW_OPEN_HINT` being the pattern. It
+    # names the KIT first because every entry has one and only a plant entry has a crop — the sentence
+    # that promised the crop alone was false on every animal row the moment §4.7a ②'s kit made those
+    # rows expandable.
+    if expandable:
+        tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_ROW_OPEN_HINT)
     row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
     var withdraw := Button.new()
     withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
@@ -2442,6 +2610,209 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     withdraw.pressed.connect(func() -> void: _emit_unqueue(band, model))
     line.add_child(withdraw)
     return row
+
+## **THE MARKER COLUMN, WHICH IS ALSO THE GRAB HANDLE** (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## **NO NEW COLUMN, AND THE ARITHMETIC IS WHY.** The row's ~356px is spoken for — marker 10, face,
+## date 168, `✕` 32 and four separations — and the face is already ellipsised at its widest shipped
+## value, so a handle of its own would come straight out of the one column with an unclipped-name
+## guarantee on it. This slot is reserved on every row already (that is what lines the faces up) and
+## holds NOTHING on a non-head row, which makes it the only spare pixels in the row.
+##
+## **THE HEAD KEEPS `▸`, because that marker is load-bearing**: it names the entry the builders pool
+## is standing on. It is still a handle — demoting the head is the most likely reorder there is — it
+## simply does not swap its glyph for the grab one.
+##
+## **A PENDING ROW GETS NEITHER.** The wire has not placed it, so there is no position for
+## `build_order` to name and nothing it can be dragged above.
+func _build_queue_row_marker(band: Dictionary, model: Dictionary, is_head: bool) -> Label:
+    var pending := _build_queue_row_is_pending(model)
+    var marker := Label.new()
+    marker.set_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META, is_head)
+    marker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    marker.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    if is_head:
+        marker.text = HudWorkVocab.BUILD_QUEUE_HEAD_MARKER
+        marker.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    elif pending:
+        marker.text = ""
+        marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        return marker
+    else:
+        marker.text = HudWorkVocab.BUILD_QUEUE_DRAG_HANDLE
+        marker.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    if pending:
+        marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        return marker
+    marker.tooltip_text = HudWorkVocab.BUILD_QUEUE_DRAG_TOOLTIP
+    marker.mouse_default_cursor_shape = Control.CURSOR_MOVE
+    # **`PASS`, NOT `STOP`, so the row's own click-to-open-settings still works through it.** Godot
+    # only asks for drag data once the pointer has moved past its threshold, so a plain click on the
+    # handle is still a click — and with `PASS` the event reaches the row's `gui_input` as well.
+    marker.mouse_filter = Control.MOUSE_FILTER_PASS
+    # **`set_drag_forwarding` RATHER THAN A SCRIPT PER ROW.** The callables live on this controller,
+    # which is where the queue's ordering already lives; a per-node script would put a copy of that
+    # knowledge on every row the block rebuilds.
+    marker.set_drag_forwarding(
+        _queue_drag_data.bind(marker, band, String(model.get("key", ""))),
+        Callable(), Callable())
+    return marker
+
+# ---- THE REORDER GESTURE (`docs/plan_standing_upkeep.md` §4.7b ③) --------------------------------
+
+## The payload one dragged row carries: its own key, tagged, so a drop target can refuse everything
+## that is not one of these rows rather than accepting any Dictionary that happens to have a `key`.
+func _queue_drag_data(_at: Vector2, handle: Control, band: Dictionary, key: String) -> Variant:
+    if key == "":
+        return null
+    _queue_drag_key = key
+    _queue_drop_key = ""
+    var preview := Label.new()
+    preview.text = _queue_drag_preview_face(band, key)
+    preview.modulate.a = HudWorkVocab.BUILD_QUEUE_DRAG_PREVIEW_ALPHA
+    preview.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    handle.set_drag_preview(preview)
+    return {"type": HudWorkVocab.BUILD_QUEUE_DRAG_TYPE, "key": key}
+
+## The dragged entry's own job face, so a list of near-identical rows still says which one is in
+## flight. Read off the block's own model list rather than off the row's Label, which the next render
+## may already have freed.
+func _queue_drag_preview_face(band: Dictionary, key: String) -> String:
+    for entry_variant in _confirmed_queue_entries(band):
+        var entry: Dictionary = entry_variant
+        if String(entry.get("key", "")) == key:
+            return _build_queue_job_face(entry)
+    return key
+
+## **CAN THIS ROW TAKE THE DROP, AND WHICH EDGE WOULD IT LAND ON?** Called on every motion while the
+## pointer is over the row, which is also what makes it the indicator's own driver: the answer and the
+## mark are one decision, so the line can never point at a row the drop would not use.
+func _queue_can_drop(at: Vector2, data: Variant, key: String) -> bool:
+    if not (data is Dictionary) or String((data as Dictionary).get(
+            "type", "")) != HudWorkVocab.BUILD_QUEUE_DRAG_TYPE:
+        return false
+    var dragged := String((data as Dictionary).get("key", ""))
+    if dragged == "" or dragged == key:
+        _queue_show_drop_mark("", true)
+        return false
+    _queue_show_drop_mark(key, at.y < HudWorkVocab.WORK_ROW_HEIGHT * 0.5)
+    return true
+
+## **THE DROP — one `build_order`, and the ordering the client draws until the turn resolves.**
+##
+## **THE POSITION IS AN INDEX INTO THE BAND'S OWN QUEUE, NOT A RANK OF OURS** (§4.9): the build queue
+## IS the priority property's storage, so the whole gesture is *state the list again* and the number
+## is where the dragged entry ended up in it.
+func _queue_drop(_at: Vector2, data: Variant, band: Dictionary, key: String) -> void:
+    if not (data is Dictionary):
+        return
+    var dragged := String((data as Dictionary).get("key", ""))
+    # **THE EDGE IS READ BEFORE THE MARK IS CLEARED.** `_queue_show_drop_mark` owns `_queue_drop_above`
+    # and resets it, so taking the flag after the clear reads the reset value — which lands every drop
+    # ABOVE its target however the pointer approached it.
+    var above := _queue_drop_above
+    _queue_show_drop_mark("", true)
+    if dragged == "" or dragged == key:
+        return
+    var entries := _confirmed_queue_entries(band)
+    var keys: Array = []
+    for entry_variant in entries:
+        keys.append(String((entry_variant as Dictionary).get("key", "")))
+    var from := keys.find(dragged)
+    var onto := keys.find(key)
+    if from < 0 or onto < 0:
+        return
+    keys.remove_at(from)
+    # The target's index moves under the removal when the entry came from above it, and the drop edge
+    # is what says which side of the target the row lands on.
+    var insert := keys.find(key)
+    if not above:
+        insert += 1
+    keys.insert(insert, dragged)
+    var model := {}
+    for entry_variant in entries:
+        if String((entry_variant as Dictionary).get("key", "")) == dragged:
+            model = entry_variant as Dictionary
+            break
+    _emit_build_order(band, model, insert, keys)
+
+## The band's CONFIRMED queue entries, in the order the block draws them — the same list the block
+## itself derives, so the position the drop sends is an index into the list the player was looking at.
+func _confirmed_queue_entries(band: Dictionary) -> Array:
+    return _build_queue_models(band, _work_source_models(band, 0)).filter(
+        func(m): return not _build_queue_row_is_pending(m as Dictionary))
+
+## **THE DROP INDICATOR, DRAWN INSIDE THE TARGET ROW'S OWN 28px.** The block's rows are flush
+## (`separation` 0), so a line drawn BETWEEN two of them would need a height term in
+## `build_queue_block_height` — on the reservation side as well as the render side, in a zone that
+## clips. Lighting one edge of the row's own stylebox costs the block nothing.
+##
+## It is a stylebox swap on nodes this controller already holds rather than a re-render, because a
+## re-render frees the rows the gesture is standing on.
+func _queue_show_drop_mark(key: String, above: bool) -> void:
+    if _queue_drop_key == key and _queue_drop_above == above:
+        return
+    _queue_drop_key = key
+    _queue_drop_above = above
+    for row_key in _queue_row_nodes:
+        var row: Control = _queue_row_nodes[row_key]
+        if row == null or not is_instance_valid(row):
+            continue
+        var open := String(row_key) == _queue_open_key
+        row.set_meta(HudWorkVocab.BUILD_QUEUE_DROP_MARK_META,
+            "" if String(row_key) != key else (HudWorkVocab.BUILD_QUEUE_HEAD_MARKER if above \
+                else HudWorkVocab.BUILD_QUEUE_DRAG_HANDLE))
+        if String(row_key) == key:
+            row.add_theme_stylebox_override("panel", HudStyle.work_row_drop_stylebox(
+                open, above, HudWorkVocab.BUILD_QUEUE_DROP_EDGE_WIDTH))
+        else:
+            row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
+
+## **THE GESTURE ENDED — dropped or cancelled — so the zone may rebuild again.** Both endings come
+## through here, which is the whole reason `QueueDragWatcher` exists: a cancel emits nothing at all,
+## and a suppression flag lifted only by a successful drop freezes the block for good.
+func _on_queue_drag_end() -> void:
+    if _queue_drag_key == "":
+        return
+    _queue_drag_key = ""
+    _queue_drop_key = ""
+    _repage_work_zone()
+
+## The watcher node, parented once into the HUD host and reused. Invisible, zero-size and
+## input-transparent: it renders nothing and its only job is to hear a notification.
+func _ensure_queue_drag_watcher() -> void:
+    if _queue_drag_watcher != null and is_instance_valid(_queue_drag_watcher):
+        return
+    var watcher := QueueDragWatcher.new()
+    watcher.name = HudWorkVocab.BUILD_QUEUE_DRAG_TYPE
+    watcher.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    watcher.custom_minimum_size = Vector2.ZERO
+    watcher.on_drag_end = _on_queue_drag_end
+    _host.add_child(watcher)
+    _queue_drag_watcher = watcher
+
+## **THE REORDER COMMAND** — `build_order <faction> <band> <source…> <position>`, 0-based, plus the
+## overlay's own write (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## **THE OVERLAY IS RECORDED BEFORE THE EMIT**, which is this layer's standing rollback precondition:
+## `Main` handles the signal synchronously and hands the payload back on a failure, so a record
+## written afterwards would survive its own failed command.
+func _emit_build_order(band: Dictionary, model: Dictionary, position: int, keys: Array) -> void:
+    if model.is_empty():
+        return
+    var entity := int(band.get("entity", -1))
+    _band_labor.record_pending_order(entity, keys)
+    emit_signal("build_order_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "x": int(model.get("x", -1)),
+        "y": int(model.get("y", -1)),
+        "herd_id": String(model.get("herd_id", "")),
+        "position": position,
+        # The rollback handle, and not a command token — `Main` hands it back to `drop_pending_order`
+        # when the send does not go.
+        "pending_entity": entity,
+    })
 
 ## `+2 more` — the rest of the queue, at the same row height and in the quiet ink.
 ##
@@ -2567,12 +2938,112 @@ func _build_queue_crop_picker(band: Dictionary, model: Dictionary) -> OptionButt
     var picker := HudWidgets.build_option_picker(entries, selected,
         String((entries[selected] as Dictionary).get("label", "")),
         HudWorkVocab.BUILD_QUEUE_CROP_TOOLTIP)
+    picker.set_meta(HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META, chosen)
     # A DECLARED width rather than the strip's whole span: the key label leads the row and the picker
     # takes what a crop name needs, which is what the retired in-row control could not be given.
     picker.size_flags_horizontal = Control.SIZE_FILL
     picker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_CROP_WIDTH, 0.0)
     HudWidgets.compact(picker, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
     return picker
+
+## **THE BUILDERS KITS THIS QUEUE ENTRY MAY BE RAISED WITH — `[]` for an entry with no web at all**
+## (`docs/plan_standing_upkeep.md` §4.7a ②), as `build_option_picker` entries.
+##
+## **IT IS THE ROSTER'S `builders` LIST, BARE-HANDED INCLUDED.** `equipment.json` authors the null kit
+## last and the capture preserves that order, so *send them out with nothing* lands at the bottom of
+## the menu without this layer knowing which entry is null — and it is a REAL selection here, not the
+## absence of one: `kit none` says bare-handed where an omitted token says *derive it*.
+##
+## **THE `(default)` MARK IS THE DERIVATION, PER ENTRY.** `KitRoster.build_kit_for_branch` off this
+## entry's own web is the answer the sim will resolve when the entry reaches the head of the queue —
+## the same lookup, asked of the published roster — so the mark names the kit the player would get by
+## touching nothing. That is what makes the override legible as an override.
+##
+## **AND THE OTHER WEB'S TOOL IS GREYED WITH ITS REASON rather than hidden** — `kit_offer`'s builders
+## branch, handed this entry's branch. A hoe takes nothing off a `Tame`; a player should learn that
+## once, and invisibility is what let the wrong tool be offered in the first place.
+func _queue_kit_choices(band: Dictionary, model: Dictionary) -> Array:
+    return _queue_kit_listing(band, model)[KitRoster.KIT_ENTRIES_KEY] as Array
+
+## …and the whole listing behind it — the entries, the index to open on and the DERIVED id the pick
+## is measured against. One resolution, spent by the predicate above and by the control below, so a
+## row cannot offer a choice the picker then marks differently.
+func _queue_kit_listing(band: Dictionary, model: Dictionary) -> Dictionary:
+    var branch := KitRoster.build_branch_for_kind(String(model.get("kind", "")))
+    if branch == KitRoster.BUILD_BRANCH_NONE:
+        return {KitRoster.KIT_ENTRIES_KEY: [],
+            KitRoster.KIT_ENTRIES_SELECTED_KEY: HudWidgets.NO_ENTRY_SELECTED,
+            QUEUE_KIT_DERIVED_KEY: KitRoster.NO_KIT_ID}
+    var kits := _band_labor.kits()
+    var derived := KitRoster.build_kit_for_branch(kits, branch)
+    var listing := KitRoster.kit_entries(kits, KitRoster.JOB_BUILDERS,
+        _queue_kit_selection(model, derived), derived,
+        func(kit_id: String) -> void: _emit_build_kit(band, model, kit_id, derived),
+        {}, "", branch)
+    listing[QUEUE_KIT_DERIVED_KEY] = derived
+    return listing
+
+## The derived answer's key on `_queue_kit_listing`'s return — the id a pick is compared against, and
+## therefore the id whose selection sends NO `kit` token.
+const QUEUE_KIT_DERIVED_KEY := "derived"
+
+## **WHAT THE PICKER OPENS ON — the WIRE's resolved kit for this entry, and the derivation while the
+## wire has not placed it.** `buildKitId` is captured live and states the RESOLVED kit, so a pick is
+## visible on the recapture the command triggers and this control needs no optimistic overlay of its
+## own. A row the wire has not seen (a build declared this turn) has no resolved kit at all, and the
+## honest face there is the answer the sim is about to reach.
+func _queue_kit_selection(model: Dictionary, derived: String) -> String:
+    var stated := String(model.get("build_kit_id", "")).strip_edges()
+    return stated if stated != "" else derived
+
+## The kit control itself. `null` where the entry offers no choice, which the strip's own host has
+## already checked.
+##
+## ⛔ **IT IS A FIXED-HEIGHT PICKER RATHER THAN `KitRoster.build_kit_row`, and the measurement is
+## why.** That helper returns a two-child block whose second child — the `tier_hint` line — is present
+## only when the selected kit has something to say, so the row it draws is 22px or ~36px depending on
+## the pick. This strip's height is RESERVED before it is drawn in a zone that clips, so a term that
+## moves with the selection cannot be in it. The LIST is still the roster's own
+## (`KitRoster.kit_entries`); only the chrome is this strip's.
+func _build_queue_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
+    var listing := _queue_kit_listing(band, model)
+    var entries: Array = listing[KitRoster.KIT_ENTRIES_KEY]
+    if entries.is_empty():
+        return null
+    var chosen := _queue_kit_selection(model, String(listing[QUEUE_KIT_DERIVED_KEY]))
+    var picker := HudWidgets.build_option_picker(entries,
+        int(listing[KitRoster.KIT_ENTRIES_SELECTED_KEY]),
+        KitRoster.display_name_for_id(_band_labor.kits(), chosen),
+        HudWorkVocab.BUILD_QUEUE_KIT_TOOLTIP)
+    picker.set_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META, chosen)
+    # A DECLARED width, the crop's own, for the crop's own reason: the key leads the line and the
+    # control takes what a kit name needs.
+    picker.size_flags_horizontal = Control.SIZE_FILL
+    picker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_KIT_WIDTH, 0.0)
+    HudWidgets.compact(picker, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    return picker
+
+## **THE PER-ENTRY KIT OVERRIDE** (`docs/plan_standing_upkeep.md` §4.7a ②) — `build_kit`, naming a
+## SOURCE and setting a property of that source's queue ENTRY.
+##
+## ⛔ **PICKING THE DERIVED DEFAULT EMITS NO `kit` TOKEN, AND THAT IS WHAT CLEARS THE OVERRIDE.** The
+## sim reads an absent token as *"go back to deriving this entry's kit from its own web"*, so
+## `Main._kit_token`'s standing rule — omit the token when the selection equals the default — is
+## exactly the right one here and there is no `default` literal to invent. `none` is a different
+## statement (bare-handed) and survives the round trip as a real selection.
+##
+## **NO OPTIMISTIC OVERLAY.** `buildKitId` is captured LIVE rather than turn-written, so the recapture
+## this command triggers already carries the new value — the one field in this block that needs no
+## client-side shadow.
+func _emit_build_kit(band: Dictionary, model: Dictionary, kit_id: String, default_id: String) -> void:
+    emit_signal("build_kit_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": int(model.get("x", -1)),
+        "y": int(model.get("y", -1)),
+        "herd_id": String(model.get("herd_id", "")),
+        "kit_id": kit_id,
+        "default_kit_id": default_id,
+    })
 
 ## The withdrawal. **The payload is `DrawerComposeController`'s, key for key**, so `Main.format_unqueue`
 ## serves both surfaces unchanged: `unqueue <faction> <x> <y>` for a patch, `unqueue <faction>
@@ -2654,12 +3125,61 @@ func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> v
     # is the exact shape this shipped in for one run of the harness.
     var margin := _rung_track_body
     HudWidgets.clear_children(margin)
-    # **THE PRESS CLOSES THE CARD BEFORE IT EMITS.** The declaration writes the optimistic overlay and
-    # re-renders the whole zone, which frees the very row this card is anchored to; a card left up
-    # over the rebuilt board would be showing the track it had just made stale.
     margin.add_child(RungLadder.build_track(rows, func(rung: String) -> void:
-        _dismiss_rung_track()
-        _emit_ready_declaration(band, model, rung)))
+        _pick_rung(band, model, source, rung, anchor)))
+    track.popup(_rung_track_anchor_rect(anchor))
+
+## **A PICKED RUNG EITHER DECLARES OR ASKS FOR A CROP, and which it does is a property of the RUNG.**
+##
+## **THE PRESS CLOSES THE CARD BEFORE IT EMITS.** The declaration writes the optimistic overlay and
+## re-renders the whole zone, which frees the very row this card is anchored to; a card left up over
+## the rebuilt board would be showing the track it had just made stale.
+##
+## **AN ANIMAL RUNG STAYS ONE CLICK** — `tame` and `corral` commit no species, so there is nothing for
+## a second step to ask — and so does a plant rung on a patch whose basket carries no plant it may
+## legally take: the sim accepts a Sow with no species token and settles it itself, and a step with
+## nothing in it is a click that answers nothing.
+func _pick_rung(band: Dictionary, model: Dictionary, source: Dictionary, rung: String,
+        anchor: Control) -> void:
+    if RungLadder.rung_commits_a_crop(rung):
+        var crops := RungLadder.crop_choices(source, HudComposeVocab.BARE_FORECAST_PREFIX, rung)
+        if not crops.is_empty():
+            _open_crop_step(band, model, source, rung, crops, anchor)
+            return
+    _dismiss_rung_track()
+    _emit_ready_declaration(band, model, rung)
+
+## **THE SECOND PAGE OF THE SAME CARD — the crop the plant rung commits to** (§4.15).
+##
+## **IT DEFAULTS TO NOTHING AND THE PICK IS THE DECLARATION.** The `⌃` used to declare in one click
+## and send no species token, so every Sow took the sim's own default — the highest-share legal plant,
+## which considers neither what it pays nor the player's take selection — which is how a fertile tile
+## got committed to a zero-food cash crop. `Sim picks` is still on the list, last, stating the plant it
+## would land on; it is a deliberate choice now rather than what happens when nobody looks.
+##
+## **IT REUSES THE SAME WINDOW, which is what keeps it free.** The work zone reads 396 of 396 in
+## height and both budgets ASSERT rather than clip, so a step drawn as a block would slice the board;
+## a Window costs the zone nothing, and rebuilding its CONTENT is the card's standing rule.
+##
+## **THE CROP GOES FIRST AND THE RUNG SECOND**, and the order is the commands': the crop rides
+## `assign_labor`'s own `species` token on the band's existing forage row (`_emit_work_assign`, the
+## queue row's picker's path — there is no second builder and no wire change), and the declaration
+## follows so its optimistic overlay is the one the rebuilt board reads.
+func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, rung: String,
+        crops: Array[Dictionary], anchor: Control) -> void:
+    var track := _ensure_rung_track()
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    margin.add_child(RungLadder.build_crop_step(crops,
+        func(species: String) -> void:
+            _dismiss_rung_track()
+            _emit_work_assign(band, model, int(model.get("workers", 0)),
+                RESTATE_STANDING_FLOOR, species)
+            _emit_ready_declaration(band, model, rung),
+        # **BACK REBUILDS THE TRACK RATHER THAN RESTORING IT**, the card's own never-patched rule: the
+        # source's position, the faction's knowledge and whatever entry is queued all move per
+        # snapshot, and a step left up across one of those would offer a rung already climbed.
+        func() -> void: _open_rung_track(band, model, anchor)))
     track.popup(_rung_track_anchor_rect(anchor))
 
 ## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.
@@ -2714,6 +3234,14 @@ func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
         "x": int(model.get("x", -1)),
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
+        # **THE OPTIMISTIC HALF'S TWO KEYS, AND NEITHER IS A COMMAND TOKEN**
+        # (`docs/plan_standing_upkeep.md` §4.7b ④). `kind` keys the withdrawal in the overlay
+        # (`pending_key`'s own shape) and `pending_entity` is the client-local handle a FAILED send
+        # hands back to `drop_pending_unqueue` — `assign_labor`'s rollback shape, exactly. The relay
+        # records the withdrawal BEFORE emitting, which is that shape's whole precondition.
+        # `Main.format_unqueue` reads neither.
+        "kind": String(model.get("kind", "")),
+        "pending_entity": int(band.get("entity", -1)),
     })
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
@@ -3512,6 +4040,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
+            # **A RING QUOTES ITS OWN METER, BECAUSE THE LADDER HAS NOTHING TO QUOTE FOR IT.** An
+            # `extend_pen` entry widens the pen rung its herd already stands on — there is no leg to
+            # climb, only more of the one the source is already on — so `building` above is empty, the
+            # trio beside this reads `0%`, and it would read `0%` for the ring's whole life. The ring's
+            # real meter is the herd's own `pen_extend_progress` / `pen_extend_cost` pair, in WORK
+            # UNITS, and `SourceForecast.pen_extend_fraction` is the same single division the herd
+            # drawer's "Fencing N%" badge comes through — so the badge and the queue row cannot quote
+            # one ring two ways. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field
+            # is meaningful only under the ring branch that `improvement` selects.
+            "build_ring_progress": SourceForecast.pen_extend_fraction(live_herd) \
+                if improvement == SourceForecast.BUILD_JOB_EXTEND_PEN \
+                else SourceForecast.PEN_EXTEND_EMPTY_METER,
             # **WHAT THAT RUNG COSTS, BOTH HALVES — the one-off pile and the standing rate.** They ride
             # the model because this is where the raw wire source is in hand, and TWO surfaces spend
             # them: the queue row's tooltip states the job's full price, and the POOLS block reads the
@@ -3563,6 +4103,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "build_destination": SourceForecast.build_destination_rung(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             "build_legs": SourceForecast.build_legs(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
+            # **AND WHAT THE ENTRY IS BEING RAISED WITH** (`docs/plan_standing_upkeep.md` §4.7a ②) —
+            # the RESOLVED builders kit of the winning band's queue entry, `""` on a source nobody
+            # has queued. It is the queue row's settings strip that spends it; the field is composed
+            # here beside the other five build fields because this is where the raw wire source is in
+            # hand, and because the five are one reading of one entry.
+            "build_kit_id": SourceForecast.build_kit_id(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN
             # CARD USES** (`docs/plan_standing_upkeep.md` §4.6b). The countdown above says the pool is
@@ -3814,9 +4361,21 @@ func _focus_work_source(model: Dictionary) -> void:
 
 ## One inspector row at a time — opening a second closes the first (and opening one costs the board
 ## rows, which is why `_work_board_capacity` subtracts the strip's height).
+## ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — the queue's strip and the board's inspector
+## are MUTUALLY EXCLUSIVE** (`docs/plan_standing_upkeep.md` §4.7b).
+##
+## **THE DEFECT IT CLOSES SHIPPED AND WAS REACHABLE IN ONE CLICK EACH.** Open a queue row's settings
+## AND a work row's inspector on a bottom dock and `Zone_work` drew 426 into a 396 box, with the board
+## already at its `maxi(1, …)` floor and nothing left to give back. No frame caught it because every
+## strip-open frame had no inspector and every inspector-open frame had no strip — two disjoint frame
+## families, the defect living in the gap, which is the same shape §4.7 found in the inspector's own
+## height. Each list already enforced this rule INTERNALLY; it is the same rule read one level up, and
+## it costs nothing.
 func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
     _work_floor_open = false
+    if _work_open_key != "":
+        _queue_open_key = ""
     _repage_work_zone()
 
 func _set_work_filter(filter: StringName) -> void:
@@ -5583,6 +6142,10 @@ func _on_split_band_pressed(band: Dictionary, workers: int) -> void:
 func render_band(unit: Dictionary) -> void:
     if _panel == null or unit.is_empty():
         return
+    # ⛔ **A SNAPSHOT MID-DRAG WOULD END THE GESTURE** — see `_queue_drag_in_flight`. The frames a
+    # drag spans are the frames the panel can afford to skip: it re-renders on the drop or the cancel.
+    if _queue_drag_in_flight():
+        return
     # Leaving the faction page is a subject change like any other, so the composing act it interrupted
     # is closed on the way back the same way a band-to-band cycle closes one. The page itself composes
     # nothing, but the player may have opened a sheet, cycled away to read the rollup and cycled back.
@@ -6103,3 +6666,16 @@ func _select_band_on_map(band: Dictionary) -> void:
         emit_signal("roster_occupant_selected", "unit", entity)
     else:
         render_band(band)
+
+## **THE ONE NODE THE BUILD QUEUE'S DRAG NEEDS, and it exists because a `RefCounted` cannot hear a
+## notification** (`docs/plan_standing_upkeep.md` §4.7b ③). Godot announces the END of a drag —
+## dropped OR cancelled — as `NOTIFICATION_DRAG_END` to every `Control` in the tree and by no other
+## means: there is no signal, and `Viewport.gui_is_dragging()` can only be polled. The suppression
+## that keeps a snapshot from freeing the rows mid-gesture has to be lifted on a CANCEL as reliably as
+## on a drop, so one invisible, input-transparent Control listens for it.
+class QueueDragWatcher extends Control:
+    var on_drag_end: Callable
+
+    func _notification(what: int) -> void:
+        if what == NOTIFICATION_DRAG_END and on_drag_end.is_valid():
+            on_drag_end.call()

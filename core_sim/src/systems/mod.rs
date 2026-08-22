@@ -25,7 +25,7 @@ use crate::{
         DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
         Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
         MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
+        PowerNode, ResidentBand, SourceYield, StartingUnit, TakeSelection, Tile, YieldRange,
         DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
