@@ -1108,16 +1108,30 @@ pub(crate) fn snapshot_forage_patches(
             let ecology = patch_ecology(patch, forage);
             // **THE LADDER'S price for each plant rung, resolved once and used by both halves of the
             // pair.** The fraction and the work pair must divide by the same number or the wire
-            // states one meter twice, from two denominators. `RUNG_COST_UNSCALED` on both: the only
-            // per-source cost multiplier on the ladder is a species' taming cost, and a plant has no
-            // species.
+            // states one meter twice, from two denominators.
+            //
+            // **`RUNG_COST_UNSCALED` on the tended rung, THIS PATCH'S OWN PRICE on the Field.**
+            // Clearing wild ground is clearing wild ground, so Cultivate is flat; a Sow is priced by
+            // how much of the tile the crop still has to replace
+            // (`forage::patch_field_cost_multiplier`, `docs/plan_standing_upkeep.md` §4.15). The
+            // **published** figure has to be the scaled one, because this is the price the compose
+            // sheet and the `⌃` mark quote a Sow at — and a quote that disagreed with the charge is
+            // exactly the defect class §4.3's rule exists to catch. Before the leg starts it is the
+            // live measure, which is the same number that leg will be stamped with (see
+            // `forage::field_replaced_share`).
             let cultivation_work_cost = ladder
                 .rung(RungKey::PlantTended)
                 .build_cost(RUNG_COST_UNSCALED)
                 .unwrap_or(NO_RUNG_WIDTH);
             let field_work_cost = ladder
                 .rung(RungKey::PlantField)
-                .build_cost(RUNG_COST_UNSCALED)
+                .build_cost(crate::forage::patch_field_cost_multiplier(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                    ladder,
+                ))
                 .unwrap_or(NO_RUNG_WIDTH);
             let forecast = forage_forecast(
                 patch,

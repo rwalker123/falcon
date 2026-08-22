@@ -1869,6 +1869,22 @@ pub fn advance_labor_allocation(
                         plant_tile_capacity,
                         &labor.forage,
                     );
+                    // **WHAT A SOW COSTS ON THIS GROUND** — the `plant:field` rung's own price
+                    // multiplier, by how much of the tile the chosen crop has still to **replace**
+                    // (`forage::patch_field_cost_multiplier`, `docs/plan_standing_upkeep.md` §4.15).
+                    // The stamp once the Field leg has started, the live measure before it, so the
+                    // arm that charges the job and every surface that quotes it read one number.
+                    //
+                    // **Resolved PRE-ACCRUAL, beside the rot and for its reason**: the quote a leg is
+                    // struck at is a fact about the ground as the turn found it, and this turn's own
+                    // work must not be able to move the price it is charged.
+                    let field_cost_multiplier = crate::forage::patch_field_cost_multiplier(
+                        patch,
+                        &tile_composition,
+                        &flora,
+                        &labor.forage,
+                        &ladder,
+                    );
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
                     // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -2187,7 +2203,12 @@ pub fn advance_labor_allocation(
                                         &ladder,
                                     ),
                                     legs: entry_destination.map_or_else(Vec::new, |destination| {
-                                        crate::forage::patch_build_legs(patch, destination, &ladder)
+                                        crate::forage::patch_build_legs(
+                                            patch,
+                                            destination,
+                                            &ladder,
+                                            field_cost_multiplier,
+                                        )
                                     }),
                                     balance,
                                     gate,
@@ -2259,6 +2280,7 @@ pub fn advance_labor_allocation(
                             &mut build_quotes,
                             entry_declares_a_rung,
                             meter_rot,
+                            field_cost_multiplier,
                         )
                     {
                         // The Field is the top of the plant branch, so finishing it is always
@@ -2352,10 +2374,17 @@ pub fn advance_labor_allocation(
                             };
                             ladder.projected_build_quote(
                                 next,
-                                // A patch is a patch: the ladder's only per-source cost
-                                // multiplier is a species' `taming_cost_multiplier`, and a plant
-                                // has no species.
-                                RUNG_COST_UNSCALED,
+                                // **THIS GROUND'S PRICE FOR THE RUNG IT WOULD CLIMB NEXT.**
+                                // Clearing is clearing, so `plant:tended` is flat; a Sow is priced
+                                // by how much of the tile the crop still has to replace (§4.15).
+                                // **This is the pre-commit quote** — the number the compose sheet
+                                // and the `⌃` mark show before the player declares anything — so it
+                                // has to be the same multiplier the arm will charge, or the sheet
+                                // prices a job the sim does not.
+                                match next_key {
+                                    RungKey::PlantField => field_cost_multiplier,
+                                    _ => RUNG_COST_UNSCALED,
+                                },
                                 banked,
                                 builders,
                                 entry_gear.work_per_worker,
@@ -4607,9 +4636,13 @@ fn estimate_standing(estimate: Option<BuildTurns>) -> EstimateStanding {
 /// path) — and the two must not drift into different gates, rates or completion side-effects.
 ///
 /// THE build seam: the rung supplies the accrual (`0` unless `Sow` is the rung's verb and `eligible`
-/// holds); the patch owns its meter, the clamp, and ownership. `RUNG_COST_UNSCALED` because sowing
-/// is a flat job — the only per-source cost multiplier on the ladder is a species'
-/// `taming_cost_multiplier`, and a plant has no species.
+/// holds); the patch owns its meter, the clamp, and ownership.
+///
+/// **`field_cost_multiplier` IS THIS GROUND'S PRICE FOR THE RUNG** — how much of the tile the chosen
+/// crop still has to replace (`forage::patch_field_cost_multiplier`,
+/// `docs/plan_standing_upkeep.md` §4.15), resolved pre-accrual by the caller. It is fixed onto the
+/// patch on the turn the Field leg first takes work ([`ForagePatch::price_field_rung`]) and quoted
+/// live before that, so the sheet's forecast, the leg list and the charge are one number.
 ///
 /// `gate` is the faction's **Seed Selection** gate and nothing else, carried as a [`BuildGate`] so
 /// a blocked head can name it. A lapse just stops accrual for the turn: progress is neither lost nor
@@ -4668,6 +4701,9 @@ fn accrue_field(
     // **What this patch's at-risk meter is bleeding this turn** (`forage::patch_meter_rot`),
     // resolved once by the caller off the keeping just stamped — see the Cultivate arm.
     meter_rot: f32,
+    // **What the `plant:field` rung costs on THIS ground**, resolved pre-accrual by the caller — see
+    // this function's doc.
+    field_cost_multiplier: f32,
 ) -> bool {
     let eligible = gate.holds();
     // The Sow crew's whole output — the keeping pool owes the rate whatever the builders do.
@@ -4676,10 +4712,11 @@ fn accrue_field(
     // *holding against the bleed* and *losing to it* stay two answers. At the **full pool**, like
     // every entry's quote.
     let balance = field_rung.build_balance(improvement, eligible, pool, gear_per_worker, meter_rot);
-    // **THE JOB'S PRICE** — `RUNG_COST_UNSCALED`, because sowing is a flat job: the only per-source
-    // cost multiplier on the ladder is a species' `taming_cost_multiplier`, and a plant has none.
+    // **THE JOB'S PRICE, ON THIS GROUND** — the rung's declared `work_cost` at this patch's own
+    // multiplier, which is what a Sow costs by how much of the tile it has to replace (§4.15).
+    // **A kit still never moves it** (§4.8): gear is a term of `balance` beside it.
     let sow_cost = field_rung
-        .build_cost(RUNG_COST_UNSCALED)
+        .build_cost(field_cost_multiplier)
         .expect("a rung a verb builds has a build meter");
     if accrual <= 0.0 {
         // **A Sow in flight claims the patch's estimate even when it is STALLED** — the shape the
@@ -4699,7 +4736,12 @@ fn accrue_field(
                     // the player is watching climb. The turn count is untouched: `BuildQuote::turns`
                     // spends `banked` only as `banked + Σ legs − banked`.
                     banked: patch.ladder_position(),
-                    legs: crate::forage::patch_build_legs(patch, RungKey::PlantField, ladder),
+                    legs: crate::forage::patch_build_legs(
+                        patch,
+                        RungKey::PlantField,
+                        ladder,
+                        field_cost_multiplier,
+                    ),
                     balance,
                     gate,
                 },
@@ -4707,6 +4749,11 @@ fn accrue_field(
         }
         return false;
     }
+    // **THE LEG'S PRICE IS FIXED HERE, ON THE TURN IT FIRST TAKES WORK** — idempotent, so it is
+    // measured once and held for the whole leg (`ForagePatch::price_field_rung`). Below the stalled
+    // return above, deliberately: a Sow that banked nothing has not started its leg, and freezing a
+    // price against a basket a later Cultivate leg will still weed would quote the player one number
+    // and charge another.
     // The TRANSITION, not the state — `ForagePatch::accrue_field` answers "did this call finish it",
     // so a second band cannot re-announce a Field the first one sowed.
     //
@@ -4721,6 +4768,7 @@ fn accrue_field(
     // nothing for work it did (`.claude/rules/core_sim/equipment.md` — *wear follows the work
     // actually done*), and under-charges the boundary turn by the part of the accrual below the
     // Field's base.
+    patch.price_field_rung(field_cost_multiplier, ladder);
     let position_before = patch.ladder_position();
     // **EVERY rung this turn's work crossed**, not just the Field. A `sow` on untended ground lays
     // two legs, and the tended rung completing on the way is news the player who ordered *"take it to
@@ -4737,7 +4785,12 @@ fn accrue_field(
                 cost: sow_cost,
                 // The whole climb's position — see the stalled quote above.
                 banked: patch.ladder_position(),
-                legs: crate::forage::patch_build_legs(patch, RungKey::PlantField, ladder),
+                legs: crate::forage::patch_build_legs(
+                    patch,
+                    RungKey::PlantField,
+                    ladder,
+                    field_cost_multiplier,
+                ),
                 balance,
                 gate,
             },

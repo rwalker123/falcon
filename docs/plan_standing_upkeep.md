@@ -1130,6 +1130,86 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     >   number is not**; at a rate near 1.0 the minimum-of-one stops being a bonus and party size
     >   means what it looks like it means. It is the **fauna** arc's edit, not this one's.
 
+15. **A SOW IS PRICED BY HOW MUCH OF THE TILE IT REPLACES.** A **scale primitive**, of §4.11's and
+    §4.13's kind and not §4.14's — the numbers below are §4.14's to own, the shape is not. It is the
+    ladder's existing per-source price hook (`RungStanding::at`'s `cost_at`, which the animal web
+    already spends on a species' `taming_cost_multiplier`) claimed by the plant web, which passed
+    `RUNG_COST_UNSCALED` with a comment saying a plant has no species. **`plant:field` only** —
+    `plant:tended` is untouched, because clearing wild ground is clearing wild ground.
+
+    Ray: *"I think maybe it should take more work to sow a field based on what % the crop is on the
+    tile."* Sowing a crop that already holds most of the ground is **tidying**; sowing one that holds
+    a tenth is **replacing the tile**. Until this the crop's share was invisible except as the
+    auto-picker's hidden criterion — it now has a job, and the crop choice becomes a decision on the
+    **cost** axis as well as the payoff one. It also reads correctly against the play report that
+    prompted it: a tile offering 100% tobacco is *cheap* to sow and feeds nobody, while sowing grain
+    there is dear and feeds you.
+    > **THE SHAPE IS A RATIO AGAINST A REFERENCE, NEVER A PENALTY.**
+    >
+    > ```text
+    > replacement = 1 - crop_share
+    > share_load  = replacement / (1 - field_reference_crop_share)
+    > field_cost  = work_cost x clamp(share_load, field_share_cost_floor, field_share_cost_ceiling)
+    > ```
+    >
+    > `field_reference_crop_share` is **0.5625, the reference basket's own weeded share** —
+    > `wild_emmer` holds `0.375` of `AlluvialPlain`'s realized basket and a Cultivate weeds it to
+    > `0.375 × 1.5` — so the shipped `plant:field` price of 75 work units is **provably
+    > pacing-neutral there**, exactly as `capacity_per_tender` is 195.0 for being that same tile's own
+    > `K`. A bare penalty would make the ladder's declared cost the *cheapest* case and inflate the
+    > whole plant branch; a bare discount would deflate it. With an anchor, ordinary sowable ground
+    > costs what the ladder already said, and §4.14 moves the anchor rather than re-tuning the rung.
+    >
+    > **Both clamps are load-bearing.** Floor `0.25` (18.75 units, ~6 turns at the rung's reference
+    > crew of three): ground already wholly the crop replaces *nothing*, and a free Sow there would
+    > still collect `field_capacity_gain` and `field_regrowth_gain` for having laid the rows and put
+    > the seed in. Ceiling `2.0` (150 units, ~50 turns), binding below a crop share of about an
+    > eighth: without it a marginal crop's price is bounded only by the anchor, which is a dial and
+    > not a promise.
+    >
+    > **⛔ ① THE SHARE IS MEASURED ONCE, WHEN THE LEG STARTS, AND HELD FOR THAT LEG.** It is stamped
+    > on the **patch** (`ForagePatch::field_cost_multiplier`, the exact twin of
+    > `Herd::taming_cost_multiplier`) rather than on the queue entry, because the patch's own standing
+    > is derived from its rung spans: a price the source could not see would leave the position's
+    > meaning and the job's price in two places. `None` is *the leg has not started*, and while it is
+    > `None` the Field rung's width provably changes nothing the patch derives — the position is at or
+    > below the rung's base.
+    >
+    > **It is NOT live.** §4.10 made the mix interpolate across the rung being raised, so a Sow raises
+    > its own crop's share continuously as it proceeds: a live price would shrink the remaining work
+    > as the work was done — a job that accelerates itself — and it would turn §4.6b's chained finish
+    > date from an exact construction into an estimate that drifts under the player.
+    >
+    > **And it is NOT stamped once at declaration either.** A `Sow` on untended ground is two legs
+    > (§2.8), and the Cultivate leg genuinely weeds toward the crop before the Field leg begins. Ray's
+    > ruling is that the mechanism *"doesn't care if it was cultivate"* — it reads the current share —
+    > so the price is re-quoted **at the leg boundary**. A discrete re-quote, not a drift: fixed for
+    > the whole of the leg it prices. It lapses again if the position ever bleeds back to the rung's
+    > base, which is the same rule applied to a re-attempt.
+    >
+    > **⛔ ② IT READS THE BASKET OF THE RUNG *BELOW*, NOT THE PATCH'S LIVE MIX.** A turn's accrual
+    > routinely overshoots the rung boundary, so a live reading taken when the leg starts is taken
+    > *after* the build has already moved it — the build pricing itself, which is `capacity_per_tender`'s
+    > ① one account over (*"the measure reads the TILE's `K` and never the patch's
+    > `carrying_capacity`, which has already been multiplied"*). The rung below's basket is free of it
+    > **and is exact**: a Field leg can only begin from a full tended rung, and a full tended rung's mix
+    > is `weeded` by construction. So the number quoted before a two-leg Sow starts and the number
+    > stamped when its Field leg finally begins are the same number, which is what keeps the chained
+    > date a construction.
+    >
+    > **⛔ ③ IT DOES NOT TOUCH THE UPKEEP, AND THAT IS THE §4.11 RULE.** `plant:field`'s hold cost is
+    > `scaled_by: source_load`, which reads the **tile's** `K` — holding a field is about how big the
+    > place is, never about what used to grow there. Two scale terms on one bill is exactly the
+    > compounding §4.11 ① measured (a Field billing 10.898 against the 4.308 it owed), so a Field that
+    > was dear to sow and one that was cheap owe the identical rate once they stand.
+    >
+    > **④ AND THE QUOTE MOVED WITH THE CHARGE**, on §4.3's rule. Every surface that states what a Sow
+    > will cost resolves through one seam (`forage::patch_field_cost_multiplier`): the arm that charges
+    > it, `patch_build_legs`' work figures and their chained dates, the pre-commit projection the `⌃`
+    > mark and the compose sheet read, and the published `fieldWorkCost`. **No wire field was added** —
+    > `fieldWorkCost` already carried the price and now carries the scaled one, so the client quotes
+    > what the sim charges without re-deriving anything.
+
 > **Every number in this arc is provisional until §4.14.** The plant demands of `2.0` / `4.0` are
 > whole-number placeholders chosen to be legible, not balanced; the graces of `2` and `1` are
 > inherited from the rung they replaced rather than chosen; and the Field's `2.53` / `2.53` were

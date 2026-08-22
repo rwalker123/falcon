@@ -296,6 +296,44 @@ fn default_sowable_species(app: &App, coord: UVec2) -> Option<String> {
     default_species_for_rung(&composition, &flora, RungKey::PlantField)
 }
 
+/// **THE FIELD RUNG'S SPAN ON THIS GROUND**, in work units, and **NOT** the ladder's declared 75.
+///
+/// A Sow is priced by how much of the tile the chosen crop still has to replace
+/// (`docs/plan_standing_upkeep.md` §4.15), so `plant_rung_span(PlantField, ..)` is the *reference*
+/// job — what it costs on ground holding exactly `field_reference_crop_share` of the crop — and any
+/// particular patch's is that times its own multiplier. Read through the one seam the arm charges and
+/// the wire quotes from (`forage::patch_field_cost_multiplier`), so a fixture cannot come to expect a
+/// price the sim does not use.
+fn field_span_here(app: &App, coord: UVec2) -> f32 {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+    let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(coord.x, coord.y)
+        .expect("the fixture tile is on the map");
+    let ground = app.world.get::<Tile>(entity).expect("the fixture tile");
+    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+    // **Ground a Sow has not created a patch on yet is priced as an UNWORKED one** — no commitment,
+    // no banked work, so the measure falls to the auto-pick against the tile's own basket, which is
+    // exactly what the arm will quote on the turn the patch appears.
+    let unworked = core_sim::ForagePatch::new(coord, tile_forage_capacity(&labor.forage, ground));
+    let registry = app.world.resource::<ForageRegistry>();
+    let patch = registry.patch(coord).unwrap_or(&unworked);
+    ladder
+        .rung(RungKey::PlantField)
+        .build_cost(core_sim::patch_field_cost_multiplier(
+            patch,
+            &composition,
+            &flora,
+            &labor.forage,
+            &ladder,
+        ))
+        .expect("the Field rung builds")
+}
+
 /// **A sowable site with NO forage patch on it** — the create-from-nothing target, *constructed*.
 ///
 /// **Read this before using it.** `Sow` creating a patch out of nothing was once the rung's headline
@@ -647,7 +685,11 @@ fn field_cost(app: &App) -> f32 {
 /// a failed Sow.
 fn turns_to_sow(app: &App, coord: UVec2) -> u32 {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    let (base, _) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    // **THIS GROUND'S price for the Field** — a Sow's cost varies with how much of the tile it
+    // replaces, so a fixture that counted turns off the ladder's declared span would over- or
+    // under-shoot the completion by whatever this patch's own multiplier is.
+    let width = field_span_here(app, coord);
     core_sim::build_turns_remaining(
         base + width,
         core_sim::RUNG_UNSTARTED,
@@ -765,8 +807,9 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     let ladder = core_sim::LadderConfig::builtin();
     let (tended_base, tended_width) =
         core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
-    let (field_base, field_width) =
-        core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    let (field_base, _) = core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
+    // **THIS GROUND'S price for the Field, not the ladder's declared one** — see `field_span_here`.
+    let field_width = field_span_here(&app, coord);
     fn published_legs(app: &App, coord: UVec2) -> Vec<(String, f32)> {
         app.world
             .resource::<ForageRegistry>()
@@ -910,7 +953,6 @@ fn a_part_built_cultivate_owes_only_the_remainder_of_its_own_leg() {
     let ladder = core_sim::LadderConfig::builtin();
     let (tended_base, tended_width) =
         core_sim::plant_rung_span(core_sim::RungKey::PlantTended, &ladder);
-    let (_, field_width) = core_sim::plant_rung_span(core_sim::RungKey::PlantField, &ladder);
     assert!(
         BANKED_ON_THE_LEG > tended_base && BANKED_ON_THE_LEG < tended_base + tended_width,
         "fixture: the seat must be INSIDE the tended rung's span, or the case is not the one \
@@ -923,6 +965,9 @@ fn a_part_built_cultivate_owes_only_the_remainder_of_its_own_leg() {
         patch.owner = Some(FactionId(0));
     }
     spawn_builder(&mut app, tile, coord, Improvement::Sow);
+    // **THIS GROUND'S price for the Field** — read before the turn runs, because the leg above is
+    // quoted at the same measure whether or not the Cultivate beneath it has finished.
+    let field_width = field_span_here(&app, coord);
     // The published legs are struck by the labor pass, so let one turn run — and read them BEFORE
     // asserting, since that turn banks a little onto the first leg.
     let before = app

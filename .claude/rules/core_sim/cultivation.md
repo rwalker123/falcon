@@ -600,6 +600,15 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   a tended patch on that ground still owes exactly 2.0 work/turn and a Field 4.0. Validated finite
   and `> 0` — a zero divisor is a division by zero and a negative one an inverted load, and both
   read as live dials. **PLAYTEST DIAL**, and the number moves in `plan_standing_upkeep.md` §4.14.)
+  **`field_reference_crop_share`** (0.5625), **`field_share_cost_floor`** (0.25) and
+  **`field_share_cost_ceiling`** (2.0) — **WHAT A SOW COSTS BY HOW MUCH OF THE TILE IT REPLACES**, the
+  `plant:field` rung's own per-source price multiplier (`forage::field_cost_multiplier_at_share`; see
+  "A Sow is priced by what it replaces" below). The anchor is the reference basket's own **weeded**
+  share of `wild_emmer` on `AlluvialPlain` (`0.375 × tended_weeding_gain`), which is what makes the
+  shipped 75-work-unit price pacing-neutral there, exactly as `capacity_per_tender` is that tile's own
+  `K`. Validated: the anchor finite and in `0.0..1.0` **exclusive of 1.0** (it is a `1 − share`
+  denominator), the floor finite and `> 0` (a free Sow still collects both Field gains), the ceiling
+  finite and `>= floor`. **PLAYTEST DIALS**, and the numbers move in `plan_standing_upkeep.md` §4.14.
   **`field_concentration_gain` is RETIRED** — a Field's favored share is set by the reweight
   (`1.0 − Σ(protected)`), not by a gain, so there is no gain left to tune. Plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
@@ -886,6 +895,68 @@ herd has one appetite).
   interchangeable:** `HudBandLaborState.forage_patch_lookup()` holds the keys **bare**, while the
   `tile_info` dict the tile card and compose sheet read carries a `patch_` prefix — except for the
   cultivation pair, which `MapView` stamps bare there too. Read whichever the caller's dict uses.
+
+## A Sow is priced by what it replaces
+
+**`plant:field`'s build cost is the rung's declared `work_cost` times a per-patch multiplier** set by
+how much of the tile the chosen crop still has to displace (`docs/plan_standing_upkeep.md` §4.15).
+Sowing a crop that already holds most of the ground is tidying; sowing one that holds a tenth is
+replacing the tile. **`plant:tended` is not scaled** — clearing wild ground is clearing wild ground —
+and neither is the **upkeep**, which is `scaled_by: source_load` off the tile's `K`: holding a field is
+about how big the place is, never about what used to grow there.
+
+```text
+replacement = 1 - crop_share
+share_load  = replacement / (1 - field_reference_crop_share)
+multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling)
+```
+
+- **It is the LADDER'S OWN per-source price hook, not a mechanism beside it.** `RungStanding::at`
+  takes a `cost_at` resolver — *this source's price for a rung* — which the animal web spends on a
+  species' `taming_cost_multiplier`. The plant web passed `RUNG_COST_UNSCALED` at four call sites with
+  a comment saying a plant has no species; `forage::plant_rung_cost` now answers the Field rung at the
+  patch's own multiplier and every other rung at `RUNG_COST_UNSCALED`, which is `Herd::standing_at`'s
+  shape exactly.
+- **The multiplier lives on the PATCH** (`ForagePatch::field_cost_multiplier`, private, read through
+  `quoted_field_cost_multiplier`), the twin of `Herd::taming_cost_multiplier`, because a patch's
+  `standing` is derived from its own rung spans: a price the source could not see would put the
+  position's meaning and the job's price in two places. `patch_rung_span` is that price list;
+  `plant_rung_span` remains the **reference** span and is what a fixture seats a position with.
+- **⛔ THE SHARE IS MEASURED ONCE, WHEN THE LEG STARTS, AND HELD FOR THAT LEG.**
+  `ForagePatch::price_field_rung` is idempotent — the Sow arm calls it on the turn the Field leg first
+  takes work, above the accrual and below the stalled-quote return, so a leg that banked nothing is
+  not priced. `None` means the leg has not started, and while it is `None` the Field rung's width
+  provably changes nothing the patch derives: the position is at or below the rung's base. It lapses
+  again in `set_ladder_position` whenever the position falls back to that base, so a Field bled away
+  and re-sown is re-quoted.
+- **⛔ IT IS NOT LIVE, and the reason is that the mix interpolates.** `patch_composition` blends across
+  the rung being raised, so a Sow raises its own crop's share continuously as it proceeds. A live price
+  would shrink the remaining work as the work was done — a job that accelerates itself — and it would
+  turn the queue's chained finish date (`plan_standing_upkeep.md` §4.6b) from an exact construction
+  into a drifting estimate. Guarded by
+  `forage::tests::a_running_sows_price_holds_while_the_mix_moves_under_it`, which asserts the crop's
+  share climbing as a **precondition** before asserting the price standing still.
+- **⛔ AND IT READS THE BASKET OF THE RUNG BELOW, NOT THE PATCH'S LIVE MIX** (`field_replaced_share` =
+  the crop's share of `weeded`). A turn's accrual routinely **overshoots** the rung boundary, so a live
+  reading taken when the leg starts is taken after the build has already moved it — the build pricing
+  itself, which is `capacity_per_tender`'s trap one account over (*the measure reads the TILE's `K` and
+  never the patch's `carrying_capacity`, which has already been multiplied*). The rung below's basket
+  is free of it **and is exact**: a Field leg can only begin from a full tended rung, and a full tended
+  rung's mix is `weeded` by construction — so a two-leg `Sow` on untended ground is quoted the same
+  number at declaration that its Field leg is stamped with once the Cultivate leg has weeded the
+  ground. The re-quote is a discrete event at a leg boundary, not a drift.
+- **The crop is the patch's commitment where it has one, and `default_species_for_rung`'s auto-pick
+  where it has not** — the same plant a Sow ordered here would commit to, so a patch nobody has worked
+  quotes the price it would really be sold at. Ground where nothing climbs to a Field prices at
+  `RUNG_COST_UNSCALED`: the rung is unbuildable there, and the ladder's declared figure is the honest
+  thing to publish.
+- **Every surface that states what a Sow will cost resolves through one seam**,
+  `forage::patch_field_cost_multiplier` — the arm that charges it, `patch_build_legs`' work figures and
+  their chained dates, the pre-commit `projected_build_quote` the `⌃` mark and the compose sheet read,
+  and the published `fieldWorkCost`. **No wire field was added**: `fieldWorkCost` already carried the
+  price and now carries the scaled one. That seam answers the patch's **own** price list whenever the
+  position stands above the Field rung's base, quoted or not, so the published cost and the published
+  `fieldWorkDone` can never divide by two different denominators.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (Intensification Rung 1c)"
 (the animal rung 3 this mirrors), "The Intensification Ladder" (the engine + the config).
