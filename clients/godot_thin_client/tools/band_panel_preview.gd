@@ -8416,6 +8416,36 @@ func _assert_rung_crop_step() -> void:
 	_assert_band_panel("crop — …and `Sim picks` names the plant it would land on (got `%s`)"
 		% String(faces.get(RungLadder.CROP_SIM_PICKS, "")),
 		String(faces.get(RungLadder.CROP_SIM_PICKS, "")).contains(CROP_STAPLE_NAME))
+	# **THE TITLE IS PER RUNG, AND A CULTIVATE GROWS NOTHING.** The live step above is a SOW, so it
+	# pins one direction only; the pair below pins the mapping itself. Asserted because a title that
+	# silently reverted to one spelling would render perfectly and say the rung does something it
+	# does not do — the defect that produced this, and one no PNG diff would flag as wrong.
+	var live_title := _rung_crop_title()
+	_assert_band_panel("crop — …and a SOW's step is titled `%s` (got `%s`)"
+		% [HudWorkVocab.RUNG_CROP_TITLE_GROW, live_title],
+		live_title == HudWorkVocab.RUNG_CROP_TITLE_GROW)
+	var tend_step := RungLadder.build_crop_step([], func(_s: String) -> void: pass,
+		func() -> void: pass, SourceForecast.IMPROVEMENT_CULTIVATE)
+	var tend_title := _title_of_crop_step(tend_step)
+	tend_step.queue_free()
+	_assert_band_panel("crop — …while a CULTIVATE's is titled `%s` (got `%s`)"
+		% [HudWorkVocab.RUNG_CROP_TITLE_TEND, tend_title],
+		tend_title == HudWorkVocab.RUNG_CROP_TITLE_TEND)
+
+## The heading over the crop step that is currently up — its column's first `Label`, which is where
+## `build_crop_step` puts it.
+func _rung_crop_title() -> String:
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_CROP_STEP_META, []):
+		return _title_of_crop_step(control)
+	return ""
+
+## …and the same read against a step built in hand, so the rung→title mapping can be asserted without
+## a second fixture for every rung that commits a crop.
+func _title_of_crop_step(step: Node) -> String:
+	for child in step.get_children():
+		if child is Label:
+			return (child as Label).text
+	return ""
 
 ## The face a crop row owes, composed from the SAME clause formats the picker composes it from — a
 ## literal here would pin the wording rather than the figures, which are what this block is about.

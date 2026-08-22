@@ -1753,7 +1753,17 @@ const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
 # relocates the trap if the list is names and shares: the player picks the dominant plant again,
 # because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to
 # *this field feeds nobody* states the zero unless a row does.
-const RUNG_CROP_TITLE := "WHAT TO GROW"
+## ⛔ **CULTIVATE GROWS NOTHING, AND THE TITLE MAY NOT SAY IT DOES.** The tended rung **weeds**: the
+## favored species' share rises toward `tended_weeding_gain` and the volunteers standing beside it
+## are still wild, so nothing is planted and the choice is which plant this band gets good at —
+## `tended_conversion_gain` multiplies that one species' whole yield vector and nothing else's. Only
+## the FIELD rung plants, forcing the favored share to 1.0 and every other to 0, which is where
+## *grow* becomes the true word. Reported from play as a nit on exactly that distinction, and it is
+## the model rather than the wording: a player told they are choosing what to GROW on a Cultivate has
+## been told the rung does something it does not do.
+const RUNG_CROP_TITLE_TEND := "WHAT TO TEND"
+
+const RUNG_CROP_TITLE_GROW := "WHAT TO GROW"
 
 ## **`Sim picks` STAYS AN OPTION AND STOPS BEING THE DEFAULT.** `""` is a real instruction on the wire
 ## — *take the tile's dominant legal plant* — and choosing it deliberately is fine. It is rendered

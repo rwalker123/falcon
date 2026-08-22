@@ -3179,7 +3179,8 @@ func _open_crop_step(band: Dictionary, model: Dictionary, source: Dictionary, ru
         # **BACK REBUILDS THE TRACK RATHER THAN RESTORING IT**, the card's own never-patched rule: the
         # source's position, the faction's knowledge and whatever entry is queued all move per
         # snapshot, and a step left up across one of those would offer a rung already climbed.
-        func() -> void: _open_rung_track(band, model, anchor)))
+        func() -> void: _open_rung_track(band, model, anchor),
+        rung))
     track.popup(_rung_track_anchor_rect(anchor))
 
 ## Take the track down, if one is up. Idempotent, and safe before the card has ever been built.

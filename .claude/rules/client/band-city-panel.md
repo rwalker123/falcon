@@ -3320,7 +3320,7 @@ So picking a plant rung on the track opens a **second page of the same card**, a
 declaration:
 
 ```
-WHAT TO GROW
+WHAT TO GROW                      ← on a SOW; a Cultivate reads WHAT TO TEND
   🌾 Wild Grain 70%
      38 work · 3.40 food
   🚬 Tobacco 20%
@@ -3330,6 +3330,14 @@ WHAT TO GROW
   ‹ Back
 ```
 
+- ⛔ **THE TITLE IS PER RUNG, BECAUSE A CULTIVATE GROWS NOTHING.** The tended rung WEEDS — the favored
+  share rises toward `tended_weeding_gain`, the volunteers beside it are still wild, and
+  `tended_conversion_gain` multiplies that one species' yield vector — so the choice there is which
+  plant the band gets good at, not what it plants. Only the FIELD rung plants, forcing the favored
+  share to 1.0 and every other to 0. `RUNG_CROP_TITLE_TEND` / `RUNG_CROP_TITLE_GROW`, chosen in
+  `build_crop_step` from the improvement it is committing. Reported from play as a nit, and it is the
+  MODEL rather than the wording: `WHAT TO GROW` over a Cultivate tells a player the rung does
+  something it does not do.
 - ⛔ **THE ROWS STATE WHAT EACH CROP PAYS, AND THAT IS THE ACTUAL REPAIR.** Forcing the choice only
   RELOCATES the trap if the list is names and shares: the player picks the dominant plant again,
   because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to *this

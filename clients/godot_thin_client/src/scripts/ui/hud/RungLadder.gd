@@ -391,14 +391,18 @@ static func _crop_face(entry: Dictionary, improvement: String) -> String:
 ##
 ## `on_pick` takes the row's SPECIES key, which is what the command carries; `on_back` returns to the
 ## rung list. Both are `Callable`s, `build_track`'s own treatment — this layer holds no state.
+## **`improvement` NAMES THE RUNG BEING COMMITTED, and it picks the title.** A Cultivate weeds toward
+## a plant already standing; only a Sow plants one. See `HudWorkVocab.RUNG_CROP_TITLE_TEND`.
 static func build_crop_step(rows: Array[Dictionary], on_pick: Callable,
-        on_back: Callable) -> VBoxContainer:
+        on_back: Callable, improvement: String) -> VBoxContainer:
     var column := VBoxContainer.new()
     column.set_meta(HudWorkVocab.RUNG_CROP_STEP_META, true)
     column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
     column.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
     var title := Label.new()
-    title.text = HudWorkVocab.RUNG_CROP_TITLE
+    title.text = HudWorkVocab.RUNG_CROP_TITLE_GROW \
+        if improvement == SourceForecast.IMPROVEMENT_SOW \
+        else HudWorkVocab.RUNG_CROP_TITLE_TEND
     title.add_theme_color_override("font_color", HudStyle.INK_DIM)
     title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
     column.add_child(title)
