@@ -441,6 +441,30 @@ const LADDER_OFF_RUNG_FRACTION := 0.54
 # and show the short final step, so the whole rail reads in one line of the log.
 const LADDER_WALK_CLICKS := 13
 
+# --- State "overlay picker" (the channel picker on the minimap's border) --------------------------
+# `docs/plan_knowledge_screen.md` §6. The picker is on the MINIMAP, so it renders in EVERY frame this
+# harness saves — but only its `◐` button does, and a closed button says nothing about the list, the
+# stub marker or the legend. This state opens the popover, and the assertions beside it cover the two
+# things no picture can carry: the ROSTER's composition and the fact that a chosen channel SURVIVES
+# the next snapshot.
+#
+# The fixture publishes one channel with real values, one flagged `placeholder`, and terrain-tag data,
+# so the frame carries a ramp legend, the stub marker and the client-side `terrain_tags` row at once.
+const PICKER_CHANNEL_LIVE := "sentiment"
+const PICKER_CHANNEL_LIVE_LABEL := "Sentiment"
+const PICKER_CHANNEL_STUB := "military"
+const PICKER_CHANNEL_STUB_LABEL := "Force Readiness"
+const PICKER_LIVE_RAW_SCALE := 100.0
+# Two tag bits with names, so the tag legend has something to count. The masks are per-tile; a tile's
+# bit is chosen off its column so the two tags split the map rather than landing on one hex.
+const PICKER_TAG_BIT_A := 1
+const PICKER_TAG_BIT_B := 2
+const PICKER_TAG_LABEL_A := "Riverine"
+const PICKER_TAG_LABEL_B := "Upland"
+# The roster the fixture must produce: the empty key leads (`PLACEMENT_FIRST`), the wire's own order
+# follows, and the client-side tag channel is last (`PLACEMENT_LAST`).
+const PICKER_EXPECTED_ORDER := ["", PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB, "terrain_tags"]
+
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
@@ -1393,7 +1417,105 @@ func _ready() -> void:
 
 	_assert_zoom_ladder()
 
+	await _overlay_picker_state()
+
 	_finish()
+
+## State "overlay picker" — the channel picker OPEN on the minimap's top border
+## (`docs/plan_knowledge_screen.md` §6). The `◐` button rides every frame this harness saves; only
+## this one opens the popover, which is where the list, the `stub data` marker and the legend are.
+##
+## **THE POPOVER IS IN THE CAPTURE BECAUSE IT IS A `Control`, NOT A `PopupPanel`.** A `PopupPanel` is
+## a Window and renders to its own surface, so the shipped popover would have been absent from this
+## frame and unjudgeable — the reason `OverlayPicker` follows `TurnOrb`'s catcher shape instead.
+func _overlay_picker_state() -> void:
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_overlay_channels())
+	_map._fit_map_to_view()
+	await _settle()
+
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("overlay picker — the minimap panel built none; the picker's mount is gone")
+		return
+
+	# THE ROSTER'S COMPOSITION. No picture can carry it: a list of four plausible names renders
+	# identically whichever order the merge put them in, and the empty key leading / the client-side
+	# tag row trailing are the two placements `OverlayChannels` exists to decide.
+	var keys := PackedStringArray()
+	for descriptor in picker.roster():
+		keys.append(String(descriptor.get("key", "")))
+	_assert_map("overlay picker — the roster merges wire + registry in order (%s)" % ", ".join(keys),
+		Array(keys) == PICKER_EXPECTED_ORDER)
+
+	# The wire's `placeholder` flag reaches the descriptor, which is what puts the `stub data` marker
+	# on the row and in the legend without any channel being named in either.
+	var stub_flagged := false
+	for descriptor in picker.roster():
+		if String(descriptor.get("key", "")) == PICKER_CHANNEL_STUB:
+			stub_flagged = bool(descriptor.get("placeholder", false))
+	_assert_map("overlay picker — the wire's placeholder flag reaches the '%s' descriptor" % PICKER_CHANNEL_STUB,
+		stub_flagged)
+
+	# Choosing a row paints the channel.
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+	_assert_map("overlay picker — choosing '%s' paints it (active_overlay_key = '%s')"
+		% [PICKER_CHANNEL_LIVE, _map.active_overlay_key],
+		_map.active_overlay_key == PICKER_CHANNEL_LIVE)
+
+	# **AND IT SURVIVES THE NEXT SNAPSHOT.** `_ingest_overlay_channels` clears `active_overlay_key` on
+	# every frame it ingests, so without the re-apply a chosen channel is painted for exactly one turn
+	# and then silently reverts to bare terrain — which looks like the player never clicked. The
+	# Inspector panel this replaced did the re-apply from its own ingest; the picker does it off
+	# `overlay_legend_changed`, and this is the assertion that says so.
+	_map.display_snapshot(_snapshot_overlay_channels())
+	await _settle()
+	_assert_map("overlay picker — the chosen channel survives the next snapshot (active_overlay_key = '%s')"
+		% _map.active_overlay_key,
+		_map.active_overlay_key == PICKER_CHANNEL_LIVE and picker.selected_key() == PICKER_CHANNEL_LIVE)
+
+	# **AND THE PICKER DOES NOT STOMP A CHANNEL IT DID NOT SET.** `set_overlay_channel` emits
+	# `overlay_legend_changed`, so a picker that re-asserted on THAT signal would overwrite every
+	# other caller of it — `MapView.set_terrain_mode`, `set_fow_enabled`'s deliberate clear, and every
+	# state in this harness that drives a channel directly. It shipped that way for one render:
+	# `map_pasture` / `map_forage` / the two danger frames / the three pasture-selection frames all
+	# came out as bare terrain, each a perfectly plausible picture of a map with no overlay on it.
+	_map.set_overlay_channel(PICKER_CHANNEL_STUB)
+	await _settle()
+	_assert_map("overlay picker — a channel set by someone else STANDS, and the picker adopts it (painted '%s', row '%s')"
+		% [_map.active_overlay_key, picker.selected_key()],
+		_map.active_overlay_key == PICKER_CHANNEL_STUB and picker.selected_key() == PICKER_CHANNEL_STUB)
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+
+	picker.open_popover()
+	await _settle()
+	_assert_map("overlay picker — the popover is a Control in this viewport, not a Window",
+		picker.is_popover_open())
+	await _save("map_overlay_picker")
+
+	# The `terrain_tags` row's `available` predicate is the registry's one gate, and a world with no
+	# tag data is the case it exists for — the tag channel has no wire raster to fall back on.
+	picker.close_popover()
+	_map.display_snapshot(_base_snapshot(_band([], 2, 0), []))
+	await _settle()
+	var untagged := PackedStringArray()
+	for descriptor in picker.roster():
+		untagged.append(String(descriptor.get("key", "")))
+	# **PAIRED WITH THE EMPTY KEY'S SURVIVAL, deliberately.** "does not contain `terrain_tags`" is also
+	# true of a roster the merge dropped on the floor, and the empty key is spelled `""` — so a
+	# one-entry roster prints as an empty string and a zero-entry one prints identically. The two
+	# claims together can only be satisfied by the roster this world should actually have.
+	_assert_map("overlay picker — a world with no tag data keeps the empty key and is not offered 'terrain_tags' (%d entries)"
+		% untagged.size(),
+		Array(untagged) == [OverlayChannels.NO_OVERLAY_KEY])
 
 
 ## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
@@ -3306,6 +3428,60 @@ func _snapshot_crisis_annotations() -> Dictionary:
 			},
 			"channel_order": PackedStringArray([CRISIS_CHANNEL_KEY]),
 			"crisis_annotations": _crisis_annotations(),
+		},
+		"populations": [],
+		"herds": [],
+	}
+
+## The overlay-picker backdrop: flat terrain under a west→east `sentiment` ramp, a SECOND channel
+## flagged `placeholder` (so the popover renders the stub marker), and per-tile terrain-tag masks with
+## two named bits (so the client-side `terrain_tags` row is offered at all). One fixture carrying every
+## shape the popover can draw.
+func _snapshot_overlay_channels() -> Dictionary:
+	var total := GRID_W * GRID_H
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var empty := PackedFloat32Array()
+	empty.resize(total)
+	var tags: Array = []
+	tags.resize(total)
+	for i in total:
+		var col := i % GRID_W
+		var pressure := float(col) / float(GRID_W - 1)
+		normalized[i] = pressure
+		raw[i] = pressure * PICKER_LIVE_RAW_SCALE
+		# Split the map between the two tags so the tag legend counts both.
+		tags[i] = PICKER_TAG_BIT_A if col < GRID_W / 2 else PICKER_TAG_BIT_B
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": _terrain_array(),
+			"terrain_tags": tags,
+			"terrain_tag_labels": {
+				PICKER_TAG_BIT_A: PICKER_TAG_LABEL_A,
+				PICKER_TAG_BIT_B: PICKER_TAG_LABEL_B,
+			},
+			"channels": {
+				PICKER_CHANNEL_LIVE: {
+					"label": PICKER_CHANNEL_LIVE_LABEL,
+					"description": "Morale and agency composite, staged west to east.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+				# A channel the sim publishes a SHAPE for and no telemetry behind — the state the
+				# `stub data` marker exists to report, and the reason the marker is a descriptor field
+				# rather than a hand-written tab per channel.
+				PICKER_CHANNEL_STUB: {
+					"label": PICKER_CHANNEL_STUB_LABEL,
+					"description": "Composite of garrison morale, manpower, and supply margin.",
+					"normalized": empty,
+					"raw": empty,
+					"placeholder": true,
+				},
+			},
+			"channel_order": PackedStringArray([PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB]),
 		},
 		"populations": [],
 		"herds": [],

@@ -1,0 +1,155 @@
+extends RefCounted
+class_name OverlayChannels
+
+## THE OVERLAY CHANNEL REGISTRY — the one place a map overlay channel is declared client-side, and
+## the merge that folds those declarations into the roster the server publishes.
+##
+## **Adding a channel is one row in `CHANNELS`** — the same property `WorkbenchPages.PAGES` gives the
+## Workbench's pages. Nothing downstream names a channel: `OverlayPicker` builds its list from
+## `roster()`, `OverlayLegend` renders whichever `legend_kind` the row declares, and neither has a
+## branch that could grow one. That is the whole reason this file exists. The Inspector panel it
+## replaced carried the `terrain_tags` label, description and availability test inline in its ingest
+## function, and two hand-written placeholder tabs for `culture` and `military` in its refresh
+## function — two places that grew a branch per channel forever.
+##
+## **A WIRE CHANNEL NEEDS NO ROW AT ALL.** `core_sim` publishes `overlays.channels` with a label, a
+## description and a placeholder flag per channel, and `MapView._ingest_overlay_channels` holds them;
+## `roster()` synthesizes a descriptor from that metadata for every key the wire names. A row here is
+## for a channel the CLIENT adds (`terrain_tags`, assembled from the per-tile tag masks with no
+## raster behind it), or to give a wire channel a legend kind other than the scalar ramp.
+##
+## **`available` AND `facts` ARE METHOD NAMES ON THE MAPVIEW, NOT `Callable`s.** A `Callable` is not a
+## constant expression, so a registry holding one could not be `const` — and a non-`const` registry is
+## one that whatever ingests it can mutate at runtime, which is exactly the property being bought
+## here. The names are resolved through `has_method` at merge time, so a row naming a method that does
+## not exist drops the channel rather than crashing the picker.
+
+## The legend shapes a row can ask for. They live on `OverlayLegend` because it is what renders them;
+## the dependency runs registry → renderer and never back, so the two `class_name`s do not cycle.
+const KIND_NONE := OverlayLegend.KIND_NONE
+const KIND_RAMP := OverlayLegend.KIND_RAMP
+const KIND_FACTS := OverlayLegend.KIND_FACTS
+
+## Where a client-side row sits relative to the wire's own `channel_order`.
+const PLACEMENT_FIRST := 0
+const PLACEMENT_LAST := 1
+
+## The empty key — "paint no overlay". `MapView.set_overlay_channel("")` is the clear.
+const NO_OVERLAY_KEY := ""
+
+const TERRAIN_TAGS_KEY := "terrain_tags"
+
+const CHANNELS: Array[Dictionary] = [
+	{
+		"key": NO_OVERLAY_KEY,
+		"label": "No Overlay",
+		"description": "Base map without overlays.",
+		# NOT a ramp: the active-view legend for the empty key is the full terrain biome list, which
+		# is a right-dock reference card (`L`) and not something a popover the width of the minimap
+		# can hold. The row states what it does and stops.
+		"legend_kind": KIND_NONE,
+		"placement": PLACEMENT_FIRST,
+	},
+	{
+		"key": TERRAIN_TAGS_KEY,
+		"label": "Terrain Tags",
+		"description": "Colors tiles by environmental tags (blends when multiple tags apply).",
+		"legend_kind": KIND_RAMP,
+		# The tag channel has no wire raster — it is assembled from the per-tile tag masks — so it is
+		# offered only on a world that carries them.
+		"available": &"has_terrain_tag_data",
+		"placement": PLACEMENT_LAST,
+	},
+]
+
+## The merged, ordered channel list: every key the picker offers, each a COMPLETE descriptor, so no
+## caller reads `MapView`'s channel dictionaries itself.
+##
+## Order is `PLACEMENT_FIRST` rows, then the wire's own `channel_order`, then `PLACEMENT_LAST` rows —
+## each key taken once, by whichever pass reaches it first. A registry row the wire also publishes
+## (the empty key is both) keeps its registry metadata and the wire's position.
+static func roster(view: Object) -> Array[Dictionary]:
+	var available: Dictionary = _available_rows(view)
+	var keys: Array[String] = []
+	for row in CHANNELS:
+		var first_key := String(row.get("key", ""))
+		if available.has(first_key) and int(row.get("placement", PLACEMENT_LAST)) == PLACEMENT_FIRST:
+			keys.append(first_key)
+	for wire_key in _wire_order(view):
+		if not keys.has(String(wire_key)):
+			keys.append(String(wire_key))
+	for row in CHANNELS:
+		var last_key := String(row.get("key", ""))
+		if available.has(last_key) and not keys.has(last_key):
+			keys.append(last_key)
+	var out: Array[Dictionary] = []
+	for key in keys:
+		out.append(descriptor_for(view, key, available))
+	return out
+
+## One complete descriptor: the registry row (when there is one) over the wire's own metadata.
+## `available_rows` is the pre-filtered registry `roster()` already built; pass `{}` to look it up.
+static func descriptor_for(view: Object, key: String, available_rows: Dictionary = {}) -> Dictionary:
+	var rows: Dictionary = available_rows if not available_rows.is_empty() else _available_rows(view)
+	var row: Dictionary = rows.get(key, {})
+	var descriptor: Dictionary = {
+		"key": key,
+		"label": _wire_string(view, &"overlay_channel_labels", key, key.capitalize()),
+		"description": _wire_string(view, &"overlay_channel_descriptions", key, ""),
+		"legend_kind": KIND_RAMP,
+		"placeholder": _wire_flag(view, &"overlay_placeholder_flags", key),
+		"facts": &"",
+	}
+	for field in row.keys():
+		var value: Variant = row[field]
+		# An empty registry string means "say nothing here", not "blank the wire's answer".
+		if value is String and String(value) == "":
+			continue
+		descriptor[field] = value
+	return descriptor
+
+## The fact lines a `KIND_FACTS` row's provider answers, and an empty list for every other row.
+static func facts_for(view: Object, descriptor: Dictionary) -> PackedStringArray:
+	var probe := StringName(descriptor.get("facts", &""))
+	if probe == &"" or view == null or not view.has_method(probe):
+		return PackedStringArray()
+	var result: Variant = view.call(probe)
+	return result if result is PackedStringArray else PackedStringArray()
+
+## The registry rows whose `available` predicate passes, keyed by channel key.
+static func _available_rows(view: Object) -> Dictionary:
+	var out: Dictionary = {}
+	for row in CHANNELS:
+		if _is_available(view, row):
+			out[String(row.get("key", ""))] = row
+	return out
+
+static func _is_available(view: Object, row: Dictionary) -> bool:
+	var probe := StringName(row.get("available", &""))
+	if probe == &"":
+		return true
+	if view == null or not view.has_method(probe):
+		return false
+	return bool(view.call(probe))
+
+static func _wire_order(view: Object) -> PackedStringArray:
+	if view == null:
+		return PackedStringArray()
+	var value: Variant = view.get(&"overlay_channel_order")
+	return value if value is PackedStringArray else PackedStringArray()
+
+static func _wire_string(view: Object, member: StringName, key: String, fallback: String) -> String:
+	if view == null:
+		return fallback
+	var table: Variant = view.get(member)
+	if not (table is Dictionary) or not (table as Dictionary).has(key):
+		return fallback
+	return String((table as Dictionary)[key])
+
+static func _wire_flag(view: Object, member: StringName, key: String) -> bool:
+	if view == null:
+		return false
+	var table: Variant = view.get(member)
+	if not (table is Dictionary):
+		return false
+	return bool((table as Dictionary).get(key, false))

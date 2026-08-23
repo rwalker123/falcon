@@ -136,8 +136,8 @@ func apply_typography() -> void:
 		Typography.apply(terrain_biome_section_label, Typography.STYLE_HEADING)
 	if terrain_tile_section_label != null:
 		Typography.apply(terrain_tile_section_label, Typography.STYLE_HEADING)
-	# Interactive controls: match MapPanel/OverlayPanel so the buttons + terrain-highlight
-	# dropdown carry the same STYLE_CONTROL sizing as every other inspector panel.
+	# Interactive controls: match MapPanel so the buttons + terrain-highlight dropdown
+	# carry the same STYLE_CONTROL sizing as every other inspector panel.
 	for control in [
 		export_map_button,
 		_terrain_highlight_dropdown
@@ -183,10 +183,6 @@ func set_terrain_palette(palette: Dictionary) -> void:
 func set_terrain_tag_labels(labels: Dictionary) -> void:
 	_terrain_tag_labels = labels.duplicate(true)
 	_render_terrain()
-
-## Coordinator collaborator: tag labels feed OverlayPanel's terrain-tags channel.
-func get_terrain_tag_labels() -> Dictionary:
-	return _terrain_tag_labels
 
 func _apply_enabled() -> void:
 	if export_map_button != null:

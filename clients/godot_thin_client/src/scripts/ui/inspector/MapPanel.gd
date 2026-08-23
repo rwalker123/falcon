@@ -7,8 +7,9 @@ class_name MapInspectorPanel
 ##
 ## Snapshot-driven (in _tab_panels): apply_update() consumes grid / campaign_profiles /
 ## campaign_label / faction_inventory. Collaborators: set_command_hooks + set_command_connected
-## (command seam) and set_map_view (rivers toggle). The nested "Map Overlays" section has
-## its own OverlayPanel script — this panel does not touch it.
+## (command seam) and set_map_view (rivers toggle). The nested "Map Overlays" section is
+## gone from this tab: the overlay-channel picker lives on the minimap's top border now
+## (docs/plan_knowledge_screen.md §6).
 ##
 ## Follows the tab-panel contract established by PowerPanel (see
 ## clients/godot_thin_client/CLAUDE.md).

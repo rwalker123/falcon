@@ -292,6 +292,45 @@ radius the ring is split and the "inks nothing else" half fails on the outline's
 **It saves no PNG and moves none** — the frame set was byte-identical across the fix, the outline
 being unwrapped and wrapped to the same place on every non-wrapping fixture here.
 
+### `map_overlay_picker` — the channel picker OPEN, and the two claims a picture cannot carry
+
+`docs/plan_knowledge_screen.md` §6. The picker is mounted on the MINIMAP, so its `◐` button rides
+**every frame this harness saves** — which is also why the migration moved all 65 of them, and why
+they were re-read rather than re-baselined. Only this state opens the popover, which is where the
+channel list, the `stub data` marker and the legend are; one fixture carries a live ramp channel, a
+`placeholder` one and terrain-tag data, so all three render together.
+
+**The popover is IN the capture only because `OverlayPicker` is a `Control` and not a `PopupPanel`.**
+A `PopupPanel` is a Window and renders to its own surface — the shipped popover would have been absent
+from this frame and unjudgeable. That is the reason for the `TurnOrb` catcher shape, recorded here
+because this harness is the thing that would have silently lost.
+
+Six assertions ride beside it, and the load-bearing ones are the pair no frame can hold — **that a
+chosen channel SURVIVES the next snapshot**, and **that a channel the picker did NOT set stands**:
+
+- `_ingest_overlay_channels` clears `active_overlay_key` on every frame it ingests, so without the
+  picker's re-apply a chosen channel is painted for one turn and reverts, which reads as a click that
+  did nothing rather than as a bug.
+- The mirror of it is the one that shipped: re-asserting on `overlay_legend_changed` — which fires on
+  every channel change, not just an ingest — made the picker overwrite **every other caller**, and
+  `map_pasture`, `map_forage`, `map_hunt_danger`, `map_threat`, `map_crisis_annotations` and the two
+  pasture-selection frames all came out as bare terrain. **Every one of them is a plausible picture of
+  a map with no overlay on it**, and this harness's own assertions were silent, so nothing but a pixel
+  diff against a pre-change render could see it. `overlay-channels.md` → "two signals, two rules" is
+  the fix; the assertion here is what pins it.
+
+The **ROSTER's composition** is the third no-picture claim (four plausible names render identically in
+any order, and the empty key leading / `terrain_tags` trailing are the two placements
+`OverlayChannels` decides). The last one pairs *"a world with no tag data is not offered
+`terrain_tags`"* with *"…and keeps the empty key"* on purpose: **the empty key is spelled `""`, so a
+one-entry roster and a zero-entry one print identically**, and the absence claim alone is satisfied by
+a merge that dropped everything on the floor.
+
+**JUDGE THIS MIGRATION BY A PIXEL DIFF, NEVER BY THE HASH LIST.** The button moves all 65 frames, so
+"which frames changed" answers nothing here — capture the PNGs before the change and diff each pair,
+where a button-sized bounding box is the expected result and a whole-image one is a real regression.
+That is exactly how the stomp above was caught.
+
 ## `tools/blend_probe.gd` / `.tscn`
 
 Dev-only **edge-blend probe rendered at the GAME's on-screen hex radius** — the other harnesses

@@ -1,7 +1,7 @@
 ---
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandOverlayRenderer,AnnotationRenderer}.gd"
-  - "clients/godot_thin_client/src/scripts/ui/inspector/OverlayPanel.gd"
+  - "clients/godot_thin_client/src/scripts/ui/overlay/**"
 ---
 
 <!-- Extracted verbatim from lines 4027-4144 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -28,8 +28,78 @@ Raster overlays streamed from `core_sim`:
 
 Legend rendering: min/avg/max values + channel description.
 
+## The picker is three modules on the MINIMAP's border, and a channel is one registry row
+
+`docs/plan_knowledge_screen.md` §6. `ui/overlay/` holds the whole of the player-facing channel
+picker, split by KIND so that adding a channel is a data edit and never a code one:
+
+| Module | Kind | Holds |
+|---|---|---|
+| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Two rows today: the empty key (`PLACEMENT_FIRST`) and `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) |
+| `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Three `legend_kind`s — `KIND_RAMP` (the channel's own legend rows), `KIND_FACTS` (the lines a descriptor's provider answers), `KIND_NONE` — and **no channel is named in the file** |
+| `ui/overlay/OverlayPicker.gd` | the widget | The `◐` button docked on `MinimapPanel`'s top border and the popover it opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
+
+**A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
+`placeholder` flag per channel and `MapView._ingest_overlay_channels` holds them, so `roster()`
+synthesizes a descriptor for every key the wire names. A row is for a channel the CLIENT adds, or to
+give a wire channel a legend kind other than the ramp. **`available` and `facts` are METHOD NAMES on
+`MapView`, not `Callable`s** — a `Callable` is not a constant expression, so a registry holding one
+could not be `const`.
+
+**THE RAMP LEGEND IS `MapView`'s OWN, pulled through `current_overlay_legend()` / pushed by
+`overlay_legend_changed`** — the same dict the right-dock legend card renders. Re-deriving min/avg/max
+from `overlay_stats_for_key` would report the map-wide minimum for every channel, which for `pasture`
+and `forage` is the sea: exactly the reading those two channels' own legend builders exist to avoid
+(below, "Zero pasture is NOT low pasture"). One producer, two surfaces, no way to disagree.
+
+### The picker owns the channel ACROSS A SNAPSHOT and nowhere else — two signals, two rules
+
+**RE-ASSERT on `overlay_channels_ingested`.** `_ingest_overlay_channels` clears `active_overlay_key`
+on every frame it ingests, so without a re-apply a chosen channel is painted for exactly one turn and
+then reverts to bare terrain — which reads as a click that did nothing. The Inspector panel did this
+from its own ingest; nothing else will now. The signal is emitted at the END of `display_snapshot`,
+before `_emit_overlay_legend`, so a listener asking `has_terrain_tag_data()` sees THIS frame's tags
+and the legend that follows describes the channel just re-asserted.
+
+**ADOPT on `overlay_legend_changed`.** That signal also fires on every ordinary channel change, and
+**a picker that re-asserted on it overwrites every other caller of `set_overlay_channel`** —
+`MapView.set_terrain_mode` / `toggle_terrain_mode`, `set_fow_enabled`'s deliberate clear, and every
+offline harness that drives a channel with no picker in the loop. That is not hypothetical: the first
+cut did exactly this, and **seven `map_preview` overlay states rendered as bare terrain** —
+`map_pasture`, `map_forage`, `map_hunt_danger`, `map_threat`, `map_crisis_annotations` and the two
+pasture-selection frames — each a perfectly plausible picture of a map with no overlay on it, which is
+why only a pixel diff against a pre-change render found it. Outside an ingest, `MapView` is the
+authority for what is painted and the picker follows it.
+
+`OverlayPicker._syncing` is what keeps the ADOPT branch off the picker's own echo. `_apply_to_map`
+then reads the key back anyway, because **`set_overlay_channel` silently REFUSES a key it holds no
+raster for** — an unread push would leave the lit row claiming a channel the map is not painting, and
+re-assert the same rejected key on every later frame. `map_preview`'s `map_overlay_picker` asserts
+both rules, the survival and the stand-down, in one place.
+
+**THE POPOVER IS A `Control`, NOT A `PopupPanel`** — `TurnOrb`'s `top_level` catcher shape. Every
+other popover in this HUD is a `PopupPanel` because a Window cannot change a docked zone's height, a
+problem a widget floating over the map does not have; what a Window WOULD cost here is the frame — it
+renders to its own surface, so an opened popover would be absent from `map_preview`'s capture and the
+state could not be judged at all.
+
+**IT LEFT THE INSPECTOR ENTIRELY.** `ui/inspector/OverlayPanel.gd` was 308 lines doing four jobs, two
+of which grew a branch per channel — an inline `terrain_tags` label/description/availability block in
+its ingest, and hand-written `Culture` and `Military` placeholder tabs in its refresh, whose content
+was exactly what the generic legend produces. Both are deleted along with the script, the
+`OverlaySection`/`OverlayTabs` subtree in `InspectorLayer.tscn`, and `Inspector.gd`'s member and four
+forwards. `Inspector._ingest_overlays` survives as a junction for the `terrain_palette` /
+`terrain_tag_labels` / `crisis_annotations` side-routes, which are Terrain's and Crisis's; the
+channels on that same key are read straight off `MapView`, which ingests the identical payload. The
+Inspector is a modding tool that ships hidden behind `I`, so the map's own channel picker was
+somewhere a player would never look — that, not the file's size, is why it moved.
+
+**`MapView.set_overlay_channel` still special-cases `terrain_tags`, and that is the render path, not
+the picker's.** Leave it alone; a new channel is a registry row plus whatever raster or derivation it
+needs, **never a second `if key ==` there**.
+
 **`elevation` is the DEFAULT channel** (`overlays.default_channel`, the native decoder's
-`DEFAULT_OVERLAY_CHANNEL`), which the Inspector's Overlays selector opens on when the player has
+`DEFAULT_OVERLAY_CHANNEL`), which the picker opens on when the player has
 chosen nothing. A default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`,
 which worldgen publishes for every world, so it is never a placeholder, and relative height is
 legible with no knowledge of the simulation's vocabulary.
@@ -70,7 +140,7 @@ blend shader's `fog_color` uniform — none of which this retirement touched. A 
 client hits fog-of-war in almost every case; check which one you have before deleting anything. On the
 client side the removal was three lines (`MapView.FOG_COLOR`, its `OVERLAY_COLORS` row, and the dead
 `avg_fog` metric): the selector and legend are data-driven off the snapshot's `channel_order`, so
-dropping the native channel registration removed the entry from both with no OverlayPanel edit — the
+dropping the native channel registration removed the entry from both with no picker edit — the
 same property the derived-danger channels rely on, described below.
 
 **`hunt_danger` / `threat` — the two derived-danger overlays (Predators Phase 0).** STRENGTH ≠ DANGER:
@@ -87,7 +157,7 @@ is correct. Neither is a two-tone ramp: MapView's `_color_for_tile` rides the ge
 `GRID_COLOR.lerp(overlay_color, value)` path off `OVERLAY_COLORS` (`HUNT_DANGER_OVERLAY_COLOR` orange /
 `THREAT_OVERLAY_COLOR` red, so the two read apart) — empty ground stays grid-colored — and the generic
 scalar legend handles both. The overlay selector + legend are data-driven off `channel_order`, so the
-channels appear with no OverlayPanel edit. **The herd drawer shows the four RAW components, NOT a verdict
+channels appear with no picker edit. **The herd drawer shows the four RAW components, NOT a verdict
 word** (`Hud._herd_summary_lines` → `_append_danger_component_lines`, after Ecology, on EVERY herd): a
 word can't survive the roster (a mammoth and later mech-infantry can't both be "Deadly"), so each is a
 relative bar + raw value, Elevation-style — **Attack** / **Defense** bar against the max across
@@ -125,9 +195,14 @@ this channel are load-bearing:
 - **It is NOT a wire raster.** Graze rides `TileState` (per-entity diffed → zero delta bytes on an
   ungrazed turn), so the channel is **assembled in the native decoder from the tiles**
   (`snapshot_dict`'s `OverlaySlices.pasture_capacity`), rather than read off a `ScalarRaster`.
-  Everything downstream — MapView's channel ingest, the OverlayPanel selector, the legend — then works
-  with no special-casing. (Do **not** synthesize it client-side in MapView the way `province` is: a
-  MapView-only channel never reaches OverlayPanel's selector, so it can't be picked.)
+  Everything downstream — MapView's channel ingest, the picker's roster, the legend — then works
+  with no special-casing. (The old caveat here — *"do not synthesize it client-side the way `province`
+  is, a MapView-only channel never reaches the selector"* — **no longer holds and is why it is
+  recorded rather than deleted.** The Inspector panel built its list from the SNAPSHOT payload, so a
+  channel MapView added to itself was unreachable; the picker builds it from
+  `MapView.overlay_channel_order`, which is that payload PLUS MapView's own additions, so `province`
+  is pickable now and renders through the generic scalar path like any other. Reading MapView rather
+  than the payload is what let the `overlays` routing leave the Inspector entirely.)
 - **It paints CAPACITY, not fill.** "How good a pasture is this ground?" is the question the layer
   exists to answer (is prairie really pasture; is forest really poor?) and it is a property of the
   biome. The *fill* (`biomass / capacity` — "how eaten-down is it?") is a different question: it rides

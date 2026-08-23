@@ -6,6 +6,14 @@ const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd"
 signal hex_selected(col: int, row: int, terrain_id: int)
 signal tile_selected(info: Dictionary)
 signal overlay_legend_changed(legend: Dictionary)
+## A snapshot has been ingested, so the channel ROSTER may have changed and `active_overlay_key` has
+## just been cleared by `_ingest_overlay_channels`. Distinct from `overlay_legend_changed`, which
+## also fires on every ordinary channel change — and the distinction is what tells the minimap's
+## picker apart: on THIS it re-asserts the channel the player chose (nothing else will), and on a
+## bare legend change it ADOPTS whatever is painted, because some other caller decided that.
+## Emitted at the END of `display_snapshot` rather than inside the ingest, so a listener asking
+## `has_terrain_tag_data()` sees this frame's tags and not the last one's.
+signal overlay_channels_ingested()
 signal unit_selected(unit: Dictionary)
 signal herd_selected(herd: Dictionary)
 ## Double-click on a herd (Early-Game Labor slice 3b): a convenience that assigns the
@@ -1270,6 +1278,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	# BEFORE the legend: a listener that re-asserts a channel here wants the legend that follows to
+	# describe the channel it just re-asserted, not the cleared one.
+	overlay_channels_ingested.emit()
 	_emit_overlay_legend()
 	_minimap.update()
 
@@ -3455,6 +3466,17 @@ func _emit_overlay_legend() -> void:
 
 func refresh_overlay_legend() -> void:
 	_emit_overlay_legend()
+
+## The legend for whatever channel is active — the PULL side of `overlay_legend_changed`, which
+## carries the identical dict. The minimap's overlay picker renders its own copy of it and can open
+## long after the last push, so it needs to be able to ask.
+func current_overlay_legend() -> Dictionary:
+	return _legend_for_current_view()
+
+## Does this world carry terrain-tag data? `terrain_tags` has no wire raster — it is assembled from
+## the per-tile tag masks — so `OverlayChannels` asks this before offering the channel at all.
+func has_terrain_tag_data() -> bool:
+	return not terrain_tags_overlay.is_empty() or not terrain_tag_labels.is_empty()
 
 func overlay_stats_for_key(key: String) -> Dictionary:
 	if key == "terrain_tags":
