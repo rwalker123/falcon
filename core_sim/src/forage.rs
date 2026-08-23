@@ -2240,40 +2240,47 @@ pub fn resolve_committed_species(
     }
 }
 
-/// **May this crew ask for these plants HERE?** — the take selection's legality, the seam the
-/// `assign_labor` rejection reads (the selective gather's twin of [`resolve_committed_species`]).
+/// **WHICH OF THESE PLANTS IS THE GROUND STILL OFFERING?** — the take selection's seam, the
+/// selective gather's twin of [`resolve_committed_species`].
 ///
-/// A named species is legal iff the roster knows it **and it is in this tile's basket** — resolved
-/// through [`tile_flora_composition`], never `FloraConfig::composition` on a raw terrain, so a
-/// navigable hex is judged on the two-term basket it actually has. **There is no rung gate**: this
-/// says what a crew carries home from the stand that is standing, not what the ground may be
-/// committed to, so a `wild`-ceiling species (an oak's mast, a fishery) is a perfectly legal choice.
+/// A named species is gatherable iff the roster knows it **and it is standing in the basket it is
+/// judged against** ([`species_stands_in`]). **There is no rung gate**: this says what a crew
+/// carries home from the stand that is standing, not what the ground may be committed to, so a
+/// `wild`-ceiling species (an oak's mast, a fishery) is a perfectly good choice.
 ///
-/// **It fails closed at the command**, like the floor does. A silently-dropped selection is
-/// indistinguishable from *"take everything"* on every readout the player has, so it would be
-/// undiagnosable; the refusal names the first offending key in the selection's own order.
+/// # THE TWO WAYS A NAME CAN BE WRONG ARE NOT THE SAME MISTAKE
 ///
-/// The whole basket ([`TakeSelection::is_everything`]) is always legal — it names no plant to be
-/// wrong about.
+/// - **A plant no roster carries** is a typo. `Err(key)` — the caller refuses and names it, because
+///   the player asked for something that does not exist and nothing can be inferred from it.
+/// - **A plant that simply does not stand here** is `Ok`, in the returned list. It is not a typo:
+///   the ground moved. A commitment reweights the mix out from under a selection the player made
+///   *before* it, so the very names this returns are ones that were legal when they were typed —
+///   and the caller **prunes** them ([`TakeSelection::pruned_to`]) rather than refusing.
+///
+/// **Refusing the absent case is what broke a Field's every crew edit.** The mix a take narrows is
+/// the patch's rung-reweighted one, so a sown Field carries only what was sown; a stored selection
+/// naming a plant the player's own Sow had weeded out then refused the whole `assign_labor` — worker
+/// count included — and the player could not clear it, because a chip is only drawn for a plant the
+/// current mix still has. `Ok` with the stale names is what lets the command land and repair itself.
+///
+/// The whole basket ([`TakeSelection::is_everything`]) names no plant to be wrong about, so it
+/// answers with nothing to prune.
 pub fn resolve_take_selection<'a>(
     take: &'a TakeSelection,
     composition: &[FloraShare],
     flora: &FloraConfig,
-) -> Result<(), (&'a str, SpeciesRefusal)> {
+) -> Result<Vec<&'a str>, &'a str> {
+    let mut absent = Vec::new();
     for species in take.keys() {
         if species_stands_in(composition, species) {
             continue;
         }
-        return Err((
-            species,
-            if flora.species.contains_key(species) {
-                SpeciesRefusal::NotHere
-            } else {
-                SpeciesRefusal::Unknown
-            },
-        ));
+        if !flora.species.contains_key(species) {
+            return Err(species);
+        }
+        absent.push(species);
     }
-    Ok(())
+    Ok(absent)
 }
 
 /// **What a patch pays, standing on `rung`** — in provisions/turn, through the *same* helpers the sim

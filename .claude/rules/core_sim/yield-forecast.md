@@ -805,5 +805,58 @@ and capture all read `foddering`; `sim_schema/src/lib.rs`'s roundtrip asserts on
 `fb::IntensificationKnowledgeState::foddering()` rather than the in-process struct, because a field
 that never reached the codec still passes an in-process assertion.
 
----
+## Shedding a crew the band can no longer field
 
+`LaborAllocation::normalize(available)` runs once per band at the head of `advance_labor_allocation`
+and trims `Σ workers` back to what the band actually has. It answers the one question a command-side
+clamp cannot: the band **lost people** since the command landed, so hands already committed have to
+go somewhere.
+
+### Every shed is announced, and a trim is a shed
+
+It returns a `ShedCrew` per row it touched — `remaining > 0` for a row it merely cut, `0` for one it
+destroyed outright — and `announce_shed_crew` pushes a `status=trimmed` or `status=lapsed` line for
+each on that source's own feed channel.
+
+The trim half was silent for the whole life of the pass: only destroyed rows were handed back, so a
+crew going `6 → 3` on a band one worker short published a smaller number with **no event anywhere**.
+From the player's side that is a crew they had just raised moving on its own, which is
+indistinguishable from the command having been refused.
+`a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left` asserts on the **event**, because the
+worker count was correct throughout and a test that read only the count would have passed the whole
+time.
+
+### The shedding order is the edit order
+
+`set_assignment` removes the row it is editing and re-pushes it at the **end** of `assignments`;
+`normalize` trims from the **end**. So **the row a player has just touched is always first in the
+shedding order**, and a raise that leaves a band fully committed is the first thing given back on the
+next turn that costs the band a worker.
+
+The two halves are individually reasonable — an edited row is naturally re-appended, and shedding
+from the tail means *"where each row falls in the shedding order is where the player put it in the
+list"*, which is a statement the player can make. Their composition is what nobody chose: the list
+position a player controls is silently overwritten by the act of editing the row. **This is an open
+question, not a settled design** — the ordering stands as written until it is ruled on.
+
+### `normalize` and the commands measure different pools
+
+`normalize` bounds on `available_workers(cohort.working)` — the **raw** pool. Every command clamps
+against `BandWorkforce::assignable()`, which is `pool − benched`. So the shedding pass tolerates an
+allocation that spends the bench's hands twice.
+
+Nothing reaches that state today: `set_bench` clamps on `benchable()` (`pool − assigned`), so
+`assigned + benched ≤ pool` holds from the command side and `normalize`'s looser bound is never the
+binding one. It is recorded because the two passes nonetheless disagree about what a band's spendable
+pool *is*, and `BandWorkforce::assignable`'s own doc comment claims the type is the single authority
+over that number.
+
+### The pool `normalize` reads is not the pool the player composed against
+
+`simulate_population` and `advance_labor_allocation` are chained in that order inside
+`TurnStage::Population` (`lib.rs`). A command therefore clamps against the pool the **published
+frame** showed, and `normalize` re-clamps one system later against the pool demographics has already
+rewritten for this turn. The formula is the same on both sides — it is the instant that differs — so
+a band sitting at full commitment sheds on any turn that costs it a working-age person.
+
+---

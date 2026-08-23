@@ -11,7 +11,7 @@ use sim_runtime::{
 use crate::{
     generations::GenerationId,
     grid_utils::{HEX_CORNER_COUNT, HEX_DIRECTION_COUNT},
-    intensification::RungKey,
+    intensification::{RungKey, NO_CREW_ON_THIS_ACTIVITY},
     mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
@@ -1645,6 +1645,32 @@ impl TakeSelection {
     where
         F: Fn(&str) -> bool,
     {
+        let pruned = self.pruned_to(stands);
+        if pruned.is_everything() {
+            return Self::EVERYTHING;
+        }
+        Self::from_keys(pruned.keys().chain(std::iter::once(crop)))
+    }
+
+    /// **THE SELECTION NARROWED TO WHAT ACTUALLY STANDS HERE** — the one definition of that
+    /// narrowing, and the reason [`Self::pruned_for_commitment`] is a thin wrapper over it.
+    ///
+    /// A stale name can be found in two places and they must answer alike: the **turn**, where a
+    /// commitment has just reweighted the ground under a running crew, and the **command**, where an
+    /// `assign_labor` restates a selection the player made before that reweight. Two pruners would
+    /// be two definitions of *"it grows there"*, which is exactly the drift `species_stands_in`
+    /// exists to prevent one layer down.
+    ///
+    /// `stands` is the predicate, passed in so this type stays free of the plant web's basket.
+    ///
+    /// **Nothing surviving falls back to the whole basket** ([`Self::EVERYTHING`]): the player's
+    /// stated preference is entirely gone, and a selection of nothing is a take of nothing in every
+    /// account at once — the silent `+0.00` this prune exists to end. The whole basket prunes to
+    /// itself, naming no plant that could go stale.
+    pub fn pruned_to<F>(&self, stands: F) -> Self
+    where
+        F: Fn(&str) -> bool,
+    {
         if self.is_everything() {
             return Self::EVERYTHING;
         }
@@ -1652,7 +1678,7 @@ impl TakeSelection {
         if surviving.is_empty() {
             return Self::EVERYTHING;
         }
-        Self::from_keys(surviving.into_iter().chain(std::iter::once(crop)))
+        Self::from_keys(surviving)
     }
 }
 
@@ -1895,6 +1921,36 @@ impl LaborAssignment {
         self.kit
             .clone()
             .unwrap_or_else(|| config.default_kit(self.target.kit_job()))
+    }
+}
+
+/// **HANDS ONE `normalize` TOOK OFF A ROW** — what [`LaborAllocation::normalize`] hands its caller
+/// so the caller can say so (`docs/plan_standing_upkeep.md` §2.2).
+///
+/// The band could not field what it was holding, so the shedding pass took `lost` workers off
+/// `target` and left `remaining` there. **[`Self::remaining`] is the whole of the difference between
+/// a trim and a lapse**: above zero the source is still worked by a smaller crew, at
+/// [`NO_CREW_ON_THIS_ACTIVITY`] the row is gone and its queue entry goes with it on the next prune.
+///
+/// It carries the target by value rather than the whole [`LaborAssignment`] because a trimmed row is
+/// **still in the allocation** — handing back a copy of a live row would put a second, instantly
+/// stale reading of its crew in the caller's hands, and the caller's one job is to name the crew
+/// this pass left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShedCrew {
+    /// The source or role the hands came off.
+    pub target: LaborTarget,
+    /// How many workers this pass took — the whole crew, on a row it dropped outright.
+    pub lost: u32,
+    /// What is still staffed there, [`NO_CREW_ON_THIS_ACTIVITY`] when the row did not survive.
+    pub remaining: u32,
+}
+
+impl ShedCrew {
+    /// **Did the row survive with a crew on it?** — the one test that decides which of the two feed
+    /// lines this shed gets, named so neither caller re-spells the comparison.
+    pub fn row_survived(&self) -> bool {
+        self.remaining > NO_CREW_ON_THIS_ACTIVITY
     }
 }
 
@@ -3513,12 +3569,21 @@ impl LaborAllocation {
     /// ([`LaborTarget::Builders`] / [`LaborTarget::Agriculture`] / [`LaborTarget::Husbandry`]), so
     /// where each falls in the shedding order is where the player put it in the list.
     ///
-    /// **Returns the assignments it dropped, because dropping one silently was a defect.** Every
-    /// other path that gives up work tells the player (the out-of-range Forage lapse, the hunt leash
-    /// lapse, `cancel_order`); this one said nothing at all, and a tended patch that quietly ended
-    /// up with zero workers is what it looks like from the outside. The caller owns the feed line —
-    /// `LaborAllocation` has no event log and should not grow one — so this hands back the evidence
-    /// and `advance_labor_allocation` narrates it.
+    /// > #### ⛔ EVERY HAND THIS SHEDS IS REPORTED — A ROW THAT MERELY SHRANK IS NOT A QUIET ONE
+    /// >
+    /// > It returns [`ShedCrew`] per row it touched, **partial trims included**, because silence is
+    /// > what makes this pass read as a bug from the outside. Every other path that gives up work
+    /// > tells the player (the out-of-range Forage lapse, the hunt leash lapse, `cancel_order`), and
+    /// > this one used to hand back only the rows it destroyed **outright**: a crew going `6 → 3`
+    /// > produced no event at all, and the player saw a number they had just raised move on its own
+    /// > with nothing anywhere saying why.
+    /// >
+    /// > A trim and a drop are the same event at two magnitudes — the band cannot field what it is
+    /// > holding — so they are one return type with [`ShedCrew::remaining`] telling them apart,
+    /// > rather than two lists a caller could narrate only one of.
+    ///
+    /// The caller owns the feed line — `LaborAllocation` has no event log and should not grow one —
+    /// so this hands back the evidence and `advance_labor_allocation` narrates it.
     ///
     /// **A dropped row takes its queue entry with it**, on the next
     /// [`Self::prune_build_queue`]: an entry requires a row (§3.2), and a band that has lost the
@@ -3528,9 +3593,18 @@ impl LaborAllocation {
     /// system's own word for *abandon it*, so zeroing would keep a row the map still renders as
     /// worked while paying nothing — the same "correct `+0.00` forever" state the out-of-range lapse
     /// exists to avoid. Dropping returns the slot to the pool and matches every other give-up path.
-    #[must_use = "a dropped assignment must be announced — see the doc comment"]
-    pub fn normalize(&mut self, available: u32) -> Vec<LaborAssignment> {
-        let mut dropped = Vec::new();
+    ///
+    /// # THE ROW SHED FIRST IS THE ONE THE PLAYER TOUCHED LAST, AND THAT IS NOT A COINCIDENCE
+    ///
+    /// [`Self::set_assignment`] removes the edited row and re-pushes it at the **end** of
+    /// `assignments`, and this trims from the **end**. So the crew a player has just raised is
+    /// always first in the shedding order — which is why a raise that leaves the band fully
+    /// committed comes back down on the very next turn that costs it a worker.
+    /// `.claude/rules/core_sim/yield-forecast.md` → "The shedding order is the edit order" holds the
+    /// open question; nothing here should be read as a decision that it is right.
+    #[must_use = "a shed crew must be announced — see the doc comment"]
+    pub fn normalize(&mut self, available: u32) -> Vec<ShedCrew> {
+        let mut shed = Vec::new();
         let mut total = self.assigned_total();
         while total > available {
             let excess = total - available;
@@ -3539,17 +3613,26 @@ impl LaborAllocation {
             };
             if last.workers > excess {
                 last.workers -= excess;
+                shed.push(ShedCrew {
+                    target: last.target.clone(),
+                    lost: excess,
+                    remaining: last.workers,
+                });
             } else {
                 // Nothing of this row survives — drop it whole, so no source is left rendered as
                 // worked by a crew of nobody.
                 if let Some(assignment) = self.assignments.pop() {
-                    dropped.push(assignment);
+                    shed.push(ShedCrew {
+                        target: assignment.target,
+                        lost: assignment.workers,
+                        remaining: NO_CREW_ON_THIS_ACTIVITY,
+                    });
                 }
             }
             total = self.assigned_total();
         }
         self.align_yields();
-        dropped
+        shed
     }
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
@@ -3965,6 +4048,43 @@ mod tests {
         );
     }
 
+    /// **THE BARE NARROWING, WHICH IS THE ONE THE COMMAND RUNS** — no crop to add, because
+    /// `assign_labor` is not a commitment: it restates a selection the ground has already moved
+    /// under. Its three answers are the three cases the command boundary has to get right.
+    #[test]
+    fn a_bare_prune_keeps_what_stands_and_falls_back_to_everything() {
+        let standing = ["emmer", "kelp"];
+        let stands = |species: &str| standing.contains(&species);
+
+        assert_eq!(
+            TakeSelection::from_keys(["emmer", "cotton"])
+                .pruned_to(stands)
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["emmer"],
+            "a partly-stale selection keeps the names that still stand"
+        );
+        assert_eq!(
+            TakeSelection::from_keys(["emmer", "kelp"])
+                .pruned_to(stands)
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["emmer", "kelp"],
+            "a selection the ground still offers is returned untouched"
+        );
+        assert!(
+            TakeSelection::from_keys(["cotton", "flax"])
+                .pruned_to(stands)
+                .is_everything(),
+            "a wholly stale selection falls back to the whole basket — a selection of nothing is a \
+             take of nothing, which is the silent `+0.00` this prune exists to end"
+        );
+        assert!(
+            TakeSelection::EVERYTHING.pruned_to(stands).is_everything(),
+            "the whole basket prunes to itself; it names no plant that could go stale"
+        );
+    }
+
     /// **NOTHING SURVIVING THE PRUNE FALLS BACK TO THE WHOLE BASKET**, not to the crop alone: the
     /// player's stated preference is entirely gone, and narrowing it for them out of the commitment
     /// is a decision this seam has no standing to make. And the whole basket prunes to itself — it
@@ -4155,7 +4275,20 @@ mod tests {
         );
 
         // One hand short: the tail row is the builders, and it is what gives.
-        assert!(allocation.normalize(8).is_empty(), "nothing is dropped yet");
+        let trimmed = allocation.normalize(8);
+        assert_eq!(
+            trimmed,
+            vec![ShedCrew {
+                target: LaborTarget::Builders,
+                lost: 1,
+                remaining: 1,
+            }],
+            "a row that merely shrank is reported too — silence here is what reads as a bug"
+        );
+        assert!(
+            trimmed[0].row_survived(),
+            "and it is reported as a TRIM, because the builders are still standing there"
+        );
         assert_eq!(
             allocation.workers_on(&LaborTarget::Builders),
             1,
@@ -4176,10 +4309,22 @@ mod tests {
         let dropped = allocation.normalize(7);
         assert_eq!(dropped.len(), 1, "the emptied builders row is handed back");
         assert_eq!(dropped[0].target, LaborTarget::Builders);
+        assert!(
+            !dropped[0].row_survived(),
+            "nothing is left there, so this is the lapse and not a trim"
+        );
         assert_eq!(allocation.workers_on(&LaborTarget::Builders), 0);
 
         // Only then does the row above it give.
-        assert!(allocation.normalize(6).is_empty());
+        assert_eq!(
+            allocation.normalize(6),
+            vec![ShedCrew {
+                target: staffed_forage(tail, 0).target,
+                lost: 1,
+                remaining: 2,
+            }],
+            "the next row up gives, and says so"
+        );
         assert_eq!(allocation.assignments[1].workers, 2);
         assert_eq!(allocation.assigned_total(), 6);
     }

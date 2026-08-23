@@ -551,11 +551,10 @@ becomes a real decision beside **how hard do I press** (the harvest floor).
   ~50%-of-runs `deterministic_snapshots_match` flake — see the share-denominator note in the
   `flora_config.json` row above. Sorting the *output* is not the fix; not being able to hold an
   unsorted one is.
-- **Legality is judged against THE MIX THE TAKE WILL NARROW** (`forage::resolve_take_selection`, the
-  take-side twin of `resolve_committed_species`) — `patch_composition` where a patch stands, falling
+- **The selection is resolved against THE MIX THE TAKE WILL NARROW** (`forage::resolve_take_selection`,
+  the take-side twin of `resolve_committed_species`) — `patch_composition` where a patch stands, falling
   back to `tile_flora_composition` where none does, never `FloraConfig::composition` on a raw terrain,
-  so a navigable hex is judged on the two-term basket it actually has. The refusals reuse
-  `SpeciesRefusal` (`unknown_species` / `species_not_here`); no new variant was needed. **There is no
+  so a navigable hex is judged on the two-term basket it actually has. **There is no
   rung *asked* in it**: a selection says what the crew carries home from the stand that is standing, so
   a `wild`-ceiling plant is a perfectly good answer where naming it as a *crop* would be
   `CeilingTooLow` — but on a tended or sown patch the stand that is standing is the reweighted one.
@@ -564,13 +563,34 @@ becomes a real decision beside **how hard do I press** (the harvest floor).
   > involved — a selection the very next turn's take valued at exactly zero. Pinned by
   > `server::tests::assign_labor_judges_a_take_selection_against_the_patchs_own_mix`. The commit-side
   > half of the same defect is the take-selection prune under "Committing a patch to one plant".
-  > **It fails closed at the command**, exactly as `floor_is_valid` does, and that is the whole reason
-  > it is validated at all: a silently dropped selection produces the identical take, crew count and
-  > row that *"take everything"* produces, so the mistake would be undiagnosable from any readout the
-  > player has. One bad key refuses the **whole** selection rather than being filtered out of it —
-  > half a selection is a different order than the one that was given. Pinned through the command by
-  > `server::tests::assign_labor_rejects_a_take_selection_this_ground_cannot_offer`, never through
-  > the validator it calls (see `cultivation.md` on the guard that passed while nothing validated).
+  > #### ⛔ THE TWO WAYS A NAME IS WRONG GET TWO DIFFERENT ANSWERS — PRUNE, OR REFUSE
+  >
+  > **A plant no roster carries is REFUSED, and the refusal names it.** That is a typo; nothing can be
+  > inferred from it, and a silently dropped key produces the identical take, crew count and row that
+  > *"take everything"* produces, so the mistake would be undiagnosable from any readout the player
+  > has. One unknown key refuses the **whole** selection rather than being filtered out of it — half a
+  > selection is a different order than the one that was given — and the refusal changes nothing at
+  > all, not even the half that was legal.
+  >
+  > **A plant that merely does not stand here is PRUNED** (`TakeSelection::pruned_to`, the same
+  > narrowing the commitment repair runs), and the command lands carrying what survived. Nothing
+  > surviving falls back to the whole basket, because a selection of nothing is a take of nothing.
+  >
+  > The two cannot be one rule, because the mix **moves under a stored selection** — that is what a
+  > `Cultivate`/`Sow` is — so the absent names are typically ones that were legal when the player made
+  > them and that the player's own crop then weeded out. Refusing those refused the whole
+  > `assign_labor`, **worker count included**: reported from play at T120 on a Field standing at
+  > `Wild Emmer 100%` whose row still named Wild Pulses, where raising the tenders did nothing turn
+  > after turn and the only thing said was *"Harvest failed — Wild Pulses does not grow at (13, 10)"*.
+  > The panel offered no way out either, since a chip is drawn only for a plant the **current** mix
+  > carries, so the stale key had no control to clear it with. A prune the sim performs on the
+  > player's behalf pushes one `status=pruned` feed line, because it is a change they did not ask for.
+  >
+  > Pinned through the command — never through the validator it calls (see `cultivation.md` on the
+  > guard that passed while nothing validated) — by
+  > `server::tests::a_take_selection_the_ground_no_longer_offers_is_pruned_not_refused`, which asserts
+  > the crew on the **published wire row**, and by
+  > `assign_labor_rejects_a_take_selection_naming_a_plant_that_does_not_exist` for the typo half.
 - **THE TAKE: the selection scales the OFFER; it does not change the crew, and it does not trample
   the rest.** In `forage_take`:
   - **available** = `max(0, B − floor·K) × Σ selected share` — `forage::selected_biomass_share` over

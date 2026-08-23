@@ -984,10 +984,32 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > fish in it, and a blanket reset would re-tick plants the player had deliberately unticked.
    > Nothing surviving the prune falls back to the whole basket rather than to the crop alone.
    >
-   > **The command boundary was judging the wrong basket, and freshly, not stalely.**
-   > `validate_take_selection` resolved against the tile's raw wild realization while the take path
-   > narrows against the rung-reweighted mix, so on any tended or sown patch it accepted a selection
-   > the very next turn valued at zero. It now judges the same mix the take will narrow.
+   > **The command boundary was judging the wrong basket, and freshly, not stalely.** The take
+   > selection resolved against the tile's raw wild realization while the take path narrows against
+   > the rung-reweighted mix, so on any tended or sown patch it accepted a selection the very next
+   > turn valued at zero. It judges the same mix the take will narrow.
+   >
+   > **⛔ AND WHAT THAT MIX DECIDES IS WHAT IS PRUNED, NOT WHAT IS REFUSED.** Judging the patch's
+   > own mix is right. Hard-refusing on it is not, because the mix **moves under a stored
+   > selection** — that is what a Cultivate or a Sow *is* — so the names found absent are typically
+   > ones that were legal when the player made them and that the player's own crop then weeded out.
+   > Refusing them refused the whole `assign_labor`, **worker count and all**: a Field standing at
+   > `Wild Emmer 100%` whose row still named Wild Pulses could not have its tenders raised at all,
+   > turn after turn, and the only thing said was *"Harvest failed — Wild Pulses does not grow at
+   > (13, 10)"*.
+   > The panel could not clear it either — a chip is drawn only for a plant the **current** mix
+   > carries, so the stale key had no control attached to it.
+   >
+   > So the command runs the **same narrowing the commitment above it runs**
+   > (`TakeSelection::pruned_to`, which `pruned_for_commitment` is a wrapper over): absent names are
+   > dropped, the rest is kept, nothing surviving falls back to the whole basket, and it lands. One
+   > feed line says so, because a selection the sim narrowed is a change the player did not ask for.
+   > A key **no roster carries** is still refused by name — that is a typo, nothing can be inferred
+   > from it, and one bad key spoils the whole selection rather than being filtered out of it.
+   >
+   > The general shape: **a gate belongs where the player's input can be wrong, a repair where the
+   > WORLD can move underneath it.** These two failure modes arrive at one validator looking alike,
+   > and answering both with a refusal makes the player's own investment into a lock.
 11. **Plant upkeep SCALES WITH THE SOURCE.** Both plant rungs ship `scaled_by: flat`, so a rich
     alluvial patch and a thin one cost the same to hold. Ray: *"the flora track should scale by size,
     just like animals."* The whole-number demands were an explicit short-term step, not the model —

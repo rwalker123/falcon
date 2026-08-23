@@ -739,14 +739,19 @@ fn assignment_sum_clamps_to_working_age() {
     // Normalize down when working-age shrinks below the assigned total.
     alloc.set_assignment(LaborTarget::Warrior, 2, 4, None);
     assert_eq!(alloc.assigned_total(), 4);
-    let dropped = alloc.normalize(3);
+    let shed = alloc.normalize(3);
     assert!(
         alloc.assigned_total() <= 3,
         "normalize should trim Σ workers to the new working-age ceiling"
     );
+    assert_eq!(
+        shed.len(),
+        1,
+        "trimming 4 → 3 shrinks the tail assignment, and a shrink is reported like any other shed"
+    );
     assert!(
-        dropped.is_empty(),
-        "trimming 4 → 3 only shrinks the tail assignment; nothing was given up"
+        shed[0].row_survived(),
+        "the tail row is still staffed, so this is a trim rather than a lapse"
     );
 
     // Sanity: available_workers floors the fractional working scalar.
@@ -1566,6 +1571,83 @@ fn a_spent_source_schedules_nothing() {
     assert!(
         schedule.iter().all(|v| *v == 0.0),
         "a herd that can never spare a whole animal delivers nothing: {schedule:?}"
+    );
+}
+
+/// **A CREW THAT MERELY SHRANK IS ANNOUNCED TOO** — the half of the shedding pass that said
+/// nothing at all.
+///
+/// `LaborAllocation::normalize` handed its caller only the rows it destroyed **outright**, so a band
+/// one worker short published a smaller crew on a row it left standing with **no event on any
+/// channel**. Measured at the time: a take crew going `6 → 3` produced zero events, and only the
+/// full drop a turn later said anything. From the player's side that is a number they had just
+/// raised moving on its own — the same class of defect as the silent drop this sits beside, and the
+/// reason a raise on a fully-committed band reads as *"the game refused me and did not say so"*.
+///
+/// **The assertion is on the EVENT.** Its absence is the whole defect: the worker count was already
+/// correct, so a test that checked only the crew would have passed throughout.
+///
+/// The band is sized so the tail row **survives** — that is what separates this from the lapse test
+/// below it, and a fixture that dropped the row would be testing that one twice.
+#[test]
+fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
+    let mut app = spawn_world();
+    let (patch_pos, patch_tile) = food_tile(&mut app);
+
+    // Σ = 6 on a band with 5 hands: one short, so the tail row is cut from 3 to 2 and survives.
+    //
+    // **The tail is a band-wide role deliberately.** A Forage or Hunt row can also leave the
+    // allocation because it went out of range or past the leash, and a fixture whose tail could
+    // vanish for a reason that is not the shedding pass would be measuring the wrong thing — or, as
+    // it did on the first attempt here, silently become the lapse test again.
+    let mut allocation = forage_alloc(patch_pos, 3);
+    allocation.assignments.push(LaborAssignment {
+        target: LaborTarget::Builders,
+        workers: 3,
+        kit: None,
+    });
+    let band = spawn_band(&mut app, patch_tile, 5, allocation);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("band allocation");
+    assert_eq!(
+        allocation.assignments.len(),
+        2,
+        "fixture: the tail row must SURVIVE, or this is the lapse test with extra steps"
+    );
+    assert_eq!(
+        allocation.assignments[1].workers, 2,
+        "the tail row is cut by the one hand the band does not have"
+    );
+
+    let entry = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .find(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("status=trimmed"))
+        })
+        .cloned()
+        .expect("a crew the sim cut must push a feed entry, not shrink in silence");
+    let detail = entry.detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains("kind=builders"),
+        "the entry names the row that gave up the hands: {detail}"
+    );
+    assert!(
+        detail.contains("workers=2"),
+        "and the crew still standing there, which is the number the row now reads: {detail}"
+    );
+    assert!(
+        detail.contains("lost=1"),
+        "and what it cost, so the two lines report the same pair: {detail}"
     );
 }
 

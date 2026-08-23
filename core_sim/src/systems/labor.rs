@@ -1137,14 +1137,14 @@ pub fn advance_labor_allocation(
             .cloned()
             .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment_cfg, available as f32));
         let faction = cohort.faction;
-        // **A trimmed-away assignment is ANNOUNCED.** `normalize` drops from the tail when the band
-        // no longer has the hands, and until this it did so in total silence — the one place in the
-        // labor system that abandoned work without saying so, while the out-of-range lapse a hundred
-        // lines below has always pushed a feed entry. The improvement rides the *assignment*, so a
-        // population dip could destroy a 25-turn build commitment and the player would only find out
-        // by noticing a tended patch with nobody on it.
-        for assignment in allocation.normalize(available) {
-            announce_dropped_assignment(&mut event_log, tick.0, faction, &assignment);
+        // **EVERY HAND `normalize` SHEDS IS ANNOUNCED, trims and drops alike.** It takes from the
+        // tail when the band no longer has the people, and it used to do so in total silence — the
+        // one place in the labor system that gave up work without saying so, while the out-of-range
+        // lapse a hundred lines below has always pushed a feed entry. A row destroyed outright can
+        // cost a 25-turn build commitment (the queue entry goes with it on the prune below); a row
+        // merely cut is the crew the player set moving on its own. Neither may happen quietly.
+        for shed in allocation.normalize(available) {
+            announce_shed_crew(&mut event_log, tick.0, faction, &shed);
         }
         if allocation.assignments.is_empty() {
             continue;
@@ -4318,26 +4318,36 @@ fn improvement_feed_channel(improvement: Improvement) -> CommandEventKind {
     }
 }
 
-/// **Say what the band just stopped doing** — the feed line for an assignment
-/// [`LaborAllocation::normalize`] trimmed away because the band no longer has the workers for it.
+/// **Say what the band just stopped doing** — the feed line for hands
+/// [`LaborAllocation::normalize`] took off a row because the band no longer has the workers for it.
 ///
 /// Shaped like the out-of-range Forage lapse it sits beside: the source named in the label, a
-/// `status=lapsed reason=…` detail, and the verb's own `CommandEventKind` so the line lands on the
-/// channel the player is already watching for that source.
+/// `status=… reason=too_few_workers` detail, and the verb's own `CommandEventKind` so the line lands
+/// on the channel the player is already watching for that source.
 ///
-/// **The improvement is named explicitly when one was in flight**, because that is the expensive
-/// half: workers come back, but a build meter that stops being worked starts reverting, and a
-/// 25-turn commitment is exactly the thing a player must not lose without being told. A lapse with no
-/// build says so plainly instead of leaving a blank where the interesting clause would be.
-fn announce_dropped_assignment(
+/// > #### ⛔ A CREW THAT MERELY SHRANK GETS A LINE TOO
+/// >
+/// > [`ShedCrew::row_survived`] picks between `status=trimmed` and `status=lapsed`, and the trim half
+/// > is the one that was missing. This used to be called only for rows destroyed outright, so a crew
+/// > going `6 → 3` on a band that had lost a worker was published with **no event on any channel** —
+/// > and from the player's side that is a number they had just raised moving on its own. It is the
+/// > same event as the lapse at a smaller magnitude, so it is the same function and the same
+/// > channel; what differs is that the trim names the crew still standing there, because that is the
+/// > number the row now reads and the thing the player will go looking for.
+///
+/// **The improvement is not named**, on either line: a build lives in the band's queue rather than on
+/// the row (`docs/plan_standing_upkeep.md` §2.5), so what a shed costs is exactly the hands named
+/// here, and a dropped row's entry is retired by the turn's prune on the rule that an entry requires
+/// a row.
+fn announce_shed_crew(
     event_log: &mut CommandEventLog,
     tick: u64,
     faction: FactionId,
-    assignment: &LaborAssignment,
+    shed: &ShedCrew,
 ) {
     // A band-wide role (Scout/Warrior) has no source to name and no verb channel of its own; it is
     // reported on the label alone, through the role's own kind where one exists.
-    let (kind, source_label, source_detail) = match &assignment.target {
+    let (kind, source_label, source_detail) = match &shed.target {
         LaborTarget::Forage { tile, .. } => (
             CommandEventKind::Forage,
             format!("foragers at ({}, {})", tile.x, tile.y),
@@ -4374,20 +4384,29 @@ fn announce_dropped_assignment(
             "kind=builders".to_string(),
         ),
     };
-    // **The build the row was carrying is NOT named here any more, and it is not lost either.** A
-    // build lives in the band's queue rather than on the row (`docs/plan_standing_upkeep.md` §2.5),
-    // so what a shed row costs is exactly the hands named below — and the queue entry that goes with
-    // it is retired by the turn's prune, on the rule that an entry requires a row.
-    let label = format!("{source_label} disbanded — too few workers");
-    let build_detail = String::new();
+    // **The crew that is left is what the two lines differ on.** A row still worked says the number
+    // it now reads, so the player can find it; a row that is gone says it is gone.
+    let (label, status, workers) = if shed.row_survived() {
+        (
+            format!("{source_label} cut to {} — too few workers", shed.remaining),
+            "trimmed",
+            shed.remaining,
+        )
+    } else {
+        (
+            format!("{source_label} disbanded — too few workers"),
+            "lapsed",
+            shed.lost,
+        )
+    };
     event_log.push(CommandEventEntry::new(
         tick,
         kind,
         faction,
         label,
         Some(format!(
-            "status=lapsed reason=too_few_workers {source_detail} workers={}{build_detail}",
-            assignment.workers,
+            "status={status} reason=too_few_workers {source_detail} workers={workers} lost={}",
+            shed.lost,
         )),
     ));
 }
