@@ -2024,9 +2024,8 @@ fn seed_source_yield(
                 .cloned()
                 .unwrap_or_default();
             // **A PENNED herd is priced at the husbandry gear's tier, a wild one at the sled's** —
-            // the same split `advance_labor_allocation` makes on the same predicate, because
-            // `hunt_forecast` early-returns the managed path for a corralled herd and the seed has
-            // to arrive at that branch holding the rate the turn will pay it at. Pricing a pen at
+            // the same split `advance_labor_allocation` makes on the same predicate, and the seed has
+            // to reach `hunt_forecast` holding the rate the turn will pay it at. Pricing a pen at
             // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
             // player commits from.
             // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped

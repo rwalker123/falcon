@@ -264,6 +264,16 @@ invariant.
   > reading that does not floor (`pen_crew_take_curve`, `EngagementQuantum::Rate`) — a cadence must not
   > be reported as a never.
   >
+  > **AND EVERY FORECAST OF A PEN RUNS THAT STAGE AND NO OTHER.** `hunt_forecast` builds
+  > `fight: NO_FIGHT_STAGE` for a corralled herd, and the quote
+  > (`forecast_production_and_take_at`), the steady headline (`project_realized_hunt`) and the arrival
+  > schedule (`project_arrivals_hunt`) each fork on `is_corralled()` and price the three terms above —
+  > the quantised two by calling `animals_handled` itself, so there is no second expression of the
+  > pen's take to drift from the tend branch's. Quoting a stalking fight over a fence read the
+  > quarry's `defense` against the crew's *hunting* kit: a bare-handed band with a penned Wild Aurochs
+  > was promised nothing and then paid a take. The reasoning lives in `yield-forecast.md` → "A PEN
+  > FORECASTS NO FIGHT, BECAUSE ITS PAYOUT RESOLVES NONE".
+  >
   > **The shipped roster rarely reaches the handling arm**, which is why the pen's numbers did not move:
   > `pen_engage_gain` is authored at `20` precisely so the keepers' *carry* binds first on every
   > pennable species (the constraint on a keeper is carrying the meat home, not catching the animal).

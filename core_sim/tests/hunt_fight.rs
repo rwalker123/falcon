@@ -695,9 +695,11 @@ fn wounds_decay_out_of_contact_but_not_instantly() {
 // §10 — the pen is untouched, and replay is order-independent
 // ---------------------------------------------------------------------------------------------
 
-/// **A penned animal is not stalked, not fought and not wary** (§10). The pen's corral-tend branch
-/// passes `f32::INFINITY` as its engagement, and the fight must hand it straight back untouched —
-/// including for a species that would otherwise be the deadliest fight on the map.
+/// **A penned animal is not stalked, not fought and not wary** (§10). No pen path reaches
+/// [`resolve_hunt_fight`] at all any more — the tend branch, the forecast and both projections fork
+/// on `is_corralled()` — so this pins the resolver's own no-fight arm, on a species that would
+/// otherwise be the deadliest fight on the map, and then walks the pen's real collection stage
+/// beside it.
 #[test]
 fn a_pen_has_no_fight_at_all() {
     let fauna = deterministic_fauna();

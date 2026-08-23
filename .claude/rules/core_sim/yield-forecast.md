@@ -193,8 +193,15 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 >
 > It is a term rather than an answer for the same reason the two beside it are: linear in the crew and
 > exact. **`engageRate <= 0` means "no engagement stage" and the term is dropped** — the wire's finite
-> reading of the sim's `f32::INFINITY` for a **pen** (a penned animal is not stalked) and for the plant
-> web, which never publishes the field. Measured before it shipped: a Wild Fowl herd with one hunter
+> reading of the sim's `f32::INFINITY`, which is what an unresolvable species answers and what the
+> plant web (never publishing the field) is.
+>
+> **A PEN publishes that same sentinel while the sim bounds it by a real number.** `engage_rate` is
+> filtered on `is_corralled()` in `snapshot::subsistence`, so a penned row drops the term client-side;
+> sim-side the tend branch, the forecast and both projections all bound the collection by
+> `fauna::herd_engage_rate` — the species' rate times `husbandry.pen_engage_gain`. The shipped gain of
+> `20` keeps the keepers' *carry* binding first on every pennable species, so the two readings agree
+> except where the handling arm is genuinely reached. Measured before it shipped: a Wild Fowl herd with one hunter
 > read **307 birds/turn** on the compose sheet (one hunter's 40 biomass of carry) against a take of
 > **10** — the sheet promising 30× what the sim would pay, for the whole life of the field's absence.
 > Pinned on the exported wire by
@@ -333,10 +340,10 @@ ladder is expressible at all: **`pastoral_yield < managed_yield`** (pastoral `r�
 MSY-capped; measured ≈ 1.0 < 2.0 on a full Wild Boar). The old escapement projection read
 `pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field exists for.
 **A stance/floor ceiling is NOT on that ladder and must not be ordered against it** — it is a stock
-and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
-`hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
-constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
-projection* is the sustained MSY. Pinned by
+and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **A live pen reads the same
+sustained MSY**: with the managed harvest retired the pen is drawn down like every other rung, and the
+rate it settles at *is* that MSY, so the payoff line and the take coincide at the operating point
+rather than being two shapes. Pinned by
 `fauna::tests::the_tame_rung_advertises_its_payoff_above_wild_sustain`.
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
@@ -587,6 +594,24 @@ client's compose-time "Expected yield" row promises. Shape:
   draw either way, so this is bit-identical to what the seed produced; what it buys is that a sub-1
   chance now yields the **expectation** instead of one arbitrary sample. See "THE INVARIANT IS
   RESTATED" below.
+
+  > **⛔ A PEN FORECASTS NO FIGHT, BECAUSE ITS PAYOUT RESOLVES NONE.** A corralled herd never reaches
+  > `systems::hunt_take`: the Hunt arm's tend branch `continue`s before it and walks the animal out
+  > (`fauna::animals_handled`). So `hunt_forecast` builds `fight: NO_FIGHT_STAGE` for it, and the three
+  > readings that price a pen — `forecast_production_and_take_at`, `project_realized_hunt`,
+  > `project_arrivals_hunt` — each fork on `Herd::is_corralled()` and run the tend branch's own three
+  > terms: the room above the floor, the keepers' handling, the crew's carry. `fight: Some(..)` for
+  > **every** herd ran an engagement, a retreat and a fight the pen does not, gated on the quarry's
+  > `defense` and the crew's *hunting* kit — so a bare-handed band with a penned **Wild Aurochs**
+  > (`defense 6`) was quoted `0`, projected a steady `0` and an empty arrival schedule, and was then
+  > paid a real take on the turn. The quantised readings call `animals_handled` itself rather than
+  > re-composing it, so the quote and the payout are one expression; the smooth one
+  > (`project_realized_hunt`) drops only the whole-animal floor, as it does on the wild arm.
+  > Guarded on the exported wire by `hunt_useful_crew_on_the_wire.rs`
+  > (`a_bare_handed_pen_is_quoted_the_take_the_turn_pays`,
+  > `a_pens_quote_is_its_payout_at_every_keeper_count`,
+  > `a_bare_handed_pen_projects_a_steady_income_and_a_delivery`), with the wild arm's fight gate pinned
+  > beside them by `a_wild_row_is_still_gated_by_the_fight`.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`

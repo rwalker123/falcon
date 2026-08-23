@@ -2891,9 +2891,9 @@ pub fn advance_labor_allocation(
                         continue;
                     };
                     // **WHICH CARRY TIER THIS HERD IS WORKED AT — the pen's or the range's.**
-                    // `hunt_forecast` splits on exactly this predicate and early-returns the managed
-                    // path for a penned herd, so **one** rate serves the whole arm: the branch that
-                    // runs is decided by the herd, and the other branch is never reached.
+                    // `hunt_forecast` splits on exactly this predicate — for the carry rate here, and
+                    // for the fight the pen does not resolve — so **one** rate serves the whole arm:
+                    // the branch that runs is decided by the herd, and the other is never reached.
                     //
                     // **It is resolved HERE, once, and every forecast, projection, crew inversion
                     // and take below reads it** — because the forecast-equals-actual invariant

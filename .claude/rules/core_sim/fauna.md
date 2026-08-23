@@ -869,11 +869,15 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   - **The herder term dominates at a SHALLOW draw.** It counts the whole herd's heads; the other two
 >     count only the drop standing above the floor. A fowl herd worked at floor `0.9` owes its full
 >     keeper crew while the drop it can pay is a fraction of it.
->   - **A PEN and the plant web have no engagement stage at all** — `engage_rate_for` /
->     `SourceYieldForecast::managed` answer `f32::INFINITY`, `hunt_engage_workers` returns `0` for it,
->     and the `max()` collapses to the two terms those sources always had. A penned animal is not
->     stalked — and, since the fight landed, not fought either (`SourceYieldForecast::fight` is `None`
->     there and on every plant source).
+>   - **The PLANT WEB has no engagement stage at all** — its `engage_rate` is `f32::INFINITY`,
+>     `hunt_engage_workers` returns `0` for it, and the `max()` collapses to the two terms it always
+>     had.
+>   - **A PEN HAS ONE, and it counts KEEPERS.** Its rate is `herd_engage_rate` (the species' own,
+>     times `husbandry.pen_engage_gain`) and its `stay` is `NO_RETREAT_STAGE_STAY` — `1.0` as the
+>     *answer*, since nothing walks away from a keeper — so this term sizes the crew that walks the
+>     room out. A penned animal is not stalked and **not fought**: `SourceYieldForecast::fight` is
+>     `NO_FIGHT_STAGE` there and on every plant source, and the readings that price a pen run the tend
+>     branch's stages instead (`yield-forecast.md` → "A PEN FORECASTS NO FIGHT").
 >   - **THE FIGHT IS A FOURTH BOUND, and it is not a crew term** (`docs/plan_hunt_through_combat.md`
 >     §4, slice 4). `quantise_animal_take`'s fourth argument is no longer the raw engagement: it is
 >     `fauna::resolve_hunt_fight(...).brought_down` — the animals the party actually put on the
