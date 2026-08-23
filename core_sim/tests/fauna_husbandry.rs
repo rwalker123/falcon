@@ -2091,9 +2091,8 @@ fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_do
         // the MSY is both the policy ceiling and the collection.
         let take = quantise_animal_take(
             msy,
-            msy,
             herd.body_mass,
-            f32::INFINITY,
+            core_sim::animals_handled(f32::INFINITY, msy, herd.body_mass),
             core_sim::EngagementStop::WhenPackFull,
         )
         .carried;
@@ -2304,6 +2303,221 @@ fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
         (last_yield - msy_provisions).abs() < msy_provisions * 0.05,
         "the settled pen pays r·K/4 × p = {msy_provisions}: got {last_yield}"
     );
+}
+
+// ---- The pen's collection stage (`fauna::animals_handled`) ---------------------------------------
+//
+// A hunt bounds what it **goes after** by the room above the floor (`resolve_hunt_engagement`); the
+// pen bounds what it **collects** by the same room, at its own call site in `systems::labor`'s tend
+// branch. The three tests below are that bound: nothing is collected at the floor, no crew collects
+// past it, and what is collected is whole animals.
+
+/// **A single keeper** — the smallest crew a pen can have, so a floor that holds for it and for
+/// [`HUNT_WORKERS`] holds for every crew in between (the collection is monotone in the crew).
+const ONE_KEEPER: u32 = 1;
+
+/// **Leave the whole herd standing** — the floor AT capacity, so nothing ever stands above it and
+/// the growth share it would otherwise pay is `× (1 − 1.0)`. This is a pen *on* its floor stated in
+/// the one way no regrowth can undo.
+const FLOOR_AT_CAPACITY: f32 = 1.0;
+
+/// How close two biomass readings must be to describe the same animals. Relative slop is pointless
+/// here — the quantities are whole bodies of a `0.27`-unit rabbit — so this is the absolute float
+/// noise of one `f32` subtraction on a stock of a few hundred.
+const SAME_BIOMASS: f32 = 1e-4;
+
+/// **One pen turn resolved in STAGE ORDER, read either side of the collection.** Logistics regrows
+/// (and feeds, and sheds) before Population takes, so a reading of *"what the keepers took"* must be
+/// taken across the labor arm alone — a before/after around the whole turn measures the regrowth as
+/// well and cannot see a take at all.
+fn pen_collection_turn(
+    app: &mut App,
+    id: &str,
+    band: bevy::prelude::Entity,
+    larder: f32,
+) -> (f32, f32) {
+    stock_larder(app, band, larder);
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_husbandry);
+    let before = herd_of(app, id).biomass;
+    app.world.run_system_once(advance_labor_allocation);
+    (before, herd_of(app, id).biomass)
+}
+
+/// **A PEN AT ITS FLOOR COLLECTS NOTHING, AT ANY CREW SIZE** — the keepers have nothing to spare, so
+/// they walk no animal out and the flock is untouched by the Population stage.
+///
+/// This is the pen's half of *"restraint is free"*: the room is spent **before** the collection
+/// ([`core_sim::animals_handled`]), exactly where a hunt spends it before its retreat, so a pen whose
+/// floor is at capacity is not merely prevented from banking a take — it never takes one.
+///
+/// **Each crew is paired with the same crew at a workable floor**, or the assertion would pass just
+/// as well on a fixture whose assignment had lapsed, whose pen had escaped, or whose species was not
+/// pennable at all.
+#[test]
+fn a_pen_at_its_floor_collects_nothing_however_many_keepers() {
+    for keepers in [ONE_KEEPER, HUNT_WORKERS] {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        corral_herd(&mut app, &id);
+        let cap = herd_of(&app, &id).carrying_capacity;
+        let band = spawn_crew_of(&mut app, &id, FLOOR_AT_CAPACITY, None, keepers);
+
+        let (before, after) = pen_collection_turn(&mut app, &id, band, cap);
+
+        assert!(
+            (after - before).abs() < SAME_BIOMASS,
+            "{keepers} keepers at a floor of {FLOOR_AT_CAPACITY} must leave the flock untouched: \
+             {before} -> {after}"
+        );
+        assert_eq!(
+            yield_of(&app, band),
+            0.0,
+            "…and bank nothing, {keepers} keepers"
+        );
+
+        // **Liveness** — the same crew on the same pen at a workable floor really does collect, so
+        // the zero above is the floor and not the fixture.
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        corral_herd(&mut app, &id);
+        let cap = herd_of(&app, &id).carrying_capacity;
+        let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, keepers);
+        let (before, after) = pen_collection_turn(&mut app, &id, band, cap);
+        assert!(
+            before - after > SAME_BIOMASS && yield_of(&app, band) > 0.0,
+            "liveness: {keepers} keepers at {MSY_BIOMASS_FRACTION} must collect ({before} -> \
+             {after})"
+        );
+    }
+}
+
+/// **NO CREW COLLECTS A PEN BELOW ITS FLOOR** — the case the missing bound allowed: the tend branch
+/// handed `herd_engage_rate × workers` straight to the quantiser, so the only thing between a big
+/// keeper crew and a stripped pen was a post-hoc clamp inside it.
+///
+/// Asserted on **the herd's biomass after the turn**, not on the take: a take that is bounded and a
+/// herd that ends up above its floor are the same claim only when the bound is the one the herd is
+/// actually drawn against, which is precisely what a call-site bound has to prove.
+///
+/// It stops **within one whole animal** of the floor, which is the whole-animal quantum rather than
+/// slack in the bound — the keepers take every body the room affords and leave the part-body
+/// standing.
+#[test]
+fn a_large_keeper_crew_cannot_collect_a_pen_below_its_floor() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    let cap = herd_of(&app, &id).carrying_capacity;
+    // The whole band on one pen: the keepers' own handling and haul are nowhere near binding, so the
+    // room above the floor is the only thing that can stop them.
+    let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, HUNT_WORKERS);
+
+    let (before, after) = pen_collection_turn(&mut app, &id, band, cap);
+
+    let herd = herd_of(&app, &id);
+    let floor_biomass = herd.carrying_capacity * MSY_BIOMASS_FRACTION;
+    assert!(
+        before - after > SAME_BIOMASS,
+        "liveness: the crew must actually collect, or the floor below is vacuous: {before} -> \
+         {after}"
+    );
+    assert!(
+        after >= floor_biomass - SAME_BIOMASS,
+        "a keeper crew of {HUNT_WORKERS} must not collect below the floor {floor_biomass}: got \
+         {after}"
+    );
+    assert!(
+        after - floor_biomass < herd.body_mass,
+        "…and it stops within one whole animal of it ({} against a body of {}): got {after}",
+        after - floor_biomass,
+        herd.body_mass
+    );
+}
+
+/// **A FRACTIONAL HANDLING RATE COLLECTS WHOLE ANIMALS** — the herd loses exactly `killed ×
+/// body_mass`, so the count and the biomass describe one event.
+///
+/// The tend branch handed the raw rate in, and [`core_sim::AnimalTake::killed`] truncates: a crew
+/// handling `3.6` animals reported **3 killed** while the flock lost **3.6 bodies**. A pen is
+/// collected rather than fought — a keeper does not walk out half a beast — so the rate is floored
+/// where it is spent and the remainder stays standing in the pen, the way every other whole-animal
+/// wait carries (the herd's own biomass is the accumulator).
+///
+/// **The fixture has to author the rate**, because the shipped `pen_engage_gain` of `20` is
+/// deliberately high enough that the keepers' *carry* binds first on every pennable species — the
+/// handling arm exists to be reachable, not to be reached.
+#[test]
+fn a_fractional_pen_handling_rate_collects_whole_animals() {
+    // **Two rates in two different whole-animal bands**, so the drop is pinned to the handling arm
+    // rather than to something that happens to be three animals wide: a carry or a room binding
+    // below `4` would answer the second case with the first case's number.
+    for (handling_per_keeper, whole_animals) in [(3.6_f32, 3.0_f32), (4.6, 4.0)] {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        corral_herd(&mut app, &id);
+        let cap = herd_of(&app, &id).carrying_capacity;
+        author_pen_handling_rate(&mut app, handling_per_keeper);
+
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        assert!(
+            (core_sim::herd_engage_rate(&herd_of(&app, &id), &fauna) - handling_per_keeper).abs()
+                < SAME_BIOMASS,
+            "the fixture must hand one keeper a fractional rate, or this test is about nothing"
+        );
+
+        let band = spawn_crew_of(&mut app, &id, MSY_BIOMASS_FRACTION, None, ONE_KEEPER);
+        let (before, after) = pen_collection_turn(&mut app, &id, band, cap);
+
+        let herd = herd_of(&app, &id);
+        // **The room is not what bound this turn** — it affords far more than the keeper can
+        // handle, which is what makes the drop a reading of the handling arm.
+        let room = core_sim::herd_take_room(&herd, MSY_BIOMASS_FRACTION, &fauna);
+        assert!(
+            core_sim::animals_affordable(room, herd.body_mass) > handling_per_keeper,
+            "the fixture's room ({room}) must not be the binding arm"
+        );
+
+        let taken = before - after;
+        let animals = taken / herd.body_mass;
+        assert!(
+            (animals - whole_animals).abs() < SAME_BIOMASS,
+            "one keeper handling {handling_per_keeper} animals collects {whole_animals}: the flock \
+             lost {taken} biomass, which is {animals} bodies"
+        );
+
+        // …and the take the sim's own seam produces says the same in both currencies: the reported
+        // count times one body IS the biomass the herd loses.
+        let take = quantise_animal_take(
+            // A collection nothing could bind on, so the two numbers under test are the handling
+            // arm's.
+            f32::INFINITY,
+            herd.body_mass,
+            core_sim::animals_handled(handling_per_keeper, room, herd.body_mass),
+            core_sim::EngagementStop::WhenPackFull,
+        );
+        assert_eq!(take.killed as f32, whole_animals);
+        assert!(
+            (take.killed_biomass() - take.killed as f32 * herd.body_mass).abs() < SAME_BIOMASS,
+            "the count and the biomass must describe one event: {take:?}"
+        );
+    }
+}
+
+/// Author [`FIXTURE_SPECIES`] a pen handling rate of `animals_per_keeper` — through the species'
+/// `engage_rate`, so `husbandry.pen_engage_gain` (validated `>= 1.0`) keeps the value it ships with
+/// and the fixture changes only how hard *this* animal is to handle.
+fn author_pen_handling_rate(app: &mut App, animals_per_keeper: f32) {
+    let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+    let mut config = (*handle.get()).clone();
+    let gain = config.husbandry.pen_engage_gain;
+    let species = config
+        .species
+        .values_mut()
+        .find(|def| def.display_name == FIXTURE_SPECIES)
+        .expect("the fixture species is in the roster");
+    species.engage_rate = animals_per_keeper / gain;
+    handle.replace(std::sync::Arc::new(config));
 }
 
 /// **THE ACCEPTANCE BAR FOR THE RUNG-3 RE-EXPRESSION** — the animal twin of

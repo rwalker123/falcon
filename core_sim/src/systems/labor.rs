@@ -3140,11 +3140,23 @@ pub fn advance_labor_allocation(
                         // per turn than a hunter because they are standing still rather than running
                         // away; that is a multiplier on this species' own rate
                         // (`fauna::herd_engage_rate`), not the absence of a number.
+                        //
+                        // **AND THE ROOM IS SPENT HERE, BEFORE THE TAKE** — [`fauna::animals_handled`]
+                        // is to a pen what `resolve_hunt_engagement`'s
+                        // `reach.min(animals_affordable(ceiling))` is to a hunt: the keepers' handling
+                        // rate clamped by the whole animals this assignment's floor leaves sparable,
+                        // and floored, because a keeper does not walk out half a beast. Handing the
+                        // raw rate to the quantiser made the pen the one take path that bounded
+                        // nothing before taking — the escapement floor was left to a post-hoc clamp
+                        // inside the quantiser, and the fractional rate made the reported count and
+                        // the herd's loss two different numbers.
+                        let handling = fauna::herd_engage_rate(herd, &fauna) * workers as f32;
+                        let collected =
+                            fauna::animals_handled(handling, production, herd.body_mass);
                         let take = fauna::quantise_animal_take(
-                            production,
                             collection,
                             herd.body_mass,
-                            fauna::herd_engage_rate(herd, &fauna) * workers as f32,
+                            collected,
                             fauna::EngagementStop::WhenPackFull,
                         );
                         herd.biomass -= take.killed_biomass();

@@ -696,9 +696,11 @@ pub struct DenialRaidForecastReply {
 /// # What is not, because it is the caller's own and stays a linear `min`
 ///
 /// The crew's **carry** throughput (`workers × per-worker yield`) and the whole-animal room
-/// `floor(ceiling / body_mass)`. The sim's own take is `min(affordable, carryable, brought_down)`
-/// (`fauna::quantise_animal_take`), so a client that `min`s this row against those two lands on the
-/// **sustained** number the turn pays — still as a rate. Rounding it for display is a presentation
+/// `floor(ceiling / body_mass)`. The sim's own take is `min(affordable, carryable, brought_down)` —
+/// the room spent **before** the take (`fauna::animals_affordable`, on the engagement or, for a pen,
+/// on the collection) and the pack seated inside `fauna::quantise_animal_take` — so a client that
+/// `min`s this row against those two lands on the **sustained** number the turn pays — still as a
+/// rate. Rounding it for display is a presentation
 /// choice; rounding it to `0` and calling that the answer is the defect above.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HuntCrewTakeRow {

@@ -714,8 +714,10 @@ fn a_pen_has_no_fight_at_all() {
     assert_eq!(penned.casualties.wounded, 0.0);
     assert!(!penned.fought);
 
-    // ...and the quantiser therefore pays the pen exactly what it paid before the fight existed:
-    // production against the keeper's collection, with no third bound.
+    // ...and the pen therefore pays exactly what it paid before the fight existed: production
+    // against the keeper's collection, with no fight in between. **The production bound is spent in
+    // the pen's own collection stage** (`animals_handled`, `systems::labor`'s tend branch) rather
+    // than inside the quantiser, which bounds a take and no longer rounds one.
     /// One body's worth and a little over, so the pen can spare exactly one animal.
     const PRODUCTION: f32 = 900.0;
     /// Less than one body — the keeper cannot haul the whole beast, which is where `max(1, carryable)`
@@ -725,11 +727,15 @@ fn a_pen_has_no_fight_at_all() {
         .species_by_display(MAMMOTH)
         .expect("shipped species")
         .body_mass;
+    let collected = core_sim::animals_handled(penned.brought_down, PRODUCTION, body);
+    assert_eq!(
+        collected, 1.0,
+        "the pen's collection stage spends the room: one whole animal of the 900 it produced"
+    );
     let take = quantise_animal_take(
-        PRODUCTION,
         COLLECTION,
         body,
-        penned.brought_down,
+        collected,
         core_sim::EngagementStop::WhenPackFull,
     );
     assert_eq!(take.killed, 1, "the keeper butchers what the pen produced");

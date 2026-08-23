@@ -700,10 +700,15 @@ killing what you have no intention of using. A *bound* is not reachable by any v
 together:
 
 ```text
-hunt:    killed  = min(affordable, animals_the_pack_seats(room), brought_down)   // WhenPackFull
-denial:  killed  = min(affordable,                    brought_down)   // Never
-both:    carried = min(killed × body_mass, carry_room)                // IDENTICAL
+hunt:    killed  = min(animals_the_pack_seats(room), brought_down)   // WhenPackFull
+denial:  killed  =                                   brought_down    // Never
+both:    carried = min(killed × body_mass, carry_room)               // IDENTICAL
 ```
+
+**The room is not an arm of either line** — both spend it on `engaged`, before the retreat and the
+fight (`fauna::animals_affordable`), which is why a raid at its floor takes no casualties for
+animals it was never going to kill. `quantise_animal_take` holds no ceiling at all; see
+`fauna.md` → "THE ESCAPEMENT ROOM IS SPENT AT STEP 1".
 
 `carried` is untouched, so a raid still banks whatever it can haul on the way home — a rounding error
 against what it killed, which is the point, and the rest is `AnimalTake::wasted`. Nothing else

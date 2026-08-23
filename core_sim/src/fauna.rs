@@ -5488,7 +5488,6 @@ pub fn project_arrivals_hunt(
             );
             quarry_fight = quarry_fight.with_wounds(fight.wounds);
             let take = quantise_animal_take(
-                ceiling,
                 collection,
                 quarry.body_mass,
                 fight.brought_down,
@@ -5569,16 +5568,18 @@ fn forecast_production_and_take_at(
             // quarry's own, off the fight the forecast already carries.
             //
             // **No fight stage means no retreat stage either** — a pen and the plant web, whose
-            // `engage_rate` is already `f32::INFINITY`.
+            // `engage_rate` is already `f32::INFINITY`. What such a source hands the quantiser is
+            // still **whole animals** ([`whole_units`], the floor [`animals_handled`] applies to the
+            // pen's own collection): the quantiser bounds a take, it no longer rounds one, so a
+            // fractional `brought_down` here would report a count its biomass disagrees with.
             let brought_down = match &forecast.fight {
                 Some((party, quarry)) => {
                     let stayed = party.stayers(engaged, quarry.profile.wariness, draw);
                     resolve_hunt_fight(stayed, workers as f32, party, quarry, draw).brought_down
                 }
-                None => engaged,
+                None => whole_units(engaged),
             };
             let take = quantise_animal_take(
-                ceiling.component(axis),
                 collection.component(axis),
                 quantum.component(axis),
                 brought_down,
@@ -7172,22 +7173,36 @@ pub const FORECAST_FIGHT_SEED: u64 = 0;
 ///
 /// **A herd is not a fluid.** You kill *whole animals*, and a big animal is a lot of food at once:
 /// ```text
-/// affordable = floor(policy_ceiling / body_mass)   // whole animals the herd can spare
-/// carryable  = floor(collection    / body_mass)    // whole animals the party can haul
-/// killed     = min(affordable, max(1, carryable))  IF affordable >= 1, else 0
-/// carried    = min(killed × body_mass, collection)
-/// wasted     = killed × body_mass − carried
+/// carryable = ceil(collection / body_mass), never below 1   // whole animals the party can haul
+/// killed    = min(carryable, brought_down)                  // …of the ones it put on the ground
+/// carried   = min(killed × body_mass, collection)
+/// wasted    = killed × body_mass − carried
 /// ```
 ///
-/// Two clauses carry the whole design:
+/// # ⛔ THE ESCAPEMENT ROOM IS NOT A BOUND HERE — EVERY CALLER SPENDS IT BEFORE THE TAKE
+///
+/// `killed` used to carry a third arm — `affordable = floor(policy_ceiling / body_mass)` — and an
+/// `affordable < 1 ⇒ take nothing` early return with it. Both are gone, and the *ceiling* parameter
+/// went with them, because a bound applied to bodies already on the ground is a bound in the wrong
+/// place. A hunt clamps its **engagement** by the room before the retreat and the fight
+/// ([`resolve_hunt_engagement`], [`animals_affordable`]) and a pen clamps its **collection** by it
+/// before the keepers walk an animal out ([`animals_handled`]) — so the arm was provably dead on
+/// every path, and the one caller that had **no** bound of its own (the pen) stayed invisible for
+/// exactly as long as this one silently covered for it. Restraint is free precisely because of that
+/// ordering (`docs/plan_hunt_through_combat.md` §1).
+///
+/// **The wait-for-regrowth turn is unchanged; it is stated at those call sites instead.** A source
+/// that cannot spare a whole animal reaches this function with `brought_down == 0` — the same
+/// nothing the early return used to hand back — so the hunt still pauses while the herd regrows.
+/// Constant escapement, discretised: the rhythm falls straight out as `body_mass / MSY` turns per
+/// animal at the operating point — small game every turn, boar/deer ~2, mammoth ~7, *then you eat
+/// for a week*.
+///
+/// One clause still carries the design:
 /// - **`max(1, carryable)` — you cannot half-kill a mammoth.** A party that cannot carry a whole
 ///   animal may still take one and **waste most of it**. That is not forbidden and not hidden: it is
 ///   what makes party size mean *"how much of the kill do you keep"* (one hunter keeps 80% of a boar,
 ///   33% of a steppe runner, **5%** of a mammoth; ~20 hunters bring a whole mammoth home).
-/// - **`affordable < 1` ⇒ take **nothing** and WAIT.** When the herd cannot yet spare a whole animal
-///   the hunt pauses while it regrows — constant escapement, discretised. The rhythm falls straight
-///   out as `body_mass / MSY` turns per animal at the operating point: small game every turn,
-///   boar/deer ~2, mammoth ~7 — *then you eat for a week*.
 ///
 /// `body_mass <= 0` is impossible (`FaunaConfig::validate` requires it finite & positive on every
 /// species) and would mean a herd of infinitely many animals; it takes **nothing** and screams in a
@@ -7242,6 +7257,43 @@ pub fn animals_affordable(policy_ceiling: f32, body_mass: f32) -> f32 {
         return 0.0;
     }
     whole_animals(policy_ceiling.max(0.0), body_mass)
+}
+
+/// **WHAT A KEEPER CREW WALKS OUT OF A PEN THIS TURN** — the pen's collection stage, and the exact
+/// counterpart of the `reach.min(animals_affordable(ceiling))` every hunt runs before its retreat
+/// ([`resolve_hunt_engagement`]).
+///
+/// ```text
+/// collected = min( floor(handling), animals_affordable(policy_ceiling) )
+/// ```
+///
+/// # A pen has no engagement stage, so it needs a stage of its own
+///
+/// `handling` is [`herd_engage_rate`] × the crew — what the keepers can bring out and butcher in a
+/// turn — and it used to be handed to [`quantise_animal_take`] raw. **The pen was therefore the one
+/// take path that bounded nothing before taking it**: enough keepers collected straight past the
+/// escapement floor, and the only thing stopping them was a post-hoc `affordable` clamp inside the
+/// quantiser that was dead on every other path and has since been removed. A hunt bounds what it
+/// *goes after*; a pen bounds what it *collects*; both spend the room before the take, so neither
+/// can take an animal the herd cannot spare.
+///
+/// # It is FLOORED, because a keeper does not half-kill an animal
+///
+/// A fight hands back whole bodies ([`resolve_hunt_fight`]) and a pen must too, or
+/// [`AnimalTake::killed`] (a `u32`) and [`AnimalTake::killed_biomass`] describe two different
+/// events: a handling rate of `3.6` reported **3 killed** while the herd lost **3.6 bodies**.
+///
+/// **The remainder is not lost, it is left standing.** The unfilled fraction of the crew's handling
+/// stays in the pen as biomass and regrows there — the herd's own stock is the accumulator, exactly
+/// as `SpeciesDef::body_mass` says of every whole-animal wait ("there is no credit meter"). The
+/// wait-for-regrowth turn is this function answering `0`: a pen at its floor collects nothing rather
+/// than shaving a fraction off the animals it is keeping.
+///
+/// **A curve is a rate and does not come through here** — [`pen_crew_take_curve`] composes the same
+/// three terms unfloored ([`animals_sparable`], [`EngagementQuantum::Rate`]), because a pen paying
+/// one beast every two and a half turns must read as a cadence rather than as a never.
+pub fn animals_handled(handling: f32, policy_ceiling: f32, body_mass: f32) -> f32 {
+    animals_affordable(policy_ceiling, body_mass).min(whole_units(handling.max(0.0)))
 }
 
 /// **[`animals_affordable`] AS A RATE — the same room, unrounded.** `ceiling ÷ body_mass`, with no
@@ -7300,8 +7352,14 @@ pub enum EngagementQuantum {
 /// [`ANIMAL_COUNT_EPSILON`] of relative slop so the same take counts the same animals whether it is
 /// quantised in biomass or in provisions.
 fn whole_animals(available: f32, body_mass: f32) -> f32 {
-    let ratio = available / body_mass;
-    (ratio * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
+    whole_units(available / body_mass)
+}
+
+/// [`whole_animals`] for a count that is **already** in animals — the same `floor` and the same
+/// [`ANIMAL_COUNT_EPSILON`], factored out so a rate expressed in animals ([`animals_handled`]'s
+/// handling term) and one expressed in biomass round on one rule rather than two copies of it.
+fn whole_units(count: f32) -> f32 {
+    (count * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
 }
 
 /// **How many animals a pack of `collection` biomass stops a party killing** — `ceil`, never below
@@ -7331,7 +7389,6 @@ fn animals_the_pack_seats(collection: f32, body_mass: f32) -> f32 {
 }
 
 pub fn quantise_animal_take(
-    policy_ceiling: f32,
     collection: f32,
     body_mass: f32,
     brought_down: f32,
@@ -7344,47 +7401,31 @@ pub fn quantise_animal_take(
         );
         return AnimalTake::default();
     }
-    let ceiling = policy_ceiling.max(0.0);
     let collection = collection.max(0.0);
-    // **The room, and on a HUNT it is already spent upstream.** Every hunting path clamps its
-    // *engagement* by this same room before the retreat and the fight
-    // ([`resolve_hunt_engagement`], `systems::expeditions::expedition_take_biomass`), and the fight
-    // can only bring down what stayed — so `affordable` cannot bind a hunt, and the escapement floor
-    // is a fact about the *engagement* rather than a veto applied to bodies already on the ground.
-    // Restraint is free precisely because of that ordering (`docs/plan_hunt_through_combat.md` §1).
-    //
-    // **It is live for the PEN, which has no engagement stage to spend it at**
-    // (`systems::labor`'s tend branch hands its keepers' raw handling rate straight in as
-    // `brought_down`), and that is the one caller this arm — and the wait-for-regrowth early return
-    // below — still exists for.
-    let affordable = whole_animals(ceiling, body_mass);
-    if affordable < 1.0 {
-        // The source cannot spare a whole animal — wait for it to regrow. THE mechanic.
-        return AnimalTake::default();
-    }
     // **What the pack seats, rounded UP** — see [`animals_the_pack_seats`]: the animal the load
     // cannot hold whole is still killed whole, carried as far as the pack goes and wasted after
     // that.
     let carryable = animals_the_pack_seats(collection, body_mass);
-    // **`brought_down` is the THIRD bound, and it is THE FIGHT** (`docs/plan_hunt_through_combat.md`
-    // §4): the animals the party actually put on the ground, which the engagement bound (§2) already
-    // caps from above because you cannot bring down an animal you never reached. It arrives already
-    // whole — [`resolve_hunt_fight`] floors it — so `killed` below stays integral and
-    // `killed_biomass` cannot disagree with the reported count. A pen passes [`f32::INFINITY`]: a
-    // penned animal is not stalked and not fought.
+    // **`brought_down` is the OTHER bound, and on a hunt it is THE FIGHT**
+    // (`docs/plan_hunt_through_combat.md` §4): the animals the party actually put on the ground,
+    // which the engagement bound (§2) already caps from above because you cannot bring down an
+    // animal you never reached. It arrives already **whole** — [`resolve_hunt_fight`] floors it,
+    // [`animals_handled`] floors the pen's — so `killed` below stays integral and `killed_biomass`
+    // cannot disagree with the reported count.
     //
     // **The carry arm is the ONE thing a denial raid drops** ([`EngagementStop`],
     // `docs/plan_denial_raid.md` §1): a hunting party stops engaging once its pack is full, a denial
     // party never stops. The `carried` line below is untouched by the choice, so a raid still banks
     // whatever it can haul and the rest becomes [`AnimalTake::wasted`].
     let killed = match stop {
-        EngagementStop::WhenPackFull => affordable.min(carryable).min(brought_down.max(0.0)),
-        EngagementStop::Never => affordable.min(brought_down.max(0.0)),
+        EngagementStop::WhenPackFull => carryable.min(brought_down.max(0.0)),
+        EngagementStop::Never => brought_down.max(0.0),
     };
     let killed_biomass = killed * body_mass;
     let carried = killed_biomass.min(collection);
     AnimalTake {
-        // `killed` is bounded by `ceiling / body_mass` and both are finite, so the cast is safe.
+        // `killed` is the animals a fight put on the ground (or a keeper walked out), both of which
+        // are finite whole counts bounded by the source's own room, so the cast is safe.
         killed: killed as u32,
         carried,
         wasted: (killed_biomass - carried).max(0.0),
@@ -9595,39 +9636,31 @@ mod tests {
                 expected,
                 "({ceiling}, {room}, {collection}, {stayed}, {brought_down}) must name {expected:?}"
             );
-            let tight = quantise_animal_take(
-                ceiling,
-                collection,
-                BODY,
-                brought_down,
-                EngagementStop::WhenPackFull,
-            );
+            // **The take as a CALLER runs it** — the room spent on what the party goes after
+            // ([`animals_handled`], the pen's spelling of `resolve_hunt_engagement`'s clamp), then
+            // the quantiser. The quantiser no longer re-applies the ceiling, so a fixture that
+            // handed it one would be pricing a pipeline the sim does not run.
+            let take_at = |ceiling: f32, collection: f32, brought_down: f32| {
+                quantise_animal_take(
+                    collection,
+                    BODY,
+                    animals_handled(brought_down, ceiling, BODY),
+                    EngagementStop::WhenPackFull,
+                )
+            };
+            let tight = take_at(ceiling, collection, brought_down);
             // **Liveness / the relation**: relaxing the named term raises the take. Without this the
             // table above would only be asserting against itself.
             let relaxed = match expected {
                 // Both ceiling-side bounds relax the same way — they differ in *whose* ceiling it is,
                 // not in which term the quantiser read.
-                HuntTakeBound::Floor | HuntTakeBound::Throughput => quantise_animal_take(
-                    ceiling * 2.0,
-                    collection,
-                    BODY,
-                    brought_down,
-                    EngagementStop::WhenPackFull,
-                ),
-                HuntTakeBound::Carry => quantise_animal_take(
-                    ceiling,
-                    collection * 2.0,
-                    BODY,
-                    brought_down,
-                    EngagementStop::WhenPackFull,
-                ),
-                HuntTakeBound::Fight | HuntTakeBound::Engagement => quantise_animal_take(
-                    ceiling,
-                    collection,
-                    BODY,
-                    brought_down * 2.0,
-                    EngagementStop::WhenPackFull,
-                ),
+                HuntTakeBound::Floor | HuntTakeBound::Throughput => {
+                    take_at(ceiling * 2.0, collection, brought_down)
+                }
+                HuntTakeBound::Carry => take_at(ceiling, collection * 2.0, brought_down),
+                HuntTakeBound::Fight | HuntTakeBound::Engagement => {
+                    take_at(ceiling, collection, brought_down * 2.0)
+                }
             };
             assert!(
                 relaxed.killed > tight.killed,
@@ -9639,19 +9672,23 @@ mod tests {
     }
 
     /// **A turn that takes nothing reports the FLOOR** — the herd could not spare a whole body, which
-    /// is the wait turn the whole-animal quantiser exists to produce. It is the bound a player needs
+    /// is the wait turn the whole-animal quantum exists to produce. It is the bound a player needs
     /// to see, because the alternative reading ("we could not reach them") is a different problem
     /// with a different remedy.
+    ///
+    /// **The wait now happens where the room is spent** ([`animals_handled`]), not inside the
+    /// quantiser: an unbounded reach against half a body engages nothing, so nothing is brought
+    /// down and nothing is quantised.
     #[test]
     fn a_wait_turn_reports_the_floor_that_caused_it() {
         const BODY: f32 = 800.0;
-        let take = quantise_animal_take(
-            BODY / 2.0,
-            f32::INFINITY,
-            BODY,
-            f32::INFINITY,
-            EngagementStop::WhenPackFull,
+        let collected = animals_handled(f32::INFINITY, BODY / 2.0, BODY);
+        assert_eq!(
+            collected, 0.0,
+            "the room spent before the take is where a wait turn is decided"
         );
+        let take =
+            quantise_animal_take(f32::INFINITY, BODY, collected, EngagementStop::WhenPackFull);
         assert_eq!(take.killed, 0, "half a body cannot be taken");
         assert_eq!(
             hunt_take_bound(
@@ -9896,19 +9933,17 @@ mod tests {
 
         let engaged = animals_engaged(HUNTERS, ONE_ANIMAL_PER_HUNTER);
         let bounded = quantise_animal_take(
-            AMPLE_CEILING,
             collection,
             BODY_MASS,
-            engaged,
+            animals_handled(engaged, AMPLE_CEILING, BODY_MASS),
             EngagementStop::WhenPackFull,
         );
-        // `f32::INFINITY` is what a pen passes — no engagement stage — so this is the take as it was
-        // before the bound existed.
+        // An unbounded reach — what the pen used to hand in, before either its own collection stage
+        // or this one existed — so this is the take with nothing but the pack in its way.
         let carry_bound = quantise_animal_take(
-            AMPLE_CEILING,
             collection,
             BODY_MASS,
-            f32::INFINITY,
+            animals_handled(f32::INFINITY, AMPLE_CEILING, BODY_MASS),
             EngagementStop::WhenPackFull,
         );
 

@@ -174,10 +174,9 @@ fn a_pack_that_seats_one_and_a_half_animals_carries_one_and_a_half() {
     const BROUGHT_DOWN: f32 = 2.0;
 
     let take = quantise_animal_take(
-        AMPLE_CEILING,
         PACK,
         BODY_MASS,
-        BROUGHT_DOWN,
+        core_sim::animals_handled(BROUGHT_DOWN, AMPLE_CEILING, BODY_MASS),
         EngagementStop::WhenPackFull,
     );
     assert_eq!(

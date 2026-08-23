@@ -1505,7 +1505,7 @@ fn expedition_take_biomass(
     // seat one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes
     // what it cannot haul, and with no banked animal it kills nothing and waits (the true no-surplus
     // case).
-    let take = fauna::quantise_animal_take(ceiling, room, body_mass, fight.brought_down, stop);
+    let take = fauna::quantise_animal_take(room, body_mass, fight.brought_down, stop);
     // Drain the bank by what was KILLED (carried + wasted), not merely carried — you cannot un-kill the
     // animal you could not haul. Cap at the surplus so it can't grow unbounded at the floor (surplus <
     // body ⇒ no kill ⇒ the bank would otherwise climb every turn). `0 ≤ credit ≤ surplus`.
@@ -1795,7 +1795,6 @@ pub fn hunt_take(
     // and drop it; a live take is the caller that keeps it.
     herd.wounds = fight.wounds;
     let take = fauna::quantise_animal_take(
-        ceiling,
         collection,
         herd.body_mass,
         fight.brought_down,

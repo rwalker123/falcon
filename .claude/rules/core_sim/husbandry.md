@@ -235,6 +235,41 @@ invariant.
   escape every check the wild path applies. `fauna::herd_engage_rate` is the one seam: the species'
   own `engage_rate`, times `husbandry.pen_engage_gain` for a corralled herd, because a keeper genuinely
   handles far more animals per turn than a hunter — a **number**, not the absence of one.
+
+  > #### ⛔ THE PEN BOUNDS ITS COLLECTION AT ITS OWN CALL SITE — `fauna::animals_handled`
+  >
+  > ```text
+  > hunt:  engaged   = reach.min(animals_affordable(ceiling))     // resolve_hunt_engagement, before the fight
+  > pen:   collected = floor(handling).min(animals_affordable(production))   // animals_handled, before the take
+  > ```
+  >
+  > **A hunt bounds what it goes after; a pen bounds what it collects.** Both spend the escapement room
+  > *before* the take, which is what makes restraint free on both — and what the pen did not do. The
+  > tend branch handed `herd_engage_rate × workers` — the keepers' raw handling rate — straight to
+  > `quantise_animal_take` as `brought_down`, so **the pen was the one take path with no bound of its
+  > own**, and the only thing between a large keeper crew and a stripped pen was a post-hoc `affordable`
+  > clamp inside the quantiser that was dead on every other path.
+  >
+  > **The asymmetry is what hid it.** A quantiser that also clamped by the room made the missing stage
+  > unobservable from the pen's own code, and the clamp's *"the source cannot spare a whole animal —
+  > wait for it to regrow"* early return read as a mechanic rather than as the pen's missing bound
+  > wearing a mechanic's clothes. The room, and that wait, now live where the pen spends them; the
+  > quantiser holds no ceiling at all (`fauna.md` → "THE ESCAPEMENT ROOM IS SPENT AT STEP 1").
+  >
+  > **The collection is FLOORED, because a keeper does not walk out half a beast.** A fight hands back
+  > whole bodies and a pen must too, or `AnimalTake::killed` (a truncating `u32`) and its
+  > `killed_biomass` describe two different events — a handling rate of `3.6` reported **3 killed**
+  > while the flock lost **3.6 bodies**. The remainder is not lost, it is **left standing**: the herd's
+  > own biomass is the accumulator, exactly as every other whole-animal wait carries. A curve is the one
+  > reading that does not floor (`pen_crew_take_curve`, `EngagementQuantum::Rate`) — a cadence must not
+  > be reported as a never.
+  >
+  > **The shipped roster rarely reaches the handling arm**, which is why the pen's numbers did not move:
+  > `pen_engage_gain` is authored at `20` precisely so the keepers' *carry* binds first on every
+  > pennable species (the constraint on a keeper is carrying the meat home, not catching the animal).
+  > The arm exists to be reachable — `fauna_husbandry::a_fractional_pen_handling_rate_collects_whole_animals`
+  > authors a fractional rate to reach it, because the shipped one cannot.
+
 - **EVERYTHING PENNING BUYS STEPS AT THE FENCE**, and that is the deliberate difference from the
   plant web. The pen's regrowth gain, its density multiplier on `K`, its escape fraction and its
   handling gain all read `is_corralled()` — a **stored fact set at completion** — so `animal:pen`

@@ -549,8 +549,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > >
 > > **⛔ AND THE PEN CURVE IS THE SAME CURVE.** `pen_crew_take_curve` published
 > > `quantise_animal_take(…).killed as f32` — whole animals — while every stalking row beside it
-> > published the un-floored rate, and `quantise_animal_take` returns `killed = 0` whenever the
-> > affordable count is below one. So a **penned** aurochs whose next-turn room is 54 biomass read
+> > published the un-floored rate, and the take path pays `killed = 0` whenever the room affords less
+> > than one whole animal. So a **penned** aurochs whose next-turn room is 54 biomass read
 > > `0.0` at every crew size, `hunt_useful_crew` fell to `NO_USEFUL_CREW`, and the Work board's `+`
 > > shut on a pen collecting a beast every two and a half turns — the same cadence-as-a-never, one
 > > function over. It publishes the rate now (`animals_sparable`, `ONE_WHOLE_ANIMAL`).
@@ -724,13 +724,21 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   remainder — the general form of the `max(1)` arm that has always said *a party that cannot carry one
 >   still takes one*. `carried` itself was never rounded and still is not.
 >
-> **The escapement room is spent at step 1, and `quantise_animal_take` re-applying it is dead code on
-> every hunting path** — the engagement is already clamped by `animals_affordable`, the fight can only
-> bring down what stayed, and `DamageLedger::pending` is below one body by invariant. It is kept because
-> it is **live for the pen**, which has no engagement stage at all: `systems::labor`'s tend branch hands
-> its keepers' raw handling rate in as `brought_down`, so `affordable` (and its
-> *wait-for-the-herd-to-regrow* early return) is the only thing standing between a big keeper crew and a
-> stripped pen.
+> **THE ESCAPEMENT ROOM IS SPENT AT STEP 1 — BY EVERY CALLER — AND `quantise_animal_take` NO LONGER
+> HOLDS IT AT ALL.** The quantiser's `affordable` arm, its `affordable < 1 ⇒ take nothing` early
+> return and its `policy_ceiling` parameter are **gone**: the engagement is already clamped by
+> `animals_affordable`, the fight can only bring down what stayed, and `DamageLedger::pending` is below
+> one body by invariant, so the arm was dead on every hunting path. What kept it alive was **the pen**,
+> which has no engagement stage — and that is exactly the argument for removing it. A bound applied to
+> bodies already on the ground let the one caller with no bound of its own look correct: `systems::labor`'s
+> tend branch handed its keepers' raw handling rate in as `brought_down` and the post-hoc clamp quietly
+> covered for it. The pen now spends the room at its own call site (`fauna::animals_handled` —
+> `husbandry.md` → "THE PEN BOUNDS ITS COLLECTION"), so a caller that forgets is a **stripped herd in a
+> test**, not a silent save.
+>
+> **The wait-for-regrowth turn moved with the room, and is unchanged.** A source that cannot spare a
+> whole animal hands the quantiser a `brought_down` of `0` — the same nothing the early return used to
+> produce — so the hunt still pauses while the herd regrows.
 >
 > **A curve is no longer a staircase.** With the reach linear in the crew and the fight linear in it
 > too, on a herd nobody can exhaust one of them is smaller at *every* crew size — the fight/engagement
