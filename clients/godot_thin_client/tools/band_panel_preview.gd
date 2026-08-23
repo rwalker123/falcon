@@ -13095,10 +13095,15 @@ func _assert_queue_settings_flow(where: String, want_one_line: bool) -> void:
 				kit.size.x, HudWorkVocab.BUILD_QUEUE_KIT_WIDTH],
 		crop.size.x >= HudWorkVocab.BUILD_QUEUE_CROP_WIDTH
 			and kit.size.x >= HudWorkVocab.BUILD_QUEUE_KIT_WIDTH)
-	# **RESERVED ≥ DRAWN, which is the one thing a clipping zone cannot check for itself.**
+	# **RESERVED == DRAWN, which is the one thing a clipping zone cannot check for itself.** Both
+	#  inequalities cost the board: drawing TALLER than the reservation takes the difference off the
+	#  bottom in silence, and drawing SHORTER reserves rows the strip never fills — which is exactly
+	#  what a wrapped strip priced at `2 × BUILD_QUEUE_SETTINGS_HEIGHT` did, 68 reserved against 56
+	#  drawn. A one-sided claim passed throughout that.
 	var reserved := strip.custom_minimum_size.y
 	_assert_band_panel("…and the strip drew %.0fpx of the %.0f it reserved"
-		% [strip.size.y, reserved], strip.size.y <= reserved + QUEUE_FACE_WIDTH_TOLERANCE)
+		% [strip.size.y, reserved],
+		absf(strip.size.y - reserved) <= QUEUE_FACE_WIDTH_TOLERANCE)
 
 ## **THE FLOW PREDICATE ITSELF, ON BOTH SIDES OF ITS THRESHOLD** — because NO SHIPPED DOCK REACHES
 ## the one-line side today and a rendered frame therefore cannot assert it

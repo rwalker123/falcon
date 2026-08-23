@@ -32,10 +32,12 @@ engages hard and does not clamp to carry.**
 standing"* — inherited the job Eradicate used to do. It cannot do that job, for a reason that has
 nothing to do with the floor.
 
-`fauna::quantise_animal_take` bounds the kill by the party's **carry**:
+`fauna::quantise_animal_take` bounds the kill by the party's **carry** — and by the fight, and by
+nothing else: it holds **no room ceiling at all** now, the herd's spare being spent one stage earlier
+at the engagement (`.claude/rules/core_sim/expeditions.md` → the take-bound table).
 
 ```text
-killed = min(affordable, animals_the_pack_seats(collection))
+killed = min(brought_down, animals_the_pack_seats(collection))
 ```
 
 `systems::hunt_take` says why, and is right: folding carry room into the collection *"keeps a

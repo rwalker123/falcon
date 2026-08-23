@@ -1963,9 +1963,11 @@ const NO_SPARE_KEEPERS: u32 = 0;
 /// nothing it can give: taking that hand is step 6 or lower, where *something ends*.
 const SMALLEST_THINNABLE_CREW: u32 = 2;
 
-/// **THE BUILD POOL AT WHICH THE NEXT HAND TAKEN IS THE LAST ONE.** Step 4 sheds a builder only
-/// *while more than one remains*; taking the last is step 11, at the bottom of the order, because
-/// every queued build stalls with it.
+/// **THE BUILD POOL AT WHICH THE NEXT HAND TAKEN IS THE LAST ONE.** While a build is queued, step 4
+/// sheds a builder only *above* this; taking the last is step 11, at the bottom of the order,
+/// because every queued build stalls with it. **With an empty queue it does not apply** — there is
+/// no job for a last builder to stall, so step 4 tests the pool against
+/// [`NO_CREW_ON_THIS_ACTIVITY`] instead and takes them all before anything is lost.
 const LAST_BUILDER_STANDING: u32 = 1;
 
 /// **A ROW WITH NOBODY ON IT BRINGS NOTHING HOME PER HEAD** — what
@@ -2084,8 +2086,14 @@ pub enum ShedStep {
     /// **3 — a keeper above the keeping demand**, Agriculture before Husbandry. The bill is still met
     /// in full, so nothing rots.
     SpareKeeper,
-    /// **4 — a builder, while more than one remains and something is queued.** The queue slows; no
-    /// job stops.
+    /// **4 — a builder the pool is not spending.** With something queued, every builder above the
+    /// last one: the queue slows and no job stops. With **nothing** queued, every builder there is,
+    /// down to and including the last — an idle pool builds nothing, so its hands are the plainest
+    /// case of *nothing is lost* in the whole order.
+    ///
+    /// ⛔ Gating this step on a **non-empty queue** put idle builders below steps 6, 9 and 10, so a
+    /// band with three builders and an empty queue answered a lost hand by dropping its only food
+    /// row. The queue decides *how many* builders are spare, never *whether* any are.
     SpareBuilder,
     /// **5 — thin the least-productive worked source that has two or more hands**, least yield *per
     /// worker*, passing over a source still accruing knowledge while another candidate exists. This
@@ -2109,9 +2117,10 @@ pub enum ShedStep {
     EmptyQueued,
     /// **11 — the last builder.** Every queued build stalls.
     ///
-    /// It names the Builders row **unconditionally**, where step 4 needs a queue and a second hand,
-    /// so a band with two builders and nothing queued still has a step that answers for it — the
-    /// walk has to be total or a fully committed band would never resolve.
+    /// It names the Builders row **unconditionally**, where step 4 leaves the last builder standing
+    /// whenever a build is queued, so the walk stays total: with a queue, the last builder is
+    /// reached only here, at the bottom. With an **empty** queue step 4 has already taken the whole
+    /// pool and this step finds nobody.
     LastBuilder,
     /// **Terminal — the band is down to a single worker on a single row.** Take it; the row ends.
     ///
@@ -3867,10 +3876,14 @@ impl LaborAllocation {
                 }
             }
         }
-        // 4. A builder, while more than one remains and something is queued.
-        if !self.build_queue.is_empty()
-            && self.workers_on(&LaborTarget::Builders) > LAST_BUILDER_STANDING
-        {
+        // 4. A builder the pool is not spending: with something queued, every builder above the
+        //    last one; with nothing queued, every builder there is.
+        let builders_the_queue_needs = if self.build_queue.is_empty() {
+            NO_CREW_ON_THIS_ACTIVITY
+        } else {
+            LAST_BUILDER_STANDING
+        };
+        if self.workers_on(&LaborTarget::Builders) > builders_the_queue_needs {
             if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
                 return Some((index, ShedStep::SpareBuilder));
             }
@@ -4797,14 +4810,15 @@ mod tests {
         );
     }
 
-    /// **STEP 4 — A BUILDER GIVES WHILE MORE THAN ONE REMAINS AND SOMETHING IS QUEUED.** The queue
-    /// slows and no job stops, which is why it outranks anything that costs output.
+    /// **STEP 4 — A BUILDER GIVES WHILE THE POOL HOLDS MORE THAN THE QUEUE NEEDS.** With a build
+    /// declared the queue slows and no job stops, which is why it outranks anything that costs
+    /// output — and the **last** builder is held back for step 11, where the queue stalls.
     ///
-    /// **Both conditions are load-bearing**, so the second half of the test empties the queue and
-    /// watches the same allocation thin a gathering crew instead: a builder pool with nothing to
-    /// build is not spare, it is simply idle, and step 11 is where its hands are finally taken.
+    /// The second half empties the queue and the same allocation gives **both** builders before the
+    /// gathering thins: with nothing declared no hand in that pool is doing anything, so there is no
+    /// last builder to protect.
     #[test]
-    fn a_builder_gives_while_the_queue_holds_something_and_a_second_builder_stands() {
+    fn a_builder_gives_while_the_pool_holds_more_than_the_queue_needs() {
         let allocation = LaborAllocation {
             assignments: vec![
                 staffed_forage(PATCH_A, 3),
@@ -4826,14 +4840,65 @@ mod tests {
         assert_eq!(
             queued.workers_on(&LaborTarget::Builders),
             1,
-            "and only the spare one goes — the last builder is step 11"
+            "and only the spare one goes — the last builder of a live queue is step 11"
         );
 
         let mut unqueued = allocation;
         assert_eq!(
-            shed_targets(&unqueued.normalize(4, ShedFacts::default())),
-            vec![staffed_forage(PATCH_A, 0).target],
-            "with nothing queued the builders are not spare, so the gathering thins instead"
+            shed_targets(&unqueued.normalize(3, ShedFacts::default())),
+            vec![LaborTarget::Builders],
+            "with nothing queued every builder is idle, so both hands come off that pool first"
+        );
+        assert_eq!(
+            unqueued.workers_on(&LaborTarget::Builders),
+            NO_CREW_ON_THIS_ACTIVITY,
+            "including the last one — there is no job for it to stall"
+        );
+        assert_eq!(
+            unqueued.assignments[0].workers, 3,
+            "and the gathering never thins while an idle pool still has a hand"
+        );
+    }
+
+    /// **AN IDLE BUILDER GIVES BEFORE THE BAND'S ONLY FOOD ROW ENDS.** Gating step 4 on a non-empty
+    /// queue put idle builders *below* steps 6, 9 and 10, so this allocation — one gatherer on an
+    /// improved patch beside three builders with nothing declared — answered a single lost hand by
+    /// **dropping the food row** (step 9) while three idle builders kept theirs.
+    ///
+    /// The row is staffed with one, so step 5 cannot thin it: the only rows steps 6–10 can reach are
+    /// sources, which is what makes this the case the ordering inverted on.
+    #[test]
+    fn an_idle_builder_gives_before_the_bands_only_food_row_is_emptied() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 1),
+                staffed_role(LaborTarget::Builders, 3),
+            ],
+            last_yields: vec![realized(6.0), SourceYield::ZERO],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            3,
+            ShedFacts {
+                sources: vec![
+                    SourceShedFacts {
+                        improved: true,
+                        ..Default::default()
+                    },
+                    SourceShedFacts::default(),
+                ],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![LaborTarget::Builders],
+            "an idle builder is the first tier — nothing is lost when a pool with nothing to build \
+             gives a hand"
+        );
+        assert_eq!(
+            allocation.assignments[0].workers, 1,
+            "and the band's only food row keeps its gatherer"
         );
     }
 

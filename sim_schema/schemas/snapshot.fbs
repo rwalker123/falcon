@@ -3510,8 +3510,16 @@ table HerdTelemetryState {
   // THIRD bound on a hunt take, beside the herd's spare stock and the party's carry. The composition
   // above is incomplete without it:
   //
-  //   reach(workers, rung) = floor(workers * engageRate * <rung>BuildFraction) * bodyMass * <account>PerBiomass
-  //   expected(workers, rung) = min(workers * perWorkerYield * <rung>BuildFraction, ceiling(floor), reach(workers, rung))
+  //   reach(workers)    = workers * engageRate * bodyMass * <account>PerBiomass
+  //   expected(workers) = min(workers * perWorkerYield, ceiling(floor), reach(workers))
+  //
+  // **THE REACH IS A RATE AND IS NOT ROUNDED.** `fauna::animals_engaged` is a plain
+  // `workers * engageRate`: no `floor()`, no minimum of one animal, and no build term (a build is
+  // raised by the band's own `builders` pool, so a hunter is only ever a hunter). One hunter on a
+  // Wild Boar (`engageRate 0.33`) reaches a THIRD of an animal per turn, and a client that rounds
+  // that up to a whole one quotes three times the reach the sim will pay. What carries a fraction
+  // between turns is the fight's own accumulator, not a rounding: a lone boar hunter finishes a body
+  // roughly every fourth turn.
   //
   // It ships as a TERM for the reason the escapement ceiling does — the expression is **linear and
   // exact**, so a client evaluating it lands on the number the sim would (see "THE BOUNDARY" in
@@ -3519,7 +3527,7 @@ table HerdTelemetryState {
   // still the sim's answer in `SourceYield.actual`; this is what makes the pre-commit CURVE honest,
   // and it is the same term the crew count inverts:
   //
-  //   engageCrew(floor, rung) = ceil((floor(ceiling_biomass / bodyMass) + 1) / (engageRate * <rung>BuildFraction))
+  //   engageCrew(floor) = ceil((floor(ceiling_biomass / bodyMass) + 1) / (engageRate * stayFraction))
   //
   // which belongs in the same `max()` as the haul crew and the herder count — the three scale on
   // three different units (animals reachable, biomass carried, heads minded) and none dominates
@@ -3529,8 +3537,15 @@ table HerdTelemetryState {
   // **`0` MEANS "NO ENGAGEMENT STAGE", not "cannot reach anything"** — the wire's finite stand-in for
   // the sim's `f32::INFINITY` (a species the roster cannot resolve; a plant, which never publishes
   // this field at all). A reader must treat `<= 0` as *unbounded* and drop the term, exactly as the
-  // sim's `hunt_engage_workers` returns no crew for it. A **pen** is the other unbounded case and
-  // publishes `0` for the same reason: a penned animal is not stalked.
+  // sim's `hunt_engage_workers` returns no crew for it.
+  //
+  // **A PEN ALSO PUBLISHES `0`, AND FOR A PEN THAT `0` IS NO LONGER THE TRUTH.** A pen's tend branch
+  // has a real collection bound sim-side — `fauna::animals_handled`, the keepers' handling rate
+  // against the room — so a client that drops the term on a penned herd quotes a collection above
+  // what the sim pays. The bound is applied at the pen's own call site and is simply not published
+  // yet; publishing a real rate here flips a gate clients use to route pens away from the hunt
+  // paths, so issue #572 tracks closing it. Until then: `0` on a penned herd means *not published*,
+  // not *unbounded*.
   engageRate:float = 0;
   // --- THE RETREAT, AS A TERM (appended) --------------------------------------------------------
   // **What FRACTION of the animals a party reaches actually stay to be fought** — `1 - wariness`
@@ -3542,7 +3557,7 @@ table HerdTelemetryState {
   // the schema previously refused to publish `wariness`: what was refused was a client-side copy of
   // the TAKE MODEL. This is one linear factor on the engagement -
   //
-  //   stayers(workers, rung) = workers * engageRate * <rung>BuildFraction * stayFraction
+  //   stayers(workers) = workers * engageRate * stayFraction
   //
   // - exactly the shape of the carry and engagement terms beside it, and a client evaluating it
   //   lands where the sim would. THE NON-LINEAR HALVES REMAIN THE SIM'S ANSWER: the whole-animal

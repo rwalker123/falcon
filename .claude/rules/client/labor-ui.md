@@ -488,9 +488,17 @@ and the *hold* target both size themselves with). Two units adapters sit beside 
 composition of the `engageRate × dip` pair: `engagement_per_worker` (animals a worker reaches) and
 `engagement_carry` (that same reach in BIOMASS, which is what a crew target divides by).
 
+> ⛔ **THE REACH IS A RATE AND IS NOT ROUNDED.** `animals_engaged` was
+> `floor(workers × engageRate).max(1)` until the hunt-take pipeline was rebuilt: the floor discarded
+> real reach every turn (four hunters earn 1.32 and were credited 1) and the `max(1)` inflated a lone
+> hunter threefold, and together they flattened six crew sizes onto one number — reported from play as
+> four hunters taking exactly what one took. **The client mirror must not re-introduce either**; there
+> is no whole-animal invariant to protect here, the pipeline dealing in fractional animals throughout
+> and quantising at the KILL, never at the reach or the haul.
+
 ```text
-reach(workers)  = floor(workers × engageRate × dip) × <account>PerAnimal
-engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
+reach(workers)  = workers × engageRate × <account>PerAnimal
+engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / engageRate)
 ```
 
 - **`engageRate <= 0` MEANS UNBOUNDED, never "reaches nothing"** (`NO_ENGAGEMENT_STAGE`). It is the
@@ -1381,8 +1389,9 @@ Four things follow, and each is load-bearing:
   resolution admits exactly what it exists to stop.** Driven, PNG-less, in `chapters/improvements.gd`
   — a rounding pair and a visible pair asserted together, since suppressing every arrow satisfies the
   negative alone, plus a precondition that the rounding pair really is two different floats.
-- **A managed rung-3 source has no burst** — the sim never draws a Field or built Pen down, so its
-  `hold_ceiling` IS its ceiling and one reading renders.
+- **A CORRALLED HERD has no burst** — its `hold_ceiling` IS its ceiling, so one reading renders. **A
+  FIELD does burst**, the plant web's managed harvest being retired: it is drawn down like any other
+  stand now.
 - **The unit is hoisted into the header.** Three `/TURN`s were the widest thing on the row and it
   could not afford them once each account stated two numbers. Hoisted, not deleted: a preset's tooltip
   states `up to +0.60/turn` for the ROOM, so something has to mark which kind of number this is. The
@@ -1458,8 +1467,11 @@ practically-false answer the verdict line exists to remove. It is folded in **in
 `max_useful_workers`**, not at the call sites, which is what keeps the two cap twins
 (`source_worker_cap_state`, `DrawerComposeController._forecast_worker_cap`) unable to gate
 differently — the failure this file already records once, when a floor reached only the compose side.
-A rung-3 managed source is excluded (`hold_crew` answers 0): the sim never draws a Field or a built
-Pen down, so its cap stays `production / perWorkerYield`. Frames + assertions: `floor_chart_full` (no
+**A CORRALLED HERD is excluded (`hold_crew` answers 0), and a FIELD no longer is** — see "A Field is a
+stand like any other" above. `FORECAST_MANAGED_FLAG_KEYS` keys on `SOURCE_KIND_HERD` alone, the plant
+web's rung-3 managed harvest having been retired: a Field is floor-live and drawn down through
+ordinary `forage_take`, and `hold_crew` returning 0 on one was the defect that read `max 0 workers
+useful here` on every cash-crop Field. Frames + assertions: `floor_chart_full` (no
 room, cap 1, the stepper renders that 1) and `herd_hunt_pelts_only`, where the wolf read `5 hold it
 after` under `max 4 workers useful here` and the press of the target is now asserted to land the
 stepper on 5.
@@ -1513,7 +1525,7 @@ quotient asked of the FODDER pair and of the per-material vector row by row, and
 - **The MAX across accounts, never the min or the first.** The cap says *beyond this crew nobody adds
   anything*, so it is the largest crew any single account can still use. On a wild source every
   account is one biomass flow through a fixed per-biomass vector, so the quotients agree and the `max`
-  is free; on a rung-3 managed source the payoffs are independent and it is doing real work.
+  is free; on a CORRALLED HERD the payoffs are independent and it is doing real work.
 - **The material vector is asked ROW BY ROW and unioned BY ID**, the standing rule for that account —
   a summed materials/turn figure is the retired trade axis under a new name.
 - **The two projection-derived crew floors resolve ABOVE the branch**, so a no-food source keeps §7.6's

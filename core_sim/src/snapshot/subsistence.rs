@@ -48,6 +48,10 @@ const NO_NEGLECT_REMAINING: u32 = 0;
 /// [`f32::INFINITY`] sim-side. FlatBuffers floats carry an infinity fine; a *client* dividing by one
 /// does not, so the seam converts once, here, and the schema documents `<= 0` as *unbounded* — the
 /// same reading `fauna::hunt_engage_workers` gives it.
+///
+/// **On a pen, *unbounded* is the wrong reading and the field is simply unpublished** — the tend
+/// branch bounds its collection by [`crate::fauna::animals_handled`] at its own call site. See the
+/// `engage_rate` site below and issue #572.
 const NO_ENGAGEMENT_STAGE: f32 = 0.0;
 
 /// **The dispersion the wire's `stayFraction` is published at** — the neutral `1.0`, which leaves the
@@ -667,8 +671,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // siblings; the whole-animal `floor()` stays the sim's answer in `SourceYield.actual`.
                 //
                 // **A PEN publishes `NO_ENGAGEMENT_STAGE`** — `engage_rate_for` answers `INFINITY` for
-                // an unresolvable species and a penned animal is not stalked either, so the wire's
-                // finite "unbounded" reading covers both and no reader has to carry an infinity.
+                // an unresolvable species, and the wire's finite reading of it spares a reader an
+                // infinity to divide by.
+                //
+                // ⛔ **For a pen that `0` is no longer the truth.** A penned animal is not *stalked*,
+                // but its tend branch does have a real collection bound — `fauna::animals_handled`,
+                // the keepers' handling rate against the room — applied at the pen's own call site.
+                // A reader following the schema's `<= 0 ⇒ unbounded` rule therefore quotes a penned
+                // collection above what the sim pays. The published value stays `0` here: a real rate
+                // on this field flips the gate clients use to route pens away from the hunt paths.
+                // Issue #572 tracks closing it.
                 engage_rate: herd
                     .filter(|herd| !herd.is_corralled())
                     .map(|herd| fauna.engage_rate_for(&herd.species))

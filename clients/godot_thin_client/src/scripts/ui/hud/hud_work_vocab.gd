@@ -1428,17 +1428,27 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 ## differs between the webs is the strip's CONTENT rather than whether there is one.
 const BUILD_QUEUE_CROP_WIDTH := 168.0
 
-## The open strip's height — ONE LINE of controls, and the number BOTH the strip draws at and
+## **ONE CONTROL LINE INSIDE THE STRIP** — the compact picker's own drawn height, which
+## `_build_queue_settings_line` also declares as its minimum so the drawn line and the reserved one
+## are one number. It is the term the WRAP multiplies, and the reason the strip's height below is a
+## SUM rather than a literal: a second line costs another control and no more chrome.
+const BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT := 22.0
+
+## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `HudStyle.ROLE_CARD_PADDING` above and below
+## (6 + 6), from the single `work_inspector_stylebox` the strip wears however many lines open inside
+## it. Reserving it per LINE is what made a wrapped strip cost 68 where it draws 56.
+const BUILD_QUEUE_SETTINGS_CHROME := 12.0
+
+## The open strip's height at ONE LINE of controls, and the number BOTH the strip draws at and
 ## `build_queue_block_height` reserves. The zone `clip_contents`, so a strip that drew taller than it
-## was paid for would take the difference off the bottom of the board with nothing to show for it.
+## was paid for would take the difference off the bottom of the board with nothing to show for it —
+## and a strip that drew SHORTER costs the board a row it could have drawn, for dead space.
 ##
-## **34 = a 22px compact picker + the strip's own 12px of `HudStyle.ROLE_CARD_PADDING`, and the 30 it
-## replaces was a live 4px UNDER-RESERVE** (`docs/plan_standing_upkeep.md` §4.7b ②). The strip wears
-## `work_inspector_stylebox`, which is the role card's — 6px top and 6px bottom — so a reservation
-## that counted only the control was short by the chrome around it every time a strip opened. It is
-## corrected here rather than absorbed because the flow arithmetic below MULTIPLIES this number, and a
-## term that is wrong by four is wrong by eight the moment the strip wraps.
-const BUILD_QUEUE_SETTINGS_HEIGHT := 34.0
+## **34 = the control plus the chrome, and the 30 it replaces was a live 4px UNDER-RESERVE**
+## (`docs/plan_standing_upkeep.md` §4.7b ②): a reservation that counted only the control was short by
+## the chrome around it every time a strip opened.
+const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
+    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
 
 ## **THE KEY COLUMN BOTH SETTINGS KEYS DECLARE — `CROP` and `KIT` alike.** One constant, because the
 ## whole point of a stacked layout is that the two keys line up: two independently-measured widths
@@ -1633,6 +1643,11 @@ static func build_queue_block_height(entries: int, rows_max: int,
 ## stack. **A LONE CONTROL IS ALWAYS ONE LINE whatever the width** — an ANIMAL entry has a kit and no
 ## crop, so it has nothing to wrap against, and letting the predicate answer for it would reserve a
 ## second line for a strip that draws one.
+##
+## ⛔ **THE SECOND LINE COSTS A CONTROL, NOT A WHOLE STRIP.** There is ONE stylebox around the pair
+## however they stack, so the wrapped height is `chrome + 2 × control` = 56 and never
+## `2 × BUILD_QUEUE_SETTINGS_HEIGHT` = 68 — which reserved 12px the strip never draws, rendered as
+## dead space inside it and cost the work board a row wherever that 12px straddled a boundary.
 static func build_queue_settings_height(legs: int, has_crop: bool, has_kit: bool = false,
         one_line: bool = true) -> float:
     var controls := 0
@@ -1643,7 +1658,7 @@ static func build_queue_settings_height(legs: int, has_crop: bool, has_kit: bool
     var height := 0.0
     if controls > 0:
         height = BUILD_QUEUE_SETTINGS_HEIGHT if (controls <= 1 or one_line) \
-            else BUILD_QUEUE_SETTINGS_HEIGHT * 2.0
+            else BUILD_QUEUE_SETTINGS_HEIGHT + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     return height

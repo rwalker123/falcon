@@ -694,17 +694,20 @@ const WOLF_MATERIAL_PER_WORKER := 0.11
 ##
 ##   room at the food peak = 240 − 0.5 × 400 = 40 biomass  ⇒  2 whole wolves affordable
 ##   one hunter carries      40 biomass                    ⇒  2 bodies haulable per hunter
-##   one hunter REACHES      0.25 wolves                   ⇒  floor(w × 0.25), never below one body
+##   one hunter REACHES      0.25 wolves                   ⇒  `w × 0.25`, UNROUNDED
 ##
-## So `killed` is ONE body from 1 to 7 hunters and TWO at 8 — flat, then a step — while the crew term
-## grows sevenfold underneath it. That is the same shape the edible Wild Boar pair proved the food
-## side with, which is why the wolf's claim can be stated the same way.
+## So `killed` is the REACH at every crew up to 7 (1.75 wolves, still under the room's 2) and rises
+## with every hand — a tenth of a hide per hunter against the retired crew-throughput line's 0.11,
+## two linear readings a tenth apart that only a magnitude claim can tell apart. That is the same
+## shape the edible Wild Boar pair proved the food side with, which is why the wolf's claim can be
+## stated the same way.
 const WOLF_BODY_MASS := 20.0
 const WOLF_CARRY := 40.0
 const WOLF_ENGAGE_RATE := 0.25
-## The crew the reach arm pins to ONE animal, and the first crew it does not — the A/B's two halves.
-const WOLF_PINNED_CREW := 7
-const WOLF_STEPPED_CREW := 8
+## The largest crew the REACH is still the binding arm at: `7 × 0.25` = 1.75 wolves, under both the
+## room's 2 whole bodies and the 14 the crew could haul. Every claim below is made inside that regime,
+## because it is the only one where the take is a reading of the reach alone.
+const WOLF_REACH_BOUND_CREW := 7
 ## `max(0, B − f·K)` at the food peak, restated so the oracle below divides by a number this file owns
 ## rather than by one it recomposes out of the client's own `escapement_room`.
 const WOLF_ROOM_AT_PEAK := WOLF_BIOMASS - 0.5 * WOLF_CAPACITY
@@ -725,12 +728,11 @@ const WOLF_RAID_HIDE_PER_ANIMAL := 0.55
 ## quantum and a reach, all in whatever unit its caller states them in. Passing the pack's biomass
 ## terms is therefore the same cross-check the deer's food terms get, not a second oracle.
 func _wolf_material_take(crew: int) -> float:
-	# The reach is FLOORED AT ONE BODY (`SourceForecast.ENGAGED_AT_LEAST`) — a party that exists brings
-	# something into contact — which at this pack's 0.25 is the difference between a take and a zero at
-	# every crew under four.
+	# The reach is `crew × engage_rate`, UNROUNDED, exactly as `fauna::animals_engaged` states it: a
+	# reach is a rate, and a lone hunter reaching a quarter of a wolf is a body every fourth turn
+	# rather than the whole one the retired floor-of-one quoted.
 	return float(HerdFx.hunt_take_oracle(float(crew) * WOLF_CARRY, WOLF_ROOM_AT_PEAK,
-		WOLF_BODY_MASS,
-		maxf(floorf(float(crew) * WOLF_ENGAGE_RATE), SourceForecast.ENGAGED_AT_LEAST))["delivered"]) \
+		WOLF_BODY_MASS, float(crew) * WOLF_ENGAGE_RATE)["delivered"]) \
 		* WOLF_MATERIAL_PER_BIOMASS
 
 ## The wolf's RAID table: `delivers_food = false` on every rung — an INEDIBLE quarry, not a denial
@@ -2707,8 +2709,10 @@ func _raid_row_for(herd: Dictionary, floor: float, party: int) -> Dictionary:
 # 0.36** — the readout falling off a cliff as the crew GREW. `_hunt_delivered_and_waste` carried two
 # branches, and the `carryable < 1` one priced delivery as the crew's whole raw `collection` on the
 # premise that the only way below one body is a pack too small to hold one. Once the ENGAGEMENT arm
-# joined the same `min` that premise was false: at six hunters the crew hauls twenty boar and brings
-# down three quarters of ONE, so the branch quoted twenty boar for a take of three quarters of one.
+# joined the same `min` that premise was false: a crew that hauls twenty boar can still bring down
+# less than ONE, so the branch quoted twenty boar for a take of a fraction of one. (The report names
+# crews of six and seven because the reach was FLOORED then; it is a plain `workers × engage_rate`
+# now, so the same regime sits at a smaller crew and the constants below say so.)
 #
 # PNG-LESS AND DRIVEN, for the reason `compose_rungs.gd`'s kit-repricing liveness block is: this is
 # arithmetic, and a sheet quoting the wrong number renders a perfectly plausible frame. The producer
@@ -2738,15 +2742,18 @@ const BOAR_CAPACITY := 400.0
 
 const BOAR_BIOMASS := 340.0
 
-## The two crews the played report names, and the one animal-count step between them:
-## 6 → `floor(6 × 0.33)` = 1 engaged, 0.75 stayed; 7 → `floor(7 × 0.33)` = 2 engaged, 1.50 stayed.
-const BOAR_CREW_SUB_ONE_ANIMAL := 6
+## A crew that brings down LESS THAN ONE BODY a turn, and its exact double — the pair that says a
+## reach is a rate. `4 × 0.33` = 1.32 reached, of which 0.99 stays: under one body, while the same
+## four hunters could HAUL thirteen. `8 × 0.33` reaches exactly twice that, because an unrounded reach
+## is linear in the crew where the retired `floor(w × 0.33).max(1)` was a staircase.
+const BOAR_CREW_SUB_ONE_ANIMAL := 4
 
-const BOAR_CREW_ONE_ANIMAL := 7
+const BOAR_CREW_DOUBLE := BOAR_CREW_SUB_ONE_ANIMAL * 2
 
-## The sweep, chosen to CROSS the sub-one-animal region rather than sit above it: at one hunter the
-## party engages `ENGAGED_AT_LEAST`'s single animal and keeps 0.75 of it, and only at 13 would a
-## third body drop. A sweep starting above the crossing would pass with the defect fully restored.
+## The sweep, chosen to CROSS the sub-one-animal region rather than sit above it: one hunter reaches
+## 0.33 of a boar and keeps a quarter of one, and the crew is still the binding arm at twelve (2.97
+## brought down, against 40 haulable and 11.67 affordable). A sweep starting above the crossing would
+## pass with the defect fully restored.
 const BOAR_SWEEP_MIN_CREW := 1
 
 const BOAR_SWEEP_MAX_CREW := 12
@@ -2754,8 +2761,9 @@ const BOAR_SWEEP_MAX_CREW := 12
 ## ---- WHAT THE SAME BOAR PAYS BESIDE THE MEAT ---------------------------------------------------
 ## The reported defect's OTHER half. One herder against five, changing nothing else, read
 ## `FOOD 0.18 · BONE 0.08 · HIDE 0.56` and `FOOD 0.18 · BONE 0.40 · HIDE 2.80`: the food was the
-## model working — `floor(workers × 0.33)` with its floor of one pins every crew from 1 to 6 at
-## exactly ONE animal reached — and the materials were a pure crew-throughput line
+## model working as it was written then — the reach was FLOORED, `floor(workers × 0.33)` never below
+## one, pinning every crew from 1 to 6 at exactly ONE animal reached — and the materials were a pure
+## crew-throughput line
 ## (`min(workers × per_worker_material, escapement ceiling)`) that had met neither the
 ## engagement→retreat arm nor the whole-animal quantiser, promising ~5× the truth at five herders.
 ##
@@ -2783,6 +2791,12 @@ const BOAR_HIDE_PER_BIOMASS := 0.05
 const BOAR_MATERIAL_LEAN_CREW := 1
 
 const BOAR_MATERIAL_FULL_CREW := 5
+
+## …and the full crew DOUBLED, which is what the coupling claim is made across: an unrounded reach is
+## linear in the crew, so twice the hands bring down exactly twice as much and every account that is a
+## conversion of the delivery must double with it. The reach is still the binding arm here (2.48
+## brought down, against 33 haulable and 11.67 affordable).
+const BOAR_MATERIAL_DOUBLE_CREW := BOAR_MATERIAL_FULL_CREW * 2
 
 ## The engagement-bound Wild Boar of the played report: wild, un-penned and food-paying, so the axis
 ## is provisions and the whole-animal quantum is real.
@@ -2926,40 +2940,66 @@ func _engagement_quantisation_assertions() -> void:
 			% [BOAR_CREW_SUB_ONE_ANIMAL, int(haulable_six), stayed_six],
 		stayed_six < 1.0 and haulable_six > 1.0)
 
-	# (1) THE REPORTED PAIR. Six hunters bring down 0.75 of a boar, so they land 0.75 × 0.24 = 0.18
-	#     food — NOT the 4.80 the crew's whole carry throughput would be, which is what the retired
-	#     `carryable < 1` branch quoted: twenty boar, for three quarters of one.
+	# (1) THE REPORTED PAIR. The sub-one-animal crew brings down 0.99 of a boar, so it lands
+	#     0.99 × 0.24 food — NOT the crew's whole carry throughput, which is what the retired
+	#     `carryable < 1` branch quoted: thirteen boar, for one.
 	var six := _boar_delivered(band, herd, BOAR_CREW_SUB_ONE_ANIMAL)
 	var want_six := stayed_six * fpa
 	var carry_six := float(BOAR_CREW_SUB_ONE_ANIMAL) * BOAR_PER_WORKER_YIELD
 	h._assert_hud(("%d hunters land what they bring DOWN (%.2f food/turn), not what they could carry"
 			+ " (%.2f) — got %.2f") % [BOAR_CREW_SUB_ONE_ANIMAL, want_six, carry_six, six],
 		is_equal_approx(six, want_six))
-	# The seventh hunter tips the engagement to two animals, so 1.50 stay and the take DOUBLES.
-	var seven := _boar_delivered(band, herd, BOAR_CREW_ONE_ANIMAL)
-	var want_seven := _boar_brought_down(BOAR_CREW_ONE_ANIMAL) * fpa
+	# Twice the crew brings down exactly twice as much, the reach being a RATE — where the retired
+	# staircase answered one animal for every crew from one to six and then jumped.
+	var seven := _boar_delivered(band, herd, BOAR_CREW_DOUBLE)
+	var want_seven := _boar_brought_down(BOAR_CREW_DOUBLE) * fpa
 	h._assert_hud("…and %d hunters land %.2f food/turn — got %.2f"
-			% [BOAR_CREW_ONE_ANIMAL, want_seven, seven],
-		is_equal_approx(seven, want_seven))
+			% [BOAR_CREW_DOUBLE, want_seven, seven],
+		is_equal_approx(seven, want_seven) and is_equal_approx(seven, six * 2.0))
+
+	# (1a) THE REACH IS THE SIM'S `fauna::animals_engaged`, UNROUNDED — `workers × engage_rate`,
+	#      asserted as the NUMBER at a crew whose product is FRACTIONAL. This is the mirror the sim
+	#      un-floored and the client did not: on the shipped boar the retired `floor(w × 0.33).max(1)`
+	#      bounded a lone hunter's row at ONE animal reached while the turn brought down 0.33, a ~3×
+	#      over-quote that held for every crew under `1 / engage_rate`. A presence check passes on
+	#      either expression, so the claim is the value.
+	var lone_reach := SourceForecast.animals_engaged(1, BOAR_ENGAGE_RATE)
+	h._assert_hud(("one hunter reaches %.2f boar — the product, not the retired floor-of-one's 1.00"
+			+ " — got %.2f") % [BOAR_ENGAGE_RATE, lone_reach],
+		is_equal_approx(lone_reach, BOAR_ENGAGE_RATE) and lone_reach < 1.0)
+	# (1b) AND IT RISES WITH EVERY HAND, at the product, across the whole sweep. Stated as one claim
+	#      over the sweep rather than as twelve literals, so a re-dialed fixture moves the numbers and
+	#      not the claim; the first crew that breaks either half is the one reported.
+	var reach_broke_at := 0
+	var previous_reach := 0.0
+	for workers in range(BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW + 1):
+		var reach := SourceForecast.animals_engaged(workers, BOAR_ENGAGE_RATE)
+		if reach_broke_at == 0 and (reach <= previous_reach
+				or not is_equal_approx(reach, float(workers) * BOAR_ENGAGE_RATE)):
+			reach_broke_at = workers
+		previous_reach = reach
+	h._assert_hud(("the reach is `workers × %.2f` and rises with every hand (%d..%d) — broke at %d")
+			% [BOAR_ENGAGE_RATE, BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW, reach_broke_at],
+		reach_broke_at == 0)
 
 	# (2) MONOTONICITY — the PROPERTY the defect violated, and the one that catches its return in any
 	#     other species' numbers. Every arm of the `min` is non-decreasing in the crew, so the take
 	#     must be too; the played pair was 4.80 → 0.36, an order of magnitude LOST to one more hunter.
-	#     Asserted as a relation over the sweep rather than as twelve literals, so a re-dialed fixture
-	#     moves the numbers and not the claim.
+	#     **STRICTLY rising across this sweep**, since the reach is the binding arm at every crew in it
+	#     and an unrounded reach has no treads — a non-decreasing claim would pass on the staircase the
+	#     un-flooring removed.
 	var previous := -1.0
 	var broke_at := 0
 	var broke_from := 0.0
 	var broke_to := 0.0
 	for workers in range(BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW + 1):
 		var delivered := _boar_delivered(band, herd, workers)
-		if broke_at == 0 and previous >= 0.0 and delivered < previous \
-				and not is_equal_approx(delivered, previous):
+		if broke_at == 0 and previous >= 0.0 and delivered <= previous:
 			broke_at = workers
 			broke_from = previous
 			broke_to = delivered
 		previous = delivered
-	h._assert_hud(("the delivered take never falls as the crew grows (%d..%d hunters)"
+	h._assert_hud(("the delivered take RISES with every hand (%d..%d hunters)"
 			+ " — %d hunters read %.2f food/turn after %.2f")
 			% [BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW, broke_at, broke_to, broke_from],
 		broke_at == 0)
@@ -3010,9 +3050,11 @@ func _engagement_quantisation_assertions() -> void:
 #         1 │ 0.18 │ 0.08 │ 0.56
 #         5 │ 0.18 │ 0.40 │ 2.80
 #
-# **The food was the model working.** `floor(workers × 0.33)` with its floor of one pins every crew
-# from one to six at exactly ONE animal reached, so one boar comes home at both sizes and the take
-# steps only at seven. **The materials were a second expression** —
+# **The food was the model working as it was written then.** The reach was FLOORED —
+# `floor(workers × 0.33)`, never below one — so every crew from one to six reached exactly ONE animal
+# and one boar came home at both sizes. (The floor is retired; the reach is `workers × engage_rate`
+# and rises with every hand, so the two crews below differ in the delivery and the claims are about
+# what the accounts are a CONVERSION of.) **The materials were a second expression** —
 # `min(workers × per_worker_material, escapement ceiling)`, a pure crew-throughput line that had met
 # neither the engagement→retreat arm nor the whole-animal quantiser — so the sheet promised roughly
 # 5× the truth at five herders while quoting the honest meat one line above it.
@@ -3117,9 +3159,11 @@ func _material_take_tracks_delivery_assertions() -> void:
 		h._assert_hud(("the engagement arm is what binds at %d herders — %.2f brought down against"
 				+ " %d haulable and %.2f affordable") % [workers, stayed, int(haulable), room_bodies],
 			stayed < haulable and stayed < room_bodies)
-	h._assert_hud("…and both crews reach the SAME one animal, which is why the meat does not move",
-		is_equal_approx(_boar_brought_down(BOAR_MATERIAL_LEAN_CREW),
-			_boar_brought_down(BOAR_MATERIAL_FULL_CREW)))
+	h._assert_hud(("…and the full crew brings down %d× what the lean one does, the reach being a rate")
+			% (BOAR_MATERIAL_FULL_CREW / BOAR_MATERIAL_LEAN_CREW),
+		is_equal_approx(_boar_brought_down(BOAR_MATERIAL_FULL_CREW),
+			_boar_brought_down(BOAR_MATERIAL_LEAN_CREW)
+				* float(BOAR_MATERIAL_FULL_CREW) / float(BOAR_MATERIAL_LEAN_CREW)))
 
 	# (0b) VACUITY GUARD — the RETIRED expression really did move between these two crews, so the
 	#      equality below is a claim about the fix rather than about a fixture that cannot tell them
@@ -3138,27 +3182,44 @@ func _material_take_tracks_delivery_assertions() -> void:
 		not is_equal_approx(float(lean_crew_line[BOAR_HIDE_ID]),
 			float(full_crew_line[BOAR_HIDE_ID])))
 
-	# (1) THE REPORTED PAIR — food AND materials flat across a five-fold crew, because the crew
-	#     reaches one boar either way.
+	# (1) EVERY ACCOUNT IS A CONVERSION OF THE ONE DELIVERED BIOMASS — its own published per-biomass
+	#     rate times what the crew actually lands, which is what "rows of the same delivery" means and
+	#     what the retired crew-throughput line was not. **The claim is the MAGNITUDE**: with the reach
+	#     unrounded both expressions are linear in the crew, so a shape claim can no longer tell them
+	#     apart — the retired line quotes an order of magnitude more hide, and only a number says so.
 	var lean := _boar_accounts(band, herd, BOAR_MATERIAL_LEAN_CREW)
 	var full := _boar_accounts(band, herd, BOAR_MATERIAL_FULL_CREW)
-	for account in accounts:
-		h._assert_hud("%s is a live reading at %d herders (got %.4f) — not a collapse to zero"
-				% [account, BOAR_MATERIAL_LEAN_CREW, float(lean.get(account, 0.0))],
-			float(lean.get(account, 0.0)) > 0.0)
-		h._assert_hud("%s reads the same at %d and %d herders — %.4f against %.4f"
-				% [account, BOAR_MATERIAL_LEAN_CREW, BOAR_MATERIAL_FULL_CREW,
-					float(lean.get(account, 0.0)), float(full.get(account, 0.0))],
-			is_equal_approx(float(lean.get(account, 0.0)), float(full.get(account, 0.0))))
+	var rates := {
+		SourceForecast.YIELD_ACCOUNT_FOOD: BOAR_PROVISIONS_PER_BIOMASS,
+		BOAR_BONE_ID: BOAR_BONE_PER_BIOMASS,
+		BOAR_HIDE_ID: BOAR_HIDE_PER_BIOMASS,
+	}
+	for workers in [BOAR_MATERIAL_LEAN_CREW, BOAR_MATERIAL_FULL_CREW]:
+		var landed := _boar_delivered_biomass(band, herd, workers)
+		var quoted := _boar_accounts(band, herd, workers)
+		for account in accounts:
+			var want := landed * float(rates[account])
+			h._assert_hud("%s is a live reading at %d herders (got %.4f) — not a collapse to zero"
+					% [account, workers, float(quoted.get(account, 0.0))],
+				float(quoted.get(account, 0.0)) > 0.0)
+			h._assert_hud("%s at %d herders is %.4f — the %.4f biomass landed at %.2f/biomass"
+					% [account, workers, want, landed, float(rates[account])],
+				is_equal_approx(float(quoted.get(account, 0.0)), want))
+	h._assert_hud(("…and the hide is NOT the retired throughput line's %.4f at %d herders — got %.4f")
+			% [float(full_crew_line[BOAR_HIDE_ID]), BOAR_MATERIAL_FULL_CREW,
+				float(full.get(BOAR_HIDE_ID, 0.0))],
+		not is_equal_approx(float(full.get(BOAR_HIDE_ID, 0.0)),
+			float(full_crew_line[BOAR_HIDE_ID])))
 
-	# (2) THE SEVENTH HUNTER STEPS THE ANIMAL COUNT, AND ALL THREE ACCOUNTS STEP WITH IT. This is the
-	#     half that proves they are COUPLED rather than both frozen — an equality claim alone passes
-	#     on a readout that has stopped moving at all.
-	var stepped := _boar_accounts(band, herd, BOAR_CREW_ONE_ANIMAL)
-	var step := _boar_brought_down(BOAR_CREW_ONE_ANIMAL) \
+	# (2) AND ALL THREE MOVE TOGETHER WITH THE DELIVERY. This is the half that proves they are COUPLED
+	#     rather than three separately-composed lines that happen to agree at one crew: twice the crew
+	#     brings down twice as much — the reach is a rate — so every account doubles with it.
+	var stepped := _boar_accounts(band, herd, BOAR_MATERIAL_DOUBLE_CREW)
+	var step := _boar_brought_down(BOAR_MATERIAL_DOUBLE_CREW) \
 		/ _boar_brought_down(BOAR_MATERIAL_FULL_CREW)
-	h._assert_hud("the %dth hunter really steps the animal count (×%.2f)"
-			% [BOAR_CREW_ONE_ANIMAL, step], is_equal_approx(step, 2.0))
+	h._assert_hud("%d herders really bring down twice what %d do (×%.2f)"
+			% [BOAR_MATERIAL_DOUBLE_CREW, BOAR_MATERIAL_FULL_CREW, step],
+		is_equal_approx(step, 2.0))
 	for account in accounts:
 		h._assert_hud("%s doubles with the animal count — %.4f against %.4f"
 				% [account, float(stepped.get(account, 0.0)), float(full.get(account, 0.0)) * step],
@@ -3214,11 +3275,12 @@ func _wolf_material_take_assertions() -> void:
 	var wolf := ForageFx.floorify(_pelt_only_wolf_herd())
 	# (0) THE PRECONDITION — the REACH is what binds at both crews, and both therefore reach the SAME
 	#     single animal. Without it the equality below is satisfied by a pack whose arms coincide.
-	var haulable := maxf(floorf(float(WOLF_PINNED_CREW) * WOLF_CARRY / WOLF_BODY_MASS), 1.0)
+	var haulable := maxf(floorf(float(WOLF_REACH_BOUND_CREW) * WOLF_CARRY / WOLF_BODY_MASS), 1.0)
 	var affordable := WOLF_ROOM_AT_PEAK / WOLF_BODY_MASS
-	h._assert_hud(("the reach arm binds at %d hunters — 1 brought down against %d haulable and"
-			+ " %.1f affordable") % [WOLF_PINNED_CREW, int(haulable), affordable],
-		SourceForecast.ENGAGED_AT_LEAST < haulable and SourceForecast.ENGAGED_AT_LEAST < affordable)
+	var reach := SourceForecast.animals_engaged(WOLF_REACH_BOUND_CREW, WOLF_ENGAGE_RATE)
+	h._assert_hud(("the reach arm binds at %d hunters — %.2f brought down against %d haulable and"
+			+ " %.1f affordable") % [WOLF_REACH_BOUND_CREW, reach, int(haulable), affordable],
+		reach < haulable and reach < affordable)
 	# (0b) VACUITY GUARD — the RETIRED expression really did move across this crew range, so the
 	#      equality below is a claim about the fix rather than about a pack that cannot tell the two
 	#      expressions apart. It is the real `expected_materials`, still the plant web's.
@@ -3227,39 +3289,56 @@ func _wolf_material_take_assertions() -> void:
 	var retired_one := _material_amounts(SourceForecast.expected_materials(
 		1.0, wolf_forecast, SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
 	var retired_many := _material_amounts(SourceForecast.expected_materials(
-		float(WOLF_PINNED_CREW), wolf_forecast, SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
+		float(WOLF_REACH_BOUND_CREW), wolf_forecast, SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY))
 	h._assert_hud(("the retired crew-throughput line DID move across this range (%.2f → %.2f hide),"
 			+ " so the pack can tell the two expressions apart")
 			% [float(retired_one[WOLF_MATERIAL_ID]), float(retired_many[WOLF_MATERIAL_ID])],
 		not is_equal_approx(float(retired_one[WOLF_MATERIAL_ID]),
 			float(retired_many[WOLF_MATERIAL_ID])))
-	# (1) FLAT ACROSS EVERY CREW THE REACH ARM PINS, and equal to the harness's own quantiser oracle
-	#     — so the claim is a cross-check against the sim's arithmetic rather than a restatement of
-	#     the client's.
-	var pinned_take := _wolf_material_take(1)
-	h._assert_hud("the pinned take is a live reading (got %.4f hide) — not a collapse to zero"
-		% pinned_take, pinned_take > 0.0)
-	for crew in range(1, WOLF_PINNED_CREW + 1):
+	# (1) THE QUOTED HIDE IS THE QUANTISER'S, AT EVERY CREW THE REACH BINDS AT — equal to the harness's
+	#     own oracle (a cross-check against the sim's arithmetic rather than a restatement of the
+	#     client's) and NOT the retired crew-throughput line beside it. The two are a tenth apart per
+	#     hunter now that the reach is unrounded, both of them linear, so only the MAGNITUDE separates
+	#     them: a shape claim would pass on either.
+	var one_hunter := _wolf_material_take(1)
+	h._assert_hud("one hunter's take is a live reading (got %.4f hide) — not a collapse to zero"
+		% one_hunter, one_hunter > 0.0)
+	var wolf_broke_at := 0
+	var wolf_previous := -1.0
+	for crew in range(1, WOLF_REACH_BOUND_CREW + 1):
 		var quoted := float(_wolf_accounts(band, wolf, crew).get(WOLF_MATERIAL_ID, 0.0))
-		h._assert_hud("%d hunter(s) bring home the one animal's %.4f hide, not %.4f — got %.4f"
-				% [crew, pinned_take, float(crew) * WOLF_MATERIAL_PER_WORKER, float(quoted)],
-			is_equal_approx(float(quoted), pinned_take))
-	# (2) …AND IT STEPS WHEN THE ANIMAL COUNT DOES. The half that proves the row is COUPLED to the
-	#     delivery rather than merely frozen — an equality claim alone passes on a readout that has
-	#     stopped moving at all.
-	var stepped_take := _wolf_material_take(WOLF_STEPPED_CREW)
-	h._assert_hud("the %dth hunter really steps the animal count (×%.2f)"
-			% [WOLF_STEPPED_CREW, stepped_take / pinned_take],
-		is_equal_approx(stepped_take / pinned_take, 2.0))
-	h._assert_hud("…and the hide steps with it — %.4f against %.4f"
-			% [float(_wolf_accounts(band, wolf, WOLF_STEPPED_CREW).get(WOLF_MATERIAL_ID, 0.0)),
-				stepped_take],
-		is_equal_approx(float(_wolf_accounts(band, wolf, WOLF_STEPPED_CREW)
-			.get(WOLF_MATERIAL_ID, 0.0)), stepped_take))
+		var oracle := _wolf_material_take(crew)
+		h._assert_hud(("%d hunter(s) bring home the quantiser's %.4f hide, not the throughput line's"
+				+ " %.4f — got %.4f")
+				% [crew, oracle, float(crew) * WOLF_MATERIAL_PER_WORKER, quoted],
+			is_equal_approx(quoted, oracle)
+				and not is_equal_approx(quoted, float(crew) * WOLF_MATERIAL_PER_WORKER))
+		if wolf_broke_at == 0 and quoted <= wolf_previous:
+			wolf_broke_at = crew
+		wolf_previous = quoted
+	# (2) …AND IT RISES WITH EVERY HAND, which is what proves the row is COUPLED to the delivery rather
+	#     than frozen — an equality claim alone passes on a readout that has stopped moving at all. It
+	#     is also the property the reach's retired floor destroyed: seven hunters used to bring home
+	#     exactly what one did.
+	h._assert_hud("the hide rises with every hand from 1 to %d hunters (broke at %d)"
+			% [WOLF_REACH_BOUND_CREW, wolf_broke_at], wolf_broke_at == 0)
+	h._assert_hud("…and %d hunters bring home %d× what one does, the reach being a rate — %.4f hide"
+			% [WOLF_REACH_BOUND_CREW, WOLF_REACH_BOUND_CREW,
+				float(_wolf_accounts(band, wolf, WOLF_REACH_BOUND_CREW).get(WOLF_MATERIAL_ID, 0.0))],
+		is_equal_approx(float(_wolf_accounts(band, wolf, WOLF_REACH_BOUND_CREW)
+			.get(WOLF_MATERIAL_ID, 0.0)), one_hunter * float(WOLF_REACH_BOUND_CREW)))
 	# (3) AND IT STILL STATES NO FOOD. The crossing is stated in biomass now, so the plausible wrong
 	#     fix is one that credits every account from it — which would put `0.00 FOOD` back on a wolf.
 	h._assert_hud("…and the pack still pays into no food account at all",
-		not _wolf_accounts(band, wolf, WOLF_PINNED_CREW).has(SourceForecast.YIELD_ACCOUNT_FOOD))
+		not _wolf_accounts(band, wolf, WOLF_REACH_BOUND_CREW).has(SourceForecast.YIELD_ACCOUNT_FOOD))
+
+## What the crew actually LANDS off the boar, in biomass — the quantity every account beside it is a
+## fixed conversion of, read from the same producer the accounts are read from rather than recomposed.
+func _boar_delivered_biomass(band: Dictionary, herd: Dictionary, workers: int) -> float:
+	var take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
+		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE,
+		_crew_curve(herd))
+	return float(take["delivered_biomass"]) if bool(take.get("available", false)) else -1.0
 
 ## Every account this crew brings home off the pack, through the REAL producer — the wolf twin of
 ## `_boar_accounts`, so the two quarries' claims are made about the same seam.
@@ -3939,12 +4018,16 @@ func _pick_actor_band(entry: int) -> void:
 ## (`0.75` against `1.50` animals, `0.18` against `0.36` food) rather than at one lucky crew.
 const CREW_TAKE_FIGHT_SURVIVAL := 0.5
 
-## The crew the claims are made at. It sits INSIDE the engagement staircase's longest flat run — crews
-## one through six all bring the same single boar to bay (`max(floor(w x 0.33), 1)`), which is the
-## measured 6x spread in the per-hunter take that rules a scalar out — and, halved by the fight, it is
-## the size at which the CREW is the smallest of the take's three limits rather than the herd's own
-## regrowth. Both facts are what claim (4) is about, and only a crew this side of the step has them.
-const CREW_TAKE_CLAIM_CREW := 6
+## The crew the claims are made at. It is sized so the CREW is the smallest of the take's FOUR limits
+## rather than the herd's own regrowth: three hunters bring 0.74 boar to bay against 9 haulable and
+## 11.67 affordable, and the fight halves that to 0.37 — under the 0.42 a turn this herd breeds back,
+## which is the arm that would otherwise answer the binding-limit sentence claim (4) is about.
+##
+## **IT MOVED FROM SIX WHEN THE REACH STOPPED ROUNDING.** It used to sit inside the engagement
+## staircase's longest flat run (`max(floor(w x 0.33), 1)`, one animal for crews one through six);
+## with the reach a plain `workers x engage_rate` there is no run to sit in, and six hunters now
+## out-take the regrowth — which put the herd's own breeding on the sentence instead of the crew.
+const CREW_TAKE_CLAIM_CREW := 3
 
 ## The band's own spread, as `HuntCrewTakeRow.animals_low` / `_high` relative to the likely take. Both
 ## published stochastic stages are binomials, so a real band is asymmetric and narrow; what this needs

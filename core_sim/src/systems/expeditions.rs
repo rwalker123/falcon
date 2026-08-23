@@ -1667,8 +1667,8 @@ pub(crate) const NOTHING_ENGAGED: f32 = 0.0;
 ///
 /// | token | meaning |
 /// |---|---|
-/// | `engaged` | animals brought into contact (§2) |
-/// | `fled` | of those, how many broke off before contact (§3) — real since the roster's wariness was authored |
+/// | `engaged` | animals brought into contact (§2) — a **rate**, printed fractional |
+/// | `fled` | of those, how many broke off before contact (§3) — real since the roster's wariness was authored, and fractional for the same reason |
 /// | `killed` | whole animals put down |
 /// | `carried_biomass` / `wasted_biomass` | what came home, and what was left on the range |
 /// | `hunters_killed` / `hunters_wounded` | what it cost the party, fractional as the resolver reports it |
@@ -1683,6 +1683,13 @@ pub(crate) const NOTHING_ENGAGED: f32 = 0.0;
 /// *conversion* of it that differs by path (a raid applies no output multiplier, a band applies its
 /// own), and the food a band actually banked is already reported on its assignment row; the biomass
 /// is the unambiguous physical fact this event owes.
+///
+/// **⛔ `engaged` AND `fled` ARE FRACTIONAL, AND ARE PRINTED TO THREE PLACES LIKE EVERY OTHER RATE
+/// ON THE LINE.** `fauna::animals_engaged` is `workers × engage_rate` — no floor, no `.max(1)` — so
+/// one hunter on a wary quarry reaches a third of an animal. Rounding the token to whole animals
+/// (`{:.0}`) printed `engaged=0 fled=0 killed=0` on every waiting turn, an entry that passed its own
+/// `engaged > NOTHING_ENGAGED` gate while asserting the party reached nothing — exactly the *"we
+/// never got near them"* reading the fractional reach exists to replace.
 ///
 /// **`hunters_wounded` is why [`CommandEventKind::HuntDanger`] did not have to widen.** That line is
 /// gated on a **death** because the hunt's baseline injury risk (§4.6) makes *every* engagement
@@ -1704,7 +1711,7 @@ pub fn hunt_report_event(
         faction,
         format!("The {species_name} hunt"),
         Some(format!(
-            "engaged={:.0} fled={:.0} killed={} carried_biomass={:.3} wasted_biomass={:.3} \
+            "engaged={:.3} fled={:.3} killed={} carried_biomass={:.3} wasted_biomass={:.3} \
 hunters_killed={:.3} hunters_wounded={:.3} bound={} species={}",
             outcome.engaged,
             outcome.fled,
@@ -2771,6 +2778,54 @@ pub fn expedition_delivery(
                 trip_bound: Some(fc.bound),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod hunt_report_tests {
+    //! What [`hunt_report_event`] prints — the feed line a player reads a hunt off.
+
+    use super::{hunt_report_event, HuntOutcome, NOTHING_ENGAGED};
+    use crate::fauna::{AnimalTake, FightCasualties, HuntFight, HuntTakeBound};
+    use crate::FactionId;
+
+    /// A lone hunter's reach on a wary quarry: under one animal, and every other number of the wait
+    /// turn at zero. The numbers are the shape `fauna::animals_engaged` produces, not a re-derivation
+    /// of it — this test is about the **printing**.
+    const A_THIRD_OF_AN_ANIMAL: f32 = 0.33;
+    const A_QUARTER_OF_THAT_FLED: f32 = 0.0825;
+
+    /// **A FRACTIONAL REACH MUST PRINT AS ONE.** `animals_engaged` is a rate (`workers ×
+    /// engage_rate`) with no floor and no `.max(1)`, so a lone hunter reaches a third of an animal —
+    /// and rounding the token to whole animals published `engaged=0 fled=0 killed=0`, an entry whose
+    /// own gate had just certified that something *was* engaged.
+    #[test]
+    fn a_fractional_reach_prints_as_a_fraction_not_as_nothing() {
+        let outcome = HuntOutcome {
+            take: AnimalTake::default(),
+            fight: HuntFight {
+                brought_down: 0.0,
+                expected_brought_down: 0.0,
+                casualties: FightCasualties::default(),
+                fought: false,
+                wounds: Default::default(),
+                strike_charges: Vec::new(),
+            },
+            engaged: A_THIRD_OF_AN_ANIMAL,
+            fled: A_QUARTER_OF_THAT_FLED,
+            bound: HuntTakeBound::Engagement,
+        };
+        let entry = hunt_report_event(1, FactionId(1), "Wild Boar", &outcome)
+            .expect("a reach above nothing is a hunt that happened");
+        let detail = entry.detail.expect("the facts ride the detail");
+        assert!(
+            detail.contains("engaged=0.330") && detail.contains("fled=0.083"),
+            "a third of an animal is what the party reached, and the line must say so: {detail}"
+        );
+        assert!(
+            outcome.engaged > NOTHING_ENGAGED,
+            "the fixture must clear the event's own gate, or it proves nothing"
+        );
     }
 }
 

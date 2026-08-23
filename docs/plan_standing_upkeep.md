@@ -565,7 +565,12 @@ that names a staffed row, then re-runs for the next hand.
 1. A **scout**.
 2. A **warrior**, if nothing threatens the band.
 3. A **keeper above the keeping demand** — Agriculture first, then Husbandry.
-4. A **builder, while more than one remains** and something is queued.
+4. A **builder the pool is not spending** — with something queued, every builder **above the
+   last one**; with **nothing queued, every builder there is**, the last included, because an
+   idle pool builds nothing. The queue decides *how many* builders are spare, never *whether*
+   any are: gating the step on a non-empty queue put idle builders below steps 6, 9 and 10, so
+   a band with three builders and an empty queue answered a lost hand by dropping its only
+   food row.
 
 **Output falls, nothing ends**
 
@@ -581,7 +586,8 @@ that names a staffed row, then re-runs for the next hand.
 9. **Empty the least-productive improved source with no queued build.**
 10. **Empty a source carrying a queued build** — the row drops and the declaration goes with it
     (§3.2: an entry requires a row).
-11. **The last builder** — every queued build stalls.
+11. **The last builder** — every queued build stalls. Reached only while a build *is* queued;
+    with an empty queue step 4 has already taken the pool.
 
 **Terminal:** a single worker on a single row. Take it; the row ends.
 

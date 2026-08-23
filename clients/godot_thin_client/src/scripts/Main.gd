@@ -1395,6 +1395,12 @@ static func format_build_kit(payload: Dictionary) -> Dictionary:
 ## back, and *"with "* followed by nothing states nothing at all.
 const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 
+## **WHAT THE PLAYER CALLS THE FIRST SLOT OF A QUEUE.** The wire's `position` is a 0-based INDEX and
+## stays one; the sim's own reply spells the landed slot `#{landed + 1}`, so the echo beside it adds
+## the same one. Named because the two bases are a real distinction here — the token and the sentence
+## in one function must not drift onto one number.
+const BUILD_QUEUE_POSITION_LABEL_BASE := 1
+
 ## **`build_order <faction> <band> <x> <y> <position>` | `build_order <faction> <band> <herd_id>
 ## <position>` — THE REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), emitted by the BUILD QUEUE
 ## block's drag.
@@ -1404,7 +1410,12 @@ const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 ##
 ## **IT NAMES A BAND where `build_kit` and `unqueue` do not**, and the asymmetry is the sim's: a queue
 ## belongs to a band, while a kit and a withdrawal are properties of the entry every band holding that
-## source has. `position` is 0-based and the sim clamps it to the queue's length.
+## source has. `position` is 0-based on the WIRE and the sim clamps it to the queue's length.
+##
+## ⛔ **THE ECHO SPELLS THAT POSITION THE SIM'S WAY — 1-based, `#n`.** `handle_build_order` answers the
+## same action with *"… is now #2 in the build queue"* (`core_sim/src/bin/server.rs`), deliberately
+## 1-based, and the two land in the dock on the SAME turn: a 0-based echo put two different numbers on
+## one drag, one row apart. The wire token stays 0-based — it is the sim's index, not a label.
 static func format_build_order(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -1415,7 +1426,8 @@ static func format_build_order(payload: Dictionary) -> Dictionary:
     if herd_id != "":
         return {
             "line": "build_order %d %d %s %d" % [faction, band_id, herd_id, position],
-            "message": "Move the build on %s to position %d in the queue." % [herd_id, position],
+            "message": "Move the build on %s to #%d in the build queue."
+                % [herd_id, position + BUILD_QUEUE_POSITION_LABEL_BASE],
         }
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
@@ -1423,7 +1435,8 @@ static func format_build_order(payload: Dictionary) -> Dictionary:
         return {}
     return {
         "line": "build_order %d %d %d %d %d" % [faction, band_id, x, y, position],
-        "message": "Move the build on (%d, %d) to position %d in the queue." % [x, y, position],
+        "message": "Move the build on (%d, %d) to #%d in the build queue."
+            % [x, y, position + BUILD_QUEUE_POSITION_LABEL_BASE],
     }
 
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench

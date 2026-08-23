@@ -2339,10 +2339,13 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     return strip
 
 ## One control line inside the settings strip: a fixed-height row led by its declared-width key. The
-## height is `BUILD_QUEUE_SETTINGS_HEIGHT`'s control half — the strip's own padding is counted once by
-## `build_queue_settings_height` and must not be charged again per line.
+## height is `BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT`, the strip's control half — DECLARED here rather
+## than left to whatever the picker inside happens to draw, so the line the reservation prices is the
+## line that renders. The strip's own padding is counted once by `build_queue_settings_height`
+## (`BUILD_QUEUE_SETTINGS_CHROME`) and must not be charged again per line.
 func _build_queue_settings_line(column: VBoxContainer, key_text: String) -> HBoxContainer:
     var line := HBoxContainer.new()
+    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT)
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     column.add_child(line)
     line.add_child(_build_queue_settings_key(key_text))

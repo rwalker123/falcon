@@ -687,11 +687,6 @@ const NO_ROOM_IN_BIOMASS := -1.0
 # The value the dropped term contributes to a `min()` / the crew `max()` — an unbounded reach cannot
 # be the binding arm, and `INF` says so without a branch at every call site.
 const ENGAGEMENT_UNBOUNDED := INF
-# **A PARTY THAT EXISTS REACHES AT LEAST ONE ANIMAL** — the sim's `fauna::animals_engaged` `max(1.0)`.
-# A fractional engagement means a small band cannot corner the quarry EFFICIENTLY, not that it cannot
-# walk up to it: three hunters do reach a mammoth and then fail at the FIGHT, which is where the gate
-# lives. Flooring to zero would put a headcount threshold in front of the attack-vs-defense one.
-const ENGAGED_AT_LEAST := 1.0
 # **THE RETREAT, AS A TERM — `1 − wariness`** (`HerdTelemetryState.stayFraction`): what fraction of the
 # animals a party REACHES actually stays to be fought. It is the stage between the engagement and the
 # fight, and it prices BOTH the take and the CREW: a party that keeps one animal in four brings down a
@@ -2381,8 +2376,8 @@ static func peak_animal_drop(ceiling: float, body: float) -> int:
 
 ## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers`: how many
 ## hunters it takes to bring the peak animal drop DOWN in one turn. It is the inverse of the pair
-## `animals_engaged` → `animals_stayed` — those floor `workers × engage_rate × dip` and then cut it by
-## the retreat, so the crew that lands `n` animals is `ceil(n / (engage_rate × dip × stay))`.
+## `animals_engaged` → `animals_stayed` — those take `workers × engage_rate` unrounded and then cut it
+## by the retreat, so the crew that lands `n` animals is `ceil(n / (engage_rate × stay))`.
 ##
 ## **THE RETREAT PRICES THE CREW AS WELL AS THE TAKE**, because a party that keeps one animal in four
 ## needs four times the hands to draw the same stock down. Sizing on the RAW reach put this crew — and
@@ -2478,9 +2473,22 @@ static func take_workers(ceiling: float, body: float, per_worker: float,
 
 ## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
 ## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
-## about how many it could reach. `floor(workers × engage_rate × dip)`, never below one for a party
-## that exists (`ENGAGED_AT_LEAST`); a party of no workers engages nothing, which is a different
-## statement and is why the worker test comes first.
+## about how many it could reach. `workers × engage_rate`, **UNROUNDED**: a reach is a RATE, and the
+## floor and floor-of-one this used to carry are both retired with the sim's.
+##
+## **THE ROUNDING IS WHAT MADE EXTRA HUNTERS WORTHLESS.** `floor(w × rate).max(1)` answered one animal
+## for every crew from 1 to 6 on the shipped Wild Boar (`engage_rate 0.33`), so four hunters reached
+## exactly what one reached — and below `1 / engage_rate` it quoted a reach the turn never delivered,
+## three times over for a lone boar hunter. The reach is strictly increasing in the crew now, which is
+## the property the whole engagement stage exists to have.
+##
+## **NOTHING NEEDS A FLOOR OF ONE, BECAUSE NOTHING REACHES ZERO.** The retired minimum defended a
+## headcount threshold standing in front of the attack-vs-defense gate — with the floor gone,
+## `floor(1 × 0.05)` would have been `0` and a lone mammoth hunter would fail for the wrong reason. A
+## plain multiply cannot produce that (a lone mammoth hunter reaches `0.05`), and the sub-one-animal
+## fraction is not a failure to arrive: the sim's retreat and wound ledger carry it between turns.
+## **A party of no workers engages nothing**, which is a different statement and is why the worker test
+## comes first.
 ##
 ## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage, so the caller's `min()` drops the arm.
 static func animals_engaged(workers: int, engage_rate: float) -> float:
@@ -2488,14 +2496,14 @@ static func animals_engaged(workers: int, engage_rate: float) -> float:
         return 0.0
     if engage_rate <= NO_ENGAGEMENT_STAGE:
         return ENGAGEMENT_UNBOUNDED
-    return maxf(floorf(float(workers) * engage_rate), ENGAGED_AT_LEAST)
+    return float(workers) * engage_rate
 
 ## **HOW MANY OF THE ENGAGED ANIMALS STAY TO BE FOUGHT** — the retreat, the stage between engagement
 ## and the fight, mirroring `fauna::animals_that_stay` at the quantile a FORECAST reads it at. The sim
 ## draws a binomial per animal; a forecast cannot draw, so it takes the analytic mean
-## `floor(engaged) × stay`, which is `snapshot.fbs`'s own `stayers = workers × engageRate ×
-## buildFraction × stayFraction` with the engagement already floored. `animals_engaged` floors, so
-## nothing here does.
+## `engaged × stay`, which is `snapshot.fbs`'s own `stayers = workers × engageRate × stayFraction`.
+## **Neither stage rounds** — `animals_engaged` reaches a rate and this cuts a rate by a fraction, and
+## the whole-animal quantisation is the take's, one `min()` further on.
 ##
 ## **IT BOUNDS THE TAKE AND, THROUGH `engage_workers`, THE CREW.** A hand that keeps one animal in four
 ## draws a stock down a quarter as fast, so the crew that draws it down at all is four times as large —
@@ -2657,11 +2665,12 @@ static func crew_take_reaching(per_crew: Array, animals: float) -> int:
 ## **WHERE THE CURVE STOPS RISING** — the smallest crew no larger crew out-takes, which is what
 ## *"max N workers useful here"* has always meant and what the closed form could only guess at.
 ##
-## **IT IS THE LAST RISE, NOT THE FIRST FLAT.** The engagement is a staircase — `floor(w × engageRate)`
-## is flat across whole runs and steps at integer boundaries — so a scan that stopped at the first crew
-## whose take equalled its predecessor's would report the bottom of a tread as the top of the stairs.
-## Reported on the shipped Wild Boar, where crews one through six all bring the same single animal to
-## bay and the seventh brings two.
+## **IT IS THE LAST RISE, NOT THE FIRST FLAT.** The reach itself rises with every hand now, but the
+## bounds around it do not: the room clamp and the whole-animal quantiser both hold a run of crews at
+## one figure before the next steps, so a scan that stopped at the first crew whose take equalled its
+## predecessor's would report the bottom of a tread as the top of the stairs. It was reported on the
+## shipped Wild Boar back when the reach was floored and crews one through six all brought the same
+## single animal to bay — the tread is shorter now, and the reading it breaks is the same one.
 ##
 ## `NO_CREW_ANSWER` where there is no curve; a curve that rises to its own last row plateaus AT that
 ## row, which is the honest answer to a question asked about a bounded pool — every hand the band has
@@ -5244,8 +5253,8 @@ static func expected_next_turn_yield(forecast: Dictionary, workers: int,
     return expected_yield_account(forecast, workers, band, "per_worker", "next_ceiling",
         FORECAST_FOOD_PER_ANIMAL_KEY)
 
-## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `floor(workers × engageRate × dip)`
-## whole animals, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
+## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `workers × engageRate` animals,
+## unrounded as the sim's reach is, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
 ## <account>PerBiomass` (the wire publishes the product as `food_per_animal`), so
 ## this is the schema's `reach(workers, rung)` with no second derivation of the body.
 ##
@@ -5263,10 +5272,10 @@ static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key:
 ## rather than an account's `*_per_animal`. `engagement_reach` is this function reading a forecast, so
 ## the sheet's take and the chart's projection bound themselves on ONE definition.
 ##
-## **IT BOUNDS THE WHOLE-ANIMAL COUNT AND THEN CONVERTS**, never the other way about: `animals_engaged`
-## floors `workers × engageRate × dip` to whole animals exactly as the sim does, and the quantum is
-## applied to that count. Multiplying first and flooring after can land a whole engagement one animal
-## short on a rounding.
+## **IT BOUNDS THE ANIMAL COUNT AND THEN CONVERTS**, never the other way about: `animals_engaged`
+## answers in ANIMALS, the retreat cuts that count, and only then does the quantum value it. Converting
+## first would price a reach in one account's units and then cut it in another's — and the whole-animal
+## quantisation, which is the take's and not the reach's, would have nothing left to round.
 ## **THE RETREAT IS APPLIED HERE AND NOT ONE STAGE EARLIER**, in the sim's own order — engage, retreat,
 ## then convert — so `stay` cuts the whole-animal count the quantum then values. It defaults to the
 ## wire's "nothing breaks off", which is what leaves a pen, the plant web and every source that
@@ -5955,8 +5964,8 @@ static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary
 ## > engagement stage and no whole-animal quantum, so both accounts are linear in workers and track by
 ## > construction. On a HERD the food row is `min(room, crew carry, engagement→retreat) × the per-body
 ## > carry clamp`, quantised to whole bodies — four bounds, of which this expression has one — so a
-## > pastoral Wild Boar herd (`engage_rate` 0.33, hence `floor(workers × 0.33)` pinned by its
-## > floor-of-one at exactly ONE animal reached for every crew from one to six) quoted five herders
+## > pastoral Wild Boar herd (`engage_rate` 0.33, whose reach was floored back then and so pinned at
+## > exactly ONE animal reached for every crew from one to six) quoted five herders
 ## > five times the bone and hide one herder brings home, beside a food row that correctly did not
 ## > move. The sim credits BOTH accounts off one `take.carried` (`systems/labor.rs`), so quote and
 ## > payout provably disagreed.

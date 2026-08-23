@@ -313,10 +313,11 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > ceiling is `B − floor·K ≤ B` for any floor `≥ 0` — and kept because a future ceiling that *could*
 > exceed the stock must not silently over-report. `stock_cap` stays populated for wire stability.
 >
-> A **rung-3 managed** source has `stock_cap: None` — it is never drawn down. *"This rung is not
-> offerable here"* used to be said by publishing a dip of `0`; with the fractions retired it is said
-> by the rung's own state (`isField` / `corralled`) and by `buildTurnsRemaining`'s
-> `NO_BUILD_TURNS_ESTIMATE`, which is what the top of a ladder answers.
+> A **corralled herd** has `stock_cap: None` — it is never drawn down by the compose sheet's own
+> reading. **A sown FIELD is not one**: the plant web's managed harvest is retired and a Field is
+> drawn down like any other stand. *"This rung is not offerable here"* used to be said by publishing a
+> dip of `0`; with the fractions retired it is said by the rung's own state (`isField` / `corralled`)
+> and by `buildTurnsRemaining`'s `NO_BUILD_TURNS_ESTIMATE`, which is what the top of a ladder answers.
 
 `ForagePatchState.tendedYield` and, on a herd, `corralYield` are what the source will pay **once the
 improvement completes**, so the client can show **"now X → then Y"** *before* the player commits the
@@ -403,9 +404,11 @@ rather than being two shapes. Pinned by
   `sowCrewNeeded` wire slots are gone (the slots `(deprecated)`). **`herdersNeeded` /
   `herdersNeededIfManaged` keep their own fields** — a herd's keeper count is a fact about the herd,
   not about a build — and no longer fold into `workers_needed`.
-- A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the floor axis
-  collapses**: `ceiling_at` returns its `managed_production` at every floor
-  (`SourceYieldForecast::managed`). **The worker cap does
+- A **corralled herd** is *yours*, so **the floor axis collapses**: `ceiling_at` returns its
+  `managed_production` at every floor (`SourceYieldForecast::managed`). **A sown FIELD is no longer one
+  of these** — the plant web's rung-3 managed harvest is retired, so a Field is floor-live and drawn
+  down through ordinary `forage_take`; see ":343" below, which states the same for the pen's own
+  collection. **The worker cap does
   not collapse** — `perWorkerYield` is the crew's real throughput, so `max_useful_workers =
   ceil(production / perWorkerYield)` is an honest count that grows with the source (slice 7; it used to
   be a hardcoded `1`, which claimed one worker could carry home whatever the land offered). A **tended
