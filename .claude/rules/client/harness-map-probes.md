@@ -305,7 +305,8 @@ A `PopupPanel` is a Window and renders to its own surface — the shipped popove
 from this frame and unjudgeable. That is the reason for the `TurnOrb` catcher shape, recorded here
 because this harness is the thing that would have silently lost.
 
-Six assertions ride beside it, and the load-bearing ones are the pair no frame can hold — **that a
+A block of assertions rides beside it — **count them from a run, not from this line** — and the
+load-bearing ones are the pair no frame can hold: **that a
 chosen channel SURVIVES the next snapshot**, and **that a channel the picker did NOT set stands**:
 
 - `_ingest_overlay_channels` clears `active_overlay_key` on every frame it ingests, so without the

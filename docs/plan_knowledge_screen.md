@@ -146,8 +146,16 @@ channel**. Moving it as-is relocates the problem. Split it:
 | New module | Kind | Holds |
 |---|---|---|
 | `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_to_climb` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
-| `OverlayLegend` | all-`static`, stateless | Renders a legend from a descriptor + `MapView.overlay_stats_for_key`. **Generic**: a `ramp` channel gets min/avg/max; a `facts` channel gets the count lines its provider returns. No channel is named here. |
+| `OverlayLegend` | all-`static`, stateless | Renders a legend from a descriptor + `MapView.current_overlay_legend()`. **Generic**: a `ramp` channel gets that channel's own legend rows; a `facts` channel gets the count lines its provider returns. No channel is named here. |
 | `OverlayPicker` | the widget | The list + the legend mount + the selection, pushed to `MapView.set_overlay_channel`. Knows no channel by name. |
+
+> **AS BUILT (Slice A): the legend source is `current_overlay_legend()`, NOT `overlay_stats_for_key`.**
+> The row above said `overlay_stats_for_key` and has been corrected, because a plan that names the
+> rejected source is a plan the next slice implements. `overlay_stats_for_key` reports min/avg/max over
+> EVERY tile, and the map-wide minimum for `pasture` and `forage` is the sea — the exact reading those
+> two channels' own legend builders exist to avoid (`.claude/rules/client/overlay-channels.md` → "Zero
+> pasture is NOT low pasture"). `MapView` already publishes a per-channel legend that gets this right,
+> so the renderer takes those rows and there is ONE producer for the map's legend and the picker's.
 
 **The two hardcoded blocks that must not survive the move:**
 

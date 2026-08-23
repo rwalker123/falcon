@@ -11,7 +11,6 @@ extends RefCounted
 const EXPECTED_CHECKPOINTS := 21
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
-const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.

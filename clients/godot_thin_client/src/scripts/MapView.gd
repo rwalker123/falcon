@@ -37,6 +37,15 @@ signal targeting_cancel_requested()
 ## resetting zoom + pan, so a fit re-syncs the readout even when already at 1.0×.
 signal zoom_changed(zoom_factor: float)
 
+## The two channels this renderer paints WITHOUT consulting `OVERLAY_COLORS` and that own no single
+## hue of their own: the empty key (terrain art, or the fog tones over it) and the terrain-tag blend
+## (one colour per tag, mixed per tile). Named here because `paints_with_overlay_color` is derived
+## from them, and because `_tile_color` branches on both. `OverlayChannels` declares the same two
+## keys for the picker's roster; the registry reads this renderer duck-typed and never the other way
+## round, so each side spells its own.
+const NO_OVERLAY_KEY := ""
+const TERRAIN_TAGS_OVERLAY_KEY := "terrain_tags"
+
 ## Tint for an overlay channel with no row in OVERLAY_COLORS — a channel the native decoder
 ## publishes that this table has never heard of still ramps in SOMETHING rather than reading as
 ## unpainted. (It was `LOGISTICS_COLOR` until the logistics channel was removed with the rest of the
@@ -86,6 +95,18 @@ const FORAGE_OVERLAY_KEY := "forage"
 static var FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
 static var FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
 static var FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
+
+## Every channel `_tile_color` paints through a path of ITS OWN rather than the generic
+## `GRID_COLOR.lerp(OVERLAY_COLORS[key], value)`. Two of them still have an `OVERLAY_COLORS` row that
+## describes what they paint (the pasture and forage ramps climb to it); the other two have none and
+## can have none, having no single hue. `paints_with_overlay_color` is this list, and it is what a
+## caller wearing a channel's colour as a READOUT asks before trusting `overlay_color_for`.
+const SPECIAL_PAINT_OVERLAY_KEYS: Array[String] = [
+	NO_OVERLAY_KEY,
+	TERRAIN_TAGS_OVERLAY_KEY,
+	PASTURE_OVERLAY_KEY,
+	FORAGE_OVERLAY_KEY,
+]
 # --- DANGER overlays (Predators Phase 0) -------------------------------------------------------
 # TWO derived-danger channels, both per-ENTITY properties the native decoder projects onto tiles
 # (max over the herds standing on each hex). Neither is a per-tile field or a two-tone ramp: both
@@ -538,6 +559,11 @@ static func apply_palette(p: Dictionary) -> void:
 		# The pasture channel paints through `_pasture_color` (a two-tone ramp plus two off-ramp barren
 		# tones), not a single-hue tint; this is the swatch any generic fallback path shows for it.
 		PASTURE_OVERLAY_KEY: PASTURE_RICH_COLOR,
+		# And the forage channel paints through `_forage_color` (a wheat→green ramp plus one barren
+		# tone) for the same reason; this is the swatch any generic fallback path shows for it. Without
+		# a row it fell to `OVERLAY_FALLBACK_COLOR`, so the minimap's legend button wore a blue that
+		# appears nowhere on the forage map.
+		FORAGE_OVERLAY_KEY: FORAGE_RICH_COLOR,
 		# Both danger channels ride the generic lerp path — empty tiles stay grid-colored, a qualifying
 		# herd glows (hunt-danger orange, threat red, so the two read apart).
 		HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
@@ -3210,7 +3236,7 @@ func _desaturate_color(c: Color, factor: float) -> Color:
 	)
 
 func _tile_color(x: int, y: int) -> Color:
-	if active_overlay_key == "":
+	if active_overlay_key == NO_OVERLAY_KEY:
 		var terrain_id := _terrain_id_at(x, y)
 		var base_color: Color = GRID_COLOR
 		if terrain_id >= 0:
@@ -3227,7 +3253,7 @@ func _tile_color(x: int, y: int) -> Color:
 			else:  # Unexplored - dark fog
 				return _fow_fog_fill_color
 		return base_color
-	if active_overlay_key == "terrain_tags":
+	if active_overlay_key == TERRAIN_TAGS_OVERLAY_KEY:
 		var mask := _tag_mask_at(x, y)
 		if mask == 0:
 			return GRID_COLOR
@@ -3479,10 +3505,24 @@ func has_terrain_tag_data() -> bool:
 	return not terrain_tags_overlay.is_empty() or not terrain_tag_labels.is_empty()
 
 ## The tint a channel paints the map in — what the minimap's legend button wears as its face when the
-## channel has no icon of its own. A channel with no row takes the same fallback `_color_for_tile`
-## gives it, so the button can never disagree with the map.
+## channel has no icon of its own. A channel with no row takes `OVERLAY_FALLBACK_COLOR`, which is a
+## RAMP TARGET for an unknown wire channel and NOT a description of anything: a caller wearing this
+## as a readout must ask `has_overlay_color` / `paints_with_overlay_color` first, or it will state a
+## colour the map paints nowhere.
 func overlay_color_for(key: String) -> Color:
 	return OVERLAY_COLORS.get(key, OVERLAY_FALLBACK_COLOR)
+
+## Does this channel have a row of its OWN in `OVERLAY_COLORS` — i.e. is `overlay_color_for` handing
+## back that channel's real tint rather than the fallback? The channels painted through a path of
+## their own still answer `true` when their ramp climbs to a named colour (pasture, forage).
+func has_overlay_color(key: String) -> bool:
+	return OVERLAY_COLORS.has(key)
+
+## Does `_tile_color` paint this channel with its `OVERLAY_COLORS` value — the generic
+## `GRID_COLOR.lerp(overlay_color, value)`? False for exactly `SPECIAL_PAINT_OVERLAY_KEYS`, each of
+## which paints through a ramp or a blend of its own.
+func paints_with_overlay_color(key: String) -> bool:
+	return not SPECIAL_PAINT_OVERLAY_KEYS.has(key)
 
 func overlay_stats_for_key(key: String) -> Dictionary:
 	if key == "terrain_tags":

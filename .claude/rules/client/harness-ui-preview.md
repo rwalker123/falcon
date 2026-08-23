@@ -714,7 +714,9 @@ whose percentage and absolute disagree would render the exact confusion the read
 **THE 32 FLORA ICONS MOVED 100 FRAMES, AND THAT IS THE ARC LANDING RATHER THAN A REGRESSION.** Every
 moved frame is one whose card carries a flora basket or the crop picker — plus the states rendered
 after them, the tile card being long-lived in the HUD, which is why `turn_orb_*`, `terrain_legend_*`,
-`narrative_fork_*` and `reserved_dock_*` are in the list. **Five assertions failed on the way**, all
+`narrative_fork_*` and `reserved_dock_*` are in the list. (The `terrain_legend_*` frames have since
+been retired with the right dock's `L` card — the list is left as it was MEASURED rather than edited
+to match a later tree, which is what makes it evidence.) **Five assertions failed on the way**, all
 five for the right reason, and the re-aiming is the part worth knowing:
 
 - **The liveness precondition fired exactly as designed.** `a real species key answers NO PATH —
@@ -1614,7 +1616,7 @@ line's own instruction being earned again.
 > `chapter.run(self)` and fails the run if the chapter falls short.
 >
 > - **Checkpoints, not assertions** — `_assert_hud` *and* `_save` both count, because `docks_legend`
->   makes **zero** assertions and renders ten frames; an assertion-only floor would be `0` there and
+>   makes **zero** assertions and renders frames only; an assertion-only floor would be `0` there and
 >   leave the one chapter an abort truncates entirely unguarded.
 > - **A floor, not an equality** — adding claims must never fail the run; losing them is the failure.
 > - **A chapter that declares nothing FAILS**, which is what makes it un-bypassable: were a missing

@@ -65,12 +65,33 @@ three rows for a scalar ramp and twenty for the biome key. `map_preview` asserts
 measured GAP on both popovers, a picture being unable to separate *attached* from *close*.
 
 **THE LEGEND BUTTON'S FACE IS THE AMBIENT READOUT** — which channel is painted, without costing a
-panel. `icon` is a registry field with a LIVE fallback (the `FaunaSprites` / `WonderSprites` shape):
-name one and the button wears it, name none and it wears that channel's own ramp colour through
-`MapView.overlay_color_for`. Every row is iconless today, so the fallback is the exercised path rather
-than a guard. It is drawn as a TINTED `■` glyph rather than a `ColorRect` child, which makes the two
-buttons the same width by construction (both are one-glyph text buttons under one stylebox padding,
-which an empty button is not) and makes the eventual icon a straight swap of the same property.
+panel. Three faces, in order: the descriptor's `icon` if it names one; else a **TINTED `■`** in that
+channel's own map colour; else a **NEUTRAL `□`** in `INK_DIM`. `icon` is a registry field with a LIVE
+fallback (the `FaunaSprites` / `WonderSprites` shape) and every row is iconless today, so the colour
+path is the exercised one rather than a guard. A glyph rather than a `ColorRect` child, which makes
+the two buttons the same width by construction (both are one-glyph text buttons under one stylebox
+padding, which an empty button is not) and makes the eventual icon a straight swap of the same
+property.
+
+**THE NEUTRAL FACE EXISTS BECAUSE NOT EVERY CHANNEL HAS A COLOUR, and the first cut claimed one
+anyway.** `MapView.overlay_color_for` is `OVERLAY_COLORS.get(key, OVERLAY_FALLBACK_COLOR)`, and FOUR
+keys paint through special paths rather than the generic `GRID_COLOR.lerp(overlay_color, value)` —
+`""` (terrain art), `terrain_tags` (a per-tag blend), `pasture` and `forage`. Only pasture had a row,
+so **`forage` stated blue while the map painted a wheat→green ramp**, and `""` / `terrain_tags` stated
+that same blue meaning nothing at all — under a docstring promising the button "can never disagree
+with the map". `forage` has its own row now (`FORAGE_RICH_COLOR`, pasture's twin); `""` and
+`terrain_tags` take the neutral face, because neither has a single hue and any row invented for them
+would be a lie. **A channel with no row that paints GENERICALLY is fine and keeps the colour** —
+`visibility` is painted with the fallback too, so its face agrees; `paints_with_overlay_color` is what
+tells the two cases apart.
+
+**THE GUARD WAS THE ACTUAL DEFECT.** The face assertion read
+`legend_face_color() == overlay_color_for(key)` — true by construction for any key, and only ever
+asked of `sentiment`, which had a row. It could not see this and never would have. It is now a claim
+over the WHOLE roster with **the painted map as its oracle**: every channel either wears the neutral
+face or wears a colour `_tile_color` actually paints that channel with. Sabotage-verified both ways —
+removing the `forage` row fails it naming forage, and forcing the tinted swatch everywhere fails it
+naming `""` and `terrain_tags` wearing the meaningless fallback.
 
 **THE RIGHT DOCK'S `L` TERRAIN TYPES CARD IS GONE** — `LegendController`, `TerrainLegendPanel`,
 `Hud.update_overlay_legend` / `toggle_legend` / `_on_legend_sort_pressed` with its Name/Count sort
@@ -185,11 +206,22 @@ somewhere a player would never look — that, not the file's size, is why it mov
 the picker's.** Leave it alone; a new channel is a registry row plus whatever raster or derivation it
 needs, **never a second `if key ==` there**.
 
-**`elevation` is the DEFAULT channel** (`overlays.default_channel`, the native decoder's
-`DEFAULT_OVERLAY_CHANNEL`), which the picker opens on when the player has
-chosen nothing. A default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`,
-which worldgen publishes for every world, so it is never a placeholder, and relative height is
-legible with no knowledge of the simulation's vocabulary.
+**`overlays.default_channel` HAS NO READER, AND HAS NOT HAD ONE FOR LONGER THAN IT LOOKS.** The
+native decoder publishes it (`DEFAULT_OVERLAY_CHANNEL`, `native/src/snapshot/mod.rs`) and nothing
+consumes it: `OverlayChannels.roster()` / `descriptor_for()` read only `channel_order` / `labels` /
+`descriptions` / `placeholder_flags`, and the picker's fallback is `_roster[0]`, which is always the
+empty key (`PLACEMENT_FIRST`). **The Inspector panel did not honour it either** — its one use sat
+behind `if not _overlay_channel_labels.has(_selected_overlay_key)`, and it added the empty key to
+that table unconditionally with `""` as the initial selection, so the branch never fired. The client
+has opened on NO OVERLAY for as long as both halves have looked like this; the paragraph that used to
+stand here said otherwise, and was describing an intention rather than the code.
+
+**The intention is still a good one and is worth honouring deliberately, in its own change.** A
+default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`, which worldgen
+publishes for every world, so it is never a placeholder, and relative height is legible with no
+knowledge of the simulation's vocabulary. Wiring it means one thing — the picker's roster fallback
+consults `default_channel` before taking `_roster[0]` — and it is a change to what a player sees on
+their first frame, so it belongs to whoever decides that, not to a migration.
 
 **RETIRED: the `logistics` channel ("Logistics Throughput", blue), the top-level `contrast` alias,
 and the whole trade-link overlay.** The sim no longer publishes a `logisticsRaster` or a link

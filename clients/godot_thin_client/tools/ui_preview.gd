@@ -79,7 +79,7 @@ const CHAPTER_ENTRY_METHOD := "run"
 ## > number, which is an edit in the same file as the removal.
 ## >
 ## > **A CHECKPOINT IS AN ASSERTION *OR* A SAVED FRAME**, and counting both is what leaves no chapter
-## > unguarded. `docks_legend` makes ZERO assertions and renders ten frames — a pure-render chapter is
+## > unguarded. `docks_legend` makes ZERO assertions and renders frames only — a pure-render chapter is
 ## > a legitimate shape — so an assertion-only floor would be `0` there and would guard the one chapter
 ## > whose whole output a mid-walk abort silently truncates. Both are checkpoints the chapter reached.
 ## >

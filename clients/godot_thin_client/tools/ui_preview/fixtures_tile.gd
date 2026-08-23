@@ -125,19 +125,4 @@ static func occupied_tile_fixture() -> Dictionary:
 		"herds": [HerdFx.occupied_herd_only()],
 	}
 
-static func terrain_legend_fixture() -> Dictionary:
-	return {
-		"key": "terrain",
-		"title": "Terrain Types",
-		"description": "Biomes present on this map (5).",
-		"rows": [
-			{"color": Color("3a6f3a"), "label": "Prairie", "value_text": "412 tiles", "count": 412},
-			{"color": Color("2a4a7a"), "label": "Deep Ocean", "value_text": "980 tiles", "count": 980},
-			{"color": Color("c8b26a"), "label": "Desert", "value_text": "137 tiles", "count": 137},
-			{"color": Color("2f5f2f"), "label": "Mixed Woodland", "value_text": "268 tiles", "count": 268},
-			{"color": Color("8a8a8a"), "label": "Alpine", "value_text": "54 tiles", "count": 54},
-		],
-		"stats": {},
-	}
-
 # ---- the compose sheet's FIT invariants -------------------------------------

@@ -7,7 +7,7 @@ class_name OverlayPicker
 ## | button | opens | face |
 ## |---|---|---|
 ## | `◐` | the CHANNEL MENU — the roster, one row each | fixed |
-## | legend | the LEGEND for whatever channel is on | the channel's `icon`, else its ramp COLOUR |
+## | legend | the LEGEND for whatever channel is on | the channel's `icon`, else its ramp COLOUR — or the neutral glyph, for a channel that has no colour to state |
 ##
 ## **ONE RULE FOR THE WHOLE CLUSTER: a button opens its own popover, attached to itself.** The first
 ## cut had one button and put the legend inside its menu, then tried making that legend a standing
@@ -77,6 +77,17 @@ const BAR_WIDTH := 2.0 * BUTTON_SIZE + float(BUTTON_GAP)
 ## `icon` a straight swap of the same property rather than a second face mechanism. U+25A0, the same
 ## Geometric Shapes block as `◐` and as `WorkbenchPages`' covered `▣` / `◧`.
 const LEGEND_SWATCH_GLYPH := "■"
+
+## The face for a channel whose `OVERLAY_COLORS` tint would state something the map does not paint —
+## the bare map (terrain art, or fog over it) and `terrain_tags` (a per-tag blend). Neither owns a
+## single hue, so ANY filled swatch is a claim the map cannot support, and the table's fallback tint
+## is a ramp target for an unknown wire channel rather than a description of anything: `forage` wore
+## that blue while the map painted a wheat→green ramp. A HOLLOW square in `HudStyle.INK_DIM` says
+## "the legend is here" and names no colour at all. U+25A1, the Geometric Shapes twin of
+## `LEGEND_SWATCH_GLYPH` — rendered and checked in `map_overlay_legend_terrain.png` (the bare map's
+## own legend, which is where this face is worn), per the
+## `WorkbenchPages.PAGES` rule that an uncovered glyph draws as a two-pixel stub with no error.
+const LEGEND_NEUTRAL_GLYPH := "□"
 
 ## **THE POPOVERS GET THEIR OWN `CanvasLayer`, ABOVE EVERY DOCKED SURFACE.** The picker is mounted on
 ## the minimap, which in the shipped client is EMBEDDED in the HUD's bottom bar — so its popover
@@ -280,6 +291,14 @@ func legend_face_color() -> Color:
 		return Color()
 	return _legend_button.get_theme_color(&"font_color")
 
+## The glyph that colour is painting — the tinted swatch, the neutral square, or a channel's `icon`.
+## The colour alone cannot separate "states this channel's tint" from "went neutral", so a caller
+## asserting the face is honest needs both.
+func legend_face_glyph() -> String:
+	if _legend_button == null:
+		return ""
+	return _legend_button.text
+
 ## The channel the player has chosen — what the picker will re-assert after the next snapshot.
 func selected_key() -> String:
 	return _selected_key
@@ -407,7 +426,9 @@ func _refresh_surfaces() -> void:
 	_render_popover()
 
 ## The legend button's face: the channel's `icon` when the registry names one, else the colour the
-## channel paints the map in. See `OverlayChannels` for why it is a table with a live fallback.
+## channel paints the map in — or, when the channel HAS no colour to state, the neutral glyph. See
+## `OverlayChannels` for why the icon is a table with a live fallback, and `LEGEND_NEUTRAL_GLYPH` for
+## why a swatch that cannot be true is worse than no swatch.
 func _paint_legend_face() -> void:
 	if _legend_button == null:
 		return
@@ -415,14 +436,35 @@ func _paint_legend_face() -> void:
 	var label := String(descriptor.get("label", ""))
 	_legend_button.tooltip_text = LEGEND_TOOLTIP_FORMAT % label if label != "" else LEGEND_TITLE
 	var icon := String(descriptor.get("icon", ""))
-	_legend_button.text = icon if icon != "" else LEGEND_SWATCH_GLYPH
 	var face: Color = HudStyle.INK
-	if icon == "" and _map_view != null and _map_view.has_method("overlay_color_for"):
+	if icon != "":
+		_legend_button.text = icon
+	elif _selection_has_map_color():
+		_legend_button.text = LEGEND_SWATCH_GLYPH
 		face = _map_view.call("overlay_color_for", _selected_key)
+	else:
+		_legend_button.text = LEGEND_NEUTRAL_GLYPH
+		face = HudStyle.INK_DIM
 	# All four live states, not just `font_color`: a swatch is a READOUT, so it must not change hue
 	# under the pointer the way a label would. The stylebox still gives the button its hover.
 	for state in LEGEND_FACE_COLOR_STATES:
 		_legend_button.add_theme_color_override(state, face)
+
+## Does the chosen channel's map colour DESCRIBE the map? Two questions of the renderer, because
+## either answer is enough: a channel with a row of its own in `OVERLAY_COLORS` states that colour
+## even when it paints through a ramp (pasture and forage climb to it), and a channel painted with
+## the generic lerp states its tint by construction. A channel that is neither — the bare map, the
+## tag blend, or a wire channel the colour table has never heard of — has only the fallback tint to
+## offer, which describes nothing, so it wears the neutral face instead. A map that answers neither
+## method (or none at all) is the same case.
+func _selection_has_map_color() -> bool:
+	if _map_view == null or not _map_view.has_method("overlay_color_for"):
+		return false
+	if _map_view.has_method("has_overlay_color") \
+			and bool(_map_view.call("has_overlay_color", _selected_key)):
+		return true
+	return _map_view.has_method("paints_with_overlay_color") \
+		and bool(_map_view.call("paints_with_overlay_color", _selected_key))
 
 func _build_popover(kind: StringName) -> PanelContainer:
 	var panel := PanelContainer.new()

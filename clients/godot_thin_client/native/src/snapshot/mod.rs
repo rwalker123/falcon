@@ -44,8 +44,15 @@ use crate::snapshot::raster::{
     OverlaySlices, TerrainSlices, FOG_ENABLED_WHEN_ABSENT,
 };
 
-/// The overlay channel the Inspector's Overlays selector opens on when the player has not chosen
-/// one (`overlays.default_channel`, read by `OverlayPanel`).
+/// The overlay channel the client is MEANT to open on when the player has not chosen one
+/// (`overlays.default_channel`).
+///
+/// **NOTHING READS IT TODAY.** Its one consumer was `ui/inspector/OverlayPanel.gd`, retired with the
+/// overlay migration — and that panel did not honour it either (its use sat behind a branch the
+/// always-present empty key made unreachable). The minimap picker that replaced it falls back to the
+/// first roster row instead. Kept published rather than deleted because the intent is sound and
+/// wiring it is one line in `OverlayChannels`; see `.claude/rules/client/overlay-channels.md` →
+/// "`overlays.default_channel` HAS NO READER" for what honouring it would change for a player.
 ///
 /// **Elevation, because a default has to be REAL on every map.** It rides `MapSection.elevationOverlay`,
 /// which worldgen publishes for every world, so the channel is never a placeholder — and relative

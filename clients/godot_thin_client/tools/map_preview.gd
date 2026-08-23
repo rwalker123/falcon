@@ -455,13 +455,22 @@ const LADDER_WALK_CLICKS := 13
 # things no picture can carry: the ROSTER's composition and the fact that a chosen channel SURVIVES
 # the next snapshot.
 #
-# The fixture publishes one channel with real values, one flagged `placeholder`, and terrain-tag data,
-# so the frame carries a ramp legend, the stub marker and the client-side `terrain_tags` row at once.
+# The fixture publishes one channel with real values, one flagged `placeholder`, one painted through
+# a ramp of the RENDERER's own, and terrain-tag data — so the frame carries a ramp legend, the stub
+# marker and the client-side `terrain_tags` row at once, and every shape the legend button's face has
+# to describe is in the roster.
 const PICKER_CHANNEL_LIVE := "sentiment"
 const PICKER_CHANNEL_LIVE_LABEL := "Sentiment"
 const PICKER_CHANNEL_STUB := "military"
 const PICKER_CHANNEL_STUB_LABEL := "Force Readiness"
 const PICKER_LIVE_RAW_SCALE := 100.0
+# A THIRD channel, published by the wire exactly like the other two, whose only distinction is on the
+# RENDERER's side: `forage` paints through a ramp of its own (`MapView._forage_color`, wheat→green)
+# instead of the generic `OVERLAY_COLORS` lerp. It is in the fixture so the legend-button face claim
+# below has a channel of that shape to ask about — the shape whose face was wrong, and the one a
+# roster of generic channels can never expose.
+const PICKER_CHANNEL_OWN_RAMP := MapView.FORAGE_OVERLAY_KEY
+const PICKER_CHANNEL_OWN_RAMP_LABEL := "Forage"
 # Two tag bits with names, so the tag legend has something to count. The masks are per-tile; a tile's
 # bit is chosen off its column so the two tags split the map rather than landing on one hex.
 const PICKER_TAG_BIT_A := 1
@@ -470,7 +479,8 @@ const PICKER_TAG_LABEL_A := "Riverine"
 const PICKER_TAG_LABEL_B := "Upland"
 # The roster the fixture must produce: the empty key leads (`PLACEMENT_FIRST`), the wire's own order
 # follows, and the client-side tag channel is last (`PLACEMENT_LAST`).
-const PICKER_EXPECTED_ORDER := ["", PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB, "terrain_tags"]
+const PICKER_EXPECTED_ORDER := ["", PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB,
+	PICKER_CHANNEL_OWN_RAMP, "terrain_tags"]
 # A stand-in for a docked Band/City panel, whose shipped narrow shell is ~495px wide. Reserved on the
 # MapView exactly as `Main` reserves it for the real panel, so the popover has a docked edge to be
 # pushed clear of. It must be WIDER than the popover, or a clamped and an unclamped position land in
@@ -1509,6 +1519,21 @@ func _terrain_legend_rows_with_art() -> Vector2i:
 			with_art += 1
 	return Vector2i(with_art, rows.size())
 
+## Is `color` a colour the map is ACTUALLY painting on some tile right now? The independent oracle
+## behind the legend-button face claim: it asks `_tile_color`, the renderer's own answer per hex,
+## rather than the colour TABLE the face is read from — so a face and a table that agree with each
+## other and with nothing on screen still fails. A ramp reaches its top colour on its richest tile,
+## so the tint a face states is either painted somewhere or is not that channel's colour at all —
+## `is_equal_approx` rather than `==` only because `Color.lerp` computes `a + (b - a) * 1.0`, which
+## lands within an ULP of `b` rather than on it. That tolerance is orders of magnitude tighter than
+## the distance between any two colours in the palette, so it cannot admit a wrong one.
+func _map_paints_color(color: Color) -> bool:
+	for row in GRID_H:
+		for col in GRID_W:
+			if _map._tile_color(col, row).is_equal_approx(color):
+				return true
+	return false
+
 ## Open the minimap picker's LEGEND on whatever channel is painted, save the frame, and close it
 ## again — the reading that used to be a `print` here and a transcribed fixture in `ui_preview`.
 ##
@@ -1579,7 +1604,8 @@ func _overlay_picker_state() -> void:
 	# every frame it ingests, so without the re-apply a chosen channel is painted for exactly one turn
 	# and then silently reverts to bare terrain — which looks like the player never clicked. The
 	# Inspector panel this replaced did the re-apply from its own ingest; the picker does it off
-	# `overlay_legend_changed`, and this is the assertion that says so.
+	# `overlay_channels_ingested`, and this is the assertion that says so. NOT off
+	# `overlay_legend_changed` — re-asserting on THAT signal is the regression the next block guards.
 	_map.display_snapshot(_snapshot_overlay_channels())
 	await _settle()
 	_assert_map("overlay picker — the chosen channel survives the next snapshot (active_overlay_key = '%s')"
@@ -1667,15 +1693,54 @@ func _overlay_picker_state() -> void:
 	await _save("map_overlay_legend")
 
 	# **THE LEGEND BUTTON'S FACE IS THE STANDING READOUT OF WHICH CHANNEL IS ON**, and with no icon in
-	# the registry yet it is that channel's own map tint. Asked of `MapView.overlay_color_for` rather
-	# than of a literal, so the button cannot drift from what the map is actually painted in — which
-	# is the entire claim the face makes.
-	_assert_map("overlay picker — the legend button wears '%s'`s own map tint" % PICKER_CHANNEL_LIVE,
-		picker.legend_face_color() == _map.overlay_color_for(PICKER_CHANNEL_LIVE))
+	# the registry yet it is that channel's own map tint — or, for a channel that HAS no single tint,
+	# the neutral glyph.
+	#
+	# **THE CLAIM IS OVER THE WHOLE ROSTER, AND ITS ORACLE IS THE PAINTED MAP.** The obvious form of
+	# it — `legend_face_color() == overlay_color_for(key)` — is true BY CONSTRUCTION for every key,
+	# `overlay_color_for` being the same table lookup the face itself reads; asked only of a channel
+	# that has a row it can never fail. That is how `forage` came to wear `OVERLAY_FALLBACK_COLOR`, a
+	# blue that appears nowhere on a map painted in the wheat→green ramp `_forage_color` gives it. So
+	# a channel painted through a path of its OWN is held to a colour the map is REALLY PAINTING on
+	# some tile, sampled from `_tile_color`, which no colour table can satisfy by construction.
+	var face_lies := PackedStringArray()
+	var own_ramp_faces := PackedStringArray()
+	for descriptor in picker.roster():
+		picker.select_channel(String(descriptor.get("key", "")))
+		await _settle()
+		# `set_overlay_channel` may refuse a key, so judge whatever the picker ended up showing.
+		var shown := picker.selected_key()
+		var face: Color = picker.legend_face_color()
+		var neutral: bool = picker.legend_face_glyph() == OverlayPicker.LEGEND_NEUTRAL_GLYPH \
+			and face == HudStyle.INK_DIM
+		if _map.paints_with_overlay_color(shown):
+			# The generic lerp climbs to exactly this tint, so the table's answer IS the map's.
+			if face != _map.overlay_color_for(shown):
+				face_lies.append("'%s' wears %s, not its own %s" % [shown, face, _map.overlay_color_for(shown)])
+		elif neutral:
+			pass  # A channel with no colour to state says so, which is the whole point of the glyph.
+		elif _map_paints_color(face):
+			own_ramp_faces.append(shown)
+		else:
+			face_lies.append("'%s' wears %s, which the map paints on no tile%s"
+				% [shown, face, " (the meaningless fallback)" if face == MapView.OVERLAY_FALLBACK_COLOR else ""])
+	_assert_map("overlay picker — every channel's face states a colour the map really paints, else the neutral glyph%s"
+		% ("" if face_lies.is_empty() else " — " + ", ".join(face_lies)),
+		face_lies.is_empty())
+	# **THE POSITIVE COMPANION, and it NAMES ITS CHANNEL, because the claim above is satisfied by a
+	# picker that gave up and went neutral on everything.** A channel painted through a ramp of its
+	# own still has a colour to state — the ramp's own top — and losing its `OVERLAY_COLORS` row does
+	# not make the map paint it any differently, only the button lie about it (with the row gone the
+	# face falls to the fallback blue, and the neutral glyph would merely hide that). `forage` is in
+	# the roster precisely so one channel of that shape is asked by name.
+	_assert_map("overlay picker — …and '%s', painted through a ramp of its own, still wears a real one%s"
+		% [PICKER_CHANNEL_OWN_RAMP,
+			"" if own_ramp_faces.has(PICKER_CHANNEL_OWN_RAMP)
+			else " — it states no colour the map paints (faces that do: %s)" % ", ".join(own_ramp_faces)],
+		own_ramp_faces.has(PICKER_CHANNEL_OWN_RAMP))
+
 	picker.select_channel(OverlayChannels.NO_OVERLAY_KEY)
 	await _settle()
-	_assert_map("overlay picker — …and follows the channel when it changes",
-		picker.legend_face_color() == _map.overlay_color_for(OverlayChannels.NO_OVERLAY_KEY))
 
 	# **NO OVERLAY HAS A LEGEND TOO — the biome key**, which is what the retired `L` card carried and
 	# is NOT the same table as `terrain_tags` (biomes, not environmental tags). Without it the legend
@@ -3670,7 +3735,8 @@ func _snapshot_crisis_annotations() -> Dictionary:
 	}
 
 ## The overlay-picker backdrop: flat terrain under a west→east `sentiment` ramp, a SECOND channel
-## flagged `placeholder` (so the popover renders the stub marker), and per-tile terrain-tag masks with
+## flagged `placeholder` (so the popover renders the stub marker), a THIRD the renderer paints through
+## a ramp of its own, and per-tile terrain-tag masks with
 ## two named bits (so the client-side `terrain_tags` row is offered at all). One fixture carrying every
 ## shape the popover can draw.
 func _snapshot_overlay_channels() -> Dictionary:
@@ -3722,8 +3788,18 @@ func _snapshot_overlay_channels() -> Dictionary:
 					"raw": empty,
 					"placeholder": true,
 				},
+				# A channel the RENDERER paints through a ramp of its own. The same west→east values
+				# as the live channel, so its richest column reaches the ramp's top colour and the map
+				# really does paint the tint the legend button claims for it.
+				PICKER_CHANNEL_OWN_RAMP: {
+					"label": PICKER_CHANNEL_OWN_RAMP_LABEL,
+					"description": "Human-edible potential — seeds, nuts, tubers, fruit, and fish.",
+					"normalized": normalized,
+					"raw": raw,
+				},
 			},
-			"channel_order": PackedStringArray([PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB]),
+			"channel_order": PackedStringArray([PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB,
+				PICKER_CHANNEL_OWN_RAMP]),
 		},
 		"populations": [],
 		"herds": [],

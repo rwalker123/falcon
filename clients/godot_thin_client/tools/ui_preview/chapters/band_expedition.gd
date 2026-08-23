@@ -13,7 +13,6 @@ const EXPECTED_CHECKPOINTS := 70
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
-const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
