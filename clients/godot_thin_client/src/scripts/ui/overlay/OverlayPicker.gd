@@ -20,9 +20,10 @@ class_name OverlayPicker
 ## this widget does not have, since it floats over the map. What it would cost is the render
 ## harnesses: a Window renders to its own surface, so a popover opened in `map_preview` would be
 ## absent from the captured frame and the state could not be judged at all. So it follows `TurnOrb`'s
-## shape instead — a `top_level` full-screen catcher with the popover nested INSIDE it, so the
-## popover's own buttons consume their clicks and only a click in the catcher area OUTSIDE it
-## dismisses.
+## shape instead — a full-screen catcher with the popover nested INSIDE it, so the popover's own
+## buttons consume their clicks and only a click in the catcher area OUTSIDE it dismisses. It differs
+## from `TurnOrb`'s in one way, for the reason `POPOVER_CANVAS_LAYER` gives: the catcher lives on a
+## `CanvasLayer` of its own, so it needs no `top_level` to escape the picker's small rect.
 ##
 ## **THE PICKER OWNS THE CHANNEL ACROSS A SNAPSHOT AND NOWHERE ELSE, and getting that backwards
 ## silently erases every overlay in the client.** Two rules, one per signal:
@@ -46,6 +47,18 @@ const BUTTON_GLYPH := "◐"
 const BUTTON_FONT_SIZE := 13
 const BUTTON_TOOLTIP := "Map overlay"
 
+## **THE POPOVER GETS ITS OWN `CanvasLayer`, ABOVE EVERY DOCKED SURFACE.** The picker is mounted on
+## the minimap, which in the shipped client is EMBEDDED in the HUD's bottom bar — so its popover
+## inherited the HUD's layer (`Main`: `hud.layer = 101`) and the Band/City dock
+## (`BandCityPanel.LAYER_INDEX` 103), the Workbench (`Main.WORKBENCH_LAYER` 103) and the event dock
+## (`EventDockPanel.LAYER_INDEX` 104) all drew straight over it. Reported from play as "the menu shows
+## up under the band panel", and invisible to `map_preview`, which stands up no HUD and therefore has
+## none of those layers — which is why the assertion guarding this compares against those files' own
+## constants rather than looking at a picture.
+##
+## It stays BELOW `Main.LOADING_OVERLAY_LAYER` (150): a world being built must cover everything.
+const POPOVER_CANVAS_LAYER := 105
+
 const POPOVER_GAP := 8.0
 const POPOVER_PADDING := 10
 const POPOVER_MARGIN_SIDES: Array[String] = ["left", "top", "right", "bottom"]
@@ -59,6 +72,7 @@ const ROW_FONT_SIZE := 12
 
 var _map_view: Node = null
 var _button: Button = null
+var _popover_layer: CanvasLayer = null
 var _catcher: Control = null
 var _popover: PanelContainer = null
 var _list: VBoxContainer = null
@@ -137,14 +151,20 @@ func open_popover() -> void:
 	if _map_view != null and _map_view.has_method("refresh_overlay_legend"):
 		# The legend is pushed on change; a popover opening long after the last one needs the pull.
 		_map_view.call("refresh_overlay_legend")
+	_popover_layer = CanvasLayer.new()
+	_popover_layer.name = "OverlayPickerLayer"
+	_popover_layer.layer = POPOVER_CANVAS_LAYER
+	add_child(_popover_layer)
+
+	# A direct child of a `CanvasLayer` already sits in that layer's own space, so this needs no
+	# `top_level` — which is the one thing that differs from `TurnOrb`'s otherwise identical catcher.
 	_catcher = Control.new()
 	_catcher.name = "OverlayPickerCatcher"
-	_catcher.top_level = true
 	_catcher.mouse_filter = Control.MOUSE_FILTER_STOP
-	_catcher.global_position = Vector2.ZERO
+	_catcher.position = Vector2.ZERO
 	_catcher.size = get_viewport_rect().size
 	_catcher.gui_input.connect(_on_catcher_input)
-	add_child(_catcher)
+	_popover_layer.add_child(_catcher)
 
 	_popover = _build_popover()
 	_popover.resized.connect(_position_popover)
@@ -153,13 +173,28 @@ func open_popover() -> void:
 	_position_popover()
 
 func close_popover() -> void:
-	# Freeing the catcher frees the nested popover with it.
-	if _catcher != null and is_instance_valid(_catcher):
-		_catcher.queue_free()
+	# Freeing the layer frees the catcher and the popover nested under it.
+	if _popover_layer != null and is_instance_valid(_popover_layer):
+		_popover_layer.queue_free()
+	_popover_layer = null
 	_catcher = null
 	_popover = null
 	_list = null
 	_legend_body = null
+
+## The `CanvasLayer` index the open popover is drawing on, for a caller asserting it clears the
+## docked surfaces. `-1` when the popover is closed.
+func popover_layer_index() -> int:
+	if _popover_layer == null or not is_instance_valid(_popover_layer):
+		return -1
+	return _popover_layer.layer
+
+## Where the open popover landed, for a caller asserting it cleared a docked edge. An empty `Rect2`
+## when the popover is closed.
+func popover_rect() -> Rect2:
+	if not is_popover_open():
+		return Rect2()
+	return _popover.get_global_rect()
 
 ## Choose a channel, exactly as clicking its row does. The one entry point: the row handler, the
 ## re-apply after a snapshot and any caller driving the picker all land here.
@@ -291,16 +326,34 @@ func _channel_row(descriptor: Dictionary) -> Button:
 	row.pressed.connect(select_channel.bind(key))
 	return row
 
-## Above the button, right-aligned to it, then clamped into the viewport — the minimap sits at the
+## Above the button, right-aligned to it, then clamped into the PLAY AREA — the minimap sits at the
 ## bottom of the screen in both of its mounts (docked in the nav cluster, or floating bottom-right),
-## so downward is off-screen and the un-clamped left edge can be too.
+## so downward is off-screen and the un-clamped left edge runs under whatever is docked to the left.
+##
+## **THE BOUND IS THE UNRESERVED RECT, NOT THE VIEWPORT.** A left-docked Band/City panel is ~495px
+## wide and the popover is ~310, so right-aligning it to a button in the nav cluster puts its left
+## edge inside the dock — and drawing it *above* the dock instead of under it would only trade an
+## unreadable popover for one covering the panel the player is reading. `MapView` already sums the
+## docked edges for its own cover-fit, so the play area is a question it can answer; the viewport is
+## the fallback for a mount with no MapView attached yet.
 func _position_popover() -> void:
 	if not is_popover_open() or _button == null:
 		return
 	var anchor := _button.get_global_rect()
 	var size_now := _popover.size
-	var bounds := get_viewport_rect().size
+	var play := _play_area()
 	var pos := Vector2(anchor.end.x - size_now.x, anchor.position.y - size_now.y - POPOVER_GAP)
-	pos.x = clampf(pos.x, POPOVER_SCREEN_INSET, maxf(POPOVER_SCREEN_INSET, bounds.x - size_now.x - POPOVER_SCREEN_INSET))
-	pos.y = clampf(pos.y, POPOVER_SCREEN_INSET, maxf(POPOVER_SCREEN_INSET, bounds.y - size_now.y - POPOVER_SCREEN_INSET))
+	var min_x: float = play.position.x + POPOVER_SCREEN_INSET
+	var min_y: float = play.position.y + POPOVER_SCREEN_INSET
+	pos.x = clampf(pos.x, min_x, maxf(min_x, play.end.x - size_now.x - POPOVER_SCREEN_INSET))
+	pos.y = clampf(pos.y, min_y, maxf(min_y, play.end.y - size_now.y - POPOVER_SCREEN_INSET))
 	_popover.global_position = pos
+
+## The rect the popover may occupy: the map's unreserved area when a MapView is attached and offers
+## one, else the whole viewport.
+func _play_area() -> Rect2:
+	if _map_view != null and _map_view.has_method("unreserved_screen_rect"):
+		var rect: Variant = _map_view.call("unreserved_screen_rect")
+		if rect is Rect2 and (rect as Rect2).has_area():
+			return rect
+	return Rect2(Vector2.ZERO, get_viewport_rect().size)

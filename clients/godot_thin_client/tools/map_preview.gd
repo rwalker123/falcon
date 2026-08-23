@@ -13,6 +13,10 @@ extends Node2D
 ## then read ui_preview_out/map_*.png.
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
+# For its CanvasLayer roster only (`HUD_LAYER` / `INSPECTOR_LAYER` / `WORKBENCH_LAYER` /
+# `LOADING_OVERLAY_LAYER`) — this harness stands up no `Main`, and the overlay picker's popover has
+# to be asserted against the layers it must clear rather than against a number written twice.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 const OUT_DIR := "res://ui_preview_out"
 const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
@@ -464,6 +468,13 @@ const PICKER_TAG_LABEL_B := "Upland"
 # The roster the fixture must produce: the empty key leads (`PLACEMENT_FIRST`), the wire's own order
 # follows, and the client-side tag channel is last (`PLACEMENT_LAST`).
 const PICKER_EXPECTED_ORDER := ["", PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB, "terrain_tags"]
+# A stand-in for a docked Band/City panel, whose shipped narrow shell is ~495px wide. Reserved on the
+# MapView exactly as `Main` reserves it for the real panel, so the popover has a docked edge to be
+# pushed clear of. It must be WIDER than the popover, or a clamped and an unclamped position land in
+# the same place and the assertion passes on either — which is why the probe is paired with a
+# precondition asserting the UNRESERVED popover really does reach into the strip.
+const PICKER_DOCK_PROBE_ID := &"overlay_picker_probe"
+const PICKER_DOCK_PROBE_WIDTH := 495.0
 
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
@@ -1499,7 +1510,56 @@ func _overlay_picker_state() -> void:
 	await _settle()
 	_assert_map("overlay picker — the popover is a Control in this viewport, not a Window",
 		picker.is_popover_open())
+
+	# **THE POPOVER MUST CLEAR EVERY DOCKED SURFACE'S LAYER**, and this harness stands up none of
+	# them: it has no HUD, so the shipped defect — the popover drawing UNDER the Band/City dock,
+	# because the embedded minimap put it on the HUD's own layer — renders here as a perfectly
+	# correct frame. So the claim is made against those panels' OWN constants rather than a picture
+	# or a number, which is also what makes it fail if one of them is ever raised.
+	var docked_layers := {
+		"Band/City panel": BandCityPanel.LAYER_INDEX,
+		"event dock": EventDockPanel.LAYER_INDEX,
+		"Workbench": MAIN_SCRIPT.WORKBENCH_LAYER,
+		"Inspector": MAIN_SCRIPT.INSPECTOR_LAYER,
+		"HUD": MAIN_SCRIPT.HUD_LAYER,
+	}
+	var covered := PackedStringArray()
+	for name in docked_layers:
+		if picker.popover_layer_index() <= int(docked_layers[name]):
+			covered.append("%s (%d)" % [name, int(docked_layers[name])])
+	_assert_map("overlay picker — the popover's layer (%d) clears every docked surface%s"
+		% [picker.popover_layer_index(),
+			"" if covered.is_empty() else " — UNDER " + ", ".join(covered)],
+		covered.is_empty())
+	_assert_map("overlay picker — …and stays under the loading overlay (%d)" % MAIN_SCRIPT.LOADING_OVERLAY_LAYER,
+		picker.popover_layer_index() < int(MAIN_SCRIPT.LOADING_OVERLAY_LAYER))
+
 	await _save("map_overlay_picker")
+
+	# **AND IT OPENS INTO THE PLAY AREA, NOT UNDER THE DOCK.** Right-aligning a ~290px popover to a
+	# button in the nav cluster puts its far edge inside a ~495px docked panel, so clearing the dock's
+	# LAYER alone would only trade an unreadable popover for one covering the panel being read.
+	# Reserving the edge on the MapView is exactly what `BandCityPanel` does through `Main`.
+	#
+	# **THE PROBE RESERVES THE *RIGHT* EDGE, AND THAT IS NOT THE SHIPPED CASE — it is the only one
+	# this harness can ask.** The reported defect was a LEFT-docked panel over an EMBEDDED minimap in
+	# the HUD's nav cluster; here there is no HUD, so the minimap takes its FLOATING mount at the
+	# bottom-right of the viewport, where a left dock is a thousand pixels away and a left-edge
+	# assertion would pass with the clamp deleted. Reserving the near edge instead drives the same
+	# `_play_area()` bound from the other side, which is the half a fixture can actually move.
+	_assert_map("overlay picker — the UNRESERVED popover reaches past where the dock will be (right edge %.0f)"
+		% picker.popover_rect().end.x,
+		picker.popover_rect().end.x > get_viewport_rect().size.x - PICKER_DOCK_PROBE_WIDTH)
+	_map.set_reserved_inset(PICKER_DOCK_PROBE_ID, SIDE_RIGHT, PICKER_DOCK_PROBE_WIDTH)
+	picker.close_popover()
+	picker.open_popover()
+	await _settle()
+	var dock_edge: float = get_viewport_rect().size.x - PICKER_DOCK_PROBE_WIDTH
+	_assert_map("overlay picker — a %.0fpx dock pushes the popover clear of it (right edge %.0f <= %.0f)"
+		% [PICKER_DOCK_PROBE_WIDTH, picker.popover_rect().end.x, dock_edge],
+		picker.popover_rect().end.x <= dock_edge)
+	picker.close_popover()
+	_map.set_reserved_inset(PICKER_DOCK_PROBE_ID, SIDE_RIGHT, 0.0)
 
 	# The `terrain_tags` row's `available` predicate is the registry's one gate, and a world with no
 	# tag data is the case it exists for — the tag channel has no wire raster to fall back on.

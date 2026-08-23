@@ -4733,6 +4733,20 @@ func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
 	queue_redraw()
 	_minimap.queue_indicator_redraw()
 
+## The rect a floating surface may open into: the viewport, less every edge a docked panel has
+## reserved. In CANVAS units, which is the space the reservations arrive in and the space a HUD
+## `Control` positions in — deliberately NOT `_reserved_inset_span_local()`, which converts the same
+## numbers into the map's own counter-scaled units for the cover-fit maths (`interface-scale.md`).
+## The raw `get_viewport_rect()` is correct here for the same reason, and is not the defect that file
+## warns about: this answer is consumed by a Control, never by map geometry.
+func unreserved_screen_rect() -> Rect2:
+	var full: Vector2 = get_viewport_rect().size
+	return Rect2(
+		Vector2(_inset_left, _inset_top),
+		Vector2(
+			maxf(0.0, full.x - _inset_left - _inset_right),
+			maxf(0.0, full.y - _inset_top - _inset_bottom)))
+
 ## Sum the registered reservations into the four per-edge totals.
 func _recompute_insets() -> void:
 	_inset_left = 0.0

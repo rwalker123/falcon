@@ -331,6 +331,26 @@ a merge that dropped everything on the floor.
 where a button-sized bounding box is the expected result and a whole-image one is a real regression.
 That is exactly how the stomp above was caught.
 
+**AND THE CHROME CLAIMS ARE STRUCTURAL, BECAUSE THIS HARNESS HAS NO HUD.** It stands up a bare
+MapView, so the minimap takes its FLOATING bottom-right mount and none of the docked CanvasLayers
+exist — which means the second reported defect, the popover drawing UNDER the Band/City panel,
+renders here as a perfectly correct frame. Two assertions cover it without one:
+
+- The popover's **layer** is compared against `BandCityPanel.LAYER_INDEX` / `EventDockPanel.LAYER_INDEX`
+  / `Main.WORKBENCH_LAYER` / `Main.INSPECTOR_LAYER` / `Main.HUD_LAYER` — **those files' own constants,
+  never a number written twice** — plus `Main.LOADING_OVERLAY_LAYER` from the other side, so raising a
+  dock's layer fails this rather than silently re-burying the popover. `map_preview` therefore
+  `preload`s `Main.gd` for its layer roster alone.
+- The **position** clamp reserves an edge through `MapView.set_reserved_inset`, exactly as `Main` does
+  for the real panel. It reserves the **RIGHT** edge, which is *not* the shipped case: the reported bug
+  was a LEFT dock over an embedded minimap, and with the minimap floating bottom-right here a left-edge
+  claim passes with the clamp deleted. The near edge drives the same `_play_area()` bound from the side
+  a fixture can actually move, and it is **paired with a precondition** asserting the UNRESERVED popover
+  really does reach into the strip — without which the probe passes whenever the two positions coincide.
+
+Both were sabotage-verified: dropping the layer to 101 fails the first naming all five surfaces it is
+under, and short-circuiting `_play_area()` to the raw viewport fails the second at `1907 <= 1425`.
+
 ## `tools/blend_probe.gd` / `.tscn`
 
 Dev-only **edge-blend probe rendered at the GAME's on-screen hex radius** — the other harnesses

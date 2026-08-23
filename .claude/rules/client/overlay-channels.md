@@ -77,11 +77,29 @@ raster for** — an unread push would leave the lit row claiming a channel the m
 re-assert the same rejected key on every later frame. `map_preview`'s `map_overlay_picker` asserts
 both rules, the survival and the stand-down, in one place.
 
-**THE POPOVER IS A `Control`, NOT A `PopupPanel`** — `TurnOrb`'s `top_level` catcher shape. Every
-other popover in this HUD is a `PopupPanel` because a Window cannot change a docked zone's height, a
-problem a widget floating over the map does not have; what a Window WOULD cost here is the frame — it
-renders to its own surface, so an opened popover would be absent from `map_preview`'s capture and the
-state could not be judged at all.
+**THE POPOVER IS A `Control`, NOT A `PopupPanel`** — `TurnOrb`'s catcher shape. Every other popover
+in this HUD is a `PopupPanel` because a Window cannot change a docked zone's height, a problem a
+widget floating over the map does not have; what a Window WOULD cost here is the frame — it renders to
+its own surface, so an opened popover would be absent from `map_preview`'s capture and the state
+could not be judged at all.
+
+**AND IT GETS ITS OWN `CanvasLayer` (105), ABOVE EVERY DOCKED SURFACE.** The picker rides the
+minimap, which in the shipped client is EMBEDDED in the HUD's bottom bar — so the popover inherited
+`Main.HUD_LAYER` (101) and the Band/City dock (`BandCityPanel.LAYER_INDEX` 103), the Workbench
+(`Main.WORKBENCH_LAYER` 103) and the event dock (`EventDockPanel.LAYER_INDEX` 104) all drew straight
+over it. Reported from play as *"the menu shows up under the band panel"*. It stays below
+`Main.LOADING_OVERLAY_LAYER` (150), a world being built having to cover everything. `Main`'s HUD and
+Inspector layers are NAMED constants now precisely because four surfaces are placed relative to them
+and were all reasoning about bare literals to do it.
+
+**Clearing the dock's LAYER is only half of it: the popover also has to open into the PLAY AREA.**
+Right-aligning a ~290px popover to a button in the nav cluster puts its far edge inside a ~495px
+docked panel, and drawing it *above* the panel instead of under it would merely trade an unreadable
+popover for one covering what the player is reading. `MapView.unreserved_screen_rect()` is the bound —
+the viewport less every edge a docked panel has reserved, in CANVAS units, which is the space the
+reservations arrive in and the space a HUD `Control` positions in. It is deliberately not
+`_reserved_inset_span_local()`, which converts the same numbers into the map's counter-scaled units
+for the cover-fit maths (`interface-scale.md`).
 
 **IT LEFT THE INSPECTOR ENTIRELY.** `ui/inspector/OverlayPanel.gd` was 308 lines doing four jobs, two
 of which grew a branch per channel — an inline `terrain_tags` label/description/availability block in

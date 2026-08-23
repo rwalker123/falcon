@@ -93,6 +93,11 @@ const DECODE_NOTE_FORMAT := "x%d discarded %d"
 ## a call is noise against a turn measured in tens of milliseconds, and eighteen such entries would
 ## bury the line; the `hud` aggregate always reports the whole block regardless.
 const HUD_CALL_REPORT_MIN_MSEC := 0.5
+## The two base chrome layers, named because four other surfaces are placed RELATIVE to them and were
+## reasoning about bare literals to do it (`BandCityPanel.LAYER_INDEX`, `EventDockPanel.LAYER_INDEX`,
+## `WORKBENCH_LAYER` below, and `OverlayPicker.POPOVER_CANVAS_LAYER`, which has to clear all of them).
+const HUD_LAYER = 101
+const INSPECTOR_LAYER = 102
 # Loading overlay: a CanvasLayer above HUD (101) and Inspector (102), so it fully covers the blank
 # map/HUD until the new world reveals.
 const LOADING_OVERLAY_LAYER = 150
@@ -192,9 +197,9 @@ func _ready() -> void:
     
     # Ensure HUD and Inspector render above the map layer
     if hud != null:
-        hud.layer = 101
+        hud.layer = HUD_LAYER
     if inspector != null:
-        inspector.layer = 102
+        inspector.layer = INSPECTOR_LAYER
 
     # Startup view defaults that must be seated BEFORE the first world renders (the rest — zoom +
     # centre-on-band — need the loaded world and are applied at reveal, see _apply_startup_view):
