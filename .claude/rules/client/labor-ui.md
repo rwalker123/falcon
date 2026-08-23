@@ -660,11 +660,16 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 > binds, and quoting the kill would put a figure in the sentence that its own parenthetical band
 > contradicts.
 >
-> **`— add hands to take more` was removed and the other remedies were NOT.** It named no count and sat
-> two lines under `max N workers useful here`, which contradicts it. The ones that survive name a real
-> action: *"more hands would take from the stock, not the surplus"* is a consequence to weigh, and
-> *"lower it, or let the herd grow"* offers two. **A remedy earns its place by being actionable**, not
-> by being a remedy.
+> **`— add hands to take more` was removed and the ROOM remedy was NOT.** It named no count and sat two
+> lines under `max N workers useful here`, which contradicts it, where *"lower it, or let the herd
+> grow"* offers two real actions. **A remedy earns its place by being actionable**, not by being a
+> remedy.
+>
+> **The SUSTAINABLE limit's trailing clause went the same way, one round later.** It read *"— more
+> hands would take from the stock, not the surplus"*, which is a CONSEQUENCE rather than an action:
+> the rate is already beside the player's own crew, so the sentence only restates what the number
+> says. Reported from play as too wordy. `HUNT_LIMIT_SUSTAINABLE_FORMAT` is the bare rate now — **a
+> limit line names the limit; it does not argue.**
 >
 > **The Work board's row `+` gate stays on the closed form** — it prices a worked row with no reply in
 > hand. Both cap twins divide through the one `max_useful_workers` and the curve rides the forecast

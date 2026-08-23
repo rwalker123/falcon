@@ -1628,7 +1628,12 @@ const HUNT_CREW_TAKE_MAX_WORKERS := 1000
 const HUNT_LIMIT_BELOW_FLOOR := "Below your breeding floor — taking the surplus only."
 
 ## THE HERD BINDS — the take already equals what grows back, so hands added past it eat the stock.
-const HUNT_LIMIT_SUSTAINABLE_FORMAT := "The herd breeds back ≈%s %s a turn — more hands would take from the stock, not the surplus."
+##
+## **THE RATE IS THE WHOLE LINE.** It once carried a trailing clause spelling out the consequence
+## (*"— more hands would take from the stock, not the surplus"*), which is the sentence restating what
+## the number already says to anyone who reads it beside their own crew. Reported from play as too
+## wordy. A limit line names the limit; it does not argue.
+const HUNT_LIMIT_SUSTAINABLE_FORMAT := "The herd breeds back ≈%s %s a turn."
 
 ## THE FLOOR BINDS — there is little standing above it to take, and the floor is the player's own dial.
 const HUNT_LIMIT_ROOM_FORMAT := "Only ≈%s %s stand above your floor — lower it, or let the herd grow."
