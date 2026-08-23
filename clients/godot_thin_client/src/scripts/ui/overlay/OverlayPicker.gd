@@ -299,9 +299,19 @@ func _render_popover() -> void:
 		descriptor,
 		_legend,
 		OverlayChannels.facts_for(_map_view, descriptor))
+	# The popover is a `Control` under a plain `Control`, so nothing lays it out and a size it once
+	# grew into is a size it keeps (see `_render_list`). Ask it back down to its own minimum after
+	# every rebuild, which is what `reset_size` is for.
+	_popover.reset_size()
 
 func _render_list() -> void:
+	# **`remove_child` BEFORE `queue_free`.** Same trap as `OverlayLegend.render`, and this is the one
+	# that shipped: `queue_free` deletes at the END of the frame, so picking a row rebuilt the list
+	# with the OUTGOING rows still counted, the popover's minimum height doubled for that frame, and a
+	# `Control` that grows to satisfy a minimum WRITES THE GROWN SIZE BACK INTO ITS OFFSETS — so it
+	# never shrank again. Reported as "every time a selection is made, the menu shows full height".
 	for child in _list.get_children():
+		_list.remove_child(child)
 		child.queue_free()
 	for descriptor in _roster:
 		_list.add_child(_channel_row(descriptor))

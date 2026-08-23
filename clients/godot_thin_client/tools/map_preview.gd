@@ -1534,6 +1534,21 @@ func _overlay_picker_state() -> void:
 	_assert_map("overlay picker — …and stays under the loading overlay (%d)" % MAIN_SCRIPT.LOADING_OVERLAY_LAYER,
 		picker.popover_layer_index() < int(MAIN_SCRIPT.LOADING_OVERLAY_LAYER))
 
+	# **PICKING A ROW MUST NOT GROW THE POPOVER**, and the frame above cannot say so — it is the FIRST
+	# render, where the list is built once and every height is correct. The defect is on the REBUILD:
+	# `queue_free` deletes at the end of the frame, so the outgoing rows were still counted while the
+	# incoming ones went in, the minimum height doubled for that frame, and a `Control` that grows to
+	# satisfy a minimum writes the grown size back into its offsets — so it never shrank again. It
+	# COMPOUNDS, which is what makes two picks the right probe rather than one.
+	var first_height: float = picker.popover_rect().size.y
+	picker.select_channel(PICKER_CHANNEL_STUB)
+	await _settle()
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+	await _settle()
+	_assert_map("overlay picker — two picks leave the popover its own height (%.0f → %.0f)"
+		% [first_height, picker.popover_rect().size.y],
+		is_equal_approx(picker.popover_rect().size.y, first_height))
+
 	await _save("map_overlay_picker")
 
 	# **AND IT OPENS INTO THE PLAY AREA, NOT UNDER THE DOCK.** Right-aligning a ~290px popover to a

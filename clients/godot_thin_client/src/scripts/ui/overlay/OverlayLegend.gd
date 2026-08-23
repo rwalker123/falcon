@@ -51,7 +51,14 @@ const EMPTY_RAMP_TEXT := "No samples received yet."
 ## value_text}]}`) and is read only by `KIND_RAMP`; `facts` is what `OverlayChannels.facts_for`
 ## answered and is read only by `KIND_FACTS`. Passing the wrong one is inert rather than wrong.
 static func render(body: VBoxContainer, descriptor: Dictionary, legend: Dictionary, facts: PackedStringArray) -> void:
+	# **`remove_child` BEFORE `queue_free`, and it is not tidiness.** `queue_free` deletes at the END
+	# of the frame, so the outgoing rows are still counted while the incoming ones are added — the
+	# container's minimum height DOUBLES for that frame. A `Control` whose parent is not a container
+	# resolves a too-small anchor box by growing and WRITING THE GROWN SIZE BACK INTO ITS OFFSETS, so
+	# the next frame's smaller minimum no longer shrinks it: the doubling is permanent, and it
+	# compounds on every re-render.
 	for child in body.get_children():
+		body.remove_child(child)
 		child.queue_free()
 	body.add_theme_constant_override("separation", ROW_SEPARATION)
 	body.custom_minimum_size = Vector2(MIN_WIDTH, 0.0)
