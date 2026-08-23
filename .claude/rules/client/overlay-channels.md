@@ -36,8 +36,8 @@ picker, split by KIND so that adding a channel is a data edit and never a code o
 | Module | Kind | Holds |
 |---|---|---|
 | `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Two rows today: the empty key (`PLACEMENT_FIRST`) and `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) |
-| `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Three `legend_kind`s — `KIND_RAMP` (the channel's own legend rows), `KIND_FACTS` (the lines a descriptor's provider answers), `KIND_NONE` — and **no channel is named in the file** |
-| `ui/overlay/OverlayPicker.gd` | the widget | The `◐` button docked on `MinimapPanel`'s top border and the popover it opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
+| `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Two `legend_kind`s — `KIND_RAMP` (the channel's own legend rows) and `KIND_FACTS` (the lines a descriptor's provider answers) — and **no channel is named in the file** |
+| `ui/overlay/OverlayPicker.gd` | the widget | The TWO buttons docked on `MinimapPanel`'s top border and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
 
 **A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
 `placeholder` flag per channel and `MapView._ingest_overlay_channels` holds them, so `roster()`
@@ -47,10 +47,42 @@ give a wire channel a legend kind other than the ramp. **`available` and `facts`
 could not be `const`.
 
 **THE RAMP LEGEND IS `MapView`'s OWN, pulled through `current_overlay_legend()` / pushed by
-`overlay_legend_changed`** — the same dict the right-dock legend card renders. Re-deriving min/avg/max
+`overlay_legend_changed`** — the dict the retired right-dock legend card used to render. Re-deriving min/avg/max
 from `overlay_stats_for_key` would report the map-wide minimum for every channel, which for `pasture`
 and `forage` is the sea: exactly the reading those two channels' own legend builders exist to avoid
 (below, "Zero pasture is NOT low pasture"). One producer, two surfaces, no way to disagree.
+
+### TWO BUTTONS, and the `L` legend card is retired
+
+**One rule for the whole cluster: a button opens its own popover, attached to itself.** `◐` opens the
+channel MENU; the button beside it opens the LEGEND for whatever channel is painted.
+
+The first cut had one button with the legend inside its menu, then tried making that legend a standing
+panel above the minimap — which pushed the menu away from the button that opened it by however tall
+the legend happened to be. **A menu that does not touch its own button is the tell.** Splitting them
+also makes the menu a FIXED height: the roster changes only when the world does, while a legend is
+three rows for a scalar ramp and twenty for the biome key. `map_preview` asserts the attachment as a
+measured GAP on both popovers, a picture being unable to separate *attached* from *close*.
+
+**THE LEGEND BUTTON'S FACE IS THE AMBIENT READOUT** — which channel is painted, without costing a
+panel. `icon` is a registry field with a LIVE fallback (the `FaunaSprites` / `WonderSprites` shape):
+name one and the button wears it, name none and it wears that channel's own ramp colour through
+`MapView.overlay_color_for`. Every row is iconless today, so the fallback is the exercised path rather
+than a guard. It is drawn as a TINTED `■` glyph rather than a `ColorRect` child, which makes the two
+buttons the same width by construction (both are one-glyph text buttons under one stylebox padding,
+which an empty button is not) and makes the eventual icon a straight swap of the same property.
+
+**THE RIGHT DOCK'S `L` TERRAIN TYPES CARD IS GONE** — `LegendController`, `TerrainLegendPanel`,
+`Hud.update_overlay_legend` / `toggle_legend` / `_on_legend_sort_pressed` with its Name/Count sort
+header, the `legend_suppressed` preference and the `L` binding. It was early scaffolding showing this
+same dict in a place a player had to know a hotkey to reach.
+
+**What it carried that nothing else did is the BIOME KEY** — `MapView._build_terrain_legend`, the
+per-biome tile counts for the bare map. That is **not** the same table as `terrain_tags` (biomes, not
+environmental tags), so the empty key's registry row is `KIND_RAMP` precisely to give it a home: the
+legend button is never in a dead state, and `L`'s one irreplaceable job moved onto it. The biome names
+remain reachable from the Inspector's Terrain tab and from any hex's tile card, which is why this is a
+relocation rather than a loss.
 
 ### The picker owns the channel ACROSS A SNAPSHOT and nowhere else — two signals, two rules
 
@@ -241,7 +273,8 @@ this channel are load-bearing:
   panel clips.
 
 Verify with `map_preview` state **"pasture"** (`map_pasture.png` — an earthlike-shaped map; it also
-prints the legend dict, since that harness has no HUD) and `ui_preview` `pasture_legend` /
+draws the legend in the minimap picker's own popover as `map_pasture_legend`, the frame that used to
+be a printed dict here and a hand-transcribed fixture in `ui_preview`) and `ui_preview`
 `tile_pasture_stressed` / `tile_pasture_none` (+ `food_tile`, which carries both stocks). **The live
 earthlike map generates zero forest** (the biome palette thins `MixedWoodland`/`BorealTaiga` out
 entirely — tracked in `core_sim/CLAUDE.md`), so the forest-is-poor-pasture inversion the two-stock
@@ -276,7 +309,7 @@ forage" and "no pasture" mean **opposite** things, and the render must not lie a
 Verify with `map_preview` state **"forage"** (`map_forage.png`, same earthlike fixture as `map_pasture`
 so the two compare tile-for-tile — forest/river valleys read RICH on forage where prairie/steppe reads
 richest on pasture, and the shelf column glows on forage where it is barren on pasture; it prints the
-legend dict) and `ui_preview` `forage_legend` (the honest twin — `No forage` barren row, no Water row,
+`map_forage_legend` beside it — the honest twin: `No forage` barren row, no Water row,
 the gathering-sites sub-count). The forage `capacity_by_biome` table ships in the sim, so the live
 inversion is real; the fixture stages it deterministically for the harness.
 

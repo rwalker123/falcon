@@ -1,6 +1,6 @@
 extends RefCounted
 
-## Dock reservations, the terrain legend and the narrative fork.
+## Dock reservations and the narrative fork.
 ##
 ## One chapter of the `ui_preview` state walk, run in the order `ui_preview.gd`'s `CHAPTERS`
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
@@ -8,9 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 10
-
-const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
+const EXPECTED_CHECKPOINTS := 5
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -81,39 +79,11 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("reserved_dock_cleared")
 
-	# Terrain-legend sort control (base terrain legend, key == "terrain"). Several
-	# biomes of varying tile counts so the default count-desc order + the Name/Count
-	# sort toggles + sort persistence across a regen push are all visible. Rendered
-	# before the full-screen `food_icons` probe (the harness's epilogue in `ui_preview.gd`, which runs
-	# after every chapter) so the right-dock legend isn't covered.
-	# Opened here and closed at the end of THIS block (not hundreds of lines later).
-	h._open_legend()
-	h._hud.update_overlay_legend(TileFx.terrain_legend_fixture())
-	await h._settle()
-	await h._save("terrain_legend_count_desc")  # default: Count, high→low
-
-	# Click "Name" → alphabetical A→Z.
-	h._hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_NAME)
-	await h._settle()
-	await h._save("terrain_legend_name_asc")
-
-	# Click "Name" again → Z→A.
-	h._hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_NAME)
-	await h._settle()
-	await h._save("terrain_legend_name_desc")
-
-	# Click "Count" → back to count, and again → low→high.
-	h._hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_COUNT)
-	h._hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_COUNT)
-	await h._settle()
-	await h._save("terrain_legend_count_asc")
-
-	# Simulate a map regen (fresh terrain-legend push): the chosen sort (count asc)
-	# must persist, not snap back to the default.
-	h._hud.update_overlay_legend(TileFx.terrain_legend_fixture())
-	await h._settle()
-	await h._save("terrain_legend_persist")
-	h._close_legend()
+	# **THE FIVE TERRAIN-LEGEND FRAMES WENT WITH THE CARD.** The right dock's `L` legend and its
+	# Name/Count sort header are retired: the map's legend is the minimap picker's own popover now,
+	# keyed to whichever channel is painted, and its frames live in `map_preview`
+	# (`map_overlay_legend`). Nothing replaced them here — this chapter's remaining subject is the dock
+	# reservation and the narrative fork.
 
 	# ---- The Telling (docs/plan_the_telling.md) -----------------------------------------------
 	# The narrative fork decision surface + the client-side end-turn gate. The fixture is the REAL

@@ -2848,25 +2848,21 @@ func _assert_ceilings_cover_the_columns(state_name: String, under: String) -> vo
 ## block is deleted from `HudLayer.tscn`. The right-hand column is the RIGHT DOCK alone now, so the
 ## widest thing it can hold is the widest CARD it can hold, and the staging is the one
 ## `_assert_right_dock_clears_the_parked_chrome` already uses for the vertical question: the Victory
-## card plus a legend long enough to reach `LegendController.LEGEND_MAX_HEIGHT`. Staging the retired
+## card beside the Telling panel. Staging the retired
 ## readouts instead would call `update_demographics`, which no longer exists — and a missing method
 ## does not fail politely here, it ABORTS this coroutine and takes every assertion under it with it.
 ##
+## **The Terrain Types legend used to be staged here too and is retired** (`overlay-channels.md`), so
+## the two remaining cards ARE the widest content — which costs this claim nothing, a card leaving the
+## dock only lowering the widest-card term.
+##
 ## **It restores the dock EXACTLY, and that is checked by the frame set rather than trusted** — the HUD
-## is long-lived, so a legend or a Victory card left showing re-renders in every later frame.
+## is long-lived, so a Victory card left showing re-renders in every later frame.
 func _assert_ceilings_cover_the_widest_right_column(state_name: String) -> void:
-	var legend_rows: Array = []
-	for i in range(_legend_worst_case_rows()):
-		legend_rows.append({"label": "Terrain %d" % i, "value_text": "%d tiles" % i,
-			"color": LEGEND_WORST_CASE_SWATCH})
 	_hud.toggle_victory()
-	_hud.toggle_legend()
-	_hud.update_overlay_legend({"key": "terrain", "title": "Terrain Types", "rows": legend_rows})
 	await _settle()
 	_assert_ceilings_cover_the_columns(state_name, "the widest content the right dock can hold")
-	# Hand the right dock back exactly as it was found: legend emptied AND re-suppressed, Victory hidden.
-	_hud.update_overlay_legend({})
-	_hud.toggle_legend()
+	# Hand the right dock back exactly as it was found: Victory hidden.
 	_hud.toggle_victory()
 	await _settle()
 
@@ -2923,18 +2919,6 @@ func _report_bottom_yield_geometry(state_name: String) -> void:
 		_panel.wide_shell_min_width(), _panel.band_zone_columns(), flank_room.call(unbounded),
 		_panel._work_columns])
 
-## A swatch colour for the staged legend's rows. Any colour renders the same box; it is named so the
-## fixture carries no bare literal.
-const LEGEND_WORST_CASE_SWATCH := Color(0.3, 0.5, 0.2)
-
-## How many terrain rows the staged legend carries: enough to drive its inner scroll to
-## `LegendController.LEGEND_MAX_HEIGHT`, i.e. the tallest that card can ever be. DERIVED from the
-## controller's own row arithmetic (`LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING` is its `_row_height()`),
-## so a retune of either moves the fixture with it instead of leaving it quietly short.
-func _legend_worst_case_rows() -> int:
-	var row_height: float = LegendController.LEGEND_MIN_ROW_HEIGHT + LegendController.LEGEND_ROW_PADDING
-	return int(ceilf(LegendController.LEGEND_MAX_HEIGHT / row_height))
-
 ## GUARD: **THE RIGHT DOCK'S DRAWN CONTENT STAYS OUT OF THE STRIP THE PARKED CHROME IS IN.**
 ##
 ## The other half of the flush-right rail, and the reason the rail may BE flush. When the HUD keeps a
@@ -2942,7 +2926,9 @@ func _legend_worst_case_rows() -> int:
 ## that strip's trailing end, hard against the screen — the same corner the right dock's cards occupy.
 ## Measured on this canvas before the clearance existed: the Telling card at its page cap, the Victory
 ## card and an 11-row Terrain Types legend put the right dock's content at y 170→1151 against a strip
-## whose top edge is 720, so the legend card alone lay 334px inside the parked chrome.
+## whose top edge is 720, so the legend card alone lay 334px inside the parked chrome. **That legend
+## card is retired** (`overlay-channels.md`) — which is what moved this block's negative control off
+## the CONTENT and onto the CLIP BOX; see the comment on the control itself.
 ##
 ## **It is asserted against BOTH rects, and neither implies the other.** Clearing the strip's whole
 ## band is the general claim — it is what a future right-dock card has to keep satisfying — while
@@ -2951,25 +2937,19 @@ func _legend_worst_case_rows() -> int:
 ##
 ## **THE NEGATIVE CONTROL IS THE WHOLE VALUE OF IT** (`_assert_card_clears_lateral_columns`' rule): the
 ## right dock is empty in every other state in this file, and an empty column clears anything. So the
-## dock is STAGED at the tallest content it can hold — the Victory card plus a legend long enough to
-## reach `LEGEND_MAX_HEIGHT` — and the clearance is then RELEASED to check that this content really
-## does reach the chrome without it, before it is put back and the claim is made.
+## dock is STAGED at the tallest content it can hold — the Victory card beside the Telling panel — and
+## the clearance is then RELEASED to check that the CLIP BOX really does reach the chrome without it,
+## before it is put back and the claim is made.
 ##
 ## **The staging is restored exactly and the restore is not incidental**: the HUD is long-lived, so a
-## legend or a Victory card left showing re-renders in every later frame. No narrative beat is pushed
+## Victory card left showing re-renders in every later frame. No narrative beat is pushed
 ## for the same reason `TellingPanel` is untouched everywhere else here — the page turn is the client's
 ## one `Tween`, and a `Tween` at `Engine.time_scale = 0` never advances at all.
 func _assert_right_dock_clears_the_parked_chrome(state_name: String) -> void:
 	if not _hud.has_method("set_right_column_bottom_clearance"):
 		_fail("%s — the HUD has no right-column clearance to assert" % state_name)
 		return
-	var legend_rows: Array = []
-	for i in range(_legend_worst_case_rows()):
-		legend_rows.append({"label": "Terrain %d" % i, "value_text": "%d tiles" % i,
-			"color": LEGEND_WORST_CASE_SWATCH})
 	_hud.toggle_victory()
-	_hud.toggle_legend()
-	_hud.update_overlay_legend({"key": "terrain", "title": "Terrain Types", "rows": legend_rows})
 	await _settle()
 
 	# THE CONTROL, first: with the clearance released this content must genuinely reach the chrome, or
@@ -2983,9 +2963,21 @@ func _assert_right_dock_clears_the_parked_chrome(state_name: String) -> void:
 	var held: Dictionary = _right_dock_content_reach()
 
 	var strip_top: float = _panel._root.get_global_rect().position.y
-	_assert_band_panel("%s: WITHOUT the clearance the right dock's cards really do reach the parked chrome (content ends %.0f against a strip starting %.0f; %d of them over the rail)"
-		% [state_name, float(unheld["bottom"]), strip_top, int(unheld["over_rail"])],
-		float(unheld["bottom"]) > strip_top and int(unheld["over_rail"]) > 0)
+	# **THE CONTROL IS THE CLIP BOX, NOT THE CONTENT, and it moved there when the legend card was
+	# retired.** It used to stage a Terrain Types legend long enough to reach that card's own height
+	# cap and assert the CARDS reached the chrome. With the legend gone the right dock's tallest
+	# possible content is the Telling panel's `PAGE_MAX_HEIGHT` (320) plus the Victory card (~50), which
+	# cannot reach the strip on any dock this harness stages — measured at 284 against a strip starting
+	# 624 — so a content-reach control could only ever refuse to prove anything.
+	#
+	# The clip box is the better subject anyway, and the assertion under it already says why: *a card
+	# can only overflow the strip if the box it is clipped to reaches into it.* The box is sized by the
+	# dock's available height and the clearance, NOT by what is in it, so this control is exactly as
+	# sharp with an empty dock as with a full one — and it tests the mechanism rather than one
+	# fixture's luck at reaching it.
+	_assert_band_panel("%s: WITHOUT the clearance the right dock's clip box really does reach into the parked chrome (%s ends %.0f against a strip starting %.0f)"
+		% [state_name, str(unheld["clip"]), Rect2(unheld["clip"]).end.y, strip_top],
+		Rect2(unheld["clip"]).end.y > strip_top)
 	_assert_band_panel("%s: the right dock's %d drawn card(s) stop above the strip (content ends %.0f of a strip starting %.0f, %.0fpx clear) under a %.0fpx clearance"
 		% [state_name, int(held["cards"]), float(held["bottom"]), strip_top,
 			strip_top - float(held["bottom"]), clearance],
@@ -3019,9 +3011,7 @@ func _assert_right_dock_clears_the_parked_chrome(state_name: String) -> void:
 			painted.position.y - card.end.y],
 		int(held["cards"]) > 0 and not card.intersects(painted))
 
-	# Hand the right dock back exactly as it was found: legend emptied AND re-suppressed, Victory hidden.
-	_hud.update_overlay_legend({})
-	_hud.toggle_legend()
+	# Hand the right dock back exactly as it was found: Victory hidden.
 	_hud.toggle_victory()
 	await _settle()
 

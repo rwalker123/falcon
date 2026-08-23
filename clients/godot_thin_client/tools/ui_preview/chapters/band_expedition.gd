@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 71
+const EXPECTED_CHECKPOINTS := 70
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -386,16 +386,14 @@ func run(harness) -> void:
 	# State 0-fresh-profile — THE SHIPPED DEFAULT DOCK LAYOUT, rendered on the path a real player
 	# travels and nothing else: prefs section erased above, HUD freshly instantiated, and the first
 	# real terrain legend arriving from MapView exactly as `Main._on_overlay_legend_changed` pushes
-	# it. NOTHING may call `set_suppressed` / `toggle_legend` / `toggle_victory` before this point —
-	# that is the whole value of the state. The right dock must be EMPTY of both reference cards:
-	# no Terrain Types, no Victory. This state is FIRST on purpose, so no later state can leak into
-	# it, and it is the regression guard for "the legend is visible by default in the real game".
-	h._hud.update_overlay_legend(TileFx.terrain_legend_fixture())
+	# it. NOTHING may call `toggle_victory` before this point — that is the whole value of the state.
+	# The right dock must be EMPTY of its reference card. This state is FIRST on purpose, so no later
+	# state can leak into it. (The Terrain Types legend it also used to guard is retired — the map's
+	# legend is the minimap picker's own popover now, and a popover has no dock-visibility default to
+	# protect.)
 	h._hud.update_victory_state(WorldFx.victory_state_fixture())
 	await h._settle()
 	await h._save("dock_fresh_profile_default")
-	h._assert_hud("fresh profile: Terrain Types legend is hidden",
-		not h._hud.terrain_legend_panel.visible)
 	h._assert_hud("fresh profile: Victory panel is hidden",
 		not h._hud.victory_panel.visible)
 

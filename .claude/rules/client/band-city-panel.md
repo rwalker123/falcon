@@ -1741,8 +1741,15 @@ edge, which is a visible regression against how the corner had always looked.
 The measurement that decided it: on a 2560 bottom dock with the strip top at `y=720`, the right dock's
 **content** reaches 302 with nothing in it, 574 at a full Telling page, **718 with the Victory card**
 (2px of clearance) and **1151 with an 11-row Terrain Types legend** — 431px *inside* the strip. Both of
-those are one keypress away (`V`, `L`), so the region-versus-content distinction did not rescue it: a
+those were one keypress away (`V`, `L`), so the region-versus-content distinction did not rescue it: a
 flush rail really would sit under the minimap.
+
+**THE LEGEND CARD HAS SINCE BEEN RETIRED, AND THE CLEARANCE STAYS** (`overlay-channels.md`). The
+tallest the right dock can now reach is the Telling page plus Victory — 718 of that same 720, i.e.
+**two pixels** — so the clearance is holding by a margin no future card can be assumed to leave. What
+changed with it is what a HARNESS can stage: `band_panel_preview`'s negative control moved off the
+CONTENT and onto the CLIP BOX, which is sized by the dock and the clearance rather than by what is in
+it, and is therefore as sharp with an empty dock as with a full one (`harness-band-panel.md`).
 
 So the clearance moved to the right dock's own container.
 `Hud.set_right_column_bottom_clearance(px)` adds to `RightDock`'s `margin_bottom`, pushed by

@@ -369,14 +369,9 @@ func _ready() -> void:
         if hud != null and hud.has_signal("faction_knowledge_changed") and map_view.has_method("set_faction_knowledge"):
             if not hud.is_connected("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge")):
                 hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))
-    if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
-        map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
-        if map_view.has_method("refresh_overlay_legend"):
-            map_view.call_deferred("refresh_overlay_legend")
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
-    _ensure_action_binding("toggle_legend", Key.KEY_L)
     _ensure_action_binding("toggle_victory", Key.KEY_V)
     _ensure_action_binding("toggle_event_dock", Key.KEY_R)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
@@ -2233,12 +2228,6 @@ func _toggle_event_dock_visibility() -> void:
     if event_dock != null and event_dock.has_method("toggle_suppressed"):
         event_dock.call("toggle_suppressed")
 
-func _toggle_legend_visibility() -> void:
-    if hud == null:
-        return
-    if hud.has_method("toggle_legend"):
-        _hud_invoke("toggle_legend")
-
 func _toggle_victory_visibility() -> void:
     if hud == null:
         return
@@ -2325,8 +2314,6 @@ func _process(delta: float) -> void:
     _pump_forecast_queries()
     if Input.is_action_just_pressed("toggle_inspector"):
         _toggle_inspector_visibility()
-    if Input.is_action_just_pressed("toggle_legend"):
-        _toggle_legend_visibility()
     if Input.is_action_just_pressed("toggle_victory"):
         _toggle_victory_visibility()
     if Input.is_action_just_pressed("toggle_event_dock"):
@@ -2430,10 +2417,6 @@ func _apply_startup_view() -> void:
         band_tile = hud.call("get_player_band_tile")
     if band_tile.x >= 0 and band_tile.y >= 0 and map_view.has_method("focus_on_tile"):
         map_view.call("focus_on_tile", band_tile.x, band_tile.y)
-
-func _on_overlay_legend_changed(legend: Dictionary) -> void:
-    if hud != null and hud.has_method("update_overlay_legend"):
-        _hud_invoke("update_overlay_legend", [legend])
 
 func _ensure_action_binding(action_name: String, keycode: Key) -> void:
     if not InputMap.has_action(action_name):

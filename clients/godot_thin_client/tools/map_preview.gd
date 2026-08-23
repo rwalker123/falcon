@@ -475,6 +475,15 @@ const PICKER_EXPECTED_ORDER := ["", PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB, "t
 # precondition asserting the UNRESERVED popover really does reach into the strip.
 const PICKER_DOCK_PROBE_ID := &"overlay_picker_probe"
 const PICKER_DOCK_PROBE_WIDTH := 495.0
+# Slack on the "a popover touches its own button" claim. The gap is `POPOVER_GAP` by construction, so
+# this absorbs sub-pixel layout rounding only — wide enough and the claim stops meaning "attached".
+const PICKER_ATTACH_TOLERANCE := 2.0
+# Biome ids the picker fixture paints the map with, so the bare map's legend has several rows to
+# show. Transcribed from the pasture fixture's own table, which is the sim's terrain id space.
+const PICKER_BIOME_IDS := [10, 11, 12, 20, 26]
+# The floor the biome-key assertion holds the legend to. One under the roster, so the claim survives
+# a biome that happens not to land on a tile but fails a merge that dropped the table.
+const PICKER_BIOME_ROWS_MIN := 4
 
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
@@ -1078,9 +1087,12 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_pasture")
-	# The legend's numbers are the other half of the readout (min/avg/max + how much ground is dead),
-	# and this harness has no HUD to draw them into — print them so they can be checked against the map.
-	print("map_preview: pasture legend = ", _map._legend_for_current_view())
+	# The legend's numbers are the other half of the readout (min/avg/max + how much ground is dead).
+	# It used to be PRINTED here, this harness having had no surface to draw it into — the minimap's
+	# picker is that surface now, so the reading is a FRAME beside the map it explains. `ui_preview`'s
+	# `pasture_legend` state moved here with it, and is better off: it had to transcribe
+	# `_build_pasture_legend`'s output into a fixture and hope the two stayed in step.
+	await _save_overlay_legend("map_pasture_legend")
 
 	# State "pasture herd range" — the herd's grazing RANGE ring OVER the pasture overlay (Grazing Phase
 	# 2b-iii). The same earthlike frame with a big-game herd parked mid-prairie (its range-1 disc of 7
@@ -1146,7 +1158,7 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_forage")
-	print("map_preview: forage legend = ", _map._legend_for_current_view())
+	await _save_overlay_legend("map_forage_legend")
 
 	# States "hunt_danger" / "threat" (Predators Phase 0) — the two derived-danger overlays, projected
 	# client-side from herd positions. Three herds on the earthlike shape: a fierce MAMMOTH (attack ×
@@ -1432,6 +1444,22 @@ func _ready() -> void:
 
 	_finish()
 
+## Open the minimap picker's LEGEND on whatever channel is painted, save the frame, and close it
+## again — the reading that used to be a `print` here and a transcribed fixture in `ui_preview`.
+##
+## **IT CLOSES AGAIN, and that is not tidiness**: the picker is mounted on a long-lived MapView, so a
+## popover left open renders in every later frame of the run.
+func _save_overlay_legend(name: String) -> void:
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("%s — the minimap panel built no picker to open the legend on" % name)
+		return
+	picker.open_legend()
+	await _settle()
+	await _save(name)
+	picker.close_popover()
+	await _settle()
+
 ## State "overlay picker" — the channel picker OPEN on the minimap's top border
 ## (`docs/plan_knowledge_screen.md` §6). The `◐` button rides every frame this harness saves; only
 ## this one opens the popover, which is where the list, the `stub data` marker and the legend are.
@@ -1506,10 +1534,10 @@ func _overlay_picker_state() -> void:
 		_map.active_overlay_key == PICKER_CHANNEL_STUB and picker.selected_key() == PICKER_CHANNEL_STUB)
 	picker.select_channel(PICKER_CHANNEL_LIVE)
 
-	picker.open_popover()
+	picker.open_channels()
 	await _settle()
-	_assert_map("overlay picker — the popover is a Control in this viewport, not a Window",
-		picker.is_popover_open())
+	_assert_map("overlay picker — the channel menu is a Control in this viewport, not a Window",
+		picker.open_popover_kind() == OverlayPicker.POPOVER_CHANNELS)
 
 	# **THE POPOVER MUST CLEAR EVERY DOCKED SURFACE'S LAYER**, and this harness stands up none of
 	# them: it has no HUD, so the shipped defect — the popover drawing UNDER the Band/City dock,
@@ -1549,7 +1577,49 @@ func _overlay_picker_state() -> void:
 		% [first_height, picker.popover_rect().size.y],
 		is_equal_approx(picker.popover_rect().size.y, first_height))
 
+	# **A POPOVER TOUCHES THE BUTTON THAT OPENED IT.** This is the whole reason the legend is its own
+	# button rather than a standing panel between the menu and the minimap: with the legend in
+	# between, the menu floated a legend's height away from the `◐` it belongs to, which is not what a
+	# menu does. The claim is the GAP, measured — a picture cannot separate "attached" from "close".
+	_assert_map("overlay picker — the menu hangs off its own button (gap %.0fpx)"
+		% (picker.anchor_rect().position.y - picker.popover_rect().end.y),
+		absf(picker.anchor_rect().position.y - picker.popover_rect().end.y)
+			<= OverlayPicker.POPOVER_GAP + PICKER_ATTACH_TOLERANCE)
+
 	await _save("map_overlay_picker")
+
+	# **THE LEGEND IS THE OTHER BUTTON'S POPOVER, and opening it closes the menu.** Two small cards
+	# over one corner of the map would fight for the same space and the same dismiss click.
+	picker.open_legend()
+	await _settle()
+	_assert_map("overlay picker — opening the legend replaces the menu rather than stacking on it",
+		picker.open_popover_kind() == OverlayPicker.POPOVER_LEGEND)
+	_assert_map("overlay picker — the legend hangs off ITS button, not the menu's (gap %.0fpx)"
+		% (picker.anchor_rect().position.y - picker.popover_rect().end.y),
+		picker.anchor_rect() == picker.legend_button_rect()
+			and absf(picker.anchor_rect().position.y - picker.popover_rect().end.y)
+				<= OverlayPicker.POPOVER_GAP + PICKER_ATTACH_TOLERANCE)
+	await _save("map_overlay_legend")
+
+	# **THE LEGEND BUTTON'S FACE IS THE STANDING READOUT OF WHICH CHANNEL IS ON**, and with no icon in
+	# the registry yet it is that channel's own map tint. Asked of `MapView.overlay_color_for` rather
+	# than of a literal, so the button cannot drift from what the map is actually painted in — which
+	# is the entire claim the face makes.
+	_assert_map("overlay picker — the legend button wears '%s'`s own map tint" % PICKER_CHANNEL_LIVE,
+		picker.legend_face_color() == _map.overlay_color_for(PICKER_CHANNEL_LIVE))
+	picker.select_channel(OverlayChannels.NO_OVERLAY_KEY)
+	await _settle()
+	_assert_map("overlay picker — …and follows the channel when it changes",
+		picker.legend_face_color() == _map.overlay_color_for(OverlayChannels.NO_OVERLAY_KEY))
+
+	# **NO OVERLAY HAS A LEGEND TOO — the biome key**, which is what the retired `L` card carried and
+	# is NOT the same table as `terrain_tags` (biomes, not environmental tags). Without it the legend
+	# button would have a dead state and that key would have no home in the client at all.
+	_assert_map("overlay picker — the bare map's legend is the biome key, not an empty card (%d rows)"
+		% _map.current_overlay_legend().get("rows", []).size(),
+		_map.current_overlay_legend().get("rows", []).size() >= PICKER_BIOME_ROWS_MIN)
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+	await _settle()
 
 	# **AND IT OPENS INTO THE PLAY AREA, NOT UNDER THE DOCK.** Right-aligning a ~290px popover to a
 	# button in the nav cluster puts its far edge inside a ~495px docked panel, so clearing the dock's
@@ -1567,7 +1637,7 @@ func _overlay_picker_state() -> void:
 		picker.popover_rect().end.x > get_viewport_rect().size.x - PICKER_DOCK_PROBE_WIDTH)
 	_map.set_reserved_inset(PICKER_DOCK_PROBE_ID, SIDE_RIGHT, PICKER_DOCK_PROBE_WIDTH)
 	picker.close_popover()
-	picker.open_popover()
+	picker.open_channels()
 	await _settle()
 	var dock_edge: float = get_viewport_rect().size.x - PICKER_DOCK_PROBE_WIDTH
 	_assert_map("overlay picker — a %.0fpx dock pushes the popover clear of it (right edge %.0f <= %.0f)"
@@ -3522,6 +3592,11 @@ func _snapshot_overlay_channels() -> Dictionary:
 	empty.resize(total)
 	var tags: Array = []
 	tags.resize(total)
+	# SEVERAL biomes, not the usual flat fill: the bare map's legend is the BIOME KEY, so a one-biome
+	# fixture would render a one-row card and the assertion over it would pass on a merge that had
+	# lost every other row.
+	var terrain: Array = []
+	terrain.resize(total)
 	for i in total:
 		var col := i % GRID_W
 		var pressure := float(col) / float(GRID_W - 1)
@@ -3529,10 +3604,11 @@ func _snapshot_overlay_channels() -> Dictionary:
 		raw[i] = pressure * PICKER_LIVE_RAW_SCALE
 		# Split the map between the two tags so the tag legend counts both.
 		tags[i] = PICKER_TAG_BIT_A if col < GRID_W / 2 else PICKER_TAG_BIT_B
+		terrain[i] = PICKER_BIOME_IDS[(col * GRID_H + i / GRID_W) % PICKER_BIOME_IDS.size()]
 	return {
 		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
 		"overlays": {
-			"terrain": _terrain_array(),
+			"terrain": terrain,
 			"terrain_tags": tags,
 			"terrain_tag_labels": {
 				PICKER_TAG_BIT_A: PICKER_TAG_LABEL_A,

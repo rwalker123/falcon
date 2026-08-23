@@ -235,11 +235,13 @@ func setup_embedded(container: Control, style: StyleBox = null) -> void:
 ## its own top edge, which is what puts the button ON the border rather than inside the map.
 ##
 ## It is added LAST, after `viewport_indicator`, so it draws over the indicator rather than under it.
+## It is a BAR of two buttons — the channel menu and the legend — so the reservation is
+## `OverlayPicker.BAR_WIDTH`, not one button's.
 func _build_overlay_picker() -> void:
 	overlay_picker = OverlayPicker.new()
 	overlay_picker.name = "OverlayPicker"
 	overlay_picker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	overlay_picker.offset_left = -(OverlayPicker.BUTTON_SIZE + PICKER_INSET)
+	overlay_picker.offset_left = -(OverlayPicker.BAR_WIDTH + PICKER_INSET)
 	overlay_picker.offset_right = -PICKER_INSET
 	# Lifted by the content inset plus half the button, so the border line runs through its middle.
 	overlay_picker.offset_top = -(OverlayPicker.BUTTON_SIZE * 0.5) - float(PANEL_CONTENT_MARGIN)

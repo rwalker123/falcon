@@ -3478,6 +3478,12 @@ func current_overlay_legend() -> Dictionary:
 func has_terrain_tag_data() -> bool:
 	return not terrain_tags_overlay.is_empty() or not terrain_tag_labels.is_empty()
 
+## The tint a channel paints the map in — what the minimap's legend button wears as its face when the
+## channel has no icon of its own. A channel with no row takes the same fallback `_color_for_tile`
+## gives it, so the button can never disagree with the map.
+func overlay_color_for(key: String) -> Color:
+	return OVERLAY_COLORS.get(key, OVERLAY_FALLBACK_COLOR)
+
 func overlay_stats_for_key(key: String) -> Dictionary:
 	if key == "terrain_tags":
 		return _tag_overlay_stats()

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 23
+const EXPECTED_CHECKPOINTS := 21
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
@@ -132,21 +132,17 @@ func run(harness) -> void:
 	h._assert_hud("default layout: Telling panel lives in the right dock stack",
 		h._hud.telling_panel.get_parent() == h._hud.right_stack)
 
-	# G6 — the same frame with BOTH reference cards toggled back on (the `V` / `L` path), so the
-	# right dock's stacking order — Telling, then Victory, then Terrain Types — is visible and the
-	# Telling panel is seen to yield height rather than overlap.
-	# Victory goes through the REAL `toggle_victory` (the `V` path, prefs write included — the harness
-	# cleared the section at startup, and this toggles back below); the legend uses the harness helper.
+	# G6 — the same frame with the reference card toggled back on (the `V` path), so the right dock's
+	# stacking order — Telling, then Victory — is visible and the Telling panel is seen to yield height
+	# rather than overlap. It goes through the REAL `toggle_victory` (prefs write included — the
+	# harness cleared the section at startup, and this toggles back below). The Terrain Types legend
+	# that used to stack third here is retired with the `L` card.
 	h._hud.toggle_victory()
-	h._open_legend()
-	h._hud.update_overlay_legend(TileFx.terrain_legend_fixture())
 	await h._settle()
 	await h._save("dock_panels_revealed")
-	h._assert_hud("toggled on: Terrain Types legend is visible", h._hud.terrain_legend_panel.visible)
 	h._assert_hud("toggled on: Victory panel is visible", h._hud.victory_panel.visible)
 	# Restore the shipped default so any later state renders the real layout.
 	h._hud.toggle_victory()
-	h._close_legend()
 
 	# TWO-BEAT ORAL — a single speaking turn firing TWO beats (both sharing one tick, so they are ONE
 	# page). The page must GROW to fit both beats + gloss with NO scrollbar — the playtest fix (the

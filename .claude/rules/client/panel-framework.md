@@ -351,9 +351,11 @@ and `right_dock` in `_ready()`.
 gone** (issue #272): its events are the event dock's now (`event-dock.md`), `R` toggles
 that instead, and the left column is the selection card's again — which is what its
 40%-of-dock `DockScrollFit` cap existed to protect in the first place.
-RIGHT = **Telling 10** · Victory 20 · Terrain Types 30, the last two
-`set_relevant(false)` by default and toggled by `V` / `L` (`Hud.toggle_victory` /
-`toggle_legend`, both persisting to `user://narrative.cfg` `[hud_panels]` — the
+RIGHT = **Telling 10** · Victory 20. **The Terrain Types card that held slot 30 is gone**, with `L`
+and `LegendController`: the map's legend rides the minimap picker's own popover now
+(`overlay-channels.md`). Victory is
+`set_relevant(false)` by default and toggled by `V` (`Hud.toggle_victory`,
+persisting to `user://narrative.cfg` `[hud_panels]` — the
 same file the voice register and the Telling panel's collapsed state use; do not
 add a third prefs file). A card that ships hidden must go through `set_relevant`
 rather than a bare `visible = false` so the dock reflows without leaving a gap.

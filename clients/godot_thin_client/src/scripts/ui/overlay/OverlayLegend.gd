@@ -12,9 +12,8 @@ class_name OverlayLegend
 ##
 ## | kind | renders |
 ## |---|---|
-## | `KIND_RAMP` | the swatch/label/value rows of the channel's own legend — the scalar ramp's Low / Average / High, or whatever rows `MapView` built for a channel with a legend of its own (pasture and forage both have one) |
+## | `KIND_RAMP` | the swatch/label/value rows of the channel's own legend — the scalar ramp's Low / Average / High, or whatever rows `MapView` built for a channel with a legend of its own (pasture, forage and the bare map's biome key all have one) |
 ## | `KIND_FACTS` | the count lines the descriptor's provider answered, one per row |
-## | `KIND_NONE` | the title and description alone |
 ##
 ## A channel that wants a different readout declares a kind, never a branch here. The panel this
 ## replaced had the opposite shape: two channels' titles and descriptions were written out by hand in
@@ -27,7 +26,6 @@ class_name OverlayLegend
 ## those two channels' own legend builders exist to avoid (`overlay-channels.md` → "Zero pasture is
 ## NOT low pasture"). One producer, two surfaces, no way for them to disagree.
 
-const KIND_NONE := &"none"
 const KIND_RAMP := &"ramp"
 const KIND_FACTS := &"facts"
 
@@ -70,8 +68,6 @@ static func render(body: VBoxContainer, descriptor: Dictionary, legend: Dictiona
 		body.add_child(_body_label(description, HudStyle.INK_DIM))
 
 	match StringName(descriptor.get("legend_kind", KIND_RAMP)):
-		KIND_NONE:
-			return
 		KIND_FACTS:
 			for line in facts:
 				body.add_child(_body_label(String(line), HudStyle.INK))

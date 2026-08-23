@@ -23,10 +23,19 @@ class_name OverlayChannels
 ## one that whatever ingests it can mutate at runtime, which is exactly the property being bought
 ## here. The names are resolved through `has_method` at merge time, so a row naming a method that does
 ## not exist drops the channel rather than crashing the picker.
+##
+## **`icon` IS A TABLE WITH A LIVE FALLBACK, the `FaunaSprites` / `WonderSprites` shape.** A channel
+## that names one wears it on the minimap's legend button; a channel that does not wears that
+## channel's own ramp COLOUR as a swatch (`MapView.overlay_color_for`). So icons land one channel at a
+## time as art appears, with no flag day and no channel ever facing a blank button — and the fallback
+## is a real, exercised path rather than a guard, every row being iconless today. Two things to hold
+## to when one arrives: a mark here is drawn at `LEGEND_BUTTON` size beside a `◐`, and this client has
+## shipped covered glyphs that were still unreadable at exactly that size (`WorkbenchPages.PAGES` has
+## the autopsy), so **render it before trusting it**; and the swatch it replaces is stating a fact
+## about the map, so an icon that says less than the colour did is a step backwards.
 
 ## The legend shapes a row can ask for. They live on `OverlayLegend` because it is what renders them;
 ## the dependency runs registry → renderer and never back, so the two `class_name`s do not cycle.
-const KIND_NONE := OverlayLegend.KIND_NONE
 const KIND_RAMP := OverlayLegend.KIND_RAMP
 const KIND_FACTS := OverlayLegend.KIND_FACTS
 
@@ -44,10 +53,11 @@ const CHANNELS: Array[Dictionary] = [
 		"key": NO_OVERLAY_KEY,
 		"label": "No Overlay",
 		"description": "Base map without overlays.",
-		# NOT a ramp: the active-view legend for the empty key is the full terrain biome list, which
-		# is a right-dock reference card (`L`) and not something a popover the width of the minimap
-		# can hold. The row states what it does and stops.
-		"legend_kind": KIND_NONE,
+		# **A RAMP, BECAUSE THE BARE MAP HAS A LEGEND TOO** — `MapView._build_terrain_legend`, the
+		# biome key with per-biome tile counts. That key was the right dock's `L` card until this arc
+		# retired it; it is not the same table as `terrain_tags` (biomes, not environmental tags), so
+		# without this row it would have had no home at all.
+		"legend_kind": KIND_RAMP,
 		"placement": PLACEMENT_FIRST,
 	},
 	{
@@ -99,6 +109,7 @@ static func descriptor_for(view: Object, key: String, available_rows: Dictionary
 		"legend_kind": KIND_RAMP,
 		"placeholder": _wire_flag(view, &"overlay_placeholder_flags", key),
 		"facts": &"",
+		"icon": "",
 	}
 	for field in row.keys():
 		var value: Variant = row[field]

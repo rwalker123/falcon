@@ -79,7 +79,7 @@ the **graze distribution** on an earthlike-shaped fixture map under the `pasture
 alluvial fallback dominant? are glacier/lava/water distinct from merely-poor ground?). It stages a
 **woodland block a live map does not have** (the palette thins forest out), sizes the window to the
 grid's aspect (MapView is **cover-fit**, so a mismatch CROPS exactly the distribution you came to
-see), and **prints the legend dict** (this harness has no HUD to draw it into). Also state
+see), and **saves the legend as its own frame** (`map_pasture_legend`, the picker's popover — it PRINTED the dict for as long as this harness had no surface to draw it into). Also state
 **"forage"** (`map_forage.png`) — the **human-food distribution**, the SAME earthlike fixture
 painted from the human-food table under the `forage` channel, so it compares tile-for-tile with
 `map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor
@@ -330,6 +330,16 @@ a merge that dropped everything on the floor.
 "which frames changed" answers nothing here — capture the PNGs before the change and diff each pair,
 where a button-sized bounding box is the expected result and a whole-image one is a real regression.
 That is exactly how the stomp above was caught.
+
+**THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
+`map_overlay_legend` is the legend popover open on the channel menu's own selection, and
+`map_pasture_legend` / `map_forage_legend` ride the `pasture` / `forage` states as
+`_save_overlay_legend`. Those last two were a `print` of the legend dict here and a hand-TRANSCRIBED
+fixture in `ui_preview`'s `pasture_legend` / `forage_legend`, kept in step by hope; this harness owns
+a real MapView, so it can open the picker on the real builder's rows. `_save_overlay_legend` CLOSES
+the popover again — the picker rides a long-lived MapView, so one left open renders in every later
+frame. (`ui_preview`'s five `terrain_legend_*` sort-control frames went with the `L` card itself and
+have no successor: the sort header was that card's, not the legend's.)
 
 **AND THE CHROME CLAIMS ARE STRUCTURAL, BECAUSE THIS HARNESS HAS NO HUD.** It stands up a bare
 MapView, so the minimap takes its FLOATING bottom-right mount and none of the docked CanvasLayers

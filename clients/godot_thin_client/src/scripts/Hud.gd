@@ -180,10 +180,6 @@ var _server_build: String = "?"
 @onready var zoom_out_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomOutButton
 @onready var zoom_fit_button: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomFitButton
 @onready var zoom_level_label: Label = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomLevelLabel
-@onready var terrain_legend_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel as PanelCard
-@onready var terrain_legend_scroll: ScrollContainer = %LegendScroll
-@onready var terrain_legend_list: VBoxContainer = %LegendList
-@onready var terrain_legend_description: Label = %LegendDescription
 @onready var victory_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel
 @onready var victory_status_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel/Margin/VictoryLabel
 @onready var telling_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TellingPanel as PanelCard
@@ -220,14 +216,11 @@ var _server_build: String = "?"
 var tooltip_panel: PanelContainer
 var tooltip_label: Label
 
-# The legend card + its terrain-only Name/Count sort header now live in
-# ui/hud/LegendController.gd. The left-dock COMMAND FEED is gone: the event dock
-# (`ui/EventDockPanel.gd`, its own CanvasLayer) replaced it, and the client-side notes that used to
-# land in it are relayed out as `system_note_requested` instead.
-# These two aliases keep `HudLayer.LEGEND_SORT_FIELD_*` resolvable for external
-# callers (e.g. tools/ui_preview.gd) with the controller as the single source of truth.
-const LEGEND_SORT_FIELD_NAME := LegendController.SORT_FIELD_NAME
-const LEGEND_SORT_FIELD_COUNT := LegendController.SORT_FIELD_COUNT
+# The right dock's TERRAIN LEGEND CARD is gone, with `L`, `LegendController` and its Name/Count sort
+# header: the map's legend is the minimap picker's own popover now, keyed to whichever channel is
+# painted (`.claude/rules/client/overlay-channels.md`). The left-dock COMMAND FEED is gone too: the
+# event dock (`ui/EventDockPanel.gd`, its own CanvasLayer) replaced it, and the client-side notes
+# that used to land in it are relayed out as `system_note_requested` instead.
 const STACK_ADDITIONAL_MARGIN := 16.0
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -245,7 +238,6 @@ const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 # Dock-card visibility preferences. Reuses the file `NarrativeForkPanel` already writes the voice
 # register into — one prefs file, its own section; the path/section constants are borrowed.
 const HUD_PANELS_CONFIG_SECTION := "hud_panels"
-const CONFIG_KEY_LEGEND_SUPPRESSED := "legend_suppressed"
 const CONFIG_KEY_VICTORY_SUPPRESSED := "victory_suppressed"
 # Both reference cards start HIDDEN: the right dock is the narrative surface's home, and Victory /
 # Terrain Types are look-it-up readouts the player opens on demand (V / L) rather than standing
@@ -253,9 +245,7 @@ const CONFIG_KEY_VICTORY_SUPPRESSED := "victory_suppressed"
 const PANEL_SUPPRESSED_BY_DEFAULT := true
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
-# The legend card (rows + sort header + suppress state) is owned by _legend; the narrative panel by
-# _telling. Hud delegates to both.
-var _legend: LegendController = null
+# The narrative panel is owned by _telling; Hud delegates to it.
 ## The client-side note sink the three controllers that post one are handed (the top bar's
 ## knowledge unlock, the turn orb's unanswered fork, targeting's two quarry refusals). It was a
 ## `CommandFeedController` reference until that feed retired; a Callable onto `note_system_event`
@@ -426,7 +416,6 @@ func _ready() -> void:
     # Both compose floors start on the sim's own default (the food peak); the number stays in
     # `SourceForecast`, not in the model.
     _compose = ComposeState.new(SourceForecast.DEFAULT_HARVEST_FLOOR)
-    _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     # The faction readouts cluster. **IT OWNS NO NODES AT ALL SINCE THE TOP-RIGHT BLOCK WAS RETIRED**
     # (issue #450): the Sedentarization meter, the demographics line, the discovered-sites strip and
     # the knowledge strip were the eight Labels it rendered into, and the faction page's `band` and
@@ -610,7 +599,6 @@ func _ready() -> void:
     # of exactly that. It captures `BottomBar`'s authored minimum height here too.
     _dockrow = DockRowController.new(bottom_bar, nav_backing, turn_orb)
     _setup_tooltip()
-    _legend.refresh_rows()
     _refresh_victory_status()
     _telling.render()
     _connect_selection_buttons()
@@ -624,7 +612,6 @@ func _ready() -> void:
     # reference cards hidden by default, effectively the whole column.
     right_dock.add(telling_panel, 10)
     right_dock.add(victory_panel, 20)
-    right_dock.add(terrain_legend_panel, 30)
     _load_hud_panel_prefs()
     _apply_hud_style()
     _setup_build_overlay()
@@ -1215,8 +1202,6 @@ func quick_assign_hunters(herd_id: String) -> void:
         SourceForecast.DEFAULT_HARVEST_FLOOR, "",
         _band_labor.improvement_for_hunt(band, herd_id))
 
-func update_overlay_legend(legend: Dictionary) -> void:
-    _legend.update(legend)
 func get_upper_stack_height() -> float:
     var max_bottom := 0.0
     # **THE TOP-BAR TERMS WENT WITH THE TOP BAR** (issue #450). This measured the `Turn N` / `Units`
@@ -1810,7 +1795,12 @@ func right_column_width() -> float:
 ## one of `ui_preview`'s 274, at every viewport those harnesses stage (1280→2560 logical) and at
 ## `ui_scale` 1.0 and 1.35 alike — the scrollbar is absent until the stack overflows. Staged at the
 ## widest content the dock can hold (the Victory card beside a Terrain Types legend long enough to
-## reach `LegendController.LEGEND_MAX_HEIGHT`) it reads **352**, which is this derivation exactly.
+## reach that card's own height cap) it reads **352**, which is this derivation exactly.
+##
+## **THAT LEGEND CARD HAS SINCE BEEN RETIRED, and the derivation is unaffected** — its numbers are
+## kept because they are what was MEASURED. A card leaving the dock can only lower the widest-visible
+## -card term, and the legend's minimum was **228** against the Telling panel's binding **320**, so it
+## was never the term. Re-measure only if a card WIDER than the Telling panel is ever added.
 ## Measured beside the Telling panel's 320 in that state: the Victory card's minimum is **50** and the
 ## legend's **228**, so the Telling panel's authored minimum is the binding term and the other two are
 ## nowhere near it.
@@ -1977,16 +1967,8 @@ func _format_victory_label(raw: String) -> String:
         parts[i] = String(parts[i]).capitalize()
     return String(" ".join(parts)).strip_edges()
 
-func _on_legend_sort_pressed(field: String) -> void:
-    _legend.on_sort_pressed(field)
-
-func toggle_legend() -> void:
-    _legend.toggle_suppressed()
-    _refit_right_dock()
-    _save_panel_pref(CONFIG_KEY_LEGEND_SUPPRESSED, _legend.legend_suppressed)
-
-## Victory's counterpart to `toggle_legend` (bound to `V` in Main). Hides/shows the card through the
-## dock so the stack reflows with no gap, and remembers the choice for next session.
+## Bound to `V` in Main. Hides/shows the card through the dock so the stack reflows with no gap, and
+## remembers the choice for next session.
 func toggle_victory() -> void:
     _victory_suppressed = not _victory_suppressed
     _apply_victory_visibility()
@@ -2015,15 +1997,8 @@ func _refit_right_dock() -> void:
 func _load_hud_panel_prefs() -> void:
     var cfg := ConfigFile.new()
     if cfg.load(NarrativeForkPanel.config_path()) == OK:
-        if _legend != null:
-            _legend.set_suppressed(bool(cfg.get_value(
-                HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
         _victory_suppressed = bool(cfg.get_value(
             HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT))
-    else:
-        # No prefs file yet (or unreadable): fall back to the hidden-by-default layout.
-        if _legend != null:
-            _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
     _apply_victory_visibility()
 
 ## Persist ONE panel's preference — never the whole section.
