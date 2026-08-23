@@ -1263,10 +1263,16 @@ pub fn advance_labor_allocation(
     configs: LaborConfigs,
     tiles: Query<&Tile>,
     food_modules: Query<&FoodModuleTag>,
+    // `Option<&BandId>`: worldgen gives every real band a durable id, but a hand-built test world
+    // may spawn a bare cohort. It is read for one purpose here — the `band=` detail token every line
+    // this pass writes about a *row* carries, so the event dock can offer that band's Work tab
+    // ([`band_detail_token`]) — so a band without one still works, gathers and lapses exactly as
+    // before and simply publishes rows the dock cannot link.
     mut cohorts: Query<(
         &mut PopulationCohort,
         &mut LaborAllocation,
         Option<&mut BandEquipment>,
+        Option<&BandId>,
     )>,
 ) {
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
@@ -1380,7 +1386,11 @@ pub fn advance_labor_allocation(
     let mut patch_build_claims: BuildEstimateClaims<UVec2> = BuildEstimateClaims::default();
     let mut herd_build_claims: BuildEstimateClaims<String> = BuildEstimateClaims::default();
 
-    for (mut cohort, mut allocation, mut band_equipment) in cohorts.iter_mut() {
+    for (mut cohort, mut allocation, mut band_equipment, band_id) in cohorts.iter_mut() {
+        // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
+        // line below that reports a row the band did not ask to lose. Copied out of the query up
+        // front because the announcements are written from several arms of the loop.
+        let band_id = band_id.copied();
         // **This band's carry tier, resolved ONCE per band per turn.** The component records what
         // the band OWNS, so an absent **entry inside it** means *not owned* — but an absent
         // **component** means the ledger was never built, and that reads as start-stocked, which is
@@ -1471,7 +1481,7 @@ pub fn advance_labor_allocation(
         // the prune below); a row merely cut is the crew the player set moving on its own. Neither
         // may happen quietly.
         for shed in allocation.normalize(available, shed_facts) {
-            announce_shed_crew(&mut event_log, tick.0, faction, &shed);
+            announce_shed_crew(&mut event_log, tick.0, faction, band_id, &shed);
         }
         if allocation.assignments.is_empty() {
             continue;
@@ -1833,9 +1843,12 @@ pub fn advance_labor_allocation(
                                 "foragers abandoned ({}, {}) — out of the band's work range",
                                 tile.x, tile.y
                             ),
-                            Some(format!(
-                                "status=lapsed reason=out_of_range x={} y={} distance={} range={}",
-                                tile.x, tile.y, distance, work_range
+                            Some(band_detail_token(
+                                format!(
+                                    "status=lapsed reason=out_of_range x={} y={} distance={} range={}",
+                                    tile.x, tile.y, distance, work_range
+                                ),
+                                band_id,
                             )),
                         ));
                         continue;
@@ -2841,7 +2854,10 @@ pub fn advance_labor_allocation(
                             CommandEventKind::Hunt,
                             faction,
                             format!("hunters lost {} (herd dispersed)", fauna_id),
-                            Some("status=lapsed reason=herd_gone".to_string()),
+                            Some(band_detail_token(
+                                "status=lapsed reason=herd_gone".to_string(),
+                                band_id,
+                            )),
                         ));
                         continue;
                     };
@@ -2859,9 +2875,12 @@ pub fn advance_labor_allocation(
                             CommandEventKind::Hunt,
                             faction,
                             format!("hunters lost the {} — it ranged too far", fauna_id),
-                            Some(format!(
-                                "status=lapsed reason=out_of_leash distance={} reach={}",
-                                distance, hunt_reach
+                            Some(band_detail_token(
+                                format!(
+                                    "status=lapsed reason=out_of_leash distance={} reach={}",
+                                    distance, hunt_reach
+                                ),
+                                band_id,
                             )),
                         ));
                         continue;
@@ -4614,6 +4633,35 @@ const BUILD_QUEUE_HEAD: usize = 0;
 /// `Improvement::as_str` to borrow, and the command's own name is the one word the player typed.
 pub const EXTEND_PEN_ACTION: &str = "extend_pen";
 
+/// **SAY WHOSE WORK BOARD A LOST ROW WAS ON** — appends the `band=` detail token to `detail`, or
+/// leaves it alone for a cohort carrying no durable id.
+///
+/// The event dock's per-row *"Work tab"* link is the only consumer, and it is why the token exists:
+/// a `status=trimmed` / `lapsed` / `pruned` row offers a jump to the band whose crew the sim cut, and
+/// the dock refuses to recover a band by reading the label's prose. `CommandEventState` on the wire
+/// is `{tick, kind, faction, label, detail, seq}` and carries no band field, so the detail token is
+/// the whole channel — a detail-token addition, not a schema change.
+///
+/// > #### ⛔ THE DURABLE [`BandId`], NEVER THE `Entity`
+/// >
+/// > Both are `u64` and neither would fail to compile here. The client resolves this id through a
+/// > **roster join keyed on `band_id`**, so entity bits would name a band that does not exist and the
+/// > link would jump nowhere. `xtask/src/command_guard.rs` exists because that exact confusion once
+/// > silently broke every band-addressed order.
+///
+/// **Appended, so it must stay ahead of any multi-word trailing value.** Detail tokens are
+/// space-delimited `key=value` (`.claude/rules/core_sim/event-feed.md`), a numeric id needs no
+/// position, and every line this is applied to ends in a numeric or single-word token. A line whose
+/// last token is a display name or a comma-joined list must interpolate `band=` earlier instead.
+fn band_detail_token(detail: String, band: Option<BandId>) -> String {
+    match band {
+        Some(id) => format!("{detail} band={}", id.0),
+        // A band with no durable id has nothing to name the jump after — the same rule the
+        // demographic feed follows (`systems::population`), and the row simply renders linkless.
+        None => detail,
+    }
+}
+
 /// **Name a build source for a feed line** — `(x, y)` for a patch, its id for a herd.
 fn describe_build_source(source: &BuildSource) -> String {
     match source {
@@ -4660,10 +4708,15 @@ fn improvement_feed_channel(improvement: Improvement) -> CommandEventKind {
 /// the row (`docs/plan_standing_upkeep.md` §2.5), so what a shed costs is exactly the hands named
 /// here, and a dropped row's entry is retired by the turn's prune on the rule that an entry requires
 /// a row.
+///
+/// **The band IS named, on the detail** ([`band_detail_token`]). It is the only channel the dock's
+/// per-row *"Work tab"* link has, and the band-wide roles (`kind=scout` / `warrior` / `builders`)
+/// name no source at all — so on those lines there is nothing whatever to infer a band from.
 fn announce_shed_crew(
     event_log: &mut CommandEventLog,
     tick: u64,
     faction: FactionId,
+    band: Option<BandId>,
     shed: &ShedCrew,
 ) {
     // A band-wide role (Scout/Warrior) has no source to name and no verb channel of its own; it is
@@ -4725,9 +4778,12 @@ fn announce_shed_crew(
         kind,
         faction,
         label,
-        Some(format!(
-            "status={status} reason=too_few_workers {source_detail} workers={workers} lost={}",
-            shed.lost,
+        Some(band_detail_token(
+            format!(
+                "status={status} reason=too_few_workers {source_detail} workers={workers} lost={}",
+                shed.lost,
+            ),
+            band,
         )),
     ));
 }

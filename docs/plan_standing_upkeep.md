@@ -585,6 +585,24 @@ that names a staffed row, then re-runs for the next hand.
 
 **Terminal:** a single worker on a single row. Take it; the row ends.
 
+**"Least productive" is two levels, and the first one is a presence test.** Steps 5, 6, 9, 10 and the
+terminal all rank candidate rows by:
+
+1. **Does this row pay into any account at all** — food, fodder or materials. A row paying nothing
+   ranks below one that pays something, so the dead row is shed first.
+2. **Then food per worker** (`last_yields[i].realized ÷ crew`), ties to the earliest row.
+
+Level 1 exists because a hay Field and the five cash crops pay **zero food by design** and are paid
+entirely by their materials rows, so a productive tobacco Field and a genuinely dead row tie at zero
+provisions and list position decided between them.
+
+**It is a PRESENCE test and must never become a combined score.** Ranking the two by amount would mean
+comparing a food rate against a material rate, and `labor_config.json`'s `_comment_weeding` refuses
+exactly that — *"an exchange rate this codebase does not have and should not invent"*. Asking only
+*whether* a row pays invents no exchange rate. The levels are in this order so the standing intent
+cannot invert: a food row pays **and** carries a positive per-worker yield, so a band short of hands
+still keeps its people on food and drops the tobacco. Level 1 decides only the tie beneath that.
+
 **Thinning beats emptying, and that is the sharp line.** Since §2.5 the builders are a band-level
 pool, so taking a hand off a source mid-build does not slow the build at all — only **emptying** the
 row does, because an entry requires a row and dropping the row drops the entry. The cliff is

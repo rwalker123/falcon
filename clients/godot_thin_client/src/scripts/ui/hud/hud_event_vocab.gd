@@ -275,10 +275,14 @@ const DETAIL_STATUS_STYLE := {
 ## row, and `pruned` narrowed what the crew still standing there takes.
 ##
 ## ⛔ **THE LINK ONLY APPEARS WHERE THE DETAIL CARRIES A `band=` TOKEN** (`DETAIL_BAND_KEY`), because
-## a jump has to name a band and the client will not recover one by reading the label's prose. The
-## labor system's own lines do NOT carry one yet — `systems::labor::announce_shed_crew` and the two
-## lapse sites beside it write the SOURCE (`x=`/`y=`, `herd=`) and no band — so those rows render
-## linkless until the sim adds it. That is a detail-token addition, not a schema change.
+## a jump has to name a band and the client will not recover one by reading the label's prose.
+## `systems::labor::announce_shed_crew`, the three lapse sites beside it and the server's own
+## `status=pruned` line all write it, as the band's **durable `BandId`** — the handle this panel
+## joins the roster on, and deliberately not the ECS entity, which is the same `u64` and is what
+## `command_guard` exists because someone once sent instead.
+##
+## **A cohort carrying no durable id still emits its line and simply renders linkless**, which is the
+## demographic feed's own rule rather than a fabricated `band=0`.
 const DETAIL_STATUS_WORK_LINK := {
 	"status=trimmed": true,
 	"status=lapsed": true,

@@ -1141,8 +1141,9 @@ func _make_event_row(event: Dictionary, pinned: bool) -> Control:
 ## ⛔ **A ROW THAT NAMES NO BAND GETS NO LINK, and that is the point of the second condition.**
 ## Recovering a band by reading the rendered sentence is exactly the drift the `key=value` contract
 ## exists to prevent, and a link that jumped to whatever band the panel happened to be showing would
-## be worse than no link at all. The labor system's lines carry the SOURCE and no band today, so they
-## render linkless until the sim writes one — see `HudEventVocab.DETAIL_STATUS_WORK_LINK`.
+## be worse than no link at all. The labor system's lines carry the band's **durable id** beside the
+## source now, so the condition holds where a cohort has one and withholds the link where it does not
+## — see `HudEventVocab.DETAIL_STATUS_WORK_LINK`.
 func _work_tab_link_band(event: Dictionary) -> int:
 	var detail := String(event["detail"])
 	if not HudEventVocab.DETAIL_STATUS_WORK_LINK.has(_detail_status_key(detail)):

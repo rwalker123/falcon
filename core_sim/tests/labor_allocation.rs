@@ -696,6 +696,102 @@ fn forage_lapses_when_the_band_walks_out_of_work_range() {
     );
 }
 
+/// **THE DURABLE `BandId` A LOSS LINE'S `band=` TOKEN MUST CARRY** — deliberately a small number no
+/// spawned `Entity`'s bits can ever equal (Bevy packs a non-zero generation into the high word), so
+/// the `assert_ne!` below is a real comparison and not a coincidence.
+const LOSS_LINE_BAND: core_sim::BandId = core_sim::BandId(7);
+
+/// The value of the `band=` token in `detail`, or `None` when it carries no such token. Read off the
+/// space-delimited `key=value` grammar the client's dock parses, so this asserts on the published
+/// form rather than on the format string that produced it.
+fn band_token(detail: &str) -> Option<u64> {
+    detail
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("band="))
+        .map(|value| value.parse().expect("the band token is a bare id"))
+}
+
+/// # ⛔ EVERY ROW THE SIM TAKES AWAY NAMES THE BAND IT TOOK IT FROM
+///
+/// The event dock offers a *"Work tab"* jump on a `status=trimmed` / `lapsed` / `pruned` row, and the
+/// detail's `band=` token is its **only** channel — `CommandEventState` on the wire is
+/// `{tick, kind, faction, label, detail, seq}` and carries no band field. Without the token the
+/// shipped link renders on nothing.
+///
+/// **Both shapes of loss are on one band here, on purpose.** The out-of-range Forage lapse names its
+/// source (`x=`/`y=`), while the shed **band-wide role** names none at all (`kind=scout`) — so on the
+/// second line there is nothing whatever a reader could infer a band from, which is why the token has
+/// to be stated rather than derived.
+///
+/// **It asserts the id is the DURABLE one, not the entity's bits.** Both are `u64` and neither would
+/// fail to compile; the client resolves this id through a roster join keyed on `band_id`, so entity
+/// bits would name a band that does not exist. A test that only checked the token was *present*
+/// would pass on exactly that wrong number.
+#[test]
+fn every_labor_loss_line_names_the_band_by_its_durable_id() {
+    let mut app = spawn_world();
+    let (patch_pos, _patch_tile) = food_tile(&mut app);
+    // Far enough from the patch that the Forage row lapses out of range this very turn.
+    let far_x = if patch_pos.x + 5 < app.world.resource::<TileRegistry>().width {
+        patch_pos.x + 5
+    } else {
+        patch_pos.x.saturating_sub(5)
+    };
+    let far_tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(far_x, patch_pos.y)
+        .expect("far tile resolves");
+
+    // Three hands committed to four seats: the scout is step 1 of the shedding order, so the band
+    // sheds it and then walks away from the patch it can no longer reach.
+    let mut allocation = forage_alloc(patch_pos, 3);
+    allocation.assignments.push(LaborAssignment {
+        target: LaborTarget::Scout,
+        workers: 1,
+        kit: None,
+    });
+    let band = spawn_band(&mut app, far_tile, 3, allocation);
+    app.world.entity_mut(band).insert(LOSS_LINE_BAND);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let losses: Vec<String> = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter_map(|entry| entry.detail.clone())
+        .filter(|detail| detail.contains("status=lapsed") || detail.contains("status=trimmed"))
+        .collect();
+    assert_eq!(
+        losses.len(),
+        2,
+        "fixture: the band must lose its scout AND abandon the patch — {losses:?}"
+    );
+    assert!(
+        losses.iter().any(|detail| detail.contains("kind=scout")),
+        "fixture: one of the two is the band-wide role, which names no source — {losses:?}"
+    );
+    assert!(
+        losses
+            .iter()
+            .any(|detail| detail.contains("reason=out_of_range")),
+        "fixture: the other is the source lapse — {losses:?}"
+    );
+    for detail in &losses {
+        assert_eq!(
+            band_token(detail),
+            Some(LOSS_LINE_BAND.0),
+            "every line the dock offers a Work tab on names the band: {detail}"
+        );
+        assert_ne!(
+            band_token(detail),
+            Some(band.to_bits()),
+            "and it is the durable BandId, never the entity bits the client cannot resolve: {detail}"
+        );
+    }
+}
+
 /// (d) `Σ assignments.workers` is clamped to the band's working-age head-count.
 #[test]
 fn assignment_sum_clamps_to_working_age() {

@@ -845,7 +845,9 @@ decided in code and there is no config lever competing with it.
 
 It returns a `ShedCrew` per row it touched — `remaining > 0` for a row it merely cut, `0` for one it
 destroyed outright — and `announce_shed_crew` pushes a `status=trimmed` or `status=lapsed` line for
-each on that source's own feed channel.
+each on that source's own feed channel. **Each of those lines names the band on a `band=` detail
+token**, which is what carries the dock's per-row *"Work tab"* link — see `event-feed.md` → "The
+`band=` token is what makes a loss line clickable".
 
 The trim half was silent for the whole life of the pass: only destroyed rows were handed back, so a
 crew going `6 → 3` on a band one worker short published a smaller number with **no event anywhere**.
@@ -867,7 +869,7 @@ is positional.
 | 2 | a **warrior**, if nothing threatens the band | |
 | 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
 | 4 | a **builder**, while more than one remains and something is queued | |
-| 5 | **thin the least-productive worked source that has two or more hands** — least yield *per worker*, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
+| 5 | **thin the least-productive worked source that has two or more hands** — "least productive" is the two-level test below, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
 | 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
 | 8 | a **keeper below the demand** — improvements begin to rot | |
@@ -909,11 +911,45 @@ pre-shed allocation, and once below against what survived, which is the reading 
 band whose builders row was emptied funds no head at all, and the split must not fund one it no
 longer has the hands to bank.
 
-**"Least productive" is `last_yields[i].realized ÷ crew`** — the row's own published headline yield,
-the number the band panel and the map annotation state, divided by the hands on it. It is the
-retained telemetry rather than a fresh derivation: this pass runs before the take, so it is the only
-yield reading that exists, and a second source here would order the shedding on a number the player
-has never been shown. Ties go to the earliest row, so the choice is stable.
+**"Least productive" is TWO levels, and the first one is a presence test.**
+
+1. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
+   the same retained `SourceYield`). A row paying nothing ranks below one that pays something, so it
+   is shed first.
+2. **Then `last_yields[i].realized ÷ crew`** — the row's own published headline yield, the number the
+   band panel and the map annotation state, divided by the hands on it. Ties go to the earliest row,
+   so the choice is stable.
+
+It is the retained telemetry rather than a fresh derivation: this pass runs before the take, so it is
+the only yield reading that exists, and a second source here would order the shedding on a number the
+player has never been shown.
+
+> #### ⛔ LEVEL 1 IS A PRESENCE TEST AND MAY NEVER BECOME A COMBINED SCORE
+>
+> A hay Field and the five cash crops read **zero in both scalar accounts and are paid entirely by
+> their materials rows** (`flora_config.json`), so a productive tobacco Field and a genuinely dead row
+> both quote `0` provisions per worker. Under `realized ÷ crew` alone they *tie*, and which one was
+> shed came down to list position — the thing nothing in this order is allowed to depend on.
+>
+> The obvious repair is a combined number, and `labor_config.json`'s `_comment_weeding` refuses
+> exactly it: ranking by amount would mean *"comparing a food rate against a trade rate, an exchange
+> rate this codebase does not have and should not invent"*. Asking only **whether** a row pays
+> sidesteps the question — a presence check invents no exchange rate — which is why level 1 is a
+> `bool` and not a term.
+>
+> **The levels are in this order so the standing behaviour cannot invert.** A food row pays *and*
+> carries a positive per-worker yield, so it still outranks every non-food row: a band short of hands
+> keeps its people on food and drops the tobacco. Level 1 decides only the tie beneath that.
+>
+> The three accounts are asked in their own published terms, because that is what `SourceYield`
+> carries: `realized` for food (the forward projection, so a big-game hunt on a wait turn still reads
+> as paying), `fodder` and `materials` for the other two, both of which are this turn's credited
+> amounts and have no projected twin to read. The material account is asked **row by row and never
+> summed** — the standing rule for it — though any one paying row answers the question.
+>
+> `shedding_order.rs` pins all three claims on the **published wire rows**: the dead row gives from
+> either list position, a food row still outranks a materials-only row, and two dead rows fall back
+> to the earliest-row tie-break rather than becoming order-dependent.
 
 **An edited row is not a zero-yield row.** `set_assignment` drops the edited row's telemetry with the
 row, and the `assign_labor` command re-seeds it immediately from the source's pre-commit forecast

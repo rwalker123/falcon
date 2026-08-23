@@ -1974,6 +1974,11 @@ const LAST_BUILDER_STANDING: u32 = 1;
 /// entered.
 const NOTHING_PER_WORKER: f32 = 0.0;
 
+/// **THE AMOUNT A ROW HAS TO EXCEED TO COUNT AS PAYING AN ACCOUNT** — the bar
+/// [`LaborAllocation::pays_any_account`] holds each of the three published accounts to. Strictly
+/// greater, so a row credited exactly nothing is a row that pays nothing, in every account alike.
+const PAYS_NOTHING: f32 = 0.0;
+
 /// **WHAT THE SHEDDING ORDER ASKS ABOUT THE GROUND UNDER ONE ROW** — the facts a row's *source*
 /// carries that [`LaborAllocation`] does not hold and cannot derive. Resolved by
 /// `systems::labor::advance_labor_allocation`, which has the world, and handed to
@@ -3982,9 +3987,51 @@ impl LaborAllocation {
             / assignment.workers as f32
     }
 
-    /// The least productive row `admits` names, by [`Self::yield_per_worker`]. Ties go to the
-    /// **earliest** row (`min_by` keeps the first minimum), so the choice is stable across turns
-    /// rather than depending on how the vector happens to be ordered.
+    /// **IS THIS ROW PAYING INTO ANY ACCOUNT AT ALL?** — food, fodder, or materials, asked of the
+    /// same retained telemetry [`Self::yield_per_worker`] reads. The first level of the shedding
+    /// order's comparison; a row that answers `false` is **dead** and goes before one that answers
+    /// `true`.
+    ///
+    /// > #### ⛔ A PRESENCE TEST, AND IT MAY NEVER BECOME A COMBINED SCORE
+    /// >
+    /// > A hay Field and the five cash crops (`flora_config.json`) pay **zero food by design** and are
+    /// > paid entirely by their fodder and materials rows, so a productive tobacco Field and a
+    /// > genuinely dead row both read `0` provisions and tie under `yield_per_worker` alone — which
+    /// > row was shed then came down to list position. Ranking them *by amount* would mean comparing a
+    /// > food rate against a material rate, and `labor_config.json`'s `_comment_weeding` refuses
+    /// > exactly that: *"an exchange rate this codebase does not have and should not invent"*. Asking
+    /// > only **whether** a row pays sidesteps the question — a presence check invents no exchange
+    /// > rate — and it is the only form of this that stays inside that rule.
+    ///
+    /// **The three accounts are asked in their own published terms**, because that is what
+    /// [`SourceYield`] carries: `realized` for food (the forward-projected headline the second level
+    /// then orders by, so a big-game hunt on a wait turn still reads as paying), `fodder` and
+    /// `materials` for the other two, both of which are this turn's *credited* amounts and have no
+    /// projected twin to read. The material account is asked **row by row and never summed** — the
+    /// standing rule for it — though here any one paying row is enough to answer the question.
+    fn pays_any_account(&self, index: usize) -> bool {
+        let Some(yields) = self.last_yields.get(index) else {
+            return false;
+        };
+        yields.realized > PAYS_NOTHING
+            || yields.fodder > PAYS_NOTHING
+            || yields
+                .materials
+                .iter()
+                .any(|payoff| payoff.amount > PAYS_NOTHING)
+    }
+
+    /// The least productive row `admits` names, on **two levels**: a row paying into no account at
+    /// all ([`Self::pays_any_account`]) ranks below every row that pays into one, and beneath that
+    /// the order is [`Self::yield_per_worker`] exactly as before. Ties go to the **earliest** row
+    /// (`min_by` keeps the first minimum), so the choice is stable across turns rather than depending
+    /// on how the vector happens to be ordered.
+    ///
+    /// **The levels are in that order so the existing behaviour cannot invert.** A food row pays and
+    /// carries a positive per-worker yield, so it still outranks every non-food row — a band short of
+    /// hands keeps its people on food and drops the tobacco, which was always the intent. What the
+    /// first level decides is only the tie *beneath* that: between a Field paying materials and a row
+    /// paying nothing, the dead one goes first.
     fn least_productive_row(
         &self,
         admits: impl Fn(usize, &LaborAssignment) -> bool,
@@ -3994,8 +4041,12 @@ impl LaborAllocation {
             .enumerate()
             .filter(|(index, assignment)| admits(*index, assignment))
             .min_by(|(left, _), (right, _)| {
-                self.yield_per_worker(*left)
-                    .total_cmp(&self.yield_per_worker(*right))
+                self.pays_any_account(*left)
+                    .cmp(&self.pays_any_account(*right))
+                    .then_with(|| {
+                        self.yield_per_worker(*left)
+                            .total_cmp(&self.yield_per_worker(*right))
+                    })
             })
             .map(|(index, _)| index)
     }

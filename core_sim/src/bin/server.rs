@@ -3155,6 +3155,21 @@ fn handle_assign_labor(
     // the row underneath already says what the crew now carries.
     if !pruned_take.is_empty() {
         let names = pruned_take.join(", ");
+        // **`band=` NAMES THE WORK BOARD THIS NARROWING HAPPENED ON** — the token the event dock's
+        // per-row *"Work tab"* link reads (`systems::labor::band_detail_token` says why it is the
+        // durable `BandId` and never the entity). Read off the selected band rather than the
+        // command's own argument, because that argument is absent whenever the player let the
+        // default-band picker choose.
+        //
+        // **It sits BEFORE `dropped=`, and it has to.** Detail tokens are space-delimited
+        // `key=value`, so the comma-joined display names can only be the trailing remainder
+        // (`.claude/rules/core_sim/event-feed.md`) — anything appended after them is swallowed by
+        // that value.
+        let band_token = app
+            .world
+            .get::<BandId>(band.entity)
+            .map(|id| format!(" band={}", id.0))
+            .unwrap_or_default();
         push_command_event(
             app,
             tick,
@@ -3162,8 +3177,8 @@ fn handle_assign_labor(
             faction,
             format!("{} no longer stands here — dropped from the take", names),
             Some(format!(
-                "status=pruned reason=not_here role={} dropped={}",
-                kind_label, names
+                "status=pruned reason=not_here role={}{} dropped={}",
+                kind_label, band_token, names
             )),
         );
     }
@@ -10409,6 +10424,14 @@ mod tests {
         assert!(
             forage_event_detail_contains(&app, "status=pruned"),
             "a selection the sim narrowed on the player's behalf is said once in the feed"
+        );
+        // **AND IT NAMES THE BAND**, because the event dock offers a *"Work tab"* jump on this row
+        // and the `band=` token is its only channel. Asserted as the whole token, ahead of
+        // `dropped=`: a bare `contains("90001")` would also pass on a tile coordinate, and a token
+        // appended *after* the comma-joined display names would be swallowed by that trailing value.
+        assert!(
+            forage_event_detail_contains(&app, &format!("band={FIXTURE_BAND_ID} dropped=")),
+            "the narrowed row names the band whose work board it is, by its durable BandId"
         );
 
         // …and the crew the player asked for is still there on the frame they are looking at.
