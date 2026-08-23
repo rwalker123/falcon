@@ -1,0 +1,1081 @@
+<meta charset="utf-8">
+<title>The Knowledge Screen</title>
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground:#eef2f1; --panel:#ffffff; --panel-2:#e6ecea; --line:#ccd8d6; --line-soft:#dee6e4;
+    --ink:#0d1719; --dim:#47595a; --faint:#6d807e; --signal:#0c766c; --warn:#9a6708;
+    --healthy:#2f7a3c; --danger:#b03c33;
+
+    --g-ground:#0b1114; --g-panel:#111a1e; --g-panel-2:#0e161a; --g-line:#26363c;
+    --g-line-soft:#1b282d; --g-ink:#e9efe9; --g-dim:#9db0ad; --g-faint:#6f8380;
+    --g-signal:#4fe0cf; --g-signal-deep:#1f9c8e; --g-signal-wash:rgba(79,224,207,0.14);
+    --g-warn:#f2b13f; --g-warn-wash:rgba(242,177,63,0.13); --g-danger:#e8746a;
+    --g-healthy:#76cd80; --g-pigment:#c89c66; --g-ghost:#13211f; --g-primary:#163a34;
+    --g-primary-t:#d8fff8;
+
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --measure:68ch; --r:3px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#080e10; --panel:#111a1e; --panel-2:#0e161a; --line:#26363c; --line-soft:#1b282d;
+      --ink:#e9efe9; --dim:#9db0ad; --faint:#6f8380; --signal:#4fe0cf; --warn:#f2b13f;
+      --healthy:#76cd80; --danger:#e8746a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#080e10; --panel:#111a1e; --panel-2:#0e161a; --line:#26363c; --line-soft:#1b282d;
+    --ink:#e9efe9; --dim:#9db0ad; --faint:#6f8380; --signal:#4fe0cf; --warn:#f2b13f;
+    --healthy:#76cd80; --danger:#e8746a;
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--ink); font-family:var(--sans);
+         font-size:16px; line-height:1.62; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1180px; margin:0 auto; padding:52px 24px 110px; }
+
+  .eyebrow { font-family:var(--mono); font-size:11.5px; letter-spacing:0.16em; text-transform:uppercase;
+             color:var(--faint); margin:0 0 14px; }
+  h1 { font-size:clamp(29px,4.2vw,43px); line-height:1.12; margin:0 0 18px; letter-spacing:-0.022em;
+       font-weight:600; text-wrap:balance; max-width:22ch; }
+  .standfirst { font-size:18.5px; line-height:1.55; color:var(--dim); margin:0 0 24px; max-width:var(--measure); }
+  .meta { display:flex; flex-wrap:wrap; gap:6px 26px; font-family:var(--mono); font-size:12px;
+          color:var(--faint); border-top:1px solid var(--line-soft); padding-top:15px; margin-top:26px; }
+  p { max-width:var(--measure); }
+  h2 { font-size:24px; line-height:1.22; margin:0; letter-spacing:-0.015em; font-weight:600; text-wrap:balance; }
+  h3 { font-size:15.5px; margin:30px 0 8px; font-weight:650; }
+  code, .k { font-family:var(--mono); font-size:0.875em; background:var(--panel-2);
+             border:1px solid var(--line-soft); border-radius:2px; padding:0.08em 0.34em; }
+  strong { font-weight:650; color:var(--ink); }
+  section { margin-top:62px; }
+  .sec-head { display:grid; grid-template-columns:58px 1fr; gap:18px; align-items:start;
+              border-top:2px solid var(--ink); padding-top:14px; margin-bottom:20px; }
+  .sec-id { font-family:var(--mono); font-size:21px; font-weight:600; color:var(--signal); line-height:1.3; }
+  .sec-head .sub { font-family:var(--mono); font-size:11.5px; letter-spacing:0.11em;
+                   text-transform:uppercase; color:var(--faint); margin:5px 0 0; }
+  .lede { font-size:17px; color:var(--dim); max-width:var(--measure); margin:0 0 18px; }
+  .caption { font-family:var(--mono); font-size:12px; color:var(--faint); margin:10px 0 0;
+             max-width:var(--measure); line-height:1.65; }
+
+  .stage { background:var(--g-ground); border:1px solid var(--g-line); border-radius:var(--r);
+           padding:20px; position:relative; color:var(--g-ink); font-family:var(--mono); }
+  .stage-label { position:absolute; top:0; right:0; font-family:var(--mono); font-size:10px;
+                 letter-spacing:0.13em; text-transform:uppercase; color:var(--g-faint);
+                 background:var(--g-panel-2); border-left:1px solid var(--g-line);
+                 border-bottom:1px solid var(--g-line); padding:4px 9px; border-radius:0 var(--r) 0 var(--r); }
+
+  /* ============ THE KNOWLEDGE SCREEN ============ */
+  .kscreen { display:grid; grid-template-columns:1fr 276px; gap:1px; background:var(--g-line);
+             border:1px solid var(--g-line); border-radius:var(--r); overflow:hidden; }
+  @media (max-width:900px) { .kscreen { grid-template-columns:1fr; } }
+
+  .khead { grid-column:1 / -1; background:var(--g-panel-2); padding:10px 13px;
+           display:flex; align-items:baseline; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+  .khead .t { font-size:13.5px; color:var(--g-ink); letter-spacing:0.02em; }
+  .khead .counts { font-size:11px; color:var(--g-faint); font-variant-numeric:tabular-nums; }
+
+  .kfilters { grid-column:1 / -1; background:var(--g-panel); padding:9px 13px;
+              display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+  .kfilters .lab { font-size:10px; letter-spacing:0.13em; text-transform:uppercase;
+                   color:var(--g-faint); margin-right:3px; }
+  .chip { font-family:var(--mono); font-size:11px; background:var(--g-ghost); color:var(--g-dim);
+          border:1px solid var(--g-line); border-radius:11px; padding:3px 11px; cursor:pointer;
+          transition:background 120ms ease, color 120ms ease, border-color 120ms ease; }
+  .chip:hover { border-color:var(--g-signal-deep); color:var(--g-ink); }
+  .chip:focus-visible { outline:2px solid var(--g-signal); outline-offset:2px; }
+  .chip[aria-pressed="true"] { background:var(--g-signal-wash); color:var(--g-signal); border-color:var(--g-signal-deep); }
+  .chip .n { color:var(--g-faint); margin-left:5px; font-variant-numeric:tabular-nums; }
+  .chip[aria-pressed="true"] .n { color:var(--g-signal); }
+  .chip.alert[aria-pressed="true"] { background:var(--g-warn-wash); color:var(--g-warn); border-color:var(--g-warn); }
+  .chip.alert[aria-pressed="true"] .n { color:var(--g-warn); }
+
+  .kbody { background:var(--g-panel); padding:14px 13px 16px; }
+  .kdomains { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  @media (max-width:820px) { .kdomains { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:560px) { .kdomains { grid-template-columns:1fr; } }
+
+  .kdom { background:var(--g-panel-2); border:1px solid var(--g-line-soft); border-radius:var(--r); padding:9px 10px 10px; }
+  .kdom > h5 { margin:0 0 3px; font-family:var(--mono); font-size:10px; letter-spacing:0.16em;
+               text-transform:uppercase; color:var(--g-faint); font-weight:400;
+               display:flex; justify-content:space-between; gap:8px; }
+  .kdom .shape { font-size:9.5px; letter-spacing:0.06em; text-transform:none; color:#41565c; }
+  .kdom .nodes { margin-top:7px; }
+  .kdom.ladder .nodes { border-left:1px solid var(--g-line); padding-left:9px; margin-left:3px; }
+
+  .knode { display:grid; grid-template-columns:11px 1fr auto; gap:7px; align-items:baseline;
+           padding:4px 5px 4px 4px; border-radius:2px; cursor:pointer; width:100%;
+           background:transparent; border:0; border-left:2px solid transparent; text-align:left;
+           font-family:var(--mono); }
+  .knode:hover { background:rgba(255,255,255,0.035); }
+  .knode:focus-visible { outline:2px solid var(--g-signal); outline-offset:-2px; }
+  .knode .pip { font-size:9px; line-height:1.7; color:var(--g-line); }
+  .knode .nm { font-size:11.5px; color:var(--g-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .knode .st { font-size:10px; color:var(--g-faint); white-space:nowrap; font-variant-numeric:tabular-nums; }
+
+  .knode.known .pip { color:var(--g-healthy); }
+  .knode.known .nm { color:var(--g-ink); }
+  .knode.known .st { color:var(--g-healthy); }
+  .knode.learning .pip { color:var(--g-signal); }
+  .knode.learning .nm { color:var(--g-dim); }
+  .knode.learning .st { color:var(--g-signal); }
+  .knode.unused { border-left-color:var(--g-warn); background:var(--g-warn-wash); }
+  .knode.unused .pip, .knode.unused .st { color:var(--g-warn); }
+  .knode.fresh { border-left-color:var(--g-signal); background:var(--g-signal-wash); }
+  .knode.fresh .pip, .knode.fresh .st { color:var(--g-signal); }
+  .knode.sel { box-shadow:inset 0 0 0 1px var(--g-signal-deep); background:rgba(79,224,207,0.09); }
+  .knode.dim { opacity:0.22; }
+
+  /* ---- detail pane ---- */
+  .kdetail { background:var(--g-panel-2); padding:13px 13px 16px; }
+  .kdetail .dnm { font-size:14px; color:var(--g-ink); margin:0 0 2px; letter-spacing:0.01em; }
+  .kdetail .dst { font-size:11px; margin:0 0 12px; }
+  .kdetail .dst.known { color:var(--g-healthy); }
+  .kdetail .dst.learning { color:var(--g-signal); }
+  .kdetail .dst.locked { color:var(--g-faint); }
+  .kdetail .dst.unused { color:var(--g-warn); }
+  .kfield { border-top:1px solid var(--g-line-soft); padding-top:8px; margin-top:10px; }
+  .kfield .lbl { font-size:9.5px; letter-spacing:0.15em; text-transform:uppercase; color:var(--g-faint); margin-bottom:4px; }
+  .kfield .val { font-size:11.5px; color:var(--g-dim); line-height:1.55; }
+  .kfield .val b { color:var(--g-ink); font-weight:600; }
+  .kfield.act .val { color:var(--g-signal); cursor:pointer; }
+  .prov { display:inline-flex; align-items:baseline; gap:5px; font-size:10.5px;
+          border:1px solid var(--g-line); border-radius:10px; padding:2px 8px; color:var(--g-dim); }
+  .prov.taught { border-color:#6b5b8a; color:#b39ddb; }
+  .prov.found { border-color:var(--g-pigment); color:var(--g-pigment); }
+  .kempty { font-size:11.5px; color:var(--g-faint); line-height:1.6; }
+
+  /* ---- misc game widgets reused ---- */
+  .btn { font-family:var(--mono); font-size:11.5px; background:var(--g-ghost); color:var(--g-signal);
+         border:1px solid var(--g-line); border-radius:var(--r); padding:5px 11px; cursor:pointer; }
+  .btn:hover { background:#173029; border-color:var(--g-signal-deep); }
+  .btn.primary { background:var(--g-primary); color:var(--g-primary-t); border-color:var(--g-signal-deep); }
+  .barslot { display:flex; align-items:center; gap:10px; padding:7px 10px; background:var(--g-panel-2);
+             border:1px solid var(--g-line); border-radius:var(--r); width:max-content; }
+  .barslot .ic { width:26px; height:26px; display:grid; place-items:center; border:1px solid var(--g-line);
+                 border-radius:var(--r); color:var(--g-signal); font-size:13px; position:relative; }
+  .barslot .ic .pip { position:absolute; top:-3px; right:-3px; width:8px; height:8px; border-radius:50%;
+                      background:var(--g-warn); border:1.5px solid var(--g-ground); }
+  .barslot .txt { font-size:10.5px; color:var(--g-faint); letter-spacing:0.1em; text-transform:uppercase; }
+
+  .popover { width:352px; background:var(--g-panel); border:1px solid var(--g-line);
+             border-radius:var(--r); box-shadow:0 10px 30px rgba(0,0,0,0.55); overflow:hidden; }
+  .arow { display:grid; grid-template-columns:3px 20px 1fr auto; gap:9px; align-items:start;
+          padding:10px 11px; border-bottom:1px solid var(--g-line-soft); }
+  .arow:last-of-type { border-bottom:0; }
+  .arow .stripe { align-self:stretch; background:var(--g-warn); border-radius:2px; }
+  .arow.know .stripe { background:var(--g-signal); }
+  .arow.crit .stripe { background:var(--g-danger); }
+  .arow .ico { font-size:13px; text-align:center; line-height:1.35; }
+  .arow.know .ico { color:var(--g-signal); font-weight:700; }
+  .arow > span:not([class]) { min-width:0; }
+  .arow .lab { display:block; font-size:12.5px; color:var(--g-ink); line-height:1.35; }
+  .arow.know .lab { color:var(--g-signal); }
+  .arow .det { display:block; font-size:11px; color:var(--g-faint); line-height:1.45; margin-top:2px; }
+  .arow .jump { font-size:11px; color:var(--g-signal); align-self:center; white-space:nowrap; }
+  .pop-foot { display:flex; justify-content:flex-end; padding:9px 11px; border-top:1px solid var(--g-line);
+              background:var(--g-panel-2); }
+
+  /* ---- band/city header + action bar ---- */
+  .bcp { width:330px; background:var(--g-panel); border:1px solid var(--g-line); border-radius:var(--r); overflow:hidden; }
+  .bcp-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:9px 11px 7px; }
+  .bcp-head .nm { font-size:13px; color:var(--g-ink); }
+  .bcp-head .tn { font-size:10.5px; color:var(--g-faint); }
+  .actbar { display:flex; gap:8px; padding:0 11px 9px; border-bottom:1px solid var(--g-line); }
+  .act { position:relative; width:28px; height:28px; display:grid; place-items:center;
+         font-family:var(--mono); font-size:14px; background:var(--g-ghost); color:var(--g-dim);
+         border:1px solid var(--g-line); border-radius:var(--r); cursor:pointer; }
+  .act:hover { background:#173029; border-color:var(--g-signal-deep); color:var(--g-signal); }
+  .act:focus-visible { outline:2px solid var(--g-signal); outline-offset:2px; }
+  .act[aria-pressed="true"] { background:var(--g-signal-wash); border-color:var(--g-signal-deep); color:var(--g-signal); }
+  .act .pip { position:absolute; top:-3px; right:-3px; width:8px; height:8px; border-radius:50%;
+              background:var(--g-warn); border:1.5px solid var(--g-panel); }
+  .bcp-tabs { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; border-bottom:1px solid var(--g-line); }
+  .bcp-tabs span { font-family:var(--mono); font-size:10.5px; letter-spacing:0.09em; text-transform:uppercase;
+                   color:var(--g-faint); text-align:center; padding:7px 2px; border-bottom:2px solid transparent; }
+  .bcp-tabs span.on { color:var(--g-signal); border-bottom-color:var(--g-signal); background:var(--g-signal-wash); }
+  .bcp-body { padding:11px; font-size:11px; color:var(--g-faint); line-height:1.6; }
+
+  /* ---- the REAL Band/City header, as band_panel_left.png renders it ---- */
+  .hdr { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:9px 10px 5px; }
+  .hdr .subj { display:flex; gap:8px; align-items:flex-start; min-width:0; }
+  .hdr .subj .sprite { font-size:18px; line-height:1.15; }
+  .hdr .subj .nm { font-size:13px; color:var(--g-ink); line-height:1.25; }
+  .hdr .subj .sub { font-size:9.5px; color:var(--g-faint); letter-spacing:0.04em; }
+  .hdr .chrome { display:flex; align-items:center; gap:7px; flex:none; }
+  .hdr .cyc { font-size:10px; color:var(--g-faint); font-variant-numeric:tabular-nums; }
+  .dockpick { display:grid; grid-template-columns:repeat(2,10px); gap:3px; padding:4px;
+              border:1px solid var(--g-line); border-radius:var(--r); background:var(--g-ghost); }
+  .dockpick i { width:10px; height:10px; border:1px solid #3a4a50; border-radius:2px; display:block; }
+  .dockpick i.on { border-color:var(--g-signal); background:var(--g-signal-wash); }
+
+  /* ---- glyph candidates + custom icon concepts ---- */
+  .glyphrow { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start; }
+  .gcand { text-align:center; }
+  .gcand .b { width:28px; height:26px; display:grid; place-items:center; font-family:var(--mono);
+              font-size:14px; background:var(--g-ghost); color:var(--g-dim);
+              border:1px solid var(--g-line); border-radius:var(--r); margin:0 auto; }
+  .gcand .n { font-size:9px; color:var(--g-faint); margin-top:5px; letter-spacing:0.04em; }
+  .gcand.risk .n { color:var(--g-warn); }
+  .iconrow { display:flex; gap:22px; flex-wrap:wrap; align-items:flex-start; }
+  .icard { text-align:center; }
+  .icard .true { width:28px; height:26px; display:grid; place-items:center; background:var(--g-ghost);
+                 color:var(--g-dim); border:1px solid var(--g-line); border-radius:var(--r); margin:0 auto 9px; }
+  .icard .big { width:76px; height:76px; display:grid; place-items:center; background:var(--g-panel-2);
+                color:var(--g-signal); border:1px solid var(--g-line); border-radius:var(--r); margin:0 auto; }
+  .icard .n { font-size:10.5px; color:var(--g-ink); margin-top:8px; }
+  .icard .w { font-size:10px; color:var(--g-faint); margin-top:3px; max-width:150px; line-height:1.5; }
+
+  /* ---- the "what Open opens" result frame ---- */
+  .result { flex:1 1 300px; min-width:280px; border:1px dashed var(--g-line); border-radius:var(--r);
+            padding:12px; min-height:196px; }
+  .result .hint { font-size:11px; color:var(--g-faint); line-height:1.65; }
+  .result .mini-screen { background:var(--g-panel); border:1px solid var(--g-line); border-radius:var(--r); overflow:hidden; }
+  .result .ms-head { background:var(--g-panel-2); padding:7px 10px; font-size:11px; color:var(--g-ink);
+                     display:flex; justify-content:space-between; gap:8px; }
+  .result .ms-head em { font-style:normal; color:var(--g-warn); font-size:10px; }
+  .result .ms-chip { padding:7px 10px 0; }
+  .result .ms-chip span { display:inline-block; font-size:10.5px; background:var(--g-warn-wash);
+                          color:var(--g-warn); border:1px solid var(--g-warn); border-radius:11px; padding:2px 10px; }
+  .result .ms-rows { padding:8px 10px 11px; }
+  .result .ms-row { display:grid; grid-template-columns:11px 1fr auto; gap:7px; align-items:baseline;
+                    padding:5px 5px 5px 6px; border-left:2px solid var(--g-warn); background:var(--g-warn-wash);
+                    margin-bottom:5px; border-radius:2px; }
+  .result .ms-row.new { border-left-color:var(--g-signal); background:var(--g-signal-wash); }
+  .result .ms-row .p { font-size:9px; color:var(--g-warn); }
+  .result .ms-row.new .p { color:var(--g-signal); }
+  .result .ms-row .n { font-size:11.5px; color:var(--g-ink); }
+  .result .ms-row .d { font-size:10px; color:var(--g-warn); }
+  .result .ms-row.new .d { color:var(--g-signal); }
+  .result .ms-row .sub { grid-column:2 / -1; font-size:10px; color:var(--g-faint); margin-top:2px; }
+
+  /* ---- minimap + its overlay button ---- */
+  .miniwrap { position:relative; width:264px; }
+  .mini { background:var(--g-panel-2); border:1px solid var(--g-line); border-radius:var(--r); padding:5px; }
+  .mini svg { display:block; border-radius:2px; }
+  .mini-btn { position:absolute; top:-11px; right:10px; width:24px; height:22px; display:grid; place-items:center;
+              font-family:var(--mono); font-size:12px; background:var(--g-panel-2); color:var(--g-dim);
+              border:1px solid var(--g-line); border-radius:var(--r) var(--r) 0 0; border-bottom:0; cursor:pointer; }
+  .mini-btn:hover { color:var(--g-signal); border-color:var(--g-signal-deep); }
+  .mini-btn:focus-visible { outline:2px solid var(--g-signal); outline-offset:2px; }
+  .mini-btn[aria-expanded="true"] { color:var(--g-signal); border-color:var(--g-signal-deep); background:var(--g-signal-wash); }
+  .mini-cap { font-size:10px; color:var(--g-faint); margin-top:6px; letter-spacing:0.06em; }
+
+  .chanpop { width:250px; background:var(--g-panel); border:1px solid var(--g-line);
+             border-radius:var(--r); box-shadow:0 10px 28px rgba(0,0,0,0.55); overflow:hidden; }
+  .chanpop[hidden] { display:none; }
+  .chanpop .h { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:var(--g-faint);
+                padding:8px 11px 6px; border-bottom:1px solid var(--g-line-soft); }
+  .chanpop .list { padding:5px 5px 6px; }
+  .chan { display:flex; justify-content:space-between; gap:8px; width:100%; text-align:left;
+          font-family:var(--mono); font-size:11.5px; color:var(--g-dim); background:transparent;
+          border:0; border-radius:2px; padding:4px 7px; cursor:pointer; }
+  .chan:hover { background:rgba(255,255,255,0.04); color:var(--g-ink); }
+  .chan:focus-visible { outline:2px solid var(--g-signal); outline-offset:-2px; }
+  .chan[aria-pressed="true"] { background:var(--g-signal-wash); color:var(--g-signal); }
+  .chan .stub { font-size:9.5px; color:var(--g-faint); }
+  .chanleg { border-top:1px solid var(--g-line); background:var(--g-panel-2); padding:9px 11px 11px; }
+  .chanleg .t { font-size:11.5px; color:var(--g-signal); margin-bottom:4px; }
+  .chanleg .d { font-size:10.5px; color:var(--g-dim); line-height:1.55; }
+  .chanleg .ramp { display:flex; height:8px; border-radius:2px; overflow:hidden; margin:8px 0 5px; }
+  .chanleg .ramp i { flex:1; }
+  .chanleg .nums { display:flex; justify-content:space-between; font-size:9.5px; color:var(--g-faint);
+                   font-variant-numeric:tabular-nums; }
+
+  .ovl { display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+  .ovl-sel { background:var(--g-panel); border:1px solid var(--g-line); border-radius:var(--r);
+             padding:9px 11px; width:230px; }
+  .ovl-sel .h { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:var(--g-faint);
+                border-bottom:1px solid var(--g-line-soft); padding-bottom:5px; margin-bottom:6px; }
+  .ovl-sel .ch { font-size:11.5px; color:var(--g-dim); padding:3px 5px; border-radius:2px; }
+  .ovl-sel .ch.on { background:var(--g-signal-wash); color:var(--g-signal); }
+  .ovl-legend { background:var(--g-panel); border:1px solid var(--g-line); border-radius:var(--r);
+                padding:9px 11px; max-width:250px; }
+  .ovl-legend .h { font-size:11.5px; color:var(--g-signal); margin-bottom:5px; }
+  .ovl-legend .d { font-size:11px; color:var(--g-dim); line-height:1.55; }
+
+  .cmp { width:100%; border-collapse:collapse; margin-top:16px; font-size:13.5px; }
+  .cmp th, .cmp td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+  /* Declare the colour rather than inherit it: this table sits between game-dark stages,
+     and an inherited value left the body text near-white on the light ground. */
+  .cmp td { color:var(--dim); }
+  .cmp td b, .cmp td strong { color:var(--ink); }
+  .cmp td code, .cmp td .k { color:var(--ink); }
+  .cmp thead th { font-family:var(--mono); font-size:10.5px; letter-spacing:0.11em; text-transform:uppercase;
+                  color:var(--faint); border-bottom:1px solid var(--line); }
+  .cmp td.id { font-family:var(--mono); color:var(--signal); font-weight:600; white-space:nowrap; }
+  .tbl-scroll { overflow-x:auto; }
+
+  @media (prefers-reduced-motion: reduce) { *,*::before,*::after { transition-duration:0.001ms !important; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Shadow-Scale · UX proposal · option H, built for scale</p>
+  <h1>Thirty-six things to know, and three you have never spent.</h1>
+  <p class="standfirst">
+    The knowledge screen with the tree it will actually have — six domains, thirty-six nodes,
+    projected from <code>intensification_ladder.json</code> and the plans that already name the
+    next rungs. Click any node. The filters are the argument.
+  </p>
+  <div class="meta">
+    <span>36 nodes · 6 domains</span>
+    <span>Turn 88</span>
+    <span>Palette from <code>ui/HudStyle.gd</code></span>
+    <span>Nothing here is built yet</span>
+  </div>
+</header>
+
+<section id="screen">
+  <div class="sec-head">
+    <div class="sec-id">1</div>
+    <div>
+      <h2>The screen</h2>
+      <p class="sub">Click a node · try the filters · the amber ones are the point</p>
+    </div>
+  </div>
+
+  <div class="stage" style="padding:16px;">
+    <span class="stage-label">knowledge · full screen</span>
+    <div class="kscreen">
+      <div class="khead">
+        <span class="t">What your people know</span>
+        <span class="counts" id="kCounts"></span>
+      </div>
+      <div class="kfilters" id="kFilters">
+        <span class="lab">Show</span>
+      </div>
+      <div class="kbody">
+        <div class="kdomains" id="kDomains"></div>
+      </div>
+      <div class="kdetail" id="kDetail"></div>
+    </div>
+  </div>
+
+  <p class="caption">
+    Six domains, three shapes. <b>Land / Herds / Routes / Telling are LADDERS</b> — a rail down the
+    left, each rung teaching the next. <b>Craft is a FAN</b> — no rail, because a craft is learned by
+    working its material and gates recipes rather than a next rung. <b>War hangs off Herds</b> — the
+    hunt already resolves through the combat model, so your hunters are your warriors and Skirmishing
+    is earned killing dangerous game.
+  </p>
+</section>
+
+<section id="unused">
+  <div class="sec-head">
+    <div class="sec-id">2</div>
+    <div>
+      <h2>The state that only exists at scale</h2>
+      <p class="sub">Known · never used · and the two doors into it</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    At five tracks you remember what you learned. At thirty-six you do not. Three nodes above are
+    known and unspent: <b>Road-building</b>, learned this turn, and <b>Tanning</b> and <b>Painted
+    Voice</b>, learned fourteen and twenty-two turns ago and never once used. Nothing in the game has
+    ever told you about the last two.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">band/city header · press ⌃ or Open ▸</span>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+
+      <div class="bcp">
+        <div class="hdr">
+          <span class="subj">
+            <span class="sprite">🛖</span>
+            <span><span class="nm">Your people</span><br><span class="sub">TURN 88</span></span>
+          </span>
+          <span class="chrome">
+            <button type="button" class="act" title="Previous settlement">◀</button>
+            <span class="cyc">1 / 3</span>
+            <button type="button" class="act" title="Next settlement">▶</button>
+            <span class="dockpick" title="Dock edge"><i></i><i></i><i class="on"></i><i></i></span>
+            <button type="button" class="act" title="Collapse">▾</button>
+          </span>
+        </div>
+        <div class="actbar">
+          <button type="button" class="act" title="Materials &amp; Crafting">⚒</button>
+          <button type="button" class="act" id="actKnow" aria-pressed="false"
+                  title="What your people know"><svg width="15" height="15" viewBox="0 0 24 24"
+              aria-hidden="true"><g fill="currentColor"><rect x="4" y="17" width="16" height="4" rx="2"/><rect x="6" y="11.6" width="12" height="4" rx="2"/><rect x="8" y="6.8" width="8" height="3.6" rx="1.8"/><rect x="10" y="2.8" width="4" height="3" rx="1.5"/></g></svg><span class="pip"></span></button>
+        </div>
+        <div class="bcp-tabs"><span class="on">Faction</span><span>Work</span><span>Parties</span></div>
+        <div class="bcp-body">Five icons ship today — <b style="color:var(--g-dim)">◀ ▶</b>, the
+          dock-edge picker, <b style="color:var(--g-dim)">▾</b>, and <b style="color:var(--g-dim)">⚒</b>
+          on the action row. Knowledge is the sixth, and <b style="color:var(--g-signal)">the Know tab
+          is gone</b> — the faction page is back to three.</div>
+      </div>
+
+      <div class="popover" style="width:340px;">
+        <div class="arow know">
+          <span class="stripe"></span><span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="4" y="17" width="16" height="4" rx="2"/><rect x="6" y="11.6" width="12" height="4" rx="2"/><rect x="8" y="6.8" width="8" height="3.6" rx="1.8"/><rect x="10" y="2.8" width="4" height="3" rx="1.5"/></g></svg></span>
+          <span>
+            <span class="lab">Road-building learned</span>
+            <span class="det">Cut a trail down to a dirt road</span>
+          </span>
+          <button type="button" class="btn openBtn" style="padding:3px 8px;">Open ▸</button>
+        </div>
+        <div class="arow">
+          <span class="stripe"></span><span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="4" y="17" width="16" height="4" rx="2"/><rect x="6" y="11.6" width="12" height="4" rx="2"/><rect x="8" y="6.8" width="8" height="3.6" rx="1.8"/><rect x="10" y="2.8" width="4" height="3" rx="1.5"/></g></svg></span>
+          <span>
+            <span class="lab">2 discoveries unspent</span>
+            <span class="det">Tanning · Painted Voice — never used</span>
+          </span>
+          <button type="button" class="btn openBtn" style="padding:3px 8px;">Open ▸</button>
+        </div>
+        <div class="arow crit">
+          <span class="stripe"></span><span class="ico">🍖</span>
+          <span><span class="lab">Band 4 starving</span><span class="det">3 turns of food left</span></span>
+          <span class="jump">Jump →</span>
+        </div>
+        <div class="pop-foot"><button class="btn primary">Advance ▸</button></div>
+      </div>
+
+      <div class="result" id="openResult">
+        <p class="hint">Press <b style="color:var(--g-signal)">⌃</b> on the action bar, or
+          <b style="color:var(--g-signal)">Open ▸</b> on either knowledge row.<br><br>
+          This frame shows exactly what appears.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <p class="caption">
+    The orb rows wear the <b>same mark as the launcher</b> — one asset, both surfaces, so the row and
+    the button can never come to mean different things.
+    <br><br>
+    <b>No knowledge row offers a jump.</b> A discovery unlocks a verb across the whole map — six
+    patches, three herds, a route — so there is no one hex to jump to, and picking one would be a
+    guess dressed as an answer. Every knowledge row is non-locating and opens the screen instead.
+    The starving band keeps its <span class="k">Jump →</span>, because a starving band <i>is</i> one
+    place.
+  </p>
+
+  <h3>The glyph, and the icon that should replace it</h3>
+  <p>
+    <code>⌃</code> was lame. The bar's existing marks are deliberately geometric because emoji do not
+    render reliably in the bundled font — but <b>the stage glyph already proves the way out</b>:
+    <code>_stage_glyph_sprite</code> is a <code>TextureRect</code> that swaps in bundled art when the
+    stage has it, with the font glyph only as fallback. Knowledge should be a drawn icon on that same
+    seam.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">stopgap glyphs · at true size</span>
+    <div class="glyphrow">
+      <div class="gcand"><span class="b">⌃</span><span class="n">CARET</span></div>
+      <div class="gcand"><span class="b">☰</span><span class="n">RUNGS</span></div>
+      <div class="gcand"><span class="b">⁂</span><span class="n">ASTERISM</span></div>
+      <div class="gcand"><span class="b">◈</span><span class="n">DIAMOND</span></div>
+      <div class="gcand risk"><span class="b">❖</span><span class="n">RISKY</span></div>
+      <div class="gcand risk"><span class="b">⬡</span><span class="n">RISKY</span></div>
+      <div class="gcand"><span class="b">▤</span><span class="n">GRID</span></div>
+    </div>
+    <p class="caption" style="margin-top:14px;">
+      <b>◈ is already taken</b> — it is the Discoveries mark on the faction page. <b>☰</b> is the
+      only one that says anything true: three rungs. The two marked RISKY are the coverage gamble the
+      bar's geometric rule exists to avoid, and both need rendering in the bundled font before they
+      are trusted.
+    </p>
+  </div>
+
+  <div class="stage" style="margin-top:16px;">
+    <span class="stage-label">custom icon · 28px, then 3×</span>
+    <div class="iconrow">
+
+      <div class="icard">
+        <span class="true"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="4" y="17" width="16" height="4" rx="2"/><rect x="6" y="11.6" width="12" height="4" rx="2"/><rect x="8" y="6.8" width="8" height="3.6" rx="1.8"/><rect x="10" y="2.8" width="4" height="3" rx="1.5"/></g></svg></span>
+        <span class="big"><svg width="52" height="52" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="4" y="17" width="16" height="4" rx="2"/><rect x="6" y="11.6" width="12" height="4" rx="2"/><rect x="8" y="6.8" width="8" height="3.6" rx="1.8"/><rect x="10" y="2.8" width="4" height="3" rx="1.5"/></g></svg></span>
+        <p class="n">Cairn</p>
+        <p class="w">Stacked stones. A trail cairn <i>is</i> inherited practical knowledge — the most
+          on-period reading, and it silhouettes cleanly at 15px.</p>
+      </div>
+
+      <div class="icard">
+        <span class="true"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><g stroke="currentColor" stroke-width="2.1" stroke-linecap="round" fill="none"><path d="M7 3.5 V20.5 M17 3.5 V20.5"/><path d="M7 7.5 H17 M7 12 H17 M7 16.5 H17"/></g></svg></span>
+        <span class="big"><svg width="52" height="52" viewBox="0 0 24 24" aria-hidden="true"><g stroke="currentColor" stroke-width="2.1" stroke-linecap="round" fill="none"><path d="M7 3.5 V20.5 M17 3.5 V20.5"/><path d="M7 7.5 H17 M7 12 H17 M7 16.5 H17"/></g></svg></span>
+        <p class="n">Rungs</p>
+        <p class="w">The mechanical truth: every branch is a short ladder and each rung teaches the
+          next. Reads as a ladder — or, unhelpfully, as a menu.</p>
+      </div>
+
+      <div class="icard">
+        <span class="true"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="8.6" y="4" width="2.4" height="9" rx="1.2"/><rect x="12" y="2.6" width="2.4" height="10.4" rx="1.2"/><rect x="15.4" y="4.6" width="2.4" height="8.4" rx="1.2"/><rect x="5.4" y="6.4" width="2.4" height="7" rx="1.2"/><rect x="3" y="10.4" width="2.3" height="5.4" rx="1.15" transform="rotate(-28 4.15 13.1)"/><rect x="5.6" y="11.4" width="12.2" height="9.4" rx="4.4"/></g></svg></span>
+        <span class="big"><svg width="52" height="52" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="8.6" y="4" width="2.4" height="9" rx="1.2"/><rect x="12" y="2.6" width="2.4" height="10.4" rx="1.2"/><rect x="15.4" y="4.6" width="2.4" height="8.4" rx="1.2"/><rect x="5.4" y="6.4" width="2.4" height="7" rx="1.2"/><rect x="3" y="10.4" width="2.3" height="5.4" rx="1.15" transform="rotate(-28 4.15 13.1)"/><rect x="5.6" y="11.4" width="12.2" height="9.4" rx="4.4"/></g></svg></span>
+        <p class="n">Handprint</p>
+        <p class="w">The cave-wall mark — ties Knowledge to the Telling's painted voice. The busiest
+          of the three at true size.</p>
+      </div>
+
+    </div>
+    <p class="caption" style="margin-top:14px;">
+      All three are drawn here at the button's real 15px and again at 3×, because the whole risk with
+      an icon is that it silhouettes at the size it is judged and mushes at the size it ships.
+      <b>The cairn is my pick</b> — fewest strokes, no clash with <b>⚒</b> or the stage hut, and the
+      only one whose meaning is not also the meaning of a hamburger menu. It is the one on the action
+      bar above.
+    </p>
+  </div>
+</section>
+
+<section id="overlay">
+  <div class="sec-head">
+    <div class="sec-id">3</div>
+    <div>
+      <h2>Where, when the answer is a hundred hexes</h2>
+      <p class="sub">The overlay picker moves onto the minimap border</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    A one-turn pulse across a hundred patches is unreadable, and “how long does it stay” has no good
+    answer. Both problems come from making the mark an <b>event</b>. Make it a <b>channel</b> — and
+    put the channel picker where a player will actually find it, which is not inside a modding tool.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">nav cluster · press ◐</span>
+    <div style="display:flex; gap:26px; flex-wrap:wrap; align-items:flex-start;">
+
+      <div class="miniwrap">
+        <button type="button" class="mini-btn" id="ovlBtn" aria-expanded="false"
+                title="Map overlay">◐</button>
+        <div class="mini">
+          <svg viewBox="0 0 250 150" width="250" height="150" role="img" aria-label="Minimap with the ready-to-climb overlay active">
+            <rect x="0" y="0" width="250" height="150" fill="#0a1013"/>
+            <path d="M18 96 Q60 62 104 78 T196 60 L232 74 L232 138 L18 138 Z" fill="#16211d"/>
+            <path d="M32 44 Q78 24 118 40 T208 30 L226 42 L226 62 Q170 52 120 66 T40 72 Z" fill="#131c20"/>
+            <g fill="#4fe0cf" opacity="0.9">
+              <circle cx="62" cy="88" r="2.4"/><circle cx="84" cy="102" r="2.4"/>
+              <circle cx="108" cy="86" r="2.4"/><circle cx="126" cy="108" r="2.4"/>
+              <circle cx="142" cy="92" r="2.4"/><circle cx="160" cy="112" r="2.4"/>
+              <circle cx="178" cy="88" r="2.4"/><circle cx="196" cy="104" r="2.4"/>
+              <circle cx="70" cy="118" r="2.4"/><circle cx="150" cy="72" r="2.4"/>
+              <circle cx="196" cy="76" r="2.4"/><circle cx="94" cy="68" r="2.4"/>
+            </g>
+            <g fill="#4fe0cf" opacity="0.34">
+              <circle cx="62" cy="88" r="7"/><circle cx="126" cy="108" r="7"/><circle cx="178" cy="88" r="7"/>
+            </g>
+            <rect x="88" y="58" width="76" height="46" fill="none" stroke="#e9efe9" stroke-width="1.2" opacity="0.75"/>
+          </svg>
+        </div>
+        <p class="mini-cap">MINIMAP · the white box is your viewport</p>
+      </div>
+
+      <div class="chanpop" id="chanPop" hidden>
+        <div class="h">Map overlay</div>
+        <div class="list" id="chanList"></div>
+        <div class="chanleg" id="chanLeg"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <p class="caption">
+    Everything in that popover is <code>Inspector → Map → OverlaySection</code> moved intact —
+    the channel list, the per-channel description, the min/avg/max legend and the
+    <span class="k">stub data</span> marker. <b>Ready to climb</b> is one new channel among them.
+    The button is docked <i>on</i> the minimap's top border rather than floated beside it, so it
+    costs the nav cluster no width and cannot be mistaken for a zoom control.
+  </p>
+
+  <p class="caption">
+    <b>The unlock never lights the map itself.</b> It says what the verb is, and the player who wants
+    to see all hundred and four sources turns the channel on — the same reading at 3 sources or at
+    300, and nothing anywhere has a duration.
+  </p>
+</section>
+
+<section id="notes">
+  <div class="sec-head">
+    <div class="sec-id">4</div>
+    <div>
+      <h2>Where the thirty-six came from</h2>
+      <p class="sub">Not invented where the repo already decided</p>
+    </div>
+  </div>
+
+  <div class="tbl-scroll">
+    <table class="cmp">
+      <thead><tr><th>Domain</th><th>Source</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td class="id">Land · Herds</td>
+          <td>Rungs 1–3 shipped. <b>Rung 4's lessons are named in the config comments</b> — <code>irrigation</code>/<code>rotation</code> for plants, <code>selective_breeding</code> for animals, both marked parked.</td>
+          <td>Real</td></tr>
+        <tr><td class="id">Routes</td>
+          <td><code>plan_contact_and_logistics.md</code> §Q4: game trail → trail → dirt road → paved road, explicitly a third <code>branch</code> of the same rung engine, with traffic in place of a crew.</td>
+          <td>Designed</td></tr>
+        <tr><td class="id">Craft</td>
+          <td>Tanning / Weaving / Bone-working are shipped discovery ids. The rest are the same pattern on other materials.</td>
+          <td>Part real</td></tr>
+        <tr><td class="id">War</td>
+          <td><code>plan_hunt_through_combat.md</code> resolves the hunt through the combat model. The knowledge names are mine; the <b>hunting-teaches-fighting link is the plan's</b>.</td>
+          <td>Invented</td></tr>
+        <tr><td class="id">Telling</td>
+          <td>Oral → painted → written is the shipped voice-medium ladder. Observance / Reckoning / Custom are mine.</td>
+          <td>Part real</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Three things this build decided that the eight-option page could not</h3>
+  <p>
+    <b>It gets wider, not deeper.</b> The rung engine models four rungs; what grows is the number of
+    parallel branches. Six short ladders side by side is a far easier layout than one twelve-deep
+    DAG — and it means the screen never needs pan, zoom, or edge routing.
+  </p>
+  <p>
+    <b>Provenance is a real field.</b> Three nodes above were not practised: <b>Trail-making</b> was
+    taught by the Ashfolk, <b>Firing</b> was found at a site, and the rest were earned. Once contact
+    can teach you things, “how do I have this” is a question the screen has to answer.
+  </p>
+  <p>
+    <b>Culture nodes do not unlock verbs.</b> Select <b>Observance</b> or <b>Custom</b> — the detail
+    pane says what <i>changes</i>, not what you may now do. That is the Telling's own
+    “re-colouring, not just unlocking”, and it is why a verb-keyed page could not have held this.
+  </p>
+</section>
+
+<section id="wiring">
+  <div class="sec-head">
+    <div class="sec-id">5</div>
+    <div>
+      <h2>How any of it is reached</h2>
+      <p class="sub">Decided · what exists · what is one branch away</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    Every control above resolves to something in the shipped client, or to a named gap. This is the
+    audit, because a prototype that promises an affordance the code cannot honour is worse than one
+    that shows nothing.
+  </p>
+
+  <div class="tbl-scroll">
+    <table class="cmp">
+      <thead><tr><th>Control</th><th>Where it lives</th><th>What it costs</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">⌃ on the action bar</td>
+          <td><b>Decided.</b> The Band/City header already has an action bar — <code>ACTION_CRAFTING</code> registers <code>⚒</code> with a glyph, tooltip and enabled flag, and the panel emits <code>crafting_requested</code>. Knowledge is a second entry in the same list.</td>
+          <td>One action descriptor, one signal, one panel. The launcher pattern is already proven by Crafting.</td>
+        </tr>
+        <tr>
+          <td class="id">The screen itself</td>
+          <td>A free-floating panel, like the Crafting panel it sits beside on the bar — <b>not</b> the 354px narrow shell, which cannot hold 36 nodes.</td>
+          <td>A new panel. Its layout is §1.</td>
+        </tr>
+        <tr>
+          <td class="id">Open ▸</td>
+          <td>Non-locating row (<code>x &lt; 0</code>) → <code>TurnOrb.panel_requested(kind)</code> → <code>TurnOrbController._on_turn_orb_panel_requested</code>, which today branches on one kind only (<code>decision</code> → the fork panel).</td>
+          <td><b>One new branch</b>, opening the screen on <span class="k">Ready · unused</span>.</td>
+        </tr>
+        <tr>
+          <td class="id">Jump → on knowledge</td>
+          <td><b>Dropped.</b> A discovery unlocks a verb across the whole map; there is no one hex, and <code>focus_on_tile</code> needs one. Only the starving-band row keeps a jump.</td>
+          <td>Nothing — it is the row not making a promise.</td>
+        </tr>
+        <tr>
+          <td class="id">◐ on the minimap</td>
+          <td><b>Decided.</b> <code>Inspector → Map → OverlaySection</code> moves here whole: channel list, per-channel description, min/avg/max legend, stub-data marker. The Inspector is a modding tool and is not normally on screen.</td>
+          <td>Re-parenting an existing panel, plus one border-mounted button on <code>MinimapPanel</code>.</td>
+        </tr>
+        <tr>
+          <td class="id">The Know tab</td>
+          <td><b>Removed.</b> The faction page goes back to three tabs — Faction, Work, Parties.</td>
+          <td>Deleting a zone, not adding one.</td>
+        </tr>
+        <tr>
+          <td class="id">Bottom-bar slot</td>
+          <td><b>Cut.</b> The action bar carries the unspent pip, so a second counter earned nothing.</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>What is left</h3>
+  <p>
+    <b>The icon needs drawing.</b> The cairn above is an SVG sketch, not an asset. Shipping it means
+    a bundled texture on the <code>_stage_glyph_sprite</code> seam, at the sizes the action bar and
+    the collapsed rail both use.
+  </p>
+</section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var P = "practised", T = "taught", F = "found";
+
+  var DOMAINS = [
+    { name: "Land", shape: "ladder", ladder: true, nodes: [
+      { id:"cultivation", nm:"Cultivation", state:"known", used:true, prov:P, provText:"Practised · turn 31",
+        does:"Cultivate a thriving wild patch", learn:"Working a wild patch", where:"6 patches ready" },
+      { id:"seed_selection", nm:"Seed Selection", state:"known", used:true, prov:P, provText:"Practised · turn 54",
+        does:"Sow on rich, well-watered ground", learn:"Working a tended patch", where:"2 sites will take seed" },
+      { id:"irrigation", nm:"Irrigation", state:"learning", pct:66,
+        does:"Water a field through a dry season", learn:"Working a sown field" },
+      { id:"rotation", nm:"Rotation", state:"locked", needs:"Irrigation",
+        does:"Rest a field without losing it", learn:"Working a sown field" },
+      { id:"terracing", nm:"Terracing", state:"locked", needs:"Rotation, and steep ground to work",
+        does:"Farm a slope", learn:"Working worked land on a hill" }
+    ]},
+
+    { name: "Herds", shape: "ladder", ladder: true, nodes: [
+      { id:"herding", nm:"Herding", state:"known", used:true, prov:P, provText:"Practised · turn 38",
+        does:"Tame a wild herd", learn:"Working a wild herd", where:"3 herds ready" },
+      { id:"penning", nm:"Penning", state:"known", used:true, prov:P, provText:"Practised · turn 61",
+        does:"Corral a herd you have tamed", learn:"Working a tamed herd", where:"1 herd ready" },
+      { id:"foddering", nm:"Foddering", state:"learning", pct:71,
+        does:"Bank hay in the fodder store to feed your pens", learn:"Keeping a penned herd" },
+      { id:"selective_breeding", nm:"Selective Breeding", state:"locked", needs:"Foddering",
+        does:"Breed a pen toward milk, meat or hide", learn:"Keeping a penned herd" },
+      { id:"milking", nm:"Milking", state:"locked", needs:"Selective Breeding",
+        does:"Draw food from a herd without killing it", learn:"Keeping a bred pen" },
+      { id:"droving", nm:"Droving", state:"locked", needs:"Penning, and a route to drive them down",
+        does:"Move a pen overland without losing it", learn:"Walking herds between pens" }
+    ]},
+
+    { name: "Craft", shape: "fan · by material", ladder: false, nodes: [
+      { id:"knapping", nm:"Knapping", state:"known", used:true, prov:P, provText:"Practised · turn 12",
+        does:"Stone into points and blades — 6 recipes", learn:"Working stone", where:"Workbench · 6 recipes" },
+      { id:"tanning", nm:"Tanning", state:"known", used:false, prov:P, provText:"Practised · turn 66",
+        does:"Hide into leather — 4 recipes", learn:"Working hide",
+        where:"Workbench · 4 recipes, none ever built" },
+      { id:"firing", nm:"Firing", state:"known", used:true, prov:F, provText:"Found at the Kiln · 31,17",
+        does:"Clay into fired pots — 3 recipes", learn:"Nobody practised this. Your people found it.",
+        where:"Workbench · 3 recipes" },
+      { id:"bone_working", nm:"Bone-working", state:"learning", pct:40,
+        does:"Bone into points, needles and haft pins", learn:"Working bone" },
+      { id:"weaving", nm:"Weaving", state:"locked", needs:"A fibre source your people work",
+        does:"Fibre into cord and cloth", learn:"Working fibre" },
+      { id:"wood_working", nm:"Wood-working", state:"locked", needs:"A worked wood source",
+        does:"Hafts, frames and fencing", learn:"Working wood" }
+    ]},
+
+    { name: "Routes", shape: "ladder", ladder: true, nodes: [
+      { id:"wayfinding", nm:"Wayfinding", state:"known", used:true, prov:P, provText:"Practised · turn 44",
+        does:"Send a party beyond what you can see", learn:"Sending parties far", where:"Party range +2" },
+      { id:"trail_making", nm:"Trail-making", state:"known", used:true, prov:T,
+        provText:"Taught by the Ashfolk · turn 71",
+        does:"Wear a game trail into a trail", learn:"Walking a game trail", where:"4 connections held" },
+      { id:"road_building", nm:"Road-building", state:"known", used:false, fresh:true, prov:P,
+        provText:"Practised · turn 88 — this turn",
+        does:"Cut a trail down to a dirt road", learn:"Keeping a trail open", where:"1 route ready" },
+      { id:"paving", nm:"Paving", state:"locked", needs:"Road-building, and traffic that pays the upkeep",
+        does:"Pave a road — cheapest to travel, dearest to hold", learn:"Keeping a road open" },
+      { id:"portage", nm:"Portage", state:"learning", pct:28,
+        does:"Carry more before a trip has to end", learn:"Carrying cargo the length of a route" },
+      { id:"caching", nm:"Caching", state:"locked", needs:"Portage",
+        does:"Hold a waystation part-way down a route", learn:"Running long routes" },
+      { id:"reckoning", nm:"Reckoning", state:"locked", needs:"12 completed deliveries",
+        does:"Better terms, and less lost in transit", learn:"Completing deliveries" }
+    ]},
+
+    { name: "War", shape: "ladder · out of Herds", ladder: true, nodes: [
+      { id:"skirmishing", nm:"Skirmishing", state:"known", used:true, prov:P, provText:"Practised · turn 57",
+        does:"Fight without your people breaking",
+        learn:"Hunting dangerous game — the hunt already resolves as combat", where:"All hunters" },
+      { id:"ambush", nm:"Ambush", state:"learning", pct:33,
+        does:"Strike first, from cover", learn:"Fighting in broken terrain" },
+      { id:"formation", nm:"Formation", state:"locked", needs:"Ambush",
+        does:"Hold a line when you have the numbers", learn:"Fighting with more than a band" },
+      { id:"raiding", nm:"Raiding", state:"locked", needs:"Formation",
+        does:"Take from another band's stores", learn:"Raiding" },
+      { id:"shield_wall", nm:"Shield-wall", state:"locked", needs:"Formation, and Wood-working",
+        does:"Absorb a charge", learn:"Fighting in formation" },
+      { id:"fortification", nm:"Fortification", state:"locked", needs:"Being raided, or holding a site",
+        does:"Harden a settlement against a raid", learn:"Surviving raids" }
+    ]},
+
+    { name: "Telling", shape: "ladder · re-colours", ladder: true, nodes: [
+      { id:"oral_voice", nm:"Oral Voice", state:"known", used:true, prov:P, provText:"From the first fire",
+        changes:"Beats are spoken, and forgotten", learn:"Telling", where:"Every beat" },
+      { id:"painted_voice", nm:"Painted Voice", state:"known", used:false, prov:P, provText:"Practised · turn 74",
+        changes:"Beats outlive the people who told them — and can be painted over",
+        learn:"Telling, once your people hold one place",
+        where:"The book · no beat has ever been painted" },
+      { id:"written_voice", nm:"Written Voice", state:"locked", needs:"Painted Voice, and a settlement",
+        changes:"Beats survive exactly, and can be read back", learn:"Telling from a settled place" },
+      { id:"observance", nm:"Observance", state:"learning", pct:55,
+        changes:"A beat told often enough becomes a rite — and re-colours every telling after it",
+        learn:"Telling the same beat across generations" },
+      { id:"reckoning_years", nm:"Reckoning of Years", state:"locked", needs:"Written Voice",
+        changes:"The chronicle can call back to itself", learn:"Keeping a written book" },
+      { id:"custom", nm:"Custom", state:"locked", needs:"Observance, and a stance you have held",
+        changes:"Your answers harden into law — forks narrow, and your people expect you",
+        learn:"Answering forks the same way, for a long time" }
+    ]}
+  ];
+
+  var ALL = [];
+  DOMAINS.forEach(function (d) { d.nodes.forEach(function (n) { n.domain = d.name; ALL.push(n); }); });
+
+  function isUnused(n) { return n.state === "known" && !n.used; }
+  function isClose(n)  { return n.state === "learning" && n.pct >= 60; }
+
+  var FILTERS = [
+    { id:"all",      lab:"All",             test:function () { return true; } },
+    { id:"learning", lab:"Learning now",    test:function (n) { return n.state === "learning"; } },
+    { id:"close",    lab:"Close",           test:isClose },
+    { id:"unused",   lab:"Ready · unused",  test:isUnused, alert:true },
+    { id:"new",      lab:"New this turn",   test:function (n) { return !!n.fresh; } }
+  ];
+
+  var active = "all";
+  var selected = "tanning";
+
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+  function meter(pct) {
+    var filled = Math.round(pct / 20), out = "", i;
+    for (i = 0; i < 5; i += 1) { out += i < filled ? "▰" : "▱"; }
+    return out;
+  }
+
+  function statusText(n) {
+    if (n.fresh) { return "NEW"; }
+    if (isUnused(n)) { return "unused"; }
+    if (n.state === "known") { return "known"; }
+    if (n.state === "learning") { return meter(n.pct) + " " + n.pct + "%"; }
+    return "—";
+  }
+
+  function nodeClass(n) {
+    var c = "knode " + n.state;
+    if (n.fresh) { c += " fresh"; }
+    else if (isUnused(n)) { c += " unused"; }
+    if (n.id === selected) { c += " sel"; }
+    var f = FILTERS.filter(function (x) { return x.id === active; })[0];
+    if (f && !f.test(n)) { c += " dim"; }
+    return c;
+  }
+
+  function pipFor(n) {
+    if (n.state === "known") { return "●"; }
+    if (n.state === "learning") { return "◐"; }
+    return "○";
+  }
+
+  function renderDomains() {
+    var html = "";
+    DOMAINS.forEach(function (d) {
+      html += '<div class="kdom' + (d.ladder ? " ladder" : "") + '">';
+      html += "<h5><span>" + esc(d.name) + '</span><span class="shape">' + esc(d.shape) + "</span></h5>";
+      html += '<div class="nodes">';
+      d.nodes.forEach(function (n) {
+        html += '<button type="button" class="' + nodeClass(n) + '" data-id="' + n.id + '">';
+        html += '<span class="pip">' + pipFor(n) + "</span>";
+        html += '<span class="nm">' + esc(n.nm) + "</span>";
+        html += '<span class="st">' + statusText(n) + "</span>";
+        html += "</button>";
+      });
+      html += "</div></div>";
+    });
+    document.getElementById("kDomains").innerHTML = html;
+  }
+
+  function renderCounts() {
+    var known = ALL.filter(function (n) { return n.state === "known"; }).length;
+    var learning = ALL.filter(function (n) { return n.state === "learning"; }).length;
+    var unknown = ALL.length - known - learning;
+    var unspent = ALL.filter(isUnused).length;
+    document.getElementById("kCounts").innerHTML =
+      known + " known · " + learning + " learning · " + unknown + " unknown · " +
+      '<span style="color:var(--g-warn)">' + unspent + " unspent</span>";
+  }
+
+  function renderFilters() {
+    var host = document.getElementById("kFilters");
+    host.innerHTML = '<span class="lab">Show</span>';
+    FILTERS.forEach(function (f) {
+      var n = ALL.filter(f.test).length;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (f.alert ? " alert" : "");
+      b.setAttribute("aria-pressed", f.id === active ? "true" : "false");
+      b.innerHTML = esc(f.lab) + '<span class="n">' + n + "</span>";
+      b.addEventListener("click", function () { active = f.id; renderFilters(); renderDomains(); });
+      host.appendChild(b);
+    });
+  }
+
+  function field(lbl, val, act) {
+    return '<div class="kfield' + (act ? " act" : "") + '"><div class="lbl">' + lbl +
+           '</div><div class="val">' + val + "</div></div>";
+  }
+
+  function renderDetail() {
+    var n = ALL.filter(function (x) { return x.id === selected; })[0];
+    var host = document.getElementById("kDetail");
+    if (!n) { host.innerHTML = '<p class="kempty">Select anything on the left.</p>'; return; }
+
+    var stCls = n.fresh ? "learning" : isUnused(n) ? "unused" : n.state;
+    var stTxt;
+    if (n.fresh) { stTxt = "Learned this turn · never used"; }
+    else if (isUnused(n)) { stTxt = "Known · never used"; }
+    else if (n.state === "known") { stTxt = "Known"; }
+    else if (n.state === "learning") { stTxt = meter(n.pct) + "  " + n.pct + "% learned"; }
+    else { stTxt = "Not begun"; }
+
+    var html = '<p class="dnm">' + esc(n.nm) + "</p>";
+    html += '<p class="dst ' + stCls + '">' + stTxt + "</p>";
+
+    if (n.changes) {
+      html += field("What it changes", esc(n.changes));
+    } else {
+      html += field("What it lets you do", "<b>" + esc(n.does) + "</b>");
+    }
+
+    if (n.state === "locked") {
+      html += field("Needs", esc(n.needs));
+    } else if (n.where) {
+      html += field("Where, now", esc(n.where) + " →", true);
+    }
+
+    html += field("How it is learned", esc(n.learn));
+
+    if (n.prov) {
+      var cls = n.prov === "taught" ? "prov taught" : n.prov === "found" ? "prov found" : "prov";
+      var glyph = n.prov === "taught" ? "⇄" : n.prov === "found" ? "◈" : "⌃";
+      html += field("How you came by it",
+        '<span class="' + cls + '">' + glyph + " " + esc(n.provText) + "</span>");
+    }
+
+    host.innerHTML = html;
+  }
+
+  document.getElementById("kDomains").addEventListener("click", function (e) {
+    var btn = e.target.closest(".knode");
+    if (!btn) { return; }
+    selected = btn.getAttribute("data-id");
+    renderDomains();
+    renderDetail();
+  });
+
+  renderCounts();
+  renderFilters();
+  renderDomains();
+  renderDetail();
+}());
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- §2 · what ⌃ and Open ▸ actually open ---------- */
+  var result = document.getElementById("openResult");
+  var actKnow = document.getElementById("actKnow");
+
+  var HINT = result.innerHTML;
+  var OPENED =
+    '<div class="mini-screen">' +
+      '<div class="ms-head"><span>What your people know</span><em>3 unspent</em></div>' +
+      '<div class="ms-chip"><span>Ready · unused  3</span></div>' +
+      '<div class="ms-rows">' +
+        '<div class="ms-row new"><span class="p">●</span><span class="n">Road-building</span>' +
+          '<span class="d">NEW</span>' +
+          '<span class="sub">Cut a trail down to a dirt road · Routes</span></div>' +
+        '<div class="ms-row"><span class="p">●</span><span class="n">Tanning</span>' +
+          '<span class="d">unused</span>' +
+          '<span class="sub">Hide into leather — 4 recipes, none built · Craft</span></div>' +
+        '<div class="ms-row"><span class="p">●</span><span class="n">Painted Voice</span>' +
+          '<span class="d">unused</span>' +
+          '<span class="sub">Beats outlive their tellers — none painted · Telling</span></div>' +
+      '</div>' +
+    "</div>";
+
+  var isOpen = false;
+  function setOpen(next) {
+    isOpen = next;
+    result.innerHTML = isOpen ? OPENED : HINT;
+    actKnow.setAttribute("aria-pressed", isOpen ? "true" : "false");
+    var pip = actKnow.querySelector(".pip");
+    if (pip) { pip.style.display = isOpen ? "none" : ""; }
+  }
+
+  actKnow.addEventListener("click", function () { setOpen(!isOpen); });
+  Array.prototype.forEach.call(document.querySelectorAll(".openBtn"), function (b) {
+    b.addEventListener("click", function () { setOpen(true); });
+  });
+
+  /* ---------- §3 · the minimap overlay picker ---------- */
+  var CHANNELS = [
+    { id:"none",     nm:"No Overlay",         desc:"Base map without overlays." },
+    { id:"elev",     nm:"Elevation",          desc:"Relative height. The default channel — worldgen publishes it for every map.",
+      ramp:["#1b2b33","#2f5560","#5d8a7e","#a8b083","#e0d9c4"], nums:["0 m","410 m","1 940 m"] },
+    { id:"forage",   nm:"Forage capacity",    desc:"What the human food layer can carry, per tile.",
+      ramp:["#4a3a22","#8a7433","#b8a83f","#7fa447","#3f8c4a"], nums:["0","36","118"] },
+    { id:"pasture",  nm:"Pasture capacity",   desc:"What the graze layer can carry, per tile.",
+      ramp:["#3d3524","#7d7038","#b3a552","#8ba85c","#5f9b57"], nums:["0","28","96"] },
+    { id:"sentiment",nm:"Sentiment",          desc:"Morale and agency composite.",
+      ramp:["#5c1f1c","#8e3630","#c05a4c","#d98e7e","#e8c0b3"], nums:["-42","+6","+61"] },
+    { id:"culture",  nm:"Culture divergence", desc:"How far this ground has drifted from your own custom.",
+      ramp:["#241a3a","#3f2c63","#5c4390","#7d63b5","#a68fd6"], nums:["0.00","0.18","0.71"] },
+    { id:"military", nm:"Military readiness", desc:"Readiness scalar.", stub:true,
+      ramp:["#1c2c1e","#2f4d33","#456f49","#5d8f61","#76cd80"], nums:["0","—","—"] },
+    { id:"threat",   nm:"Threat",             desc:"Attack × aggression, projected per herd.",
+      ramp:["#3a1212","#6b1f1f","#a12c2c","#d13a3a","#e8746a"], nums:["0","14","88"] },
+    { id:"climb",    nm:"Ready to climb",     desc:"Every source whose next rung your people can now reach.",
+      facts:["<b>104 sources</b> · 61 patches, 38 herds, 5 routes",
+             "Nearest unworked: 14,22"] }
+  ];
+
+  var chosen = "climb";
+  var btn = document.getElementById("ovlBtn");
+  var pop = document.getElementById("chanPop");
+  var list = document.getElementById("chanList");
+  var leg = document.getElementById("chanLeg");
+
+  function renderList() {
+    list.innerHTML = "";
+    CHANNELS.forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chan";
+      b.setAttribute("aria-pressed", c.id === chosen ? "true" : "false");
+      b.innerHTML = "<span>" + c.nm + "</span>" +
+        (c.stub ? '<span class="stub">stub data</span>' : c.id === chosen ? "<span>✓</span>" : "");
+      b.addEventListener("click", function () { chosen = c.id; renderList(); renderLegend(); });
+      list.appendChild(b);
+    });
+  }
+
+  function renderLegend() {
+    var c = CHANNELS.filter(function (x) { return x.id === chosen; })[0];
+    var html = '<p class="t">' + (c.id === "climb" ? "⌃ " : "") + c.nm + "</p>";
+    html += '<p class="d">' + c.desc + "</p>";
+    if (c.ramp) {
+      html += '<div class="ramp">' + c.ramp.map(function (h) {
+        return '<i style="background:' + h + '"></i>';
+      }).join("") + "</div>";
+      html += '<div class="nums"><span>' + c.nums[0] + "</span><span>" + c.nums[1] +
+              "</span><span>" + c.nums[2] + "</span></div>";
+    }
+    if (c.facts) {
+      html += '<p class="d" style="margin-top:8px">' + c.facts.join("<br>") + "</p>";
+    }
+    leg.innerHTML = html;
+  }
+
+  btn.addEventListener("click", function () {
+    var open = pop.hidden;
+    pop.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  renderList();
+  renderLegend();
+  pop.hidden = false;
+  btn.setAttribute("aria-expanded", "true");
+}());
+</script>
