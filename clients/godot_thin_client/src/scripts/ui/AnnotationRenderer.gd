@@ -54,15 +54,14 @@ const COORD_PAIR_SIZE := 2
 # --- CRISIS ANNOTATIONS (Crisis overlay) --------------------------------------------------------
 # Only drawn while the `crisis` channel is the active overlay — the annotations annotate THAT view.
 const CRISIS_OVERLAY_KEY := "crisis"
-# Per-severity palette; anything not in it falls back to MapView's base crisis tint. That const
-# stays on MapView because its OVERLAY_COLORS table also references it, so this is an alias — one
-# definition, two readers.
+# Per-severity palette; anything not in it falls back to MapView's base crisis tint, read at the use
+# site rather than aliased into a const here — `MapView.CRISIS_COLOR` is a themed `static var` now
+# (see `ui/HudPalette.gd`), which is not a constant expression.
 const CRISIS_SEVERITY_COLORS := {
 	"critical": Color(0.96, 0.28, 0.38, 0.95),
 	"warn": Color(0.97, 0.75, 0.28, 0.92),
 	"safe": Color(0.5, 0.82, 0.72, 0.85)
 }
-const CRISIS_COLOR := MapView.CRISIS_COLOR
 const CRISIS_SEVERITY_DEFAULT := "safe"
 # A path arrives either as a PackedInt32Array of FLATTENED col,row pairs (the wire form) or as an
 # Array of [col, row] pairs; both are accepted (see draw_crisis_annotations), walked COORD_PAIR_SIZE
@@ -249,7 +248,7 @@ func draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 			continue
 		var entry: Dictionary = entry_variant
 		var severity := String(entry.get("severity", CRISIS_SEVERITY_DEFAULT))
-		var color: Color = CRISIS_SEVERITY_COLORS.get(severity, CRISIS_COLOR)
+		var color: Color = CRISIS_SEVERITY_COLORS.get(severity, MapView.CRISIS_COLOR)
 		var stroke_color: Color = color
 		stroke_color.a = max(color.a, CRISIS_STROKE_MIN_ALPHA)
 		var fill_color: Color = color

@@ -14,7 +14,7 @@ class_name MenuShell
 ##
 ## Signals out — the owner (LandingScreen / Main's PauseLayer) wires these:
 ##   new_game_requested(preset_id, width, height, seed, profile_id)
-##   resume_requested / abandon_requested / exit_requested
+##   resume_requested / abandon_requested / exit_requested / apply_theme_requested
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const MapSizes = preload("res://src/scripts/MapSizes.gd")
@@ -23,6 +23,9 @@ signal new_game_requested(preset_id: String, width: int, height: int, seed: int,
 signal resume_requested
 signal abandon_requested
 signal exit_requested
+## The Theme row's "Apply now" button. Installing the palette and rebuilding the scene is the
+## OWNER's to perform (via the `GameLaunch` autoload) — this file's items emit, they do not act.
+signal apply_theme_requested
 
 const LANDING := "landing"
 const PAUSE := "pause"
@@ -131,6 +134,21 @@ const SPEED_FORMATTER_META := "speed_formatter"
 ## Same default-in-meta pattern for the Options-pane boolean rows.
 const TOGGLE_DEFAULT_META := "toggle_default"
 
+## The Theme row's caption, in its two states. It is a CAPTION, always on screen, not a tooltip: the
+## row is the one Options control that does not take effect the instant it is used, and a state the
+## player has to hover to discover is one they will not discover.
+const THEME_CAPTION_SETTLED := "Applied."
+const THEME_CAPTION_PENDING := "Not applied yet."
+## The pause-mode pending caption. Applying reloads the current scene, which re-runs `Main._ready` and
+## so reconnects and asks for a new world — the run does not survive it, and the caption says so
+## beside a button that says so too.
+const THEME_CAPTION_PENDING_IN_RUN := "Not applied yet. Applying rebuilds the world and ends this run."
+## The button's two labels. The pause-mode one carries its consequence in its own text, the same way
+## "Abandon and return to menu" does — that is the house pattern for a destructive action here, and
+## it is why this row has no modal confirm.
+const THEME_APPLY_LABEL := "Apply now"
+const THEME_APPLY_LABEL_IN_RUN := "Apply now — ends this run"
+
 # The masthead title tone — warm parchment, the one place the dark console admits a light accent
 # (mirrors the prototype's --parchment / #f2e6bf). Not in HudStyle because nothing else uses it.
 const TITLE_COLOR := Color(0.949, 0.902, 0.749, 1.0)
@@ -162,6 +180,11 @@ var _nav_rows := {}   # id -> {row, item, hover}
 var _speed_sliders: Array = []
 ## The Options-pane boolean rows, same lifetime and same reset contract as `_speed_sliders`.
 var _option_toggles: Array = []
+## The Theme row's three parts, rebuilt with the pane. Held because "Restore defaults" has to move the
+## picker AND re-word the caption, and because caption + button are re-derived together on every pick.
+var _theme_picker: OptionButton = null
+var _theme_caption: Label = null
+var _theme_apply: Button = null
 
 
 func set_mode(value: String) -> void:
@@ -420,7 +443,9 @@ func _nav_stylebox(active: bool, hover: bool, danger: bool) -> StyleBox:
 		sb.bg_color = HudStyle.SIGNAL_WASH
 		sb.border_color = HudStyle.SIGNAL_DEEP
 	else:  # hover
-		sb.bg_color = Color(0.075, 0.129, 0.122, 1.0)
+		# The ghost button's resting fill, READ from the palette rather than repeated as a literal —
+		# a hovered nav row and a secondary button are the same "this is actionable" surface.
+		sb.bg_color = HudStyle.GHOST_BG
 		sb.border_color = HudStyle.DANGER if danger else HudStyle.SIGNAL_DEEP
 	return sb
 
@@ -550,6 +575,11 @@ func _build_options_pane() -> void:
 		ClientSettings.UI_SCALE_STEP,
 		ClientSettings.set_ui_scale,
 		_format_percent_readout))
+	# Second, beside the scale, because the two answer the same question — how the client LOOKS — and
+	# because this row's caption has to be read in the same glance as the row above it. Like every
+	# other row here it writes `ClientSettings` and stops; unlike them, what it writes is not what is on
+	# screen until its own "Apply now" installs the palette and rebuilds the scene against it.
+	_pane_body.add_child(_make_theme_row())
 	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
 	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
 	# `ClientSettings.changed` and is the single place that sends `set_fog`, which is also why the
@@ -616,6 +646,7 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	slider.max_value = max_v
 	slider.step = step
 	slider.value = value
+	HudStyle.apply_slider(slider)
 	slider.set_meta(SPEED_DEFAULT_META, default_value)
 	row.add_child(slider)
 
@@ -633,6 +664,101 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 
 	_speed_sliders.append(slider)
 	return col
+
+
+## The Theme row: a picker over the palette roster, the always-visible caption stating whether the
+## pick is on screen yet, and — only while it is not — the button that puts it there. Picking PERSISTS
+## and nothing more: every Control already built read the palette installed at boot
+## (`ClientSettings._ready` → `HudPalette.apply`) and nothing restyles one afterwards, which is why
+## applying means rebuilding the scene rather than repainting it.
+func _make_theme_row() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(row)
+
+	var title_label := Label.new()
+	title_label.text = "Theme"
+	title_label.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	title_label.add_theme_color_override("font_color", HudStyle.INK)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title_label)
+
+	_theme_picker = OptionButton.new()
+	_theme_picker.focus_mode = Control.FOCUS_NONE
+	_theme_picker.fit_to_longest_item = false
+	HudStyle.apply_option_button(_theme_picker)
+	# The roster and its display order both come from `HudPalette.ids()` — the picker keeps no list of
+	# its own. A second, hand-maintained order here would accept a fifth theme everywhere else in the
+	# system (validated, installed, reported by `applied_id`) while never listing it, and the picker
+	# would then sit on some other theme's row while that palette was on screen.
+	var roster := HudPalette.ids()
+	for index in roster.size():
+		var id := String(roster[index])
+		_theme_picker.add_item(HudPalette.display_name(id), index)
+		_theme_picker.set_item_metadata(index, id)
+	_theme_picker.select(_theme_item_index(ClientSettings.theme))
+	_theme_picker.item_selected.connect(_on_theme_selected)
+	row.add_child(_theme_picker)
+
+	# The act on the caption's statement. Hidden while the pick and what is on screen agree — there is
+	# nothing to apply then, and a permanently-present rebuild button in an options pane is an
+	# invitation to lose a run by accident. `_refresh_theme_row` owns that visibility.
+	_theme_apply = Button.new()
+	_theme_apply.focus_mode = Control.FOCUS_NONE
+	_theme_apply.pressed.connect(func(): emit_signal("apply_theme_requested"))
+	row.add_child(_theme_apply)
+
+	_theme_caption = Label.new()
+	_theme_caption.add_theme_font_size_override("font_size", HINT_SIZE)
+	_theme_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_theme_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(_theme_caption)
+	_refresh_theme_row(ClientSettings.theme)
+	return col
+
+
+## The picker index showing `id` — the default's index for an id the roster no longer lists, so a
+## stale settings file still opens the row on something.
+func _theme_item_index(id: String) -> int:
+	var roster := HudPalette.ids()
+	var index := roster.find(id)
+	return index if index >= 0 else roster.find(HudPalette.DEFAULT_THEME)
+
+
+func _on_theme_selected(index: int) -> void:
+	var id := String(_theme_picker.get_item_metadata(index))
+	ClientSettings.set_theme(id)
+	_refresh_theme_row(id)
+
+
+## The caption states the ONE thing the row cannot show: whether the pick is what is on screen.
+## `applied_id` is the palette THIS session installed, and it is a different question from what is
+## saved — so the comparison is against it, never against `ClientSettings.theme` (just picked).
+##
+## The button's visibility is derived from that SAME comparison, in this one place, so the caption
+## can never promise an apply the button is not offering (or the reverse). In pause mode both wear
+## the heavier wording: applying there rebuilds the world, and is a run-ending act.
+func _refresh_theme_row(selected_id: String) -> void:
+	if _theme_caption == null:
+		return
+	var pending := selected_id != HudPalette.applied_id
+	var in_run := mode == PAUSE
+	if pending:
+		_theme_caption.text = THEME_CAPTION_PENDING_IN_RUN if in_run else THEME_CAPTION_PENDING
+		_theme_caption.add_theme_color_override("font_color", HudStyle.WARN)
+	else:
+		_theme_caption.text = THEME_CAPTION_SETTLED
+		_theme_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	if _theme_apply == null:
+		return
+	_theme_apply.visible = pending
+	_theme_apply.text = THEME_APPLY_LABEL_IN_RUN if in_run else THEME_APPLY_LABEL
+	HudStyle.apply_button(_theme_apply, "armed" if in_run else "primary")
 
 
 ## The speed rows' readout unit — a bare multiplier, `1.00×`.
@@ -673,6 +799,9 @@ func _make_toggle_row(title: String, value: bool, default_value: bool, on_change
 
 func _on_restore_defaults_pressed() -> void:
 	ClientSettings.restore_defaults()
+	if _theme_picker != null:
+		_theme_picker.select(_theme_item_index(HudPalette.DEFAULT_THEME))
+		_refresh_theme_row(HudPalette.DEFAULT_THEME)
 	for toggle in _option_toggles:
 		toggle.set_pressed_no_signal(bool(toggle.get_meta(TOGGLE_DEFAULT_META)))
 	for slider in _speed_sliders:

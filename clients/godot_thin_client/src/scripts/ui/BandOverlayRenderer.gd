@@ -111,14 +111,13 @@ const BADGE_FONT_SIZE_MIN := 9
 const BADGE_FONT_SIZE_MAX := 14
 const BADGE_PAD_FACTOR := 0.34           # of the font size, per side
 const BADGE_BG := Color(0.04, 0.05, 0.07, 0.88)
-const BADGE_CREW_COLOR := Color(0.616, 0.690, 0.678, 1.0)   # HudStyle.INK_DIM
-# READY wears SIGNAL cyan, NOT amber: amber is trouble in this HUD (overdraw, understaffing, a
-# starving pen), and colouring an opportunity amber trains the player to read good news as a warning.
-const BADGE_READY_COLOR := Color(0.310, 0.878, 0.812, 1.0)  # HudStyle.SIGNAL
+# READY wears `HudStyle.SIGNAL` cyan, NOT amber: amber is trouble in this HUD (overdraw,
+# understaffing, a starving pen), and colouring an opportunity amber trains the player to read good
+# news as a warning. These five badge tints are READ OFF `HudStyle` at their draw sites rather than
+# copied into consts here — the copies existed, and had already drifted from the palette they named.
 # A rung UNDER WAY reads in the SAME hue one step deeper (`HudStyle.SIGNAL_DEEP`): ready and building
 # are one axis in two states, so they belong to one colour family — bright says "act now", deep says
 # "already under way". A different hue would file them as unrelated facts, and amber is spoken for.
-const BADGE_BUILDING_COLOR := Color(0.122, 0.612, 0.557, 1.0)  # HudStyle.SIGNAL_DEEP
 # The building face is `<verb glyph><percent>%`. The chevron is deliberately ABSENT: `⌃` means "you
 # could start this", and the work has started. The percent is the whole point — it is what moves every
 # turn, and the only number that answers "how much longer?".
@@ -128,12 +127,10 @@ const BADGE_BUILDING_FORMAT := "%s%d%% "
 # player staffed with nobody is pixel-identical to one they started this turn. There is no number to
 # put here: nothing is moving, which is the whole message.
 const BADGE_UNSTAFFED_FORMAT := "%s⚠ "
-# Amber, and this is the one rung face that earns it. `BADGE_READY_COLOR`'s note explains why an
+# Amber, and this is the one rung face that earns it. The READY note above explains why an
 # OPPORTUNITY must never be amber; an unstaffed commitment is not an opportunity — it is the trouble
 # channel's own subject, and it wears the `HudStyle.WARN` the overdraw and under-herded marks do.
-const BADGE_UNSTAFFED_COLOR := Color(0.965, 0.706, 0.278, 1.0)  # HudStyle.WARN
 const BADGE_BORDER_WIDTH := 1.2
-const BADGE_BORDER_IDLE := Color(0.149, 0.212, 0.235, 1.0)  # HudStyle.LINE
 # Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
 # work-range ring — hunt reach = work_range + leash).
 const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
@@ -194,11 +191,17 @@ const LABOR_PENDING_WIDTH := 2.6
 const LABOR_PENDING_DASH := 10.0
 const LABOR_PENDING_GAP := 7.0
 const LABOR_PENDING_LINK_ALPHA := 0.7
-# Travel destination (selected traveling band/expedition): a thin cyan line from the unit's
-# current tile to the wrapped-nearest destination hex + a target reticle on that hex, so the
-# player sees where it is headed. Distinct from the pending-amber style — this is a confirmed,
+# Travel destination (selected traveling band/expedition): a thin line in the targeting tint from
+# the unit's current tile to the wrapped-nearest destination hex + a target reticle on that hex, so
+# the player sees where it is headed. Distinct from the pending-amber style — this is a confirmed,
 # in-progress move reported by the snapshot (`is_traveling` + `travel_target_x/y`).
-const TRAVEL_DEST_COLOR := Color(0.310, 0.878, 0.812, 0.85)  # SIGNAL cyan
+#
+# It rides `HudStyle.SIGNAL` because a confirmed destination IS a targeting affordance, and it is
+# read at the DRAW SITE rather than copied into a const: a copy freezes at whichever palette was
+# loaded when this script parsed, so it would stay cyan under every theme. That is not
+# hypothetical — this line was exactly that copy, and the three `map_travel_*` preview frames were
+# still rendering the old cyan after the theme swap.
+const TRAVEL_DEST_ALPHA := 0.85
 const TRAVEL_DEST_LINE_WIDTH := 2.0
 const TRAVEL_DEST_LINE_ALPHA := 0.6           # line reads fainter than the reticle
 const TRAVEL_DEST_RETICLE_FACTOR := 0.62      # reticle radius as a factor of hex radius
@@ -481,7 +484,7 @@ func _draw_source_badge(entry: Dictionary) -> void:
 	var crew_text := "%s%d" % [BADGE_CREW_GLYPH, crew]
 	# THE RUNG FACE — at most one of the two, a verb being neither offered nor under way at once.
 	var rung_text := ""
-	var rung_color := BADGE_READY_COLOR
+	var rung_color := HudStyle.SIGNAL
 	var building_glyph := String(entry.get("building_glyph", ""))
 	if building_glyph != "":
 		# **A PERCENT ON A BUILD NOBODY IS STAFFING IMPLIES PROGRESS THAT IS NOT HAPPENING.** The
@@ -496,11 +499,11 @@ func _draw_source_badge(entry: Dictionary) -> void:
 		# the same function, which is what stops the two surfaces disagreeing.
 		if bool(entry.get("stalled", false)):
 			rung_text = BADGE_UNSTAFFED_FORMAT % building_glyph
-			rung_color = BADGE_UNSTAFFED_COLOR
+			rung_color = HudStyle.WARN
 		else:
 			rung_text = BADGE_BUILDING_FORMAT % [building_glyph,
 				int(round(float(entry.get("building_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))]
-			rung_color = BADGE_BUILDING_COLOR
+			rung_color = HudStyle.SIGNAL_DEEP
 	elif ready_glyph != "":
 		rung_text = "%s%s " % [BADGE_READY_CHEVRON, ready_glyph]
 	var text := rung_text + crew_text
@@ -513,13 +516,13 @@ func _draw_source_badge(entry: Dictionary) -> void:
 	# THE BORDER carries the rung state, so the plate reads at a glance without the eye having to
 	# resolve a small glyph: SIGNAL cyan when a rung is on OFFER, SIGNAL_DEEP while one is UNDER WAY,
 	# the quiet line colour when the source is merely worked.
-	_view.draw_rect(box, rung_color if rung_text != "" else BADGE_BORDER_IDLE, false, BADGE_BORDER_WIDTH)
+	_view.draw_rect(box, rung_color if rung_text != "" else HudStyle.LINE, false, BADGE_BORDER_WIDTH)
 	var baseline := center + Vector2(-run.x * 0.5, run.y * 0.5 - font.get_descent(font_size))
 	if rung_text != "":
 		var rung_run: Vector2 = font.get_string_size(rung_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
 		_view.draw_string(font, baseline, rung_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, rung_color)
 		baseline.x += rung_run.x
-	_view.draw_string(font, baseline, crew_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, BADGE_CREW_COLOR)
+	_view.draw_string(font, baseline, crew_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, HudStyle.INK_DIM)
 
 ## One source's worked mark: the ring on its marker's slot, plus the tile-level outline underneath.
 ## `slot_of(key) == -1` means the marker did not draw at all (overflowed or far zoom), so only the
@@ -813,12 +816,12 @@ func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, ef
 		return
 	var dest_col := eff_col + _view._wrapped_col_delta(band_col, target_x)
 	var dest_center := _view._hex_center(dest_col, target_y, radius, origin)
-	var line_color := TRAVEL_DEST_COLOR
-	line_color.a = TRAVEL_DEST_LINE_ALPHA
+	var dest_color := Color(HudStyle.SIGNAL, TRAVEL_DEST_ALPHA)
+	var line_color := Color(HudStyle.SIGNAL, TRAVEL_DEST_LINE_ALPHA)
 	_view.draw_line(band_center, dest_center, line_color, TRAVEL_DEST_LINE_WIDTH)
 	# Reticle marks the destination hex; no pulse (this is a steady, confirmed heading, unlike the
 	# animated targeting reticle).
-	_view._draw_reticle(dest_center, radius * TRAVEL_DEST_RETICLE_FACTOR, TRAVEL_DEST_COLOR, 1.0)
+	_view._draw_reticle(dest_center, radius * TRAVEL_DEST_RETICLE_FACTOR, dest_color, 1.0)
 
 ## A dashed line a→b (used for pending links). `dash`/`gap` are pixel lengths.
 func _draw_dashed_line(a: Vector2, b: Vector2, color: Color, width: float, dash: float, gap: float) -> void:

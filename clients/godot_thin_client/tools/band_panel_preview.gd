@@ -825,6 +825,12 @@ func _ready() -> void:
 	# so `UiScaler` applies the pin through its own real path.
 	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
 	ClientSettings.changed.emit()
+	# PIN THE PALETTE, the theme half of the same contamination. `ClientSettings` read the developer's
+	# real `user://client_settings.cfg` at boot and `HudPalette.apply()` has ALREADY installed whatever
+	# theme it found, so a developer running Kiln would re-tint every frame in this set. Re-applying the
+	# default here is safe at any point before UI is built: `HudStyle`/`MapView` and the vocabulary
+	# modules are all re-derived by `apply`, and nothing on screen has read a colour yet.
+	HudPalette.apply(HudPalette.DEFAULT_THEME)
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
