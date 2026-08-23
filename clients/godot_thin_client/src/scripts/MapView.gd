@@ -3749,6 +3749,13 @@ func _build_terrain_legend() -> Dictionary:
 		var counted_id := int(raw_id)
 		counts[counted_id] = int(counts.get(counted_id, 0)) + 1
 	var labels := _get_terrain_labels()
+	# **THE KEY SHOWS WHAT THE MAP IS ACTUALLY DRAWN WITH.** With terrain textures on, a flat colour
+	# swatch names a biome the player cannot match to anything on screen — the hexes are painted art,
+	# not the palette entry. `hex_texture_for` is the very texture the blend-OFF renderer stamps on a
+	# hex, so the swatch is a picture of that tile. Gated on the `T` toggle, because with textures OFF
+	# the map really is flat `_tile_color` fills and the palette swatch is the honest answer; and it
+	# answers `null` for any id the atlas has no layer for, which `OverlayLegend` falls back from.
+	var textured: bool = _terrain.get_terrain_textures_enabled()
 	var rows: Array = []
 	for id in present_ids:
 		var label := ""
@@ -3759,10 +3766,10 @@ func _build_terrain_legend() -> Dictionary:
 		var tile_count := int(counts.get(id, 0))
 		rows.append({
 			"color": _terrain_color_for_id(id),
+			"texture": _terrain.hex_texture_for(id) if textured else null,
 			"label": label,
 			"value_text": "%d tiles" % tile_count,
-			# Numeric tile count so the legend panel can sort by count without
-			# parsing value_text.
+			# Numeric tile count so a consumer can sort by count without parsing value_text.
 			"count": tile_count,
 		})
 	return {

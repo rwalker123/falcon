@@ -84,6 +84,43 @@ legend button is never in a dead state, and `L`'s one irreplaceable job moved on
 remain reachable from the Inspector's Terrain tab and from any hex's tile card, which is why this is a
 relocation rather than a loss.
 
+### THE CATCHER MUST NOT EAT A PRESS AIMED AT THE PICKER'S OWN BUTTONS
+
+The full-screen dismiss catcher sits on a layer ABOVE the bar, so with either popover open the OTHER
+button never receives its click: pressing it read as *dismiss* rather than *switch*, and the player
+had to click twice to reach the other card. `_on_catcher_input` resolves the two buttons itself now,
+in the same terms their own `pressed` handlers use — the open one's button toggles it shut, the
+other's swaps to it, everything else dismisses.
+
+**No frame can carry that**: the failing state renders as a map with nothing open, which is an
+ordinary map. `map_preview`'s `_assert_picker_buttons_swap` drives every leg as a REAL press through
+`Viewport.push_input`, because driving a button's own `pressed` signal routes around the very thing
+under test. It shares `ui_preview`'s `InputProbe` for the canvas→window conversion — an unconverted
+press misses the bar entirely, which is what it did on the first attempt.
+
+### THE BIOME KEY WEARS THE TERRAIN ART, NOT THE PALETTE
+
+With terrain textures on, a flat colour swatch names a biome the player cannot match to anything on
+screen — the hexes are painted art, not the palette entry. `_build_terrain_legend` therefore hands
+each row `TerrainRenderer.hex_texture_for(id)`, the very texture the blend-OFF renderer stamps on a
+hex, and `OverlayLegend._swatch` renders a `TextureRect` where a row carries one.
+
+**Gated on the `T` toggle, and the claim is a PAIR.** With textures OFF the map really is flat
+`_tile_color` fills and the palette swatch is the honest answer. A swatch is a small square either way
+at a glance, so a frame cannot separate the two and a one-sided claim passes on a key that hands out
+art whether the map is textured or not; `map_preview` asserts both directions over EVERY row.
+
+Two mechanical traps, both of which shipped once: a `TextureRect` reports its TEXTURE's size as its
+own minimum and `custom_minimum_size` is a FLOOR rather than a cap, so without `EXPAND_IGNORE_SIZE`
+one biome filled the whole card; and a texture swatch needs its own larger box (`TEXTURE_SWATCH_SIZE`),
+a hex-masked tile being mostly transparent and unreadable at the colour swatch's size.
+
+**A `ScrollContainer`'s vertical bar is drawn OVER its content, not beside it**, so the legend
+reserves a gutter for it (`LEGEND_SCROLL_GAP` plus the bar's own measured minimum) — without which the
+value column ran under the bar. It is reserved whether or not the bar is shown, which also stops the
+popover changing width per channel. `map_preview`'s biome fixture carries enough biomes to SCROLL,
+deliberately: a short key renders the same either way, which is how this shipped.
+
 ### The picker owns the channel ACROSS A SNAPSHOT and nowhere else — two signals, two rules
 
 **RE-ASSERT on `overlay_channels_ingested`.** `_ingest_overlay_channels` clears `active_overlay_key`

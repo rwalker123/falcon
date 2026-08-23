@@ -331,6 +331,16 @@ a merge that dropped everything on the floor.
 where a button-sized bounding box is the expected result and a whole-image one is a real regression.
 That is exactly how the stomp above was caught.
 
+**IT DRIVES REAL POINTER INPUT NOW, AND THE CONVERSION IS THE WHOLE TRICK.** `_click_canvas` presses
+through `Viewport.push_input` so the GUI pass picks the top control exactly as it does for a player —
+which is the only way to test the overlay picker's catcher, a full-screen `STOP` on a layer above its
+own buttons. **`push_input` takes WINDOW coordinates and a control's rect is in CANVAS ones**, and
+this harness pins a canvas the window does not match, so an unconverted press lands somewhere else
+entirely: measured, it missed the bar on every leg and every claim failed with nothing open. The
+conversion is `ui_preview`'s `InputProbe.canvas_to_window` — SHARED rather than copied, for the reason
+`band_panel_preview` already shares `fixtures_band.gd`, and it makes this the second cross-harness
+preload in the tree.
+
 **THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
 `map_overlay_legend` is the legend popover open on the channel menu's own selection, and
 `map_pasture_legend` / `map_forage_legend` ride the `pasture` / `forage` states as

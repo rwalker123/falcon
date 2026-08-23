@@ -107,6 +107,12 @@ const ROW_FONT_SIZE := 12
 ## legend. Sized to sit comfortably above the minimap in the nav cluster.
 const LEGEND_MAX_HEIGHT := 320.0
 
+## Daylight between the legend's rows and the scrollbar that shares their right edge. A
+## `ScrollContainer`'s vertical bar is drawn OVER the content rather than beside it, so without a
+## reserved gutter the value column runs under the bar — reported from play with `2059 tiles` touching
+## it. Measured off the real bar rather than guessed, so a theme change moves the gutter with it.
+const LEGEND_SCROLL_GAP := 6.0
+
 ## Which popover is open, for a caller that needs to tell them apart.
 const POPOVER_NONE := &""
 const POPOVER_CHANNELS := &"channels"
@@ -254,11 +260,18 @@ func anchor_rect() -> Rect2:
 		return Rect2()
 	return _anchor_button.get_global_rect()
 
-## The legend button's own rect, so a caller can prove which button a popover is hanging off.
+## The legend button's own rect, so a caller can prove which button a popover is hanging off — and so
+## a harness can press it where a player would.
 func legend_button_rect() -> Rect2:
 	if _legend_button == null or not is_instance_valid(_legend_button):
 		return Rect2()
 	return _legend_button.get_global_rect()
+
+## The channel button's own rect, the `◐`'s twin of the above.
+func channel_button_rect() -> Rect2:
+	if _channel_button == null or not is_instance_valid(_channel_button):
+		return Rect2()
+	return _channel_button.get_global_rect()
 
 ## The colour the legend button's face is currently drawn in, for a caller asserting it tracks the
 ## painted channel.
@@ -311,9 +324,23 @@ func _open(kind: StringName, anchor: Button) -> void:
 	_render_popover()
 	_position_popover()
 
+## **THE CATCHER MUST NOT SWALLOW A PRESS AIMED AT THE PICKER'S OWN BUTTONS.** It is a full-screen
+## `STOP` on a layer ABOVE the bar, so with either popover open the OTHER button never receives its
+## click — pressing it read as "dismiss" instead of "switch", and the player had to click twice to get
+## to the other card. The two buttons are resolved here instead, in the same terms their own `pressed`
+## handlers use: the open one's button toggles it shut, the other one's swaps to it. Everything else
+## dismisses, which is what the catcher is for.
 func _on_catcher_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
-		close_popover()
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	var at: Vector2 = _catcher.global_position + (event as InputEventMouseButton).position
+	if _channel_button != null and _channel_button.get_global_rect().has_point(at):
+		toggle_channels()
+		return
+	if _legend_button != null and _legend_button.get_global_rect().has_point(at):
+		toggle_legend()
+		return
+	close_popover()
 
 # ---- channel state --------------------------------------------------------------------------
 
@@ -428,10 +455,17 @@ func _build_popover(kind: StringName) -> PanelContainer:
 		_legend_scroll.name = "OverlayLegendScroll"
 		_legend_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		body.add_child(_legend_scroll)
+		# The rows sit inside a margin, not directly in the scroll: the vertical bar is drawn OVER the
+		# content, so the gutter has to come out of the rows' own width. See `LEGEND_SCROLL_GAP`.
+		var gutter := MarginContainer.new()
+		gutter.name = "OverlayLegendGutter"
+		gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		gutter.add_theme_constant_override("margin_right", int(_legend_scroll_gutter()))
+		_legend_scroll.add_child(gutter)
 		_legend_body = VBoxContainer.new()
 		_legend_body.name = "OverlayChannelLegend"
 		_legend_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_legend_scroll.add_child(_legend_body)
+		gutter.add_child(_legend_body)
 	return panel
 
 func _render_popover() -> void:
@@ -451,12 +485,23 @@ func _render_popover() -> void:
 		# the first cut. Only the height is capped.
 		var wanted: Vector2 = _legend_body.get_combined_minimum_size()
 		_legend_scroll.custom_minimum_size = Vector2(
-			maxf(OverlayLegend.MIN_WIDTH, wanted.x),
+			maxf(OverlayLegend.MIN_WIDTH, wanted.x + _legend_scroll_gutter()),
 			minf(wanted.y, LEGEND_MAX_HEIGHT))
 	# The popover is a `Control` under a plain `Control`, so nothing lays it out and a size it once
 	# grew into is a size it keeps (see `_render_list`). Ask it back down to its own minimum after
 	# every rebuild, which is what `reset_size` is for.
 	_popover.reset_size()
+
+## How much room the scrollbar needs on the legend's right edge: the bar's own minimum width plus a
+## gap. The bar exists whether or not it is shown, so this answers the same number for a legend that
+## scrolls and one that does not — which is what keeps the popover from changing width per channel.
+func _legend_scroll_gutter() -> float:
+	if _legend_scroll == null:
+		return LEGEND_SCROLL_GAP
+	var bar := _legend_scroll.get_v_scroll_bar()
+	if bar == null:
+		return LEGEND_SCROLL_GAP
+	return bar.get_combined_minimum_size().x + LEGEND_SCROLL_GAP
 
 func _render_list() -> void:
 	# **`remove_child` BEFORE `queue_free`.** Same trap as `OverlayLegend.render`, and this is the one

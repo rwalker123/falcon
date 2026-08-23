@@ -37,6 +37,10 @@ const BODY_FONT_SIZE := 12
 const ROW_FONT_SIZE := 12
 const ROW_SEPARATION := 3
 const SWATCH_SIZE := Vector2(11.0, 11.0)
+## A TEXTURE swatch is bigger than a colour one, and has to be: it is a hex-masked tile, so most of
+## its box is transparent and the material only reads once the hex itself does. At `SWATCH_SIZE` the
+## biomes were indistinguishable smudges.
+const TEXTURE_SWATCH_SIZE := Vector2(20.0, 20.0)
 const SWATCH_GAP := 7
 ## The legend's own width floor, so a one-row channel and a five-row one open the same popover.
 const MIN_WIDTH := 236.0
@@ -105,12 +109,7 @@ static func _render_ramp(body: VBoxContainer, legend: Dictionary) -> void:
 static func _ramp_row(entry: Dictionary) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", SWATCH_GAP)
-
-	var swatch := ColorRect.new()
-	swatch.custom_minimum_size = SWATCH_SIZE
-	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	swatch.color = entry.get("color", Color.WHITE)
-	row.add_child(swatch)
+	row.add_child(_swatch(entry))
 
 	var label := Label.new()
 	label.text = String(entry.get("label", ""))
@@ -127,6 +126,33 @@ static func _ramp_row(entry: Dictionary) -> Control:
 		value.add_theme_color_override("font_color", HudStyle.INK)
 		row.add_child(value)
 	return row
+
+## A row's swatch: the TEXTURE the map paints that row with when it has one, else its flat colour.
+##
+## **A ROW CARRIES A TEXTURE ONLY WHERE THE MAP IS TEXTURED** — today that is the bare map's biome
+## key, and only while the `T` toggle is on (`MapView._build_terrain_legend`). Every scalar channel
+## paints a flat lerp of its own ramp, so a colour really is what those rows are drawn with. The
+## fallback is a live path, not a guard: a biome the atlas has no layer for answers `null` here.
+static func _swatch(entry: Dictionary) -> Control:
+	var texture: Variant = entry.get("texture", null)
+	if texture is Texture2D:
+		var art := TextureRect.new()
+		art.texture = texture
+		# **`EXPAND_IGNORE_SIZE`, or the swatch is the TEXTURE's size.** A `TextureRect` reports its
+		# texture's dimensions as its own minimum by default, and `custom_minimum_size` is a FLOOR
+		# rather than a cap — so the hex art came through at its full cache resolution and one biome
+		# filled the card. This is what makes the minimum the box asked for.
+		art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		art.custom_minimum_size = TEXTURE_SWATCH_SIZE
+		art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		art.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		return art
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = SWATCH_SIZE
+	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	swatch.color = entry.get("color", Color.WHITE)
+	return swatch
 
 static func _body_label(text: String, color: Color) -> Label:
 	var label := Label.new()

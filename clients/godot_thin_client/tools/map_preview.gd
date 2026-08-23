@@ -17,6 +17,9 @@ const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 # `LOADING_OVERLAY_LAYER`) — this harness stands up no `Main`, and the overlay picker's popover has
 # to be asserted against the layers it must clear rather than against a number written twice.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+# `ui_preview`'s real-pointer probe, for the picker's button-swap claim: it owns the canvas→window
+# conversion `push_input` needs, and a second copy of that arithmetic is a second thing to keep right.
+const INPUT_PROBE := preload("res://tools/ui_preview/input_probe.gd")
 const OUT_DIR := "res://ui_preview_out"
 const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
@@ -478,12 +481,17 @@ const PICKER_DOCK_PROBE_WIDTH := 495.0
 # Slack on the "a popover touches its own button" claim. The gap is `POPOVER_GAP` by construction, so
 # this absorbs sub-pixel layout rounding only — wide enough and the claim stops meaning "attached".
 const PICKER_ATTACH_TOLERANCE := 2.0
-# Biome ids the picker fixture paints the map with, so the bare map's legend has several rows to
-# show. Transcribed from the pasture fixture's own table, which is the sim's terrain id space.
-const PICKER_BIOME_IDS := [10, 11, 12, 20, 26]
-# The floor the biome-key assertion holds the legend to. One under the roster, so the claim survives
-# a biome that happens not to land on a tile but fails a merge that dropped the table.
-const PICKER_BIOME_ROWS_MIN := 4
+# Biome ids the picker fixture paints the map with, so the bare map's legend has several rows to show.
+# Transcribed from the pasture fixture's own table, which is the sim's terrain id space.
+#
+# **THERE ARE ENOUGH OF THEM TO SCROLL, deliberately.** The legend caps at `LEGEND_MAX_HEIGHT` and the
+# reserved scrollbar gutter is only judgeable against a bar that is actually SHOWN — a short key
+# renders the same either way, which is how the value column came to be running under the bar in the
+# first place.
+const PICKER_BIOME_IDS := [0, 1, 6, 8, 9, 10, 11, 12, 14, 15, 17, 20, 22, 24, 26, 30]
+# The floor the biome-key assertion holds the legend to. Under the roster, so the claim survives a
+# biome that happens not to land on a tile but fails a merge that dropped the table.
+const PICKER_BIOME_ROWS_MIN := 12
 
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
@@ -1444,6 +1452,63 @@ func _ready() -> void:
 
 	_finish()
 
+## Click a CANVAS point through the REAL input path — `Viewport.push_input`, so the GUI pass decides
+## which control is on top exactly as it does for a player. Driving the button's own `pressed` signal
+## instead would route around the very thing under test: the picker's full-screen catcher sits on a
+## layer ABOVE the bar, so with a popover open it is the catcher, not the button, that receives this.
+##
+## **THE CONVERSION IS NOT OPTIONAL.** `push_input` takes WINDOW coordinates and a control's rect is in
+## CANVAS ones; this harness pins a canvas the window does not match, so an unconverted press lands
+## somewhere else entirely — measured, it missed the bar on every leg and every claim failed with
+## nothing open. `InputProbe` is `ui_preview`'s, shared rather than copied for the reason
+## `band_panel_preview` already shares `fixtures_band.gd`: one implementation of a conversion two
+## harnesses need.
+func _click_canvas(point: Vector2) -> void:
+	var window_point := INPUT_PROBE.canvas_to_window(get_viewport(), get_window(), point)
+	INPUT_PROBE.press_left(get_viewport(), window_point)
+	INPUT_PROBE.release_left(get_viewport(), window_point)
+	await _settle()
+
+## **CLICKING THE OTHER BUTTON SWAPS THE POPOVER; CLICKING THE OPEN ONE'S BUTTON CLOSES IT.** Reported
+## from play: with the menu up, pressing the legend button just dismissed the menu — the catcher was
+## eating the press. **No frame can carry this**: the failing state renders as a map with nothing open,
+## which is a perfectly ordinary map. Every leg is driven as a real press.
+func _assert_picker_buttons_swap(picker: OverlayPicker) -> void:
+	picker.close_popover()
+	await _settle()
+	var channel_at: Vector2 = picker.channel_button_rect().get_center()
+	var legend_at: Vector2 = picker.legend_button_rect().get_center()
+
+	await _click_canvas(channel_at)
+	_assert_map("overlay picker — pressing ◐ with nothing open opens the MENU (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_CHANNELS)
+	await _click_canvas(legend_at)
+	_assert_map("overlay picker — …then pressing the legend button SWAPS to the legend, not dismiss (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_LEGEND)
+	await _click_canvas(channel_at)
+	_assert_map("overlay picker — …and back the other way (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_CHANNELS)
+	# The toggle half, without which "always open the button's own popover" passes every claim above.
+	await _click_canvas(channel_at)
+	_assert_map("overlay picker — pressing the OPEN one's own button closes it (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_NONE)
+	# And a press on bare map still dismisses, which is the catcher's whole job.
+	await _click_canvas(legend_at)
+	await _click_canvas(picker.popover_rect().get_center() - Vector2(0.0, picker.popover_rect().size.y))
+	_assert_map("overlay picker — a press outside both still dismisses (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_NONE)
+
+## How many of the bare map's legend rows carry terrain art, and how many rows there are — as
+## `Vector2i(with_art, total)`, so a caller can state BOTH halves and neither claim can go vacuous on
+## an empty key.
+func _terrain_legend_rows_with_art() -> Vector2i:
+	var rows: Array = _map.current_overlay_legend().get("rows", [])
+	var with_art := 0
+	for entry in rows:
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("texture", null) is Texture2D:
+			with_art += 1
+	return Vector2i(with_art, rows.size())
+
 ## Open the minimap picker's LEGEND on whatever channel is painted, save the frame, and close it
 ## again — the reading that used to be a `print` here and a transcribed fixture in `ui_preview`.
 ##
@@ -1618,7 +1683,31 @@ func _overlay_picker_state() -> void:
 	_assert_map("overlay picker — the bare map's legend is the biome key, not an empty card (%d rows)"
 		% _map.current_overlay_legend().get("rows", []).size(),
 		_map.current_overlay_legend().get("rows", []).size() >= PICKER_BIOME_ROWS_MIN)
+
+	# **AND ITS SWATCHES ARE THE TERRAIN ART, NOT THE PALETTE** — with textures on, a flat colour names
+	# a biome the player cannot match to anything on screen, the hexes being painted art. **The claim
+	# is a PAIR and has to be**: a swatch is a small square either way at a glance, so a frame cannot
+	# separate "the art" from "the colour", and a one-sided claim passes on a key that hands out a
+	# texture whether the map is textured or not. Every row is asked, since a key that textured its
+	# first row and gave up would satisfy a spot check.
+	_map.enable_terrain_textures(true)
+	await _settle()
+	var textured := _terrain_legend_rows_with_art()
+	_assert_map("overlay picker — with textures ON the biome key wears the terrain art (%d of %d rows)"
+		% [textured.x, textured.y], textured.x == textured.y and textured.y > 0)
+	await _save_overlay_legend("map_overlay_legend_terrain")
+	_map.enable_terrain_textures(false)
+	await _settle()
+	var flat := _terrain_legend_rows_with_art()
+	_assert_map("overlay picker — with textures OFF it falls back to the palette colour (%d of %d rows carry art)"
+		% [flat.x, flat.y], flat.x == 0 and flat.y > 0)
+
 	picker.select_channel(PICKER_CHANNEL_LIVE)
+	# The legend frames above CLOSE the popover on their way out, so the dock probe below re-opens the
+	# menu rather than inheriting whatever the last block left. Its precondition reads the popover's
+	# own rect, which is an empty `Rect2` when nothing is open — i.e. it would fail rather than pass
+	# silently, but it would fail for the wrong reason.
+	picker.open_channels()
 	await _settle()
 
 	# **AND IT OPENS INTO THE PLAY AREA, NOT UNDER THE DOCK.** Right-aligning a ~290px popover to a
@@ -1661,6 +1750,8 @@ func _overlay_picker_state() -> void:
 	_assert_map("overlay picker — a world with no tag data keeps the empty key and is not offered 'terrain_tags' (%d entries)"
 		% untagged.size(),
 		Array(untagged) == [OverlayChannels.NO_OVERLAY_KEY])
+
+	await _assert_picker_buttons_swap(picker)
 
 
 ## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
