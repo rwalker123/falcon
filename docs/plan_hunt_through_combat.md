@@ -67,15 +67,22 @@ kill formula *and* the resolver would guarantee the two drift.
 > how much comes home.**
 
 ```text
-engaged   = floor( hunters × species.engage_rate )        // §2 — how many animals are in the fight
+engaged   = hunters × species.engage_rate                 // §2 — how many animals are in the fight
 stayed    = engaged − retreat(engaged, wariness, seed)    // §3 — some break off at contact
 outcome   = resolve_fight(party_force, herd_force(stayed))// §4 — combat owns the kill
-killed    = outcome.enemy_losses                          // whole animals, as today
+killed    = outcome.enemy_losses                          // WHOLE animals — the one quantised stage
 
 carried   = min( killed × body_mass, carry_capacity, carry_room )   // §5 — unchanged
 wasted    = killed × body_mass − carried
 herd.biomass -= killed × body_mass
 ```
+
+**The whole-animal quantum sits on the KILL and on nothing else.** *An animal dies whole; meat
+divides* — a hunter field-dresses and takes what fits, so `carried` is unrounded biomass and always
+was. `engaged` is a **rate** and is no longer floored: `floor(hunters × engage_rate).max(1)` made a
+Wild Boar's `0.33` answer one animal for every crew from one to six, so extra hunters bought nothing
+(`0.18 food/turn` at one hunter and at four, from play). What carries a sub-body reach between turns
+is §4.2's wound ledger, which is already an accumulator over exactly that quantity.
 
 Each stage answers one question, and no stage answers another's:
 
@@ -122,10 +129,13 @@ the bespoke hunt formula wearing a different hat: it hard-codes an answer that m
 equipment, party size and the quarry's defense, and it will silently stop tracking all three the
 moment any of them changes.
 
-**A fractional engagement rounds up to one, not down to zero.** Three hunters against a mammoth come
-to `3 × 0.05 = 0.15`; flooring says a small band can never *reach* a mammoth, which is not what the
-rate means — they can walk up to it. What stops them is that they cannot hurt it fast enough to
-matter, which the fight already reports. Contact is not the gate.
+**A fractional engagement stays fractional — it is neither rounded up to one nor down to zero.**
+Three hunters against a mammoth come to `3 × 0.05 = 0.15`; flooring says a small band can never
+*reach* a mammoth, which is not what the rate means, and rounding up to one hands them an animal they
+never cornered and makes the next five hunters free. What stops them is that they cannot hurt it fast
+enough to matter, which the fight already reports. Contact is not the gate — and a plain multiply
+cannot answer zero for a party that exists, so no headcount threshold stands in front of the
+attack-vs-defense one.
 
 **It scales linearly with party size.** One hunter engages `X`, two engage `2X`; there is nothing
 magic about crowding, and the fractional values below are **throughput, not a threshold**. Forty
@@ -568,9 +578,13 @@ The two halves of a hunt have opposite shapes, which is why one number could nev
 | driven by | weapon quality first, then numbers | mass ÷ people |
 | failure mode | you cannot hunt it at all | you waste the remainder |
 
-**`max(1, carryable)` survives untouched.** A party too small to haul a whole animal still takes one
-and wastes the rest — that is where hunting's waste comes from, and deleting it would silently remove
-waste from the game everywhere except a denial raid.
+**The pack's bound on the kill ROUNDS UP** (`fauna::animals_the_pack_seats`, `ceil`, never below one
+body). A party too small to haul a whole animal still takes one and wastes the rest — that is where
+hunting's waste comes from, and deleting it would silently remove waste from the game everywhere
+except a denial raid. That rule used to apply *only* under one body, with `floor` above it, which left
+a party able to carry `1.5` animals killing one and leaving half its pack idle every turn. Rounding up
+is the same statement made general: you kill the animal at the top of your load, haul what fits, and
+leave the remainder. `carried` is unchanged — `min(killed × body_mass, capacity, room)`, unrounded.
 
 ### 5.1 A raid's length is a species constant, and the party stepper cannot change it
 
@@ -855,7 +869,7 @@ Each lands on its own PR.
    pack-full / floor / herd-lost / horizon.
 4. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
    the resolver's enemy losses; the herd-as-`Force` mapping and the one-sided fast path land here.
-   Carry, waste and `max(1, carryable)` are untouched.
+   Carry and waste are untouched (the carry arm's rounding changed later — see §5).
 5. **The three kits split correctly** (§4.8) — **LANDED**. A sled took over the hunt's carry
    (`40 → 12` sledless), baskets moved to the forage web with a much lower bare-handed tier
    (`8 → 1.6`, a fifth), spears keep `attack`. Each kit wears on its own quantum, so a band that only
@@ -923,8 +937,18 @@ review can be about the seam rather than about balance. Slices 1, 3 and 4 all mo
 - **No quantity of attackers rolls through the gate.** A large bare-handed party against megafauna
   kills zero over any horizon — pinned, because it is the one property a probabilistic gate would
   silently break (see §4.7).
-- **A fractional engagement reaches one animal**, not zero — contact is not the gate, and a
-  three-hunter mammoth party fails at the *fight*, with casualties, rather than failing to find it.
+- **A fractional engagement reaches a PART of an animal**, neither one nor zero — contact is not the
+  gate, and a three-hunter mammoth party fails at the *fight*, with casualties, rather than failing
+  to find it.
+- **Every extra hunter brings home strictly more.** Crews one through eight on a Wild Boar, on the
+  take rather than on the reach: no flat region anywhere, which is the acceptance test for the
+  un-floored engagement. `core_sim/tests/hunt_take_pipeline.rs`, and on the published crew-take rows
+  in `hunt_useful_crew_on_the_wire.rs`.
+- **A lone hunter eventually kills, at its reach rate.** Over many turns a solo boar hunter's total
+  is `turns × engage_rate × (1 − wariness)` within one animal — the assertion that the wound ledger
+  really carries the part body, and not merely that the total is non-zero.
+- **The pack's last part-load is used.** A crew that can carry `1.5` animals and brought two down
+  carries `1.5` and reports `0.5` wasted.
 - **The fast path is free.** A one-sided engagement produces no casualties, no battle report, and
   costs no more than today's take path.
 - **Distribution over seeds, with liveness.** Non-zero wariness produces a spread whose mean tracks

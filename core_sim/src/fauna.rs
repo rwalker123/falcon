@@ -322,6 +322,13 @@ pub struct Herd {
     /// already handed over. The accumulator that role needed is the herd's own standing biomass, which
     /// crosses one `body_mass` on exactly the cadence the bank used to meter.
     ///
+    /// **Nor is it what a sub-body REACH banks in.** Since [`animals_engaged`] became a plain
+    /// `w × engage_rate`, a crew below `1 / engage_rate` engages a *fraction* of an animal and would
+    /// floor to nothing every turn — but the quantity that has to carry between those turns is the
+    /// party's **fight progress**, which [`crate::combat::DamageLedger`] on [`Herd::wounds`] already
+    /// banks, one accumulator for every party working the herd. Restoring a second bank here would
+    /// meter the same wait twice.
+    ///
     /// Its one remaining writer is the hunting **expedition** (`systems::expedition_take_biomass`),
     /// where it banks a different quantity: the *party's* per-turn processing throughput, metering
     /// **when** the next whole animal is ready for a body heavier than one turn's work. That bank is
@@ -5997,13 +6004,27 @@ pub fn herd_past_recovery(biomass: f32, carrying_capacity: f32, ecology: &Ecolog
 /// `docs/plan_hunt_through_combat.md` §2, and the single definition of it, so no two hunters of a
 /// herd can disagree about how many they could reach.
 ///
-/// `workers × engage_rate`, floored to whole animals — **but never below one for a party that
-/// exists**. A fractional engagement means a small band cannot corner the quarry *efficiently*, not
-/// that it cannot walk up to it: three hunters do reach a mammoth, and then fail at the *fight*,
-/// which is where the gate lives. Flooring to zero would put a headcount threshold in front of the
-/// attack-vs-defense one and hide the reason.
+/// `workers × engage_rate`, **unrounded** — a reach is a *rate*, and rounding it is what made extra
+/// hunters worthless. `floor(w × rate).max(1)` answered **one animal for every crew from 1 to 6** on
+/// the shipped Wild Boar (`engage_rate 0.33`), so four hunters took exactly what one took
+/// (`0.18 food/turn` either way, reported from play). The reach is now strictly increasing in the
+/// crew, which is the property the whole engagement stage exists to have.
 ///
-/// A party of no workers engages nothing, which is not the same statement.
+/// # Nothing here needs a floor of one, because nothing reaches zero
+///
+/// The retired `.max(1.0)` defended a headcount threshold standing in front of the
+/// attack-vs-defense gate: with the floor removed, `floor(1 × 0.05)` would have been `0` and a lone
+/// mammoth hunter would fail for the wrong reason. A plain multiply cannot produce that — a lone
+/// mammoth hunter reaches `0.05`, not `0` — so the gate is still the fight's and the defence is no
+/// longer needed. **A party of no workers engages nothing**, which is a different statement and is
+/// the one arm kept.
+///
+/// # A fractional reach is progress, not a failure to arrive
+///
+/// A crew below `1 / engage_rate` reaches less than one body a turn, and what carries it between
+/// turns is the fight's own accumulator: the retreat keeps the fraction ([`animals_that_stay`]) and
+/// [`crate::combat::DamageLedger`] banks the damage struck at it, so a lone boar hunter finishes a
+/// body roughly every fourth turn instead of flooring to zero forever. See [`Herd::wounds`].
 ///
 /// # `workers` IS THE TAKE CREW — no build term, and no dip
 ///
@@ -6017,7 +6038,7 @@ pub fn animals_engaged(workers: u32, engage_rate: f32) -> f32 {
     if workers == 0 {
         return 0.0;
     }
-    (workers as f32 * engage_rate.max(0.0)).floor().max(1.0)
+    workers as f32 * engage_rate.max(0.0)
 }
 
 /// **The per-event seed for a retreat draw** — `(map_seed, tick, herd, party)`, order-independent by
@@ -6085,6 +6106,18 @@ pub fn stay_fraction(wariness: f32, dispersion: f32) -> f32 {
 /// every existing yield test pinning the numbers it pins today, and it is asserted directly rather
 /// than assumed.
 ///
+/// # THE PART BODY IS RETREATED IN CLOSED FORM, and it has to be
+///
+/// [`animals_engaged`] is a **rate**, so an engagement is `3.4` animals as readily as `3` — and the
+/// bodies-only reading floored that to `3` and threw the remainder away one stage before the fight
+/// could bank it. A crew below `1 / engage_rate` then engaged `0.33` and retreated it to **zero, on
+/// every turn forever**, which is the one shape the fractional reach must not produce.
+///
+/// So the whole bodies are drawn as they always were and the part body is kept in **expectation**,
+/// `frac × (1 − wariness)`: you cannot roll a fraction of an animal breaking off, and the fraction
+/// is *progress toward contact* rather than an animal standing there. An integral engagement has no
+/// remainder, so every take that engaged whole bodies is bit-for-bit unchanged.
+///
 /// A non-finite `engaged` (a pen, a plant — no engagement stage at all) is returned unchanged: there
 /// is nothing to retreat from, and iterating it would not terminate.
 pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
@@ -6092,7 +6125,10 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         return engaged;
     }
     let stayers = engaged.floor();
-    match draw {
+    // The part body above the last whole one — kept at its expectation below, never drawn.
+    let partial = (engaged - stayers).max(0.0);
+    let stay_chance = 1.0 - wariness.min(1.0);
+    let whole = match draw {
         HuntDraw::Seeded(seed) => {
             let odds = f64::from(wariness.min(1.0));
             let mut rng = SmallRng::seed_from_u64(seed);
@@ -6100,12 +6136,12 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         }
         // **A forecast makes no draw** — it reads the same binomial analytically (see [`HuntDraw`]).
         HuntDraw::Quantile { sigmas } => {
-            let stay_chance = 1.0 - wariness.min(1.0);
             let mean = stayers * stay_chance;
             let deviation = (stayers * stay_chance * (1.0 - stay_chance)).sqrt();
             (mean + sigmas * deviation).clamp(0.0, stayers)
         }
-    }
+    };
+    whole + partial * stay_chance
 }
 
 /// **[`animals_that_stay`] ON A FRACTIONAL ENGAGEMENT** — the retreat as a rate
@@ -6119,8 +6155,9 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
 ///
 /// **A [`HuntDraw::Seeded`] draw falls back to the whole-animal form**, and that is not a shortcut:
 /// a live take resolves *bodies* — you cannot roll a fraction of an animal breaking off — so a rate
-/// has nothing to draw. No caller reaches it (only the curve asks for a rate, and a curve never
-/// draws); the arm exists so the function is total rather than panicking on an unreachable state.
+/// has nothing to draw, and the fallback keeps the fraction in closed form for exactly that reason.
+/// No caller reaches it (only the curve asks for a rate, and a curve never draws); the arm exists so
+/// the function is total rather than panicking on an unreachable state.
 ///
 /// The `wariness <= 0` and non-finite guards are [`animals_that_stay`]'s, unchanged: a calm quarry
 /// and a source with no engagement stage at all answer their exact identities on both forms.
@@ -6475,11 +6512,11 @@ impl HuntingParty {
     /// **[`stayers`](Self::stayers) WITHOUT THE WHOLE-ANIMAL FLOOR** — the retreat applied to a
     /// fractional engagement, for [`EngagementQuantum::Rate`].
     ///
-    /// **The retreat re-floors what the room clamp already floored, one stage later**, and that is
-    /// why un-flooring [`animals_sparable`] alone changes nothing: `animals_that_stay` opens with
-    /// `let stayers = engaged.floor()`, so an engagement of `0.45` is handed to the binomial as `0`
-    /// and the whole curve is zero however the room was measured. Both floors have to go, or neither
-    /// does.
+    /// **The whole rate reads one continuous binomial**, rather than [`stayers`](Self::stayers)'s
+    /// drawn bodies plus a closed-form remainder. The two agree on the mean and differ only in the
+    /// spread a [`HuntDraw::Quantile`] reports — this one takes its deviation over the whole
+    /// fractional `n`, which is the reading a *rate* wants, while a turn's draw can only deviate on
+    /// the bodies it actually rolled.
     pub fn stayers_at_rate(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         animals_that_stay_at_rate(engaged, effective_wariness(wariness, self.dispersion), draw)
     }
@@ -7267,6 +7304,32 @@ fn whole_animals(available: f32, body_mass: f32) -> f32 {
     (ratio * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
 }
 
+/// **How many animals a pack of `collection` biomass stops a party killing** — `ceil`, never below
+/// one body ([`ONE_WHOLE_ANIMAL`]).
+///
+/// # It rounds UP because the top animal of a load is killed whole
+///
+/// The carry arm used [`whole_animals`], and flooring it left the pack's last part-load **unused**:
+/// a party able to carry `1.5` bodies killed `1`, carried `1`, and left half its capacity idle every
+/// turn of the game. Rounding up kills the animal the pack cannot seat whole, carries what fits and
+/// wastes the rest — which is not a new rule but the general form of the `max(1)` arm that has
+/// always said *"a party that cannot carry one still takes one and wastes the rest"*. `ceil` and
+/// that floor are the same statement about the indivisibility of the animal, one of them stated for
+/// every load rather than only for a load under one body.
+///
+/// **`max(1)` therefore only survives for a pack with no room at all** — a raid whose pack is
+/// exactly full, where `ceil(0) == 0` would stall the trip instead of ending it on one forced
+/// partial kill (`systems::expeditions::expedition_take_biomass`).
+///
+/// The slop is [`ANIMAL_COUNT_EPSILON`]'s, applied **downward** because the rounding is upward: a
+/// collection of exactly three bodies must seat three, not four on a last-mantissa-bit overshoot.
+fn animals_the_pack_seats(collection: f32, body_mass: f32) -> f32 {
+    let ratio = collection / body_mass;
+    (ratio * (1.0 - ANIMAL_COUNT_EPSILON))
+        .ceil()
+        .max(ONE_WHOLE_ANIMAL)
+}
+
 pub fn quantise_animal_take(
     policy_ceiling: f32,
     collection: f32,
@@ -7283,14 +7346,26 @@ pub fn quantise_animal_take(
     }
     let ceiling = policy_ceiling.max(0.0);
     let collection = collection.max(0.0);
+    // **The room, and on a HUNT it is already spent upstream.** Every hunting path clamps its
+    // *engagement* by this same room before the retreat and the fight
+    // ([`resolve_hunt_engagement`], `systems::expeditions::expedition_take_biomass`), and the fight
+    // can only bring down what stayed — so `affordable` cannot bind a hunt, and the escapement floor
+    // is a fact about the *engagement* rather than a veto applied to bodies already on the ground.
+    // Restraint is free precisely because of that ordering (`docs/plan_hunt_through_combat.md` §1).
+    //
+    // **It is live for the PEN, which has no engagement stage to spend it at**
+    // (`systems::labor`'s tend branch hands its keepers' raw handling rate straight in as
+    // `brought_down`), and that is the one caller this arm — and the wait-for-regrowth early return
+    // below — still exists for.
     let affordable = whole_animals(ceiling, body_mass);
     if affordable < 1.0 {
-        // The herd cannot spare a whole animal — wait for it to regrow. THE mechanic.
+        // The source cannot spare a whole animal — wait for it to regrow. THE mechanic.
         return AnimalTake::default();
     }
-    let carryable = whole_animals(collection, body_mass);
-    // `max(1.0)`: a party that can't carry one still takes one — and wastes the rest.
-    //
+    // **What the pack seats, rounded UP** — see [`animals_the_pack_seats`]: the animal the load
+    // cannot hold whole is still killed whole, carried as far as the pack goes and wasted after
+    // that.
+    let carryable = animals_the_pack_seats(collection, body_mass);
     // **`brought_down` is the THIRD bound, and it is THE FIGHT** (`docs/plan_hunt_through_combat.md`
     // §4): the animals the party actually put on the ground, which the engagement bound (§2) already
     // caps from above because you cannot bring down an animal you never reached. It arrives already
@@ -7303,9 +7378,7 @@ pub fn quantise_animal_take(
     // party never stops. The `carried` line below is untouched by the choice, so a raid still banks
     // whatever it can haul and the rest becomes [`AnimalTake::wasted`].
     let killed = match stop {
-        EngagementStop::WhenPackFull => affordable
-            .min(carryable.max(1.0))
-            .min(brought_down.max(0.0)),
+        EngagementStop::WhenPackFull => affordable.min(carryable).min(brought_down.max(0.0)),
         EngagementStop::Never => affordable.min(brought_down.max(0.0)),
     };
     let killed_biomass = killed * body_mass;
@@ -7411,14 +7484,16 @@ pub fn hunt_take_bound(
     // What the HERD could have spared. `<= affordable` (a band, or a raid whose bank has caught up
     // with the surplus) leaves the first arm reading `Floor` exactly as it did.
     let sparable = whole_animals(escapement_room.max(0.0), body_mass);
-    // The same `max(1.0)` the quantiser applies: a party that cannot carry a whole animal still takes
-    // one, so carry does not *bind* below one body — it produces waste instead.
+    // **The same [`animals_the_pack_seats`] the quantiser applies** — read through the one helper
+    // rather than restated, so the reported bound and the paid take cannot disagree about how many
+    // animals a load holds. A party that cannot carry a whole animal still takes one, so carry never
+    // *binds* below one body — it produces waste instead.
     //
     // **A denial raid can never be carry-bound**, because the quantiser's carry arm is exactly what
     // [`EngagementStop::Never`] drops: the pack still decides what comes home, but it stops no kill,
     // so reporting `Carry` here would name a bound the take did not hit.
     let carryable = match stop {
-        EngagementStop::WhenPackFull => whole_animals(collection.max(0.0), body_mass).max(1.0),
+        EngagementStop::WhenPackFull => animals_the_pack_seats(collection.max(0.0), body_mass),
         EngagementStop::Never => f32::INFINITY,
     };
     let brought_down = brought_down.max(0.0);
@@ -8099,11 +8174,13 @@ const CREW_TAKE_RISE_TOLERANCE: f32 = 0.001;
 ///
 /// # It is the LAST RISE, not the first flat
 ///
-/// The engagement is a staircase — `floor(w × engage_rate)` is flat across whole runs of crew sizes
-/// and steps at integer boundaries — so a scan that stopped at the first crew whose take equalled
-/// its predecessor's would report the bottom of a tread as the top of the stairs. On the shipped
-/// Wild Boar (`engage_rate 0.33`) crews one through six all bring the same single animal to bay and
-/// the seventh brings two.
+/// The engagement no longer contributes treads of its own — [`animals_engaged`] is a plain
+/// `w × engage_rate`, and the staircase it used to cut (`floor(w × rate).max(1)`, flat across crews
+/// one to six on the shipped Wild Boar) is exactly the defect that removal fixed. **The reading
+/// stays the last rise**, because the terms that are *not* linear in the crew still make flats: the
+/// escapement room does not grow with the crew at all, and gear coverage re-resolved per crew size
+/// can leave two adjacent sizes taking the same. A scan stopping at the first repeat would report
+/// the bottom of one of those as the top of the curve.
 ///
 /// # A curve still rising at its last row plateaus AT that row
 ///
@@ -9709,7 +9786,7 @@ mod tests {
     // ---- The engagement bound ------------------------------------------------------------------
 
     /// A quarry a whole hunter can only partly corner in a turn — `workers × rate < 1` for any small
-    /// party, which is the case the `max(1.0)` floor exists for.
+    /// party, which is the case the retired `max(1.0)` floor used to answer `1` for.
     const HARD_TO_CORNER_ENGAGE_RATE: f32 = 0.25;
     /// A quarry a hunter reaches two of per turn — the linear-scaling fixture.
     const EASY_ENGAGE_RATE: f32 = 2.0;
@@ -9720,12 +9797,19 @@ mod tests {
         crew / 2
     }
 
-    /// **A fractional engagement reaches one animal, not zero**
-    /// (`docs/plan_hunt_through_combat.md` §10). A small band cannot corner the quarry *efficiently*;
-    /// it can still walk up to it, and the gate on whether it survives the meeting is the fight, not
-    /// a headcount threshold in front of it.
+    /// **A FRACTIONAL ENGAGEMENT STAYS FRACTIONAL — and every extra hunter buys more of it.**
+    ///
+    /// The reach was `floor(w × rate).max(1)`, which answered **exactly one animal** for every crew
+    /// from 1 to 3 here (and 1 to 6 on the shipped Wild Boar), so extra hunters bought a party
+    /// nothing at all. What carries the part body between turns is the fight's own accumulator
+    /// ([`crate::combat::DamageLedger`]), not a floor at this stage.
+    ///
+    /// **Nothing collapses to zero**, which is what the retired floor was defending: a party that
+    /// exists reaches a positive fraction, and the gate on whether it comes home with anything stays
+    /// the fight's (`docs/plan_hunt_through_combat.md` §10).
     #[test]
-    fn a_party_too_small_to_corner_one_animal_still_engages_one() {
+    fn a_fractional_engagement_is_a_rate_and_rises_with_every_hunter() {
+        let mut previous = 0.0;
         for workers in 1..=3u32 {
             let engaged = animals_engaged(workers, HARD_TO_CORNER_ENGAGE_RATE);
             assert!(
@@ -9733,17 +9817,23 @@ mod tests {
                 "fixture must actually be fractional for {workers} hunters"
             );
             assert_eq!(
-                engaged, 1.0,
-                "{workers} hunters must reach one animal, never zero"
+                engaged,
+                workers as f32 * HARD_TO_CORNER_ENGAGE_RATE,
+                "{workers} hunters reach their own rate, unrounded"
             );
+            assert!(
+                engaged > previous,
+                "{workers} hunters must reach strictly more than {} did",
+                workers - 1
+            );
+            previous = engaged;
         }
-        // The floor is the *fraction's* floor, not a blanket one: a party whose reach clears whole
-        // animals is not pinned at 1.
-        assert_eq!(animals_engaged(8, HARD_TO_CORNER_ENGAGE_RATE), 2.0);
+        // …and a crew whose reach clears whole animals is not rounded down to them either.
+        assert_eq!(animals_engaged(9, HARD_TO_CORNER_ENGAGE_RATE), 2.25);
     }
 
-    /// **No workers engage NOTHING** — a different statement from the fractional floor above, and
-    /// pinned separately: the `max(1.0)` must not manufacture a hunter out of an unstaffed row.
+    /// **No workers engage NOTHING** — a different statement from the fractional reach above, and
+    /// pinned separately: it is the one arm of the helper that is not a plain multiply.
     #[test]
     fn a_party_of_no_workers_engages_nothing() {
         for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE, f32::INFINITY] {
@@ -9759,8 +9849,7 @@ mod tests {
     /// That is what makes *"put hands on the build instead"* a real cost with nothing else in the
     /// arithmetic: the retired `build_dip` factor said the same thing about a *shared* crew, and the
     /// defect it guarded (a build riding a hunting party for free) cannot recur when the two crews
-    /// are separate numbers. Asserted where the count is `>= 2`, so the `max(1.0)` floor cannot mask
-    /// the difference.
+    /// are separate numbers.
     #[test]
     fn engagement_scales_with_the_hunting_crew() {
         const CREW: u32 = 8;
@@ -9826,8 +9915,9 @@ mod tests {
         assert_eq!(bounded.killed, HUNTERS, "the party kills what it can reach");
         assert_eq!(
             carry_bound.killed,
-            (collection / BODY_MASS) as u32,
-            "unbounded, the party kills what it can carry"
+            (collection / BODY_MASS).ceil() as u32,
+            "unbounded, the party kills what it can carry — INCLUDING the part-load animal at the \
+             top of the pack, whose remainder it wastes (`animals_the_pack_seats`)"
         );
         assert!(
             bounded.killed < carry_bound.killed,

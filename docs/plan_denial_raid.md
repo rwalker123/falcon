@@ -35,7 +35,7 @@ nothing to do with the floor.
 `fauna::quantise_animal_take` bounds the kill by the party's **carry**:
 
 ```text
-killed = min(affordable, max(1, carryable))
+killed = min(affordable, animals_the_pack_seats(collection))
 ```
 
 `systems::hunt_take` says why, and is right: folding carry room into the collection *"keeps a
@@ -237,7 +237,7 @@ requirement is *how fast*: on the reported herd 9 hunters grind past the 60-turn
 the line in 11 turns.
 
 **The axis is sized by the closed form, so it does not guarantee a SUCCESS row.** The closed form is
-blind to the quantiser, the fight and `animals_engaged`'s `max(1)` floor, so the simulated
+blind to the quantiser and to the fight, so the simulated
 requirement can sit above it: swept over the shipped roster (~670 herd × stock-fraction samples per
 map), 0–5 rows per map have their first success 1–4 parties above the axis, and a Thunder Mammoth at
 full `K` sat **9** above (closed form 4, simulated 21). Those herds report the `0` sentinel. Widening

@@ -187,7 +187,7 @@ branches on mission:
 >   (`fauna::animals_engaged`, which carries no build term at all since the dip retired) and the
 >   quarry's retreat (`fauna::animals_that_stay`, under the caller's `fauna::HuntDraw` — a per-event
 >   seed live, a quantile in a forecast) and hands the count to **the**
->   quantiser, which also retired its hand-rolled copy of the `max(1, carryable)` arithmetic. The bound
+>   quantiser, which also retired its hand-rolled copy of the pack-seating arithmetic. The bound
 >   is what stops the *same* party on the *same* herd taking a different number of animals purely by
 >   choosing the expedition verb (five hunters took 5 Red Deer a turn from camp and 13 as a raid);
 >   pinned by `expedition_hunt::a_raid_and_a_resident_band_reach_the_same_animals`.
@@ -210,7 +210,8 @@ branches on mission:
 >   the bank meters *when* the next whole animal is **ready** (a body heavier than one turn's work takes
 >   `body / throughput` turns). Once one is banked (`affordable >= 1`) the party
 >   **kills it even if the pack cannot seat it whole**, carries the pack's worth, and **wastes the
->   remainder** — exactly the resident band's `max(1, carryable)` rule (`fauna::quantise_animal_take`): a
+>   remainder** — exactly the resident band's pack-seating rule
+>   (`fauna::animals_the_pack_seats`): a
 >   1-hunter party on an 800-biomass mammoth (16 food) whose pack holds only `per_worker_carry` = 4 food
 >   (200 biomass) kills it, delivers ~200 (≈ 25%), wastes ~600. So **`animals_taken` is now a KILL
 >   count**, and the delivered payload is `delivered_food` (`Σ HuntYield::apply(carried)`), not
@@ -699,7 +700,7 @@ killing what you have no intention of using. A *bound* is not reachable by any v
 together:
 
 ```text
-hunt:    killed  = min(affordable, max(1, carryable), brought_down)   // WhenPackFull
+hunt:    killed  = min(affordable, animals_the_pack_seats(room), brought_down)   // WhenPackFull
 denial:  killed  = min(affordable,                    brought_down)   // Never
 both:    carried = min(killed × body_mass, carry_room)                // IDENTICAL
 ```
@@ -716,7 +717,7 @@ resolves both verbs through.
   and refuses anything else (`CommandParseError::UnexpectedArgument`) rather than accepting a number
   and dropping it.
 - **A floor-`0` HUNT is still a different thing, and the difference is the ENGAGEMENT, never the
-  carry.** It grinds to extinction through the lost-herd guard, one `max(1, carryable)` animal a turn
+  carry.** It grinds to extinction through the lost-herd guard, one pack-seated animal a turn
   once its pack is full; denial drops the pack as a bound on what it **engages** and kills everything
   it brings down. **Both haul their real pack** — `carry_room_biomass` takes no floor argument and
   `NO_CARRY_BOUND` means *inedible quarry* and nothing else. A floor-`0` hunt used to pass it, so
@@ -842,9 +843,8 @@ nothing. What they were paying for is worth stating, because it is what "exact" 
   client-side with the prose that explains it.
 - **`party_needed` searches `1..=max_party_workers` upward and stops at the first party that
   succeeds.** It is the forward simulation's answer, not the closed form's — `denial_party_needed` is
-  linear in the party and therefore blind to the whole-animal quantiser, to the fight, and to
-  `animals_engaged`'s `max(1)` floor, so it errs in *both* directions and was only ever a bound on the
-  search. The walk stops at the first success, so a deniable herd costs a handful of projections; a
+  linear in the party and therefore blind to the whole-animal quantiser and to the fight, so it errs
+  and was only ever a bound on the search. The walk stops at the first success, so a deniable herd costs a handful of projections; a
   herd nothing can deny costs the whole range, which is exactly the answer that has to be earned.
 - **The sentinel CHANGED MEANING, and it is a published number, so say so.** `party_needed == 0` now
   means *"no party YOU can field drives this herd down"* — the search ran to the band's own last
@@ -882,10 +882,10 @@ turns the control from a guessing game into an adjustment.
   number the sim now answers exactly is an invitation to call the wrong one — the same rule that
   retired `HuntTripEstimateState`, with a sharper edge. What it knew now lives on
   `forecast_query::seeded_denial_party_for`, because it explains why that walks a projection:
-  - **It erred in BOTH directions.** Too low, being linear: blind to the whole-animal quantiser and
-    to the fight (a party has to *land* its strikes; `defense` and `durability` decide how many turns
-    a kill takes). Too high: blind to `animals_engaged`'s `max(1)` floor, which lets a lone hunter
-    reach **one** mammoth where the arithmetic reads `0.05`.
+  - **It erred low, being linear:** blind to the whole-animal quantiser and to the fight (a party
+    has to *land* its strikes; `defense` and `durability` decide how many turns a kill takes). It also
+    used to err *high*, being blind to `animals_engaged`'s `max(1)` floor — that floor is retired, so
+    the reach it approximates is now the linear thing it always assumed.
   - **The number it divided was subtler than "the herd's regrowth"** — the replacement a raid must
     out-kill is the **peak on the path down**, not the rate where the herd stands. The logistic curve
     peaks at `K/2`, so a party sized on a *full* herd's instantaneous regrowth (which is **zero**)

@@ -187,7 +187,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > party can *reach* at all — `HerdTelemetryState.engageRate`, appended for exactly this:
 >
 > ```text
-> reach(workers)    = floor(workers × engageRate) × bodyMass × <account>PerBiomass
+> reach(workers)    = workers × engageRate × bodyMass × <account>PerBiomass
 > expected(workers) = min(crew term, ceiling(floor), reach(workers))
 > ```
 >

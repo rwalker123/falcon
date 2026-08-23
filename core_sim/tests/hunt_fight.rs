@@ -335,11 +335,12 @@ fn the_kill_rate_responds_to_party_weapon_and_quarry() {
     );
 }
 
-/// **A fractional engagement reaches ONE animal, not zero** (§10) — contact is not the gate. Three
-/// hunters do walk up to a mammoth (`engage_rate 0.05` would floor to `0`); they then fail at the
-/// *fight*, with casualties, which is a different and legible failure.
+/// **A fractional engagement reaches a PART of an animal, never zero** (§10) — contact is not the
+/// gate. Three hunters do get near a mammoth (`engage_rate 0.05`, so `0.15` of one a turn — a plain
+/// multiply cannot answer zero for a party that exists); they then fail at the *fight*, with
+/// casualties, which is a different and legible failure.
 #[test]
-fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
+fn a_fractional_engagement_reaches_part_of_an_animal_and_fails_at_the_fight() {
     const TINY_PARTY: u32 = 3;
     let fauna = deterministic_fauna();
     let engage = fauna
@@ -350,11 +351,13 @@ fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
         (TINY_PARTY as f32 * engage) < 1.0,
         "the fixture must actually be in the fractional regime ({TINY_PARTY} × {engage})"
     );
+    let reach = animals_engaged(TINY_PARTY, engage);
     assert_eq!(
-        animals_engaged(TINY_PARTY, engage),
-        1.0,
-        "a party that exists reaches one animal"
+        reach,
+        TINY_PARTY as f32 * engage,
+        "a party that exists reaches its own rate, un-floored"
     );
+    assert!(reach > 0.0, "and it is never nothing");
 
     let (killed, casualties, fought) =
         hunt_once(MAMMOTH, TINY_PARTY, &HuntingParty::builtin_equipped());

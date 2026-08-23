@@ -1551,24 +1551,31 @@ mod tests {
         the_curve_reproduces_the_take(AUROCHS, AUROCHS_BODY, FAT_HERD, STRIP_IT_BARE);
     }
 
+    /// **EVERY EXTRA HUNTER BUYS TAKE — THE ACCEPTANCE TEST for the un-floored reach.**
+    ///
+    /// The reach was `floor(w × engage_rate).max(1)`, so the shipped Wild Boar's `0.33` answered
+    /// **one animal for every crew from 1 to 6**: four hunters took exactly what one took, and the
+    /// row read `0.18 food/turn` either way. The run is now strictly increasing, and it is asserted
+    /// on the *take* (the sustained kill rate the sim pays) rather than on the reach, because a cap
+    /// that rises while the take does not is the defect wearing a different hat.
     #[test]
     fn the_curve_reproduces_the_take_where_engagement_binds() {
         let world = world_hunting(BOAR, BOAR_BODY);
-        // **THE PRECONDITION** — the engagement really is the binding term on this fixture, and it
-        // really is FLAT across a run of crews, which is `animals_engaged`'s `max(.., 1)` floor.
+        // **THE PRECONDITION** — the engagement really is the binding term on this fixture, so the
+        // rise below is the reach's and not the fight's.
         assert!(
             !fight_binds(&world, BOAR, BOAR_BODY, 6),
             "the boar fixture must be ENGAGEMENT-bound at a crew of six, or this test is not about \
              the engagement"
         );
-        let flat: Vec<f32> = (1..=6)
+        let rising: Vec<f32> = (1..=6)
             .map(|workers| binding_terms(&world, BOAR, BOAR_BODY, FAT_HERD, workers).0)
             .collect();
         assert!(
-            flat.windows(2).all(|pair| pair[0] == pair[1]) && flat[0] > 0.0,
-            "crews of 1 through 6 must all take the SAME non-zero number of boar ({flat:?}) — that \
-             flat run is the `max(.., 1)` floor, and it is what makes a per-hunter rate span 6x \
-             across six adjacent stepper positions"
+            rising.windows(2).all(|pair| pair[1] > pair[0]) && rising[0] > 0.0,
+            "each crew from 1 to 6 must take STRICTLY more boar than the crew below it ({rising:?})\
+             — a flat run there is the retired `floor(w × engage_rate).max(1)`, under which four \
+             hunters fed a band no better than one"
         );
         the_curve_reproduces_the_take(BOAR, BOAR_BODY, FAT_HERD, STRIP_IT_BARE);
     }
@@ -1723,30 +1730,53 @@ mod tests {
     /// **THE BINDING TERM FLIPS INSIDE THE STEPPER'S OWN RANGE**, which is why the sweep above is a
     /// sweep. Asserted directly so a retune that flattened the curve into something a scalar *could*
     /// carry fails here, loudly, rather than leaving the curve looking like over-engineering.
+    ///
+    /// # It is the ROOM that flips it, and after the un-floored reach it is the only thing that can
+    ///
+    /// The reach (`w × engage_rate × stay`) and the fight (`w × landed × damage / durability`) are
+    /// **both linear in the crew**, so on a herd nobody can exhaust, whichever of them is smaller at
+    /// one hunter is smaller at every hunter — the fight/engagement flip this test used to sweep for
+    /// existed only because `floor(w × engage_rate).max(1)` made the reach a *staircase*, and a
+    /// staircase crossing a line is an artefact of the rounding rather than a fact about hunting.
+    ///
+    /// What genuinely is not linear is the **escapement room**: it does not grow with the crew at
+    /// all. So a thin herd is reach-bound at small crews and room-bound at large ones, the curve
+    /// rises and then stops rising inside one stepper's range, and that plateau is precisely what no
+    /// per-hunter scalar can carry. Read off the **published rows**, because that is the transport
+    /// the client's stepper walks.
     #[test]
     fn the_binding_term_changes_within_one_stepper_range() {
-        let world = world_hunting(AUROCHS, AUROCHS_BODY);
-        let mut saw_fight = false;
-        let mut saw_engagement = false;
-        for workers in 1..=SWEEP_CREW {
-            if fight_binds(&world, AUROCHS, AUROCHS_BODY, workers) {
-                saw_fight = true;
-            } else {
-                saw_engagement = true;
-            }
-        }
+        /// Thin enough that the stock standing above the floor covers fewer deer than a full crew
+        /// can reach, and fat enough that a small crew is still the tighter term.
+        const THIN_HERD: f32 = 70.0;
+
+        let mut world = world_hunting_biomass(DEER, DEER_BODY, THIN_HERD);
+        let rows = crew_curve(&mut world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE));
+        let plateau = crate::fauna::hunt_useful_crew(
+            &rows
+                .iter()
+                .map(|row| crate::fauna::HuntCrewTake {
+                    workers: row.workers,
+                    low: row.animals_low,
+                    likely: row.animals_likely,
+                    high: row.animals_high,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let takes: Vec<f32> = rows.iter().map(|row| row.animals_likely).collect();
         assert!(
-            saw_fight && saw_engagement,
-            "the aurochs curve must be fight-bound at some crews and engagement-bound at others \
-             within `1..={SWEEP_CREW}` — a single per-hunter rate cannot express that, which is the \
-             whole reason this reply is a curve"
+            plateau > 1 && plateau < SWEEP_CREW,
+            "the curve must still be climbing at some crews and flat at others within \
+             `1..={SWEEP_CREW}` (it plateaus at {plateau}: {takes:?}) — a single per-hunter rate \
+             cannot express that, which is the whole reason this reply is a curve"
         );
     }
 
-    /// **THE CREW OF ONE**, which is where [`crate::fauna::animals_engaged`]'s `max(.., 1)` lives:
-    /// a lone hunter reaches ONE aurochs where `1 x 0.17` reads `0.17`. Pinned on its own because a
-    /// sweep that started at two would never see it, and because a scalar per-hunter rate derived
-    /// from any larger crew is wrong here by exactly that floor.
+    /// **THE CREW OF ONE**, whose reach is a *fraction of one animal* — `1 × 0.17` of an aurochs.
+    /// Pinned on its own because a sweep that started at two would never see it, and because this is
+    /// the crew a rounding at either end of the pipeline silently deletes: the retired
+    /// `max(.., 1)` used to hand it a whole animal it had not reached, and a bare `floor()` would
+    /// hand it nothing, for ever.
     #[test]
     fn a_crew_of_one_reaches_one_animal_and_the_curve_says_so() {
         let world = world_hunting(AUROCHS, AUROCHS_BODY);
@@ -1755,13 +1785,14 @@ mod tests {
         let stay = crate::fauna::stay_fraction(fauna.wariness_for(AUROCHS), NEUTRAL_DISPERSION);
         assert!(
             rate < 1.0,
-            "the fixture must have a FRACTIONAL engage_rate ({rate}) or the `max(.., 1)` floor is \
-             not exercised and this test asserts nothing"
+            "the fixture must have a FRACTIONAL engage_rate ({rate}) or this test is not about the \
+             part body at all"
         );
         assert_eq!(
             crate::fauna::animals_engaged(1, rate),
-            1.0,
-            "one hunter reaches one animal — the floor itself"
+            rate,
+            "one hunter reaches its own rate — a part body, neither rounded up to one nor down to \
+             nothing"
         );
         drop(fauna);
 
@@ -1770,29 +1801,30 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].workers, 1);
 
-        // **THE FLOOR IS LOAD-BEARING, stated as the difference it makes.** What stands in front of
-        // a lone hunter is a whole animal's worth of retreat, not `0.17` of one — so `stayed` is the
-        // species' `stay_fraction`, and a curve derived from the un-floored `w × engage_rate` would
-        // quote a sixth of that.
+        // **THE PART BODY SURVIVES THE RETREAT, stated as the difference it makes.** The retreat
+        // draws whole bodies and keeps the remainder in closed form, so what stands in front of a
+        // lone hunter is `rate × stay_fraction` of an animal — a re-floor at this stage would leave
+        // it exactly zero and the fight nothing to bank.
         let (killed, stayed) = binding_terms(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1);
-        let unfloored = rate * stay;
         assert_eq!(
-            stayed, stay,
-            "one hunter corners a WHOLE animal and keeps `stay_fraction` of it"
+            stayed,
+            rate * stay,
+            "one hunter corners `engage_rate` of an animal and keeps `stay_fraction` of that"
         );
         assert!(
-            stayed > unfloored,
-            "the floor must actually raise the reach ({stayed} vs the un-floored {unfloored}), or \
-             this fixture does not exercise it"
+            stayed > 0.0 && stayed < 1.0,
+            "the fixture must actually be a PART body ({stayed}), or it exercises neither rounding"
         );
 
         // **AND THE LONE HUNTER REALLY DOES GET ONE.** A single turn reads `0` here — a
         // 150-durability aurochs takes about sixteen hunter-turns and the damage is banked, not lost
         // — so asserting on turn one alone would be asserting on the pulse rather than on the reach.
+        // That bank ([`crate::combat::DamageLedger`]) is what makes a sub-body reach a *cadence*
+        // rather than a never.
         assert!(
             killed > 0.0,
-            "a crew of one must bring an aurochs down eventually ({killed}/turn sustained); that is \
-             what the `max(.., 1)` floor exists to allow, and a `floor()` to zero would forbid"
+            "a crew of one must bring an aurochs down eventually ({killed}/turn sustained); the \
+             wound ledger is what carries its part body between turns"
         );
         let paid = sim_take(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1, STRIP_IT_BARE);
         assert!(

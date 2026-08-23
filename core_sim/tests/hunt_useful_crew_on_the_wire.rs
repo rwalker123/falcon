@@ -256,8 +256,9 @@ fn crew_take_curve(app: &mut App) -> Vec<(u32, f32)> {
 const REACH_TOLERANCE: f32 = 0.001;
 
 /// **WHERE THE CURVE STOPS RISING, walked the way `SourceForecast.crew_take_plateau` walks it** —
-/// the LAST rise, never the first flat, because the engagement is a staircase and a scan that
-/// stopped at the first repeated value would report the bottom of a tread as the top of the stairs.
+/// the LAST rise, never the first flat. The reach is a plain `w × engage_rate` now, so it no longer
+/// contributes treads of its own; the room and the fight's own float noise still can, and the last
+/// rise is the reading that survives either.
 fn plateau_of(curve: &[(u32, f32)]) -> u32 {
     let mut plateau = NO_USEFUL_CREW;
     let mut best = 0.0f32;
@@ -275,9 +276,11 @@ fn plateau_of(curve: &[(u32, f32)]) -> u32 {
 /// stayed to be fought; the engagement binds when the party kills everything it kept.
 ///
 /// **Which arm binds is a property of the CREW, not of the species**, which is why the regime
-/// preconditions below scan the whole asked range rather than probing one crew: on the aurochs the
-/// fight binds crews 1–8 and 12–17 and the engagement binds the treads in between, and a probe that
-/// happened to land on a tread would report the wrong regime about a fixture that is fine.
+/// preconditions below scan the whole asked range rather than probing one crew. The reach and the
+/// fight are both linear in the crew now, so on an unbounded herd one of them would bind
+/// everywhere — what still moves the answer across the range is the **room**, which does not grow
+/// with the crew at all, and a probe at one crew size would report the wrong regime about a fixture
+/// that is fine.
 fn take_and_reach(app: &App, workers: u32, wear: &BandEquipment) -> (f32, f32) {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let combat = app.world.resource::<CombatConfigHandle>().get();
@@ -363,8 +366,8 @@ fn the_published_cap_is_the_curves_plateau_on_a_fight_bound_quarry() {
 }
 
 /// **…AND ON A QUARRY THE ENGAGEMENT BINDS**, which is the other regime and a different plateau: the
-/// aurochs curve stops where the fight's linear rise meets the reach, the boar curve where the
-/// staircase takes its last step.
+/// aurochs curve stops where the fight's linear rise meets the room, the boar curve where the
+/// reach's does.
 #[test]
 fn the_published_cap_is_the_curves_plateau_on_an_engagement_bound_quarry() {
     let mut app = world_hunting(BOAR, stocked());
@@ -383,6 +386,35 @@ fn the_published_cap_is_the_curves_plateau_on_an_engagement_bound_quarry() {
         "one producer, two transports — on the engagement arm as much as on the fight one: \
          {curve:?}"
     );
+}
+
+/// **THE PUBLISHED ROWS RISE WITH EVERY HUNTER, up to the crew the herd's room stops them at.**
+///
+/// The reach was `floor(workers × engage_rate).max(1)`, so the shipped Wild Boar's `0.33` published
+/// **the same row for crews one through six** — a stepper the player could drag five positions
+/// across for no take at all, matching the play report of four hunters feeding a band exactly as
+/// well as one. Asserted on the rows that cross the **socket**, because those are what the compose
+/// sheet draws; the flat tail above the plateau is the escapement room, which is a fact about the
+/// herd rather than a rounding.
+#[test]
+fn the_published_curve_rises_with_every_hunter_up_to_its_plateau() {
+    let mut app = world_hunting(BOAR, stocked());
+    let curve = crew_take_curve(&mut app);
+    let plateau = plateau_of(&curve);
+    assert!(
+        plateau > 1,
+        "PRECONDITION: the boar curve must climb past its first row ({curve:?}), or there is no \
+         rise to check"
+    );
+    let mut previous = 0.0f32;
+    for (workers, likely) in curve.iter().take_while(|(w, _)| *w <= plateau) {
+        assert!(
+            *likely > previous,
+            "the published row for {workers} hunters must be strictly above the row below it \
+             ({likely} vs {previous}) — a flat run here is the retired reach floor: {curve:?}"
+        );
+        previous = *likely;
+    }
 }
 
 /// **THE TWO FIXTURES REALLY ARE IN DIFFERENT REGIMES**, stated as its own claim rather than left to

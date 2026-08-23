@@ -1041,9 +1041,12 @@ is the seam the basket tier rides; sites with no band to resolve against (the pa
 
 ## Waste came back, and it is pinned
 
-Slice 4 made the wild hunt's `max(1, carryable)` waste branch **unreachable** at the shipped tier:
-any crew that could make the kill could also carry it. Waste needs
+Slice 4 made the wild hunt's forced-partial waste branch **unreachable** at the shipped tier: any
+crew that could make the kill could also carry it. Waste of a *whole* body needs
 `workers × per_worker_carry < body_mass`, and the sledless rate puts that regime back within reach.
+(Since the carry arm rounds **up** — `fauna::animals_the_pack_seats` — a *part*-body waste is now
+ordinary at any crew whose pack does not divide evenly into bodies; this fixture is about the extreme
+case, where less than half of one kill comes home.)
 `a_sledless_party_wastes_the_kill_it_cannot_carry` pins it on **both** sides of the same fixture — 2
 hunters on a 50-biomass body collect `2 × 40 = 80` sledded (whole body seated, `wasted == 0`) and
 `2 × 12 = 24` sledless (one body down, less than half of it home, `wasted > 0`) — with a liveness

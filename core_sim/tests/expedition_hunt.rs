@@ -612,13 +612,19 @@ fn more_hunters_raid_the_surplus_faster() {
 
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
-    // **The sweep starts at the crew that can bring one boar down, not at 1.** Below it the raid takes
-    // nothing at any party size (§4.2's gate), which orders perfectly and says nothing about
-    // throughput — the same reason §10 had to grow three other crew constants when the engagement
-    // bound landed.
-    let least = hunters_to_bring_one_down("Wild Boar", &fauna);
-    // ...and it ends at the crew that can reach a SECOND boar, because engagement is quantised: every
-    // crew between the two takes one a turn and the sweep would be a flat line.
+    // **The sweep starts at the crew that can bring one boar down AND reach one**, not at 1. Below
+    // the fight's gate the raid takes nothing at any party size (§4.2), which orders perfectly and
+    // says nothing about throughput; below one body of *reach* a party takes less per turn than this
+    // herd regrows, so the raid is honestly unbounded (`HuntTripBound::Horizon`) and there is no
+    // trip length to compare. The reach term is new to this sweep: it used to be `max(1)` for every
+    // crew, which handed a two-hunter party a whole boar a turn it had never cornered.
+    let least = hunters_to_bring_one_down("Wild Boar", &fauna).max(hunters_to_reach(
+        "Wild Boar",
+        1,
+        &fauna,
+    ));
+    // ...and it ends at the crew that can reach a SECOND boar, so the sweep spans a whole body of
+    // reach rather than a sliver of one.
     let most = hunters_to_reach("Wild Boar", 2, &fauna).max(least + 1);
 
     let mut prev_turns = u32::MAX;
@@ -763,17 +769,29 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
             &cfg,
             &hunting_party(),
         );
-        let pack_animals =
-            (workers as f32 * cfg.hunt.per_worker_carry / food_per_animal).floor() as u32;
+        let pack_animals = workers as f32 * cfg.hunt.per_worker_carry / food_per_animal;
+        let seats_whole = pack_animals.floor() as u32;
         println!(
-            "[pack-scaling] Marsh Grazer, {workers} hunter(s): {} animals over {} turns (pack fits {})",
+            "[pack-scaling] Marsh Grazer, {workers} hunter(s): {} animals over {} turns (pack fits {pack_animals}, seats {seats_whole} whole)",
             f.animals_taken,
             f.turns_to_fill.expect("a pack-limited raid completes"),
-            pack_animals
         );
-        assert_eq!(
-            f.animals_taken, pack_animals,
-            "a pack-limited raid delivers exactly what the pack seats whole, no over-kill"
+        // **The pack still sets the haul, and the raid still never over-kills** — but the top of the
+        // load is now allowed to be **one** part-seated animal, which is the general form of the
+        // rule that has always let a party unable to seat even one still take one
+        // (`fauna::animals_the_pack_seats`). Which of the two answers a given crew gives is the
+        // *fight's* cadence, not a second rule: a crew that can bring the top animal down on the
+        // same turn kills it and wastes what will not fit, while a slower crew meets the trip-level
+        // `pack_cannot_seat_another` stop first and comes home on the whole bodies it has.
+        //
+        // **The over-kill regression is exactly what the upper bound guards.** The old bug killed at
+        // the *throughput* rate and left many carcasses a trip; at most one animal may be partial,
+        // and the pack-full stop ends the trip on it.
+        assert!(
+            f.animals_taken >= seats_whole && f.animals_taken <= seats_whole + 1,
+            "a pack-limited raid delivers what the pack seats whole ({seats_whole}), plus at most \
+             the one part-seated animal at the top of the load — took {}",
+            f.animals_taken
         );
     }
 }
