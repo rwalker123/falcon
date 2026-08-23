@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 124
+const EXPECTED_CHECKPOINTS := 136
 
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
 
@@ -144,6 +144,98 @@ func _preview_visible_label_count(dock: EventDockPanel, label: String) -> int:
 		if String(event["label"]) == label:
 			count += 1
 	return count
+
+## What `_preview_event_rung` answers for a label the dock is not holding — a value no rung can take,
+## so an absent row fails its claim instead of accidentally matching one.
+const EVENT_DOCK_RUNG_ABSENT := ""
+
+## The rung one RETAINED row resolved to. Read off the accumulator, where `_append` stamped it, so the
+## claim is about the RUNG ITSELF and not about whichever floor the dock happens to be drawing — a
+## row rendered at the wrong importance looks perfectly right in a frame that renders everything.
+func _preview_event_rung(dock: EventDockPanel, label: String) -> String:
+	for event in dock._events:
+		if String(event["label"]) == label:
+			return String(event["rung"])
+	return EVENT_DOCK_RUNG_ABSENT
+
+## Every `Work tab` link the dock has DRAWN, across the bar and the expanded log. A BUTTON walk rather
+## than `_preview_dock_labels`' Label one, deliberately: what is under test is that the row offers a
+## PRESS, and a `Label` reading `Work tab` would satisfy any text search while doing nothing at all.
+func _preview_dock_work_links(dock: EventDockPanel) -> Array[Button]:
+	var found: Array[Button] = []
+	var stack: Array[Node] = [dock._rows, dock._log_body]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node == null:
+			continue
+		for child in node.get_children():
+			stack.append(child)
+		if node is Button and (node as Button).text == HudEventVocab.WORK_TAB_LINK_TEXT:
+			found.append(node as Button)
+	return found
+
+## ---- A SHORT BAND SHEDS A CREW (`systems::labor::announce_shed_crew`) -------------------------
+## The five rows of the shed fixture, spelled out so the assertions compare against strings this
+## chapter states rather than against strings recomposed through the code under test.
+
+## **THE SIM'S SHAPE TODAY, and the link's negative case in one row.** `announce_shed_crew` writes the
+## SOURCE — `kind=`, `x=`/`y=` — and no `band=`, so this row is Notable and offers no jump: the client
+## will not recover a band by reading `foragers at (60, 0)` out of the label.
+const SHED_TRIMMED_LINKLESS_LABEL := "foragers at (60, 0) cut to 3 — too few workers"
+
+const SHED_TRIMMED_LINKLESS_DETAIL := "status=trimmed reason=too_few_workers kind=forage x=60 y=0 workers=3 lost=3"
+
+## **THE SAME LINE ONCE THE SIM NAMES THE BAND** — the one token this row needs and does not yet
+## carry. Staged here because the client half is what is under test, and stated as the ASK it is:
+## `band={id}` on the shed detail, beside the source it already writes.
+const SHED_TRIMMED_LINKED_LABEL := "hunters on aurochs-4 cut to 2 — too few workers"
+
+const SHED_TRIMMED_LINKED_DETAIL := "status=trimmed reason=too_few_workers kind=hunt herd=aurochs-4 band=3 workers=2 lost=1"
+
+const SHED_TRIMMED_LINKED_BAND := 3
+
+## The row DESTROYED outright, which stays on the ALERT rung it already had: the queue entry goes with
+## it on the turn's prune, so a build commitment is lost and not merely thinned.
+const SHED_LAPSED_LABEL := "foragers at (58, 4) disbanded — too few workers"
+
+const SHED_LAPSED_DETAIL := "status=lapsed reason=too_few_workers kind=forage x=58 y=4 band=7 workers=2 lost=2"
+
+const SHED_LAPSED_BAND := 7
+
+## The take a commitment narrowed under the crew still standing there (`server.rs handle_assign_labor`).
+const SHED_PRUNED_LABEL := "kelp no longer stands here — dropped from the take"
+
+const SHED_PRUNED_DETAIL := "status=pruned reason=not_here role=forage dropped=kelp"
+
+## **THE POSITIVE COMPANION, AND THE CLAIMS ABOVE ARE HOLLOW WITHOUT IT.** An ordinary `forage`
+## receipt — the same KIND the two trimmed rows ride — with no `status=` token at all. It must stay
+## Routine and must NOT reach the default floor, or "the shed rows are visible" would only be saying
+## that the dock shows everything.
+const SHED_RECEIPT_LABEL := "Ashfoot Forage x4"
+
+## The band ids the two linked rows name, sorted, which is what a press of each must hand back.
+const SHED_LINK_BANDS: Array[int] = [SHED_TRIMMED_LINKED_BAND, SHED_LAPSED_BAND]
+
+## **THE NARROWEST A DRAWN LINK MAY BE, and this is a regression floor rather than a design figure.**
+## The link shipped for one build with `clip_text` set — which keeps a `Button`'s text out of its
+## minimum size, and beside a label that is `SIZE_EXPAND_FILL` therefore allocated it exactly ZERO
+## pixels. Every count-and-press claim below passed on that build; the frame showed no link at all.
+## Well under the word at the row's detail type size, and unreachably far above the zero.
+const WORK_LINK_MIN_DRAWN_WIDTH := 20.0
+
+func _event_dock_shed_fixture() -> Array:
+	return [
+		{"tick": 84, "kind": "forage", "faction": 0,
+			"label": SHED_RECEIPT_LABEL, "detail": "", "seq": 951},
+		{"tick": 84, "kind": "forage", "faction": 0,
+			"label": SHED_TRIMMED_LINKLESS_LABEL, "detail": SHED_TRIMMED_LINKLESS_DETAIL, "seq": 952},
+		{"tick": 84, "kind": "hunt", "faction": 0,
+			"label": SHED_TRIMMED_LINKED_LABEL, "detail": SHED_TRIMMED_LINKED_DETAIL, "seq": 953},
+		{"tick": 84, "kind": "forage", "faction": 0,
+			"label": SHED_LAPSED_LABEL, "detail": SHED_LAPSED_DETAIL, "seq": 954},
+		{"tick": 84, "kind": "forage", "faction": 0,
+			"label": SHED_PRUNED_LABEL, "detail": SHED_PRUNED_DETAIL, "seq": 955},
+	]
 
 ## The tick one RETAINED row carries — the stamp `note_system` took off the dock's current turn.
 ## Read off the accumulator like its label twin, because the claim is about the stamp applied at
@@ -1451,6 +1543,70 @@ func run(harness) -> void:
 	h._assert_hud("a split's token detail is still rendered as prose — got \"%s\"" % founded_phrase,
 		not founded_phrase.contains("=") and founded_phrase.contains(
 			HudEventVocab.DETAIL_PHRASE_SEPARATOR))
+
+	# ---- A SHORT BAND SHEDS A CREW — the rung, and the way to what it cut -----------------------
+	# **THE DEFECT THIS BLOCK EXISTS FOR IS AN ABSENCE.** `status=trimmed` and `status=pruned` ride
+	# their VERB's kind (`forage` / `hunt`), every one of which is `RUNG_ROUTINE`, and the dock's
+	# default floor is `RUNG_NOTABLE` — so a band going 6 → 3 said nothing at all to a player on
+	# default settings, which reads as the number the player just set moving on its own.
+	#
+	# **RENDERED AT THE DEFAULT FLOOR, and the floor is the whole point.** A frame taken at
+	# `Everything` shows all five rows and proves nothing; here the four that must be heard are the
+	# four that are drawn, and the plain receipt beside them is filtered out.
+	#
+	# **THE RUNGS ARE ASSERTED, NOT INFERRED FROM THE PICTURE.** A row drawn at the wrong importance
+	# is invisible to a default player and looks perfectly fine in a frame that renders everything, so
+	# every claim below reads the stamped rung off the accumulator.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_expanded(false)
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_shed_fixture())
+	await h._settle()
+	await h._save("event_dock_crew_cut")
+	h._assert_hud("a crew merely CUT is Notable — the player asked for six and got three, which is no receipt (got %s)"
+			% _preview_event_rung(event_dock, SHED_TRIMMED_LINKLESS_LABEL),
+		_preview_event_rung(event_dock, SHED_TRIMMED_LINKLESS_LABEL) == HudEventVocab.RUNG_NOTABLE)
+	h._assert_hud("a take NARROWED under the crew is Notable too (got %s)"
+			% _preview_event_rung(event_dock, SHED_PRUNED_LABEL),
+		_preview_event_rung(event_dock, SHED_PRUNED_LABEL) == HudEventVocab.RUNG_NOTABLE)
+	h._assert_hud("a row DESTROYED outright stays on the Alert rung it already had (got %s)"
+			% _preview_event_rung(event_dock, SHED_LAPSED_LABEL),
+		_preview_event_rung(event_dock, SHED_LAPSED_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…and the SAME KIND with no `status=` token is still a Routine receipt (got %s)"
+			% _preview_event_rung(event_dock, SHED_RECEIPT_LABEL),
+		_preview_event_rung(event_dock, SHED_RECEIPT_LABEL) == HudEventVocab.RUNG_ROUTINE)
+	h._assert_hud("the cut reaches the DEFAULT floor, which is the whole defect",
+		_preview_visible_label_count(event_dock, SHED_TRIMMED_LINKLESS_LABEL) == 1)
+	h._assert_hud("…while the plain receipt beside it does not — the floor is still doing its job",
+		_preview_visible_label_count(event_dock, SHED_RECEIPT_LABEL) == 0)
+	# **THE JUMP TO WHAT WAS CUT.** The link is offered only where the sim NAMED a band, so the two
+	# rows carrying `band=` wear one and the row that carries only its source does not — the client
+	# does not recover a band by parsing `foragers at (60, 0)` out of a rendered sentence.
+	var work_links := _preview_dock_work_links(event_dock)
+	h._assert_hud("exactly the two rows that NAME a band offer the jump (got %d links)"
+			% work_links.size(), work_links.size() == SHED_LINK_BANDS.size())
+	var linkless_event := {"detail": SHED_TRIMMED_LINKLESS_DETAIL}
+	h._assert_hud("…and the row that names no band offers none, rather than jumping somewhere plausible",
+		event_dock._work_tab_link_band(linkless_event) == HudConst.NO_BAND_ID)
+	var thinnest_link := 0.0
+	for link in work_links:
+		thinnest_link = link.size.x if thinnest_link == 0.0 else minf(thinnest_link, link.size.x)
+	h._assert_hud("…and each is DRAWN wide enough to read and to hit (thinnest %.0f px)"
+			% thinnest_link, thinnest_link >= WORK_LINK_MIN_DRAWN_WIDTH)
+	var asked_bands: Array[int] = []
+	var link_sink := func(band_id: int) -> void: asked_bands.append(band_id)
+	event_dock.band_work_tab_requested.connect(link_sink)
+	for link in work_links:
+		link.pressed.emit()
+	event_dock.band_work_tab_requested.disconnect(link_sink)
+	h._assert_hud("pressing each link asks once — %d presses, %d asks"
+			% [work_links.size(), asked_bands.size()],
+		asked_bands.size() == work_links.size())
+	asked_bands.sort()
+	h._assert_hud("…each carrying the band ITS OWN row named (asked %s, want %s)"
+			% [str(asked_bands), str(SHED_LINK_BANDS)], asked_bands == SHED_LINK_BANDS)
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame

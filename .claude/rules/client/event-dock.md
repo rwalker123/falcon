@@ -16,8 +16,8 @@ to keep closed.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). **What it does publish is `dock_changed(edge)` and `occupancy_changed(edge, extent)`**, both the opposite direction and neither to be mistaken for a reservation: the first says where the bar WENT, so `Main` can re-measure what displaces it there; the second says how deep it is DRAWN, for the free-floating cards that are placed by arithmetic and so cannot be drawn under it (see "Overlaying costs two things a reserved strip never had to pay"). It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`, and pushed inboard on its OWN axis past whatever reserves the edge it is docked to via `set_edge_offset` (see "On a shared edge the panel keeps the rim"). Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
-| `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) · **`IGNORED_KINDS`** (the kinds the dock drops at ingest — see "A kind the dock IGNORES") plus the two client-minted kinds `KIND_SYSTEM` / `KIND_COMMAND_ECHO` and the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
+| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). **What it does publish is `dock_changed(edge)`, `occupancy_changed(edge, extent)` and — its one PER-ROW signal — `band_work_tab_requested(band_id)`** (see "A cut row offers the way to what it cut"); the first two are the opposite direction from a reservation and neither is to be mistaken for one: the first says where the bar WENT, so `Main` can re-measure what displaces it there; the second says how deep it is DRAWN, for the free-floating cards that are placed by arithmetic and so cannot be drawn under it (see "Overlaying costs two things a reserved strip never had to pay"). It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`, and pushed inboard on its OWN axis past whatever reserves the edge it is docked to via `set_edge_offset` (see "On a shared edge the panel keeps the rim"). Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
+| `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule — accent AND rung, the only override above `RUNG_BY_KIND`) · `DETAIL_STATUS_WORK_LINK` + `WORK_TAB_LINK_TEXT` (which of those tokens offers the Work-tab jump) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) · **`IGNORED_KINDS`** (the kinds the dock drops at ingest — see "A kind the dock IGNORES") plus the two client-minted kinds `KIND_SYSTEM` / `KIND_COMMAND_ECHO` and the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
 
 ## Three questions, kept apart
 
@@ -152,11 +152,12 @@ Three layers, and each exists because the one below it cannot express the case:
    `HudStyle.HUNT_DANGER_ACCENT`. Carried over verbatim from the retired command feed so a raid row
    still wears the same crimson as the map's `threat` overlay wash and a hunt-danger row the same
    amber as `hunt_danger` — the bar accent and the map wash speak one danger language.
-2. **`DETAIL_STATUS_STYLE`** — a rung going feral and an assignment dropped for want of people ride
-   their VERB's own kind (`cultivate` / `sow` / `forage` / `hunt`), deliberately, so a rung's whole
-   life reads on one channel. That makes the LOSS the same kind as the COMPLETION before it, which
-   `KIND_STYLE` structurally cannot separate. The sim's own `status=` token can, and it also
-   **promotes the row to the Alert rung** (§02 lists both tokens under Alert).
+2. **`DETAIL_STATUS_STYLE`** — a rung going feral, an assignment dropped for want of people and a
+   crew merely cut all ride their VERB's own kind (`cultivate` / `sow` / `forage` / `hunt`),
+   deliberately, so a rung's whole life reads on one channel. That makes the LOSS the same kind as
+   the COMPLETION before it, which `KIND_STYLE` structurally cannot separate. The sim's own
+   `status=` token can, and it also **sets the row's rung** — see "The `status=` token sets the rung,
+   and it is the only thing above the kind" below.
    **Matched as a whole space-delimited `key=value` fragment, never a bare substring** — the sim
    writes `"status=feral reason=untended …"`, and a substring test on `feral` would also fire on a
    species key or a tile label containing the word.
@@ -165,6 +166,63 @@ Three layers, and each exists because the one below it cannot express the case:
 Only an Alert's LABEL carries its accent; a Routine one recedes to `INK_DIM` and a Notable one stays
 on the shared ink. The rung reads off the rail and the glyph — tinting every label would turn the bar
 into a colour chart and cost the alerts the contrast that makes them alerts.
+
+## The `status=` token sets the rung, and it is the only thing above the kind
+
+`_resolve_rung` asks `DETAIL_STATUS_STYLE` first and `RUNG_BY_KIND` second. The rung rides **inside
+the style entry** rather than in a table beside it: two tables would be two memberships, and a token
+added to one and forgotten in the other renders a row wearing the loss accent at its kind's own rung
+— which looks perfectly right in any frame and is invisible at the player's floor.
+
+| token | rung | why |
+|---|---|---|
+| `status=feral` | Alert | a rung has reverted; the investment is gone |
+| `status=lapsed` | Alert | the labor row was destroyed outright and its queued build went with it |
+| `status=trimmed` | Notable | the source is still worked, by fewer hands than the player set |
+| `status=pruned` | Notable | the crew still stands there; what it TAKES was narrowed |
+
+**Notable is the ladder's own answer for a crew that was merely cut.** Routine is *"bracket
+transitions, and receipts for things the player asked for"*, and a cut crew is the opposite of a
+receipt — the player asked for six and got three. Notable is *"the world changed in a way worth
+knowing"*. Not Alert: this ladder puts a DEATH at Notable (see "The demographic kinds split on
+HEAD-COUNT"), and a shed crew is a consequence of one.
+
+**The two Notable tokens were silent for a release, and the absence is what the split fixes.**
+`trimmed` and `pruned` ride `forage` / `hunt` / `cultivate` / `corral`, every one of which is
+`RUNG_ROUTINE`, against a `DEFAULT_DETAIL_LEVEL` of `RUNG_NOTABLE` — so `systems::labor::
+announce_shed_crew` announced a band going 6 → 3 to nobody on default settings, which reads from the
+player's side as the number they had just set moving on its own.
+
+### A cut row offers the way to what it cut
+
+A row whose `status=` token is in `DETAIL_STATUS_WORK_LINK` (`trimmed`, `lapsed`, `pruned` — a labor
+row the sim changed unasked; **not** `feral`, which changes a source and leaves the work board alone)
+draws a `Work tab` link and emits `band_work_tab_requested(band_id)`. It is the dock's **first and
+only per-row signal**; every other one it publishes is about the strip.
+
+- **The link appears only where the detail carries a `band=` token.** A jump has to name a band, and
+  the client will not recover one by reading `foragers at (60, 0)` out of a rendered label —
+  recovering data from prose is the drift the whole `key=value` contract exists to prevent. Absent,
+  the row still renders, still at its Notable rung, with no link.
+- ⛔ **The labor system does not write that token yet.** `announce_shed_crew` and the two lapse sites
+  beside it write the SOURCE — `kind=`, `x=`/`y=`, `herd=` — and no band, so those rows are linkless
+  today. `band={id}` beside the source is the one addition that lights them up; it is a detail-token
+  change, not a schema change.
+- **It carries a `band_id`, not an `entity`.** The dock's only handle on a band is the wire's durable
+  `BandId`; `BandPanelController.show_work_tab` takes the client-local entity. **The roster is the
+  only place the two meet**, so the join happens exactly once, in `HudLayer.show_band_work_tab`
+  (`HudBandLaborState.player_band_by_band_id`) — the dock never learns an entity and the panel never
+  learns a `band_id`. `Main` relays, as it does for every other dock signal.
+- **The route is the compose sheet's, not a second one** — `jump_to_band_entity`, whose note forbids
+  a second way to make a band the subject. Everything downstream of the join (jump only when the
+  subject is not already that band, tab set AFTER the jump, an unresolvable band still gets the tab)
+  is `show_work_tab`'s own contract; see `labor-ui.md` → "THERE IS NO CHECKBOX ANY MORE".
+- **The link is a `Button`, and it must not be `clip_text`.** Clipping keeps a Button's text out of
+  its minimum size, which beside a `SIZE_EXPAND_FILL` label means it is allocated exactly zero pixels
+  — it shipped that way for one build, passing every count-and-press assertion while rendering
+  nothing. A row's natural width is allowed to grow instead, which is what the unclipped detail label
+  beside it has always done; `MIN_STRIP_WIDTH` is a stated constant rather than a reading of the live
+  card, and `EventRows` clips its contents. `ui_preview` asserts a drawn width, not just a count.
 
 ## The wire tokens are a CONTRACT; what the player sees is rendered from them
 

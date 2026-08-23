@@ -211,6 +211,7 @@ const DOCK_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
 ## first `_apply_dock_layout` always emits even if the strip happens to be suppressed at zero.
 const OCCUPANCY_UNPUBLISHED := -1.0
 
+
 # ---- signals ---------------------------------------------------------------
 ## The strip moved to the other horizontal edge (the log's dock chips are the only way this
 ## happens). **This is NOT `reservation_changed` and must never become it** — the dock still reserves
@@ -229,6 +230,19 @@ signal dock_changed(edge: int)
 ## already runs through: the edge, the displacement, the row count, expanding, suppressing and the
 ## viewport's own resize.
 signal occupancy_changed(edge: int, extent: float)
+
+## **THE DOCK'S FIRST PER-ROW SIGNAL: take me to this band's Work tab.** Emitted by the `Work tab`
+## link a row wears when the sim cut, dropped or narrowed one of that band's labor rows — see
+## `_work_tab_link_band` for which rows those are.
+##
+## **IT CARRIES A `band_id`, NOT AN `entity`, and that is the wire's constraint rather than a
+## preference.** The dock's only input is the sim's `band=` detail token, which is the durable
+## `BandId`; the client-local entity handle every overlay reader keys on is a ROSTER fact, and the
+## roster lives in `HudLayer`. So the join happens exactly once, where it is possible, at
+## `HudLayer.show_band_work_tab` — the dock never learns an entity and the panel never learns a
+## `band_id`. `Main` relays, as it does for every other dock signal: the coordinator mediates and the
+## strip never reaches the HUD itself.
+signal band_work_tab_requested(band_id: int)
 
 # ---- state -----------------------------------------------------------------
 var _dock_edge: int = DEFAULT_EDGE
@@ -472,12 +486,19 @@ func _append(tick: int, kind: String, faction: int, label: String, detail: Strin
 	if rung == HudEventVocab.RUNG_ALERT:
 		_alert_seen = false
 
-## The rung a kind sits on, PROMOTED to Alert by a `status=` token when the sim's detail says an
-## investment was lost. The token test is what separates a rung going feral from the completion that
-## preceded it on the same kind — see `HudEventVocab.DETAIL_STATUS_STYLE`.
+## The rung a kind sits on, OVERRIDDEN by a `status=` token when the sim's detail says a source or a
+## crew changed without the player asking. The token test is what separates a rung going feral from
+## the completion that preceded it on the same kind, and a crew cut to three from the forage receipt
+## it rides beside — both pairs share a KIND, and only the token can tell them apart.
+##
+## **THE OVERRIDE IS A LOOKUP, NOT A PROMOTION TO ALERT.** It returned `RUNG_ALERT` outright while the
+## table held only `feral` and `lapsed`, which are both Alert; `trimmed` and `pruned` are Notable, so
+## the rung now comes off the matched entry. See `HudEventVocab.DETAIL_STATUS_STYLE` for why each
+## token sits where it does.
 func _resolve_rung(kind: String, detail: String) -> String:
-	if _detail_status_key(detail) != "":
-		return HudEventVocab.RUNG_ALERT
+	var token := _detail_status_key(detail)
+	if token != "":
+		return String(HudEventVocab.DETAIL_STATUS_STYLE[token]["rung"])
 	return String(HudEventVocab.RUNG_BY_KIND.get(kind, HudEventVocab.DEFAULT_RUNG))
 
 ## Glyph + accent, most specific first: the kind's own threat style, then the detail's `status=`
@@ -1098,7 +1119,61 @@ func _make_event_row(event: Dictionary, pinned: bool) -> Control:
 	var detail := detail_phrase(String(event["detail"]))
 	if detail != "":
 		line.add_child(_make_label(detail, DETAIL_FONT_SIZE, HudStyle.INK_FAINT))
+
+	# **AND WHERE TO GO AND LOOK AT IT.** Last in the row, so the line still reads left to right as
+	# glyph → turn → what happened → the terms → the way there. Built for both surfaces at once: the
+	# expanded log renders its rows through this same function.
+	var link_band := _work_tab_link_band(event)
+	if link_band != HudConst.NO_BAND_ID:
+		line.add_child(_make_work_tab_link(link_band))
 	return row
+
+## The band whose Work tab this row offers, or `HudConst.NO_BAND_ID`.
+##
+## The wire's own absent-band sentinel is reused rather than a fresh `-1`: `NO_BAND_ID` is the value a
+## real band never takes, so a malformed `band=0` and a missing token answer alike, and no reader has
+## to learn a second spelling of "no band".
+##
+## **TWO CONDITIONS, BOTH READ OFF THE SIM'S MACHINE TOKENS AND NEITHER OFF THE LABEL'S PROSE**: the
+## `status=` fragment is one `HudEventVocab.DETAIL_STATUS_WORK_LINK` names — a labor row the sim cut,
+## dropped or narrowed — and the detail carries a `band=` id to jump to.
+##
+## ⛔ **A ROW THAT NAMES NO BAND GETS NO LINK, and that is the point of the second condition.**
+## Recovering a band by reading the rendered sentence is exactly the drift the `key=value` contract
+## exists to prevent, and a link that jumped to whatever band the panel happened to be showing would
+## be worse than no link at all. The labor system's lines carry the SOURCE and no band today, so they
+## render linkless until the sim writes one — see `HudEventVocab.DETAIL_STATUS_WORK_LINK`.
+func _work_tab_link_band(event: Dictionary) -> int:
+	var detail := String(event["detail"])
+	if not HudEventVocab.DETAIL_STATUS_WORK_LINK.has(_detail_status_key(detail)):
+		return HudConst.NO_BAND_ID
+	var raw_id := _detail_token(detail, HudEventVocab.DETAIL_BAND_KEY)
+	if not raw_id.is_valid_int():
+		return HudConst.NO_BAND_ID
+	return int(raw_id)
+
+## The row's `Work tab` control — the HUD's shared inline-link treatment, so a link in the bar reads
+## exactly like the compose sheet's, at the DETAIL type size it sits beside rather than
+## `build_inline_link`'s own default.
+##
+## ⛔ **IT IS NOT `clip_text`, AND THAT WAS THE FIRST BUILD.** Clipping a `Button` keeps its text out
+## of `get_minimum_size`, which looked like the careful thing to do beside a strip that has a width
+## floor — but the row's label is `SIZE_EXPAND_FILL`, so a clipped link is allocated its minimum,
+## which is now nothing, and the control rendered as zero pixels of empty space. A link nobody can see
+## is the defect this whole row was built to close.
+##
+## **THE ROW'S NATURAL WIDTH IS ALLOWED TO GROW, which is what the row beside it already does.** The
+## detail phrase is an unclipped `Label`, so a row's minimum has always tracked its own text;
+## `MIN_STRIP_WIDTH` is a stated constant rather than a reading of the live card, `EventRows` clips
+## its contents, and the strip is clamped inside its insets either way. So the cost of a link is the
+## same cost a long detail already has, and the frame is the thing that would show it.
+func _make_work_tab_link(band_id: int) -> Button:
+	var link := HudWidgets.build_inline_link(HudEventVocab.WORK_TAB_LINK_TEXT, HudStyle.SIGNAL,
+		func() -> void: band_work_tab_requested.emit(band_id))
+	link.add_theme_font_size_override("font_size", DETAIL_FONT_SIZE)
+	link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	link.size_flags_horizontal = Control.SIZE_SHRINK_END
+	return link
 
 ## An Alert's label carries its accent; a Routine one recedes to `INK_DIM`; a Notable one stays on
 ## the shared ink. The rung reads off the rail and the glyph — tinting every label would turn the

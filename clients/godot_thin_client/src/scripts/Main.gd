@@ -2243,6 +2243,11 @@ func _connect_event_dock() -> void:
     if event_dock.has_signal("occupancy_changed") and not event_dock.is_connected(
             "occupancy_changed", Callable(self, "_on_event_dock_occupancy_changed")):
         event_dock.connect("occupancy_changed", Callable(self, "_on_event_dock_occupancy_changed"))
+    # The dock's one PER-ROW signal: the `Work tab` link on a cut, dropped or narrowed labor row.
+    if event_dock.has_signal("band_work_tab_requested") and not event_dock.is_connected(
+            "band_work_tab_requested", Callable(self, "_on_event_dock_band_work_tab_requested")):
+        event_dock.connect("band_work_tab_requested",
+            Callable(self, "_on_event_dock_band_work_tab_requested"))
     # Seed BOTH bounds: nothing else will, since the dock never enters `_apply_reservation`'s fan-out.
     # Wiring runs after `_connect_band_city_panel`, so the reservers are already in `_reservations`.
     _update_event_dock_insets()
@@ -2279,6 +2284,12 @@ func _push_event_dock_occupancy() -> void:
 
 func _on_band_labels_changed(labels: Dictionary) -> void:
     _event_dock_invoke("set_band_labels", [labels])
+
+## The dock's `Work tab` link, relayed to the HUD. **The band arrives as the sim's durable `band_id`**
+## — the dock's only handle on a band is an event's `band=` detail token — and the roster join onto
+## the client-local entity happens in `HudLayer.show_band_work_tab`, which is where the roster is.
+func _on_event_dock_band_work_tab_requested(band_id: int) -> void:
+    _hud_invoke("show_band_work_tab", [band_id])
 
 ## The HUD's own client-side notes — a quick-hunt refusal, a knowledge unlock, an unanswered fork.
 ## Every one of them is a fault or a state change the player is owed, so this path states no kind and

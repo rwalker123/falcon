@@ -3052,6 +3052,14 @@ retires, so no rung of that picker can be disabled.
 >     Four cases: the faction page, a different band, the right band already, and an unresolvable one.
 > - **What it still does NOT do is focus the source's ROW** on that board — that needs a public focus
 >   seam the board does not have.
+> - **THE COMPOSE SHEET IS NO LONGER THE ONLY CALLER.** The event dock's `Work tab` link — on a row
+>   where the sim cut, dropped or narrowed one of that band's labor rows — reaches the same
+>   `show_work_tab`, and so the same `jump_to_band_entity`, through `HudLayer.show_band_work_tab`
+>   (`event-dock.md` → "A cut row offers the way to what it cut"). **It arrives by the OTHER band
+>   handle**: the dock holds the wire's durable `band_id` and the roster is the only place that joins
+>   it to an `entity`, so `show_band_work_tab` does the join and hands this method the entity it
+>   requires. The four sub-rules above are unchanged and are not restated at that call site — one
+>   contract, two entry points.
 > - **AVAILABLE is the one state built as a `RichTextLabel`**, and the reason is layout, not style:
 >   `build_inline_link` returns a `Button`, which is atomic — a `[Label][link][Label]` sentence cannot
 >   break inside either half and overflows the ~245px card. An inline `[url]` flows. Every other state

@@ -2394,6 +2394,8 @@ func _ready() -> void:
 
 	await _assert_work_tab_link_routes()
 
+	await _assert_dock_work_tab_link_routes()
+
 	await _render_build_queue_states()
 
 	await _render_work_build_state_states()
@@ -13788,6 +13790,91 @@ func _count_work_tab_link_jumps(band_entity: int) -> int:
 
 ## An entity no band in the roster carries, for the unresolvable-band fallback.
 const WORK_TAB_LINK_UNKNOWN_BAND := 99_999
+
+## A `band_id` no band in the roster carries — the dock's twin of the const above. Its own value
+## because the two handles are counted in different spaces, and one shared number would be a
+## coincidence a reader could mistake for a rule.
+const DOCK_WORK_TAB_UNKNOWN_BAND_ID := 88_888
+
+## **THE EVENT DOCK'S `Work tab` LINK, WHICH ARRIVES BY THE OTHER HANDLE** (`HudLayer.
+## show_band_work_tab`). The dock's only purchase on a band is an event's `band=` detail token — the
+## sim's durable `BandId` — where `show_work_tab` above takes the client-local `entity`. The roster is
+## the one place the two meet, so the join is what this walk is for; the tab-and-jump behaviour it
+## delegates to is already covered by `_assert_work_tab_link_routes`.
+##
+## **THE ENTITY CASE IS THE POINT OF IT.** `_stamp_band_ids` makes every fixture's `band_id` differ
+## from its `entity` precisely so a lookup that reads the wrong field is visible: handed an ENTITY,
+## this path must resolve nothing and jump nowhere. A fixture where the two agreed would pass on the
+## defect.
+##
+## **THE JUMP IS COUNTED, NOT INFERRED** — `alert_focus_requested` emissions, 1 when it must jump and
+## 0 when it must not, which is what catches *always jumps* and *never jumps* alike.
+##
+## **PNG-LESS**: a Work tab reached by one handle and a Work tab reached by the other are the same
+## picture.
+func _assert_dock_work_tab_link_routes() -> void:
+	var roster := _faction_roster()
+	_set_world_herds(_herd_fixtures() + _under_herded_work_herd_fixtures())
+	_push_bands(roster)
+	var acting := int((roster[0] as Dictionary).get("entity", -1))
+	var other := int((roster[1] as Dictionary).get("entity", -1))
+	var acting_band_id := acting + FIXTURE_BAND_ID_OFFSET
+	if acting < 0 or other < 0 or acting == other:
+		_fail("dock work tab link — the roster does not stage two distinct bands")
+		return
+	_assert_band_panel("dock work tab link — the fixture's band_id really does differ from its entity (%d vs %d)"
+			% [acting_band_id, acting], acting_band_id != acting)
+	# (1) THE JOIN — a `band_id` off the wire lands on the band that carries it.
+	_hud._bandpanel.jump_to_band_entity(other)
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	var jumps := _count_dock_work_tab_jumps(acting_band_id)
+	await _settle()
+	_assert_band_panel("dock work tab link — a `band_id` moves the subject to that band's Work tab (subject %d, want %d, tab %s)"
+			% [int(_hud._band_labor.panel_band().get("entity", -1)), acting, str(_panel._active_tab)],
+		int(_hud._band_labor.panel_band().get("entity", -1)) == acting
+			and _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…having actually jumped (%d focus emits)" % jumps, jumps > 0)
+	# (2) ALREADY THERE — the tab alone, and NO jump, so a link pressed twice does not re-centre the
+	# map under a player who is already looking at the board.
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	jumps = _count_dock_work_tab_jumps(acting_band_id)
+	await _settle()
+	_assert_band_panel("dock work tab link — a panel already on that band switches the tab (%s)"
+			% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…and does NOT re-jump (%d focus emits)" % jumps, jumps == 0)
+	# (3) AN `entity` IN THE `band_id` SLOT resolves to nothing — the field-confusion guard.
+	_hud._bandpanel.jump_to_band_entity(other)
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	jumps = _count_dock_work_tab_jumps(acting)
+	await _settle()
+	_assert_band_panel("dock work tab link — an ENTITY handed to the band_id path moves no subject (subject %d, want the untouched %d)"
+			% [int(_hud._band_labor.panel_band().get("entity", -1)), other],
+		int(_hud._band_labor.panel_band().get("entity", -1)) == other)
+	_assert_band_panel("…and jumps nowhere on it (%d focus emits)" % jumps, jumps == 0)
+	# (4) AN UNKNOWN `band_id` STILL GETS THE TAB — a stale row must not swallow the whole press.
+	_panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await _settle()
+	jumps = _count_dock_work_tab_jumps(DOCK_WORK_TAB_UNKNOWN_BAND_ID)
+	await _settle()
+	_assert_band_panel("dock work tab link — an unresolvable band_id still switches the tab (%s)"
+			% str(_panel._active_tab), _panel._active_tab == BandCityPanel.ZONE_WORK)
+	_assert_band_panel("…and jumps nowhere on it either (%d focus emits)" % jumps, jumps == 0)
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## The dock link's twin of `_count_work_tab_link_jumps`: drive `HudLayer.show_band_work_tab` — the
+## method `Main` relays `EventDockPanel.band_work_tab_requested` into — and answer how many map-focus
+## emits the join made on its way.
+func _count_dock_work_tab_jumps(band_id: int) -> int:
+	var seen: Array = []
+	var sink := func(_x: int, _y: int) -> void: seen.append(true)
+	_hud._bandpanel.alert_focus_requested.connect(sink)
+	_hud.show_band_work_tab(band_id)
+	_hud._bandpanel.alert_focus_requested.disconnect(sink)
+	return seen.size()
 
 ## **THE JOB'S SETTINGS ARE A ROW EXPANSION** (`docs/plan_standing_upkeep.md` §4.7a ②, ③). Ray, from
 ## play: *"The CROP TO TEND shouldn't be a selection here as the user can't do the cultivate here."* —

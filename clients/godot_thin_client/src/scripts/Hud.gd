@@ -1687,6 +1687,28 @@ func cycle_panel_band(delta: int) -> void:
 func focus_panel_band() -> void:
     _bandpanel.focus_band()
 
+## The `entity` an unresolvable band resolves to, named beside its only reader rather than written as
+## a bare `-1`: it is the whole of `show_band_work_tab`'s unknown-band case, and it has to sit below
+## `BandPanelController.show_work_tab`'s own `>= 0` guard for that case to behave.
+const NO_BAND_ENTITY := -1
+
+## **THE EVENT DOCK ASKS FOR A BAND'S WORK TAB** — the `Work tab` link on a row where the sim cut,
+## dropped or narrowed one of that band's labor rows. `Main` relays `band_work_tab_requested` here;
+## the strip never reaches the panel itself, exactly as the compose sheet never reaches the dock.
+##
+## **THIS IS WHERE THE TWO BAND HANDLES MEET, AND IT IS THE ONLY PLACE THEY CAN.** The dock holds the
+## sim's durable `band_id` (an event's `band=` token is all it ever gets); `show_work_tab` takes the
+## client-local `entity` every overlay reader keys on. The roster is what joins them, and the roster
+## is here — so the id is resolved once, in this method, and neither end learns the other's handle.
+##
+## **AN UNRESOLVABLE ID STILL GETS THE TAB**, which is `show_work_tab`'s own rule and not a second
+## one: a band the roster has never heard of resolves to `NO_BAND_ENTITY`, the jump is skipped and
+## the tab switch — the half that is always right — still happens. A pressed link doing nothing at all
+## is the failure that rule exists to prevent.
+func show_band_work_tab(band_id: int) -> void:
+    var band := _band_labor.player_band_by_band_id(band_id)
+    _bandpanel.show_work_tab(int(band.get("entity", NO_BAND_ENTITY)))
+
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID

@@ -1100,6 +1100,21 @@ func player_band_by_entity(entity: int) -> Dictionary:
 			return b
 	return {}
 
+## **THE SAME BAND, REACHED FROM THE OTHER HANDLE** — its durable `BandId`, which is what the SIM
+## names a band by. `player_band_by_entity` above answers the client-local handle every overlay reader
+## keys on; this one exists for the single direction that cannot use it, an event's `band=` detail
+## token arriving from the wire (`EventDockPanel.band_work_tab_requested`).
+##
+## **THE ROSTER IS THE ONLY PLACE THE TWO HANDLES MEET**, which is why the join is here and not at
+## either end of that hop: the dock holds no entities and `BandPanelController` takes no `band_id`.
+## `{}` when the roster does not know the id — a band that starved out, or a row still held from
+## before a resync.
+func player_band_by_band_id(band_id: int) -> Dictionary:
+	for b in current_player_bands():
+		if b is Dictionary and int((b as Dictionary).get("band_id", -1)) == band_id:
+			return b
+	return {}
+
 ## The band's standing FORAGE assignment on (x,y) — `{}` when it works no such tile. The one lookup
 ## behind the worker count, the seeded policy and the drawer's standing summary, so the three can
 ## never read different assignments.

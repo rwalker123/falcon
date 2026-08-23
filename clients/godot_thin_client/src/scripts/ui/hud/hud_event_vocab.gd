@@ -238,12 +238,57 @@ const KIND_STYLE := {
 ## species key or a tile label containing the word. WARN amber rather than the raid crimson: this is
 ## a loss the player caused by looking away and can still reverse, not an attack.
 ##
-## A row this table claims is promoted to the ALERT rung whatever its kind says — that is the whole
-## point of it, and §02 lists both tokens under Alert.
+## **A ROW THIS TABLE CLAIMS TAKES ITS `rung` FROM HERE, WHATEVER ITS KIND SAYS** — that is the whole
+## point of it, and it is the only override above `RUNG_BY_KIND`. The rung rides in the STYLE entry
+## rather than in a second table beside it, deliberately: two tables would be two memberships, and a
+## token added to one and forgotten in the other is a row that wears the loss accent at the kind's own
+## rung — i.e. looks perfectly right in a frame and is invisible at the player's floor.
+##
+## **THE FOUR TOKENS SPLIT ACROSS TWO RUNGS, and the ladder's own words decide which:**
+##   • ALERT — `feral` and `lapsed`, both listed under Alert in §02. An investment is GONE: a rung has
+##     reverted, or a labor row has been destroyed outright and taken its queued build with it.
+##   • NOTABLE — `trimmed` and `pruned`, where the source is still worked, by less than the player set.
+##     Routine is *"bracket transitions, and receipts for things the player asked for"*, and a crew
+##     cut is the opposite of a receipt: the player asked for six and got three. Notable is *"the
+##     world changed in a way worth knowing"*, which is exactly what a shrunken crew is. **Not
+##     Alert** — this ladder's own calibration puts a DEATH at Notable (see `RUNG_BY_KIND`), and a
+##     shed crew is a consequence of one.
+##
+## **WITHOUT THE SPLIT BOTH NEW TOKENS WERE SILENT.** `trimmed` and `pruned` ride their VERB's kind
+## (`forage` / `hunt` / `cultivate` / `corral`), every one of which is `RUNG_ROUTINE`, and the dock's
+## `DEFAULT_DETAIL_LEVEL` is `RUNG_NOTABLE` — so a band going 6 → 3 announced itself to nobody on
+## default settings, which is the exact defect the sim-side announcement was added to close.
 const DETAIL_STATUS_STYLE := {
-	"status=feral": {"glyph": "⚠", "color": HudStyle.WARN},
-	"status=lapsed": {"glyph": "⚠", "color": HudStyle.WARN},
+	"status=feral": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_ALERT},
+	"status=lapsed": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_ALERT},
+	"status=trimmed": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
+	"status=pruned": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 }
+
+## **THE STATUS TOKENS WHOSE ROW OFFERS THE WORK TAB** — a labor row the sim changed without being
+## asked, so the player is owed a way to go and look at what is left of it. `EventDockPanel` renders
+## `WORK_TAB_LINK_TEXT` on such a row and emits `band_work_tab_requested`.
+##
+## **A SUBSET OF `DETAIL_STATUS_STYLE`, NOT A COPY OF IT.** `feral` is a SOURCE reverting — nothing on
+## the band's work board changed, so the Work tab answers nothing there. The three here are the ones
+## where a crew is smaller or gone than the player left it: `trimmed` cut it, `lapsed` destroyed the
+## row, and `pruned` narrowed what the crew still standing there takes.
+##
+## ⛔ **THE LINK ONLY APPEARS WHERE THE DETAIL CARRIES A `band=` TOKEN** (`DETAIL_BAND_KEY`), because
+## a jump has to name a band and the client will not recover one by reading the label's prose. The
+## labor system's own lines do NOT carry one yet — `systems::labor::announce_shed_crew` and the two
+## lapse sites beside it write the SOURCE (`x=`/`y=`, `herd=`) and no band — so those rows render
+## linkless until the sim adds it. That is a detail-token addition, not a schema change.
+const DETAIL_STATUS_WORK_LINK := {
+	"status=trimmed": true,
+	"status=lapsed": true,
+	"status=pruned": true,
+}
+
+## The link's own words. Deliberately the same string as `HudComposeVocab.WORK_TAB_LINK_TEXT` and
+## deliberately a SEPARATE const: the compose sheet's copy is a word inside a sentence, this one is a
+## control at the end of a row, and this file is a cycle-free leaf that reads only `HudStyle`.
+const WORK_TAB_LINK_TEXT := "Work tab"
 
 # ---- the detail floor ------------------------------------------------------
 ## A floor admits its own rung and everything LOUDER. Three settings, no more: the preference is a
@@ -347,6 +392,10 @@ const DETAIL_VALUE_LABELS := {
 	"elder": "elder",
 	"feral": "feral",
 	"lapsed": "lapsed",
+	# Lower-case with their neighbours, and for their reason: the phrase continues the label
+	# ("foragers at (60, 0) cut to 3 — too few workers" · "trimmed"), it does not head a column.
+	"trimmed": "trimmed",
+	"pruned": "pruned",
 	"untended": "untended",
 }
 
