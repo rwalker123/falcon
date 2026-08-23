@@ -87,8 +87,8 @@ exceed the band. Two rules hold that line, and they answer different questions:
 - **A role's stepper clamps on the band's idle count**, exactly as scout's and warrior's do. The
   refusal the four verbs used to make retires with the crew they used to name: an order that states
   no head count cannot ask for hands the band has not got.
-- **A band that SHRANK sheds**, tail-first, and a role is a row like any other — so where a band's
-  builders fall in the shedding order is where the player put that row in the list.
+- **A band that SHRANK sheds**, and a role is a row like any other — the builders have their own two
+  steps in the decided shedding order (§2.9), one for a spare hand and one for the last.
 
 **The gear the builders carry is the Builders role's own**, read off that row like every other role's,
 and the coverage behind it is resolved over the pool.
@@ -549,6 +549,57 @@ unkept flock loses **animals**, never taming progress. So the animal web cannot 
 and the plant web is the odd one out. **Making plants match animals is a consistency fix, not a new
 idea.** What the animal web still needs from this section is the **cost** side: its demand is flat at
 any fullness exactly as the plant web's is.
+
+### 2.9 WHEN A BAND CANNOT AFFORD ITS ROWS, THE ORDER IS DECIDED
+
+**It fires only at zero slack.** Idle hands absorb a shrinking pool by themselves, so this reaches
+only a band that is **fully committed** when it loses someone — a famine, a fission, a raid, an
+elder. It is an edge-case handler, and that is why the order is decided here rather than exposed as a
+policy: a config lever would be a second answer competing with a settled one.
+
+`LaborAllocation::normalize` walks the list top to bottom and gives **one** hand off the first step
+that names a staffed row, then re-runs for the next hand.
+
+**Nothing is lost**
+
+1. A **scout**.
+2. A **warrior**, if nothing threatens the band.
+3. A **keeper above the keeping demand** — Agriculture first, then Husbandry.
+4. A **builder, while more than one remains** and something is queued.
+
+**Output falls, nothing ends**
+
+5. **Thin the least-productive worked source that has two or more hands** — least yield **per
+   worker**, passing over a source still accruing knowledge if another candidate exists. This never
+   empties a row.
+
+**Something ends**
+
+6. **Empty the least-productive source carrying no improvement and no queued build.**
+7. A **warrior, unconditionally.**
+8. A **keeper below the demand** — improvements begin to rot.
+9. **Empty the least-productive improved source with no queued build.**
+10. **Empty a source carrying a queued build** — the row drops and the declaration goes with it
+    (§3.2: an entry requires a row).
+11. **The last builder** — every queued build stalls.
+
+**Terminal:** a single worker on a single row. Take it; the row ends.
+
+**Thinning beats emptying, and that is the sharp line.** Since §2.5 the builders are a band-level
+pool, so taking a hand off a source mid-build does not slow the build at all — only **emptying** the
+row does, because an entry requires a row and dropping the row drops the entry. The cliff is
+emptying, never building. **9 is worse than 8** because an improved source with no take crew still
+owes its upkeep and now pays nothing, where rot is gradual and recoverable; **7 sits after 6** because
+pulling the guard under a real threat can cost people, which is worse than losing a row that had
+nothing invested in it.
+
+**What it replaced was the edit order.** `set_assignment` re-pushes an edited row to the end of the
+list and the pass used to trim from the end, so the row the player had just touched was always first
+to be cut — a Field's tenders raised `2 → 3` came straight back down on the turn an elder died.
+Nothing in the eleven steps is positional, and list position must not become the shedding order
+again.
+
+---
 
 ---
 

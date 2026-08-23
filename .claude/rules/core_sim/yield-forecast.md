@@ -807,10 +807,14 @@ that never reached the codec still passes an in-process assertion.
 
 ## Shedding a crew the band can no longer field
 
-`LaborAllocation::normalize(available)` runs once per band at the head of `advance_labor_allocation`
-and trims `Σ workers` back to what the band actually has. It answers the one question a command-side
-clamp cannot: the band **lost people** since the command landed, so hands already committed have to
-go somewhere.
+`LaborAllocation::normalize(available, facts)` runs once per band at the head of
+`advance_labor_allocation` and trims `Σ workers` back to what the band actually has. It answers the
+one question a command-side clamp cannot: the band **lost people** since the command landed, so hands
+already committed have to go somewhere.
+
+**It fires only at zero slack.** Idle hands absorb a shrinking pool by themselves, so only a fully
+committed band ever reaches the order below — it is an edge-case handler, which is why the order is
+decided in code and there is no config lever competing with it.
 
 ### Every shed is announced, and a trim is a shed
 
@@ -826,18 +830,89 @@ indistinguishable from the command having been refused.
 worker count was correct throughout and a test that read only the count would have passed the whole
 time.
 
-### The shedding order is the edit order
+### The shedding order — the eleven steps, and why they are in that order
 
-`set_assignment` removes the row it is editing and re-pushes it at the **end** of `assignments`;
-`normalize` trims from the **end**. So **the row a player has just touched is always first in the
-shedding order**, and a raise that leaves a band fully committed is the first thing given back on the
-next turn that costs the band a worker.
+`ShedStep` (`components.rs`) is the list, one variant per step, walked top to bottom; the first step
+that names a staffed row gives **one** hand, and the walk re-runs for the next hand. Nothing about it
+is positional.
 
-The two halves are individually reasonable — an edited row is naturally re-appended, and shedding
+| | Step | Band |
+|---|---|---|
+| 1 | a **scout** | *Nothing is lost* |
+| 2 | a **warrior**, if nothing threatens the band | |
+| 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
+| 4 | a **builder**, while more than one remains and something is queued | |
+| 5 | **thin the least-productive worked source that has two or more hands** — least yield *per worker*, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
+| 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
+| 7 | a **warrior**, unconditionally | |
+| 8 | a **keeper below the demand** — improvements begin to rot | |
+| 9 | **empty the least-productive improved source with no queued build** | |
+| 10 | **empty a source carrying a queued build** — the row drops and the declaration goes with it | |
+| 11 | **the last builder** — every queued build stalls | |
+
+Below that, `ShedStep::LastHand`: a single worker on a single row, taken, and the row ends. Steps 6,
+9 and 10 partition every staffed *source* row between them and the role steps name every staffed
+*role* row, so the walk is already total and that arm is the assertion rather than a case.
+
+**Thinning beats emptying, and that is the sharp line.** The builders have been a band-level pool
+since `docs/plan_standing_upkeep.md` §2.5, so taking a hand off a source mid-build does not slow that
+build at all — only **emptying** the row does, because an entry requires a row (§3.2) and dropping
+the row drops the entry. The cliff is emptying, never building. Two consequences of the same
+reasoning: **9 is worse than 8** (an improved source with no take crew still owes its upkeep and now
+pays nothing, where rot is gradual and recoverable), and **7 sits after 6** (pulling the guard under
+a real threat can cost people, which is worse than losing a row nothing was invested in).
+
+**One hand per pass of the walk**, because the picture changes with every hand taken — a keeper
+surplus falls, a two-hand row becomes a one-hand row, a builder pool reaches its last. A step that
+*empties* a row still takes one hand, and that is not a coincidence: step 5 names every source row
+with two or more hands, so by the time the walk reaches step 6 no source row has more than one.
+
+**`normalize` does not hold the facts the order needs**, so `advance_labor_allocation` resolves them
+into `ShedFacts` and hands them in — and **only the facts**: the steps are walked in one place, so no
+seam knows half the order. Every fact is struck against the allocation the *player* left, before a
+hand is shed:
+
+| Fact | Resolved from |
+|---|---|
+| `threatened` | the **same trigger** `advance_predator_raids` fires on — a carnivore with `aggression > 0` inside `predators.raid_radius`. That pass runs straight after this one off the same herd positions, so a band the pack reaches this turn keeps its guard. A band whose tile will not resolve reads **threatened**: the guard is the reading that costs people when it is wrong |
+| `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make |
+| `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one |
+| `improved` | `patch_at_risk_cost` / `herd_at_risk_cost` above `RUNG_UNSTARTED` — work on the ladder, finished or in flight |
+
+`banking` and the keeping gear are therefore resolved **twice** per band: once here against the
+pre-shed allocation, and once below against what survived, which is the reading the split funds. A
+band whose builders row was emptied funds no head at all, and the split must not fund one it no
+longer has the hands to bank.
+
+**"Least productive" is `last_yields[i].realized ÷ crew`** — the row's own published headline yield,
+the number the band panel and the map annotation state, divided by the hands on it. It is the
+retained telemetry rather than a fresh derivation: this pass runs before the take, so it is the only
+yield reading that exists, and a second source here would order the shedding on a number the player
+has never been shown. Ties go to the earliest row, so the choice is stable.
+
+**An edited row is not a zero-yield row.** `set_assignment` drops the edited row's telemetry with the
+row, and the `assign_labor` command re-seeds it immediately from the source's pre-commit forecast
+(`set_source_yield`) — so a crew the player has just staffed carries the number the compose sheet
+quoted rather than a `0.0` that would make it the first thing thinned. That seeding is load-bearing
+to this order, not merely a display nicety.
+
+#### ⛔ It used to be the EDIT order, and that is what this replaced
+
+`set_assignment` removes the row it is editing and re-pushes it at the **end** of `assignments`, and
+`normalize` trimmed from the **end**. So the row a player had just touched was always first in the
+shedding order. Reported from play: a Field's tenders were raised `2 → 3`, an elder died that turn,
+and the worker came straight back off the row that had just been chosen — which reads as the game
+ignoring the order.
+
+The two halves were individually reasonable — an edited row is naturally re-appended, and shedding
 from the tail means *"where each row falls in the shedding order is where the player put it in the
 list"*, which is a statement the player can make. Their composition is what nobody chose: the list
-position a player controls is silently overwritten by the act of editing the row. **This is an open
-question, not a settled design** — the ordering stands as written until it is ruled on.
+position a player controls is silently overwritten by the act of editing the row. **List position
+must never be the shedding order again**; nothing in the eleven steps is positional.
+
+`core_sim/tests/shedding_order.rs` pins the reported case on the **encoded envelope** — the raise
+stands and the poorer ground per head gives the hand — because the claim is about the crew count the
+player watched move.
 
 ### `normalize` and the commands measure different pools
 

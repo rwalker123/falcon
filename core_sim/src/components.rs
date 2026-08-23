@@ -1954,6 +1954,168 @@ impl ShedCrew {
     }
 }
 
+/// **HOW MANY SPARE KEEPERS IS NONE** — the value [`ShedFacts::spare_agriculture_keepers`] is tested
+/// against, named so step 3 reads as *"is there a keeper the bill does not need"* rather than as an
+/// arbitrary comparison with zero.
+const NO_SPARE_KEEPERS: u32 = 0;
+
+/// **THE SMALLEST CREW A ROW CAN BE THINNED FROM.** Step 5 never empties a row, so a row of one has
+/// nothing it can give: taking that hand is step 6 or lower, where *something ends*.
+const SMALLEST_THINNABLE_CREW: u32 = 2;
+
+/// **THE BUILD POOL AT WHICH THE NEXT HAND TAKEN IS THE LAST ONE.** Step 4 sheds a builder only
+/// *while more than one remains*; taking the last is step 11, at the bottom of the order, because
+/// every queued build stalls with it.
+const LAST_BUILDER_STANDING: u32 = 1;
+
+/// **A ROW WITH NOBODY ON IT BRINGS NOTHING HOME PER HEAD** — what
+/// [`LaborAllocation::yield_per_worker`] answers for an unstaffed row instead of dividing by zero.
+/// No step of the shedding order names such a row, and a `NaN` would poison every comparison it
+/// entered.
+const NOTHING_PER_WORKER: f32 = 0.0;
+
+/// **WHAT THE SHEDDING ORDER ASKS ABOUT THE GROUND UNDER ONE ROW** — the facts a row's *source*
+/// carries that [`LaborAllocation`] does not hold and cannot derive. Resolved by
+/// `systems::labor::advance_labor_allocation`, which has the world, and handed to
+/// [`LaborAllocation::normalize`] index-aligned to [`LaborAllocation::assignments`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SourceShedFacts {
+    /// **This source is still teaching the faction something** — the rung it stands on names a
+    /// knowledge the faction has not completed, and the row's floor leaves a lesson to be earned
+    /// (`intensification::learn_multiplier`). Step 5 passes over such a row while another candidate
+    /// exists: the progress a thinned crew gives up there is invisible to the yield figure the
+    /// choice is otherwise made on.
+    pub accruing_knowledge: bool,
+    /// **This source carries work on its ladder** — an improvement finished or in flight, i.e.
+    /// `forage::patch_at_risk_cost` / `fauna::herd_at_risk_cost` above
+    /// [`crate::intensification::RUNG_UNSTARTED`]. It is the whole line between step 6 (*nothing was
+    /// invested here*) and step 9 (*something was*).
+    pub improved: bool,
+}
+
+/// **WHAT THE SHEDDING ORDER NEEDS AND THE ALLOCATION DOES NOT HOLD** — the keeping demand, a threat
+/// reading and the per-source facts above, resolved once per band per turn by
+/// `systems::labor::advance_labor_allocation` and handed to [`LaborAllocation::normalize`].
+///
+/// **The caller resolves the facts; `normalize` decides the order.** One place walks the eleven
+/// steps, so the order cannot be half-known at two seams — which is why this is a bag of readings
+/// rather than a policy the caller hands in.
+///
+/// [`Self::default`] is *"a band nothing threatens, with no spare keepers and neither improvement nor
+/// lesson on any row"* — the state a hand-rolled fixture is in.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ShedFacts {
+    /// One entry per row, **index-aligned to [`LaborAllocation::assignments`]**. A short vector reads
+    /// as [`SourceShedFacts::default`] for the rows it does not cover, so a fixture may state only
+    /// the rows it is about.
+    pub sources: Vec<SourceShedFacts>,
+    /// **Something is coming for this band** — the same trigger `advance_predator_raids` fires on,
+    /// read one system earlier in the same tick. Step 2 sheds the guard only while this is `false`;
+    /// a threatened band's warriors wait for step 7, below every row that had nothing invested in
+    /// it, because pulling the guard under a real threat can cost people.
+    pub threatened: bool,
+    /// **Hands on [`LaborTarget::Agriculture`] the band's plant keeping bill does not need** — what
+    /// step 3 spends before anything that costs output. Measured against the allocation as the
+    /// player left it, before a single hand is shed.
+    pub spare_agriculture_keepers: u32,
+    /// **Hands on [`LaborTarget::Husbandry`] the band's animal keeping bill does not need** — the
+    /// twin of [`Self::spare_agriculture_keepers`], shed after it because step 3 walks Agriculture
+    /// first.
+    pub spare_husbandry_keepers: u32,
+}
+
+impl ShedFacts {
+    /// This row's source facts, or [`SourceShedFacts::default`] where the caller stated none.
+    fn source(&self, index: usize) -> SourceShedFacts {
+        self.sources.get(index).copied().unwrap_or_default()
+    }
+
+    /// Keep the vector aligned when [`LaborAllocation::normalize`] drops a row out of the middle of
+    /// `assignments` — the same removal `last_yields` takes, for the same reason.
+    fn forget_row(&mut self, index: usize) {
+        if index < self.sources.len() {
+            self.sources.remove(index);
+        }
+    }
+}
+
+/// **THE SHEDDING ORDER** — which row gives when a band cannot field what it is holding. One variant
+/// per step, declared in the order they are walked, so the whole list can be read top to bottom in
+/// one place (`docs/plan_standing_upkeep.md` §2.9).
+///
+/// **It fires only at zero slack.** Idle hands absorb a shrinking pool by themselves, so this is an
+/// edge-case handler for a band that is fully committed — not a standing policy, which is why the
+/// order is decided here and there is no config lever competing with it.
+///
+/// # THE THREE BANDS, AND THE SHARP LINE IS BETWEEN THE SECOND AND THE THIRD
+///
+/// - **Nothing is lost** (1–4): a role stops, or a pool loses a hand it was not spending.
+/// - **Output falls, nothing ends** (5): a crew thins. The row, its improvement and its queue entry
+///   all stand.
+/// - **Something ends** (6–11): a row is emptied and dropped, or the keeping goes short.
+///
+/// **Thinning beats emptying, and that line is the whole design.** The builders have been a
+/// band-level pool since `docs/plan_standing_upkeep.md` §2.5, so taking a hand off a source
+/// mid-build does not slow that build at all — only **emptying** the row does, because an entry
+/// requires a row (§3.2) and dropping the row drops the entry. The cliff is emptying, never
+/// building.
+///
+/// # ⛔ THE STEP THAT USED TO FIRE WAS "WHATEVER THE PLAYER TOUCHED LAST"
+///
+/// [`LaborAllocation::set_assignment`] removes the row it edits and re-pushes it at the **end** of
+/// `assignments`, and this pass used to trim from the end — so the crew a player had just raised was
+/// always first to be cut. Raising a Field's tenders `2 → 3` on the turn an elder died took the
+/// worker straight back off the row the player had just chosen, which reads as the game ignoring the
+/// order. Nothing in the list below is positional, and that is deliberate: **list position must
+/// never be the shedding order again**, because the position a player controls is silently
+/// overwritten by the act of editing the row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShedStep {
+    /// **1 — a scout.** The fog stops rolling back and nothing the band holds is touched.
+    Scout,
+    /// **2 — a warrior, while nothing threatens the band.** A guard against nothing is the cheapest
+    /// hand in the allocation.
+    UnthreatenedWarrior,
+    /// **3 — a keeper above the keeping demand**, Agriculture before Husbandry. The bill is still met
+    /// in full, so nothing rots.
+    SpareKeeper,
+    /// **4 — a builder, while more than one remains and something is queued.** The queue slows; no
+    /// job stops.
+    SpareBuilder,
+    /// **5 — thin the least-productive worked source that has two or more hands**, least yield *per
+    /// worker*, passing over a source still accruing knowledge while another candidate exists. This
+    /// never empties a row.
+    ThinLeastProductive,
+    /// **6 — empty the least-productive source carrying no improvement and no queued build.** The row
+    /// ends, and nothing invested ends with it.
+    EmptyUnimproved,
+    /// **7 — a warrior, unconditionally.** Below step 6 because pulling the guard under a real threat
+    /// can cost people, which is worse than losing a row that had nothing invested in it.
+    Warrior,
+    /// **8 — a keeper below the demand.** Improvements begin to rot, which is gradual and
+    /// recoverable.
+    NeededKeeper,
+    /// **9 — empty the least-productive improved source with no queued build.** Worse than step 8:
+    /// an improved source with no take crew still owes its upkeep and now pays nothing, where rot is
+    /// gradual and recoverable.
+    EmptyImproved,
+    /// **10 — empty a source carrying a queued build.** The row drops and the declaration goes with
+    /// it on the next [`LaborAllocation::prune_build_queue`].
+    EmptyQueued,
+    /// **11 — the last builder.** Every queued build stalls.
+    ///
+    /// It names the Builders row **unconditionally**, where step 4 needs a queue and a second hand,
+    /// so a band with two builders and nothing queued still has a step that answers for it — the
+    /// walk has to be total or a fully committed band would never resolve.
+    LastBuilder,
+    /// **Terminal — the band is down to a single worker on a single row.** Take it; the row ends.
+    ///
+    /// Steps 6, 9 and 10 partition every staffed *source* row between them and steps 1–4, 7, 8 and
+    /// 11 name every staffed *role* row, so the walk above is already total. This arm says so out
+    /// loud rather than looping forever if it ever stops being.
+    LastHand,
+}
+
 /// Retained per-source food-yield telemetry for one labor assignment this turn (derived, not
 /// persisted). `actual` = the provisions the source actually produced this turn; `sustainable` =
 /// the provisions it could yield *without drawing down its stock*. Forage is inexhaustible in
@@ -3560,14 +3722,30 @@ impl LaborAllocation {
         }
     }
 
-    /// Trim assignments so `Σ ≤ available` (called each turn in case `working` shrank). Reduces
-    /// from the last assignment(s) first, dropping any that reach zero.
+    /// Trim assignments so `Σ ≤ available` (called each turn in case `working` shrank), one hand at
+    /// a time, taking each from the first step of [`ShedStep`] that names a row — **the decided
+    /// shedding order** (`docs/plan_standing_upkeep.md` §2.9). Read that enum for the list and the
+    /// reasoning behind it; this doc covers only how the walk is executed.
+    ///
+    /// **It fires only at zero slack.** Idle hands absorb a shrinking pool by themselves, so a band
+    /// with anyone unassigned never reaches here.
     ///
     /// **It trims ONE allocation per row, because a row now carries one** — the take crew. The
     /// build→take shedding order went with the per-source build crew
     /// (`docs/plan_standing_upkeep.md` §2.5); the building and the keeping are **rows** of their own
-    /// ([`LaborTarget::Builders`] / [`LaborTarget::Agriculture`] / [`LaborTarget::Husbandry`]), so
-    /// where each falls in the shedding order is where the player put it in the list.
+    /// ([`LaborTarget::Builders`] / [`LaborTarget::Agriculture`] / [`LaborTarget::Husbandry`]), and
+    /// the order names each of them explicitly.
+    ///
+    /// # ONE HAND PER PASS OF THE WALK, AND THAT IS WHAT MAKES THE ORDER COHERENT
+    ///
+    /// The picture changes with every hand taken — a keeper surplus falls, a two-hand row becomes a
+    /// one-hand row, a builder pool reaches its last — so the walk is re-run per worker rather than
+    /// taking a row's whole excess at once. `facts` is consumed by value and **decremented in
+    /// place** for exactly that reason.
+    ///
+    /// A step that *empties* a row (6, 9, 10) still takes only one hand, and that is not a
+    /// coincidence: step 5 names every source row with two or more hands, so by the time the walk
+    /// reaches step 6 no source row has more than one. Emptying is therefore always the last hand.
     ///
     /// > #### ⛔ EVERY HAND THIS SHEDS IS REPORTED — A ROW THAT MERELY SHRANK IS NOT A QUIET ONE
     /// >
@@ -3594,45 +3772,232 @@ impl LaborAllocation {
     /// worked while paying nothing — the same "correct `+0.00` forever" state the out-of-range lapse
     /// exists to avoid. Dropping returns the slot to the pool and matches every other give-up path.
     ///
-    /// # THE ROW SHED FIRST IS THE ONE THE PLAYER TOUCHED LAST, AND THAT IS NOT A COINCIDENCE
+    /// # ⛔ LIST POSITION IS NOT THE SHEDDING ORDER, AND MUST NEVER BE AGAIN
     ///
-    /// [`Self::set_assignment`] removes the edited row and re-pushes it at the **end** of
-    /// `assignments`, and this trims from the **end**. So the crew a player has just raised is
-    /// always first in the shedding order — which is why a raise that leaves the band fully
-    /// committed comes back down on the very next turn that costs it a worker.
-    /// `.claude/rules/core_sim/yield-forecast.md` → "The shedding order is the edit order" holds the
-    /// open question; nothing here should be read as a decision that it is right.
+    /// This pass used to take from the **tail**, while [`Self::set_assignment`] removes the row it
+    /// edits and re-pushes it at the **end** — so the crew a player had just raised was always first
+    /// to be cut. See [`ShedStep`]'s own callout for the case that closed it.
     #[must_use = "a shed crew must be announced — see the doc comment"]
-    pub fn normalize(&mut self, available: u32) -> Vec<ShedCrew> {
-        let mut shed = Vec::new();
-        let mut total = self.assigned_total();
-        while total > available {
-            let excess = total - available;
-            let Some(last) = self.assignments.last_mut() else {
+    pub fn normalize(&mut self, available: u32, facts: ShedFacts) -> Vec<ShedCrew> {
+        // Aligned up front: every "least productive" step reads `last_yields` by the row's index.
+        self.align_yields();
+        let mut facts = facts;
+        let mut shed: Vec<ShedCrew> = Vec::new();
+        while self.assigned_total() > available {
+            let Some((index, step)) = self.row_that_gives(&facts) else {
                 break;
             };
-            if last.workers > excess {
-                last.workers -= excess;
-                shed.push(ShedCrew {
-                    target: last.target.clone(),
-                    lost: excess,
-                    remaining: last.workers,
-                });
-            } else {
-                // Nothing of this row survives — drop it whole, so no source is left rendered as
-                // worked by a crew of nobody.
-                if let Some(assignment) = self.assignments.pop() {
-                    shed.push(ShedCrew {
-                        target: assignment.target,
-                        lost: assignment.workers,
-                        remaining: NO_CREW_ON_THIS_ACTIVITY,
-                    });
+            // Step 3 spends a surplus down: each spare keeper taken is one the bill no longer has
+            // spare, and the next pass of the walk has to see that.
+            if step == ShedStep::SpareKeeper {
+                match self.assignments[index].target {
+                    LaborTarget::Agriculture => {
+                        facts.spare_agriculture_keepers -= 1;
+                    }
+                    _ => {
+                        facts.spare_husbandry_keepers -= 1;
+                    }
                 }
             }
-            total = self.assigned_total();
+            let assignment = &mut self.assignments[index];
+            assignment.workers -= 1;
+            let remaining = assignment.workers;
+            let target = assignment.target.clone();
+            if remaining == NO_CREW_ON_THIS_ACTIVITY {
+                // Nothing of this row survives — drop it whole, so no source is left rendered as
+                // worked by a crew of nobody, and take its telemetry and its facts with it so both
+                // stay index-aligned.
+                self.assignments.remove(index);
+                self.last_yields.remove(index);
+                facts.forget_row(index);
+            }
+            // **ONE ROW, ONE `ShedCrew`, however many passes of the walk took hands off it** — the
+            // caller narrates one feed line per row, and three lines for three hands off the same
+            // crew would read as three separate losses.
+            match shed
+                .iter_mut()
+                .find(|entry| entry.target.same_source(&target))
+            {
+                Some(entry) => {
+                    entry.lost += 1;
+                    entry.remaining = remaining;
+                }
+                None => shed.push(ShedCrew {
+                    target,
+                    lost: 1,
+                    remaining,
+                }),
+            }
         }
         self.align_yields();
         shed
+    }
+
+    /// **THE ROW THAT GIVES THIS HAND** — [`ShedStep`] walked top to bottom, returning the first
+    /// step that names a staffed row and that row's index. `None` only when nothing is staffed at
+    /// all.
+    ///
+    /// Read it beside [`ShedStep`]'s variant docs: every arm below is one line of that list, in that
+    /// order, and the pairing is the whole point of naming the steps.
+    fn row_that_gives(&self, facts: &ShedFacts) -> Option<(usize, ShedStep)> {
+        // ## Nothing is lost
+        // 1. A scout.
+        if let Some(index) = self.staffed_role_row(&LaborTarget::Scout) {
+            return Some((index, ShedStep::Scout));
+        }
+        // 2. A warrior, if nothing threatens the band.
+        if !facts.threatened {
+            if let Some(index) = self.staffed_role_row(&LaborTarget::Warrior) {
+                return Some((index, ShedStep::UnthreatenedWarrior));
+            }
+        }
+        // 3. A keeper above the keeping demand — Agriculture first, then Husbandry.
+        for (role, spare) in [
+            (LaborTarget::Agriculture, facts.spare_agriculture_keepers),
+            (LaborTarget::Husbandry, facts.spare_husbandry_keepers),
+        ] {
+            if spare > NO_SPARE_KEEPERS {
+                if let Some(index) = self.staffed_role_row(&role) {
+                    return Some((index, ShedStep::SpareKeeper));
+                }
+            }
+        }
+        // 4. A builder, while more than one remains and something is queued.
+        if !self.build_queue.is_empty()
+            && self.workers_on(&LaborTarget::Builders) > LAST_BUILDER_STANDING
+        {
+            if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
+                return Some((index, ShedStep::SpareBuilder));
+            }
+        }
+
+        // ## Output falls, nothing ends
+        // 5. Thin the least-productive worked source that has two or more hands — skipping a source
+        //    still accruing knowledge **if another candidate exists**, which is what the `or_else`
+        //    fallback says: when every thinnable row is learning, one of them still gives.
+        let thinnable = |assignment: &LaborAssignment| {
+            assignment.target.is_source() && assignment.workers >= SMALLEST_THINNABLE_CREW
+        };
+        if let Some(index) = self
+            .least_productive_row(|index, assignment| {
+                thinnable(assignment) && !facts.source(index).accruing_knowledge
+            })
+            .or_else(|| self.least_productive_row(|_, assignment| thinnable(assignment)))
+        {
+            return Some((index, ShedStep::ThinLeastProductive));
+        }
+
+        // ## Something ends
+        // 6. Empty the least-productive source carrying no improvement and no queued build.
+        if let Some(index) = self.least_productive_row(|index, assignment| {
+            self.staffed_source(assignment)
+                && !facts.source(index).improved
+                && !self.row_carries_a_queued_build(assignment)
+        }) {
+            return Some((index, ShedStep::EmptyUnimproved));
+        }
+        // 7. A warrior, unconditionally.
+        if let Some(index) = self.staffed_role_row(&LaborTarget::Warrior) {
+            return Some((index, ShedStep::Warrior));
+        }
+        // 8. A keeper below the demand — improvements begin to rot. Agriculture first, as step 3.
+        for role in [LaborTarget::Agriculture, LaborTarget::Husbandry] {
+            if let Some(index) = self.staffed_role_row(&role) {
+                return Some((index, ShedStep::NeededKeeper));
+            }
+        }
+        // 9. Empty the least-productive improved source with no queued build.
+        if let Some(index) = self.least_productive_row(|index, assignment| {
+            self.staffed_source(assignment)
+                && facts.source(index).improved
+                && !self.row_carries_a_queued_build(assignment)
+        }) {
+            return Some((index, ShedStep::EmptyImproved));
+        }
+        // 10. Empty a source carrying a queued build — the row drops and the declaration goes with
+        //     it on the next `prune_build_queue`.
+        if let Some(index) = self.least_productive_row(|_, assignment| {
+            self.staffed_source(assignment) && self.row_carries_a_queued_build(assignment)
+        }) {
+            return Some((index, ShedStep::EmptyQueued));
+        }
+        // 11. The last builder — every queued build stalls.
+        if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
+            return Some((index, ShedStep::LastBuilder));
+        }
+
+        // Terminal: a single worker on a single row. Take it; the row ends.
+        self.least_productive_row(|_, assignment| assignment.workers > NO_CREW_ON_THIS_ACTIVITY)
+            .map(|index| (index, ShedStep::LastHand))
+    }
+
+    /// The band-wide role row for `role`, **only while somebody is standing on it** — a role row at
+    /// zero has no hand to give. Roles are singletons, so there is at most one.
+    fn staffed_role_row(&self, role: &LaborTarget) -> Option<usize> {
+        self.assignments.iter().position(|assignment| {
+            assignment.target.same_source(role) && assignment.workers > NO_CREW_ON_THIS_ACTIVITY
+        })
+    }
+
+    /// **A worked source with a hand on it** — the shape steps 6, 9 and 10 choose between. A source
+    /// row held at **zero** is the band's holding of that ground ([`Self::set_assignment`]) and has
+    /// nothing to shed, so it is never a candidate and is never dropped here.
+    fn staffed_source(&self, assignment: &LaborAssignment) -> bool {
+        assignment.target.is_source() && assignment.workers > NO_CREW_ON_THIS_ACTIVITY
+    }
+
+    /// Whether this row's source is named by an entry in the band's build queue — the term steps 6,
+    /// 9 and 10 partition on. Answered from the allocation's own queue, because that is where it
+    /// lives; nothing about it needs the world.
+    fn row_carries_a_queued_build(&self, assignment: &LaborAssignment) -> bool {
+        self.build_queue
+            .iter()
+            .any(|entry| entry.source.names(&assignment.target))
+    }
+
+    /// **WHAT ONE HAND ON THIS ROW IS BRINGING HOME** — the row's own published headline yield
+    /// ([`SourceYield::realized`], the steady food/turn the band panel and the map annotation state)
+    /// divided by the crew standing on it. THE key every *least productive* step orders on.
+    ///
+    /// **It is the retained telemetry, not a fresh derivation.** `last_yields` is index-aligned to
+    /// `assignments` and holds the previous turn's resolved row, which is the only yield reading
+    /// that exists at this point in the turn — this pass runs before the take. A second yield source
+    /// here would order the shedding on a number the player has never been shown.
+    ///
+    /// **An edited row is not a zero-yield row**, which matters because [`Self::set_assignment`]
+    /// drops the edited row's telemetry with the row: the `assign_labor` command re-seeds it
+    /// immediately from the source's pre-commit forecast ([`Self::set_source_yield`]), so a crew the
+    /// player has just staffed carries the number the compose sheet quoted rather than a `0.0` that
+    /// would make it the first thing thinned.
+    fn yield_per_worker(&self, index: usize) -> f32 {
+        let Some(assignment) = self.assignments.get(index) else {
+            return NOTHING_PER_WORKER;
+        };
+        if assignment.workers == NO_CREW_ON_THIS_ACTIVITY {
+            return NOTHING_PER_WORKER;
+        }
+        self.last_yields
+            .get(index)
+            .map_or(NOTHING_PER_WORKER, |yields| yields.realized)
+            / assignment.workers as f32
+    }
+
+    /// The least productive row `admits` names, by [`Self::yield_per_worker`]. Ties go to the
+    /// **earliest** row (`min_by` keeps the first minimum), so the choice is stable across turns
+    /// rather than depending on how the vector happens to be ordered.
+    fn least_productive_row(
+        &self,
+        admits: impl Fn(usize, &LaborAssignment) -> bool,
+    ) -> Option<usize> {
+        self.assignments
+            .iter()
+            .enumerate()
+            .filter(|(index, assignment)| admits(*index, assignment))
+            .min_by(|(left, _), (right, _)| {
+                self.yield_per_worker(*left)
+                    .total_cmp(&self.yield_per_worker(*right))
+            })
+            .map(|(index, _)| index)
     }
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
@@ -4240,93 +4605,462 @@ mod tests {
         }
     }
 
-    /// **A SHRUNK BAND SHEDS FROM THE TAIL, AND EVERY STANDING ROLE IS AN ORDINARY ROW.**
-    ///
-    /// [`LaborAllocation::normalize`] answers the one question a command-side clamp cannot: the band
-    /// **lost people** (a famine, a fission, a raid), so hands already committed have to go
-    /// somewhere. It trims **tail-first**, and a row with nothing left of it is dropped whole rather
-    /// than left staffed by nobody.
-    ///
-    /// **There is no within-row shedding order any more** (`docs/plan_standing_upkeep.md` §2.5). The
-    /// build→take order existed while a row carried two crews; the building and the keeping are
-    /// **rows** now ([`LaborTarget::Builders`] / [`LaborTarget::Agriculture`] /
-    /// [`LaborTarget::Husbandry`]), so where each falls in the shedding order is where the player
-    /// put it in the list — which is a statement the player can make and the old rule was not.
+    /// Two tiles the shedding-order fixtures work, named so an assertion says *which patch* rather
+    /// than repeating a coordinate literal.
+    const PATCH_A: bevy::math::UVec2 = bevy::math::UVec2::new(1, 1);
+    const PATCH_B: bevy::math::UVec2 = bevy::math::UVec2::new(2, 2);
+
+    /// A band-wide standing role staffed with `workers` — the row shape steps 1–4, 7, 8 and 11 name.
+    #[cfg(test)]
+    fn staffed_role(target: LaborTarget, workers: u32) -> LaborAssignment {
+        LaborAssignment {
+            target,
+            workers,
+            kit: None,
+        }
+    }
+
+    /// A telemetry row whose only live field is the headline [`SourceYield::realized`] the *least
+    /// productive* steps order on — everything else is the zero row, because nothing else is read.
+    #[cfg(test)]
+    fn realized(value: f32) -> SourceYield {
+        SourceYield {
+            realized: value,
+            ..SourceYield::ZERO
+        }
+    }
+
+    /// A build queue entry naming `tile`, so a fixture can say *this row carries a declaration*.
+    #[cfg(test)]
+    fn queued_on(tile: bevy::math::UVec2) -> BuildQueueEntry {
+        BuildQueueEntry {
+            source: BuildSource::Patch(tile),
+            declared: BuildJob::Rung(Improvement::Cultivate),
+            kit: None,
+        }
+    }
+
+    /// The targets `normalize` took hands off, in the order it first touched them — what a walk-down
+    /// assertion is actually about.
+    #[cfg(test)]
+    fn shed_targets(shed: &[ShedCrew]) -> Vec<LaborTarget> {
+        shed.iter().map(|entry| entry.target.clone()).collect()
+    }
+
+    /// **STEP 1 — A SCOUT GIVES FIRST.** Nothing is lost: the fog stops rolling back and every row
+    /// the band holds is untouched, so it outranks even the warrior standing beside it.
     #[test]
-    fn a_shrunk_band_sheds_from_the_tail_and_the_builders_are_a_row_in_that_line() {
-        let head = bevy::math::UVec2::new(1, 1);
-        let tail = bevy::math::UVec2::new(2, 2);
+    fn a_scout_is_the_first_hand_a_shrunk_band_gives() {
         let mut allocation = LaborAllocation {
             assignments: vec![
-                staffed_forage(head, 4),
-                staffed_forage(tail, 3),
-                LaborAssignment {
-                    target: LaborTarget::Builders,
-                    workers: 2,
-                    kit: None,
-                },
+                staffed_forage(PATCH_A, 3),
+                staffed_role(LaborTarget::Scout, 2),
+                staffed_role(LaborTarget::Warrior, 2),
             ],
             ..Default::default()
         };
+        let shed = allocation.normalize(6, ShedFacts::default());
         assert_eq!(
-            allocation.assigned_total(),
-            9,
-            "the builders draw on the same finite band as the gatherers"
-        );
-
-        // One hand short: the tail row is the builders, and it is what gives.
-        let trimmed = allocation.normalize(8);
-        assert_eq!(
-            trimmed,
+            shed,
             vec![ShedCrew {
-                target: LaborTarget::Builders,
+                target: LaborTarget::Scout,
                 lost: 1,
                 remaining: 1,
             }],
-            "a row that merely shrank is reported too — silence here is what reads as a bug"
+            "the scout gives, and says so"
         );
-        assert!(
-            trimmed[0].row_survived(),
-            "and it is reported as a TRIM, because the builders are still standing there"
+        assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
+        assert_eq!(allocation.assignments[0].workers, 3, "the gathering stands");
+    }
+
+    /// **STEP 2 — A WARRIOR GIVES WHILE NOTHING THREATENS THE BAND**, ahead of a keeper the bill does
+    /// not need. Threaten the band and the same allocation sheds the spare keeper instead: the guard
+    /// drops to step 7, below every row that had nothing invested in it.
+    #[test]
+    fn an_unthreatened_warrior_gives_before_a_spare_keeper_and_a_threatened_one_does_not() {
+        let allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 3),
+                staffed_role(LaborTarget::Warrior, 2),
+                staffed_role(LaborTarget::Agriculture, 2),
+            ],
+            ..Default::default()
+        };
+        let spare = ShedFacts {
+            spare_agriculture_keepers: 1,
+            ..Default::default()
+        };
+
+        let mut unthreatened = allocation.clone();
+        assert_eq!(
+            shed_targets(&unthreatened.normalize(6, spare.clone())),
+            vec![LaborTarget::Warrior],
+            "a guard against nothing is the cheapest hand in the allocation"
+        );
+
+        let mut threatened = allocation;
+        assert_eq!(
+            shed_targets(&threatened.normalize(
+                6,
+                ShedFacts {
+                    threatened: true,
+                    ..spare
+                }
+            )),
+            vec![LaborTarget::Agriculture],
+            "under a real threat the guard stays and the spare keeper goes instead"
+        );
+    }
+
+    /// **STEP 3 — A KEEPER ABOVE THE DEMAND GIVES BEFORE A BUILDER**, and Agriculture before
+    /// Husbandry. Nothing rots either way: the bill is still met in full.
+    #[test]
+    fn a_spare_keeper_gives_before_a_builder_and_agriculture_gives_before_husbandry() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 3),
+                staffed_role(LaborTarget::Husbandry, 2),
+                staffed_role(LaborTarget::Agriculture, 2),
+                staffed_role(LaborTarget::Builders, 2),
+            ],
+            build_queue: vec![queued_on(PATCH_A)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            7,
+            ShedFacts {
+                spare_agriculture_keepers: 1,
+                spare_husbandry_keepers: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![LaborTarget::Agriculture, LaborTarget::Husbandry],
+            "the plant pool is walked first, and only then the animal one — both ahead of the queue"
         );
         assert_eq!(
             allocation.workers_on(&LaborTarget::Builders),
-            1,
-            "the tail row sheds first"
+            2,
+            "no hand comes off the queue while a keeping bill has slack in it"
+        );
+    }
+
+    /// **STEP 4 — A BUILDER GIVES WHILE MORE THAN ONE REMAINS AND SOMETHING IS QUEUED.** The queue
+    /// slows and no job stops, which is why it outranks anything that costs output.
+    ///
+    /// **Both conditions are load-bearing**, so the second half of the test empties the queue and
+    /// watches the same allocation thin a gathering crew instead: a builder pool with nothing to
+    /// build is not spare, it is simply idle, and step 11 is where its hands are finally taken.
+    #[test]
+    fn a_builder_gives_while_the_queue_holds_something_and_a_second_builder_stands() {
+        let allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 3),
+                staffed_role(LaborTarget::Builders, 2),
+            ],
+            last_yields: vec![realized(9.0), SourceYield::ZERO],
+            ..Default::default()
+        };
+
+        let mut queued = LaborAllocation {
+            build_queue: vec![queued_on(PATCH_A)],
+            ..allocation.clone()
+        };
+        assert_eq!(
+            shed_targets(&queued.normalize(4, ShedFacts::default())),
+            vec![LaborTarget::Builders],
+            "the queue slows before the gathering does"
         );
         assert_eq!(
-            (
-                allocation.assignments[0].workers,
-                allocation.assignments[1].workers
-            ),
-            (4, 3),
-            "the gathering is untouched while the tail still has hands"
+            queued.workers_on(&LaborTarget::Builders),
+            1,
+            "and only the spare one goes — the last builder is step 11"
         );
 
-        // **A row with nothing left of it is DROPPED WHOLE**, rather than left staffed by nobody —
-        // a zero-worker row is this system's own word for *abandon it*, so keeping one would render
-        // as work being done by an empty crew.
-        let dropped = allocation.normalize(7);
-        assert_eq!(dropped.len(), 1, "the emptied builders row is handed back");
-        assert_eq!(dropped[0].target, LaborTarget::Builders);
+        let mut unqueued = allocation;
+        assert_eq!(
+            shed_targets(&unqueued.normalize(4, ShedFacts::default())),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "with nothing queued the builders are not spare, so the gathering thins instead"
+        );
+    }
+
+    /// **STEP 5 — THE LEAST PRODUCTIVE CREW THINS, PER WORKER**, and a source still accruing
+    /// knowledge is passed over while another candidate exists. Output falls; nothing ends.
+    ///
+    /// The thin patch is staffed **larger** than the rich one, so a rule that ordered on the row's
+    /// whole yield — or on its head count — would pick the other row.
+    #[test]
+    fn the_least_productive_crew_per_worker_thins_and_a_learning_source_is_passed_over() {
+        let allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 4), staffed_forage(PATCH_B, 2)],
+            // 12 ÷ 4 = 3.0 a head on A, 8 ÷ 2 = 4.0 a head on B: A is the thinner ground per hand
+            // while being the larger crew and the larger total.
+            last_yields: vec![realized(12.0), realized(8.0)],
+            ..Default::default()
+        };
+
+        let mut plain = allocation.clone();
+        assert_eq!(
+            shed_targets(&plain.normalize(5, ShedFacts::default())),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "least yield PER WORKER is the key, not the biggest crew or the biggest total"
+        );
+        assert_eq!(plain.assignments[0].workers, 3, "and it only thinned");
+
+        let mut learning = allocation;
+        assert_eq!(
+            shed_targets(&learning.normalize(
+                5,
+                ShedFacts {
+                    sources: vec![
+                        SourceShedFacts {
+                            accruing_knowledge: true,
+                            ..Default::default()
+                        },
+                        SourceShedFacts::default(),
+                    ],
+                    ..Default::default()
+                }
+            )),
+            vec![staffed_forage(PATCH_B, 0).target],
+            "a source part-way to a rung is skipped while another candidate can give instead"
+        );
+    }
+
+    /// **THINNING BEATS EMPTYING, AND THAT IS THE SHARP LINE.** A band with a candidate at step 5 and
+    /// a candidate at step 6 thins the productive crew rather than ending the poor row — because a
+    /// row that ends takes its improvement, its queue entry and its holding with it, where a thinned
+    /// crew loses only this turn's output.
+    #[test]
+    fn a_band_with_both_a_thin_and_an_empty_available_thins() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 1)],
+            // B is far poorer per head and carries nothing — the perfect step-6 candidate.
+            last_yields: vec![realized(20.0), realized(1.0)],
+            ..Default::default()
+        };
+        assert_eq!(
+            shed_targets(&allocation.normalize(2, ShedFacts::default())),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "the rich crew thins rather than the poor row ending"
+        );
+        assert_eq!(
+            allocation.assignments.len(),
+            2,
+            "both rows are still standing, which is the whole point of the line"
+        );
+    }
+
+    /// **STEP 6 — AN UNIMPROVED ROW ENDS BEFORE THE GUARD STANDS DOWN.** Pulling the guard under a
+    /// real threat can cost people; losing a row nothing was invested in cannot.
+    #[test]
+    fn a_row_with_nothing_invested_in_it_ends_before_a_threatened_warrior_gives() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 1),
+                staffed_role(LaborTarget::Warrior, 2),
+            ],
+            last_yields: vec![realized(3.0), SourceYield::ZERO],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            2,
+            ShedFacts {
+                threatened: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(shed_targets(&shed), vec![staffed_forage(PATCH_A, 0).target]);
         assert!(
-            !dropped[0].row_survived(),
+            !shed[0].row_survived(),
             "nothing is left there, so this is the lapse and not a trim"
         );
-        assert_eq!(allocation.workers_on(&LaborTarget::Builders), 0);
-
-        // Only then does the row above it give.
         assert_eq!(
-            allocation.normalize(6),
-            vec![ShedCrew {
-                target: staffed_forage(tail, 0).target,
-                lost: 1,
-                remaining: 2,
-            }],
-            "the next row up gives, and says so"
+            allocation.assignments.len(),
+            1,
+            "the emptied row is DROPPED, not left rendered as worked by a crew of nobody"
         );
-        assert_eq!(allocation.assignments[1].workers, 2);
-        assert_eq!(allocation.assigned_total(), 6);
+        assert_eq!(
+            allocation.last_yields.len(),
+            1,
+            "and its telemetry goes too"
+        );
+        assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
+    }
+
+    /// **STEP 8 BEFORE STEP 9 — RATHER LET AN IMPROVEMENT ROT THAN LEAVE IT WITH NO CREW.** Rot is
+    /// gradual and recoverable; an improved source with no take crew still owes its upkeep and now
+    /// pays nothing.
+    #[test]
+    fn a_keeper_the_bill_needs_gives_before_an_improved_row_is_emptied() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 1),
+                staffed_role(LaborTarget::Agriculture, 1),
+            ],
+            last_yields: vec![realized(3.0), SourceYield::ZERO],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            1,
+            ShedFacts {
+                sources: vec![
+                    SourceShedFacts {
+                        improved: true,
+                        ..Default::default()
+                    },
+                    SourceShedFacts::default(),
+                ],
+                // The bill needs every keeper it has, so step 3 finds nothing.
+                threatened: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(shed_targets(&shed), vec![LaborTarget::Agriculture]);
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "the Field keeps its crew and starts to rot instead"
+        );
+    }
+
+    /// **STEPS 9 → 10 → 11 — A DECLARATION IS THE LAST THING A SOURCE ROW LOSES, AND THE LAST BUILDER
+    /// IS THE LAST HAND OF ALL.** An entry requires a row, so emptying a queued row drops the
+    /// declaration with it; taking the last builder stalls every entry that is left.
+    #[test]
+    fn an_improved_row_ends_before_a_queued_one_and_the_last_builder_goes_last() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 1),
+                staffed_forage(PATCH_B, 1),
+                staffed_role(LaborTarget::Builders, 1),
+            ],
+            build_queue: vec![queued_on(PATCH_B)],
+            last_yields: vec![realized(9.0), realized(1.0), SourceYield::ZERO],
+            ..Default::default()
+        };
+        let facts = ShedFacts {
+            sources: vec![
+                SourceShedFacts {
+                    improved: true,
+                    ..Default::default()
+                },
+                SourceShedFacts {
+                    improved: true,
+                    ..Default::default()
+                },
+                SourceShedFacts::default(),
+            ],
+            threatened: true,
+            ..Default::default()
+        };
+        let shed = allocation.normalize(0, facts);
+        assert_eq!(
+            shed_targets(&shed),
+            vec![
+                staffed_forage(PATCH_A, 0).target,
+                staffed_forage(PATCH_B, 0).target,
+                LaborTarget::Builders,
+            ],
+            "the un-queued improvement ends first even though it is the RICHER row, then the \
+             declaration, and the builders hold on longest"
+        );
+        assert!(allocation.assignments.is_empty());
+    }
+
+    /// **A BAND WITH CANDIDATES AT SEVERAL STEPS TAKES THE EARLIEST, EVERY TIME** — the walk read top
+    /// to bottom, in one assertion.
+    #[test]
+    fn the_walk_takes_the_earliest_step_that_answers() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 2),
+                staffed_role(LaborTarget::Agriculture, 2),
+                staffed_role(LaborTarget::Builders, 2),
+                staffed_role(LaborTarget::Warrior, 1),
+                staffed_role(LaborTarget::Scout, 1),
+            ],
+            build_queue: vec![queued_on(PATCH_A)],
+            last_yields: vec![realized(6.0); 5],
+            ..Default::default()
+        };
+        assert_eq!(allocation.assigned_total(), 8);
+        let shed = allocation.normalize(
+            3,
+            ShedFacts {
+                spare_agriculture_keepers: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![
+                LaborTarget::Scout,
+                LaborTarget::Warrior,
+                LaborTarget::Agriculture,
+                LaborTarget::Builders,
+                staffed_forage(PATCH_A, 0).target,
+            ],
+            "steps 1, 2, 3, 4 then 5 — and list position had nothing to do with any of it"
+        );
+    }
+
+    /// **THE TERMINAL CASE** — one worker on one row, and the pool has gone. Take it; the row ends.
+    #[test]
+    fn a_band_down_to_one_hand_on_one_row_loses_that_row() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 1)],
+            last_yields: vec![realized(4.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(0, ShedFacts::default());
+        assert_eq!(shed.len(), 1);
+        assert!(!shed[0].row_survived(), "the row ends");
+        assert!(allocation.assignments.is_empty());
+        assert!(allocation.last_yields.is_empty());
+    }
+
+    /// # ⛔ THE ROW THE PLAYER JUST TOUCHED IS NOT THE FIRST THING SHED
+    ///
+    /// The reported case: a Field's tenders were raised `2 → 3`, an elder died that same turn, and
+    /// the worker came straight back off the row the player had just chosen — because
+    /// [`LaborAllocation::set_assignment`] re-pushes an edited row to the **tail** and `normalize`
+    /// used to trim from the tail.
+    ///
+    /// The fixture reproduces the composition exactly: the raise moves the row to the end of
+    /// `assignments`, the assign-time forecast seeds its telemetry the way the `assign_labor`
+    /// command does, and then the band loses a worker. **This is the test that would have caught the
+    /// original**, and it asserts on the raised row's own head count, which is the number the player
+    /// watched move.
+    #[test]
+    fn the_row_the_player_just_raised_is_not_the_one_that_gives() {
+        const BAND: u32 = 6;
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(staffed_forage(PATCH_A, 0).target, 4, BAND, None);
+        allocation.set_source_yield(&staffed_forage(PATCH_A, 0).target, realized(4.0));
+        // The player raises the second patch's crew, which re-pushes that row to the tail…
+        allocation.set_assignment(staffed_forage(PATCH_B, 0).target, 2, BAND, None);
+        allocation.set_source_yield(&staffed_forage(PATCH_B, 0).target, realized(20.0));
+        assert_eq!(
+            allocation.assignments.last().map(|row| row.workers),
+            Some(2),
+            "the edited row really is at the tail — the composition the defect needed"
+        );
+
+        // …and the band loses a worker that same turn.
+        let shed = allocation.normalize(BAND - 1, ShedFacts::default());
+        assert_eq!(
+            allocation.workers_on(&staffed_forage(PATCH_B, 0).target),
+            2,
+            "the crew the player had just chosen is untouched"
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "the poorer ground gives instead, whatever order the rows are sitting in"
+        );
     }
 
     /// **A KEEPING ROLE IS A ROW LIKE ANY OTHER** — it counts against the pool, `workers_on` reads

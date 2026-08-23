@@ -763,8 +763,24 @@ fn head_rung_gate(
     }
 }
 
+/// One source's claim on its web's pool: where to write the share back, what it asks for, and
+/// the two keys that make *most-invested first* a total order.
+struct KeepingClaim {
+    index: usize,
+    demand: f32,
+    invested: f32,
+    tiebreak: String,
+}
+
+/// **WHAT THIS BAND'S ROWS CLAIM FROM THEIR WEBS' KEEPING POOLS THIS TURN** — the plant claims and
+/// the animal claims, in row order.
+///
+/// **THE one definition of the band's keeping bill.** [`maintenance_shares`] divides the two pools
+/// against it, and the shedding order's spare-keeper step counts a role's hands against its **sum**
+/// ([`keeping_demand`]) — so *"more keepers than the bill needs"* and *"what each source is owed"*
+/// can never be struck off two different readings of the same ground.
 #[allow(clippy::too_many_arguments)] // one source, one rung, and every seam its gate is judged by
-fn maintenance_shares(
+fn keeping_claims(
     allocation: &LaborAllocation,
     banking: &SourceBankingFirstWork,
     forage_registry: &ForageRegistry,
@@ -776,20 +792,9 @@ fn maintenance_shares(
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
-    keeping_gear: &KeepingGear,
-) -> Vec<f32> {
-    /// One source's claim on its web's pool: where to write the share back, what it asks for, and
-    /// the two keys that make *most-invested first* a total order.
-    struct Claim {
-        index: usize,
-        demand: f32,
-        invested: f32,
-        tiebreak: String,
-    }
-
-    let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
-    let mut plant: Vec<Claim> = Vec::new();
-    let mut animal: Vec<Claim> = Vec::new();
+) -> (Vec<KeepingClaim>, Vec<KeepingClaim>) {
+    let mut plant: Vec<KeepingClaim> = Vec::new();
+    let mut animal: Vec<KeepingClaim> = Vec::new();
     for (index, assignment) in allocation.assignments.iter().enumerate() {
         // **THE TAKE CREW IS NOT A TERM HERE, and that separation is the point** (§2.2). A row's
         // eligibility is the *ground's* answer — *does this source have a meter carrying work* —
@@ -817,7 +822,7 @@ fn maintenance_shares(
                 if !crate::forage::patch_claims_keeping(patch, verb) {
                     continue;
                 }
-                plant.push(Claim {
+                plant.push(KeepingClaim {
                     index,
                     // **The DEMAND takes no verb any more** — it interpolates on the patch's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
@@ -852,7 +857,7 @@ fn maintenance_shares(
                 if !fauna::herd_claims_keeping(herd, verb) {
                     continue;
                 }
-                animal.push(Claim {
+                animal.push(KeepingClaim {
                     index,
                     // **The DEMAND takes no verb any more** — it interpolates on the herd's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
@@ -875,6 +880,262 @@ fn maintenance_shares(
             | LaborTarget::Builders => {}
         }
     }
+    (plant, animal)
+}
+
+/// **WHAT ONE WEB'S KEEPING POOL IS BILLED FOR THIS TURN**, in work units — the sum of its claims,
+/// which is the number a keeping role has to cover for nothing to rot.
+fn keeping_demand(claims: &[KeepingClaim]) -> f32 {
+    claims.iter().map(|claim| claim.demand).sum()
+}
+
+/// **HANDS ON A KEEPING ROLE THE BILL DOES NOT NEED** — the largest number that can leave the role
+/// with what remains still covering `demand` in full. The shedding order's step 3 spends exactly
+/// these, and only these, before anything that costs output.
+///
+/// A pool does not divide into whole people, so the crew that must stay is `ceil(demand ÷ what one
+/// keeper supplies)` — the same [`crate::intensification::build_work_per_worker_turn`] rate
+/// [`crate::intensification::pool_work_supply`] multiplies up, so the surplus is struck against the
+/// supply the split will actually make. That rate floors its gear term at bare hands and bare hands
+/// deliver a positive `PER_WORKER_OUTPUT`, so the division cannot be by zero.
+fn spare_keepers(workers: u32, gear_per_worker: f32, demand: f32) -> u32 {
+    let per_keeper = crate::intensification::build_work_per_worker_turn(gear_per_worker);
+    let needed = (demand / per_keeper).ceil().max(0.0) as u32;
+    workers.saturating_sub(needed)
+}
+
+/// [`source_banking_its_first_work`] with [`head_rung_gate`] wired to this system's resources.
+///
+/// **A function rather than a reusable closure, because `advance_labor_allocation` asks it twice**
+/// — once of the allocation the player left (the keeping bill the shedding order counts spare
+/// keepers against) and once of what survived the shed (the pool [`maintenance_shares`] funds). A
+/// closure capturing `allocation` would hold it borrowed across [`LaborAllocation::normalize`]'s
+/// `&mut`, so the alternative is the argument list written out twice at the call sites.
+#[allow(clippy::too_many_arguments)] // every seam the head's own rung gate is judged by
+fn band_banking(
+    allocation: &LaborAllocation,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    faction: FactionId,
+    discovery: &DiscoveryProgressLedger,
+    knowledge_threshold: f32,
+    ladder: &LadderConfig,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    flora: &crate::flora_config::FloraConfig,
+    food_sites: &FoodSiteRegistry,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    map_seed: u64,
+    wrap_horizontal: bool,
+) -> SourceBankingFirstWork {
+    source_banking_its_first_work(allocation, |source, improvement| {
+        head_rung_gate(
+            source,
+            improvement,
+            allocation,
+            forage_registry,
+            herds,
+            faction,
+            discovery,
+            knowledge_threshold,
+            ladder,
+            fauna,
+            labor,
+            flora,
+            food_sites,
+            tile_registry,
+            tiles,
+            map_seed,
+            wrap_horizontal,
+        )
+    })
+}
+
+/// **IS ANYTHING COMING FOR THIS BAND** — [`ShedFacts::threatened`], and **the same trigger
+/// [`advance_predator_raids`] fires on**: a carnivore with `aggression > 0` (a herbivore never
+/// raids, and an unaggressive carnivore does not either) standing within
+/// `fauna.predators.raid_radius` of the band's tile.
+///
+/// **Read one system early, off the same herd positions.** The raid pass runs straight after
+/// `advance_labor_allocation` in the Population stage and nothing moves a herd between them, so a
+/// band the pack reaches this turn keeps its guard through this turn's shedding. A second, looser
+/// predicate here would let the shedding order disarm a band the raid pass is about to hit.
+///
+/// A band whose tile cannot be resolved is treated as **threatened**: the guard is the reading that
+/// costs people when it is wrong, so an unanswerable question keeps it.
+fn band_is_threatened(
+    band_pos: Option<UVec2>,
+    herds: &HerdRegistry,
+    fauna: &FaunaConfig,
+    width: u32,
+    wrap: bool,
+) -> bool {
+    let Some(band_pos) = band_pos else {
+        return true;
+    };
+    herds.herds.iter().any(|herd| {
+        let Some(def) = fauna.species_by_display(&herd.species) else {
+            return false;
+        };
+        def.diet == Diet::Carnivore
+            && def.combat.attack * def.aggression > NO_RAID_ATTACK
+            && crate::grid_utils::hex_distance_wrapped(herd.current_pos, band_pos, width, wrap)
+                <= fauna.predators.raid_radius
+    })
+}
+
+/// **THE RAID ATTACK AT WHICH A PACK DOES NOT COME AT ALL** — `attack × aggression`'s own gate in
+/// [`advance_predator_raids`], named here so [`band_is_threatened`] states the same threshold rather
+/// than a bare zero.
+const NO_RAID_ATTACK: f32 = 0.0;
+
+/// **IS THIS SOURCE STILL TEACHING THE FACTION SOMETHING** — [`SourceShedFacts::accruing_knowledge`],
+/// the term step 5 passes over.
+///
+/// Three conditions, and they are exactly [`RungDef::knowledge_accrual`]'s own:
+/// the rung this source stands on names a lesson, the faction has not yet completed it, and the
+/// row's floor leaves practice to be had (`intensification::learn_multiplier` is `0` at a floor of
+/// `0` — *stripping teaches nothing*).
+///
+/// **What it deliberately does NOT ask is the escapement room** (`crew_is_working_the_source`), the
+/// fourth term the live credit is gated on. That room is resolved from this turn's take, which has
+/// not happened yet at the top of the pass — so this is *"is there a lesson here to lose"* rather
+/// than *"will a lesson be banked this turn"*, and a source standing exactly on its floor reads as
+/// teaching. It is the conservative direction: it protects a row from being thinned, never exposes
+/// one.
+fn source_is_still_teaching(
+    rung: &crate::intensification::RungDef,
+    floor: f32,
+    faction: FactionId,
+    discovery: &DiscoveryProgressLedger,
+    knowledge_threshold: f32,
+) -> bool {
+    let Some(lesson) = rung.earns_discovery_id() else {
+        return false;
+    };
+    crate::intensification::learn_multiplier(floor) > NO_PRACTICE
+        && !knows(discovery, faction, lesson, knowledge_threshold)
+}
+
+/// **THE PRACTICE RATE AT WHICH NOTHING IS LEARNED** — `learn_multiplier`'s own zero, named so
+/// [`source_is_still_teaching`] reads as *"is any practice happening"*.
+const NO_PRACTICE: f32 = 0.0;
+
+/// **WHAT THE SHEDDING ORDER NEEDS AND [`LaborAllocation`] DOES NOT HOLD** — resolved against the
+/// band **as the player left it**, before a single hand is shed, because every one of these is a
+/// question about the allocation being cut down rather than about the one that survives.
+///
+/// It is the whole of this system's part in the order: the steps themselves are walked in
+/// [`LaborAllocation::normalize`], so no seam here knows which fact outranks which.
+#[allow(clippy::too_many_arguments)] // every seam a source's rung and its keeping bill are read from
+fn resolve_shed_facts(
+    allocation: &LaborAllocation,
+    banking: &SourceBankingFirstWork,
+    band_pos: Option<UVec2>,
+    faction: FactionId,
+    forage_registry: &ForageRegistry,
+    herds: &HerdRegistry,
+    tile_capacity_of: &dyn Fn(UVec2) -> f32,
+    forage: &crate::labor_config::ForageLaborConfig,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    discovery: &DiscoveryProgressLedger,
+    knowledge_threshold: f32,
+    keeping_gear: &KeepingGear,
+    width: u32,
+    wrap: bool,
+) -> ShedFacts {
+    let (plant_claims, animal_claims) = keeping_claims(
+        allocation,
+        banking,
+        forage_registry,
+        tile_capacity_of,
+        forage,
+        herds,
+        fauna,
+        ladder,
+    );
+    let sources = allocation
+        .assignments
+        .iter()
+        .map(|assignment| match &assignment.target {
+            LaborTarget::Forage { tile, floor, .. } => {
+                forage_registry
+                    .patch(*tile)
+                    .map_or(SourceShedFacts::default(), |patch| SourceShedFacts {
+                        accruing_knowledge: source_is_still_teaching(
+                            crate::forage::patch_rung(patch, ladder),
+                            *floor,
+                            faction,
+                            discovery,
+                            knowledge_threshold,
+                        ),
+                        improved: crate::forage::patch_at_risk_cost(patch) > RUNG_UNSTARTED,
+                    })
+            }
+            LaborTarget::Hunt { fauna_id, floor } => {
+                herds
+                    .find(fauna_id)
+                    .map_or(SourceShedFacts::default(), |herd| SourceShedFacts {
+                        accruing_knowledge: source_is_still_teaching(
+                            fauna::herd_rung(herd, ladder),
+                            *floor,
+                            faction,
+                            discovery,
+                            knowledge_threshold,
+                        ),
+                        improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
+                    })
+            }
+            // A band-wide role stands on no ground, so it carries neither a lesson nor a meter. No
+            // step of the order asks these of a role row; the entry exists to hold the alignment.
+            LaborTarget::Scout
+            | LaborTarget::Warrior
+            | LaborTarget::Agriculture
+            | LaborTarget::Husbandry
+            | LaborTarget::Builders => SourceShedFacts::default(),
+        })
+        .collect();
+    ShedFacts {
+        sources,
+        threatened: band_is_threatened(band_pos, herds, fauna, width, wrap),
+        spare_agriculture_keepers: spare_keepers(
+            allocation.workers_on(&LaborTarget::Agriculture),
+            keeping_gear.on(crate::intensification::RungBranch::Plant),
+            keeping_demand(&plant_claims),
+        ),
+        spare_husbandry_keepers: spare_keepers(
+            allocation.workers_on(&LaborTarget::Husbandry),
+            keeping_gear.on(crate::intensification::RungBranch::Animal),
+            keeping_demand(&animal_claims),
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // one source, one rung, and every seam its gate is judged by
+fn maintenance_shares(
+    allocation: &LaborAllocation,
+    banking: &SourceBankingFirstWork,
+    forage_registry: &ForageRegistry,
+    tile_capacity_of: &dyn Fn(UVec2) -> f32,
+    forage: &crate::labor_config::ForageLaborConfig,
+    herds: &HerdRegistry,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    keeping_gear: &KeepingGear,
+) -> Vec<f32> {
+    let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
+    let (mut plant, mut animal) = keeping_claims(
+        allocation,
+        banking,
+        forage_registry,
+        tile_capacity_of,
+        forage,
+        herds,
+        fauna,
+        ladder,
+    );
     let mode = allocation.upkeep_fund_mode;
     for (role, branch, claims) in [
         (
@@ -1137,13 +1398,79 @@ pub fn advance_labor_allocation(
             .cloned()
             .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment_cfg, available as f32));
         let faction = cohort.faction;
-        // **EVERY HAND `normalize` SHEDS IS ANNOUNCED, trims and drops alike.** It takes from the
-        // tail when the band no longer has the people, and it used to do so in total silence — the
-        // one place in the labor system that gave up work without saying so, while the out-of-range
-        // lapse a hundred lines below has always pushed a feed entry. A row destroyed outright can
-        // cost a 25-turn build commitment (the queue entry goes with it on the prune below); a row
-        // merely cut is the crew the player set moving on its own. Neither may happen quietly.
-        for shed in allocation.normalize(available) {
+        // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
+        // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
+        // system is (the registry index, then the query), and handed to
+        // `forage::patch_land_capacity` so a coord that is **not on the map** reads the patch's
+        // seeded capacity here exactly as it does in the decay pass that bills against this share.
+        // Ground with no patch on it presents no load and therefore no claim.
+        //
+        // Declared at the top of the band's iteration because **both** readers of the keeping bill
+        // want it — the shedding order's spare-keeper count below, and `maintenance_shares` further
+        // down. It borrows `forage_registry` immutably and nothing mutates that registry between
+        // the two.
+        let tile_capacity_of = |coord: UVec2| {
+            let ground = tile_registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map(|tile| tile_forage_capacity(&labor.forage, tile));
+            forage_registry
+                .patch(coord)
+                .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |patch| {
+                    crate::forage::patch_land_capacity(patch, ground)
+                })
+        };
+        // **THE SHEDDING ORDER'S FACTS, STRUCK BEFORE A SINGLE HAND IS SHED.** Every one of them is
+        // a question about the allocation the *player* left — *has this band more keepers than its
+        // bill needs*, *is anything coming for it*, *what is standing on each row's ground* — so the
+        // gear and the funded head are resolved here against that allocation, and resolved again
+        // below against whatever survives, which is the reading the split funds.
+        let shed_keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
+        let shed_banking = band_banking(
+            &allocation,
+            &forage_registry,
+            &registry,
+            faction,
+            &discovery,
+            knowledge_threshold,
+            &ladder,
+            &fauna,
+            &labor,
+            &flora,
+            &food_sites,
+            &tile_registry,
+            &tiles,
+            map_seed,
+            wrap_horizontal,
+        );
+        let shed_facts = resolve_shed_facts(
+            &allocation,
+            &shed_banking,
+            tiles
+                .get(cohort.current_tile)
+                .map(|tile| tile.position)
+                .ok(),
+            faction,
+            &forage_registry,
+            &registry,
+            &tile_capacity_of,
+            &labor.forage,
+            &fauna,
+            &ladder,
+            &discovery,
+            knowledge_threshold,
+            &shed_keeping_gear,
+            grid_width,
+            wrap_horizontal,
+        );
+        // **EVERY HAND `normalize` SHEDS IS ANNOUNCED, trims and drops alike.** It walks the decided
+        // shedding order ([`ShedStep`]) when the band no longer has the people, and it used to do so
+        // in total silence — the one place in the labor system that gave up work without saying so,
+        // while the out-of-range lapse a hundred lines below has always pushed a feed entry. A row
+        // destroyed outright can cost a 25-turn build commitment (the queue entry goes with it on
+        // the prune below); a row merely cut is the crew the player set moving on its own. Neither
+        // may happen quietly.
+        for shed in allocation.normalize(available, shed_facts) {
             announce_shed_crew(&mut event_log, tick.0, faction, &shed);
         }
         if allocation.assignments.is_empty() {
@@ -1196,44 +1523,26 @@ pub fn advance_labor_allocation(
         // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
         // stands there, so letting it claim would dilute the share of everything the band really
         // holds under the default `Spread`.
-        let banking = source_banking_its_first_work(&allocation, |source, improvement| {
-            head_rung_gate(
-                source,
-                improvement,
-                &allocation,
-                &forage_registry,
-                &registry,
-                faction,
-                &discovery,
-                knowledge_threshold,
-                &ladder,
-                &fauna,
-                &labor,
-                &flora,
-                &food_sites,
-                &tile_registry,
-                &tiles,
-                map_seed,
-                wrap_horizontal,
-            )
-        });
-        // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
-        // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
-        // system is (the registry index, then the query), and handed to
-        // `forage::patch_land_capacity` so a coord that is **not on the map** reads the patch's
-        // seeded capacity here exactly as it does in the decay pass that bills against this share.
-        // Ground with no patch on it presents no load and therefore no claim.
-        let tile_capacity_of = |coord: UVec2| {
-            let ground = tile_registry
-                .index(coord.x, coord.y)
-                .and_then(|entity| tiles.get(entity).ok())
-                .map(|tile| tile_forage_capacity(&labor.forage, tile));
-            forage_registry
-                .patch(coord)
-                .map_or(crate::labor_config::NO_FORAGE_CAPACITY, |patch| {
-                    crate::forage::patch_land_capacity(patch, ground)
-                })
-        };
+        // **Re-struck against what SURVIVED the shed**, unlike the pre-shed reading the shedding
+        // order was handed: a band whose builders row was emptied above funds no head at all, and
+        // the split must not fund one it no longer has the hands to bank.
+        let banking = band_banking(
+            &allocation,
+            &forage_registry,
+            &registry,
+            faction,
+            &discovery,
+            knowledge_threshold,
+            &ladder,
+            &fauna,
+            &labor,
+            &flora,
+            &food_sites,
+            &tile_registry,
+            &tiles,
+            map_seed,
+            wrap_horizontal,
+        );
         let upkeep_shares = maintenance_shares(
             &allocation,
             &banking,

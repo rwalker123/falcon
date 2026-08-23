@@ -46,8 +46,8 @@ use core_sim::{
     FaunaConfigHandle, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
     HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
     LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    MoraleCause, PopulationCohort, ShedFacts, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
@@ -739,7 +739,7 @@ fn assignment_sum_clamps_to_working_age() {
     // Normalize down when working-age shrinks below the assigned total.
     alloc.set_assignment(LaborTarget::Warrior, 2, 4, None);
     assert_eq!(alloc.assigned_total(), 4);
-    let shed = alloc.normalize(3);
+    let shed = alloc.normalize(3, ShedFacts::default());
     assert!(
         alloc.assigned_total() <= 3,
         "normalize should trim Σ workers to the new working-age ceiling"
@@ -747,11 +747,16 @@ fn assignment_sum_clamps_to_working_age() {
     assert_eq!(
         shed.len(),
         1,
-        "trimming 4 → 3 shrinks the tail assignment, and a shrink is reported like any other shed"
+        "trimming 4 → 3 shrinks one row, and a shrink is reported like any other shed"
+    );
+    assert_eq!(
+        shed[0].target,
+        LaborTarget::Scout,
+        "the scout is step 1 of the shedding order; the warrior standing beside it is step 2"
     );
     assert!(
         shed[0].row_survived(),
-        "the tail row is still staffed, so this is a trim rather than a lapse"
+        "a scout is still posted, so this is a trim rather than a lapse"
     );
 
     // Sanity: available_workers floors the fractional working scalar.
@@ -1587,22 +1592,24 @@ fn a_spent_source_schedules_nothing() {
 /// **The assertion is on the EVENT.** Its absence is the whole defect: the worker count was already
 /// correct, so a test that checked only the crew would have passed throughout.
 ///
-/// The band is sized so the tail row **survives** — that is what separates this from the lapse test
+/// The band is sized so the shed row **survives** — that is what separates this from the lapse test
 /// below it, and a fixture that dropped the row would be testing that one twice.
 #[test]
 fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
     let mut app = spawn_world();
     let (patch_pos, patch_tile) = food_tile(&mut app);
 
-    // Σ = 6 on a band with 5 hands: one short, so the tail row is cut from 3 to 2 and survives.
+    // Σ = 6 on a band with 5 hands: one short, so one row is cut from 3 to 2 and survives.
     //
-    // **The tail is a band-wide role deliberately.** A Forage or Hunt row can also leave the
-    // allocation because it went out of range or past the leash, and a fixture whose tail could
-    // vanish for a reason that is not the shedding pass would be measuring the wrong thing — or, as
-    // it did on the first attempt here, silently become the lapse test again.
+    // **The row that gives is a SCOUT, and the order says so rather than the list does.** Scouts are
+    // step 1 of the shedding order (`ShedStep::Scout`) — nothing is lost when the fog stops rolling
+    // back — so this fixture names its shed row by construction. A Forage or Hunt row can also leave
+    // the allocation because it went out of range or past the leash, and a fixture whose shed row
+    // could vanish for a reason that is not the shedding pass would be measuring the wrong thing —
+    // or, as it did on the first attempt here, silently become the lapse test again.
     let mut allocation = forage_alloc(patch_pos, 3);
     allocation.assignments.push(LaborAssignment {
-        target: LaborTarget::Builders,
+        target: LaborTarget::Scout,
         workers: 3,
         kit: None,
     });
@@ -1617,11 +1624,12 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
     assert_eq!(
         allocation.assignments.len(),
         2,
-        "fixture: the tail row must SURVIVE, or this is the lapse test with extra steps"
+        "fixture: the shed row must SURVIVE, or this is the lapse test with extra steps"
     );
     assert_eq!(
-        allocation.assignments[1].workers, 2,
-        "the tail row is cut by the one hand the band does not have"
+        allocation.workers_on(&LaborTarget::Scout),
+        2,
+        "the scout is cut by the one hand the band does not have"
     );
 
     let entry = app
@@ -1638,7 +1646,7 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
         .expect("a crew the sim cut must push a feed entry, not shrink in silence");
     let detail = entry.detail.clone().unwrap_or_default();
     assert!(
-        detail.contains("kind=builders"),
+        detail.contains("kind=scout"),
         "the entry names the row that gave up the hands: {detail}"
     );
     assert!(
@@ -1651,34 +1659,45 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
     );
 }
 
-/// **A trimmed-away assignment is announced, and its DECLARATION goes with it.**
+/// **A shed-away assignment is announced, and its DECLARATION goes with it.**
 ///
-/// `LaborAllocation::normalize` drops from the tail when a band's working-age head-count shrinks
-/// below what it has committed, and it did so in **total silence** — the one place in the labor
-/// system that abandoned work without telling the player, against the out-of-range Forage lapse a
-/// few tests above which has always pushed a feed entry.
+/// `LaborAllocation::normalize` ends a row when a band's working-age head-count shrinks below what
+/// it has committed, and it did so in **total silence** — the one place in the labor system that
+/// abandoned work without telling the player, against the out-of-range Forage lapse a few tests
+/// above which has always pushed a feed entry.
 ///
 /// **The lost build is no longer NAMED on the line, and that is the model rather than a regression**
 /// (`docs/plan_standing_upkeep.md` §2.5). A build lives in the band's queue, not on the row, so what
 /// a shed row costs is exactly the hands the line reports — and the queue entry that required that
 /// row is retired by the turn's own prune, which is the half this asserts.
 #[test]
-fn a_trimmed_assignment_is_announced_and_its_declaration_goes_with_it() {
+fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
     let mut app = spawn_world();
-    let (patch_pos, patch_tile) = food_tile(&mut app);
+    let (_patch_pos, patch_tile) = food_tile(&mut app);
     let herd_id = app.world.resource::<HerdRegistry>().herds[0].id.clone();
 
-    // Two assignments, Σ = 6, on a band with only 3 hands: `normalize` drops the tail (the hunt) and
-    // trims the forage. The tail carries a queued build, which is the half that cannot come back.
-    let mut allocation = forage_alloc(patch_pos, 3);
-    allocation.assignments.push(LaborAssignment {
-        target: LaborTarget::Hunt {
-            fauna_id: herd_id.clone(),
-            floor: 0.5,
-        },
-        workers: 3,
-        kit: None,
-    });
+    // **A ROW CARRYING A DECLARATION IS THE LAST SOURCE TO GO** — step 10 of the shedding order,
+    // below every row with nothing invested in it. So the fixture leaves it as the only source the
+    // band works, one hand short, with a single builder beside it: the builders are step 11, the one
+    // step below, which is what keeps a row standing for the turn's prune to run against.
+    let mut allocation = LaborAllocation {
+        assignments: vec![
+            LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: herd_id.clone(),
+                    floor: 0.5,
+                },
+                workers: 1,
+                kit: None,
+            },
+            LaborAssignment {
+                target: LaborTarget::Builders,
+                workers: 1,
+                kit: None,
+            },
+        ],
+        ..Default::default()
+    };
     let source = core_sim::BuildSource::Herd(herd_id.clone());
     assert!(
         allocation.enqueue_build(
@@ -1687,7 +1706,7 @@ fn a_trimmed_assignment_is_announced_and_its_declaration_goes_with_it() {
         ),
         "fixture: the band works the herd it declares a Tame on"
     );
-    let band = spawn_band(&mut app, patch_tile, 3, allocation);
+    let band = spawn_band(&mut app, patch_tile, 1, allocation);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -1698,7 +1717,7 @@ fn a_trimmed_assignment_is_announced_and_its_declaration_goes_with_it() {
             .assignments
             .len(),
         1,
-        "the tail assignment is dropped — this test is meaningless if nothing was trimmed"
+        "the hunt row is dropped — this test is meaningless if nothing was shed"
     );
     assert_eq!(
         app.world
