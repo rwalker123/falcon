@@ -191,9 +191,11 @@ the top of this file for the test.
 ### Scene Structure
 - `Main.tscn` - Root `Node2D` scene with a `Camera2D`, the `MapView` map layer, and `CanvasLayer`s for HUD/inspector/Band-City panel
 - The client is **2D-only**; an experimental 3D relief view was permanently removed (see `docs/architecture.md` → "Removed: 3D Relief Rendering")
-- Toggle: `I` hides/shows inspector, `L` shows/hides the Terrain Types legend, `V` shows/hides
-  Victory. The legend + Victory cards ship **hidden** (both persisted to `user://narrative.cfg`
-  `[hud_panels]`), so the right dock is the narrative surface's by default
+- Toggle: `I` hides/shows inspector, `V` shows/hides
+  Victory. The Victory card ships **hidden** (persisted to `user://narrative.cfg` `[hud_panels]`), so
+  the right dock is the narrative surface's by default. **The right dock's `L` Terrain Types legend is
+  retired** — the map's legend rides the minimap's own picker now
+  (`.claude/rules/client/overlay-channels.md`)
 
 ### Data Flow
 ```
@@ -251,7 +253,6 @@ shown build can never go stale.
 | `T` | Toggle terrain textures |
 | `I` | Hide/show inspector |
 | `` ` `` | Hide/show the Workbench, the designer surface (**hidden by default**) — see `.claude/rules/client/workbench.md` |
-| `L` | Show/hide the Terrain Types legend (**hidden by default**, persisted) |
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |
 | `R` | Show/hide the **event dock** (the notification bar; **shown by default**, persisted) |
 | Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |

@@ -44,7 +44,6 @@ var capability_flags: int = 0
 @onready var sentiment_panel: SentimentInspectorPanel = $RootPanel/TabContainer/Sentiment
 @onready var terrain_panel: TerrainInspectorPanel = $RootPanel/TabContainer/Terrain
 @onready var map_panel: MapInspectorPanel = $RootPanel/TabContainer/Map
-@onready var overlay_panel: OverlayInspectorPanel = $RootPanel/TabContainer/Map/MapVBox/OverlaySection
 @onready var culture_panel: CultureInspectorPanel = $RootPanel/TabContainer/Culture
 @onready var victory_panel: VictoryInspectorPanel = $RootPanel/TabContainer/Victory
 @onready var influencer_panel: InfluencerInspectorPanel = $RootPanel/TabContainer/Influencers
@@ -103,7 +102,6 @@ var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
 var _script_host: ScriptHostManager = null
-# Overlay channel state moved to OverlayPanel.
 
 func _ready() -> void:
 	Typography.initialize()
@@ -314,8 +312,6 @@ func _render_static_sections() -> void:
 		terrain_panel.reset()
 	if culture_panel != null:
 		culture_panel.reset()
-	if overlay_panel != null:
-		overlay_panel.reset()
 	if map_panel != null:
 		map_panel.reset()
 	_panel_width = PANEL_WIDTH_DEFAULT
@@ -386,8 +382,6 @@ func apply_typography() -> void:
 		influencer_panel.apply_typography()
 	if corruption_panel != null:
 		corruption_panel.apply_typography()
-	if overlay_panel != null:
-		overlay_panel.apply_typography()
 	if map_panel != null:
 		map_panel.apply_typography()
 	if culture_panel != null:
@@ -701,8 +695,6 @@ func attach_map_view(view: Node) -> void:
 	_map_view = view
 	if map_panel != null:
 		map_panel.set_map_view(view)
-	if overlay_panel != null:
-		overlay_panel.set_map_view(view)
 	if culture_panel != null:
 		culture_panel.set_map_view(view)
 	if terrain_panel != null:
@@ -800,6 +792,10 @@ func _on_root_panel_gui_input(event: InputEvent) -> void:
 			else:
 				root_panel.mouse_default_cursor_shape = Control.CURSOR_ARROW
 
+## The `overlays` fan-out junction, and it is now ONLY a junction: the two side-routes below are
+## Terrain's and Crisis's, and they are the whole of it. The overlay CHANNELS on this same key are no
+## business of the Inspector's any more — the picker on the minimap's top border reads them straight
+## off `MapView`, which ingests the identical payload (`docs/plan_knowledge_screen.md` §6c).
 func _ingest_overlays(overlays: Variant) -> void:
 	if not (overlays is Dictionary):
 		return
@@ -815,11 +811,6 @@ func _ingest_overlays(overlays: Variant) -> void:
 			terrain_panel.set_terrain_tag_labels(tag_variant as Dictionary)
 	if overlay_dict.has("crisis_annotations") and crisis_panel != null:
 		crisis_panel.ingest_annotations(overlay_dict["crisis_annotations"])
-	# Overlay channels are owned by OverlayPanel; hand it the payload plus Terrain's tag
-	# labels (which gate the terrain-tags channel).
-	if overlay_panel != null:
-		var tag_labels: Dictionary = terrain_panel.get_terrain_tag_labels() if terrain_panel != null else {}
-		overlay_panel.ingest(overlay_dict, tag_labels)
 
 func _on_script_log_from_package(script_id: int, level: String, message: String) -> void:
 	var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"

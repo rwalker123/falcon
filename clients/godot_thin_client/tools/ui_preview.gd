@@ -79,7 +79,7 @@ const CHAPTER_ENTRY_METHOD := "run"
 ## > number, which is an edit in the same file as the removal.
 ## >
 ## > **A CHECKPOINT IS AN ASSERTION *OR* A SAVED FRAME**, and counting both is what leaves no chapter
-## > unguarded. `docks_legend` makes ZERO assertions and renders ten frames — a pure-render chapter is
+## > unguarded. `docks_legend` makes ZERO assertions and renders frames only — a pure-render chapter is
 ## > a legitimate shape — so an assertion-only floor would be `0` there and would guard the one chapter
 ## > whose whole output a mid-walk abort silently truncates. Both are checkpoints the chapter reached.
 ## >
@@ -522,23 +522,6 @@ func _ready() -> void:
 		% _herd_pair_scans, _herd_pair_violations == 0)
 
 	_finish()
-
-
-## Open / close the Terrain Types legend around a block of legend states.
-##
-## The card ships SUPPRESSED, so a legend state must open it — and every legend state MUST close it
-## again at the end of its own block. An earlier cut opened it once and restored it ~700 lines later,
-## which meant a dozen intervening states silently rendered with a non-default right dock and NO
-## state anywhere exercised the shipped default. That is precisely how a default-visibility bug
-## hides, so scope stays tight and local.
-##
-## Set through the controller rather than `Hud.toggle_legend`, which would PERSIST the choice to the
-## prefs file this harness clears at startup — a harness must not write the preference it is testing.
-func _open_legend() -> void:
-	_hud._legend.set_suppressed(false)
-
-func _close_legend() -> void:
-	_hud._legend.set_suppressed(true)
 
 
 ## Settle the HUD for a capture. `finish_tweens = false` is for the two callers that must NOT have

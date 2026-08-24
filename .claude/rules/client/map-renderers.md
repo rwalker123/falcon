@@ -287,6 +287,17 @@ Reusable minimap UI component handling:
 - Aspect ratio sizing from grid dimensions
 - Click-to-pan with drag support
 - Viewport indicator overlay with draw callbacks
+- The **map-overlay picker docked on its TOP BORDER** (`ui/overlay/OverlayPicker.gd`, built by both
+  setup paths; `MinimapController` hands it the MapView). Docked ON the border rather than floated
+  beside the panel, so it costs the nav cluster no width and cannot be mistaken for a zoom control —
+  see `overlay-channels.md` → "The picker is three modules on the MINIMAP's border"
+
+**THE PICKER HANGS OFF `texture_rect`, and neither node above it would have worked.** `panel` is a
+`PanelContainer` and, embedded, its own parent is the HUD's `MinimapContainer` `MarginContainer` —
+both lay a second child out on top of the first, so the button would have covered the map. A
+`TextureRect` is neither a container nor a clipper: its children sit where they are put, and the part
+of the button reaching above its top edge is not cut off, which is what puts the button ON the border
+instead of inside the map. It is added AFTER `viewport_indicator` so it draws over it.
 
 ### 2D Minimap (MapView.gd)
 - Renders terrain at 1 pixel per hex as an `ImageTexture`

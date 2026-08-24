@@ -51,6 +51,11 @@ func _setup() -> void:
 
 	_minimap_2d.pan_requested.connect(_on_pan_requested)
 	_minimap_2d.connect_indicator_draw(_draw_viewport_indicator)
+	# The picker on the panel's top border drives the MapView's overlay channel and reads its channel
+	# roster and legend — so the MapView handle is all the wiring it needs, and the `overlays` payload
+	# no longer has to be routed anywhere for a player to pick a channel.
+	if _minimap_2d.overlay_picker != null:
+		_minimap_2d.overlay_picker.set_map_view(_view)
 
 func update() -> void:
 	if _view.grid_width == 0 or _view.grid_height == 0:

@@ -13,6 +13,13 @@ extends Node2D
 ## then read ui_preview_out/map_*.png.
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
+# For its CanvasLayer roster only (`HUD_LAYER` / `INSPECTOR_LAYER` / `WORKBENCH_LAYER` /
+# `LOADING_OVERLAY_LAYER`) — this harness stands up no `Main`, and the overlay picker's popover has
+# to be asserted against the layers it must clear rather than against a number written twice.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+# `ui_preview`'s real-pointer probe, for the picker's button-swap claim: it owns the canvas→window
+# conversion `push_input` needs, and a second copy of that arithmetic is a second thing to keep right.
+const INPUT_PROBE := preload("res://tools/ui_preview/input_probe.gd")
 const OUT_DIR := "res://ui_preview_out"
 const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
@@ -440,6 +447,61 @@ const LADDER_OFF_RUNG_FRACTION := 0.54
 # Clicks in the printed ladder walk: enough to run MIN_ZOOM_FACTOR to the clamp at MAX_ZOOM_FACTOR
 # and show the short final step, so the whole rail reads in one line of the log.
 const LADDER_WALK_CLICKS := 13
+
+# --- State "overlay picker" (the channel picker on the minimap's border) --------------------------
+# `docs/plan_knowledge_screen.md` §6. The picker is on the MINIMAP, so it renders in EVERY frame this
+# harness saves — but only its `◐` button does, and a closed button says nothing about the list, the
+# stub marker or the legend. This state opens the popover, and the assertions beside it cover the two
+# things no picture can carry: the ROSTER's composition and the fact that a chosen channel SURVIVES
+# the next snapshot.
+#
+# The fixture publishes one channel with real values, one flagged `placeholder`, one painted through
+# a ramp of the RENDERER's own, and terrain-tag data — so the frame carries a ramp legend, the stub
+# marker and the client-side `terrain_tags` row at once, and every shape the legend button's face has
+# to describe is in the roster.
+const PICKER_CHANNEL_LIVE := "sentiment"
+const PICKER_CHANNEL_LIVE_LABEL := "Sentiment"
+const PICKER_CHANNEL_STUB := "military"
+const PICKER_CHANNEL_STUB_LABEL := "Force Readiness"
+const PICKER_LIVE_RAW_SCALE := 100.0
+# A THIRD channel, published by the wire exactly like the other two, whose only distinction is on the
+# RENDERER's side: `forage` paints through a ramp of its own (`MapView._forage_color`, wheat→green)
+# instead of the generic `OVERLAY_COLORS` lerp. It is in the fixture so the legend-button face claim
+# below has a channel of that shape to ask about — the shape whose face was wrong, and the one a
+# roster of generic channels can never expose.
+const PICKER_CHANNEL_OWN_RAMP := MapView.FORAGE_OVERLAY_KEY
+const PICKER_CHANNEL_OWN_RAMP_LABEL := "Forage"
+# Two tag bits with names, so the tag legend has something to count. The masks are per-tile; a tile's
+# bit is chosen off its column so the two tags split the map rather than landing on one hex.
+const PICKER_TAG_BIT_A := 1
+const PICKER_TAG_BIT_B := 2
+const PICKER_TAG_LABEL_A := "Riverine"
+const PICKER_TAG_LABEL_B := "Upland"
+# The roster the fixture must produce: the empty key leads (`PLACEMENT_FIRST`), the wire's own order
+# follows, and the client-side tag channel is last (`PLACEMENT_LAST`).
+const PICKER_EXPECTED_ORDER := ["", PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB,
+	PICKER_CHANNEL_OWN_RAMP, "terrain_tags"]
+# A stand-in for a docked Band/City panel, whose shipped narrow shell is ~495px wide. Reserved on the
+# MapView exactly as `Main` reserves it for the real panel, so the popover has a docked edge to be
+# pushed clear of. It must be WIDER than the popover, or a clamped and an unclamped position land in
+# the same place and the assertion passes on either — which is why the probe is paired with a
+# precondition asserting the UNRESERVED popover really does reach into the strip.
+const PICKER_DOCK_PROBE_ID := &"overlay_picker_probe"
+const PICKER_DOCK_PROBE_WIDTH := 495.0
+# Slack on the "a popover touches its own button" claim. The gap is `POPOVER_GAP` by construction, so
+# this absorbs sub-pixel layout rounding only — wide enough and the claim stops meaning "attached".
+const PICKER_ATTACH_TOLERANCE := 2.0
+# Biome ids the picker fixture paints the map with, so the bare map's legend has several rows to show.
+# Transcribed from the pasture fixture's own table, which is the sim's terrain id space.
+#
+# **THERE ARE ENOUGH OF THEM TO SCROLL, deliberately.** The legend caps at `LEGEND_MAX_HEIGHT` and the
+# reserved scrollbar gutter is only judgeable against a bar that is actually SHOWN — a short key
+# renders the same either way, which is how the value column came to be running under the bar in the
+# first place.
+const PICKER_BIOME_IDS := [0, 1, 6, 8, 9, 10, 11, 12, 14, 15, 17, 20, 22, 24, 26, 30]
+# The floor the biome-key assertion holds the legend to. Under the roster, so the claim survives a
+# biome that happens not to land on a tile but fails a merge that dropped the table.
+const PICKER_BIOME_ROWS_MIN := 12
 
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
@@ -1043,9 +1105,12 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_pasture")
-	# The legend's numbers are the other half of the readout (min/avg/max + how much ground is dead),
-	# and this harness has no HUD to draw them into — print them so they can be checked against the map.
-	print("map_preview: pasture legend = ", _map._legend_for_current_view())
+	# The legend's numbers are the other half of the readout (min/avg/max + how much ground is dead).
+	# It used to be PRINTED here, this harness having had no surface to draw it into — the minimap's
+	# picker is that surface now, so the reading is a FRAME beside the map it explains. `ui_preview`'s
+	# `pasture_legend` state moved here with it, and is better off: it had to transcribe
+	# `_build_pasture_legend`'s output into a fixture and hope the two stayed in step.
+	await _save_overlay_legend("map_pasture_legend")
 
 	# State "pasture herd range" — the herd's grazing RANGE ring OVER the pasture overlay (Grazing Phase
 	# 2b-iii). The same earthlike frame with a big-game herd parked mid-prairie (its range-1 disc of 7
@@ -1111,7 +1176,7 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_forage")
-	print("map_preview: forage legend = ", _map._legend_for_current_view())
+	await _save_overlay_legend("map_forage_legend")
 
 	# States "hunt_danger" / "threat" (Predators Phase 0) — the two derived-danger overlays, projected
 	# client-side from herd positions. Three herds on the earthlike shape: a fierce MAMMOTH (attack ×
@@ -1393,7 +1458,365 @@ func _ready() -> void:
 
 	_assert_zoom_ladder()
 
+	await _overlay_picker_state()
+
 	_finish()
+
+## Click a CANVAS point through the REAL input path — `Viewport.push_input`, so the GUI pass decides
+## which control is on top exactly as it does for a player. Driving the button's own `pressed` signal
+## instead would route around the very thing under test: the picker's full-screen catcher sits on a
+## layer ABOVE the bar, so with a popover open it is the catcher, not the button, that receives this.
+##
+## **THE CONVERSION IS NOT OPTIONAL.** `push_input` takes WINDOW coordinates and a control's rect is in
+## CANVAS ones; this harness pins a canvas the window does not match, so an unconverted press lands
+## somewhere else entirely — measured, it missed the bar on every leg and every claim failed with
+## nothing open. `InputProbe` is `ui_preview`'s, shared rather than copied for the reason
+## `band_panel_preview` already shares `fixtures_band.gd`: one implementation of a conversion two
+## harnesses need.
+func _click_canvas(point: Vector2) -> void:
+	var window_point := INPUT_PROBE.canvas_to_window(get_viewport(), get_window(), point)
+	INPUT_PROBE.press_left(get_viewport(), window_point)
+	INPUT_PROBE.release_left(get_viewport(), window_point)
+	await _settle()
+
+## **CLICKING THE OTHER BUTTON SWAPS THE POPOVER; CLICKING THE OPEN ONE'S BUTTON CLOSES IT.** Reported
+## from play: with the menu up, pressing the legend button just dismissed the menu — the catcher was
+## eating the press. **No frame can carry this**: the failing state renders as a map with nothing open,
+## which is a perfectly ordinary map. Every leg is driven as a real press.
+func _assert_picker_buttons_swap(picker: OverlayPicker) -> void:
+	picker.close_popover()
+	await _settle()
+	var channel_at: Vector2 = picker.channel_button_rect().get_center()
+	var legend_at: Vector2 = picker.legend_button_rect().get_center()
+
+	await _click_canvas(channel_at)
+	_assert_map("overlay picker — pressing ◐ with nothing open opens the MENU (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_CHANNELS)
+	await _click_canvas(legend_at)
+	_assert_map("overlay picker — …then pressing the legend button SWAPS to the legend, not dismiss (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_LEGEND)
+	await _click_canvas(channel_at)
+	_assert_map("overlay picker — …and back the other way (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_CHANNELS)
+	# The toggle half, without which "always open the button's own popover" passes every claim above.
+	await _click_canvas(channel_at)
+	_assert_map("overlay picker — pressing the OPEN one's own button closes it (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_NONE)
+	# And a press on bare map still dismisses, which is the catcher's whole job.
+	await _click_canvas(legend_at)
+	await _click_canvas(picker.popover_rect().get_center() - Vector2(0.0, picker.popover_rect().size.y))
+	_assert_map("overlay picker — a press outside both still dismisses (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_NONE)
+
+## How many of the bare map's legend rows carry terrain art, and how many rows there are — as
+## `Vector2i(with_art, total)`, so a caller can state BOTH halves and neither claim can go vacuous on
+## an empty key.
+func _terrain_legend_rows_with_art() -> Vector2i:
+	var rows: Array = _map.current_overlay_legend().get("rows", [])
+	var with_art := 0
+	for entry in rows:
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("texture", null) is Texture2D:
+			with_art += 1
+	return Vector2i(with_art, rows.size())
+
+## Is `color` a colour the map is ACTUALLY painting on some tile right now? The independent oracle
+## behind the legend-button face claim: it asks `_tile_color`, the renderer's own answer per hex,
+## rather than the colour TABLE the face is read from — so a face and a table that agree with each
+## other and with nothing on screen still fails. A ramp reaches its top colour on its richest tile,
+## so the tint a face states is either painted somewhere or is not that channel's colour at all —
+## `is_equal_approx` rather than `==` only because `Color.lerp` computes `a + (b - a) * 1.0`, which
+## lands within an ULP of `b` rather than on it. That tolerance is orders of magnitude tighter than
+## the distance between any two colours in the palette, so it cannot admit a wrong one.
+func _map_paints_color(color: Color) -> bool:
+	for row in GRID_H:
+		for col in GRID_W:
+			if _map._tile_color(col, row).is_equal_approx(color):
+				return true
+	return false
+
+## Open the minimap picker's LEGEND on whatever channel is painted, save the frame, and close it
+## again — the reading that used to be a `print` here and a transcribed fixture in `ui_preview`.
+##
+## **IT CLOSES AGAIN, and that is not tidiness**: the picker is mounted on a long-lived MapView, so a
+## popover left open renders in every later frame of the run.
+func _save_overlay_legend(name: String) -> void:
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("%s — the minimap panel built no picker to open the legend on" % name)
+		return
+	picker.open_legend()
+	await _settle()
+	await _save(name)
+	picker.close_popover()
+	await _settle()
+
+## State "overlay picker" — the channel picker OPEN on the minimap's top border
+## (`docs/plan_knowledge_screen.md` §6). The `◐` button rides every frame this harness saves; only
+## this one opens the popover, which is where the list, the `stub data` marker and the legend are.
+##
+## **THE POPOVER IS IN THE CAPTURE BECAUSE IT IS A `Control`, NOT A `PopupPanel`.** A `PopupPanel` is
+## a Window and renders to its own surface, so the shipped popover would have been absent from this
+## frame and unjudgeable — the reason `OverlayPicker` follows `TurnOrb`'s catcher shape instead.
+func _overlay_picker_state() -> void:
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_overlay_channels())
+	_map._fit_map_to_view()
+	await _settle()
+
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("overlay picker — the minimap panel built none; the picker's mount is gone")
+		return
+
+	# THE ROSTER'S COMPOSITION. No picture can carry it: a list of four plausible names renders
+	# identically whichever order the merge put them in, and the empty key leading / the client-side
+	# tag row trailing are the two placements `OverlayChannels` exists to decide.
+	var keys := PackedStringArray()
+	for descriptor in picker.roster():
+		keys.append(String(descriptor.get("key", "")))
+	_assert_map("overlay picker — the roster merges wire + registry in order (%s)" % ", ".join(keys),
+		Array(keys) == PICKER_EXPECTED_ORDER)
+
+	# The wire's `placeholder` flag reaches the descriptor, which is what puts the `stub data` marker
+	# on the row and in the legend without any channel being named in either.
+	var stub_flagged := false
+	for descriptor in picker.roster():
+		if String(descriptor.get("key", "")) == PICKER_CHANNEL_STUB:
+			stub_flagged = bool(descriptor.get("placeholder", false))
+	_assert_map("overlay picker — the wire's placeholder flag reaches the '%s' descriptor" % PICKER_CHANNEL_STUB,
+		stub_flagged)
+
+	# Choosing a row paints the channel.
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+	_assert_map("overlay picker — choosing '%s' paints it (active_overlay_key = '%s')"
+		% [PICKER_CHANNEL_LIVE, _map.active_overlay_key],
+		_map.active_overlay_key == PICKER_CHANNEL_LIVE)
+
+	# **AND IT SURVIVES THE NEXT SNAPSHOT.** `_ingest_overlay_channels` clears `active_overlay_key` on
+	# every frame it ingests, so without the re-apply a chosen channel is painted for exactly one turn
+	# and then silently reverts to bare terrain — which looks like the player never clicked. The
+	# Inspector panel this replaced did the re-apply from its own ingest; the picker does it off
+	# `overlay_channels_ingested`, and this is the assertion that says so. NOT off
+	# `overlay_legend_changed` — re-asserting on THAT signal is the regression the next block guards.
+	_map.display_snapshot(_snapshot_overlay_channels())
+	await _settle()
+	_assert_map("overlay picker — the chosen channel survives the next snapshot (active_overlay_key = '%s')"
+		% _map.active_overlay_key,
+		_map.active_overlay_key == PICKER_CHANNEL_LIVE and picker.selected_key() == PICKER_CHANNEL_LIVE)
+
+	# **AND THE PICKER DOES NOT STOMP A CHANNEL IT DID NOT SET.** `set_overlay_channel` emits
+	# `overlay_legend_changed`, so a picker that re-asserted on THAT signal would overwrite every
+	# other caller of it — `MapView.set_terrain_mode`, `set_fow_enabled`'s deliberate clear, and every
+	# state in this harness that drives a channel directly. It shipped that way for one render:
+	# `map_pasture` / `map_forage` / the two danger frames / the three pasture-selection frames all
+	# came out as bare terrain, each a perfectly plausible picture of a map with no overlay on it.
+	_map.set_overlay_channel(PICKER_CHANNEL_STUB)
+	await _settle()
+	_assert_map("overlay picker — a channel set by someone else STANDS, and the picker adopts it (painted '%s', row '%s')"
+		% [_map.active_overlay_key, picker.selected_key()],
+		_map.active_overlay_key == PICKER_CHANNEL_STUB and picker.selected_key() == PICKER_CHANNEL_STUB)
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+
+	picker.open_channels()
+	await _settle()
+	_assert_map("overlay picker — the channel menu is a Control in this viewport, not a Window",
+		picker.open_popover_kind() == OverlayPicker.POPOVER_CHANNELS)
+
+	# **THE POPOVER MUST CLEAR EVERY DOCKED SURFACE'S LAYER**, and this harness stands up none of
+	# them: it has no HUD, so the shipped defect — the popover drawing UNDER the Band/City dock,
+	# because the embedded minimap put it on the HUD's own layer — renders here as a perfectly
+	# correct frame. So the claim is made against those panels' OWN constants rather than a picture
+	# or a number, which is also what makes it fail if one of them is ever raised.
+	var docked_layers := {
+		"Band/City panel": BandCityPanel.LAYER_INDEX,
+		"event dock": EventDockPanel.LAYER_INDEX,
+		"Workbench": MAIN_SCRIPT.WORKBENCH_LAYER,
+		"Inspector": MAIN_SCRIPT.INSPECTOR_LAYER,
+		"HUD": MAIN_SCRIPT.HUD_LAYER,
+	}
+	var covered := PackedStringArray()
+	for name in docked_layers:
+		if picker.popover_layer_index() <= int(docked_layers[name]):
+			covered.append("%s (%d)" % [name, int(docked_layers[name])])
+	_assert_map("overlay picker — the popover's layer (%d) clears every docked surface%s"
+		% [picker.popover_layer_index(),
+			"" if covered.is_empty() else " — UNDER " + ", ".join(covered)],
+		covered.is_empty())
+	_assert_map("overlay picker — …and stays under the loading overlay (%d)" % MAIN_SCRIPT.LOADING_OVERLAY_LAYER,
+		picker.popover_layer_index() < int(MAIN_SCRIPT.LOADING_OVERLAY_LAYER))
+
+	# **PICKING A ROW MUST NOT GROW THE POPOVER**, and the frame above cannot say so — it is the FIRST
+	# render, where the list is built once and every height is correct. The defect is on the REBUILD:
+	# `queue_free` deletes at the end of the frame, so the outgoing rows were still counted while the
+	# incoming ones went in, the minimum height doubled for that frame, and a `Control` that grows to
+	# satisfy a minimum writes the grown size back into its offsets — so it never shrank again. It
+	# COMPOUNDS, which is what makes two picks the right probe rather than one.
+	var first_height: float = picker.popover_rect().size.y
+	picker.select_channel(PICKER_CHANNEL_STUB)
+	await _settle()
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+	await _settle()
+	_assert_map("overlay picker — two picks leave the popover its own height (%.0f → %.0f)"
+		% [first_height, picker.popover_rect().size.y],
+		is_equal_approx(picker.popover_rect().size.y, first_height))
+
+	# **A POPOVER TOUCHES THE BUTTON THAT OPENED IT.** This is the whole reason the legend is its own
+	# button rather than a standing panel between the menu and the minimap: with the legend in
+	# between, the menu floated a legend's height away from the `◐` it belongs to, which is not what a
+	# menu does. The claim is the GAP, measured — a picture cannot separate "attached" from "close".
+	_assert_map("overlay picker — the menu hangs off its own button (gap %.0fpx)"
+		% (picker.anchor_rect().position.y - picker.popover_rect().end.y),
+		absf(picker.anchor_rect().position.y - picker.popover_rect().end.y)
+			<= OverlayPicker.POPOVER_GAP + PICKER_ATTACH_TOLERANCE)
+
+	await _save("map_overlay_picker")
+
+	# **THE LEGEND IS THE OTHER BUTTON'S POPOVER, and opening it closes the menu.** Two small cards
+	# over one corner of the map would fight for the same space and the same dismiss click.
+	picker.open_legend()
+	await _settle()
+	_assert_map("overlay picker — opening the legend replaces the menu rather than stacking on it",
+		picker.open_popover_kind() == OverlayPicker.POPOVER_LEGEND)
+	_assert_map("overlay picker — the legend hangs off ITS button, not the menu's (gap %.0fpx)"
+		% (picker.anchor_rect().position.y - picker.popover_rect().end.y),
+		picker.anchor_rect() == picker.legend_button_rect()
+			and absf(picker.anchor_rect().position.y - picker.popover_rect().end.y)
+				<= OverlayPicker.POPOVER_GAP + PICKER_ATTACH_TOLERANCE)
+	await _save("map_overlay_legend")
+
+	# **THE LEGEND BUTTON'S FACE IS THE STANDING READOUT OF WHICH CHANNEL IS ON**, and with no icon in
+	# the registry yet it is that channel's own map tint — or, for a channel that HAS no single tint,
+	# the neutral glyph.
+	#
+	# **THE CLAIM IS OVER THE WHOLE ROSTER, AND ITS ORACLE IS THE PAINTED MAP.** The obvious form of
+	# it — `legend_face_color() == overlay_color_for(key)` — is true BY CONSTRUCTION for every key,
+	# `overlay_color_for` being the same table lookup the face itself reads; asked only of a channel
+	# that has a row it can never fail. That is how `forage` came to wear `OVERLAY_FALLBACK_COLOR`, a
+	# blue that appears nowhere on a map painted in the wheat→green ramp `_forage_color` gives it. So
+	# a channel painted through a path of its OWN is held to a colour the map is REALLY PAINTING on
+	# some tile, sampled from `_tile_color`, which no colour table can satisfy by construction.
+	var face_lies := PackedStringArray()
+	var own_ramp_faces := PackedStringArray()
+	for descriptor in picker.roster():
+		picker.select_channel(String(descriptor.get("key", "")))
+		await _settle()
+		# `set_overlay_channel` may refuse a key, so judge whatever the picker ended up showing.
+		var shown := picker.selected_key()
+		var face: Color = picker.legend_face_color()
+		var neutral: bool = picker.legend_face_glyph() == OverlayPicker.LEGEND_NEUTRAL_GLYPH \
+			and face == HudStyle.INK_DIM
+		if _map.paints_with_overlay_color(shown):
+			# The generic lerp climbs to exactly this tint, so the table's answer IS the map's.
+			if face != _map.overlay_color_for(shown):
+				face_lies.append("'%s' wears %s, not its own %s" % [shown, face, _map.overlay_color_for(shown)])
+		elif neutral:
+			pass  # A channel with no colour to state says so, which is the whole point of the glyph.
+		elif _map_paints_color(face):
+			own_ramp_faces.append(shown)
+		else:
+			face_lies.append("'%s' wears %s, which the map paints on no tile%s"
+				% [shown, face, " (the meaningless fallback)" if face == MapView.OVERLAY_FALLBACK_COLOR else ""])
+	_assert_map("overlay picker — every channel's face states a colour the map really paints, else the neutral glyph%s"
+		% ("" if face_lies.is_empty() else " — " + ", ".join(face_lies)),
+		face_lies.is_empty())
+	# **THE POSITIVE COMPANION, and it NAMES ITS CHANNEL, because the claim above is satisfied by a
+	# picker that gave up and went neutral on everything.** A channel painted through a ramp of its
+	# own still has a colour to state — the ramp's own top — and losing its `OVERLAY_COLORS` row does
+	# not make the map paint it any differently, only the button lie about it (with the row gone the
+	# face falls to the fallback blue, and the neutral glyph would merely hide that). `forage` is in
+	# the roster precisely so one channel of that shape is asked by name.
+	_assert_map("overlay picker — …and '%s', painted through a ramp of its own, still wears a real one%s"
+		% [PICKER_CHANNEL_OWN_RAMP,
+			"" if own_ramp_faces.has(PICKER_CHANNEL_OWN_RAMP)
+			else " — it states no colour the map paints (faces that do: %s)" % ", ".join(own_ramp_faces)],
+		own_ramp_faces.has(PICKER_CHANNEL_OWN_RAMP))
+
+	picker.select_channel(OverlayChannels.NO_OVERLAY_KEY)
+	await _settle()
+
+	# **NO OVERLAY HAS A LEGEND TOO — the biome key**, which is what the retired `L` card carried and
+	# is NOT the same table as `terrain_tags` (biomes, not environmental tags). Without it the legend
+	# button would have a dead state and that key would have no home in the client at all.
+	_assert_map("overlay picker — the bare map's legend is the biome key, not an empty card (%d rows)"
+		% _map.current_overlay_legend().get("rows", []).size(),
+		_map.current_overlay_legend().get("rows", []).size() >= PICKER_BIOME_ROWS_MIN)
+
+	# **AND ITS SWATCHES ARE THE TERRAIN ART, NOT THE PALETTE** — with textures on, a flat colour names
+	# a biome the player cannot match to anything on screen, the hexes being painted art. **The claim
+	# is a PAIR and has to be**: a swatch is a small square either way at a glance, so a frame cannot
+	# separate "the art" from "the colour", and a one-sided claim passes on a key that hands out a
+	# texture whether the map is textured or not. Every row is asked, since a key that textured its
+	# first row and gave up would satisfy a spot check.
+	_map.enable_terrain_textures(true)
+	await _settle()
+	var textured := _terrain_legend_rows_with_art()
+	_assert_map("overlay picker — with textures ON the biome key wears the terrain art (%d of %d rows)"
+		% [textured.x, textured.y], textured.x == textured.y and textured.y > 0)
+	await _save_overlay_legend("map_overlay_legend_terrain")
+	_map.enable_terrain_textures(false)
+	await _settle()
+	var flat := _terrain_legend_rows_with_art()
+	_assert_map("overlay picker — with textures OFF it falls back to the palette colour (%d of %d rows carry art)"
+		% [flat.x, flat.y], flat.x == 0 and flat.y > 0)
+
+	picker.select_channel(PICKER_CHANNEL_LIVE)
+	# The legend frames above CLOSE the popover on their way out, so the dock probe below re-opens the
+	# menu rather than inheriting whatever the last block left. Its precondition reads the popover's
+	# own rect, which is an empty `Rect2` when nothing is open — i.e. it would fail rather than pass
+	# silently, but it would fail for the wrong reason.
+	picker.open_channels()
+	await _settle()
+
+	# **AND IT OPENS INTO THE PLAY AREA, NOT UNDER THE DOCK.** Right-aligning a ~290px popover to a
+	# button in the nav cluster puts its far edge inside a ~495px docked panel, so clearing the dock's
+	# LAYER alone would only trade an unreadable popover for one covering the panel being read.
+	# Reserving the edge on the MapView is exactly what `BandCityPanel` does through `Main`.
+	#
+	# **THE PROBE RESERVES THE *RIGHT* EDGE, AND THAT IS NOT THE SHIPPED CASE — it is the only one
+	# this harness can ask.** The reported defect was a LEFT-docked panel over an EMBEDDED minimap in
+	# the HUD's nav cluster; here there is no HUD, so the minimap takes its FLOATING mount at the
+	# bottom-right of the viewport, where a left dock is a thousand pixels away and a left-edge
+	# assertion would pass with the clamp deleted. Reserving the near edge instead drives the same
+	# `_play_area()` bound from the other side, which is the half a fixture can actually move.
+	_assert_map("overlay picker — the UNRESERVED popover reaches past where the dock will be (right edge %.0f)"
+		% picker.popover_rect().end.x,
+		picker.popover_rect().end.x > get_viewport_rect().size.x - PICKER_DOCK_PROBE_WIDTH)
+	_map.set_reserved_inset(PICKER_DOCK_PROBE_ID, SIDE_RIGHT, PICKER_DOCK_PROBE_WIDTH)
+	picker.close_popover()
+	picker.open_channels()
+	await _settle()
+	var dock_edge: float = get_viewport_rect().size.x - PICKER_DOCK_PROBE_WIDTH
+	_assert_map("overlay picker — a %.0fpx dock pushes the popover clear of it (right edge %.0f <= %.0f)"
+		% [PICKER_DOCK_PROBE_WIDTH, picker.popover_rect().end.x, dock_edge],
+		picker.popover_rect().end.x <= dock_edge)
+	picker.close_popover()
+	_map.set_reserved_inset(PICKER_DOCK_PROBE_ID, SIDE_RIGHT, 0.0)
+
+	# The `terrain_tags` row's `available` predicate is the registry's one gate, and a world with no
+	# tag data is the case it exists for — the tag channel has no wire raster to fall back on.
+	picker.close_popover()
+	_map.display_snapshot(_base_snapshot(_band([], 2, 0), []))
+	await _settle()
+	var untagged := PackedStringArray()
+	for descriptor in picker.roster():
+		untagged.append(String(descriptor.get("key", "")))
+	# **PAIRED WITH THE EMPTY KEY'S SURVIVAL, deliberately.** "does not contain `terrain_tags`" is also
+	# true of a roster the merge dropped on the floor, and the empty key is spelled `""` — so a
+	# one-entry roster prints as an empty string and a zero-entry one prints identically. The two
+	# claims together can only be satisfied by the roster this world should actually have.
+	_assert_map("overlay picker — a world with no tag data keeps the empty key and is not offered 'terrain_tags' (%d entries)"
+		% untagged.size(),
+		Array(untagged) == [OverlayChannels.NO_OVERLAY_KEY])
+
+	await _assert_picker_buttons_swap(picker)
 
 
 ## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
@@ -3306,6 +3729,77 @@ func _snapshot_crisis_annotations() -> Dictionary:
 			},
 			"channel_order": PackedStringArray([CRISIS_CHANNEL_KEY]),
 			"crisis_annotations": _crisis_annotations(),
+		},
+		"populations": [],
+		"herds": [],
+	}
+
+## The overlay-picker backdrop: flat terrain under a west→east `sentiment` ramp, a SECOND channel
+## flagged `placeholder` (so the popover renders the stub marker), a THIRD the renderer paints through
+## a ramp of its own, and per-tile terrain-tag masks with
+## two named bits (so the client-side `terrain_tags` row is offered at all). One fixture carrying every
+## shape the popover can draw.
+func _snapshot_overlay_channels() -> Dictionary:
+	var total := GRID_W * GRID_H
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var empty := PackedFloat32Array()
+	empty.resize(total)
+	var tags: Array = []
+	tags.resize(total)
+	# SEVERAL biomes, not the usual flat fill: the bare map's legend is the BIOME KEY, so a one-biome
+	# fixture would render a one-row card and the assertion over it would pass on a merge that had
+	# lost every other row.
+	var terrain: Array = []
+	terrain.resize(total)
+	for i in total:
+		var col := i % GRID_W
+		var pressure := float(col) / float(GRID_W - 1)
+		normalized[i] = pressure
+		raw[i] = pressure * PICKER_LIVE_RAW_SCALE
+		# Split the map between the two tags so the tag legend counts both.
+		tags[i] = PICKER_TAG_BIT_A if col < GRID_W / 2 else PICKER_TAG_BIT_B
+		terrain[i] = PICKER_BIOME_IDS[(col * GRID_H + i / GRID_W) % PICKER_BIOME_IDS.size()]
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": terrain,
+			"terrain_tags": tags,
+			"terrain_tag_labels": {
+				PICKER_TAG_BIT_A: PICKER_TAG_LABEL_A,
+				PICKER_TAG_BIT_B: PICKER_TAG_LABEL_B,
+			},
+			"channels": {
+				PICKER_CHANNEL_LIVE: {
+					"label": PICKER_CHANNEL_LIVE_LABEL,
+					"description": "Morale and agency composite, staged west to east.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+				# A channel the sim publishes a SHAPE for and no telemetry behind — the state the
+				# `stub data` marker exists to report, and the reason the marker is a descriptor field
+				# rather than a hand-written tab per channel.
+				PICKER_CHANNEL_STUB: {
+					"label": PICKER_CHANNEL_STUB_LABEL,
+					"description": "Composite of garrison morale, manpower, and supply margin.",
+					"normalized": empty,
+					"raw": empty,
+					"placeholder": true,
+				},
+				# A channel the RENDERER paints through a ramp of its own. The same west→east values
+				# as the live channel, so its richest column reaches the ramp's top colour and the map
+				# really does paint the tint the legend button claims for it.
+				PICKER_CHANNEL_OWN_RAMP: {
+					"label": PICKER_CHANNEL_OWN_RAMP_LABEL,
+					"description": "Human-edible potential — seeds, nuts, tubers, fruit, and fish.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+			},
+			"channel_order": PackedStringArray([PICKER_CHANNEL_LIVE, PICKER_CHANNEL_STUB,
+				PICKER_CHANNEL_OWN_RAMP]),
 		},
 		"populations": [],
 		"herds": [],

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 50
+const EXPECTED_CHECKPOINTS := 48
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -640,50 +640,6 @@ func _river_tile_fixture(river_mask: int) -> Dictionary:
 		"river_edges": river_mask,
 	}
 
-## A base terrain legend (key == "terrain") shaped exactly like
-## MapView._build_terrain_legend's output: rows carry color/label/value_text plus
-## the numeric `count` the sort control keys off. Counts are deliberately varied
-## and out of both name/count order so the sorting is obvious.
-## MapView._build_pasture_legend's output, transcribed from the map_preview "pasture" state (it prints
-## the legend dict) so the two harnesses cannot disagree. The swatch colors are read off MapView's own
-## constants rather than restated, so a ramp retune moves the legend with the map.
-func _pasture_legend_fixture() -> Dictionary:
-	var poor: Color = h.MAP_VIEW_SCRIPT.PASTURE_POOR_COLOR
-	var rich: Color = h.MAP_VIEW_SCRIPT.PASTURE_RICH_COLOR
-	return {
-		"key": "pasture",
-		"title": "Pasture (Graze Capacity)",
-		"description": "Graze capacity — the ANIMAL-edible stock (grass and browse; humans cannot digest it).\nStanding stock 100% of capacity across 346 pasture tiles.",
-		"rows": [
-			{"color": poor.lerp(rich, 8.0 / 240.0), "label": "Poorest pasture", "value_text": "8 graze"},
-			{"color": poor.lerp(rich, 138.0 / 240.0), "label": "Average pasture", "value_text": "138 graze"},
-			{"color": rich, "label": "Richest pasture", "value_text": "240 graze"},
-			{"color": h.MAP_VIEW_SCRIPT.PASTURE_DEAD_COLOR, "label": "Barren ground", "value_text": "50 tiles"},
-			{"color": h.MAP_VIEW_SCRIPT.PASTURE_WATER_COLOR, "label": "Water", "value_text": "72 tiles"},
-		],
-		"stats": {"min": 8.0, "avg": 138.0, "max": 240.0},
-	}
-
-func _forage_legend_fixture() -> Dictionary:
-	# The HUMAN-food twin of the pasture legend. NOTE the differences that are the whole point: there is
-	# NO water row (coastal shelves carry forage and ride the ramp), the barren row is the honest
-	# "No forage" (deep ocean/glacier/lava only), and the description carries the gathering-sites
-	# sub-count — the tiles actually forageable today, a subset of the potential the ramp paints.
-	var poor: Color = h.MAP_VIEW_SCRIPT.FORAGE_POOR_COLOR
-	var rich: Color = h.MAP_VIEW_SCRIPT.FORAGE_RICH_COLOR
-	return {
-		"key": "forage",
-		"title": "Forage (Human Food Capacity)",
-		"description": "The HUMAN-edible potential of this land — seeds, nuts, tubers, fruit, and fish.\nGathering sites: 18 tiles.",
-		"rows": [
-			{"color": poor.lerp(rich, 5.0 / 195.0), "label": "Poorest forage", "value_text": "5 food"},
-			{"color": poor.lerp(rich, 92.0 / 195.0), "label": "Average forage", "value_text": "92 food"},
-			{"color": rich, "label": "Richest forage", "value_text": "195 food"},
-			{"color": h.MAP_VIEW_SCRIPT.FORAGE_BARREN_COLOR, "label": "No forage", "value_text": "63 tiles"},
-		],
-		"stats": {"min": 5.0, "avg": 92.0, "max": 195.0},
-	}
-
 func run(harness) -> void:
 	h = harness
 
@@ -847,30 +803,11 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("tile_pasture_none")
 
-	# State 2-pasture-legend — the map legend for the `pasture` overlay channel (rows produced by
-	# MapView._build_pasture_legend; see map_preview's "pasture" state for the map itself). The barren
-	# tones sit OFF the straw→grass ramp: dead ground and water are their own rows, so "no pasture at
-	# all" can never be read as "poor pasture".
-	# The legend card ships SUPPRESSED (the player opens it with `L`), so every legend state opens it
-	# and CLOSES IT AGAIN around its own frames — see `_open_legend` / `_close_legend`.
-	h._open_legend()
-	h._hud.update_overlay_legend(_pasture_legend_fixture())
-	await h._settle()
-	await h._save("pasture_legend")
-	h._close_legend()
-	h._hud.clear_selection()
-
-	# State 2-forage-legend — the map legend for the `forage` overlay channel (rows produced by
-	# MapView._build_forage_legend; see map_preview's "forage" state for the map). The twin of the
-	# pasture legend, but honest about the OPPOSITE meaning of absence: NO water row (shelves carry
-	# forage and ride the ramp), a single "No forage" barren row (deep ocean/glacier/lava only), and a
-	# "Gathering sites: N" sub-count so the ramp reads as POTENTIAL without calling the rest dead.
-	h._open_legend()
-	h._hud.update_overlay_legend(_forage_legend_fixture())
-	await h._settle()
-	await h._save("forage_legend")
-	h._close_legend()
-	h._hud.clear_selection()
+	# **THE PASTURE AND FORAGE LEGEND FRAMES MOVED TO `map_preview`** (`map_pasture_legend` /
+	# `map_forage_legend`), with the right dock's `L` card they used to render into. They are better
+	# off there: this chapter had to TRANSCRIBE `_build_pasture_legend`'s output into a fixture and
+	# hope the two stayed in step, while `map_preview` owns a real MapView and can open the picker's
+	# legend on the real builder's rows.
 
 	# ---- Hex-edge rivers on the Tile card (ui/RiverEdges.gd, the shared text formatter) -----------
 	# State 2-river-both — the interesting case: a tile whose sides carry BOTH classes. The card must

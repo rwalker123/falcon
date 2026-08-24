@@ -1,7 +1,7 @@
 ---
 paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandOverlayRenderer,AnnotationRenderer}.gd"
-  - "clients/godot_thin_client/src/scripts/ui/inspector/OverlayPanel.gd"
+  - "clients/godot_thin_client/src/scripts/ui/overlay/**"
 ---
 
 <!-- Extracted verbatim from lines 4027-4144 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -28,11 +28,200 @@ Raster overlays streamed from `core_sim`:
 
 Legend rendering: min/avg/max values + channel description.
 
-**`elevation` is the DEFAULT channel** (`overlays.default_channel`, the native decoder's
-`DEFAULT_OVERLAY_CHANNEL`), which the Inspector's Overlays selector opens on when the player has
-chosen nothing. A default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`,
-which worldgen publishes for every world, so it is never a placeholder, and relative height is
-legible with no knowledge of the simulation's vocabulary.
+## The picker is three modules on the MINIMAP's border, and a channel is one registry row
+
+`docs/plan_knowledge_screen.md` §6. `ui/overlay/` holds the whole of the player-facing channel
+picker, split by KIND so that adding a channel is a data edit and never a code one:
+
+| Module | Kind | Holds |
+|---|---|---|
+| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Two rows today: the empty key (`PLACEMENT_FIRST`) and `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) |
+| `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Two `legend_kind`s — `KIND_RAMP` (the channel's own legend rows) and `KIND_FACTS` (the lines a descriptor's provider answers) — and **no channel is named in the file** |
+| `ui/overlay/OverlayPicker.gd` | the widget | The TWO buttons docked on `MinimapPanel`'s top border and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
+
+**A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
+`placeholder` flag per channel and `MapView._ingest_overlay_channels` holds them, so `roster()`
+synthesizes a descriptor for every key the wire names. A row is for a channel the CLIENT adds, or to
+give a wire channel a legend kind other than the ramp. **`available` and `facts` are METHOD NAMES on
+`MapView`, not `Callable`s** — a `Callable` is not a constant expression, so a registry holding one
+could not be `const`.
+
+**THE RAMP LEGEND IS `MapView`'s OWN, pulled through `current_overlay_legend()` / pushed by
+`overlay_legend_changed`** — the dict the retired right-dock legend card used to render. Re-deriving min/avg/max
+from `overlay_stats_for_key` would report the map-wide minimum for every channel, which for `pasture`
+and `forage` is the sea: exactly the reading those two channels' own legend builders exist to avoid
+(below, "Zero pasture is NOT low pasture"). One producer, two surfaces, no way to disagree.
+
+### TWO BUTTONS, and the `L` legend card is retired
+
+**One rule for the whole cluster: a button opens its own popover, attached to itself.** `◐` opens the
+channel MENU; the button beside it opens the LEGEND for whatever channel is painted.
+
+The first cut had one button with the legend inside its menu, then tried making that legend a standing
+panel above the minimap — which pushed the menu away from the button that opened it by however tall
+the legend happened to be. **A menu that does not touch its own button is the tell.** Splitting them
+also makes the menu a FIXED height: the roster changes only when the world does, while a legend is
+three rows for a scalar ramp and twenty for the biome key. `map_preview` asserts the attachment as a
+measured GAP on both popovers, a picture being unable to separate *attached* from *close*.
+
+**THE LEGEND BUTTON'S FACE IS THE AMBIENT READOUT** — which channel is painted, without costing a
+panel. Three faces, in order: the descriptor's `icon` if it names one; else a **TINTED `■`** in that
+channel's own map colour; else a **NEUTRAL `□`** in `INK_DIM`. `icon` is a registry field with a LIVE
+fallback (the `FaunaSprites` / `WonderSprites` shape) and every row is iconless today, so the colour
+path is the exercised one rather than a guard. A glyph rather than a `ColorRect` child, which makes
+the two buttons the same width by construction (both are one-glyph text buttons under one stylebox
+padding, which an empty button is not) and makes the eventual icon a straight swap of the same
+property.
+
+**THE NEUTRAL FACE EXISTS BECAUSE NOT EVERY CHANNEL HAS A COLOUR, and the first cut claimed one
+anyway.** `MapView.overlay_color_for` is `OVERLAY_COLORS.get(key, OVERLAY_FALLBACK_COLOR)`, and FOUR
+keys paint through special paths rather than the generic `GRID_COLOR.lerp(overlay_color, value)` —
+`""` (terrain art), `terrain_tags` (a per-tag blend), `pasture` and `forage`. Only pasture had a row,
+so **`forage` stated blue while the map painted a wheat→green ramp**, and `""` / `terrain_tags` stated
+that same blue meaning nothing at all — under a docstring promising the button "can never disagree
+with the map". `forage` has its own row now (`FORAGE_RICH_COLOR`, pasture's twin); `""` and
+`terrain_tags` take the neutral face, because neither has a single hue and any row invented for them
+would be a lie. **A channel with no row that paints GENERICALLY is fine and keeps the colour** —
+`visibility` is painted with the fallback too, so its face agrees; `paints_with_overlay_color` is what
+tells the two cases apart.
+
+**THE GUARD WAS THE ACTUAL DEFECT.** The face assertion read
+`legend_face_color() == overlay_color_for(key)` — true by construction for any key, and only ever
+asked of `sentiment`, which had a row. It could not see this and never would have. It is now a claim
+over the WHOLE roster with **the painted map as its oracle**: every channel either wears the neutral
+face or wears a colour `_tile_color` actually paints that channel with. Sabotage-verified both ways —
+removing the `forage` row fails it naming forage, and forcing the tinted swatch everywhere fails it
+naming `""` and `terrain_tags` wearing the meaningless fallback.
+
+**THE RIGHT DOCK'S `L` TERRAIN TYPES CARD IS GONE** — `LegendController`, `TerrainLegendPanel`,
+`Hud.update_overlay_legend` / `toggle_legend` / `_on_legend_sort_pressed` with its Name/Count sort
+header, the `legend_suppressed` preference and the `L` binding. It was early scaffolding showing this
+same dict in a place a player had to know a hotkey to reach.
+
+**What it carried that nothing else did is the BIOME KEY** — `MapView._build_terrain_legend`, the
+per-biome tile counts for the bare map. That is **not** the same table as `terrain_tags` (biomes, not
+environmental tags), so the empty key's registry row is `KIND_RAMP` precisely to give it a home: the
+legend button is never in a dead state, and `L`'s one irreplaceable job moved onto it. The biome names
+remain reachable from the Inspector's Terrain tab and from any hex's tile card, which is why this is a
+relocation rather than a loss.
+
+### THE CATCHER MUST NOT EAT A PRESS AIMED AT THE PICKER'S OWN BUTTONS
+
+The full-screen dismiss catcher sits on a layer ABOVE the bar, so with either popover open the OTHER
+button never receives its click: pressing it read as *dismiss* rather than *switch*, and the player
+had to click twice to reach the other card. `_on_catcher_input` resolves the two buttons itself now,
+in the same terms their own `pressed` handlers use — the open one's button toggles it shut, the
+other's swaps to it, everything else dismisses.
+
+**No frame can carry that**: the failing state renders as a map with nothing open, which is an
+ordinary map. `map_preview`'s `_assert_picker_buttons_swap` drives every leg as a REAL press through
+`Viewport.push_input`, because driving a button's own `pressed` signal routes around the very thing
+under test. It shares `ui_preview`'s `InputProbe` for the canvas→window conversion — an unconverted
+press misses the bar entirely, which is what it did on the first attempt.
+
+### THE BIOME KEY WEARS THE TERRAIN ART, NOT THE PALETTE
+
+With terrain textures on, a flat colour swatch names a biome the player cannot match to anything on
+screen — the hexes are painted art, not the palette entry. `_build_terrain_legend` therefore hands
+each row `TerrainRenderer.hex_texture_for(id)`, the very texture the blend-OFF renderer stamps on a
+hex, and `OverlayLegend._swatch` renders a `TextureRect` where a row carries one.
+
+**Gated on the `T` toggle, and the claim is a PAIR.** With textures OFF the map really is flat
+`_tile_color` fills and the palette swatch is the honest answer. A swatch is a small square either way
+at a glance, so a frame cannot separate the two and a one-sided claim passes on a key that hands out
+art whether the map is textured or not; `map_preview` asserts both directions over EVERY row.
+
+Two mechanical traps, both of which shipped once: a `TextureRect` reports its TEXTURE's size as its
+own minimum and `custom_minimum_size` is a FLOOR rather than a cap, so without `EXPAND_IGNORE_SIZE`
+one biome filled the whole card; and a texture swatch needs its own larger box (`TEXTURE_SWATCH_SIZE`),
+a hex-masked tile being mostly transparent and unreadable at the colour swatch's size.
+
+**A `ScrollContainer`'s vertical bar is drawn OVER its content, not beside it**, so the legend
+reserves a gutter for it (`LEGEND_SCROLL_GAP` plus the bar's own measured minimum) — without which the
+value column ran under the bar. It is reserved whether or not the bar is shown, which also stops the
+popover changing width per channel. `map_preview`'s biome fixture carries enough biomes to SCROLL,
+deliberately: a short key renders the same either way, which is how this shipped.
+
+### The picker owns the channel ACROSS A SNAPSHOT and nowhere else — two signals, two rules
+
+**RE-ASSERT on `overlay_channels_ingested`.** `_ingest_overlay_channels` clears `active_overlay_key`
+on every frame it ingests, so without a re-apply a chosen channel is painted for exactly one turn and
+then reverts to bare terrain — which reads as a click that did nothing. The Inspector panel did this
+from its own ingest; nothing else will now. The signal is emitted at the END of `display_snapshot`,
+before `_emit_overlay_legend`, so a listener asking `has_terrain_tag_data()` sees THIS frame's tags
+and the legend that follows describes the channel just re-asserted.
+
+**ADOPT on `overlay_legend_changed`.** That signal also fires on every ordinary channel change, and
+**a picker that re-asserted on it overwrites every other caller of `set_overlay_channel`** —
+`MapView.set_terrain_mode` / `toggle_terrain_mode`, `set_fow_enabled`'s deliberate clear, and every
+offline harness that drives a channel with no picker in the loop. That is not hypothetical: the first
+cut did exactly this, and **seven `map_preview` overlay states rendered as bare terrain** —
+`map_pasture`, `map_forage`, `map_hunt_danger`, `map_threat`, `map_crisis_annotations` and the two
+pasture-selection frames — each a perfectly plausible picture of a map with no overlay on it, which is
+why only a pixel diff against a pre-change render found it. Outside an ingest, `MapView` is the
+authority for what is painted and the picker follows it.
+
+`OverlayPicker._syncing` is what keeps the ADOPT branch off the picker's own echo. `_apply_to_map`
+then reads the key back anyway, because **`set_overlay_channel` silently REFUSES a key it holds no
+raster for** — an unread push would leave the lit row claiming a channel the map is not painting, and
+re-assert the same rejected key on every later frame. `map_preview`'s `map_overlay_picker` asserts
+both rules, the survival and the stand-down, in one place.
+
+**THE POPOVER IS A `Control`, NOT A `PopupPanel`** — `TurnOrb`'s catcher shape. Every other popover
+in this HUD is a `PopupPanel` because a Window cannot change a docked zone's height, a problem a
+widget floating over the map does not have; what a Window WOULD cost here is the frame — it renders to
+its own surface, so an opened popover would be absent from `map_preview`'s capture and the state
+could not be judged at all.
+
+**AND IT GETS ITS OWN `CanvasLayer` (105), ABOVE EVERY DOCKED SURFACE.** The picker rides the
+minimap, which in the shipped client is EMBEDDED in the HUD's bottom bar — so the popover inherited
+`Main.HUD_LAYER` (101) and the Band/City dock (`BandCityPanel.LAYER_INDEX` 103), the Workbench
+(`Main.WORKBENCH_LAYER` 103) and the event dock (`EventDockPanel.LAYER_INDEX` 104) all drew straight
+over it. Reported from play as *"the menu shows up under the band panel"*. It stays below
+`Main.LOADING_OVERLAY_LAYER` (150), a world being built having to cover everything. `Main`'s HUD and
+Inspector layers are NAMED constants now precisely because four surfaces are placed relative to them
+and were all reasoning about bare literals to do it.
+
+**Clearing the dock's LAYER is only half of it: the popover also has to open into the PLAY AREA.**
+Right-aligning a ~290px popover to a button in the nav cluster puts its far edge inside a ~495px
+docked panel, and drawing it *above* the panel instead of under it would merely trade an unreadable
+popover for one covering what the player is reading. `MapView.unreserved_screen_rect()` is the bound —
+the viewport less every edge a docked panel has reserved, in CANVAS units, which is the space the
+reservations arrive in and the space a HUD `Control` positions in. It is deliberately not
+`_reserved_inset_span_local()`, which converts the same numbers into the map's counter-scaled units
+for the cover-fit maths (`interface-scale.md`).
+
+**IT LEFT THE INSPECTOR ENTIRELY.** `ui/inspector/OverlayPanel.gd` was 308 lines doing four jobs, two
+of which grew a branch per channel — an inline `terrain_tags` label/description/availability block in
+its ingest, and hand-written `Culture` and `Military` placeholder tabs in its refresh, whose content
+was exactly what the generic legend produces. Both are deleted along with the script, the
+`OverlaySection`/`OverlayTabs` subtree in `InspectorLayer.tscn`, and `Inspector.gd`'s member and four
+forwards. `Inspector._ingest_overlays` survives as a junction for the `terrain_palette` /
+`terrain_tag_labels` / `crisis_annotations` side-routes, which are Terrain's and Crisis's; the
+channels on that same key are read straight off `MapView`, which ingests the identical payload. The
+Inspector is a modding tool that ships hidden behind `I`, so the map's own channel picker was
+somewhere a player would never look — that, not the file's size, is why it moved.
+
+**`MapView.set_overlay_channel` still special-cases `terrain_tags`, and that is the render path, not
+the picker's.** Leave it alone; a new channel is a registry row plus whatever raster or derivation it
+needs, **never a second `if key ==` there**.
+
+**`overlays.default_channel` HAS NO READER, AND HAS NOT HAD ONE FOR LONGER THAN IT LOOKS.** The
+native decoder publishes it (`DEFAULT_OVERLAY_CHANNEL`, `native/src/snapshot/mod.rs`) and nothing
+consumes it: `OverlayChannels.roster()` / `descriptor_for()` read only `channel_order` / `labels` /
+`descriptions` / `placeholder_flags`, and the picker's fallback is `_roster[0]`, which is always the
+empty key (`PLACEMENT_FIRST`). **The Inspector panel did not honour it either** — its one use sat
+behind `if not _overlay_channel_labels.has(_selected_overlay_key)`, and it added the empty key to
+that table unconditionally with `""` as the initial selection, so the branch never fired. The client
+has opened on NO OVERLAY for as long as both halves have looked like this; the paragraph that used to
+stand here said otherwise, and was describing an intention rather than the code.
+
+**The intention is still a good one and is worth honouring deliberately, in its own change.** A
+default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`, which worldgen
+publishes for every world, so it is never a placeholder, and relative height is legible with no
+knowledge of the simulation's vocabulary. Wiring it means one thing — the picker's roster fallback
+consults `default_channel` before taking `_roster[0]` — and it is a change to what a player sees on
+their first frame, so it belongs to whoever decides that, not to a migration.
 
 **RETIRED: the `logistics` channel ("Logistics Throughput", blue), the top-level `contrast` alias,
 and the whole trade-link overlay.** The sim no longer publishes a `logisticsRaster` or a link
@@ -70,7 +259,7 @@ blend shader's `fog_color` uniform — none of which this retirement touched. A 
 client hits fog-of-war in almost every case; check which one you have before deleting anything. On the
 client side the removal was three lines (`MapView.FOG_COLOR`, its `OVERLAY_COLORS` row, and the dead
 `avg_fog` metric): the selector and legend are data-driven off the snapshot's `channel_order`, so
-dropping the native channel registration removed the entry from both with no OverlayPanel edit — the
+dropping the native channel registration removed the entry from both with no picker edit — the
 same property the derived-danger channels rely on, described below.
 
 **`hunt_danger` / `threat` — the two derived-danger overlays (Predators Phase 0).** STRENGTH ≠ DANGER:
@@ -87,7 +276,7 @@ is correct. Neither is a two-tone ramp: MapView's `_color_for_tile` rides the ge
 `GRID_COLOR.lerp(overlay_color, value)` path off `OVERLAY_COLORS` (`HUNT_DANGER_OVERLAY_COLOR` orange /
 `THREAT_OVERLAY_COLOR` red, so the two read apart) — empty ground stays grid-colored — and the generic
 scalar legend handles both. The overlay selector + legend are data-driven off `channel_order`, so the
-channels appear with no OverlayPanel edit. **The herd drawer shows the four RAW components, NOT a verdict
+channels appear with no picker edit. **The herd drawer shows the four RAW components, NOT a verdict
 word** (`Hud._herd_summary_lines` → `_append_danger_component_lines`, after Ecology, on EVERY herd): a
 word can't survive the roster (a mammoth and later mech-infantry can't both be "Deadly"), so each is a
 relative bar + raw value, Elevation-style — **Attack** / **Defense** bar against the max across
@@ -125,9 +314,14 @@ this channel are load-bearing:
 - **It is NOT a wire raster.** Graze rides `TileState` (per-entity diffed → zero delta bytes on an
   ungrazed turn), so the channel is **assembled in the native decoder from the tiles**
   (`snapshot_dict`'s `OverlaySlices.pasture_capacity`), rather than read off a `ScalarRaster`.
-  Everything downstream — MapView's channel ingest, the OverlayPanel selector, the legend — then works
-  with no special-casing. (Do **not** synthesize it client-side in MapView the way `province` is: a
-  MapView-only channel never reaches OverlayPanel's selector, so it can't be picked.)
+  Everything downstream — MapView's channel ingest, the picker's roster, the legend — then works
+  with no special-casing. (The old caveat here — *"do not synthesize it client-side the way `province`
+  is, a MapView-only channel never reaches the selector"* — **no longer holds and is why it is
+  recorded rather than deleted.** The Inspector panel built its list from the SNAPSHOT payload, so a
+  channel MapView added to itself was unreachable; the picker builds it from
+  `MapView.overlay_channel_order`, which is that payload PLUS MapView's own additions, so `province`
+  is pickable now and renders through the generic scalar path like any other. Reading MapView rather
+  than the payload is what let the `overlays` routing leave the Inspector entirely.)
 - **It paints CAPACITY, not fill.** "How good a pasture is this ground?" is the question the layer
   exists to answer (is prairie really pasture; is forest really poor?) and it is a property of the
   biome. The *fill* (`biomass / capacity` — "how eaten-down is it?") is a different question: it rides
@@ -148,7 +342,8 @@ this channel are load-bearing:
   panel clips.
 
 Verify with `map_preview` state **"pasture"** (`map_pasture.png` — an earthlike-shaped map; it also
-prints the legend dict, since that harness has no HUD) and `ui_preview` `pasture_legend` /
+draws the legend in the minimap picker's own popover as `map_pasture_legend`, the frame that used to
+be a printed dict here and a hand-transcribed fixture in `ui_preview`) and `ui_preview`
 `tile_pasture_stressed` / `tile_pasture_none` (+ `food_tile`, which carries both stocks). **The live
 earthlike map generates zero forest** (the biome palette thins `MixedWoodland`/`BorealTaiga` out
 entirely — tracked in `core_sim/CLAUDE.md`), so the forest-is-poor-pasture inversion the two-stock
@@ -183,7 +378,7 @@ forage" and "no pasture" mean **opposite** things, and the render must not lie a
 Verify with `map_preview` state **"forage"** (`map_forage.png`, same earthlike fixture as `map_pasture`
 so the two compare tile-for-tile — forest/river valleys read RICH on forage where prairie/steppe reads
 richest on pasture, and the shelf column glows on forage where it is barren on pasture; it prints the
-legend dict) and `ui_preview` `forage_legend` (the honest twin — `No forage` barren row, no Water row,
+`map_forage_legend` beside it — the honest twin: `No forage` barren row, no Water row,
 the gathering-sites sub-count). The forage `capacity_by_biome` table ships in the sim, so the live
 inversion is real; the fixture stages it deterministically for the harness.
 

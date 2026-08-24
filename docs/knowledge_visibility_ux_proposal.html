@@ -1,0 +1,1241 @@
+<meta charset="utf-8">
+<title>Eight Ways to Notice a Discovery</title>
+
+<style>
+  /* ============================================================
+     Tokens. The DOCUMENT shell is theme-aware; every PROTOTYPE
+     keeps the game's own dark console palette in both themes on
+     purpose — the HUD is dark and stays dark. The `--g-*` set is
+     lifted verbatim from clients/.../ui/HudStyle.gd, so a swatch
+     here is the colour the client actually draws.
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    /* The game palette — fixed across both document themes. */
+    --g-ground:    #0b1114;
+    --g-panel:     #111a1e;
+    --g-panel-2:   #0e161a;
+    --g-line:      #26363c;
+    --g-line-soft: #1b282d;
+    --g-ink:       #e9efe9;
+    --g-dim:       #9db0ad;
+    --g-faint:     #6f8380;
+    --g-signal:    #4fe0cf;
+    --g-signal-deep: #1f9c8e;
+    --g-signal-wash: rgba(79, 224, 207, 0.14);
+    --g-warn:      #f2b13f;
+    --g-danger:    #e8746a;
+    --g-healthy:   #76cd80;
+    --g-pigment:   #c89c66;
+    --g-voice-ink: #82a2b4;
+    --g-ghost:     #13211f;
+    --g-primary:   #163a34;
+    --g-primary-t: #d8fff8;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 68ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #080e10;
+    --panel:       #111a1e;
+    --panel-2:     #0e161a;
+    --line:        #26363c;
+    --line-soft:   #1b282d;
+    --ink:         #e9efe9;
+    --dim:         #9db0ad;
+    --faint:       #6f8380;
+    --signal:      #4fe0cf;
+    --signal-wash: rgba(79, 224, 207, 0.12);
+    --warn:        #f2b13f;
+    --healthy:     #76cd80;
+    --danger:      #e8746a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 56px 28px 120px; }
+
+  /* ---- document typography ---- */
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 4.6vw, 46px); line-height: 1.12; margin: 0 0 20px;
+    letter-spacing: -0.022em; font-weight: 600; text-wrap: balance; max-width: 20ch;
+  }
+  .standfirst { font-size: 19px; line-height: 1.55; color: var(--dim); margin: 0 0 26px; max-width: var(--measure); }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 6px 26px; font-family: var(--mono);
+    font-size: 12px; color: var(--faint); border-top: 1px solid var(--line-soft);
+    padding-top: 16px; margin-top: 30px;
+  }
+  p { max-width: var(--measure); }
+  h2 { font-size: 25px; line-height: 1.22; margin: 0; letter-spacing: -0.015em; font-weight: 600; text-wrap: balance; }
+  h3 { font-size: 16px; margin: 32px 0 8px; letter-spacing: -0.005em; font-weight: 650; }
+  a { color: var(--signal); text-underline-offset: 2px; }
+  code, .k {
+    font-family: var(--mono); font-size: 0.875em; background: var(--panel-2);
+    border: 1px solid var(--line-soft); border-radius: 2px; padding: 0.08em 0.34em;
+  }
+  strong { font-weight: 650; color: var(--ink); }
+
+  section { margin-top: 68px; }
+  .sec-head {
+    display: grid; grid-template-columns: 58px 1fr; gap: 18px; align-items: start;
+    border-top: 2px solid var(--ink); padding-top: 14px; margin-bottom: 22px;
+  }
+  .sec-id {
+    font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--signal);
+    line-height: 1.25; letter-spacing: 0.02em;
+  }
+  .sec-head .sub {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--faint); margin: 5px 0 0;
+  }
+  .lede { font-size: 17px; color: var(--dim); max-width: var(--measure); margin: 0 0 20px; }
+
+  /* ---- verdict strip under each option ---- */
+  .verdict { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); margin-top: 20px; }
+  .verdict > div { background: var(--panel); padding: 12px 14px; }
+  .verdict dt {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 5px;
+  }
+  .verdict dd { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--dim); }
+  .verdict .buys dt { color: var(--healthy); }
+  .verdict .costs dt { color: var(--warn); }
+  .verdict .risk dt { color: var(--danger); }
+  @media (max-width: 720px) { .verdict { grid-template-columns: 1fr; } }
+
+  /* ---- the game stage every prototype sits on ---- */
+  .stage {
+    background: var(--g-ground);
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    color: var(--g-ink);
+    font-family: var(--mono);
+  }
+  .stage.tall { min-height: 400px; }
+  .stage-label {
+    position: absolute; top: 0; right: 0;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase;
+    color: var(--g-faint); background: var(--g-panel-2);
+    border-left: 1px solid var(--g-line); border-bottom: 1px solid var(--g-line);
+    padding: 4px 9px; border-radius: 0 var(--r) 0 var(--r);
+  }
+  .caption {
+    font-family: var(--mono); font-size: 12px; color: var(--faint);
+    margin: 10px 0 0; max-width: var(--measure); line-height: 1.65;
+  }
+
+  /* ---- shared game widgets ---- */
+  .g-panel {
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: var(--r);
+  }
+  .zone-head {
+    font-size: 10.5px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--g-faint); border-bottom: 1px solid var(--g-line-soft);
+    padding-bottom: 5px; margin-bottom: 9px;
+  }
+  .meter { color: var(--g-signal); letter-spacing: 0.02em; }
+  .meter.dim { color: var(--g-faint); }
+  .pct { color: var(--g-dim); font-variant-numeric: tabular-nums; }
+
+  button.ghost, .btn {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em;
+    background: var(--g-ghost); color: var(--g-signal);
+    border: 1px solid var(--g-line); border-radius: var(--r);
+    padding: 5px 11px; cursor: pointer; transition: background 120ms ease, border-color 120ms ease;
+  }
+  button.ghost:hover, .btn:hover { background: #173029; border-color: var(--g-signal-deep); }
+  button.ghost:focus-visible, .btn:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 2px; }
+  button.primary {
+    background: var(--g-primary); color: var(--g-primary-t); border-color: var(--g-signal-deep);
+  }
+  button.primary:hover { background: #1c4640; }
+
+  /* toggle strip for before/after prototypes */
+  .switch { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .switch .lab {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--g-faint); margin-right: 4px;
+  }
+  .switch button[aria-pressed="true"] {
+    background: var(--g-signal-wash); color: var(--g-signal); border-color: var(--g-signal-deep);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  /* ============ A · turn orb + attention popover ============ */
+  .orb-stage { min-height: 350px; display: flex; align-items: flex-end; justify-content: flex-end; }
+  .orb-cluster { position: relative; width: 340px; }
+  .orb {
+    width: 78px; height: 78px; border-radius: 50%; margin-left: auto;
+    background: var(--g-panel-2); border: 2px solid var(--g-signal);
+    display: grid; place-items: center; cursor: pointer; position: relative;
+    transition: border-color 160ms ease;
+  }
+  .orb .turnword {
+    position: absolute; top: 9px; left: 0; right: 0; text-align: center;
+    font-size: 9px; letter-spacing: 0.22em; color: var(--g-signal); opacity: 0.62;
+  }
+  .orb .num { font-size: 27px; font-weight: 600; color: var(--g-signal); line-height: 1; margin-top: 7px; font-variant-numeric: tabular-nums; }
+  .orb.warn { border-color: var(--g-warn); }
+  .orb.warn .num, .orb.warn .turnword { color: var(--g-warn); }
+  .orb .badge {
+    position: absolute; top: -2px; right: -2px; min-width: 21px; height: 21px; padding: 0 5px;
+    border-radius: 11px; background: var(--g-warn); color: var(--g-ground);
+    font-size: 11.5px; font-weight: 700; display: grid; place-items: center;
+    border: 2px solid var(--g-ground);
+  }
+  .orb .pulse {
+    position: absolute; inset: -9px; border-radius: 50%; border: 1px solid var(--g-signal);
+    opacity: 0; animation: pulse 2.6s ease-out infinite;
+  }
+  @keyframes pulse { 0% { transform: scale(0.86); opacity: 0.55; } 100% { transform: scale(1.18); opacity: 0; } }
+
+  .popover {
+    position: absolute; bottom: 92px; right: 0; width: 340px;
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: var(--r);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.55); overflow: hidden;
+  }
+  .popover[hidden] { display: none; }
+  .arow { display: grid; grid-template-columns: 3px 20px 1fr auto; gap: 9px; align-items: start;
+          padding: 10px 11px; border-bottom: 1px solid var(--g-line-soft); }
+  .arow:last-of-type { border-bottom: 0; }
+  .arow .stripe { align-self: stretch; background: var(--g-warn); border-radius: 2px; }
+  .arow.crit .stripe { background: var(--g-danger); }
+  .arow.know .stripe { background: var(--g-signal); }
+  .arow .ico { font-size: 13px; line-height: 1.35; text-align: center; }
+  .arow.know .ico { color: var(--g-signal); font-weight: 700; }
+  .arow > span:not([class]) { min-width: 0; }
+  .arow .lab { display: block; font-size: 12.5px; color: var(--g-ink); line-height: 1.35; }
+  .arow.know .lab { color: var(--g-signal); }
+  .arow .det { display: block; font-size: 11px; color: var(--g-faint); line-height: 1.45; margin-top: 2px; }
+  .arow .jump { font-size: 11px; color: var(--g-signal); align-self: center; white-space: nowrap; }
+  .arow.done { opacity: 0.42; }
+  .arow.done .jump { color: var(--g-faint); }
+  .pop-foot { display: flex; justify-content: flex-end; padding: 9px 11px; border-top: 1px solid var(--g-line); background: var(--g-panel-2); }
+
+  /* ============ B · the Know tab ============ */
+  .bandpanel { width: 354px; }
+  .bp-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 9px 11px; border-bottom: 1px solid var(--g-line);
+  }
+  .bp-head .name { font-size: 13px; color: var(--g-ink); letter-spacing: 0.02em; }
+  .bp-head .turn { font-size: 10.5px; color: var(--g-faint); }
+  .tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--g-line); }
+  .tabs button {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+    background: transparent; color: var(--g-faint); border: 0;
+    border-bottom: 2px solid transparent; padding: 8px 2px; cursor: pointer; position: relative;
+  }
+  .tabs button[aria-selected="true"] { color: var(--g-signal); border-bottom-color: var(--g-signal); background: var(--g-signal-wash); }
+  .tabs button .dot {
+    position: absolute; top: 5px; right: 12px; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--g-warn); box-shadow: 0 0 0 2px var(--g-panel);
+  }
+  .bp-body { padding: 12px 11px 14px; }
+  .zblock + .zblock { margin-top: 16px; }
+
+  .krow { padding: 7px 0; border-bottom: 1px solid var(--g-line-soft); }
+  .krow:last-child { border-bottom: 0; }
+  .krow .top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .krow .name { font-size: 13px; color: var(--g-ink); }
+  .krow .val { font-size: 12px; white-space: nowrap; }
+  .krow .val .known { color: var(--g-healthy); letter-spacing: 0.04em; }
+  .krow .verb { font-size: 11.5px; color: var(--g-dim); margin-top: 3px; display: flex; justify-content: space-between; gap: 10px; }
+  .krow .verb .ready { color: var(--g-signal); white-space: nowrap; cursor: pointer; }
+  .krow .prac { font-size: 11px; color: var(--g-faint); margin-top: 2px; }
+  .krow .prac b { color: var(--g-warn); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px; }
+  .krow.locked .name { color: var(--g-faint); }
+  .krow.locked .val { color: var(--g-faint); }
+  .krow.locked .verb { color: var(--g-faint); opacity: 0.75; }
+  .krow.fresh { background: var(--g-signal-wash); box-shadow: inset 2px 0 0 var(--g-signal); padding-left: 8px; margin-left: -8px; }
+
+  /* ============ C · the ladder diagram ============ */
+  .ladder { width: 100%; overflow-x: auto; }
+  .ladder svg { display: block; min-width: 600px; }
+  .ladder .rung-box { cursor: pointer; }
+  .ladder text { font-family: var(--mono); }
+  .lg-key { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; font-size: 11px; color: var(--g-faint); }
+  .lg-key span b { color: var(--g-signal); font-weight: 500; }
+
+  /* ============ D · the Telling beat ============ */
+  .book {
+    width: 420px; margin: 0 auto; background: #14100c; border: 1px solid #3a2f22;
+    border-radius: var(--r); padding: 20px 22px 18px; position: relative;
+  }
+  .book .eyeb { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: #7a6448; margin-bottom: 14px; }
+  .book .beat { font-size: 15px; line-height: 1.6; color: var(--g-pigment); font-family: var(--sans); }
+  .book .beat em { font-style: normal; color: #e8c793; }
+  .book .after { font-size: 11.5px; color: #8a7355; margin-top: 14px; padding-top: 12px; border-top: 1px solid #2c2418; line-height: 1.6; }
+  .book .after b { color: var(--g-pigment); font-weight: 600; }
+  .book .close { position: absolute; top: 12px; right: 14px; color: #7a6448; font-size: 12px; }
+
+  /* ============ E · the map mark ============ */
+  .mapwrap { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+  .mapwrap svg { display: block; }
+  .mark-callout {
+    background: var(--g-panel); border: 1px solid var(--g-signal-deep); border-left-width: 3px;
+    border-radius: var(--r); padding: 11px 13px; max-width: 260px;
+  }
+  .mark-callout .t { font-size: 12px; color: var(--g-signal); margin-bottom: 4px; }
+  .mark-callout .d { font-size: 11.5px; color: var(--g-dim); line-height: 1.55; }
+  .ping { animation: ping 1.9s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes ping { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  /* ============ F · capability sheet ============ */
+  .sheet { width: 420px; }
+  .vrow { display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--g-line-soft); }
+  .vrow:last-child { border-bottom: 0; }
+  .vrow .pip { font-size: 11px; color: var(--g-healthy); }
+  .vrow.off .pip { color: var(--g-line); }
+  .vrow .v { font-size: 13px; color: var(--g-ink); }
+  .vrow.off .v { color: var(--g-faint); }
+  .vrow .where { font-size: 11.5px; color: var(--g-signal); white-space: nowrap; }
+  .vrow.off .where { color: var(--g-faint); }
+  .vrow .why { grid-column: 2 / -1; font-size: 11px; color: var(--g-faint); margin-top: 3px; line-height: 1.5; }
+  .vrow .why b { color: var(--g-warn); font-weight: 600; }
+
+  /* ============ G · the modal ============ */
+  .modal-scrim { position: relative; background: rgba(0,0,0,0.55); padding: 46px 20px; border-radius: var(--r); }
+  .modal {
+    width: 440px; margin: 0 auto; background: var(--g-panel); border: 1px solid var(--g-signal-deep);
+    border-radius: var(--r); box-shadow: 0 18px 50px rgba(0,0,0,0.7); overflow: hidden;
+  }
+  .modal .bar { background: var(--g-primary); color: var(--g-primary-t); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; padding: 8px 14px; }
+  .modal .body { padding: 20px 18px 16px; text-align: center; }
+  .modal .glyph { font-size: 34px; color: var(--g-signal); line-height: 1; }
+  .modal h4 { font-family: var(--sans); font-size: 20px; margin: 12px 0 6px; color: var(--g-ink); font-weight: 600; }
+  .modal .sub { font-size: 12.5px; color: var(--g-dim); line-height: 1.6; margin: 0 auto; max-width: 34ch; }
+  .modal .foot { display: flex; gap: 9px; justify-content: center; padding: 14px 18px 18px; }
+  .queue { display: flex; gap: 6px; justify-content: center; margin-top: 14px; font-size: 10.5px; color: var(--g-faint); }
+
+  /* ============ H · the standalone tree ============ */
+  .treewrap { overflow-x: auto; }
+  .treewrap svg { display: block; min-width: 640px; }
+  .barslot { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--g-panel-2); border: 1px solid var(--g-line); border-radius: var(--r); width: max-content; }
+  .barslot .ic { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--g-line); border-radius: var(--r); color: var(--g-signal); font-size: 13px; position: relative; }
+  .barslot .ic .pip { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--g-warn); border: 1.5px solid var(--g-ground); }
+  .barslot .txt { font-size: 10.5px; color: var(--g-faint); letter-spacing: 0.1em; text-transform: uppercase; }
+
+  /* ============ comparison ============ */
+  table.cmp { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13.5px; }
+  table.cmp th, table.cmp td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  /* Declare the colour rather than inherit it — see the sibling doc: an inherited value
+     left this table's body text near-white on the light ground. */
+  table.cmp td { color: var(--dim); }
+  table.cmp td b, table.cmp td strong { color: var(--ink); }
+  table.cmp thead th {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.11em; text-transform: uppercase;
+    color: var(--faint); border-bottom: 1px solid var(--line);
+  }
+  table.cmp td.id { font-family: var(--mono); color: var(--signal); font-weight: 600; white-space: nowrap; }
+  table.cmp td.opt { white-space: nowrap; }
+  .tbl-scroll { overflow-x: auto; }
+  .yes { color: var(--healthy); font-weight: 650; }
+  .no  { color: var(--faint); }
+  .part { color: var(--warn); font-weight: 650; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Shadow-Scale · UX proposal · the intensification ladder</p>
+  <h1>Your people learned to break the ground. You didn't notice.</h1>
+  <p class="standfirst">
+    The knowledge tree moved to the <b>Know</b> tab on the Faction panel, which is the right
+    home for it. But nothing tells a player that a track finished, and nothing tells them what
+    the new knowledge lets their hands do. Eight prototypes, one per approach — all live, all in
+    the game's own palette, so the choice can be made by looking rather than by imagining.
+  </p>
+  <div class="meta">
+    <span>8 options · A–H</span>
+    <span>Palette from <code>ui/HudStyle.gd</code></span>
+    <span>Nothing here is built yet</span>
+  </div>
+</header>
+
+<section id="ground">
+  <div class="sec-head">
+    <div class="sec-id">§</div>
+    <div>
+      <h2>Two things already exist, and they change what needs building</h2>
+      <p class="sub">Read this before judging the eight</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    The problem is narrower than “we must tell the player things”. The sentence you want is
+    already written, and the map already answers <i>where</i>. Both land somewhere nobody looks.
+  </p>
+
+  <h3>1 · The unlock message exists — it goes to the quietest surface in the game</h3>
+  <p>
+    <code>FactionReadouts._announce_knowledge_unlock</code> fires exactly once per track, with a
+    label and a line naming the verb it bought:
+  </p>
+
+  <div class="stage" style="padding:18px;">
+    <span class="stage-label">as shipped · event dock, System channel</span>
+    <div class="g-panel" style="padding:9px 11px; display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; max-width:640px;">
+      <span style="color:var(--g-faint); font-size:10.5px;">SYS</span>
+      <span style="color:var(--g-ink); font-size:12.5px; white-space:nowrap;">Cultivation learned</span>
+      <span style="color:var(--g-faint); font-size:11.5px;">The Cultivate policy is now available on Thriving wild patches.</span>
+    </div>
+    <p class="caption" style="color:var(--g-faint);">
+      One row on a horizontal strip that scrolls, sits behind a three-rung detail floor, and is
+      toggled off entirely with <b>R</b>. The copy is good. The delivery is a surface designed to
+      be ignorable.
+    </p>
+  </div>
+
+  <h3>2 · The map already marks every source the new knowledge unlocked</h3>
+  <p>
+    <code>SecondaryMarkerRenderer</code> draws <b>⌃</b> on any source that can climb a rung, driven
+    off <code>RungGates</code> and the player's own knowledge row. It has never been explained to
+    anyone. That is option <b>E</b> below — the cheapest of the eight, because the feature is done
+    and only the teaching is missing.
+  </p>
+
+  <h3>3 · Why a 4X popup is a worse fit here than it looks</h3>
+  <p>
+    In Civ the popup is a <b>receipt</b>: you chose Bronze Working fifteen turns ago and have been
+    waiting for it. Here knowledge is <b>earned by practice</b> — you never chose it, you may not
+    know the track exists, and the first you hear of Penning is the turn it lands. A popup has to
+    introduce the noun and the verb simultaneously, to a player who was not waiting for either.
+    That is why several options below spend their effort on <b>anticipation</b> rather than on the
+    moment: a player who has watched <span class="k">Seed Selection ▰▰▰▱▱ 62%</span> climb for ten
+    turns cannot miss it completing.
+  </p>
+  <p>
+    Which exposes the current Know tab's real defect, and it is not the missing second line:
+    <code>_build_knowledge_block</code> skips any track at <code>progress &lt;= 0.0</code>. A new
+    player opens <b>Know</b> and sees one row, or none. <b>The ladder is invisible until you are
+    already climbing it.</b>
+  </p>
+</section>
+
+<section id="a">
+  <div class="sec-head">
+    <div class="sec-id">A</div>
+    <div>
+      <h2>The unlock becomes a turn-orb attention row</h2>
+      <p class="sub">Fixes the moment · reuses existing machinery · persists until used</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    The orb is already the generic “something needs you” hub, with a severity-tinted count badge and
+    a popover of rows carrying <span class="k">Jump →</span>. A discovery fits its contract exactly —
+    with one twist that makes it better than every other producer: <b>it stays until you use the verb
+    once</b>, where a note scrolls away.
+  </p>
+
+  <div class="stage orb-stage">
+    <span class="stage-label">click the orb · then Jump</span>
+    <div class="orb-cluster">
+      <div class="popover" id="popA">
+        <div class="arow know" id="rowA">
+          <span class="stripe"></span><span class="ico">⌃</span>
+          <span>
+            <span class="lab">Cultivation learned</span>
+            <span class="det" id="detA">Cultivate a thriving wild patch — 3 ready</span>
+          </span>
+          <button class="btn" id="jumpA" style="padding:3px 8px;">Jump →</button>
+        </div>
+        <div class="arow crit">
+          <span class="stripe"></span><span class="ico">🍖</span>
+          <span><span class="lab">Band 2 starving</span><span class="det">4 turns of food left</span></span>
+          <span class="jump">Jump →</span>
+        </div>
+        <div class="arow">
+          <span class="stripe"></span><span class="ico">🛠</span>
+          <span><span class="lab">6 idle workers</span><span class="det">Band 1</span></span>
+          <span class="jump">Jump →</span>
+        </div>
+        <div class="pop-foot"><button class="ghost primary">Advance ▸</button></div>
+      </div>
+      <div class="orb warn" id="orbA" role="button" tabindex="0" aria-label="Turn 47, 3 items need attention">
+        <span class="pulse" hidden></span>
+        <span class="turnword">TURN</span>
+        <span class="num">47</span>
+        <span class="badge" id="badgeA">3</span>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    The discovery row wears the <b>⌃</b> the map already uses and the cyan stripe, so it reads as an
+    opportunity rather than as damage — the other two rows are the existing warn/critical producers,
+    for contrast. <b>Not</b> <code>blocking</code>: an unlock must never hold the turn hostage.
+    Press <b>Jump</b> to see it retire.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>A count badge the player already watches every turn; a click that ends with the compose sheet open on a patch you can now cultivate.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>One producer plus a “used it yet” latch beside the existing <code>_knowledge_announced</code>. No new surface, no new art.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>The registry is rebuilt per snapshot; this row is the first that must survive across turns on client state.</dd></div>
+  </dl>
+</section>
+
+<section id="b">
+  <div class="sec-head">
+    <div class="sec-id">B</div>
+    <div>
+      <h2>Know-tab rows go two-line — and the second line is live</h2>
+      <p class="sub">Fixes the standing answer · your original idea, with the world's own numbers in it</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    A static “cultivate a foragable tile” is a manual entry. The client knows the world, so the row
+    can answer <b>where you stand</b> instead: what the knowledge lets you do, and how many places
+    you could do it right now. For a track still climbing, the second line answers the question
+    nothing in the game answers today — <b>what work advances this</b>.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">Faction panel · Know</span>
+    <div class="switch">
+      <span class="lab">Rows</span>
+      <button class="ghost" id="bToday" aria-pressed="false">As shipped</button>
+      <button class="ghost" id="bProp" aria-pressed="true">Proposed</button>
+    </div>
+    <div class="g-panel bandpanel">
+      <div class="bp-head"><span class="name">Your people</span><span class="turn">Turn 47</span></div>
+      <div class="tabs">
+        <button type="button">Faction</button>
+        <button type="button">Work</button>
+        <button type="button" aria-selected="true">Know<span class="dot" id="bDot"></span></button>
+        <button type="button">Parties</button>
+      </div>
+      <div class="bp-body">
+        <div class="zblock">
+          <div class="zone-head">Settling</div>
+          <div class="krow"><div class="top"><span class="name">Seasonal base</span><span class="val"><span class="meter">▰▰▰▱▱</span> <span class="pct">62/100</span></span></div></div>
+        </div>
+        <div class="zblock">
+          <div class="zone-head">Knowledge</div>
+          <div id="bRows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    Toggle between the two. <b>As shipped</b> is the live code path — label, meter, and any track at
+    zero hidden entirely. <b>Proposed</b> adds the verb line (that copy already exists as
+    <code>KNOWLEDGE_UNLOCK_NOTES</code>), a live ready-count that jumps, a <b>PRACTISE</b> line, and
+    stops hiding unstarted rungs. The freshly-learned track keeps a cyan rail until the tab is
+    visited — which is what clears the dot on the tab itself.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>The only surface that can say <b>how to earn</b> a track. “You learn Penning by working herds you already tamed” is currently written down only in a Rust doc comment.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>Row height roughly triples, so the zone needs the taller tier. Ready-counts need <code>RungGates</code> run across all sources, not just the selected one.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>Still a tab the player must choose to open. Pair it with A or H, or it inherits today's problem.</dd></div>
+  </dl>
+</section>
+
+<section id="c">
+  <div class="sec-head">
+    <div class="sec-id">C</div>
+    <div>
+      <h2>Draw the ladder, because that is what it is</h2>
+      <p class="sub">Fixes anticipation · the wide-shell rendering of the Know zone</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    A generic tech-tree DAG would misrepresent this system: there are no prerequisites to shop for,
+    no queue, nothing to click. What a picture is <i>for</i> here is making one arrow visible — <b>the
+    rung you stand on teaches the lesson that unlocks the next one</b>. That rule is the whole
+    economy of the ladder, and it is currently written down only in a Rust doc comment.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">hover a rung</span>
+    <div class="ladder">
+      <svg viewBox="0 0 600 316" width="100%" height="316" role="img" aria-label="The intensification ladder: two webs, plants and animals, each rung teaching the lesson that unlocks the next">
+        <defs>
+          <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0 0 L8 4 L0 8 z" fill="#6f8380"/>
+          </marker>
+        </defs>
+
+        <text x="44" y="16" fill="#6f8380" font-size="10.5" letter-spacing="2.4">PLANTS</text>
+        <text x="332" y="16" fill="#6f8380" font-size="10.5" letter-spacing="2.4">ANIMALS</text>
+
+        <!-- ============ PLANTS ============ -->
+        <g class="col">
+          <path d="M32 51 V235" stroke="#1b282d" stroke-width="1.5" fill="none"/>
+          <path d="M32 51 H44 M32 94 H84 M32 143 H44 M32 186 H84 M32 235 H44"
+                stroke="#26363c" stroke-width="1.5" fill="none"/>
+
+          <g class="rung-box" data-teaches="p1">
+            <rect x="44" y="36" width="170" height="30" rx="3" fill="#0e161a" stroke="#4fe0cf" stroke-width="1"/>
+            <text x="58" y="55" fill="#e9efe9" font-size="12.5">Forage</text>
+            <text x="200" y="55" fill="#76cd80" font-size="11" text-anchor="end">worked</text>
+          </g>
+          <g class="lesson" id="p1">
+            <rect x="84" y="82" width="190" height="24" rx="12" fill="#0b1114" stroke="#4fe0cf" stroke-width="1"/>
+            <text x="100" y="98" fill="#4fe0cf" font-size="11">Cultivation</text>
+            <text x="258" y="98" fill="#4fe0cf" font-size="9.5" text-anchor="end">NEW</text>
+          </g>
+
+          <g class="rung-box" data-teaches="p2">
+            <rect x="44" y="128" width="170" height="30" rx="3" fill="#0e161a" stroke="#26363c"/>
+            <text x="58" y="147" fill="#e9efe9" font-size="12.5">Cultivate</text>
+            <text x="200" y="147" fill="#4fe0cf" font-size="10.5" text-anchor="end">3 ready</text>
+          </g>
+          <g class="lesson" id="p2">
+            <rect x="84" y="174" width="190" height="24" rx="12" fill="#0b1114" stroke="#26363c"/>
+            <text x="100" y="190" fill="#9db0ad" font-size="11">Seed Selection</text>
+            <text x="258" y="190" fill="#9db0ad" font-size="9.5" text-anchor="end">62%</text>
+          </g>
+
+          <g class="rung-box">
+            <rect x="44" y="220" width="170" height="30" rx="3" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+            <text x="58" y="239" fill="#6f8380" font-size="12.5">Sow</text>
+            <text x="200" y="239" fill="#6f8380" font-size="10.5" text-anchor="end">locked</text>
+          </g>
+        </g>
+
+        <!-- ============ ANIMALS ============ -->
+        <g class="col">
+          <path d="M320 51 V278" stroke="#1b282d" stroke-width="1.5" fill="none"/>
+          <path d="M320 51 H332 M320 94 H372 M320 143 H332 M320 186 H372 M320 235 H332 M320 278 H372"
+                stroke="#26363c" stroke-width="1.5" fill="none"/>
+
+          <g class="rung-box" data-teaches="a1">
+            <rect x="332" y="36" width="170" height="30" rx="3" fill="#0e161a" stroke="#4fe0cf"/>
+            <text x="346" y="55" fill="#e9efe9" font-size="12.5">Hunt</text>
+            <text x="488" y="55" fill="#76cd80" font-size="11" text-anchor="end">worked</text>
+          </g>
+          <g class="lesson" id="a1">
+            <rect x="372" y="82" width="190" height="24" rx="12" fill="#0b1114" stroke="#26363c"/>
+            <text x="388" y="98" fill="#9db0ad" font-size="11">Herding</text>
+            <text x="546" y="98" fill="#76cd80" font-size="9.5" text-anchor="end">KNOWN</text>
+          </g>
+
+          <g class="rung-box" data-teaches="a2">
+            <rect x="332" y="128" width="170" height="30" rx="3" fill="#0e161a" stroke="#26363c"/>
+            <text x="346" y="147" fill="#e9efe9" font-size="12.5">Tame</text>
+            <text x="488" y="147" fill="#4fe0cf" font-size="10.5" text-anchor="end">1 ready</text>
+          </g>
+          <g class="lesson" id="a2">
+            <rect x="372" y="174" width="190" height="24" rx="12" fill="#0b1114" stroke="#26363c"/>
+            <text x="388" y="190" fill="#9db0ad" font-size="11">Penning</text>
+            <text x="546" y="190" fill="#9db0ad" font-size="9.5" text-anchor="end">18%</text>
+          </g>
+
+          <g class="rung-box" data-teaches="a3">
+            <rect x="332" y="220" width="170" height="30" rx="3" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+            <text x="346" y="239" fill="#6f8380" font-size="12.5">Corral</text>
+            <text x="488" y="239" fill="#6f8380" font-size="10.5" text-anchor="end">locked</text>
+          </g>
+          <g class="lesson" id="a3">
+            <rect x="372" y="266" width="190" height="24" rx="12" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+            <text x="388" y="282" fill="#6f8380" font-size="11">Foddering</text>
+            <text x="546" y="282" fill="#6f8380" font-size="9.5" text-anchor="end">not begun</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <div class="lg-key">
+      <span><b>Hover any rung</b> to see the lesson working it teaches.</span>
+      <span>Rounded = a lesson. Square = a thing your hands do.</span>
+    </div>
+  </div>
+  <p class="caption">
+    Two webs, not one tree. <b>Foddering hangs below Corral and unlocks no rung</b> — it is what
+    keeping a pen taught you, which is exactly why a generic tree shape would have had to lie about
+    it. The same picture also makes the game's cruellest non-obvious rule readable at a glance: the
+    <i>same hunt</i> teaches Herding on a wild herd and Penning on a tamed one.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>The only option that answers “where is this all going” before the player has climbed anything. Doubles as the teaching surface for how practice works.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>A drawn layout in a zone that is currently rows. Fits the <code>full</code> tier the Discoveries block already branches on.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>Nothing here is clickable in the tech-tree sense — no queue, no choice. If it reads as a planner, it has taught the wrong thing.</dd></div>
+  </dl>
+</section>
+
+<section id="d">
+  <div class="sec-head">
+    <div class="sec-id">D</div>
+    <div>
+      <h2>Spend the moment on The Telling, not on a dialog</h2>
+      <p class="sub">Fixes the moment · first-ever unlock only · the most game-specific option here</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    A modal at turn resolution competes with the four other things that just happened and becomes a
+    click-through. But this game already owns a surface for “something changed about who we are”:
+    the Telling is the book of what happened to us, it already auto-opens for forks, and it is a
+    medium that matures from oral to painted to written.
+  </p>
+
+  <div class="stage" style="padding:34px 24px;">
+    <span class="stage-label">first track ever learned · auto-opens once</span>
+    <div class="book">
+      <span class="close">✕</span>
+      <p class="eyeb">At the fire · Turn 47</p>
+      <p class="beat">
+        The rains came late and the stands by the river grew thin. <em>Ganna, who had watched the
+        same ground for nine summers, pressed seed back into the broken earth</em> — and the
+        following spring it answered her.
+      </p>
+      <p class="after">
+        <b>Your people learned Cultivation.</b> They may now cultivate a thriving wild patch;
+        three stand ready. Patches you can work this way wear <b>⌃</b> on the map.
+      </p>
+    </div>
+  </div>
+  <p class="caption">
+    Fires on the <b>first track a faction ever learns</b>, and never again — every later unlock takes
+    the quiet path (A). The pigment palette is the Telling's own <code>VOICE_PIGMENT</code>; the beat
+    would be a catalog entry, so it is mod surface rather than engine text.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>The one option that makes learning feel like something that happened to your people rather than a system notification. Introduces the ladder in-fiction, once, at the exact moment it starts mattering.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>Content catalog work per track, plus a first-ever latch. The engine seam for auto-opening already exists (forks use it).</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>Prose is the slowest way to deliver a number. Cannot be the <i>only</i> channel — it needs A or B standing behind it for every unlock after the first.</dd></div>
+  </dl>
+</section>
+
+<section id="e">
+  <div class="sec-head">
+    <div class="sec-id">E</div>
+    <div>
+      <h2>Teach the ⌃ mark at the moment it becomes true</h2>
+      <p class="sub">Fixes “where” · the feature is already built · cheapest option on this page</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    The map already marks every source that can climb a rung. On the turn a track completes, those
+    marks change meaning — and that is the one moment a player will read a sentence about them.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">the turn Cultivation lands</span>
+    <div class="mapwrap">
+      <svg viewBox="0 0 260 180" width="260" height="180" role="img" aria-label="Map fragment: three forage patches wearing the climb-ready caret">
+        <g stroke="#1b282d" stroke-width="1" fill="#0e161a">
+          <polygon points="40,10 66,25 66,55 40,70 14,55 14,25"/>
+          <polygon points="92,10 118,25 118,55 92,70 66,55 66,25"/>
+          <polygon points="144,10 170,25 170,55 144,70 118,55 118,25"/>
+          <polygon points="196,10 222,25 222,55 196,70 170,55 170,25"/>
+          <polygon points="66,55 92,70 92,100 66,115 40,100 40,70"/>
+          <polygon points="118,55 144,70 144,100 118,115 92,100 92,70"/>
+          <polygon points="170,55 196,70 196,100 170,115 144,100 144,70"/>
+          <polygon points="40,100 66,115 66,145 40,160 14,145 14,115"/>
+          <polygon points="92,100 118,115 118,145 92,160 66,145 66,115"/>
+          <polygon points="144,100 170,115 170,145 144,160 118,145 118,115"/>
+          <polygon points="196,100 222,115 222,145 196,160 170,145 170,115"/>
+        </g>
+        <g fill="#76cd80" opacity="0.30">
+          <circle cx="92" cy="40" r="9"/><circle cx="66" cy="85" r="9"/><circle cx="170" cy="85" r="9"/>
+        </g>
+        <g font-family="ui-monospace, monospace" font-size="13" fill="#4fe0cf" text-anchor="middle" font-weight="700">
+          <text class="ping" x="92" y="45">⌃</text>
+          <text class="ping" x="66" y="90">⌃</text>
+          <text class="ping" x="170" y="90">⌃</text>
+        </g>
+        <g font-family="ui-monospace, monospace" font-size="10" fill="#6f8380" text-anchor="middle">
+          <text x="144" y="45">⚒</text>
+          <text x="118" y="135">⚒</text>
+        </g>
+      </svg>
+      <div class="mark-callout">
+        <p class="t">⌃ — ready to climb</p>
+        <p class="d">
+          Three patches can be <b style="color:var(--g-ink)">Cultivated</b> now that your people know
+          how. The mark appears on any source whose next rung you can reach.
+        </p>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    The marks pulse for the turn the knowledge lands, and the callout is the same sentence the unlock
+    already carries with the glyph named. One-shot teaching, attached to the moment the glyph starts
+    meaning something — strictly better than a legend entry nobody opens. <b>⚒</b> is the existing
+    “merely worked” mark, shown for contrast.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>Connects the announcement to the map, where the player must eventually act. Almost free — the renderer exists and is already knowledge-driven.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>A one-turn pulse flag and one extra clause on the unlock copy.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>Not a standalone answer. It makes an existing affordance legible; it does not tell you a track finished.</dd></div>
+  </dl>
+</section>
+
+<section id="f">
+  <div class="sec-head">
+    <div class="sec-id">F</div>
+    <div>
+      <h2>Stop listing knowledge. List what your hands may attempt.</h2>
+      <p class="sub">Fixes the standing answer · the reframe · replaces the Know tab's contents</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    Every other option here treats knowledge as the subject and the verb as its footnote. Invert it.
+    The page becomes a list of <b>verbs</b> — the things your people can do — and knowledge becomes
+    the <i>reason</i> a verb is dark. That answers the actual complaint (“what can I do with it”) by
+    promoting the answer to the primary key.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">Faction panel · Know</span>
+    <div class="g-panel sheet" style="padding:12px 13px 14px;">
+      <div class="zone-head">What your people can do</div>
+
+      <div class="vrow"><span class="pip">●</span><span class="v">Forage</span><span class="where">anywhere green</span></div>
+      <div class="vrow"><span class="pip">●</span><span class="v">Hunt</span><span class="where">4 herds in reach</span></div>
+      <div class="vrow" style="background:var(--g-signal-wash); box-shadow:inset 2px 0 0 var(--g-signal); padding-left:8px; margin-left:-8px;">
+        <span class="pip" style="color:var(--g-signal)">●</span><span class="v">Cultivate</span><span class="where">3 patches ready ▸</span>
+        <span class="why" style="color:var(--g-signal)">New — your people learned Cultivation this turn.</span>
+      </div>
+      <div class="vrow"><span class="pip">●</span><span class="v">Tame</span><span class="where">1 herd ready ▸</span></div>
+      <div class="vrow off"><span class="pip">○</span><span class="v">Sow</span><span class="where">locked</span>
+        <span class="why">Needs <b>Seed Selection</b> · 62% — keep working your Tended Patches. Also needs rich, well-watered ground.</span>
+      </div>
+      <div class="vrow off"><span class="pip">○</span><span class="v">Corral</span><span class="where">locked</span>
+        <span class="why">Needs <b>Penning</b> · 18% — work the herds you have already tamed.</span>
+      </div>
+      <div class="vrow off"><span class="pip">○</span><span class="v">Store fodder</span><span class="where">locked</span>
+        <span class="why">Needs <b>Foddering</b> · not begun — keep a pen, and your people will work it out.</span>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    Same data as <b>B</b>, different primary key. Note what falls out for free: a verb the player has
+    never heard of still gets a row, so the sheet teaches the shape of the game without a diagram.
+    And it scales — crafting, trade and expeditions all belong on this page, where they would each
+    need their own knowledge sub-list under B.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>The most direct answer to “what can I do with it”, and the only layout that stays right as the verb set grows.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>A new derived model — verbs are currently implied by policies, gates and rungs rather than enumerated anywhere.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>Loses the sense of a <i>ladder</i>. Pairs naturally with C, which supplies exactly that.</dd></div>
+  </dl>
+</section>
+
+<section id="g">
+  <div class="sec-head">
+    <div class="sec-id">G</div>
+    <div>
+      <h2>The 4X popup, shown honestly</h2>
+      <p class="sub">Fixes the moment · the baseline every other option should have to beat</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    Worth prototyping properly rather than dismissing, because it is the option every player already
+    understands. Here it is at its best — and then at its realistic worst, which is the part that
+    usually goes unprototyped.
+  </p>
+
+  <div class="stage" style="padding:0;">
+    <span class="stage-label">turn 47 resolves</span>
+    <div class="modal-scrim">
+      <div class="modal">
+        <div class="bar">Discovery</div>
+        <div class="body">
+          <p class="glyph">⌃</p>
+          <h4>Cultivation</h4>
+          <p class="sub">
+            Your people learned to break the ground. You may now <b style="color:var(--g-ink)">Cultivate</b>
+            a thriving wild patch — three stand ready.
+          </p>
+        </div>
+        <div class="foot">
+          <button class="ghost">Later</button>
+          <button class="ghost primary">Show me ▸</button>
+        </div>
+      </div>
+      <p class="queue">◂ 2 of 5 this turn ▸</p>
+    </div>
+  </div>
+  <p class="caption">
+    <b>Read the bottom line.</b> On the turn this fires, a band also went hungry, a party arrived, a
+    child was born and a pen started starving. The dialog is not alone — it is item two of five, and
+    by the third turn of that the player is clicking through without reading. A <b>Show me ▸</b>
+    button that jumps to a ready patch rescues a lot of it, and is the half worth stealing regardless
+    of which option wins.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>Genuinely unmissable, once. Zero learning curve — every 4X player knows this dialog.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>A modal layer the HUD does not currently have, plus a queue for the turns that produce several.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>It interrupts, so it trains dismissal; and it introduces a noun and a verb at once to a player who was not waiting for either. If it fires more than a handful of times per game it becomes the thing players mute.</dd></div>
+  </dl>
+</section>
+
+<section id="h">
+  <div class="sec-head">
+    <div class="sec-id">H</div>
+    <div>
+      <h2>An icon off the turn bar, opening the whole tree</h2>
+      <p class="sub">Fixes anticipation · your second idea · known and future, one graph</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    A permanent slot beside the orb, and a single dialog holding everything the faction knows and
+    everything it might. Prototyped with the <b>crafts</b> included, because that is the honest
+    scope — Tanning, Weaving and Bone-working are faction discoveries too, earned the same way.
+  </p>
+
+  <div class="stage">
+    <span class="stage-label">bottom bar</span>
+    <div class="barslot" style="margin-bottom:20px;">
+      <span class="ic">⌃<span class="pip"></span></span>
+      <span class="txt">Knowledge · 1 new</span>
+    </div>
+
+    <div class="g-panel" style="overflow:hidden;">
+      <div class="bp-head">
+        <span class="name">What your people know</span>
+        <span class="turn">3 known · 2 learning · 4 unknown</span>
+      </div>
+      <div class="treewrap" style="padding:16px 14px;">
+        <svg viewBox="0 0 640 232" width="100%" height="232" role="img" aria-label="The full knowledge graph: plant web, animal web, and craft tracks">
+          <defs>
+            <marker id="ar2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L8 4 L0 8 z" fill="#6f8380"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace, monospace">
+            <text x="14" y="14" fill="#6f8380" font-size="10" letter-spacing="2.2">PLANTS</text>
+            <text x="230" y="14" fill="#6f8380" font-size="10" letter-spacing="2.2">ANIMALS</text>
+            <text x="464" y="14" fill="#6f8380" font-size="10" letter-spacing="2.2">CRAFTS</text>
+
+            <path d="M60 46 V78 M60 110 V142" stroke="#26363c" stroke-width="1.5" marker-end="url(#ar2)" fill="none"/>
+            <path d="M276 46 V78 M276 110 V142" stroke="#26363c" stroke-width="1.5" marker-end="url(#ar2)" fill="none"/>
+
+            <g>
+              <rect x="14" y="24" width="150" height="26" rx="13" fill="#0b1114" stroke="#4fe0cf"/>
+              <text x="28" y="41" fill="#4fe0cf" font-size="11">Cultivation</text>
+              <text x="152" y="41" fill="#4fe0cf" font-size="9.5" text-anchor="end">NEW</text>
+
+              <rect x="14" y="88" width="150" height="26" rx="13" fill="#0b1114" stroke="#26363c"/>
+              <text x="28" y="105" fill="#9db0ad" font-size="11">Seed Selection</text>
+              <text x="152" y="105" fill="#9db0ad" font-size="9.5" text-anchor="end">62%</text>
+
+              <rect x="14" y="152" width="150" height="26" rx="13" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+              <text x="28" y="169" fill="#6f8380" font-size="11">— nothing beyond —</text>
+            </g>
+
+            <g>
+              <rect x="230" y="24" width="150" height="26" rx="13" fill="#0b1114" stroke="#26363c"/>
+              <text x="244" y="41" fill="#9db0ad" font-size="11">Herding</text>
+              <text x="368" y="41" fill="#76cd80" font-size="9.5" text-anchor="end">KNOWN</text>
+
+              <rect x="230" y="88" width="150" height="26" rx="13" fill="#0b1114" stroke="#26363c"/>
+              <text x="244" y="105" fill="#9db0ad" font-size="11">Penning</text>
+              <text x="368" y="105" fill="#9db0ad" font-size="9.5" text-anchor="end">18%</text>
+
+              <rect x="230" y="152" width="150" height="26" rx="13" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+              <text x="244" y="169" fill="#6f8380" font-size="11">Foddering</text>
+              <text x="368" y="169" fill="#6f8380" font-size="9.5" text-anchor="end">—</text>
+            </g>
+
+            <g>
+              <rect x="464" y="24" width="160" height="26" rx="13" fill="#0b1114" stroke="#26363c"/>
+              <text x="478" y="41" fill="#9db0ad" font-size="11">Tanning</text>
+              <text x="612" y="41" fill="#76cd80" font-size="9.5" text-anchor="end">KNOWN</text>
+
+              <rect x="464" y="88" width="160" height="26" rx="13" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+              <text x="478" y="105" fill="#6f8380" font-size="11">Weaving</text>
+              <text x="612" y="105" fill="#6f8380" font-size="9.5" text-anchor="end">—</text>
+
+              <rect x="464" y="152" width="160" height="26" rx="13" fill="#0b1114" stroke="#1b282d" stroke-dasharray="3 3"/>
+              <text x="478" y="169" fill="#6f8380" font-size="11">Bone-working</text>
+              <text x="612" y="169" fill="#6f8380" font-size="9.5" text-anchor="end">—</text>
+            </g>
+
+            <text x="14" y="222" fill="#6f8380" font-size="10">No arrows between columns — the crafts are learned by working the material, not by climbing.</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    Two honest problems this prototype exposes. <b>The graph has almost no edges</b> — three short
+    chains and three orphans — so the graph form is doing very little work that a list would not do
+    better today; it earns its keep only once the tree is much larger. And <b>a permanently present
+    icon is furniture</b>: the player stops seeing it within an hour unless it changes state, and a
+    pip that changes state is option A with a different anchor and no <span class="k">Jump →</span>.
+  </p>
+
+  <dl class="verdict">
+    <div class="buys"><dt>Buys</dt><dd>One place that holds everything, including the crafts the Know tab does not show. Familiar 4X furniture.</dd></div>
+    <div class="costs"><dt>Costs</dt><dd>A whole new dialog and layout engine, duplicating what the Know tab is for.</dd></div>
+    <div class="risk"><dt>Watch</dt><dd>It is a second home for a fact that already has one, and the hub-vs-rule instinct in this repo says the same about UI: one home per fact.</dd></div>
+  </dl>
+</section>
+
+<section id="compare">
+  <div class="sec-head">
+    <div class="sec-id">◈</div>
+    <div>
+      <h2>Side by side</h2>
+      <p class="sub">Four questions a player has, and which option answers each</p>
+    </div>
+  </div>
+
+  <p class="lede">
+    No option scores across the board, and none should — <b>“it happened” and “what it's for” are
+    different questions with different natural homes</b>. The table is for picking a pair, not a
+    winner.
+  </p>
+
+  <div class="tbl-scroll">
+    <table class="cmp">
+      <thead>
+        <tr>
+          <th></th><th>Option</th>
+          <th>It happened</th><th>What it's for</th><th>Where to use it</th><th>Before you learn it</th>
+          <th>Build cost</th><th>New surface</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="id">A</td><td class="opt">Turn-orb row</td>
+          <td class="yes">strong</td><td class="yes">yes</td><td class="yes">jumps there</td><td class="no">no</td><td>low</td><td class="no">none</td></tr>
+        <tr><td class="id">B</td><td class="opt">Two-line Know rows</td>
+          <td class="part">tab dot</td><td class="yes">yes</td><td class="yes">live count</td><td class="yes">yes</td><td>medium</td><td class="no">none</td></tr>
+        <tr><td class="id">C</td><td class="opt">The ladder drawn</td>
+          <td class="no">no</td><td class="part">partly</td><td class="no">no</td><td class="yes">strongest</td><td>medium</td><td class="no">none</td></tr>
+        <tr><td class="id">D</td><td class="opt">Telling beat</td>
+          <td class="yes">once, hard</td><td class="yes">yes</td><td class="part">names ⌃</td><td class="no">no</td><td>medium</td><td class="no">exists</td></tr>
+        <tr><td class="id">E</td><td class="opt">Teach the ⌃ mark</td>
+          <td class="no">no</td><td class="no">no</td><td class="yes">strongest</td><td class="no">no</td><td class="yes">tiny</td><td class="no">none</td></tr>
+        <tr><td class="id">F</td><td class="opt">Capability sheet</td>
+          <td class="part">tab dot</td><td class="yes">strongest</td><td class="yes">live count</td><td class="yes">yes</td><td>medium</td><td class="no">none</td></tr>
+        <tr><td class="id">G</td><td class="opt">4X modal</td>
+          <td class="yes">strongest</td><td class="yes">yes</td><td class="part">Show me ▸</td><td class="no">no</td><td>medium</td><td class="part">modal layer</td></tr>
+        <tr><td class="id">H</td><td class="opt">Tree dialog off the bar</td>
+          <td class="part">a pip</td><td class="part">partly</td><td class="no">no</td><td class="yes">yes</td><td>high</td><td class="part">full dialog</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>What I would ship, and in what order</h3>
+  <p>
+    <b>A + E together, as one small change.</b> The unlock stops being a note and becomes an orb row
+    that persists until used and jumps to a real patch; the same copy names the <b>⌃</b> the map is
+    already drawing. Between them they answer <i>it happened</i>, <i>what for</i> and <i>where</i>,
+    they add no surface, and the machinery for both already exists.
+  </p>
+  <p>
+    <b>Then B or F</b> — the same information, differing only in whether knowledge or the verb is the
+    primary key. F is the better page; B is the smaller change. Either one must also stop hiding
+    unstarted tracks, which is a one-condition flip with an outsized effect.
+  </p>
+  <p>
+    <b>C last, and only if the tab is being rebuilt anyway.</b> D is a genuine flourish worth
+    considering once A is in — it costs catalog content, not engine work.
+  </p>
+  <p>
+    <b>G and H I would not ship alone.</b> G's dialog is unmissable exactly once and then becomes the
+    thing players click through; H builds a second home for a fact that already has one, and its own
+    prototype shows the graph has barely any edges to draw yet. The half of G worth stealing is the
+    <b>Show me ▸</b> button, which is what A's <span class="k">Jump →</span> already is.
+  </p>
+
+  <h3>Three things only you can decide</h3>
+  <p>
+    <b>Does D appeal, or is it too indirect</b> for something this mechanical? It is the most
+    distinctive option here and the one most likely to be wrong.
+  </p>
+  <p>
+    <b>B or F</b> — is the Know tab about knowledge, with verbs as detail, or about verbs, with
+    knowledge as the reason one is dark?
+  </p>
+  <p>
+    <b>Is a persistent orb row enough</b>, or do you specifically want something that interrupts? If
+    the latter, I would argue for interrupting <i>once, ever</i> — the first track a player learns —
+    and never again, which is D wearing G's clothes.
+  </p>
+</section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- A · orb popover ---------- */
+  var orb = document.getElementById("orbA");
+  var pop = document.getElementById("popA");
+  var jump = document.getElementById("jumpA");
+  var row = document.getElementById("rowA");
+  var det = document.getElementById("detA");
+  var badge = document.getElementById("badgeA");
+
+  function togglePop() {
+    pop.hidden = !pop.hidden;
+  }
+  orb.addEventListener("click", togglePop);
+  orb.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePop(); }
+  });
+
+  jump.addEventListener("click", function (e) {
+    e.stopPropagation();
+    if (row.classList.contains("done")) {
+      row.classList.remove("done");
+      det.textContent = "Cultivate a thriving wild patch — 3 ready";
+      jump.textContent = "Jump →";
+      badge.textContent = "3";
+      return;
+    }
+    row.classList.add("done");
+    det.textContent = "Used — Band 1 is cultivating the river stand";
+    jump.textContent = "done";
+    badge.textContent = "2";
+  });
+
+  /* ---------- B · Know rows ---------- */
+  var TRACKS = [
+    { name: "Cultivation",    state: "known",   fresh: true,
+      verb: "Cultivate a thriving wild patch", ready: "▸ 3 ready" },
+    { name: "Seed Selection", state: "part", pct: 62, cells: "▰▰▰▱▱",
+      verb: "Sow on rich, well-watered ground",
+      prac: "keep working your Tended Patches" },
+    { name: "Herding",        state: "known",
+      verb: "Tame a wild herd that can be domesticated", ready: "▸ 1 ready" },
+    { name: "Penning",        state: "part", pct: 18, cells: "▰▱▱▱▱",
+      verb: "Corral a herd you have tamed",
+      prac: "work the herds you have already tamed" },
+    { name: "Foddering",      state: "none",
+      verb: "Bank hay in the fodder store to feed your pens",
+      prac: "keep a pen, and your people will work it out" }
+  ];
+
+  var host = document.getElementById("bRows");
+  var btnToday = document.getElementById("bToday");
+  var btnProp = document.getElementById("bProp");
+  var dot = document.getElementById("bDot");
+
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+  function valueFor(t) {
+    if (t.state === "known") { return '<span class="known">Known</span>'; }
+    if (t.state === "part") {
+      return '<span class="meter">' + t.cells + '</span> <span class="pct">' + t.pct + "%</span>";
+    }
+    return '<span class="pct">not begun</span>';
+  }
+
+  function render(proposed) {
+    var html = "";
+    for (var i = 0; i < TRACKS.length; i += 1) {
+      var t = TRACKS[i];
+      if (!proposed && t.state === "none") { continue; }  /* the live `progress <= 0` skip */
+
+      var cls = "krow";
+      if (proposed && t.state === "none") { cls += " locked"; }
+      if (proposed && t.fresh) { cls += " fresh"; }
+
+      html += '<div class="' + cls + '">';
+      html += '<div class="top"><span class="name">' + esc(t.name) + "</span>";
+      html += '<span class="val">' + valueFor(t) + "</span></div>";
+
+      if (proposed) {
+        html += '<div class="verb"><span>' + esc(t.verb) + "</span>";
+        html += t.ready ? '<span class="ready">' + t.ready + "</span>" : "<span></span>";
+        html += "</div>";
+        if (t.prac) {
+          html += '<div class="prac"><b>Practise</b> &nbsp;' + esc(t.prac) + "</div>";
+        }
+      }
+      html += "</div>";
+    }
+    host.innerHTML = html;
+    dot.hidden = !proposed;
+    btnToday.setAttribute("aria-pressed", proposed ? "false" : "true");
+    btnProp.setAttribute("aria-pressed", proposed ? "true" : "false");
+  }
+
+  btnToday.addEventListener("click", function () { render(false); });
+  btnProp.addEventListener("click", function () { render(true); });
+  render(true);
+
+  /* ---------- C · ladder hover ---------- */
+  var rungs = document.querySelectorAll(".ladder .rung-box[data-teaches]");
+  Array.prototype.forEach.call(rungs, function (g) {
+    var lesson = document.getElementById(g.getAttribute("data-teaches"));
+    if (!lesson) { return; }
+    var rect = lesson.querySelector("rect");
+    var base = rect.getAttribute("stroke");
+    function on() { rect.setAttribute("stroke", "#f2b13f"); rect.setAttribute("stroke-width", "2"); }
+    function off() { rect.setAttribute("stroke", base); rect.setAttribute("stroke-width", "1"); }
+    g.addEventListener("mouseenter", on);
+    g.addEventListener("mouseleave", off);
+    g.addEventListener("focus", on);
+    g.addEventListener("blur", off);
+    g.setAttribute("tabindex", "0");
+  });
+}());
+</script>

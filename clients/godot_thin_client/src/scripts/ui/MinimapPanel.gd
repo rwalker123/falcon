@@ -10,7 +10,8 @@ class_name MinimapPanel
 ##     └─ anchor (Control, bottom-right positioned)
 ##         └─ panel (PanelContainer)
 ##             └─ texture_rect (TextureRect, STRETCH_KEEP_ASPECT_CENTERED)
-##                 └─ viewport_indicator (Control, for draw callbacks)
+##                 ├─ viewport_indicator (Control, for draw callbacks)
+##                 └─ overlay_picker (OverlayPicker, straddling the panel's TOP BORDER)
 ##
 ## Usage:
 ##   var minimap := MinimapPanel.new()
@@ -43,6 +44,16 @@ const DEFAULT_MIN_WIDTH := 140.0
 const DEFAULT_MAX_WIDTH := 520.0
 const DEFAULT_MARGIN := 16.0
 
+# The default panel style's border width and content inset. Named because the overlay picker docks on
+# the BORDER and has to be lifted by exactly this much to straddle it — a bare literal in three places
+# would be three chances for the button to drift off the line it is meant to sit on. A caller that
+# passes its own `style` owns its own insets; no caller does today.
+const PANEL_BORDER_WIDTH := 2
+const PANEL_CORNER_RADIUS := 4
+const PANEL_CONTENT_MARGIN := 4
+# How far in from the panel's right edge the picker button sits.
+const PICKER_INSET := 6.0
+
 # Loaded config values
 var _base_height: int = DEFAULT_BASE_HEIGHT
 var _embedded_height: int = 80  # Smaller height for embedded mode
@@ -54,6 +65,9 @@ var anchor: Control
 var panel: PanelContainer
 var texture_rect: TextureRect
 var viewport_indicator: Control
+## The map-overlay picker docked on the panel's top border. Created by both setup paths;
+## `MinimapController` is what hands it the MapView it drives.
+var overlay_picker: OverlayPicker = null
 
 var _drag_active: bool = false
 var _margin: float = DEFAULT_MARGIN
@@ -125,12 +139,12 @@ func setup(parent: Node, layer_index: int = MINIMAP_CANVAS_LAYER, margin: float 
 		var default_style := StyleBoxFlat.new()
 		default_style.bg_color = Color(0.1, 0.1, 0.15, 0.85)
 		default_style.border_color = Color(0.3, 0.35, 0.4, 1.0)
-		default_style.set_border_width_all(2)
-		default_style.set_corner_radius_all(4)
-		default_style.content_margin_left = 4
-		default_style.content_margin_top = 4
-		default_style.content_margin_right = 4
-		default_style.content_margin_bottom = 4
+		default_style.set_border_width_all(PANEL_BORDER_WIDTH)
+		default_style.set_corner_radius_all(PANEL_CORNER_RADIUS)
+		default_style.content_margin_left = PANEL_CONTENT_MARGIN
+		default_style.content_margin_top = PANEL_CONTENT_MARGIN
+		default_style.content_margin_right = PANEL_CONTENT_MARGIN
+		default_style.content_margin_bottom = PANEL_CONTENT_MARGIN
 		panel.add_theme_stylebox_override("panel", default_style)
 	anchor.add_child(panel)
 
@@ -152,6 +166,8 @@ func setup(parent: Node, layer_index: int = MINIMAP_CANVAS_LAYER, margin: float 
 	viewport_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	viewport_indicator.set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_rect.add_child(viewport_indicator)
+
+	_build_overlay_picker()
 
 ## Initialize the minimap panel UI for embedding within an existing container.
 ## Unlike setup(), this does NOT create a CanvasLayer - the panel is added directly
@@ -180,12 +196,12 @@ func setup_embedded(container: Control, style: StyleBox = null) -> void:
 		var default_style := StyleBoxFlat.new()
 		default_style.bg_color = Color(0.1, 0.1, 0.15, 0.85)
 		default_style.border_color = Color(0.3, 0.35, 0.4, 1.0)
-		default_style.set_border_width_all(2)
-		default_style.set_corner_radius_all(4)
-		default_style.content_margin_left = 4
-		default_style.content_margin_top = 4
-		default_style.content_margin_right = 4
-		default_style.content_margin_bottom = 4
+		default_style.set_border_width_all(PANEL_BORDER_WIDTH)
+		default_style.set_corner_radius_all(PANEL_CORNER_RADIUS)
+		default_style.content_margin_left = PANEL_CONTENT_MARGIN
+		default_style.content_margin_top = PANEL_CONTENT_MARGIN
+		default_style.content_margin_right = PANEL_CONTENT_MARGIN
+		default_style.content_margin_bottom = PANEL_CONTENT_MARGIN
 		panel.add_theme_stylebox_override("panel", default_style)
 	container.add_child(panel)
 
@@ -207,6 +223,30 @@ func setup_embedded(container: Control, style: StyleBox = null) -> void:
 	viewport_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	viewport_indicator.set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_rect.add_child(viewport_indicator)
+
+	_build_overlay_picker()
+
+## Dock the map-overlay picker on the panel's TOP BORDER (`docs/plan_knowledge_screen.md` §6a).
+##
+## **IT HANGS OFF `texture_rect`, WHICH IS NEITHER A CONTAINER NOR A CLIPPER.** Both nodes above it
+## lay a second child out on top of the first — `panel` is a `PanelContainer`, and embedded, its own
+## parent is a `MarginContainer` — so the picker would cover the map in either. A `TextureRect` frees
+## its children to sit where they are put, and does not clip the part of the button that reaches above
+## its own top edge, which is what puts the button ON the border rather than inside the map.
+##
+## It is added LAST, after `viewport_indicator`, so it draws over the indicator rather than under it.
+## It is a BAR of two buttons — the channel menu and the legend — so the reservation is
+## `OverlayPicker.BAR_WIDTH`, not one button's.
+func _build_overlay_picker() -> void:
+	overlay_picker = OverlayPicker.new()
+	overlay_picker.name = "OverlayPicker"
+	overlay_picker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	overlay_picker.offset_left = -(OverlayPicker.BAR_WIDTH + PICKER_INSET)
+	overlay_picker.offset_right = -PICKER_INSET
+	# Lifted by the content inset plus half the button, so the border line runs through its middle.
+	overlay_picker.offset_top = -(OverlayPicker.BUTTON_SIZE * 0.5) - float(PANEL_CONTENT_MARGIN)
+	overlay_picker.offset_bottom = overlay_picker.offset_top + OverlayPicker.BUTTON_SIZE
+	texture_rect.add_child(overlay_picker)
 
 ## Check if this minimap is in embedded mode (no CanvasLayer).
 func is_embedded() -> bool:

@@ -123,18 +123,6 @@ toggle_inspector={
 "unicode": 105
 }]
 }
-toggle_legend={
-"deadzone": 0.5,
-"events": [{
-"device": 0,
-"echo": false,
-"keycode": 76,
-"physical_keycode": 76,
-"pressed": false,
-"type": "InputEventKey",
-"unicode": 108
-}]
-}
 
 [rendering]
 

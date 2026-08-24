@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=18 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -13,7 +13,6 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/LogsPanel.gd" id="12"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/InfluencerPanel.gd" id="13"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CorruptionPanel.gd" id="14"]
-[ext_resource type="Script" path="res://src/scripts/ui/inspector/OverlayPanel.gd" id="16"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/MapPanel.gd" id="17"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CulturePanel.gd" id="18"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/TerrainPanel.gd" id="19"]
@@ -328,50 +327,6 @@ theme_override_constants/separation = 6
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Highlight rivers"
-
-[node name="OverlaySection" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-script = ExtResource("16")
-
-[node name="OverlaySectionLabel" type="Label" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Map Overlays"
-
-[node name="OverlayTabs" type="TabContainer" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection"]
-layout_mode = 2
-size_flags_horizontal = 3
-current_tab = 0
-
-[node name="Culture" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_constants/separation = 4
-metadata/_tab_index = 0
-
-[node name="CulturePlaceholder" type="RichTextLabel" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Culture"]
-layout_mode = 2
-size_flags_horizontal = 3
-bbcode_enabled = true
-text = "[i]Awaiting overlay telemetry...[/i]"
-fit_content = true
-
-[node name="Military" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_constants/separation = 4
-metadata/_tab_index = 1
-
-[node name="MilitaryPlaceholder" type="RichTextLabel" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Military"]
-layout_mode = 2
-size_flags_horizontal = 3
-bbcode_enabled = true
-text = "[i]Awaiting overlay telemetry...[/i]"
-fit_content = true
 
 [node name="Crisis" type="ScrollContainer" parent="RootPanel/TabContainer"]
 visible = false

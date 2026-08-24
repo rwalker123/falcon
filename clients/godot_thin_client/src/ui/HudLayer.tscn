@@ -242,29 +242,3 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 6
 visible = false
 
-
-[node name="TerrainLegendPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
-script = ExtResource("4")
-card_title = "Terrain Types"
-hotkey_hint = "L"
-visible = false
-
-[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel"]
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="LegendDescription" type="Label" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent"]
-unique_name_in_owner = true
-visible = false
-size_flags_horizontal = 3
-autowrap_mode = 1
-
-[node name="LegendScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-vertical_scroll_mode = 1
-
-[node name="LegendList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent/LegendScroll"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-size_flags_vertical = 3

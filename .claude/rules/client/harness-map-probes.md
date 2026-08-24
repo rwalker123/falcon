@@ -79,7 +79,7 @@ the **graze distribution** on an earthlike-shaped fixture map under the `pasture
 alluvial fallback dominant? are glacier/lava/water distinct from merely-poor ground?). It stages a
 **woodland block a live map does not have** (the palette thins forest out), sizes the window to the
 grid's aspect (MapView is **cover-fit**, so a mismatch CROPS exactly the distribution you came to
-see), and **prints the legend dict** (this harness has no HUD to draw it into). Also state
+see), and **saves the legend as its own frame** (`map_pasture_legend`, the picker's popover — it PRINTED the dict for as long as this harness had no surface to draw it into). Also state
 **"forage"** (`map_forage.png`) — the **human-food distribution**, the SAME earthlike fixture
 painted from the human-food table under the `forage` channel, so it compares tile-for-tile with
 `map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor
@@ -291,6 +291,86 @@ radius the ring is split and the "inks nothing else" half fails on the outline's
 
 **It saves no PNG and moves none** — the frame set was byte-identical across the fix, the outline
 being unwrapped and wrapped to the same place on every non-wrapping fixture here.
+
+### `map_overlay_picker` — the channel picker OPEN, and the two claims a picture cannot carry
+
+`docs/plan_knowledge_screen.md` §6. The picker is mounted on the MINIMAP, so its `◐` button rides
+**every frame this harness saves** — which is also why the migration moved all 65 of them, and why
+they were re-read rather than re-baselined. Only this state opens the popover, which is where the
+channel list, the `stub data` marker and the legend are; one fixture carries a live ramp channel, a
+`placeholder` one and terrain-tag data, so all three render together.
+
+**The popover is IN the capture only because `OverlayPicker` is a `Control` and not a `PopupPanel`.**
+A `PopupPanel` is a Window and renders to its own surface — the shipped popover would have been absent
+from this frame and unjudgeable. That is the reason for the `TurnOrb` catcher shape, recorded here
+because this harness is the thing that would have silently lost.
+
+A block of assertions rides beside it — **count them from a run, not from this line** — and the
+load-bearing ones are the pair no frame can hold: **that a
+chosen channel SURVIVES the next snapshot**, and **that a channel the picker did NOT set stands**:
+
+- `_ingest_overlay_channels` clears `active_overlay_key` on every frame it ingests, so without the
+  picker's re-apply a chosen channel is painted for one turn and reverts, which reads as a click that
+  did nothing rather than as a bug.
+- The mirror of it is the one that shipped: re-asserting on `overlay_legend_changed` — which fires on
+  every channel change, not just an ingest — made the picker overwrite **every other caller**, and
+  `map_pasture`, `map_forage`, `map_hunt_danger`, `map_threat`, `map_crisis_annotations` and the two
+  pasture-selection frames all came out as bare terrain. **Every one of them is a plausible picture of
+  a map with no overlay on it**, and this harness's own assertions were silent, so nothing but a pixel
+  diff against a pre-change render could see it. `overlay-channels.md` → "two signals, two rules" is
+  the fix; the assertion here is what pins it.
+
+The **ROSTER's composition** is the third no-picture claim (four plausible names render identically in
+any order, and the empty key leading / `terrain_tags` trailing are the two placements
+`OverlayChannels` decides). The last one pairs *"a world with no tag data is not offered
+`terrain_tags`"* with *"…and keeps the empty key"* on purpose: **the empty key is spelled `""`, so a
+one-entry roster and a zero-entry one print identically**, and the absence claim alone is satisfied by
+a merge that dropped everything on the floor.
+
+**JUDGE THIS MIGRATION BY A PIXEL DIFF, NEVER BY THE HASH LIST.** The button moves all 65 frames, so
+"which frames changed" answers nothing here — capture the PNGs before the change and diff each pair,
+where a button-sized bounding box is the expected result and a whole-image one is a real regression.
+That is exactly how the stomp above was caught.
+
+**IT DRIVES REAL POINTER INPUT NOW, AND THE CONVERSION IS THE WHOLE TRICK.** `_click_canvas` presses
+through `Viewport.push_input` so the GUI pass picks the top control exactly as it does for a player —
+which is the only way to test the overlay picker's catcher, a full-screen `STOP` on a layer above its
+own buttons. **`push_input` takes WINDOW coordinates and a control's rect is in CANVAS ones**, and
+this harness pins a canvas the window does not match, so an unconverted press lands somewhere else
+entirely: measured, it missed the bar on every leg and every claim failed with nothing open. The
+conversion is `ui_preview`'s `InputProbe.canvas_to_window` — SHARED rather than copied, for the reason
+`band_panel_preview` already shares `fixtures_band.gd`, and it makes this the second cross-harness
+preload in the tree.
+
+**THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
+`map_overlay_legend` is the legend popover open on the channel menu's own selection, and
+`map_pasture_legend` / `map_forage_legend` ride the `pasture` / `forage` states as
+`_save_overlay_legend`. Those last two were a `print` of the legend dict here and a hand-TRANSCRIBED
+fixture in `ui_preview`'s `pasture_legend` / `forage_legend`, kept in step by hope; this harness owns
+a real MapView, so it can open the picker on the real builder's rows. `_save_overlay_legend` CLOSES
+the popover again — the picker rides a long-lived MapView, so one left open renders in every later
+frame. (`ui_preview`'s five `terrain_legend_*` sort-control frames went with the `L` card itself and
+have no successor: the sort header was that card's, not the legend's.)
+
+**AND THE CHROME CLAIMS ARE STRUCTURAL, BECAUSE THIS HARNESS HAS NO HUD.** It stands up a bare
+MapView, so the minimap takes its FLOATING bottom-right mount and none of the docked CanvasLayers
+exist — which means the second reported defect, the popover drawing UNDER the Band/City panel,
+renders here as a perfectly correct frame. Two assertions cover it without one:
+
+- The popover's **layer** is compared against `BandCityPanel.LAYER_INDEX` / `EventDockPanel.LAYER_INDEX`
+  / `Main.WORKBENCH_LAYER` / `Main.INSPECTOR_LAYER` / `Main.HUD_LAYER` — **those files' own constants,
+  never a number written twice** — plus `Main.LOADING_OVERLAY_LAYER` from the other side, so raising a
+  dock's layer fails this rather than silently re-burying the popover. `map_preview` therefore
+  `preload`s `Main.gd` for its layer roster alone.
+- The **position** clamp reserves an edge through `MapView.set_reserved_inset`, exactly as `Main` does
+  for the real panel. It reserves the **RIGHT** edge, which is *not* the shipped case: the reported bug
+  was a LEFT dock over an embedded minimap, and with the minimap floating bottom-right here a left-edge
+  claim passes with the clamp deleted. The near edge drives the same `_play_area()` bound from the side
+  a fixture can actually move, and it is **paired with a precondition** asserting the UNRESERVED popover
+  really does reach into the strip — without which the probe passes whenever the two positions coincide.
+
+Both were sabotage-verified: dropping the layer to 101 fails the first naming all five surfaces it is
+under, and short-circuiting `_play_area()` to the raw viewport fails the second at `1907 <= 1425`.
 
 ## `tools/blend_probe.gd` / `.tscn`
 
