@@ -1178,6 +1178,132 @@ SELECTED unit, and in this harness that is a stale reference band rather than th
 > the rollback for a send that never went. `band-city-panel.md` → "④ THE WITHDRAWAL…" carries the
 > same correction; the two files must not drift back apart.
 
+## The EXPANSION's frames, and the three traps they paid for (§4.9 item 9c)
+
+`_render_queue_expanded_states` runs inside `_render_queue_control_states`, after the wire-rank block
+and before the withdrawal, on a fixture **longer than any other in this file** —
+`_build_long_queue_band_fixture` builds ON the two-entry reference band and appends `QUEUE_LONG_TAIL`
+plant entries, so the head marker, the builders pool and both webs are the ones every other queue
+state already asserts against.
+
+⛔ **THE PAIRED NEGATIVE RUNS FIRST, ON THE SAME BAND.** `band_panel_queue_collapsed_long` asserts the
+3-row block and its `+11 more` and that **no expanded list exists**. Without it every claim below
+passes on a mode that is always on, and the collapsed block is the state the game spends nearly all of
+its time in.
+
+**THE ENTRY COUNT IS CHOSEN AGAINST THE TIGHTEST BOX, and it is reported rather than assumed.** The
+auto-scroll frame is meaningless unless the list OVERFLOWS its viewport, and only the 1920 BOTTOM dock
+is short enough to overflow at any reasonable length: `_report_queue_expanded_geometry` prints the
+box, the declared viewport, the rows it affords and the scrollbar's width at every dock these states
+render, so *which docks scroll* is a measurement. Fourteen entries fill **9.3 rows of viewport on the
+bottom dock and 22.3 on the tall LEFT one** — the LEFT dock does not scroll, and the frame says so.
+
+### The seven frames, and what each one alone cannot tell
+
+- **`band_panel_queue_collapsed_long`** (tall LEFT) — the mode is OFF by default and the block is
+  unchanged: 3 rows plus `+11 more`, no expanded list.
+- **`band_panel_queue_expanded_doors`** (tall LEFT) — both doors, both directions, all real clicks;
+  the work inspector cleared on entry; press-and-slide-off toggles nothing.
+- **`band_panel_queue_expanded`** (tall LEFT) — one row per entry; board / chips / pager / inspector /
+  `+N more` all ABSENT; head and POOLS PRESENT; the sanctioned scroll, once, under `ZONE_WORK`, by name.
+- **`band_panel_queue_expanded_arrows`** (tall LEFT) — a real `▲` and a real `▼` on **row 4**, past
+  the 3-row cap, so a row only the expansion draws.
+- **`band_panel_queue_expanded_settings`** (**1920 BOTTOM**) — ⛔ the expansion open AND a row's strip
+  open, in the tightest box this panel ships.
+- **`band_panel_queue_expanded_autoscroll`** (1920 BOTTOM) — the pump, the physical-pointer read and
+  the hover re-resolve.
+- **`band_panel_queue_expanded_hidden_entry`** (tall LEFT) — the expansion's own row loop counts the
+  WIRE queue, not the list it drew.
+
+⛔ **THE STRIP FRAME IS REQUIRED, NOT THE EXPANSION ALONE.** A frame with the expansion open and a
+frame with a strip open are **two disjoint frame families with the defect living in the gap** — the
+exact shape that hid a 64px overflow in §4.7 and an inspector-height defect before it. It runs on the
+1920 BOTTOM dock because that is the shortest box the panel ships, and the strip is opened by a REAL
+click on **row 5**, an entry that had no way to be configured at all before this mode.
+
+### `_drive_drag` grew a HOLD, and the hold is the auto-scroll's whole test
+
+`hold_frames` awaits N frames at the destination **with nothing pushed at all** before the release,
+which is the gesture a player makes when they park the pointer at the edge — and a scroll that only
+advanced on motion looks identical to a working one until you stop moving. `hold_probe` is called on
+each held frame and is **awaited**, so a probe may itself capture: the auto-scrolled, mid-drag list
+exists on no other frame, since the drop ends the gesture and `_repage_work_zone` rebuilds the block
+at scroll 0.
+
+The frame's claims are the three mechanisms, apart: `scroll_vertical` starts at 0 and has advanced
+after the hold (**0 → 36px over 45 frames**); a row that was outside the viewport is inside it now;
+**the drop mark moved to a row that was not visible at the start, with the pointer stationary**; the
+release sends the target's **WIRE** index, read back through `Main.format_build_order` the way
+`_assert_queue_arrow_click` does; and the block did not rebuild under the gesture. It skips under
+`_is_headless()` like `_assert_queue_reorder_by_real_gesture`.
+
+> #### ⛔ `Engine.time_scale` IS 0 IN EVERY RENDER HARNESS, SO A `_process` DELTA IS ZERO
+>
+> `band_panel_preview`, `ui_preview` and `blend_probe` all pin `Engine.time_scale = 0.0` for
+> determinism, and `preview_watchdog` documents that every `delta` in the process is therefore zero.
+> A per-frame pump driven by the frame delta advances by **exactly nothing** here — measured as
+> `0 → 0px over 45 frames`, indistinguishable from having no pump at all. The auto-scroll reads
+> `Time.get_ticks_usec` instead, which is unscaled. **Any future harness claim about a rate must ask
+> what clock the code under test is on**; this one was written, run, and read as a bug in the fixture
+> before the frozen clock was found.
+
+### The sanctioned-scroll guard was NARROWED, not extended
+
+`SANCTIONED_SCROLLS` gained `[BUILD_QUEUE_EXPANDED_SCROLL_NAME, ZONE_WORK]`, and its existence claim
+is the **first conditional one**: the list must be found exactly when `_queue_expanded` **and** the
+work zone is mounted, and never otherwise.
+
+⛔ **AND EACH OF THE THREE CLAIMS IS NOW MADE ONLY WHERE ITS ZONE IS MOUNTED.** The narrow shell
+parents only the ACTIVE tab's zone (`_reparent_zones` detaches the rest), so a zone can be in `_zones`
+and nowhere the walk could find it. The band zone's claim already guarded for that; the parties one
+did not, so asking this guard from a narrow-shell WORK-tab state reported a parties list that had
+"lost" a scroll it was merely detached from. Every pre-existing call site is on a wide shell where all
+three are parented, so no claim was weakened.
+
+> #### ⛔ A CLICK FREES THE LIST, NOT ONLY THE ROWS
+>
+> `harness-band-panel.md` already records that a queue row captured before a click is a freed object.
+> The expansion reaches the same trap one level up: `_toggle_queue_settings` → `_repage_work_zone`
+> frees the `ScrollContainer` too, and `scroll.is_ancestor_of(strip)` on a freed instance **raises** —
+> which ends the assertion block with **no `FAIL` line**, leaves the strip open over every state
+> below, and still exits 0 with a healthy PASS count. It happened once here and was caught only by
+> reading the log for the assertions that should have been there. `_expanded_queue_scroll()` re-finds
+> it from the live tree after every real click.
+
+### The falsifications, and the one that failed nothing
+
+Each defect was restored, the run counted, and the fix put back.
+
+- **The auto-scroll pump deleted → 4 failed.** *the pointer held STILL … and the list scrolled
+  anyway* · *carrying N row(s) that were outside the viewport … into it* · *the drop mark MOVED under
+  a stationary pointer* · *it names a row that was NOT on screen*.
+- **The hover re-resolve dropped → 2 failed** — the two drop-mark claims above. The wire-index claim
+  did NOT fail, and correctly so: the arithmetic is right either way, and what the re-resolve fixes is
+  WHICH row the mark and the drop name.
+- **The expansion's loop ranks its DRAWN list → 7 failed**, every one of them on
+  `band_panel_queue_expanded_hidden_entry`: *the two drawn rows wear the WIRE's ranks* · *NEITHER
+  drawn row wears the `▸`* · *the TOP drawn row's `▲` is ENABLED* · both `▲`/`▼` meta-value claims ·
+  *a REAL click … emitted no build_order at all* · the `▼` command line.
+- **The `_work_open_key` clear removed → 3 failed.** *entering the mode CLEARED the open work
+  inspector* · *the board back and no inspector springing back onto it* (the board came back at 8 rows
+  where it had 9) · *no work inspector is open beside it*, which is the required strip frame's own.
+- **The header toggle fired on the PRESS → 1 failed**, and only because the claim was written for it.
+  See below.
+- **A stub board left drawn in the mode → 7 failed** — the zone-fit and zone-bounds guards at **both**
+  docks (168px over on each) plus the board and chips absence claims.
+
+⛔ **THE PRESS-TIME HEADER TOGGLE FAILED NOTHING, WHICH MEANT A CLAIM WAS MISSING.** The head sits in
+the same place in both modes, so a plain click looks identical whichever edge fires it, and the header
+is not a drag source — the drag starts on a ROW's marker — so the press-time rebuild kills no gesture.
+What a press-time toggle really breaks is **press, slide off, release**, which must change nothing.
+That is now driven with `_drive_drag` from the header onto the last queue row, and it is the only
+claim that can tell the two edges apart. Its twin asserts the row the release landed on did not open
+either — `mouse_focus` latched on the header.
+
+> **A FALSIFICATION THAT FAILS NOTHING IS A RESULT, not a formality.** Two of the six here changed the
+> harness rather than confirming it, and both were places where the obvious claim was about the fix's
+> *mechanism* instead of about a consequence the player could see.
+
 ## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
 
 Three blocks land at the end of the run, after `_render_build_queue_states`. Order is load-bearing
