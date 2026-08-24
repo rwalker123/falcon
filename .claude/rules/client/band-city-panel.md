@@ -2877,9 +2877,45 @@ the clear removed the collapse comes back with the inspector open and the board 
 
 `_queue_expanded` is **NOT reset on a band change** — it is zone MODE, which is the player's, the same
 reasoning `_work_filter` and `_work_sort` are kept under; a player comparing two bands' queues would
-otherwise have it fold on the first selection. It **IS pruned when the queue is empty**, in
-`_fill_work_zone`, exactly as `_work_open_key` is pruned for a source that leaves the board: no queue
-means no block, no block means no header, and the header is the only way out.
+otherwise have it fold on the first selection.
+
+⛔ **AND IT IS NOT PRUNED FOR AN EMPTY QUEUE EITHER, which it was.** No queue means no block, no block
+means no header, and the header is the only way out — so `_fill_work_zone` declines to DRAW the mode
+for a band with nothing queued (`if _queue_expanded and not queued.is_empty()`) and falls through to
+the collapsed path, which draws no block for an empty queue either. That is the whole of what the "no
+way back" argument requires. **Clearing the flag, which the first cut did, cancels the mode for EVERY
+band the moment an idle one is selected** — i.e. it re-creates on a three-band cycle precisely the
+band-change fold the paragraph above exists to prevent. Asserted by
+`_assert_queue_expanded_survives_an_empty_queue`; restoring the prune fails it and the reselection
+claim beside it (2).
+
+#### ⛔ THE LIST REMEMBERS WHERE THE PLAYER WAS, ACROSS THE REBUILD ITS OWN CLICK CAUSES
+
+Every in-mode interaction frees the zone: opening a row's settings strip runs `_toggle_queue_settings`
+→ `_repage_work_zone`, and an arrow, a drop or a withdrawal takes effect through the returning
+snapshot → `render_band`. A list rebuilt at 0 therefore throws the player back to the top on each of
+them and once more per turn — and the entries only a scrolled list can reach are exactly the ones the
+mode exists to reach. `_queue_expanded_scroll_offset` carries the offset across, captured at the top
+of `_fill_work_zone` (the last moment the outgoing node is readable on BOTH fill paths: `_repage_work_zone`
+has `queue_free`d it, and `render_band` builds the new zone before `set_zones` frees the old) and
+restored by `_build_build_queue_expanded`. It is `CraftingPanel._pending_scroll`'s contract exactly.
+
+- ⛔ **THE RESTORE IS DEFERRED ONE FRAME, AND THAT IS THE WHOLE CORRECTNESS OF IT.** `scroll_vertical`
+  is clamped to the CURRENT content extent on the way in, and at the moment the rows are added that
+  extent is not the list's — so an assignment made in the builder is silently clamped and the defect
+  survives under a fix that reads right. `_restore_queue_scroll_offset` awaits one `process_frame`
+  through `_host`, by which point the container has sorted and re-ranged its scrollbar. **A frame is
+  needed even though the naive form appears to work at small offsets**: a fresh `VScrollBar` is a
+  `Range` and a `Range` ships `max = 100`, so anything under 100px passes through the broken form
+  intact — measured at 84px it passes, at 112 it clamps to 100.
+- **The clamp is the container's** — a queue that lost entries has a shorter list, and the setter's own
+  range check is what stops the restore landing past its new end.
+- ⛔ **AND IT DECLINES UNDER A LIVE DRAG.** The edge auto-scroll writes `scroll_vertical` every frame
+  of a gesture; a deferred restore resuming beside it would fight the pump. `_queue_drag_in_flight`
+  already holds the rebuild off, so the only reachable case is a gesture starting inside the frame the
+  restore is waiting out, and the restore checks rather than assuming.
+- **ENTERING THE MODE RESETS IT** (`_toggle_queue_expanded`): the offset is a place in ONE list, and a
+  fresh expansion opens at the top of the queue.
 
 **THE MODE RE-SPELLS NOTHING.** `_build_build_queue_expanded` calls `_build_build_queue_head`,
 `_build_build_queue_row` and `_build_queue_settings_strip` — so the arrows, the `✕`, the drag handle,
@@ -2942,8 +2978,10 @@ it cannot reorder onto. Three mechanisms, each with a defect of its own:
 directions, all real clicks, plus the press-and-slide-off claim) · `band_panel_queue_expanded` ·
 `band_panel_queue_expanded_arrows` · `band_panel_queue_expanded_settings` (⛔ the 1920 BOTTOM dock,
 the expansion open AND a row's strip open) · `band_panel_queue_expanded_autoscroll` ·
-`band_panel_queue_expanded_hidden_entry`. `harness-band-panel.md` → "The EXPANSION's frames" carries
-what each one can tell apart.
+`band_panel_queue_expanded_scrolled` (the 1920 BOTTOM dock, the list scrolled and a below-the-fold
+row's strip opened on it) · `band_panel_queue_expanded_hidden_entry`, plus the PNG-less empty-queue
+survival block. `harness-band-panel.md` → "The EXPANSION's frames" carries what each one can tell
+apart.
 
 ### THE ORDER IS THE BAND'S OWN — and three surfaces were asking the wrong band (§4.9 item 9a)
 

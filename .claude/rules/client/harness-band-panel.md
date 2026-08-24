@@ -1198,7 +1198,7 @@ box, the declared viewport, the rows it affords and the scrollbar's width at eve
 render, so *which docks scroll* is a measurement. Fourteen entries fill **9.3 rows of viewport on the
 bottom dock and 22.3 on the tall LEFT one** — the LEFT dock does not scroll, and the frame says so.
 
-### The seven frames, and what each one alone cannot tell
+### The nine states, and what each one alone cannot tell
 
 - **`band_panel_queue_collapsed_long`** (tall LEFT) — the mode is OFF by default and the block is
   unchanged: 3 rows plus `+11 more`, no expanded list.
@@ -1212,30 +1212,73 @@ bottom dock and 22.3 on the tall LEFT one** — the LEFT dock does not scroll, a
   open, in the tightest box this panel ships.
 - **`band_panel_queue_expanded_autoscroll`** (1920 BOTTOM) — the pump, the physical-pointer read and
   the hover re-resolve.
+- **`band_panel_queue_expanded_scrolled`** (1920 BOTTOM) — the list keeps the player's place across
+  the rebuild its own click causes.
+- **the empty-queue survival block** (1920 BOTTOM, PNG-less) — the mode is the player's and outlives a
+  band with nothing queued.
 - **`band_panel_queue_expanded_hidden_entry`** (tall LEFT) — the expansion's own row loop counts the
   WIRE queue, not the list it drew.
 
 ⛔ **THE STRIP FRAME IS REQUIRED, NOT THE EXPANSION ALONE.** A frame with the expansion open and a
 frame with a strip open are **two disjoint frame families with the defect living in the gap** — the
 exact shape that hid a 64px overflow in §4.7 and an inspector-height defect before it. It runs on the
-1920 BOTTOM dock because that is the shortest box the panel ships, and the strip is opened by a REAL
-click on **row 5**, an entry that had no way to be configured at all before this mode.
+1920 BOTTOM dock because that is the shortest box the panel ships, and the strip is opened on **row
+5**, an entry that had no way to be configured at all before this mode.
+
+> #### ⛔ A REQUIRED FRAME'S HEADLESS SKIP WRAPS THE INPUT, NEVER THE FRAME
+>
+> `_assert_queue_expanded_settings` carried its `_is_headless()` return ABOVE its own claims, so under
+> the dummy driver it returned after the geometry print and the row-count guard: no `_save`, no
+> `_assert_zones_within_bounds`, no `_assert_zone_content_fits`, no `_assert_scroll_only_where_sanctioned`,
+> no extent report. The gap the frame exists to cover was **unasserted in exactly the run that is meant
+> to be the cheap full-coverage one**, and it exited 0 while doing it. None of those claims needs a
+> click; the CLICK needs a viewport. The skip now wraps the input alone and the headless path opens the
+> same strip through `_toggle_queue_settings`, so the **combined state** is asserted in both modes and
+> only the mechanism differs (the claim's own text says which). Measured: the block reports **10 claims
+> (7 `PASS` + 3 `assert OK`) headless and the same 10 windowed**, against **0 headless** before.
+> `_assert_queue_expanded_scroll_persists` takes the same shape for the same reason.
 
 ### `_drive_drag` grew a HOLD, and the hold is the auto-scroll's whole test
 
-`hold_frames` awaits N frames at the destination **with nothing pushed at all** before the release,
-which is the gesture a player makes when they park the pointer at the edge — and a scroll that only
-advanced on motion looks identical to a working one until you stop moving. `hold_probe` is called on
-each held frame and is **awaited**, so a probe may itself capture: the auto-scrolled, mid-drag list
-exists on no other frame, since the drop ends the gesture and `_repage_work_zone` rebuilds the block
-at scroll 0.
+The hold awaits frames at the destination **with nothing pushed at all** before the release, which is
+the gesture a player makes when they park the pointer at the edge — and a scroll that only advanced on
+motion looks identical to a working one until you stop moving. `hold_probe` is called on each held
+frame and is **awaited**, so a probe may itself capture: the auto-scrolled, mid-drag list exists on no
+other frame, since the drop ends the gesture and `_repage_work_zone` rebuilds the block at scroll 0.
 
-The frame's claims are the three mechanisms, apart: `scroll_vertical` starts at 0 and has advanced
-after the hold (**0 → 36px over 45 frames**); a row that was outside the viewport is inside it now;
+The frame's claims are the three mechanisms, apart: `scroll_vertical` starts at 0 and has advanced by
+the travel the claims need after the hold; a row that was outside the viewport is inside it now;
 **the drop mark moved to a row that was not visible at the start, with the pointer stationary**; the
 release sends the target's **WIRE** index, read back through `Main.format_build_order` the way
 `_assert_queue_arrow_click` does; and the block did not rebuild under the gesture. It skips under
 `_is_headless()` like `_assert_queue_reorder_by_real_gesture`.
+
+> #### ⛔ THE HOLD IS A CONDITION UNDER A WALL-CLOCK BUDGET, NOT A FRAME COUNT
+>
+> The pump is on the unscaled wall clock, so `QUEUE_AUTOSCROLL_HOLD_FRAMES` (45) bought
+> `45 × whatever a frame costs here` — measured **36px**, against the **17px** the arrival claim needs,
+> with a large share of it coming from the awaited PNG `_save` mid-hold. On a faster machine or a
+> faster save three claims fail at once, and it was the one outcome in this harness that depended on
+> machine speed. `hold_done` makes the hold end on **`QUEUE_AUTOSCROLL_TARGET_ROWS` (2) of travel**
+> instead, under `QUEUE_AUTOSCROLL_TRAVEL_BUDGET_SECONDS` (3.0, ~9× the 0.33s the pump honestly needs),
+> with `QUEUE_AUTOSCROLL_HOLD_FRAMES_MAX` as a ceiling so a DEAD pump cannot hold the run open. The
+> deadline is inside the callable so the gesture ENDS on it and the travel claim reports what was
+> actually reached — a blown budget fails loudly rather than skipping. Measured windowed: **0 → 56px
+> over 77 frames** (i.e. ~230fps, which is why 45 frames was only ever worth ~33px). **Every tick is
+> still the engine's**: nothing calls `_queue_autoscroll_tick`, the hold pushes no input, and deleting
+> the pump's step still fails the same **4** claims — what changed is only when the hold STOPS. The PNG
+> is now captured on the frame the travel lands, so it always shows a scrolled list mid-gesture.
+>
+> #### ⛔ THE LAST SAMPLE IS TAKEN AT THE RELEASE, NOT A FRAME BEFORE IT
+>
+> The hold's loop probes and THEN awaits a frame, and the release is pushed after that frame — so the
+> pump ticked once more between the final sample and the drop, and `want_position`, computed from that
+> sample's `mark`/`above`, could name the row under the pointer one step BEFORE the row Godot drops
+> onto. `_drive_drag` probes once more immediately before pushing the button-up, with no
+> `process_frame` between, so the expectation is read from the state the drop sees. Measured, the
+> window it closes is real but narrow here: **1px of travel** between the penultimate sample and the
+> release across three runs, which crosses a row boundary only sometimes — an intermittent failure
+> about nothing under test.
 
 > #### ⛔ `Engine.time_scale` IS 0 IN EVERY RENDER HARNESS, SO A `_process` DELTA IS ZERO
 >
@@ -1291,6 +1334,15 @@ Each defect was restored, the run counted, and the fix put back.
   See below.
 - **A stub board left drawn in the mode → 7 failed** — the zone-fit and zone-bounds guards at **both**
   docks (168px over on each) plus the board and chips absence claims.
+- **The scroll restore deleted → 2 failed.** *the rebuild the click caused KEPT the player's place* ·
+  *with that row still inside the viewport*.
+- **The restore written into the builder instead of deferred a frame → 1 failed**, and only because
+  the frame scrolls past 100px: a fresh `VScrollBar` is a `Range` and a `Range` ships `max = 100`, so
+  at 84px (three rows) the un-deferred form PASSES and at 112 (four) it clamps to 100 and fails. That
+  is what fixes `QUEUE_SCROLL_PERSIST_ROWS` at 4 — a falsification that does not bite is a constant
+  chosen wrong, not a fix confirmed.
+- **The empty-queue prune put back → 2 failed.** *the MODE survived it* · *reselecting the band that
+  HAS a queue comes back EXPANDED* (it came back with 1 drawn row, i.e. collapsed).
 
 ⛔ **THE PRESS-TIME HEADER TOGGLE FAILED NOTHING, WHICH MEANT A CLAIM WAS MISSING.** The head sits in
 the same place in both modes, so a plain click looks identical whichever edge fires it, and the header

@@ -178,14 +178,29 @@ var _queue_open_key: String = ""
 ## reasoning `_work_filter` and `_work_sort` are kept under. A player who opened the full list to
 ## compare two bands' queues would have it fold on the first selection.
 ##
-## **IT IS PRUNED WHEN THE QUEUE IS EMPTY**, in `_fill_work_zone`, exactly as `_work_open_key` is
-## pruned for a source that has left the board: no queue means no block, no block means no header, and
-## the header is the only way back out of the mode.
+## ⛔ **AN EMPTY QUEUE IS NOT DRAWN IN THE MODE, AND THE FLAG IS NOT CLEARED FOR IT.** No queue means
+## no block, no block means no header, and the header is the only way back out — so `_fill_work_zone`
+## falls through to the COLLAPSED path for a band with nothing queued, which draws no block either and
+## leaves the player nothing to be stranded in. Clearing the flag instead would cancel the mode for
+## EVERY band on the first selection of an idle one, which is the band-change fold the paragraph above
+## exists to prevent.
 var _queue_expanded: bool = false
 ## The expanded list's `ScrollContainer` while it is mounted, held for the DRAG's edge auto-scroll
 ## alone — the pump reads its rect and writes its `scroll_vertical`, and must reach it without
 ## re-rendering the block the gesture is standing on. `null` in every collapsed render.
 var _queue_expanded_scroll: ScrollContainer = null
+## ⛔ **HOW FAR DOWN THE EXPANDED LIST THE PLAYER IS, CARRIED ACROSS EVERY REBUILD OF IT.**
+##
+## Every in-mode interaction frees the zone: a row's settings strip runs `_toggle_queue_settings` →
+## `_repage_work_zone`, and an arrow, a drag or a withdrawal takes effect through the returning
+## snapshot → `render_band`. A list rebuilt at 0 would throw the player back to the top on each of
+## them AND once a turn on the snapshot — and the entries only reachable that far down are precisely
+## the ones the mode exists to reach. It is the `CraftingPanel._pending_scroll` contract exactly.
+##
+## **IT IS AN OFFSET INTO ONE LIST, so entering the mode resets it** (`_toggle_queue_expanded`): a
+## fresh expansion opens at the top of the queue, and 0 is therefore both the initial value and a
+## restore that costs nothing.
+var _queue_expanded_scroll_offset: int = 0
 ## ⛔ **THE AUTO-SCROLL'S SUB-PIXEL REMAINDER, AND THE DIRECTION IT WAS EARNED IN.**
 ## `ScrollContainer.scroll_vertical` is an INT and `BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND` at 60fps
 ## is ~2.8px a frame, so a truncating step would throw away most of the travel. Whole pixels are
@@ -1632,6 +1647,13 @@ func _queue_drag_in_flight() -> bool:
 
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     _ensure_queue_drag_watcher()
+    # ⛔ **THE PLAYER'S PLACE IN THE LIST IS TAKEN OFF THE OUTGOING NODE, HERE, BECAUSE THIS IS THE
+    # LAST MOMENT IT EXISTS.** Both fill paths reach this line with the previous list still readable —
+    # `_repage_work_zone` has `queue_free`d it (deferred, so it is still a valid instance) and
+    # `render_band` builds the new zone BEFORE `set_zones` frees the old one — and neither offers
+    # another hook. `_build_build_queue_expanded` restores it onto the list it is about to build.
+    if _queue_expanded_scroll != null and is_instance_valid(_queue_expanded_scroll):
+        _queue_expanded_scroll_offset = _queue_expanded_scroll.scroll_vertical
     # The previous fill's nodes are about to be freed, so the auto-scroll's handle is dropped before
     # anything can read a dangling one; the expanded builder is what re-seats it.
     _queue_expanded_scroll = null
@@ -1665,17 +1687,16 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # the narrow shell's swapped host has 400px spare at that same ceiling. Resolved ONCE here so the
     # block and the capacity below cannot cap differently.
     var pools_fund_mode := bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
-    # ⛔ **NO QUEUE MEANS NO BLOCK, WHICH MEANS NO HEADER, WHICH MEANS NO WAY BACK** — so the mode is
-    # pruned here, the way `_work_open_key` is pruned for a source that has left the board. A band
-    # whose last entry completed would otherwise be left in an expansion with nothing in it and no
-    # control to leave by.
-    if queued.is_empty():
-        _queue_expanded = false
     # **THE EXPANSION IS A FORK, NOT A WIDENING** (§4.9 item 9c). The whole
     # queue takes the whole zone: the work head above it, the POOLS block directly above the list they
     # fund, and every entry in a scrolling list — and NO chips, no board, no pager, no inspector and
     # no `+N more`, so `_work_board_capacity` is not consulted at all in this mode.
-    elif _queue_expanded:
+    # ⛔ **AN EMPTY QUEUE FALLS THROUGH TO THE COLLAPSED PATH AND THE FLAG IS LEFT ALONE.** No queue
+    # means no block, no block means no header, and the header is the only way back — but the fall
+    # through already draws no block, so nothing is stranded. CLEARING the flag here (which it did)
+    # cancels the mode for every band the moment an idle one is selected, which is exactly the
+    # band-change fold `_queue_expanded` is documented as not doing.
+    if _queue_expanded and not queued.is_empty():
         col.add_child(_build_build_queue_expanded(band, queued, pools_fund_mode))
         return
     var queue_rows_max := HudWorkVocab.build_queue_rows_max(_zone_box().y,
@@ -2430,7 +2451,37 @@ func _build_build_queue_expanded(band: Dictionary, queued: Array,
             list.add_child(_build_queue_settings_strip(band, entry))
     block.add_child(scroll)
     _queue_expanded_scroll = scroll
+    _restore_queue_scroll_offset(scroll)
     return block
+
+## ⛔ **PUT THE PLAYER BACK WHERE HE WAS IN THE LIST — A FRAME LATER, AND THAT IS THE WHOLE TRAP.**
+## `ScrollContainer.scroll_vertical` is clamped to its scrollbar's CURRENT range on the way in, and
+## the rows added a line above have not been laid out — so an assignment made here is clamped to
+## whatever that un-ranged bar happens to allow and the rebuild-forgets-its-place defect survives
+## underneath a fix that reads right. **The clamp is not to zero, which is what makes it so easy to
+## miss**: a fresh `VScrollBar` is a `Range`, and a `Range` ships `max = 100`, so an offset under 100px
+## sails through the naive form intact and only a deeper scroll shows the truncation. One frame is
+## what it takes for the container to sort its children and re-range that bar, which is
+## `CraftingPanel.refit`'s own reason for awaiting one before restoring `_pending_scroll`.
+##
+## **THE CLAMP IS THE CONTAINER'S, DELIBERATELY** — a queue that lost entries has a shorter list, and
+## the setter's own range check is what stops the restore landing past its new end.
+##
+## ⛔ **AND IT MUST NEVER LAND UNDER A LIVE DRAG.** The edge auto-scroll writes `scroll_vertical`
+## every frame of the gesture; a deferred restore resuming beside it would fight the pump and yank the
+## list back to where the rebuild found it. `_queue_drag_in_flight` already holds the rebuild itself
+## off, so the only reachable case is a gesture starting in the frame this is waiting out — declined
+## here rather than assumed impossible.
+func _restore_queue_scroll_offset(scroll: ScrollContainer) -> void:
+    if _queue_expanded_scroll_offset <= 0:
+        return
+    var want := _queue_expanded_scroll_offset
+    await _host.get_tree().process_frame
+    if not is_instance_valid(scroll) or not scroll.is_inside_tree():
+        return
+    if _queue_expanded_scroll != scroll or _queue_drag_in_flight():
+        return
+    scroll.scroll_vertical = want
 
 ## Open the whole queue over the Work zone, or fold it back to the summary block — the mode's ONE
 ## mutator, driven by the BUILD QUEUE header both ways and by the `+N more` row inward.
@@ -2440,11 +2491,14 @@ func _build_build_queue_expanded(band: Dictionary, queued: Array,
 ## the inspector back on the collapse BESIDE an open queue settings strip — which is exactly the
 ## 460-into-a-396px-box overflow the one-expansion rule closed (§4.7b). It is the same clear
 ## `_toggle_queue_settings` already carries.
+## **ENTERING IT ALSO OPENS THE LIST AT THE TOP.** `_queue_expanded_scroll_offset` is a place in ONE
+## list and is carried across that list's rebuilds; a fresh entry into the mode is not one of those.
 func _toggle_queue_expanded() -> void:
     _queue_expanded = not _queue_expanded
     if _queue_expanded:
         _work_open_key = ""
         _work_floor_open = false
+        _queue_expanded_scroll_offset = 0
     _repage_work_zone()
 
 ## **THE HEAD IS THE TOGGLE, BOTH WAYS** (§4.9 item 9c) — `+N more` is a second door IN only, the expanded

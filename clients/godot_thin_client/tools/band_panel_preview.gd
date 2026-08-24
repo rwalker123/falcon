@@ -13774,8 +13774,15 @@ func _drive_click(window_point: Vector2) -> void:
 ## shape this arc has already shipped once. The hold awaits frames at the destination with nothing
 ## pushed at all, and `hold_probe` is called on each of them, so a claim can be made about a state
 ## that exists ONLY mid-gesture (the drop mark, the rows the block has not rebuilt).
+## ⛔ **`hold_done` MAKES THE HOLD A CONDITION RATHER THAN A COUNT, AND `hold_frames` ITS BUDGET.**
+## The auto-scroll's pump is on the WALL clock (it must be — `Engine.time_scale` is 0 here), so a hold
+## of N frames buys however much travel those N frames happen to take, which is a machine-speed
+## dependent number in an otherwise deterministic harness. A caller that needs a specific amount of
+## travel says so with this callable and asserts it was reached; `hold_frames` becomes the ceiling
+## that stops a DEAD pump holding the run open, and the caller's own claim is what fails loudly when
+## the hold ended on the ceiling instead of on the condition.
 func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int = 0,
-		hold_probe: Callable = Callable()) -> Dictionary:
+		hold_probe: Callable = Callable(), hold_done: Callable = Callable()) -> Dictionary:
 	var parked := DisplayServer.mouse_get_position()
 	var hover := InputEventMouseMotion.new()
 	hover.position = from
@@ -13810,6 +13817,16 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 			await hold_probe.call()
 		await get_tree().process_frame
 		dragging = dragging or get_viewport().gui_is_dragging()
+		if hold_done.is_valid() and bool(hold_done.call()):
+			break
+	# ⛔ **ONE LAST SAMPLE, WITH NO FRAME BETWEEN IT AND THE DROP.** The hold's loop probes and THEN
+	# awaits a frame, so the pump gets one more tick after the final sample — and a caller computing
+	# what the drop SHOULD send from that sample names the row that was under the pointer a step ago
+	# while Godot performs the drop against the row that is under it now. Intermittent, and about
+	# nothing under test. The release is pushed below with no `process_frame` in between, so this
+	# reads the same state the drop will.
+	if hold_frames > 0 and hold_probe.is_valid():
+		await hold_probe.call()
 	var release := InputEventMouseButton.new()
 	release.button_index = MOUSE_BUTTON_LEFT
 	release.pressed = false
@@ -13883,14 +13900,36 @@ const QUEUE_LONG_ARROW_ROW := 4
 ## …and the row whose SETTINGS strip the tightest dock opens, likewise past the cap.
 const QUEUE_LONG_SETTINGS_ROW := 5
 
-## How long the auto-scroll gesture PARKS at the bottom edge, in frames. ~0.75s at 60fps, which at
-## `BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND` is about four rows of travel — enough to bring a row that
-## was outside the viewport into it, and short enough that the list cannot simply hit the end.
-const QUEUE_AUTOSCROLL_HOLD_FRAMES := 45
+## ⛔ **HOW FAR THE PERSISTENCE FRAME SCROLLS BEFORE IT CLICKS — far enough that the row it opens was
+## BELOW THE FOLD when the list was drawn, AND far enough to catch a restore made before layout.**
+##
+## Four rows of the 1920 BOTTOM dock's 9.3-row viewport brings rows 9–12 in, out of ~4.6 rows of
+## scrollable range, so the claim is about rows only a scrolled list can reach and the list is nowhere
+## near its end. **The second reason is why it is not three.** A restore written straight into the
+## builder is supposed to be clamped to 0 by the not-yet-laid-out content — but a fresh `VScrollBar`
+## is a `Range`, and a `Range` ships `max = 100`, so any offset under 100px sails through the broken
+## form as well as the correct one and the frame cannot tell them apart. Measured: at 84px (three
+## rows) an un-deferred assignment PASSES this frame; at 112 it clamps to 100 and fails it.
+const QUEUE_SCROLL_PERSIST_ROWS := 4.0
 
-## Which of those frames captures the PNG. Mid-hold, so the frame shows a list that HAS scrolled and a
-## gesture still in flight.
-const QUEUE_AUTOSCROLL_CAPTURE_FRAME := 30
+## ⛔ **HOW MUCH TRAVEL THE CLAIMS BELOW NEED — the hold is held until the list has moved this far,
+## NOT for a fixed number of frames.** The pump is on the WALL clock (it must be, `Engine.time_scale`
+## being 0 here), so a fixed hold buys `frames × however long a frame takes`, and three assertions
+## then depend on how fast the machine is: the arrival claim needs the tallest row's overhang out of
+## the viewport, and the two drop-mark claims need the mark to have reached a row that was off screen.
+## Two rows clears the 1920 BOTTOM dock's ~18px overhang with a whole row to spare and is a small
+## fraction of that dock's ~130px of scrollable range, so the list cannot simply hit the end.
+const QUEUE_AUTOSCROLL_TARGET_ROWS := 2.0
+
+## …and how long the pump is given to produce it, on the same wall clock it runs on. At
+## `BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND` two rows take ~0.33s, so this is ~9× the honest cost — a
+## budget rather than a race. Blowing it does not merely skip the claims: the travel assertion below
+## reads the offset that was actually reached and FAILS.
+const QUEUE_AUTOSCROLL_TRAVEL_BUDGET_SECONDS := 3.0
+
+## A hard ceiling on the held frames so a DEAD pump ends the gesture rather than holding the run open
+## — the budget above at 400fps, i.e. far past any rate this windowed harness renders at.
+const QUEUE_AUTOSCROLL_HOLD_FRAMES_MAX := 1200
 
 ## Where inside the hot band the pointer parks: half a margin up from the viewport's bottom edge, so
 ## it is unambiguously inside the scroll AND inside the band.
@@ -13955,6 +13994,14 @@ func _expanded_queue_scroll() -> ScrollContainer:
 ## visits a node before its children, so this is the row and not the glyph Label inside it.
 func _queue_head_toggle() -> Control:
 	return _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META)
+
+## The KEY a drawn queue row belongs to, read back off the controller's own `_queue_row_nodes` map —
+## a row carries its RANK as a meta and not its key, so this is the only honest direction.
+func _queue_row_key(row: Control) -> String:
+	for key_variant in _hud._bandpanel._queue_row_nodes.keys():
+		if _hud._bandpanel._queue_row_nodes[key_variant] == row:
+			return String(key_variant)
+	return ""
 
 ## Which queue entries the expanded viewport is showing RIGHT NOW, by KEY. The rows are read off the
 ## controller's own `_queue_row_nodes` map — the same map the drop indicator reaches its target
@@ -14157,8 +14204,12 @@ func _expected_wire_insert(dragged: String, onto: String, above: bool) -> int:
 ## cannot leave the viewport is a reorder that only works inside one screenful. The three mechanisms
 ## are asserted apart:
 ##
-## - **the per-frame PUMP** — the pointer is parked in the hot band and NOTHING is pushed for
-##   `QUEUE_AUTOSCROLL_HOLD_FRAMES`, so a scroll that only advanced on motion does not move at all;
+## - **the per-frame PUMP** — the pointer is parked in the hot band and NOTHING is pushed while the
+##   hold runs, so a scroll that only advanced on motion does not move at all. **Every tick of it is
+##   the ENGINE's**: nothing here calls `_queue_autoscroll_tick`, and what the fix for the machine-speed
+##   dependence changed is only when the hold STOPS — it now ends on `QUEUE_AUTOSCROLL_TARGET_ROWS` of
+##   travel instead of on a frame count, so the amount the claims below rest on is a constant rather
+##   than a function of how fast this machine renders;
 ## - **the PHYSICAL-pointer read** — `Input.warp_mouse` is the only lever that moves what
 ##   `Viewport.get_mouse_position` returns, which is what `_drive_drag` warps and what the pump reads;
 ## - **the HOVER RE-RESOLVE** — Godot picks the drag-over control on MOTION, so scrolling rows under a
@@ -14186,10 +14237,7 @@ func _assert_queue_expanded_autoscroll() -> void:
 	if visible_before.size() >= rows.size():
 		return
 	var dragged_row: Control = rows[0]
-	var dragged_key := ""
-	for key_variant in _hud._bandpanel._queue_row_nodes.keys():
-		if _hud._bandpanel._queue_row_nodes[key_variant] == dragged_row:
-			dragged_key = String(key_variant)
+	var dragged_key := _queue_row_key(dragged_row)
 	var handle := _find_meta_control(dragged_row, HudWorkVocab.BUILD_QUEUE_MARKER_META)
 	if handle == null or dragged_key == "":
 		_fail("queue auto-scroll — the head row has no marker column to grab")
@@ -14198,8 +14246,10 @@ func _assert_queue_expanded_autoscroll() -> void:
 	var view := scroll.get_global_rect()
 	var park := _canvas_to_window(Vector2(view.position.x + view.size.x * 0.5,
 		view.end.y - HudWorkVocab.BUILD_QUEUE_AUTOSCROLL_MARGIN * QUEUE_AUTOSCROLL_PARK_FRACTION))
+	# **THE TRAVEL THE CLAIMS NEED, IN PIXELS** — the hold ends on this rather than on a frame count.
+	var target := int(QUEUE_AUTOSCROLL_TARGET_ROWS * HudWorkVocab.WORK_ROW_HEIGHT)
 	var samples: Array = []
-	var frame := [0]
+	var captured := [false]
 	var probe := func() -> void:
 		samples.append({
 			"scroll": scroll.scroll_vertical if is_instance_valid(scroll) else -1,
@@ -14209,13 +14259,25 @@ func _assert_queue_expanded_autoscroll() -> void:
 			"row_alive": is_instance_valid(dragged_row) and dragged_row.is_inside_tree(),
 			"rows": _hud._bandpanel._queue_row_nodes.size(),
 		})
-		frame[0] += 1
-		if frame[0] == QUEUE_AUTOSCROLL_CAPTURE_FRAME:
+		# **THE PNG IS TAKEN THE FRAME THE TRAVEL LANDS**, so the captured frame always shows a list
+		# that HAS scrolled with the gesture still in flight — the state that exists on no other frame.
+		if not captured[0] and is_instance_valid(scroll) and scroll.scroll_vertical >= target:
+			captured[0] = true
 			await _save("band_panel_queue_expanded_autoscroll")
+	# ⛔ **THE HOLD IS A CONDITION UNDER A WALL-CLOCK BUDGET, NOT A FRAME COUNT.** The pump is real and
+	# per-frame; what would not be deterministic is asserting on `45 frames × whatever a frame costs`.
+	# The deadline is in the callable so a dead pump ENDS the gesture and the travel claim below reports
+	# what was actually reached instead of the harness hanging on a ceiling.
+	var deadline := Time.get_ticks_usec() \
+		+ int(QUEUE_AUTOSCROLL_TRAVEL_BUDGET_SECONDS * HudWorkVocab.MICROSECONDS_PER_SECOND)
+	var done := func() -> bool:
+		return not is_instance_valid(scroll) or scroll.scroll_vertical >= target \
+			or Time.get_ticks_usec() >= deadline
 	var seen: Array = []
 	var sink := func(payload: Dictionary) -> void: seen.append(payload)
 	_hud.build_order_requested.connect(sink)
-	var gesture := await _drive_drag(grab, park, handle, QUEUE_AUTOSCROLL_HOLD_FRAMES, probe)
+	var gesture := await _drive_drag(grab, park, handle, QUEUE_AUTOSCROLL_HOLD_FRAMES_MAX, probe,
+		done)
 	_hud.build_order_requested.disconnect(sink)
 	_assert_band_panel("…and parking the drag at the bottom edge is a REAL drag",
 		bool(gesture["dragging"]))
@@ -14225,10 +14287,14 @@ func _assert_queue_expanded_autoscroll() -> void:
 		return
 	var first: Dictionary = samples[0]
 	var last: Dictionary = samples[samples.size() - 1]
-	# ① THE PUMP RAN WITH NO MOTION AT ALL.
-	_assert_band_panel("⛔ the pointer held STILL in the hot band and the list scrolled anyway — %d → %dpx over %d frames"
-			% [int(first["scroll"]), int(last["scroll"]), samples.size()],
-		int(last["scroll"]) > int(first["scroll"]))
+	# ① THE PUMP RAN WITH NO MOTION AT ALL — and it is the ENGINE's per-frame tick that ran, under a
+	# genuine drag: nothing here calls the pump, the hold pushes no input, and the only thing the
+	# determinism fix changed is that the hold WAITS for the travel instead of assuming a frame count
+	# bought it. **The budget is part of the claim**: a hold that ended on the deadline reports the
+	# offset it actually reached and fails here rather than passing on a lucky margin.
+	_assert_band_panel("⛔ the pointer held STILL in the hot band and the engine's own pump carried the list %d → %dpx (%dpx wanted) over %d frames"
+			% [int(first["scroll"]), int(last["scroll"]), target, samples.size()],
+		int(last["scroll"]) > int(first["scroll"]) and int(last["scroll"]) >= target)
 	# ② A ROW THAT WAS OUTSIDE THE VIEWPORT IS INSIDE IT NOW.
 	var arrived: Array = []
 	for key in (last["inside"] as Array):
@@ -14251,6 +14317,10 @@ func _assert_queue_expanded_autoscroll() -> void:
 		bool(last["row_alive"]) and int(last["rows"]) == int(first["rows"])
 			and int(first["rows"]) == rows.size())
 	# ⑤ AND THE RELEASE SENDS THE TARGET'S **WIRE** INDEX.
+	# ⛔ **THE EXPECTATION IS READ FROM THE LAST SAMPLE, WHICH IS NOW TAKEN AT THE RELEASE.** The hold's
+	# loop probes and then awaits a frame, so the pump used to tick once more between the final sample
+	# and the drop — naming the row under the pointer one step BEFORE the row Godot drops onto. See
+	# `_drive_drag`'s pre-release probe: `last` is that sample, with no frame between it and the button-up.
 	if seen.is_empty():
 		_fail("queue auto-scroll — the release over the scrolled-to row emitted no build_order at all")
 		_hud._bandpanel._on_queue_drag_end()
@@ -14264,6 +14334,120 @@ func _assert_queue_expanded_autoscroll() -> void:
 		want_position >= 0 and line.ends_with(" %d" % want_position)
 			and int(payload.get("position", -1)) == want_position)
 	_hud._bandpanel._on_queue_drag_end()
+
+## ⛔ **THE LIST REMEMBERS WHERE THE PLAYER WAS, ACROSS THE REBUILD ITS OWN CLICK CAUSES.**
+##
+## Every in-mode interaction frees the zone — a row's settings strip runs `_toggle_queue_settings` →
+## `_repage_work_zone`, and an arrow, a drop or a withdrawal takes effect through the returning
+## snapshot — so a list rebuilt at 0 throws the player back to the top on each of them, and once a
+## turn besides. The entries only a scrolled list can reach are exactly the ones the mode exists for,
+## which is why the claim is made about a row that was BELOW THE FOLD when the list was drawn.
+##
+## ⛔ **THE TRAP IS LAYOUT TIMING, so the claim must be made after a settle and not merely after the
+## assignment.** A `ScrollContainer` clamps `scroll_vertical` to its CURRENT content extent, and at
+## the moment the rows are added that extent is zero — a restore written in the builder lands on 0
+## and the defect survives underneath a fix that reads correctly. What this frame can see is the
+## offset a laid-out list actually holds.
+##
+## **THE ROW STILL BEING ON SCREEN IS THE OTHER HALF**: an offset that survived while the row moved
+## out from under it would satisfy the number and fail the player.
+func _assert_queue_expanded_scroll_persists() -> void:
+	var scroll := _expanded_queue_scroll()
+	if scroll == null:
+		_fail("queue scroll persistence — the expansion mounted no list")
+		return
+	var rows := _build_queue_rows()
+	var before_fold := _queue_rows_inside(scroll)
+	if before_fold.is_empty() or before_fold.size() >= rows.size():
+		_fail("queue scroll persistence — the list must OVERFLOW its viewport for this claim; %d of %d rows fit"
+			% [before_fold.size(), rows.size()])
+		return
+	scroll.scroll_vertical = int(QUEUE_SCROLL_PERSIST_ROWS * HudWorkVocab.WORK_ROW_HEIGHT)
+	await _settle()
+	var offset := scroll.scroll_vertical
+	_assert_band_panel("the player scrolls the expanded list down to %dpx of its %.0fpx viewport (%d of %d rows fit)"
+			% [offset, scroll.size.y, before_fold.size(), rows.size()],
+		offset > 0)
+	# The first row the scroll BROUGHT IN — one the collapsed fold could not reach and the unscrolled
+	# expansion could not either, so opening it is a gesture only this offset makes possible.
+	var target_key := ""
+	for key in _queue_rows_inside(scroll):
+		if not before_fold.has(String(key)):
+			target_key = String(key)
+			break
+	if target_key == "":
+		_fail("queue scroll persistence — scrolling %dpx brought no new row into the viewport" % offset)
+		return
+	var target_row: Variant = _hud._bandpanel._queue_row_nodes.get(target_key)
+	if not (target_row is Control):
+		_fail("queue scroll persistence — no row node for the scrolled-to entry `%s`" % target_key)
+		return
+	_assert_band_panel("…and the row it is about to open (`%s`) was BELOW THE FOLD before that scroll"
+		% target_key, not before_fold.has(target_key))
+	await _save("band_panel_queue_expanded_scrolled")
+	# The rebuild is driven by a REAL click where there is a viewport to push one into; headless opens
+	# the same strip through the toggle, so the persistence claim — which is about the REBUILD, not
+	# about the input — is made in both modes. `_assert_queue_expanded_settings` carries the reasoning.
+	if _is_headless():
+		push_warning("band_panel_preview: the scroll-persistence rebuild is driven by the settings toggle under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		_hud._bandpanel._toggle_queue_settings(target_key)
+	else:
+		await _drive_click(_canvas_to_window((target_row as Control).get_global_rect().get_center()))
+	await _settle()
+	# ⛔ **EVERY NODE CAPTURED ABOVE IS FREED BY NOW, THE LIST INCLUDED** — re-find both from the live
+	# tree, or this block raises and ends with no `FAIL` line at all.
+	var after := _expanded_queue_scroll()
+	if after == null:
+		_fail("queue scroll persistence — the rebuild mounted no list")
+		return
+	_assert_band_panel("⛔ …and the rebuild the click caused KEPT the player's place — %dpx, not the top"
+			% after.scroll_vertical, after.scroll_vertical == offset)
+	var reopened: Variant = _hud._bandpanel._queue_row_nodes.get(target_key)
+	_assert_band_panel("…with that row still inside the viewport, which is the half a surviving number alone does not give",
+		reopened is Control and _queue_rows_inside(after).has(target_key))
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	_assert_band_panel("…and its settings strip is open below it — the entry the scroll went to get is configurable",
+		strip != null)
+	_assert_zone_content_fits()
+	_assert_scroll_only_where_sanctioned()
+	# Closed again, so the states below are not asked about a strip this frame opened. The OFFSET is
+	# deliberately left where the player put it — that it survives the states after this one is the
+	# claim, and the tall LEFT dock's list does not overflow, so it clamps itself back to the top.
+	if _hud._bandpanel._queue_open_key != "":
+		_hud._bandpanel._toggle_queue_settings(_hud._bandpanel._queue_open_key)
+		await _settle()
+
+## ⛔ **THE MODE IS THE PLAYER'S AND OUTLIVES A BAND WITH NOTHING QUEUED.** `_queue_expanded` is not
+## reset on a band change, so that a player comparing two bands' queues does not have it fold on the
+## first selection — and an empty-queue PRUNE reintroduced exactly that, since selecting any idle band
+## cancelled the mode for every band. Falling through to the collapsed path draws no block for an
+## empty queue either, so nothing is stranded and nothing needs clearing.
+func _assert_queue_expanded_survives_an_empty_queue() -> void:
+	if not _hud._bandpanel._queue_expanded:
+		_fail("empty-queue survival — the mode was not open to begin with")
+		return
+	_set_forage_patches(_build_queue_patches(0))
+	_push_bands([_build_queue_band_fixture(0)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("a band with NOTHING queued draws no build-queue block at all (%d expanded lists)"
+			% (0 if _expanded_queue_scroll() == null else 1),
+		_expanded_queue_scroll() == null
+			and _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META) == null)
+	_assert_band_panel("⛔ …and the MODE survived it — it is the player's, not the band's",
+		_hud._bandpanel._queue_expanded)
+	_assert_zone_content_fits()
+	# …and returning to the band that HAS a queue comes back expanded, which is what the player asked
+	# for two selections ago. This is the claim the prune broke.
+	_set_forage_patches(_long_queue_patch_set())
+	_push_bands([_build_long_queue_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("…and reselecting the band that HAS a queue comes back EXPANDED, %d rows and no `+N more`"
+			% _build_queue_rows().size(),
+		_hud._bandpanel._queue_expanded and _expanded_queue_scroll() != null
+			and _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null)
 
 ## **A REAL `▲` AND A REAL `▼` ON A ROW BELOW THE COLLAPSED CAP** — a row that exists only because the
 ## expansion drew it — each asserted to send that row's WIRE index.
@@ -14290,18 +14474,21 @@ func _assert_queue_expanded_arrows() -> void:
 		QUEUE_LONG_ARROW_ROW + HudWorkVocab.BUILD_QUEUE_REORDER_STEP)
 
 ## ⛔ **THE EXPANSION OPEN *AND* A ROW'S SETTINGS STRIP OPEN, ON THE TIGHTEST BOX THIS PANEL SHIPS.**
-## The strip is opened by a REAL click on the row, on a row past the collapsed cap — an entry that had
-## no way to be configured at all before this mode.
+## The strip is opened on a row past the collapsed cap — an entry that had no way to be configured at
+## all before this mode.
+##
+## ⛔ **THE HEADLESS SKIP WRAPS THE INPUT MECHANISM, NOT THE FRAME.** This frame is REQUIRED because
+## the expansion-open and strip-open families are disjoint and the overflow lives in the gap — so
+## returning early under the dummy driver left exactly that gap unasserted in the run that is meant to
+## be the cheap full-coverage one: no `_save`, no bounds, no fit, no sanctioned-scroll claim, no
+## extent report. None of those needs a click. What needs a real viewport is the CLICK, so the strip
+## is opened through `_toggle_queue_settings` there instead and every claim below runs in both modes.
 func _assert_queue_expanded_settings() -> void:
 	_report_queue_expanded_geometry("band_panel_queue_expanded_settings")
 	var rows := _build_queue_rows()
 	if rows.size() <= QUEUE_LONG_SETTINGS_ROW:
 		_fail("expanded settings — need a row at %d, the list drew %d"
 			% [QUEUE_LONG_SETTINGS_ROW, rows.size()])
-		return
-	if _is_headless():
-		push_warning("band_panel_preview: the settings strip needs a real click — skipped under the %s display driver"
-			% HEADLESS_DISPLAY_DRIVER)
 		return
 	var row: Control = rows[QUEUE_LONG_SETTINGS_ROW]
 	var scroll := _expanded_queue_scroll()
@@ -14311,12 +14498,23 @@ func _assert_queue_expanded_settings() -> void:
 	_assert_band_panel("row %d is inside the %.0fpx viewport, so a real click can reach it"
 			% [QUEUE_LONG_SETTINGS_ROW, scroll.size.y],
 		scroll.get_global_rect().encloses(row.get_global_rect()))
-	await _drive_click(_canvas_to_window(row.get_global_rect().get_center()))
+	var opened_by_click := not _is_headless()
+	if opened_by_click:
+		await _drive_click(_canvas_to_window(row.get_global_rect().get_center()))
+	else:
+		push_warning("band_panel_preview: the settings strip's REAL click needs a viewport — opened directly under the %s display driver, and every claim below still runs"
+			% HEADLESS_DISPLAY_DRIVER)
+		var key := _queue_row_key(row)
+		if key == "":
+			_fail("expanded settings — row %d belongs to no queue entry" % QUEUE_LONG_SETTINGS_ROW)
+			return
+		_hud._bandpanel._toggle_queue_settings(key)
 	await _settle()
 	await _save("band_panel_queue_expanded_settings")
 	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
-	_assert_band_panel("a REAL click on row %d — past the block's %d-row cap — opens its settings strip"
-			% [QUEUE_LONG_SETTINGS_ROW, HudWorkVocab.BUILD_QUEUE_ROWS_MAX], strip != null)
+	_assert_band_panel("%s on row %d — past the block's %d-row cap — opens its settings strip"
+			% ["a REAL click" if opened_by_click else "the settings toggle",
+				QUEUE_LONG_SETTINGS_ROW, HudWorkVocab.BUILD_QUEUE_ROWS_MAX], strip != null)
 	# ⛔ **THE CLICK FREED EVERY NODE IN THE ZONE, THE LIST INCLUDED.** `_toggle_queue_settings` ends in
 	# `_repage_work_zone`, so the `ScrollContainer` captured above is a freed instance by now — and
 	# calling a method on one RAISES, which ends this assertion block with no `FAIL` line at all and
@@ -14388,10 +14586,16 @@ func _render_queue_expanded_states() -> void:
 	# ---- (e) THE EDGE AUTO-SCROLL, on that same tightest viewport ---------------------------------
 	await _assert_queue_expanded_autoscroll()
 	await _settle()
+	# ---- (f) THE PLAYER'S PLACE IN THE LIST, ACROSS THE REBUILD ITS OWN CLICK CAUSES --------------
+	# ⛔ AFTER the auto-scroll, deliberately: that frame's first claim is that the list OPENS at the
+	# top, and a state that leaves it scrolled would have to run below it or take that claim away.
+	await _assert_queue_expanded_scroll_persists()
+	# ---- (g) …AND THE MODE OUTLIVES A BAND WITH NOTHING QUEUED -----------------------------------
+	await _assert_queue_expanded_survives_an_empty_queue()
 	await _pin_canvas(PREVIEW_SIZE)
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
-	# ---- (f) THE HIDDEN-ENTRY FIXTURE, EXPANDED --------------------------------------------------
+	# ---- (h) THE HIDDEN-ENTRY FIXTURE, EXPANDED --------------------------------------------------
 	# The one fixture whose DRAWN list and WIRE queue disagree, re-run in the mode. It is what stops a
 	# second index space being reintroduced by the expansion's own row loop.
 	if not _hud._bandpanel._queue_expanded:
