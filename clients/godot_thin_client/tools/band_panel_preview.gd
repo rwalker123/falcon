@@ -13075,6 +13075,12 @@ func _render_queue_control_states() -> void:
 	# are two brand-new buttons in a row with two pixels of slack, and `pressed.emit()` cannot see a
 	# button that is covered, zero-size or filtered out of the hit test.
 	await _assert_queue_reorder_arrows()
+	# **(d4) …AND EVERY ONE OF THOSE POSITIONS COUNTED IN THE **WIRE** QUEUE, NOT IN THE DRAWN LIST.**
+	# The two lists are not the same length: a band keeps its row on a QUEUED source at zero take crew
+	# (the sim declines to drop it precisely because it is queued), and the work board admits a row on
+	# its take crew — so that entry has no model and the block cannot draw it. Every claim above is
+	# blind to the difference, its fixture having a model for every entry.
+	await _assert_queue_positions_are_the_wires()
 	# **(e) THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED** (§4.7b ④), where it used
 	# to sit there until the turn resolved. The PAIRED claim is that the OTHER entries stay: a block
 	# that emptied itself would pass "the row is gone".
@@ -13432,6 +13438,181 @@ func _assert_queue_arrow_click(row_index: int, meta: String, glyph: String,
 		int(payload.get("band_id", HudConst.NO_BAND_ID)), source, position]
 	_assert_band_panel("…and a REAL click on it sends `%s` (got \"%s\")" % [want, line],
 		line == want)
+
+## **THE QUEUE ENTRY THE WORK BOARD CANNOT DRAW** — a fourth patch the band holds with **no take
+## crew**, put at the HEAD of its wire queue.
+##
+## It is not a contrived state. The sim keeps a source's labor row when the take crew goes to zero
+## (`LaborAllocation::set_assignment` → `keep_holding`), the `assign_labor` command declines to drop
+## that row while the source is QUEUED, and the membership test behind `prune_build_queue`
+## (`holds_build_source`) asks only whether a row exists — never how many hands are on it. So the
+## entry survives, turn after turn, while `_work_source_models` drops the row for having no crew.
+const QUEUE_HIDDEN_PATCH := Vector2i(74, 18)
+
+## …and the crew it is held with. **Zero is the whole fixture**: it is what takes the row off the work
+## board, and therefore what takes the entry out of the drawn queue while leaving it in the wire's.
+const QUEUE_HIDDEN_WORKERS := 0
+
+## How many rows a three-entry wire queue draws when one of its entries has no model.
+const QUEUE_HIDDEN_DRAWN_ROWS := 2
+
+## The WIRE indices those two drawn rows carry — `[1, 2]` of a three-entry queue whose entry 0 has no
+## model. The drawn list would say `[0, 1]`, which is the whole difference under test.
+const QUEUE_HIDDEN_WIRE_RANKS := [1, 2]
+
+## …and the wire queue's LAST index, which is where a `▼` on the top drawn row lands and the position
+## its `▼` end-stop is measured against. The drawn list computes `1` here, which the sim resolves back
+## to the order it already holds.
+const QUEUE_HIDDEN_WIRE_TAIL := 2
+
+## Where inside the target row a drop lands when it means BELOW it — the lower quarter, the mirror of
+## `QUEUE_GESTURE_DROP_HEIGHT_FRACTION` and unambiguously past the midpoint `_queue_can_drop` splits
+## the row at.
+const QUEUE_GESTURE_DROP_BELOW_FRACTION := 0.75
+
+## The band whose wire queue names three sources and can draw only two: the hidden patch at the head,
+## then the reference band's own head patch and its herd.
+##
+## The hidden patch gets a real labor row — the band HOLDS it, which is what keeps its entry alive —
+## carrying `QUEUE_HIDDEN_WORKERS` hands and the declaration its entry states.
+func _build_hidden_queue_band_fixture() -> Dictionary:
+	var band := _build_queue_band_fixture(2)
+	var rows: Array = band["labor_assignments"]
+	var held := _build_queue_forage_row(QUEUE_HIDDEN_PATCH, SourceForecast.IMPROVEMENT_CULTIVATE)
+	held["workers"] = QUEUE_HIDDEN_WORKERS
+	rows.insert(0, held)
+	band["build_queue"] = [
+		_queue_forage_entry(QUEUE_HIDDEN_PATCH),
+		_queue_forage_entry(QUEUE_HEAD_PATCH),
+		_queue_hunt_entry(QUEUE_HERD_ID),
+	]
+	return band
+
+## ⛔ **EVERY POSITION THIS BLOCK SENDS IS AN INDEX INTO THE BAND'S WIRE QUEUE, NEVER INTO THE ROWS IT
+## DREW** — and this is the fixture that can tell the two apart.
+##
+## **THE REGRESSION IT PINS.** Membership and order used to come from the per-source
+## `build_queue_position`, which WAS the wire index, so a hidden entry left the visible entries'
+## numbers alone. Ranking on the drawn index instead made every position below a hidden entry short
+## by the number hidden, and all three ways of reordering shared the error: with `[A, B, C]` drawn as
+## `[B, C]`, `▼` on `B` sent `1` — which the sim resolves straight back to `[A, B, C]`, a button that
+## reads as broken because it silently did nothing — `▲` on `C` sent `0` and jumped it above an entry
+## the player cannot see, and a drag of `B` below `C` computed the same dead `1`. The `▼` end-stop was
+## drawn from the same count, so it disabled the wrong row.
+##
+## **THE CLAIMS ARE THE THREE SENDERS PLUS BOTH END-STOPS**, because they are three separate
+## arithmetics over one list and a fix to any one of them passes nothing about the other two.
+func _assert_queue_positions_are_the_wires() -> void:
+	_set_forage_patches(_build_queue_patches(2))
+	# The herd is the wire queue's LAST entry here, not its second — the hidden patch took index 0.
+	_set_world_herds(_build_queue_herds(QUEUE_HIDDEN_DRAWN_ROWS, QUEUE_TURNS_SECOND))
+	_push_bands([_build_hidden_queue_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_queue_hidden_entry")
+	_assert_zone_content_fits()
+	var rows := _build_queue_rows()
+	_assert_band_panel("a wire queue of 3 whose head has no take crew draws %d rows — the held-but-uncrewed entry has no model to draw (got %d)"
+			% [QUEUE_HIDDEN_DRAWN_ROWS, rows.size()],
+		rows.size() == QUEUE_HIDDEN_DRAWN_ROWS)
+	if rows.size() != QUEUE_HIDDEN_DRAWN_ROWS:
+		_restore_queue_reorder_fixture()
+		await _settle()
+		return
+	# ① THE RANKS THEMSELVES — 1 and 2, the wire's own indices, where the drawn list would say 0 and 1.
+	var ranks: Array = []
+	for row in rows:
+		ranks.append(int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)))
+	_assert_band_panel("…and the two drawn rows wear the WIRE's ranks %s, not the drawn list's own 0 and 1 — got %s"
+			% [str(QUEUE_HIDDEN_WIRE_RANKS), str(ranks)],
+		ranks == QUEUE_HIDDEN_WIRE_RANKS)
+	# ② NEITHER DRAWN ROW IS THE HEAD. The `▸` names the entry the builders pool is standing on, which
+	# is wire index 0 — the entry that is not on screen. A marker on the first drawn row would promise
+	# funding that is going somewhere else.
+	var head_markers := 0
+	for row in rows:
+		var marker := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_MARKER_META)
+		if marker != null and bool(marker.get_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META)):
+			head_markers += 1
+	_assert_band_panel("…and NEITHER drawn row wears the `%s` — the entry the pool is funding is the one with no row to draw (found %d)"
+			% [HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, head_markers],
+		head_markers == 0)
+	# ③ THE END-STOPS, BOTH OF THEM. The top drawn row can still CLIMB — there is a real entry above
+	# it — and only the bottom one, which is the wire's last, may not fall.
+	var promote_top := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+	var demote_bottom := _find_meta_control(rows[1], HudWorkVocab.BUILD_QUEUE_DEMOTE_META) as Button
+	_assert_band_panel("the TOP drawn row's `%s` is ENABLED — it can climb above the entry it cannot see"
+			% HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH,
+		promote_top != null and not promote_top.disabled)
+	_assert_band_panel("…and the BOTTOM drawn row's `%s` is DISABLED — it is the WIRE queue's last entry"
+			% HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH,
+		demote_bottom != null and demote_bottom.disabled)
+	if _is_headless():
+		push_warning("band_panel_preview: the wire-rank presses need a real viewport — skipped under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		_restore_queue_reorder_fixture()
+		await _settle()
+		return
+	var head_source := "%d %d" % [QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y]
+	# ④ `▲` ON THE TOP DRAWN ROW SENDS 0, not −1: it is at wire index 1, so promoting it puts it at the
+	# very front, above the entry with no row.
+	await _assert_queue_arrow_click(0, HudWorkVocab.BUILD_QUEUE_PROMOTE_META,
+		HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, head_source, SourceForecast.BUILD_QUEUE_HEAD)
+	# ⑤ …AND `▼` ON THE SAME ROW SENDS 2, not the drawn list's 1 — which the sim would resolve back to
+	# the order it already has, the silent no-op this whole state exists to catch.
+	await _assert_queue_arrow_click(0, HudWorkVocab.BUILD_QUEUE_DEMOTE_META,
+		HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH, head_source, QUEUE_HIDDEN_WIRE_TAIL)
+	# ⑥ AND THE DRAG, WHICH COMPUTES ITS INSERT SEPARATELY. Dropping the top drawn row on the LOWER
+	# half of the bottom one means *below it*: remove wire index 1 from `[hidden, head, herd]` and
+	# re-insert after `herd` — position 2, where the drawn list computes a dead 1.
+	await _assert_queue_drag_sends(0, 1, QUEUE_GESTURE_DROP_BELOW_FRACTION, head_source,
+		QUEUE_HIDDEN_WIRE_TAIL)
+	_restore_queue_reorder_fixture()
+	await _settle()
+
+## Put the three-entry reorder fixture back, so the states after this one start where they did before
+## the hidden-entry band was pushed.
+func _restore_queue_reorder_fixture() -> void:
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches(_build_queue_patches(3))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
+	_push_bands([_build_queue_band_fixture(3)])
+	_hud._bandpanel.rerender()
+
+## One REAL drag between two drawn rows, read off the command line it produced — the drag's twin of
+## `_assert_queue_arrow_click`, so the third sender of `build_order` is pinned by the same shape of
+## claim as the other two. `height_fraction` picks the drop edge inside the target row.
+func _assert_queue_drag_sends(from_index: int, onto_index: int, height_fraction: float,
+		source: String, position: int) -> void:
+	var rows := _build_queue_rows()
+	if from_index >= rows.size() or onto_index >= rows.size():
+		_fail("queue drag — need rows %d and %d, found %d" % [from_index, onto_index, rows.size()])
+		return
+	var handle := _find_meta_control(rows[from_index], HudWorkVocab.BUILD_QUEUE_MARKER_META)
+	if handle == null:
+		_fail("queue drag — drawn row %d has no marker column to grab" % from_index)
+		return
+	var grab := _canvas_to_window(handle.get_global_rect().get_center())
+	var target := rows[onto_index].get_global_rect()
+	var drop := _canvas_to_window(target.position
+		+ Vector2(target.size.x * 0.5, target.size.y * height_fraction))
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.build_order_requested.connect(sink)
+	var gesture := await _drive_drag(grab, drop, handle)
+	_hud.build_order_requested.disconnect(sink)
+	_assert_band_panel("…and dragging drawn row %d onto row %d starts a REAL drag"
+			% [from_index, onto_index], bool(gesture["dragging"]))
+	if seen.is_empty():
+		_fail("queue drag — the real press-drag-release from drawn row %d emitted no build_order at all"
+			% from_index)
+		_hud._bandpanel._on_queue_drag_end()
+		return
+	var line := String(MAIN_SCRIPT.format_build_order(seen[0] as Dictionary).get("line", ""))
+	var want := "build_order %d %d %s %d" % [HudConst.PLAYER_FACTION_ID,
+		int((seen[0] as Dictionary).get("band_id", HudConst.NO_BAND_ID)), source, position]
+	_assert_band_panel("…and the drop sends `%s` (got \"%s\")" % [want, line], line == want)
+	_hud._bandpanel._on_queue_drag_end()
 
 ## ⛔ **THE REORDER, DRIVEN AS THE PLAYER DRIVES IT — real events through the real viewport.**
 ##

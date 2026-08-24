@@ -151,8 +151,15 @@ work zone comes out **300px of a 300px box, 0 spare**, with the board still pagi
 (It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
 `band_panel_builders_kit_animal`, the frames on which the Builders card's gear line is judged. **The
 PAIR is the claim, and the fixture is what makes it one**: ONE band, whose forage row and hunt row
-already name the two sources, with the head moving by dialling those SOURCES' own
-`buildQueuePosition` — so the two frames differ in the queue head's WEB and in nothing else.
+already name the two sources, with the head moving by re-ordering **the band's own `build_queue`** —
+so the two frames differ in the queue head's WEB and in nothing else.
+
+> **It used to move by dialling those SOURCES' own `buildQueuePosition`, and that stopped being the
+> head** (`docs/plan_standing_upkeep.md` §4.9 item 9a). Membership and order are the band's own
+> `buildQueue` now, so both frames change the BAND fixture rather than the sources — which also means
+> the pair is no longer byte-identical outside the queue, and the third case added with the reorder
+> arrows (a plant head under another band's animal head) is what pins that the derivation reads the
+> acting band.
 
 **They asserted a PICKER's face, its greyed entry and the reason on it until slice 6b retired that
 control** (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"). Re-aimed rather than
@@ -1100,6 +1107,19 @@ the per-band ordering fix. `_assert_queue_reorder_by_real_gesture` pushes
 machinery run: that is the WIRING — whether `mouse_focus` resolves to the handle, whether the walk up
 the parent chain finds a `get_drag_data`, whether a drag ever begins at all.
 
+⛔ **EVERY FIXTURE ABOVE HAS A MODEL FOR EVERY QUEUE ENTRY, AND THAT IS WHAT MADE THEM ALL BLIND TO
+ONE CLASS OF DEFECT.** A band keeps its labor row on a source it has taken to zero take crew while
+that source is QUEUED, and the work board admits a row on its take crew — so the wire queue can carry
+an entry the block cannot draw, turn after turn. On a self-consistent fixture a position counted in
+the DRAWN list and one counted in the WIRE queue are the same number, so no claim could tell them
+apart. `_build_hidden_queue_band_fixture` is the one that can: three wire entries, the first held at
+zero crew. `_assert_queue_positions_are_the_wires` then makes the claims the others cannot — the
+ranks are `[1, 2]`, the top drawn row's `▲` is ENABLED and only the bottom's `▼` is disabled, neither
+row wears the `▸`, and all **three** senders of `build_order` (`▲`, `▼`, and the drag through
+`_assert_queue_drag_sends`) send the wire's index. Three separate arithmetics over one list: a fix to
+any one of them proves nothing about the other two. Reverting the rank to the drawn index fails eight
+of them. The frame is `band_panel_queue_hidden_entry`.
+
 ⛔ **AND EVERY BUTTON THE QUEUE GREW WITH THE ARROWS IS DRIVEN THE SAME WAY.** `_drive_click` — a real
 `push_input` press and release on a window point — is what `_assert_queue_arrow_click` and
 `_render_queue_withdrawal_state` use, because `pressed.emit()` cannot see a control that is covered,
@@ -1145,10 +1165,18 @@ consumes the button-up for the drop and never forwards it to `gui_input`). `_cli
 halves of a click for the same reason — the queue row's toggle lives on the release now.
 
 **The withdrawal state re-pushes the same fixture on the same turn**, which is the command's own
-recapture: the server broadcasts after every command and that capture still carries the stale
-`buildQueuePosition`, so a row that only survives until the next snapshot fails here. It doubles as
+recapture: the server broadcasts after every command, so a row that only survives until the next
+snapshot fails here. It doubles as
 the re-seat this layer needs — an optimistic write runs `_after_pending_change`, which re-renders the
 SELECTED unit, and in this harness that is a stale reference band rather than the queue fixture.
+
+> ⛔ **THE REASON NARROWED, AND THE OLD ONE IS NO LONGER TRUE.** It was *"that capture still carries
+> the stale turn-written `buildQueuePosition`"*. `PopulationCohortState.buildQueue` is captured LIVE
+> off the allocation, so `unqueue` drops the entry on the command's own recapture and the block would
+> lose the row with no overlay at all. What the tombstone still covers is the **press→reply round
+> trip** — the frames between the `✕` and the server's answer, which no wire field can reach — and
+> the rollback for a send that never went. `band-city-panel.md` → "④ THE WITHDRAWAL…" carries the
+> same correction; the two files must not drift back apart.
 
 ## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
 

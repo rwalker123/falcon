@@ -4538,7 +4538,7 @@ static func rung_branch_for_kind(source_kind: String) -> Array:
 ## derived the wrong web's kit and the compose sheet drew a running meter over an entry standing third
 ## in the acting band's line. `HudBandLaborState.is_band_build_head` / `head_build_branch` answer off
 ## `PopulationCohortState.buildQueue`, the only list that is a particular band's.
-##
+
 ## **THE WORK UNITS THE POOL'S KITS ADD TO ITS OUTPUT THIS TURN** — `workers × gear_per_worker`, the
 ## gear-only remainder of the build's supply (`intensification::gear_work_supply`). `0` when no build
 ## is in flight or the crew carries nothing that helps, which is what every readout gates its gear

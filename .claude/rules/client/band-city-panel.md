@@ -2311,10 +2311,11 @@ BUILD QUEUE                          3 builders · Tillage kit
   early-game state and it must cost nothing; an empty header or a hint there would be permanent
   furniture explaining an absence.
 - ⛔ **IT DID NEED A BAND-SIDE QUEUE ON THE WIRE, AND THIS BLOCK SHIPPED A SLICE WITHOUT ONE.** The
-  membership argument held and still does — the sim keeps an entry only while its source holds a labor
-  assignment (`LaborAllocation::prune_build_queue` → `holds_build_source`), `_work_source_models`
-  admits any source with a take crew, and a source queued by ANOTHER band is not in this band's
-  `effective_worker_map` at all. **What it did not buy was the ORDER.** `buildQueuePosition` is
+  membership argument held **for the common case** — the sim keeps an entry only while its source
+  holds a labor assignment (`LaborAllocation::prune_build_queue` → `holds_build_source`),
+  `_work_source_models` admits any source with a take crew, and a source queued by ANOTHER band is
+  not in this band's `effective_worker_map` at all. (It is not airtight: a row and a crew are not the
+  same thing — "AN ENTRY CAN OUTLIVE ITS ROW'S CREW" below.) **What it did not buy was the ORDER.** `buildQueuePosition` is
   source-addressed and rides the winning band, so a source **both** bands hold publishes the other
   band's rank, and the block sorted on it. The block reads
   `HudBandLaborState.build_queue_keys(band)` — the band's own `buildQueue`, order and all — and
@@ -2640,10 +2641,14 @@ nothing on a non-head row.
   0-based — §4.9's priority property stored in the queue itself, so this client keeps no rank beside
   it. `build_order` is the one of the three verbs that names a BAND; a kit and a withdrawal are
   properties of an entry every band holding that source shares.
-- **AND THE POSITION IS AN INDEX INTO THE BAND'S OWN LIST**, which is why the order the block draws
-  has to be the band's. `_queue_drop` computes `insert` off `_confirmed_queue_entries`, so an order
-  that is not this band's makes the gesture send a number that means something else — see "THE ORDER
-  IS THE BAND'S OWN" below.
+- ⛔ **AND THE POSITION IS AN INDEX INTO THE BAND'S WIRE QUEUE — NOT INTO THE ROWS THE BLOCK DREW.**
+  Both the arrows and the drag count in `_queue_rank_keys` (`HudBandLaborState.build_queue_keys`),
+  and `_build_queue_models` stamps each drawn row's rank from the same walk. The two lists are not
+  the same length: see "AN ENTRY CAN OUTLIVE ITS ROW'S CREW" below for the reachable, persistent
+  state in which the wire carries an entry the block cannot draw. Counting in the drawn list instead
+  makes every position below a hidden entry short by the number hidden, which the sim resolves
+  against its own full queue — a `▼` that silently does nothing, or a row that jumps above something
+  the player cannot see.
 - ⛔ **THERE IS NO OPTIMISTIC ORDERING, AND THERE MUST NOT BE ONE** (§4.9 item 9a). This slice shipped
   one — `_queue_sort_rank` over a turn-keyed `order` overlay — because `buildQueuePosition` is
   turn-written and the list snapped back on the command's own recapture. The band-side `buildQueue`
@@ -2797,9 +2802,35 @@ vector index**, captured live. This layer reads it and keeps no rank beside it.
 | `DrawerComposeController` (`◷ Queued` vs a running meter) | *are the builders on THIS one* | `HudBandLaborState.is_band_build_head(band, kind, source)` |
 
 `SourceForecast.build_is_queue_head` is **deleted** — it could not answer for a particular band, which
-is what all three needed. `BUILD_QUEUE_ROW_META` carries the row's rank **in this band's queue** (its
-drawn index, `NOT_IN_ANY_BUILD_QUEUE` when pending) rather than the wire position, because all five of
-its readers were band-scoped too.
+is what all three needed. `BUILD_QUEUE_ROW_META` carries the row's rank **in this band's queue** — its
+index into `build_queue_keys(band)`, `NOT_IN_ANY_BUILD_QUEUE` when pending — rather than the
+source-addressed wire position, because all five of its readers were band-scoped too. It is **not**
+the block's index into the rows it drew; the section below is why.
+
+### AN ENTRY CAN OUTLIVE ITS ROW'S CREW, SO THE DRAWN LIST IS SHORTER THAN THE WIRE'S
+
+The membership argument above — *an entry requires a row, and the board admits any source with a take
+crew* — quietly equates a **row** with a **crew**, and the sim does not. The gap is reachable and it
+persists:
+
+| step | seam |
+|---|---|
+| unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` |
+| …and `assign_labor` declines to drop that row while the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` |
+| the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source`, so `prune_build_queue` keeps the entry |
+| …and the turn pass spares it for the same reason, so the state survives every turn | `queued.is_none()` guards the lapse in `advance_labor_allocation` |
+| the client then drops that row, the board admitting on the take crew | `_work_source_models` → `if workers <= 0 and not pending` |
+
+So a wire queue of `[A, B, C]` legitimately draws as `[B, C]`. **Membership is the drawn list's;
+every ARITHMETIC is the wire's** — `_build_queue_models` walks the wire with its own index and lets a
+skipped entry spend its rank, the `▼` end-stop is the wire queue's LENGTH (so `B`'s `▲` is enabled,
+and only `C`'s `▼` is disabled), and `_queue_drop` removes and re-inserts in the wire's key list,
+using the drawn row only to NAME the drop target. The `▸` is the wire's head too: an entry with no row
+is still the one the builders pool is standing on, so neither drawn row wears it.
+
+**The zero-crew row is deliberately NOT re-admitted to fix this.** Admitting it would put it back on
+the WORK BOARD as well, which `docs/plan_standing_upkeep.md` §2.5 reverted on purpose — a separate
+design question. `band_panel_queue_hidden_entry` is the frame.
 
 > **THE COMPOSE-SHEET ONE RE-OPENED A REPORTED PLAY DEFECT BY A SECOND DOOR.** The DECLARED-vs-RUNNING
 > fork exists because rendering a mere declaration as a running build was a one-way trap —
