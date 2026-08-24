@@ -644,3 +644,47 @@ take every visible slot, so both worked sources roll into the chip as `+2 ⌃`).
 ready" — the correct degradation, but an unreadable frame. `map_band_work`'s fixture gained a food site
 on each worked tile, and that is load-bearing: the first cut of the ring rendered nothing at all
 because the fixture had none, and the mark correctly degraded to the bare tile outline.
+
+### `map_ready_to_climb` — the AGGREGATE ⌃, and why the frame is a contrast rather than a glow
+
+`docs/plan_knowledge_screen.md` §7. The `ready_to_climb` channel painted over the ⌃-mark fixture, plus
+`map_ready_to_climb_legend`, its `facts` card. It **extends `_snapshot_work_ready` rather than
+replacing it**, so the badges and the channel are asked about the SAME sources — a channel disagreeing
+with the badge on the hex under it is exactly the two-surface split `RungGates` exists to stop.
+
+What the extension adds is the half the badge cannot have: **sources nobody is working**. A badge is
+drawn on a worked source's own marker, so a map of unworked opportunities is what the aggregate is
+FOR, and the legend's nearest-unworked line has nothing to name without them. It adds two unworked
+patches, one unworked tamed herd, a patch whose plants may climb NOTHING, and a **second player band**
+parked beside the far patch.
+
+**A CYAN MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERY SOURCE IT CAN SEE**, which is why
+the frame stages three controls that must stay DARK — the patch mid-Cultivate, the wild-ceiling wolf,
+and the patch with no legal rung — and why the assertions ask for TILES rather than a count. On a
+fixture this size a count can be right for the wrong reason; `_lit_ready_tiles` reads the tiles back
+off the **raster the map paints**, not off the model's own counters, so the claim cannot be the
+assertion agreeing with itself.
+
+The block beside it drives four things no picture can carry:
+
+- **THE KNOWLEDGE PUSH THAT ARRIVES LATE.** The snapshot goes in with the knowledge row EMPTY and the
+  row is pushed after it — the shipped order, since `Main._apply_snapshot` renders the map first and
+  fans the HUD out behind it. A channel derived only at ingest stays empty here, which is the state it
+  would be in for the whole turn a discovery lands on. The empty case is asserted first (the channel
+  is offered, states its empty sentence, lights nothing), so the push is a real A/B.
+- **THE COUNTS SPLIT BY WEB.** One web answering for both produces a perfectly plausible total.
+- **THE SECOND BAND, and it exists for one claim**: *nearest* is measured from the SELECTED band. With
+  one band the anchor and its fallback are the same tile and a hardcoded first-band read passes. The
+  leg changes the selection and **nothing else** — no snapshot, no re-derive — which also pins that
+  the facts are answered off the CACHED model rather than stamped into it at ingest.
+- **A WORLD WITH NO SOURCES OFFERS NO CHANNEL**, paired with the empty key surviving, for the reason
+  the `terrain_tags` claim beside it is paired: `""` prints identically to nothing at all.
+
+**`_assert_ready_to_climb_scale` IS A REPORT, NOT A THRESHOLD.** §7 says to measure the all-sources
+pass before assuming it is cheap, so the probe builds a **full-size 256×192 world with a patch on
+every tile** — the ceiling on what the derivation can ever be handed, since the sim seeds a patch on
+every food-module tile that carries capacity and caps none of them — and prints the microseconds. A
+timing ASSERTION on a shared machine fails for reasons that have nothing to do with the code under
+test, and a harness that cries wolf stops being read; what is asserted instead is the thing a number
+cannot drift on, that the probe really walked a full-size world. It is the last thing the state does,
+because it leaves `_map` on that world.

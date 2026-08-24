@@ -503,6 +503,47 @@ const PICKER_BIOME_IDS := [0, 1, 6, 8, 9, 10, 11, 12, 14, 15, 17, 20, 22, 24, 26
 # biome that happens not to land on a tile but fails a merge that dropped the table.
 const PICKER_BIOME_ROWS_MIN := 12
 
+# --- THE `ready_to_climb` CHANNEL (docs/plan_knowledge_screen.md §7) ------------------------------
+# The AGGREGATE ⌃: every source that could climb a rung right now, painted at once. Its fixture
+# extends the ⌃-mark fixture (`_snapshot_work_ready`) rather than replacing it, so the per-source
+# badges and the channel are asked about the SAME sources — a channel that disagreed with the badge on
+# the hex under it would be the two-surface split `RungGates` exists to stop.
+#
+# What the extension adds is the half the badge cannot have: sources NOBODY IS WORKING. The badge is
+# drawn on a worked source's own marker, so a map of unworked opportunities is exactly what the
+# aggregate is for, and the legend's nearest-unworked line has nothing to name without them.
+const READY_UNWORKED_NEAR := Vector2i(9, 5)    # tended + sowable, unworked → offers Sow
+const READY_UNWORKED_FAR := Vector2i(2, 10)    # wild + cultivable, unworked → offers Cultivate
+const READY_UNWORKED_HERD := Vector2i(4, 3)    # a tamed pen-ceiling herd nobody hunts → offers Corral
+const READY_UNWORKED_HERD_ID := "game_aurochs_11"
+# A patch with a composition that may climb NOTHING (`can_cultivate` and `can_sow` both false). The
+# selectivity control on the unworked side: without it "every unworked patch is ready" and "the ready
+# test works" produce the same counts.
+const READY_BARREN_LADDER := Vector2i(12, 9)
+# The SECOND player band, parked beside the far patch and carrying no work at all. It exists for one
+# claim — that "nearest" is measured from the SELECTED band — which a single-band fixture cannot make:
+# with one band the anchor and its fallback are the same tile and a broken selection read passes.
+const READY_SECOND_BAND_ENTITY := 9002
+const READY_SECOND_BAND_TILE := Vector2i(2, 9)
+# What the fixture's ladder actually offers, spelled out so a count assertion says WHICH source it
+# expected rather than only a number. Three patches: the tended one the band works (Sow), and the two
+# unworked ones. Two herds: the worked deer (Corral) and the unworked aurochs (Corral).
+const READY_EXPECTED_PATCHES := 3
+const READY_EXPECTED_HERDS := 2
+const READY_EXPECTED_UNWORKED := 3
+# The knowledge row that opens all four rungs — the same one `map_worked_ready` pushes, restated here
+# because this state also drives the EMPTY case by clearing it, and the two have to be one edit apart.
+const READY_FULL_KNOWLEDGE := {
+	"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
+}
+# The SCALING PROBE's synthetic world (§7: "measure that before assuming it is cheap"). A live
+# earthlike is 256×192 and the sim seeds a forage patch on EVERY food-module tile that carries any
+# human-edible capacity, with no cap anywhere in the capture — so the honest question is not "is one
+# `RungGates` call fast" but "what does a map's worth of them cost". The probe builds a patch on every
+# tile of a full-size grid, which is the ceiling rather than the expectation.
+const READY_PROBE_GRID_W := 256
+const READY_PROBE_GRID_H := 192
+
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
@@ -1459,6 +1500,7 @@ func _ready() -> void:
 	_assert_zoom_ladder()
 
 	await _overlay_picker_state()
+	await _ready_to_climb_state()
 
 	_finish()
 
@@ -1818,6 +1860,238 @@ func _overlay_picker_state() -> void:
 
 	await _assert_picker_buttons_swap(picker)
 
+
+## State "ready to climb" — THE AGGREGATE ⌃ (`docs/plan_knowledge_screen.md` §7), the channel and its
+## `facts` legend.
+##
+## **THE FRAME IS THE CONTRAST, NOT THE GLOW.** A cyan map is a plausible picture of a correct channel
+## and of a channel that lights every source it can see; what the frame has to show is that the
+## mid-Cultivate patch, the wild-ceiling wolf and the can-climb-nothing patch stay DARK while three
+## patches and two herds glow. Everything a picture cannot separate — which web each lit hex is on,
+## whether the counts split right, which coordinate the legend named and why — is asserted below.
+func _ready_to_climb_state() -> void:
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+
+	# **KNOWLEDGE IS PUSHED AFTER THE SNAPSHOT, AND THAT IS THE SHIPPED ORDER RATHER THAN A
+	# CONVENIENCE.** `Main._apply_snapshot` renders the map first and fans the HUD out after it, so
+	# `faction_knowledge_changed` always lands behind `display_snapshot` — a channel derived only at
+	# ingest would state the PREVIOUS turn's knowledge for the whole turn a discovery arrives on. This
+	# state drives that order deliberately: the snapshot goes in with the knowledge row still EMPTY.
+	_map.set_faction_knowledge({})
+	_map.display_snapshot(_snapshot_ready_to_climb())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("ready to climb — the minimap panel built no picker")
+		return
+
+	# **THE INGEST BUILT NOTHING, WHICH IS THE WHOLE POINT OF THE MEASUREMENT.** A `RungGates` pass per
+	# source costs ~7 µs a source — 342 ms for a full-size world's worth (the probe at the end of this
+	# state) — and paying it on every turn boundary for a channel nobody has selected is work that
+	# should not happen. The claim is asked of the CHANNEL TABLE rather than of a flag: an unbuilt
+	# channel is one `overlay_channels` has no raster for, which is the same thing
+	# `set_overlay_channel` tests. **Paired with the roster claim below**, because "the map holds no
+	# raster for it" is also true of a channel that was never wired at all.
+	_assert_map("ready to climb — the snapshot ingest builds NO raster for it (deferred until something asks)",
+		not _map.overlay_channels.has(ReadyToClimb.CHANNEL_KEY))
+
+	# **THE EMPTY CASE IS A REAL STATE, NOT A DEGENERATE ONE.** A faction that has learned nothing can
+	# climb nothing, and the channel still exists to say so — it is offered off the WORLD's sources,
+	# never off the count, so it does not appear and disappear as the ladder is learned.
+	_assert_map("ready to climb — a world with sources offers the channel even before any knowledge (roster: %s)"
+		% ", ".join(_roster_keys(picker)),
+		Array(_roster_keys(picker)).has(ReadyToClimb.CHANNEL_KEY))
+	_assert_map("ready to climb — …and it states the empty answer rather than a count (%s)"
+		% ", ".join(_map.ready_to_climb_facts()),
+		Array(_map.ready_to_climb_facts()) == [ReadyToClimb.FACTS_NONE])
+	_assert_map("ready to climb — …with nothing lit on the map (%d tiles)" % _lit_ready_tiles().size(),
+		_lit_ready_tiles().is_empty())
+
+	# **AND NOW THE PUSH THAT ARRIVES LATE.** No new snapshot: only the knowledge row moves, exactly as
+	# it does on the turn a track completes. If the channel were derived at ingest alone this is where
+	# it would stay empty.
+	_map.set_faction_knowledge(READY_FULL_KNOWLEDGE)
+	await _settle()
+	var facts: PackedStringArray = _map.ready_to_climb_facts()
+	_assert_map("ready to climb — the knowledge push that lands AFTER the snapshot re-derives the channel (%s)"
+		% ", ".join(facts),
+		facts.size() == 2 and String(facts[0]) != ReadyToClimb.FACTS_NONE)
+
+	# THE COUNTS, split by web. A single total cannot say whether the two walks both ran: one web
+	# answering for both produces a perfectly plausible number.
+	var model: Dictionary = _map._ready_to_climb
+	_assert_map("ready to climb — %d patches and %d herds offer a rung (expected %d / %d)"
+		% [int(model.get(ReadyToClimb.MODEL_PATCHES, -1)), int(model.get(ReadyToClimb.MODEL_HERDS, -1)),
+			READY_EXPECTED_PATCHES, READY_EXPECTED_HERDS],
+		int(model.get(ReadyToClimb.MODEL_PATCHES, -1)) == READY_EXPECTED_PATCHES
+			and int(model.get(ReadyToClimb.MODEL_HERDS, -1)) == READY_EXPECTED_HERDS)
+
+	# **A RUNG UNDER WAY IS NOT AN OFFER, and the mid-Cultivate patch is the whole reason the channel
+	# asks `rung_in_progress` before `next_rung_ready`.** Its next rung is admitted and ungated, so a
+	# pass that asked only the ready test would light it — and light it in the same cyan as the patch
+	# beside it that really is waiting for hands. Asked as a TILE rather than a count, because a count
+	# that is right for the wrong reason is exactly what a fixture of this size can produce.
+	var lit: Array[Vector2i] = _lit_ready_tiles()
+	_assert_map("ready to climb — the patch mid-Cultivate at (9, 8) stays dark; a rung being climbed is not on offer",
+		not lit.has(Vector2i(9, 8)))
+	_assert_map("ready to climb — the wild-ceiling wolf pack at (11, 4) stays dark however much we know",
+		not lit.has(Vector2i(11, 4)))
+	_assert_map("ready to climb — a patch whose plants may climb nothing stays dark (%s)"
+		% READY_BARREN_LADDER, not lit.has(READY_BARREN_LADDER))
+	_assert_map("ready to climb — every unworked ready source IS lit (%s)" % str(lit),
+		lit.has(READY_UNWORKED_NEAR) and lit.has(READY_UNWORKED_FAR) and lit.has(READY_UNWORKED_HERD))
+
+	# THE UNWORKED LINE, and the anchor it is measured from.
+	_assert_map("ready to climb — %d of them are unworked, nearest to the selected band (%s)"
+		% [int(model.get(ReadyToClimb.MODEL_UNWORKED, []).size()), ", ".join(facts)],
+		int(model.get(ReadyToClimb.MODEL_UNWORKED, []).size()) == READY_EXPECTED_UNWORKED
+			and String(facts[1]) == ReadyToClimb.FACTS_UNWORKED_FORMAT
+				% [READY_EXPECTED_UNWORKED, READY_UNWORKED_NEAR.x, READY_UNWORKED_NEAR.y])
+
+	# **SELECT THE OTHER BAND AND NOTHING ELSE.** No snapshot, no re-derive of the sources — the model
+	# is cached and only the legend's own scan re-runs, which is the whole reason `facts` is answered
+	# on demand instead of stamped into the model at ingest. "Nearest" is a question about where the
+	# player is standing, and a fixture with one band cannot tell a real read of the selection from a
+	# hardcoded first-band one.
+	_map.selected_unit_id = READY_SECOND_BAND_ENTITY
+	var moved: PackedStringArray = _map.ready_to_climb_facts()
+	_assert_map("ready to climb — selecting the far band moves 'nearest' with it, off the CACHED model (%s)"
+		% ", ".join(moved),
+		String(moved[1]) == ReadyToClimb.FACTS_UNWORKED_FORMAT
+			% [READY_EXPECTED_UNWORKED, READY_UNWORKED_FAR.x, READY_UNWORKED_FAR.y])
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+
+	# The channel is PICKABLE — the `province` property. `set_overlay_channel` silently refuses a key
+	# it holds no raster for, so this is asked of the map's own `active_overlay_key` rather than of the
+	# picker's lit row, which would agree with itself either way.
+	picker.select_channel(ReadyToClimb.CHANNEL_KEY)
+	await _settle()
+	_assert_map("ready to climb — choosing the row paints it (active_overlay_key = '%s')"
+		% _map.active_overlay_key,
+		_map.active_overlay_key == ReadyToClimb.CHANNEL_KEY)
+	await _save("map_ready_to_climb")
+	await _save_overlay_legend("map_ready_to_climb_legend")
+
+	# **A WORLD WITH NO SOURCES OFFERS NO CHANNEL.** Paired with the roster claim at the top of this
+	# state: "does not contain the key" is also true of a roster the merge dropped, so the empty key
+	# has to survive alongside it.
+	picker.close_popover()
+	_map.display_snapshot(_base_snapshot(_band([], 2, 0), []))
+	await _settle()
+	_assert_map("ready to climb — a world with no patches and no herds keeps the empty key and is not offered the channel (%s)"
+		% ", ".join(_roster_keys(picker)),
+		Array(_roster_keys(picker)) == [OverlayChannels.NO_OVERLAY_KEY])
+	_map.set_faction_knowledge({})
+
+	_assert_ready_to_climb_scale()
+
+## The tiles the `ready_to_climb` raster is lit on, read back off the CHANNEL rather than off the
+## model's counts — the raster is what the map actually paints, and a count that agreed with a plane
+## it was not built from would be the assertion agreeing with itself.
+func _lit_ready_tiles() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var plane: Variant = _map.overlay_channels.get(ReadyToClimb.CHANNEL_KEY, null)
+	if not (plane is PackedFloat32Array):
+		return out
+	var values: PackedFloat32Array = plane
+	for idx in range(values.size()):
+		if values[idx] > 0.0:
+			out.append(Vector2i(idx % _map.grid_width, idx / _map.grid_width))
+	return out
+
+func _roster_keys(picker: OverlayPicker) -> PackedStringArray:
+	var keys := PackedStringArray()
+	for descriptor in picker.roster():
+		keys.append(String(descriptor.get("key", "")))
+	return keys
+
+## **WHAT A MAP'S WORTH OF `RungGates` COSTS** — §7 says to measure it before assuming it is cheap, and
+## the answer is what decided that this channel is derived once per SNAPSHOT rather than per frame.
+##
+## It is a REPORT, not a threshold: a timing assertion on a shared machine fails for reasons that have
+## nothing to do with the code under test, and a harness that cries wolf stops being read. What is
+## asserted is the thing a number cannot drift on — that the probe really did evaluate a full-size
+## world, so the microseconds printed beside it are about that world and not about an empty one.
+func _assert_ready_to_climb_scale() -> void:
+	_map.set_faction_knowledge(READY_FULL_KNOWLEDGE)
+	_map.display_snapshot(_snapshot_ready_probe())
+	var sources: int = _map.forage_patch_lookup.size() + _map.herds.size()
+	var started: int = Time.get_ticks_usec()
+	var model: Dictionary = ReadyToClimb.derive(_map)
+	var elapsed: int = Time.get_ticks_usec() - started
+	print("map_preview: ready_to_climb scale — %d sources on a %d×%d world in %d µs (%d ready)"
+		% [sources, READY_PROBE_GRID_W, READY_PROBE_GRID_H, elapsed,
+			int(model[ReadyToClimb.MODEL_PATCHES]) + int(model[ReadyToClimb.MODEL_HERDS])])
+	_assert_map("ready to climb — the scale probe really walked a full-size world (%d sources)" % sources,
+		sources >= READY_PROBE_GRID_W * READY_PROBE_GRID_H)
+	_map.set_faction_knowledge({})
+
+## The `ready_to_climb` fixture: `_snapshot_work_ready`'s three worked sources, plus the unworked ones
+## the aggregate exists to surface and the two controls that must stay dark.
+func _snapshot_ready_to_climb() -> Dictionary:
+	var snap := _snapshot_work_ready()
+	var patches: Array = snap["forage_patches"]
+	patches.append(_ready_patch(READY_UNWORKED_NEAR, true, true, true))
+	patches.append(_ready_patch(READY_UNWORKED_FAR, false, true, false))
+	# Neither rung is legal for anything growing here, so no amount of knowledge opens one.
+	patches.append(_ready_patch(READY_BARREN_LADDER, false, false, false))
+	var herds: Array = snap["herds"]
+	herds.append({
+		"id": READY_UNWORKED_HERD_ID, "label": "Aurochs (%s)" % READY_UNWORKED_HERD_ID,
+		"x": READY_UNWORKED_HERD.x, "y": READY_UNWORKED_HERD.y,
+		"biomass": 420.0, "huntable": true,
+		"domestication": 1.0, "husbandry_ceiling": "pen",
+	})
+	# The second band carries NO assignments: it must not claim a source, only supply an anchor.
+	var second := _band([], 2, 0)
+	second["entity"] = READY_SECOND_BAND_ENTITY
+	second["current_x"] = READY_SECOND_BAND_TILE.x
+	second["current_y"] = READY_SECOND_BAND_TILE.y
+	second["id"] = "Band 2"
+	snap["populations"].append(second)
+	return snap
+
+## One forage patch for the fixture. `tended` fills the cultivated rung so a sowable patch offers Sow
+## rather than Cultivate; the two legality flags are SPECIES-global ("can this plant ever climb this
+## rung"), which is what `RungGates.any_crop_allows` reads.
+func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool) -> Dictionary:
+	return {
+		"x": tile.x, "y": tile.y,
+		"ecology_phase": "thriving",
+		"is_cultivated": tended, "is_field": false,
+		"sow_site_refusal": "",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": can_cultivate, "can_sow": can_sow}],
+	}
+
+## The SCALING probe's world: a full-size grid with a patch on every tile and one band, which is the
+## ceiling on how many sources the derivation can ever be handed. Deliberately not a plausible map —
+## a real earthlike is part ocean — because a ceiling is the number worth knowing.
+func _snapshot_ready_probe() -> Dictionary:
+	var patches: Array = []
+	for row in range(READY_PROBE_GRID_H):
+		for col in range(READY_PROBE_GRID_W):
+			patches.append(_ready_patch(Vector2i(col, row), true, true, true))
+	var terrain: Array = []
+	terrain.resize(READY_PROBE_GRID_W * READY_PROBE_GRID_H)
+	terrain.fill(PICKER_BIOME_IDS[0])
+	return {
+		"grid": {"width": READY_PROBE_GRID_W, "height": READY_PROBE_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [_band([], 2, 0)],
+		"forage_patches": patches,
+		"herds": [],
+	}
 
 ## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
 ## text AFTER the `FAIL` token, which is what the output scanning keys on.
@@ -2748,6 +3022,15 @@ func _snapshot_work_ready() -> Dictionary:
 		if String(herd.get("id", "")) == "game_deer_07":
 			herd["domestication"] = 1.0
 			herd["husbandry_ceiling"] = "pen"
+		# **AND THE WOLF'S CEILING IS STATED, because the ABSENT one is not the one this frame
+		# claims.** `SourceForecast.husbandry_ceiling` normalizes an absent field to `"pen"` — the
+		# FULL ladder, so an untagged herd behaves as it did before the field existed — which made the
+		# wolf offer `Tame` and wear a ⌃ of its own. The state's whole value is the CONTRAST ("a
+		# chevron on every marker would prove nothing"), so the one source that must offer nothing has
+		# to say so rather than rely on a default that means the opposite. Stated HERE and not on
+		# `_pelt_only_wolf_herd`, so only the two frames that push knowledge move.
+		elif String(herd.get("id", "")) == "game_wolf_03":
+			herd["husbandry_ceiling"] = "wild"
 	return snap
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so

@@ -70,6 +70,33 @@ const CHANNELS: Array[Dictionary] = [
 		"available": &"has_terrain_tag_data",
 		"placement": PLACEMENT_LAST,
 	},
+	{
+		# **THE AGGREGATE ⌃** (`docs/plan_knowledge_screen.md` §7). The map already marks a single
+		# worked source that can climb a rung; this is every one of them at once. Like `terrain_tags`
+		# it has no wire raster — the answer depends on what the PLAYER's faction knows, which the sim
+		# does not publish a plane of — so `MapView` synthesizes it and this row does the rest.
+		#
+		# **AND IT IS THE FIRST `KIND_FACTS` ROW EVER WRITTEN.** The kind and `facts_for` were built in
+		# Slice A for exactly this channel; nothing had exercised them until this row.
+		"key": ReadyToClimb.CHANNEL_KEY,
+		"label": ReadyToClimb.CHANNEL_LABEL,
+		"description": ReadyToClimb.CHANNEL_DESCRIPTION,
+		"legend_kind": KIND_FACTS,
+		# A ramp legend would be a lie about a binary plane: there is no "more ready". What the player
+		# wants is the SHAPE — how many, on which web, and whether any of it is ground nobody stands
+		# on — and those are lines, not rows.
+		"facts": &"ready_to_climb_facts",
+		# Gated on the RASTER, not on the count: a world with sources offers the channel even when
+		# nothing is ready (the legend says so), and `set_overlay_channel` would silently refuse the
+		# key on a world that has none.
+		"available": &"has_ready_to_climb_data",
+		# **AND THE PLACEMENT IS LOAD-BEARING BECAUSE THE CHANNEL IS BUILT LAZILY.** `MapView` does not
+		# synthesize this raster during the ingest (`DEFERRED_OVERLAY_BUILDERS` — a `RungGates` pass per
+		# source is not turn-boundary work for a channel nobody has picked), so for most of a frame's
+		# life the key is absent from `overlay_channel_order` and the wire pass cannot place it. This
+		# row is what puts it in the list at all, and last is where a client-side channel belongs.
+		"placement": PLACEMENT_LAST,
+	},
 ]
 
 ## The merged, ordered channel list: every key the picker offers, each a COMPLETE descriptor, so no
