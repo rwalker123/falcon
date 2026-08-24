@@ -15574,4 +15574,140 @@ mod tests {
             mission.destination_display()
         );
     }
+
+    /// **One band's published `buildQueue`, read off the ENCODED envelope** — as `(x, y)` pairs,
+    /// since these fixtures queue patches. Read through the client's own accessor chain because a
+    /// field that never reached the codec still passes an in-process assertion.
+    fn published_build_queue(app: &mut bevy::prelude::App, band_id: u64) -> Vec<(u32, u32)> {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section carries the band list")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .expect("the fixture band is published")
+            .buildQueue()
+            .map(|queue| {
+                queue
+                    .iter()
+                    .map(|entry| (entry.targetX(), entry.targetY()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// **THE PUBLISHED QUEUE IS CAPTURED LIVE, so a re-order lands on the COMMAND'S OWN FRAME**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a).
+    ///
+    /// `build_order` mutates the allocation at command time and the server re-captures after every
+    /// dispatched command, so the wire carries the new order **without a turn being advanced**. That
+    /// is what retires the client's optimistic ordering overlay — an overlay is a second ordering
+    /// beside the wire's, which is exactly the drift the field's "the rank is the index" rule
+    /// forbids — so it is pinned here rather than assumed.
+    ///
+    /// The declaration and the withdrawal ride the same recapture and are asserted in the same run:
+    /// all three writers of the queue must be live, or the overlay has to come back for the one that
+    /// is not.
+    #[test]
+    fn the_published_build_queue_follows_a_command_without_a_turn() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        grant_cultivation(&mut app, faction);
+
+        // Three patches, declared in this order — deliberately NOT in coordinate order, so an
+        // ordering derived from anything but the band's own queue is visible.
+        let first = UVec2::new(3, 3);
+        let second = UVec2::new(1, 1);
+        let third = UVec2::new(2, 2);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: first,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        for tile in [first, second, third] {
+            // The ground has to admit a tended crop, so pin the terrain the plant-web fixtures use
+            // before seeding the stand on it — worldgen's own tile at these coordinates offers
+            // whatever the map rolled, which is routinely a wild-harvest-only basket.
+            let entity = app
+                .world
+                .resource::<TileRegistry>()
+                .index(tile.x, tile.y)
+                .expect("the generated world carries this tile");
+            app.world
+                .get_mut::<Tile>(entity)
+                .expect("a registered tile carries its ground")
+                .terrain = SOURCE_BIOME;
+            seed_thriving_patch(&mut app, tile);
+        }
+        // The other two patches need take crews before a declaration can land on them: an entry
+        // requires a row.
+        for tile in [second, third] {
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(FIXTURE_BAND_ID),
+                "forage".to_string(),
+                1,
+                Some(tile.x),
+                Some(tile.y),
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+            );
+        }
+
+        // ① A DECLARATION is live: each `cultivate` appends, and the wire says so on its own frame.
+        for (index, tile) in [first, second, third].iter().enumerate() {
+            handle_cultivate(&mut app, faction, *tile);
+            assert_eq!(
+                published_build_queue(&mut app, FIXTURE_BAND_ID).len(),
+                index + 1,
+                "declaring {tile:?} must reach the wire without a turn being advanced"
+            );
+        }
+        assert_eq!(
+            published_build_queue(&mut app, FIXTURE_BAND_ID),
+            vec![(first.x, first.y), (second.x, second.y), (third.x, third.y)],
+            "the published order is the order the player declared them in"
+        );
+
+        // ② A RE-ORDER is live: send the tail to the head, and read the wire with no turn between.
+        handle_build_order(&mut app, faction, FIXTURE_BAND_ID, patch_source(third), 0);
+        assert_eq!(
+            published_build_queue(&mut app, FIXTURE_BAND_ID),
+            vec![(third.x, third.y), (first.x, first.y), (second.x, second.y)],
+            "the re-order arrives on the command's own recapture — the client needs no optimistic \
+             ordering overlay"
+        );
+
+        // ③ A WITHDRAWAL is live: `unqueue` drops the entry and the rest close up, same frame.
+        handle_unqueue(&mut app, faction, patch_source(first));
+        assert_eq!(
+            published_build_queue(&mut app, FIXTURE_BAND_ID),
+            vec![(third.x, third.y), (second.x, second.y)],
+            "the withdrawal arrives on the command's own recapture too"
+        );
+    }
 }

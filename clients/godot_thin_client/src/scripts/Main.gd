@@ -1629,12 +1629,15 @@ func _on_hud_unqueue(payload: Dictionary) -> void:
 func _on_hud_build_kit(payload: Dictionary) -> void:
     _send_formatted_command(format_build_kit(payload))
 
-## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③). `buildQueuePosition` IS
-## turn-written, so this one does carry an optimistic ordering — recorded in the controller before the
-## emit, and dropped here when the send does not go.
+## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule,
+## and for the identical reason one field over. `PopulationCohortState.buildQueue` is captured LIVE
+## rather than turn-written (§4.9 item 9a), so the reordered list arrives on this command's own
+## recapture; the client-side ordering that used to be undone here was a second ordering beside the
+## wire's, which is the drift that made a drag paint one order and then jump to another.
 func _on_hud_build_order(payload: Dictionary) -> void:
-    if not _send_formatted_command(format_build_order(payload)):
-        _hud_invoke("drop_pending_order", [payload])
+    _send_formatted_command(format_build_order(payload))
 
 ## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a
 ## standing policy on the band's allocation, not part of any source's commit.

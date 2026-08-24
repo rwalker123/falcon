@@ -434,12 +434,12 @@ func _drive_build_order() -> void:
 	_hud._bandpanel._emit_build_order(band, {
 		"kind": SourceForecast.LABOR_KIND_FORAGE, "key": "forage:%d,%d" % [TARGET_X, TARGET_Y],
 		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-	}, BUILD_ORDER_POSITION, [])
+	}, BUILD_ORDER_POSITION)
 	await _settle()
 	_hud._bandpanel._emit_build_order(band, {
 		"kind": SourceForecast.LABOR_KIND_HUNT, "key": "hunt:%s" % NEAR_HERD_ID,
 		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
-	}, SourceForecast.BUILD_QUEUE_HEAD, [])
+	}, SourceForecast.BUILD_QUEUE_HEAD)
 	await _settle()
 
 ## The position the plant drive moves its entry to. **Not the head**, because 0 is what an

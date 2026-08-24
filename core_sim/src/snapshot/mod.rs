@@ -8,7 +8,8 @@ use bevy::{
     prelude::*,
 };
 use sim_runtime::{
-    encode_delta_flatbuffer, encode_snapshot_flatbuffer, AxisBiasState, CampaignProfileState,
+    encode_delta_flatbuffer, encode_snapshot_flatbuffer, AxisBiasState,
+    BuildQueueEntryState as SchemaBuildQueueEntryState, CampaignProfileState,
     CharacteristicBandState, ClimateBandsState, CohortStoreState, CommandEventState,
     ConnectionState, CorruptionLedger, CorruptionSubsystem, CraftKnowledgeState, CrisisGaugeState,
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
@@ -36,9 +37,10 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, Expedition,
-        ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget, PendingMigration,
-        PopulationCohort, PowerNode, SourceYield, Tile, FODDER, FOOD, NO_RAID_FLOOR,
+        available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, BuildSource,
+        Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
+        PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, FODDER, FOOD,
+        NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,

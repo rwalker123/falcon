@@ -151,8 +151,15 @@ work zone comes out **300px of a 300px box, 0 spare**, with the board still pagi
 (It was 242 / 348 / 95 before the BUILDERS KIT PAIR — `band_panel_builders_kit_plant` /
 `band_panel_builders_kit_animal`, the frames on which the Builders card's gear line is judged. **The
 PAIR is the claim, and the fixture is what makes it one**: ONE band, whose forage row and hunt row
-already name the two sources, with the head moving by dialling those SOURCES' own
-`buildQueuePosition` — so the two frames differ in the queue head's WEB and in nothing else.
+already name the two sources, with the head moving by re-ordering **the band's own `build_queue`** —
+so the two frames differ in the queue head's WEB and in nothing else.
+
+> **It used to move by dialling those SOURCES' own `buildQueuePosition`, and that stopped being the
+> head** (`docs/plan_standing_upkeep.md` §4.9 item 9a). Membership and order are the band's own
+> `buildQueue` now, so both frames change the BAND fixture rather than the sources — which also means
+> the pair is no longer byte-identical outside the queue, and the third case added with the reorder
+> arrows (a plant head under another band's animal head) is what pins that the derivation reads the
+> acting band.
 
 **They asserted a PICKER's face, its greyed entry and the reason on it until slice 6b retired that
 control** (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"). Re-aimed rather than
@@ -1084,25 +1091,92 @@ can stage alone.
 
 **The FLOW is asserted where it is DECIDED, not where it is drawn.** No shipped dock is wide enough
 for the settings pair on one line (342px of strip on the tall LEFT dock, 368 on the 1920 BOTTOM one,
-against 408), so a rendered one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
+against 444 — 408 of pickers plus the withdrawal's 32 and its gap, since the `✕` rides that line
+now), so a rendered one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
 `HudWorkVocab.queue_settings_one_line` on both sides of its threshold and that the reserved height
 follows the wrap, and `_assert_queue_settings_flow` REPORTS the width at every dock it renders. That
 is the payoff of the wrap being a predicate both the reservation and the builder read: it is checkable
 without a layout.
 
-**The DRAG is driven through the controller's own callables, and the handle through the node.** Godot
-exposes no public getter for what `set_drag_forwarding` installs (`_get_drag_data` is a virtual the
-Viewport calls), so what the harness reads off the marker is what the PLAYER can see — the move
-cursor, the tooltip, and a `MOUSE_FILTER_PASS` that still lets the click through to the row — and what
-it drives is `_queue_drag_data` / `_queue_can_drop` / `_queue_drop`. The frame is taken **while the
-drag is live**, and the block is asserted NOT to have rebuilt under a `rerender()`, which is the state
-no other frame reaches.
+**The DRAG is driven TWICE — through the controller's callables AND as a real mouse gesture — because
+the two pin different halves and neither implies the other.** `_render_queue_drag_state` calls
+`_queue_drag_data` / `_queue_can_drop` / `_queue_drop` directly: that is the ARITHMETIC — the payload,
+the edge the pointer sits on, the index the drop computes — it needs no window, and it is what proved
+the per-band ordering fix. `_assert_queue_reorder_by_real_gesture` pushes
+`InputEventMouseButton` / `InputEventMouseMotion` into `get_viewport()` and lets Godot's own GUI drag
+machinery run: that is the WIRING — whether `mouse_focus` resolves to the handle, whether the walk up
+the parent chain finds a `get_drag_data`, whether a drag ever begins at all.
+
+⛔ **EVERY FIXTURE ABOVE HAS A MODEL FOR EVERY QUEUE ENTRY, AND THAT IS WHAT MADE THEM ALL BLIND TO
+ONE CLASS OF DEFECT.** A band keeps its labor row on a source it has taken to zero take crew while
+that source is QUEUED, and the work board admits a row on its take crew — so the wire queue can carry
+an entry the block cannot draw, turn after turn. On a self-consistent fixture a position counted in
+the DRAWN list and one counted in the WIRE queue are the same number, so no claim could tell them
+apart. `_build_hidden_queue_band_fixture` is the one that can: three wire entries, the first held at
+zero crew. `_assert_queue_positions_are_the_wires` then makes the claims the others cannot — the
+ranks are `[1, 2]`, the top drawn row's `▲` is ENABLED and only the bottom's `▼` is disabled, neither
+row wears the `▸`, and all **three** senders of `build_order` (`▲`, `▼`, and the drag through
+`_assert_queue_drag_sends`) send the wire's index. Three separate arithmetics over one list: a fix to
+any one of them proves nothing about the other two. Reverting the rank to the drawn index fails eight
+of them. The frame is `band_panel_queue_hidden_entry`.
+
+⛔ **AND EVERY BUTTON THE QUEUE GREW WITH THE ARROWS IS DRIVEN THE SAME WAY.** `_drive_click` — a real
+`push_input` press and release on a window point — is what `_assert_queue_arrow_click` and
+`_render_queue_withdrawal_state` use, because `pressed.emit()` cannot see a control that is covered,
+zero-size, `IGNORE`-filtered or **disabled**, and the reorder pair shares 32px with 2px between while
+the `✕` now rides a strip whose height is reserved rather than measured. The disabled case is the one
+that matters most here: the arrows are deliberately dead at the ends of the queue, so a harness that
+emitted the signal would read a live command off a control the player cannot press. The frame is still taken
+**while the drag is live**, and the block is still asserted NOT to have rebuilt under a `rerender()`,
+which is the state no other frame reaches.
+
+> #### ⛔ "A HARNESS CANNOT DRIVE THE GESTURE" WAS FALSE, AND IT LET A DEAD GESTURE SHIP GREEN
+>
+> What used to stand here was *"Godot exposes no public getter for what `set_drag_forwarding` installs
+> (`_get_drag_data` is a virtual the Viewport calls), so what a harness CAN read is what the player can
+> see."* The getter is beside the point: a harness does not need to READ the callables, it needs to
+> make the ENGINE call them — and it can, through `Viewport.push_input`.
+>
+> The reorder was unusable in the real client for a whole release. Pressing the handle merely opened
+> the row's settings; no drag, no preview, no drop. Every direct-callable claim above passed the whole
+> time, because the row's `gui_input` toggle fired on the **press** and `_repage_work_zone` freed the
+> marker before the pointer had travelled far enough for Godot to ask for drag data. **A claim whose
+> subject is the ENGINE's routing has to push events.**
+
+Three things the real gesture needs, each measured rather than assumed:
+
+- **The motion must carry `relative` AND `button_mask`.** Godot accumulates `relative` as a VECTOR SUM
+  and compares its length to a threshold, so a single teleporting motion — or one with no button held —
+  is not a drag at all. `QUEUE_GESTURE_KICK` deliberately overshoots on the first motion, which is what
+  keeps the gesture's start independent of how far apart two `WORK_ROW_HEIGHT` rows happen to sit.
+- ⛔ **The PHYSICAL cursor decides the drop's LOCAL position.** Godot picks the drag-over CONTROL from
+  the pushed event, but localizes the point it hands `can_drop_data` / `drop_data` from
+  `Viewport.get_mouse_position()`, which on a root window reads `DisplayServer.mouse_get_position()`.
+  Pushed events alone therefore route to the right ROW and then ask *"which EDGE?"* about wherever the
+  human's mouse is sitting — measured here as a drop that landed BELOW a row the pointer was in the top
+  quarter of, i.e. an `above` flag that is pure noise. `Input.warp_mouse` is the only lever that moves
+  what Godot reads: `_drive_drag` warps with every motion and puts the pointer back where it found it.
+- **It skips under `_is_headless()`.** There is no viewport worth pushing into on the dummy driver.
+
+**The handle's affordances are still read off the node** — the move cursor, the tooltip, the
+`MOUSE_FILTER_PASS`. What changed is that the pair they exist for is now BEHAVIOURAL: a real click on
+those same pixels must still open the settings strip, and a completed drag must NOT (the Viewport
+consumes the button-up for the drop and never forwards it to `gui_input`). `_click_control` sends both
+halves of a click for the same reason — the queue row's toggle lives on the release now.
 
 **The withdrawal state re-pushes the same fixture on the same turn**, which is the command's own
-recapture: the server broadcasts after every command and that capture still carries the stale
-`buildQueuePosition`, so a row that only survives until the next snapshot fails here. It doubles as
+recapture: the server broadcasts after every command, so a row that only survives until the next
+snapshot fails here. It doubles as
 the re-seat this layer needs — an optimistic write runs `_after_pending_change`, which re-renders the
 SELECTED unit, and in this harness that is a stale reference band rather than the queue fixture.
+
+> ⛔ **THE REASON NARROWED, AND THE OLD ONE IS NO LONGER TRUE.** It was *"that capture still carries
+> the stale turn-written `buildQueuePosition`"*. `PopulationCohortState.buildQueue` is captured LIVE
+> off the allocation, so `unqueue` drops the entry on the command's own recapture and the block would
+> lose the row with no overlay at all. What the tombstone still covers is the **press→reply round
+> trip** — the frames between the `✕` and the server's answer, which no wire field can reach — and
+> the rollback for a send that never went. `band-city-panel.md` → "④ THE WITHDRAWAL…" carries the
+> same correction; the two files must not drift back apart.
 
 ## The build states, the rollback and the pending queue row (`docs/plan_standing_upkeep.md` §4.6a/b)
 

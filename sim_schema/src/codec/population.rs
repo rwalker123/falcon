@@ -300,6 +300,40 @@ fn create_populations<'a>(
             let kit_id = builder.create_string(&cohort.kit_id);
             // The band's maintenance fund mode — a string, so a third mode needs no schema change.
             let upkeep_fund_mode = Some(builder.create_string(&cohort.upkeep_fund_mode));
+            // **THE BAND'S OWN BUILD QUEUE, IN THE BAND'S OWN ORDER** (§4.9 item 9a) — the rank is
+            // the index, so the vector is written verbatim and nothing here sorts or filters it.
+            // **Absent rather than an empty vector** when the band has declared nothing, the
+            // `laborAssignments`/`takeSpecies` convention: an absent vector reads as empty, and
+            // empty *is* "this band is building nothing".
+            // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+            let build_queue = if cohort.build_queue.is_empty() {
+                None
+            } else {
+                let entries: Vec<_> = cohort
+                    .build_queue
+                    .iter()
+                    .map(|entry| {
+                        let kind = builder.create_string(&entry.kind);
+                        // A forage entry names its tile and no herd — absent rather than `""`, the
+                        // same reading `LaborAssignment::faunaId` takes.
+                        let fauna_id = if entry.fauna_id.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&entry.fauna_id))
+                        };
+                        fb::BuildQueueEntryState::create(
+                            builder,
+                            &fb::BuildQueueEntryStateArgs {
+                                kind: Some(kind),
+                                targetX: entry.target_x,
+                                targetY: entry.target_y,
+                                faunaId: fauna_id,
+                            },
+                        )
+                    })
+                    .collect();
+                Some(builder.create_vector(&entries))
+            };
             // **The TOE, one row per item.** Built before the cohort table like every other nested
             // vector: FlatBuffers forbids writing a child table while a parent is open.
             let kit_item_conditions = {
@@ -770,6 +804,9 @@ fn create_populations<'a>(
                     // always written, because "the sim did not state a mode" and "spread" must not
                     // be the same frame.
                     upkeepFundMode: upkeep_fund_mode,
+                    // THE BAND'S OWN BUILD QUEUE — appended last. The rank is the index, so this
+                    // vector's ORDER is the payload; a reader must not re-sort it.
+                    buildQueue: build_queue,
                 },
             )
         })

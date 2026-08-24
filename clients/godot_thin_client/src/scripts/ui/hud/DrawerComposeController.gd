@@ -1638,9 +1638,16 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # `builders` pool goes on the head entry until its meter fills, so a staffed pool says nothing
     # about an entry waiting third in line — and reading it as *in flight* would put the one-way
     # `Cultivating 0 / 50 work (0%)` Label straight back on every queued-and-waiting rung.
+    #
+    # ⛔ **AND IT IS THE ACTING BAND'S OWN HEAD, WHICH `SourceForecast.build_is_queue_head` WAS NOT**
+    # (§4.9 item 9a). That read `buildQueuePosition == 0`, published per SOURCE and riding the WINNING
+    # band, so a source standing third in THIS band's line answered *head* whenever another band
+    # working it had it first — and the sheet drew the one-way running meter the note above records as
+    # a reported defect, reached by the wrong door. `is_band_build_head` asks the band's own
+    # `buildQueue`, which is the only list that can answer for this band.
     if running_verb != SourceForecast.IMPROVEMENT_NONE \
             and not (build_crew > SourceForecast.BUILD_CREW_NONE \
-                and SourceForecast.build_is_queue_head(source, prefix)) \
+                and _band_labor.is_band_build_head(band, kind, source)) \
             and SourceForecast.improvement_progress(source, prefix, running_verb) \
                 <= SourceForecast.BUILD_METER_UNSTARTED:
         _mount_declared_control(source, prefix, source_kind, running_verb, floor, band, kit_gear,

@@ -1182,7 +1182,55 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .unwrap_or_default()
             .as_str()
             .to_string(),
+        // **THE BAND'S OWN BUILD QUEUE, IN THE BAND'S OWN ORDER** (`docs/plan_standing_upkeep.md`
+        // §4.9 item 9a) — the rank a client reads, where position is the vector INDEX.
+        //
+        // **It is the answer `ForagePatchState::build_queue_position` cannot give.** That one is
+        // source-addressed and rides the *winning* band, so it states another band's place in
+        // another band's line whenever two bands hold the source — which is ordinary. One int per
+        // source cannot carry two bands' ranks; this list is per band and carries each.
+        //
+        // **Captured LIVE off the allocation, never turn-written** — the same discipline as
+        // `build_kit_id` on the source rows. A `build_order` / `unqueue` / declaration mutates the
+        // allocation at command time and `recapture_snapshot_in_place` re-reads it, so the new order
+        // ships on that command's own frame and the client needs no optimistic ordering overlay.
+        //
+        // **Unfiltered and unsorted**: exactly what the band holds, in the band's order.
+        // `prune_build_queue` is what keeps it honest, and re-deriving that here would be a second
+        // producer of one verdict.
+        build_queue: allocation
+            .map(|alloc| {
+                alloc
+                    .build_queue
+                    .iter()
+                    .map(|entry| build_queue_entry_to_state(&entry.source))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
+}
+
+/// **Publish one build-queue entry's SOURCE** — the whole of what a row of
+/// [`PopulationCohortState::build_queue`] carries.
+///
+/// The declared job, the kit, the destination rung and the estimate are all published on the
+/// **source** row and agree across every band holding the source by construction, so an entry that
+/// repeated them would be a second copy of a fact that already has a home.
+fn build_queue_entry_to_state(source: &BuildSource) -> SchemaBuildQueueEntryState {
+    let mut state = SchemaBuildQueueEntryState {
+        // The same token the band's Forage/Hunt labor row publishes for this source
+        // (`LaborTarget::kind`), so a client joins the two lists on one spelling.
+        kind: source.kind().to_string(),
+        ..Default::default()
+    };
+    match source {
+        BuildSource::Patch(tile) => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+        }
+        BuildSource::Herd(fauna_id) => fauna_id.clone_into(&mut state.fauna_id),
+    }
+    state
 }
 
 pub(crate) fn generation_state(profile: &GenerationProfile) -> GenerationState {
@@ -1674,5 +1722,160 @@ mod tests {
             (9, 16, 5)
         );
         assert_eq!(state.size, 30);
+    }
+
+    /// An allocation holding `queue` as its build queue, with a take row on each source so the
+    /// fixture is a band that could really have declared them.
+    fn allocation_queueing(queue: &[BuildSource]) -> LaborAllocation {
+        LaborAllocation {
+            assignments: queue
+                .iter()
+                .map(|source| LaborAssignment {
+                    target: match source {
+                        BuildSource::Patch(tile) => LaborTarget::Forage {
+                            tile: *tile,
+                            floor: 0.5,
+                            species: None,
+                            take_species: crate::components::TakeSelection::EVERYTHING,
+                        },
+                        BuildSource::Herd(fauna_id) => LaborTarget::Hunt {
+                            fauna_id: fauna_id.clone(),
+                            floor: 0.5,
+                        },
+                    },
+                    workers: 1,
+                    kit: None,
+                })
+                .collect(),
+            build_queue: queue
+                .iter()
+                .map(|source| crate::components::BuildQueueEntry {
+                    source: source.clone(),
+                    declared: crate::components::BuildJob::Rung(
+                        crate::components::Improvement::Cultivate,
+                    ),
+                    kit: None,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// The published queue as `(kind, x, y, fauna_id)` tuples, in the order the wire carries them.
+    fn published_queue(state: &PopulationCohortState) -> Vec<(String, u32, u32, String)> {
+        state
+            .build_queue
+            .iter()
+            .map(|entry| {
+                (
+                    entry.kind.clone(),
+                    entry.target_x,
+                    entry.target_y,
+                    entry.fauna_id.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// **TWO BANDS SHARING ONE SOURCE PUBLISH TWO DIFFERENT ORDERS, and each publishes its own**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a).
+    ///
+    /// This is the defect pinned rather than merely fixed. `ForagePatchState::build_queue_position`
+    /// is **one int per source**, written by whichever band has the sooner estimate — so with band B
+    /// holding `Y` second and band C holding it first, that int can state `1` or `0` and *cannot
+    /// state both*. Whichever it states, the other band's queue block draws a list that is not its
+    /// own, and the drag gesture computes its insert index off that wrong list. The per-band vector
+    /// carries both answers because there are two vectors.
+    #[test]
+    fn two_bands_sharing_a_source_each_publish_their_own_queue_order() {
+        let cohort = cohort(TEST_LARDER);
+        // **The tiles are deliberately out of key order.** B declares X, Y, Z in that order, and
+        // their coordinates sort the other way — so a capture that published *any* order derived
+        // from the sources rather than from the band (a global rank, the client's old tie-break on
+        // the key string) lands on `[Y, Z, X]` and is caught. Equal-and-ascending coordinates would
+        // make this fixture pass under exactly the defect it exists to forbid.
+        let x = UVec2::new(3, 3);
+        let y = UVec2::new(1, 1);
+        let z = UVec2::new(2, 2);
+
+        let band_b = allocation_queueing(&[
+            BuildSource::Patch(x),
+            BuildSource::Patch(y),
+            BuildSource::Patch(z),
+        ]);
+        let band_c = allocation_queueing(&[BuildSource::Patch(y)]);
+
+        let published_b = captured(&cohort, Some(&band_b), None);
+        let published_c = captured(&cohort, Some(&band_c), None);
+
+        assert_eq!(
+            published_queue(&published_b),
+            vec![
+                ("forage".to_string(), x.x, x.y, String::new()),
+                ("forage".to_string(), y.x, y.y, String::new()),
+                ("forage".to_string(), z.x, z.y, String::new()),
+            ],
+            "band B publishes B's queue, in B's order"
+        );
+        assert_eq!(
+            published_queue(&published_c),
+            vec![("forage".to_string(), y.x, y.y, String::new())],
+            "band C publishes C's queue, in C's order"
+        );
+
+        // …and the thing the retired signal cannot express: the SAME source ranks differently in
+        // the two bands, so no single per-source int is a correct rank for both.
+        let rank_of = |state: &PopulationCohortState, tile: UVec2| {
+            state
+                .build_queue
+                .iter()
+                .position(|entry| (entry.target_x, entry.target_y) == (tile.x, tile.y))
+                .expect("the fixture band has this source queued")
+        };
+        assert_eq!(rank_of(&published_b, y), 1, "Y is second in B's line");
+        assert_eq!(rank_of(&published_c, y), 0, "…and first in C's");
+        assert_ne!(
+            rank_of(&published_b, y),
+            rank_of(&published_c, y),
+            "ONE per-source int cannot carry both ranks — that is the defect, and the per-band \
+             vector is what carries them"
+        );
+    }
+
+    /// **A HERD ENTRY NAMES ITS HERD, a patch entry names its tile**, on the same `kind` vocabulary
+    /// the band's own labor rows publish — so a client joins the queue to the rows on one spelling
+    /// rather than two that happen to match.
+    #[test]
+    fn a_queue_entry_names_its_source_in_the_labor_row_vocabulary() {
+        let cohort = cohort(TEST_LARDER);
+        let tile = UVec2::new(4, 7);
+        let allocation = allocation_queueing(&[
+            BuildSource::Herd("aurochs-3".to_string()),
+            BuildSource::Patch(tile),
+        ]);
+        let state = captured(&cohort, Some(&allocation), None);
+        assert_eq!(
+            published_queue(&state),
+            vec![
+                ("hunt".to_string(), 0, 0, "aurochs-3".to_string()),
+                ("forage".to_string(), tile.x, tile.y, String::new()),
+            ]
+        );
+        // The tokens are the labor rows' own, not a second copy that happens to spell the same.
+        assert_eq!(
+            state.build_queue[0].kind, state.labor_assignments[0].kind,
+            "the herd entry and the Hunt row say the same word"
+        );
+        assert_eq!(
+            state.build_queue[1].kind, state.labor_assignments[1].kind,
+            "the patch entry and the Forage row say the same word"
+        );
+    }
+
+    /// A band with no allocation at all publishes an empty queue, not a phantom entry.
+    #[test]
+    fn a_band_with_no_allocation_publishes_an_empty_queue() {
+        let cohort = cohort(TEST_LARDER);
+        assert!(captured(&cohort, None, None).build_queue.is_empty());
     }
 }

@@ -70,8 +70,8 @@ signal build_kit_requested(payload: Dictionary)
 #
 # **THE QUEUE IS THE PRIORITY PROPERTY'S STORAGE** (§4.9), so the payload names a POSITION in that one
 # list rather than a rank of the client's own: `{ faction, band_id, x, y, herd_id, position }`,
-# 0-based. `pending_entity` and `order` ride it for the optimistic overlay's write and its rollback,
-# and no `format_*` builder reads either.
+# 0-based, and that is the WHOLE payload. It carries no `pending_entity`: the queue is captured live,
+# so there is no optimistic ordering to roll back when a send does not go (§4.9 item 9a).
 signal build_order_requested(payload: Dictionary)
 # A build was DECLARED from a work row's `⌃` (`docs/plan_standing_upkeep.md` §4.7a ①) — relayed to
 # HudLayer.improvement_requested and formatted by `Main.format_improvement`, which is unchanged.
@@ -2069,34 +2069,72 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     col.add_child(stepper)
     return card
 
-## **THE BAND'S BUILD QUEUE, IN ORDER** — the work-source models that carry a queue position, sorted
-## by it (`docs/plan_standing_upkeep.md` §4.6b).
+## **THE BAND'S BUILD QUEUE, IN THE BAND'S OWN ORDER** — its `PopulationCohortState.buildQueue`
+## entries joined to the work-source models, in wire order (`docs/plan_standing_upkeep.md` §4.9
+## item 9a).
+##
+## ⛔ **BOTH THE MEMBERSHIP AND THE ORDER COME FROM THE BAND'S OWN QUEUE, NEVER FROM
+## `build_queue_position`.** That field is published per SOURCE and rides the winning band — the one
+## with the soonest estimate among the bands working it — so on a shared source it states another
+## band's place in another band's line. Ordering on it drew band B's `[X, Y, Z]` as `[Y, X, Z]` when
+## band C also held Y, and `_queue_drop` then computed its insert index from that wrong list, so a
+## drag landed the entry on the opposite side of its target. `build_queue_position` survives on the
+## model as a READOUT (the row's meta, the `✕`'s meta); the RANK is the index into this list.
 ##
 ## **IT IS DERIVED FROM THE FULL MODEL SET AND NEVER FROM `filtered`.** The chips filter the BOARD;
 ## the queue is the band's own list, so a chip press must leave it alone.
 ##
-## **IT IS COMPLETE AND IT IS PER BAND, both for free.** A queue entry requires a labor assignment on
-## its source (`LaborAllocation::prune_build_queue` → `holds_build_source`) and these models admit any
-## source with a take crew, so no entry of this band's queue can be missing one; and a source queued
-## by ANOTHER band is not in this band's `effective_worker_map`, so it never appears here. That is why
-## the block needs no band id on the wire.
+## ⛔ **AN ENTRY WITH NO MODEL IS SKIPPED, AND THAT IS A REACHABLE, PERSISTENT STATE — which is
+## exactly why the RANK IS THE WIRE QUEUE'S INDEX AND NEVER THIS LIST'S.** An earlier note here
+## claimed the skip could not normally happen, on the strength of *"an entry requires a row"*. The
+## rule is real and the conclusion drawn from it was false: the rule says a ROW, and a row is not a
+## CREW.
 ##
-## The `key` tiebreak makes it a TOTAL ORDER — `sort_custom` is not stable in Godot, and while two
-## live entries cannot share a position, an unexpected wire state must not reorder the list on an
-## unrelated re-render (the work board's own rule).
-## **…AND THE DECLARATIONS THE WIRE HAS NOT PLACED YET RIDE ITS TAIL.** `buildQueuePosition` is a wire
-## field, so an entry declared this turn has none until the sim resolves — and this block, derived from
-## that field alone, stayed empty until the next tick. The optimistic overlay already carries the
-## declaration, so a source that is `pending` with a live rung in flight and NO wire position is a
-## pending entry, and `HudWorkVocab`'s "A DECLARATION THE WIRE HAS NOT PLACED YET" states the rest of
-## the rule (tail only, no date, no head marker, a full row of height, reconciles away for free).
+## The path, end to end — a queued source whose take crew the player has taken to zero:
+##
+## | step | seam |
+## |---|---|
+## | unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` (`core_sim/src/components.rs:3526`) |
+## | …and the command declines to drop that row because the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` (`core_sim/src/bin/server.rs:3134`) |
+## | the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source` (`core_sim/src/components.rs:3721`), so `prune_build_queue` keeps the entry |
+## | …and the turn pass spares it for the same reason, so the state SURVIVES EVERY TURN | `queued.is_none()` guards the lapse (`core_sim/src/systems/labor.rs:1866`) |
+## | the client then drops that row: the board admits on the take crew | `_work_source_models` — `if workers <= 0 and not pending: continue` |
+##
+## So the wire queue `[A, B, C]` legitimately draws as `[B, C]`, and a position counted off the DRAWN
+## list is short by every entry hidden above it — `▼` on `B` would send `1`, which the sim resolves
+## back to `[A, B, C]`: a button that reads as broken because it silently did nothing.
+##
+## **THE RANK IS THEREFORE STAMPED HERE, from the entry's place in `build_queue_keys`**
+## (`BUILD_QUEUE_ROW_RANK_KEY`), and every `build_order` the block sends — both arrows and the drag —
+## is an index into that list. The end-stops key on it too, so with `[A(hidden), B, C]` drawn as
+## `[B, C]`, `B`'s `▲` is ENABLED (it can climb above `A`) and only `C`'s `▼` is disabled.
+##
+## **Skipping rather than inventing a placeholder is still the right fallback**: a placeholder has no
+## face, no date, no legs and no price to state. Admitting the zero-crew row instead would put it back
+## on the WORK BOARD as well, which §2.5 deliberately reverted — a separate design question, and not
+## this list's to decide.
+##
+## **…AND THE DECLARATIONS THE WIRE HAS NOT PLACED YET RIDE ITS TAIL.** The queue is captured live,
+## so a declaration lands in it on its own command's recapture — but that recapture is a network hop
+## away and the block is drawn on the frame the `⌃` is pressed. The optimistic overlay carries the
+## declaration across that window, so a source that is `pending` with a live rung in flight and NOT
+## in the band's wire queue is a pending entry, and `HudWorkVocab`'s "A DECLARATION THE WIRE HAS NOT
+## PLACED YET" states the rest of the rule (tail only, no date, no head marker, a full row of height,
+## reconciles away for free).
+##
+## ⛔ **THE TAIL EXCLUDES ANYTHING THE WIRE QUEUE ALREADY CARRIES, AND THAT TEST IS NEW.** The overlay
+## outlives the recapture that confirms it (it is keyed on the TURN), and the live capture puts the
+## same key in both halves the moment the reply lands — so without this the just-declared entry drew
+## TWICE, once in the list and once on the tail. The old turn-written field could not produce that
+## state, which is why the test was not needed before.
 ##
 ## **THE TAIL IS NOT A GUESS AT A POSITION, it is the refusal to make one.** The sim APPENDS, so the
-## end of the list is the only honest place for an entry with no position; interleaving would state a
-## fact the sim has not made. Within the tail they hold DECLARATION ORDER, read off the pending
-## overlay's own insertion order (`pending_assigns_for` is written once per declaration and a Godot
-## Dictionary keeps its insertion order), with the same `key` tiebreak the confirmed half uses so the
-## whole list stays a TOTAL order under Godot's unstable sort.
+## end of the list is the only honest place for an entry the wire has not placed; interleaving would
+## state a fact the sim has not made. Within the tail they hold DECLARATION ORDER, read off the
+## pending overlay's own insertion order (`pending_assigns_for` is written once per declaration and a
+## Godot Dictionary keeps its insertion order), with a `key` tiebreak so the tail stays a TOTAL order
+## under Godot's unstable sort. The CONFIRMED half needs neither a tiebreak nor a sort now — a vector
+## index is already a total order.
 ##
 ## **THE RUNG IN FLIGHT IS PART OF THE TEST, not just the declaration.** `record_pending_assign` fires
 ## on EVERY worker step and carries the improvement forward, so `pending` alone would keep a row here
@@ -2104,32 +2142,53 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## answer, which goes empty the moment the meter does.
 func _build_queue_models(band: Dictionary, models: Array) -> Array:
     # **A WITHDRAWAL TAKES ITS ROW OUT ON THE FRAME THE `✕` IS PRESSED**
-    # (`docs/plan_standing_upkeep.md` §4.7b ④). `buildQueuePosition` is turn-written and the server
-    # re-captures after every command, so the entry is still at its old position on the very snapshot
-    # the `unqueue` triggers; without this filter the row leaves and comes straight back. The set is
-    # keyed on the TURN like every other optimistic write, so it reconciles away with them.
-    var withdrawn := _band_labor.pending_unqueues_for(int(band.get("entity", -1)))
-    var queued: Array = models.filter(func(m):
-        return int(m.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) \
-            >= SourceForecast.BUILD_QUEUE_HEAD \
-            and not withdrawn.has(String(m.get("key", ""))))
-    # **AND A DRAG ORDERS THEM UNTIL THE TURN RESOLVES** (§4.7b ③), for the identical reason: the
-    # position the drag moved is turn-written too, so the wire's order is stale until the tick. The
-    # overlay states the WHOLE ordering rather than a delta; an entry it does not name (one queued
-    # since the drag) sorts behind everything it does, by its own wire position.
-    var order := _band_labor.pending_order_for(int(band.get("entity", -1)))
-    queued.sort_custom(func(a, b):
-        var pa := _queue_sort_rank(a as Dictionary, order)
-        var pb := _queue_sort_rank(b as Dictionary, order)
-        if pa != pb:
-            return pa < pb
-        return String((a as Dictionary).get("key", "")) < String((b as Dictionary).get("key", "")))
-    var declared: Array = _band_labor.pending_assigns_for(int(band.get("entity", -1))).keys()
-    var awaiting: Array = models.filter(func(m):
-        return _build_queue_row_is_pending(m as Dictionary) \
-            and bool(m.get("pending", false)) \
-            and String(m.get("building_glyph", "")) != "" \
-            and not withdrawn.has(String(m.get("key", ""))))
+    # (`docs/plan_standing_upkeep.md` §4.7b ④), and what it covers now is the ROUND TRIP rather than
+    # a stale field — see `HudBandLaborState`'s own note, which records that the reason this filter
+    # was written for died with the live capture. Keyed on the TURN like every other optimistic
+    # write, so it reconciles away with them.
+    var entity := int(band.get("entity", -1))
+    var withdrawn := _band_labor.pending_unqueues_for(entity)
+    # ONE derivation of the band's order, shared with `_queue_drop` and with the block's `▼`
+    # end-stop, so the index a drag sends, the index an arrow sends and the row that may not fall
+    # any further are all the same list.
+    var rank_keys := _queue_rank_keys(band)
+    var in_wire_queue: Dictionary = {}
+    for key_variant in _band_labor.build_queue_keys(band):
+        in_wire_queue[String(key_variant)] = true
+    var by_key: Dictionary = {}
+    for model_variant in models:
+        by_key[String((model_variant as Dictionary).get("key", ""))] = model_variant
+    var queued: Array = []
+    for rank in range(rank_keys.size()):
+        var key := String(rank_keys[rank])
+        # ⛔ **AN ENTRY THAT DOES NOT DRAW STILL SPENDS ITS RANK** — that is the whole point of
+        # walking the wire's list with its own index rather than appending and counting. Two kinds
+        # skip, and the WIRE still carries both: one whose source has no work-source model (the note
+        # above has the path, and that state persists across turns), and one the player has just
+        # withdrawn, whose `✕` is covered for the round trip by an overlay while `buildQueue` still
+        # lists it.
+        if withdrawn.has(key) or not by_key.has(key):
+            continue
+        var entry: Dictionary = by_key[key]
+        entry[BUILD_QUEUE_ROW_PENDING_KEY] = false
+        entry[BUILD_QUEUE_ROW_RANK_KEY] = rank
+        queued.append(entry)
+    var declared: Array = _band_labor.pending_assigns_for(entity).keys()
+    var awaiting: Array = []
+    for model_variant in models:
+        var model: Dictionary = model_variant
+        var key := String(model.get("key", ""))
+        if in_wire_queue.has(key) or withdrawn.has(key):
+            continue
+        if not bool(model.get("pending", false)) \
+                or String(model.get("building_glyph", "")) == "":
+            continue
+        model[BUILD_QUEUE_ROW_PENDING_KEY] = true
+        # **A PENDING ROW HAS NO RANK, because the wire has not placed it** — the same
+        # `NOT_IN_ANY_BUILD_QUEUE` its row meta and its `✕` have always worn, stamped once here so
+        # the arrows, the drag gate and the metas cannot disagree about it.
+        model[BUILD_QUEUE_ROW_RANK_KEY] = SourceForecast.NOT_IN_ANY_BUILD_QUEUE
+        awaiting.append(model)
     awaiting.sort_custom(func(a, b):
         var ia := declared.find(String((a as Dictionary).get("key", "")))
         var ib := declared.find(String((b as Dictionary).get("key", "")))
@@ -2139,26 +2198,75 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
     queued.append_array(awaiting)
     return queued
 
-## **WHERE ONE CONFIRMED ENTRY SORTS** — its place in the drag overlay's ordering when that overlay
-## names it, else its wire position pushed behind every entry the overlay does name.
-##
-## **THE PUSH IS WHAT KEEPS IT A TOTAL ORDER.** An entry queued since the drag has a wire position
-## that would collide with an overlay index; offsetting by the overlay's own length makes the two
-## ranges disjoint, so the tiebreak below never has to arbitrate between two different meanings of a
-## number.
-func _queue_sort_rank(model: Dictionary, order: Array) -> int:
-    var key := String(model.get("key", ""))
-    var index := order.find(key)
-    if index >= 0:
-        return index
-    return order.size() + int(model.get("build_queue_position", 0))
+## The model slot `_build_queue_models` stamps its verdict into. A MODEL key rather than a node meta
+## because the answer is a property of the ENTRY, and three of its four readers hold the model before
+## any node exists.
+const BUILD_QUEUE_ROW_PENDING_KEY := "queue_row_pending"
 
-## **IS THIS ENTRY ONE THE WIRE HAS NOT PLACED?** The one derivation of it, so the block's filter, the
-## head marker's suppression and the row's date can never disagree about which rows are pending. A
-## real position is 0-based, so "below the head" is exactly "no position".
+## **IS THIS ROW ONE THE BAND'S WIRE QUEUE DOES NOT CARRY?** The one derivation of it, so the block's
+## filter, the head marker's suppression, the drag gate and the row's date can never disagree about
+## which rows are pending.
+##
+## ⛔ **IT IS BAND-DEPENDENT NOW, WHICH IS WHY IT READS A STAMP RATHER THAN THE MODEL'S OWN FIELDS.**
+## The question used to be *"did the wire give this source a position?"* — answerable from the model
+## alone, and wrong for the same reason ordering on that position was wrong, since the position
+## belongs to whichever band has the soonest estimate. It is now *"is this key in THIS band's
+## queue?"*, which no model can answer by itself; `_build_queue_models` resolves it once against the
+## band and writes the answer here, so this stays a SINGLE derivation instead of becoming a band
+## argument threaded through five call sites.
+##
+## ⛔ **`PENDING` NOW MEANS THE PRESS-TO-REPLY WINDOW AND NOTHING WIDER, AND THAT IS DELIBERATE — do
+## not "restore" the old meaning.** It used to stretch until the TURN resolved, because
+## `buildQueuePosition` was the test and that field is turn-written. The queue is captured live, so an
+## entry the sim has accepted is in `buildQueue` on the command's own recapture: from that frame it is
+## QUEUED AT A REAL INDEX and draws like one — at that index, with a drag handle, and wearing the `▸`
+## if it is index 0. It is not pending, because it is not waiting on us; it is in the line.
+##
+## **ITS DATE GOES BLANK FOR THE REST OF THE TURN, AND THAT IS THE TRUTHFUL FACE.**
+## `buildTurnsRemaining` IS turn-written, so the sim has not yet answered *when* about that entry —
+## and `BUILD_TURNS_NO_ESTIMATE`'s own rule is that a missing line is honest where a zero is a
+## promise. A row that quoted a number here would be inventing the one thing nobody has computed.
+##
+## Defaults to `true` for a model nobody stamped: unstamped means *no queue this controller built
+## placed it*, and calling that pending withholds a drag handle rather than handing `_queue_drop` a
+## row to compute an index from.
 static func _build_queue_row_is_pending(model: Dictionary) -> bool:
-    return int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) \
-        < SourceForecast.BUILD_QUEUE_HEAD
+    return bool(model.get(BUILD_QUEUE_ROW_PENDING_KEY, true))
+
+## The model slot carrying **the entry's place in the BAND'S OWN WIRE QUEUE** —
+## `NOT_IN_ANY_BUILD_QUEUE` for a pending tail row the wire has not placed. Stamped once by
+## `_build_queue_models`, beside the pending verdict and for the same reason: it is a property of the
+## ENTRY, and the readers that need it hold the model before any node exists.
+const BUILD_QUEUE_ROW_RANK_KEY := "queue_row_wire_rank"
+
+## ⛔ **THE ONE NUMBER EVERY `build_order` THIS BLOCK SENDS IS COUNTED IN** — the row's index into
+## `_queue_rank_keys`, never into the list the block drew.
+##
+## The two lists are not the same length: a queue entry whose source has no work-source model is
+## skipped by `_build_queue_models` (its note says by what path, and that the state persists across
+## turns), so the drawn list can be shorter than the wire's with the gaps anywhere in it. Counting a
+## position off the drawn list is then wrong by the number of entries hidden above it, and the sim
+## resolves the short index against its own full queue — which reads to the player as an arrow that
+## does nothing, or as a row that jumped above something they cannot see.
+##
+## Defaults to `NOT_IN_ANY_BUILD_QUEUE` for a model nobody stamped, matching
+## `_build_queue_row_is_pending`'s own default: an unranked row offers no arrows and no drag rather
+## than naming a position it cannot vouch for.
+static func _build_queue_row_rank(model: Dictionary) -> int:
+    return int(model.get(BUILD_QUEUE_ROW_RANK_KEY, SourceForecast.NOT_IN_ANY_BUILD_QUEUE))
+
+## **THE BAND'S OWN QUEUE, AS THE SIM HOLDS IT** — the index space every `build_order` position is
+## counted in, and the one derivation of it. Three readers share it: `_build_queue_models` stamps
+## each drawn row's rank from it, the block reads its LENGTH for the `▼` end-stop, and `_queue_drop`
+## does its removal-and-insert arithmetic in it.
+##
+## **IT IS THE WIRE'S LIST WHOLE — hidden entries included.** That is the entire correction: the
+## block's membership is the drawn list's, but its ARITHMETIC has to be the sim's, because the sim is
+## what resolves the number. Deriving the length here rather than counting drawn rows is what makes
+## *"the last entry cannot fall further"* a fact about the queue instead of a fact about the page —
+## which it already had to be, the page being truncated at `BUILD_QUEUE_ROWS_MAX`.
+func _queue_rank_keys(band: Dictionary) -> Array:
+    return _band_labor.build_queue_keys(band)
 
 ## The BUILD QUEUE block — its head, up to `BUILD_QUEUE_ROWS_MAX` entry rows, and the overflow row
 ## that stands for the rest.
@@ -2178,6 +2286,15 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     # An entry scrolled past the row cap cannot be open either: it has no row to hang beneath.
     var settings := _queue_settings_state(band, queued, drawn)
     var open_index := int(settings["index"])
+    # ⛔ **THE `▼` END-STOP IS THE WIRE QUEUE'S LENGTH, AND IT IS READ OFF THE WIRE.** It used to count
+    # the block's own non-pending rows, which is the same number only when every entry drew — and an
+    # entry with no work-source model does not (`_build_queue_models`' note has the path). The last
+    # row a `build_order` can name is the wire's last entry, drawn or not, so the count comes from
+    # `_queue_rank_keys` and is handed to every row rather than re-derived per row.
+    #
+    # Pending entries never enter it: they ride the tail with no rank at all
+    # (`NOT_IN_ANY_BUILD_QUEUE`), so they take neither end-stop.
+    var confirmed := _queue_rank_keys(band).size()
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
         queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"]),
         bool(settings["kit"]), bool(settings["one_line"])))
@@ -2194,9 +2311,13 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         # **A PENDING ROW NEVER WEARS THE HEAD MARKER, not even when it is the only row.** The head is
         # the entry the builders pool is actually standing on, which the sim decides; an entry the sim
         # has not placed is not that yet, and a `▸` on it would promise funding nobody has committed.
+        # **AND THE HEAD MARKER IS THE WIRE'S HEAD, not the page's first row** — for the same reason
+        # the ranks are: the `▸` names the entry the builders pool is standing on, which is wire
+        # index 0, and an entry hidden above the first drawn row is still the one being funded.
+        # `NOT_IN_ANY_BUILD_QUEUE` for a pending row, so the pending case falls out of the test.
         var row := _build_build_queue_row(band, entry,
-            index == SourceForecast.BUILD_QUEUE_HEAD and not _build_queue_row_is_pending(entry),
-            builders)
+            _build_queue_row_rank(entry) == SourceForecast.BUILD_QUEUE_HEAD,
+            builders, confirmed)
         _queue_row_nodes[String(entry.get("key", ""))] = row
         block.add_child(row)
         # …and its SETTINGS strip directly beneath the row it belongs to, which is what makes the
@@ -2336,7 +2457,53 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
         var kit_picker := _build_queue_kit_picker(band, model)
         if kit_picker != null:
             line.add_child(kit_picker)
+    # **THE WITHDRAWAL RIDES THE STRIP'S LAST LINE, RIGHT-ALIGNED** (§4.7b ③). The `✕` left the row
+    # when the reorder arrows took its 32px column, and the strip is where it went: every queued entry
+    # expands, so there is always a line to hang it on, and withdrawing becomes two clicks where
+    # reordering is one — the right way round, a reorder being the commoner act.
+    #
+    # ⛔ **IT ADDS NO LINE, and the predicate is what pays for that.** The strip already stacks to two
+    # lines on every shipped dock and this zone reads its full height, so a button that opened a THIRD
+    # line would come off the bottom of the board in silence. `queue_settings_one_line_width` counts
+    # the button and its separation, so the wrap the reservation reads is the wrap this line draws.
+    if line == null:
+        # A strip with no pickers at all — legs only, which nothing the sim publishes reaches, every
+        # queued entry having a kit. `build_queue_settings_height` takes the same branch, so the line
+        # bought here is a line that was reserved.
+        line = _build_queue_settings_line(column, "")
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(spacer)
+    line.add_child(_build_queue_unqueue_button(band, model))
     return strip
+
+## **THE WITHDRAWAL — same button, same command, same optimistic write; only its HOST moved** (§4.7b
+## ③). It keeps `BUILD_QUEUE_UNQUEUE_META` and the entry's own rank on it, so every reader that found
+## it by name finds it in the strip.
+##
+## **NO CONFIRM.** `unqueue` withdraws a DECLARATION: the banked meter survives it, the row keeps its
+## crew and its kit, and re-declaring is one press of that row's own `⌃`. This panel's confirm path is
+## for an act that loses something (`_confirm_destructive`), which is the parties zone's
+## cancel-versus-recall rule read one surface over.
+func _build_queue_unqueue_button(band: Dictionary, model: Dictionary) -> Button:
+    var withdraw := Button.new()
+    # The entry's own rank — a FINDER value, never asserted on, and read off the SAME model stamp its
+    # row wears, so the two cannot state one entry's place two ways.
+    withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META, _build_queue_row_rank(model))
+    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH
+    withdraw.focus_mode = Control.FOCUS_NONE
+    withdraw.tooltip_text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_TOOLTIP
+    withdraw.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH, 0.0)
+    HudStyle.apply_button(withdraw, "ghost")
+    # The parties zone's recall treatment: a steady, full-opacity DANGER red, because the steady red
+    # already reads as destructive and there is nothing further to brighten to on hover. It squeezes
+    # its chrome for the same reason every control in this strip does — the default padding busts the
+    # control line's declared height.
+    HudWidgets.compact(withdraw, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    withdraw.add_theme_color_override("font_color", HudStyle.DANGER)
+    withdraw.pressed.connect(func() -> void: _emit_unqueue(band, model))
+    return withdraw
 
 ## One control line inside the settings strip: a fixed-height row led by its declared-width key. The
 ## height is `BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT`, the strip's control half — DECLARED here rather
@@ -2443,11 +2610,18 @@ func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
 ##
 ## **THE MARKER SLOT IS RESERVED ON EVERY ROW.** A conditionally-omitted Label would shift every row
 ## behind the head sideways, which reads as a list that has lost its alignment rather than as a head.
+## **THE ROW'S RANK IS ITS PLACE IN THIS BAND'S OWN WIRE QUEUE**, read off the model stamp
+## (`_build_queue_row_rank`) — `NOT_IN_ANY_BUILD_QUEUE` for a pending tail row, whose place no queue
+## has named. It replaced `build_queue_position` on this meta because that field is the WINNING
+## band's answer (§4.9 item 9a) and every reader of the meta was taking it for this band's; it is
+## **not** the block's index into the list it drew, because the drawn list can be short of the wire's.
+## **`confirmed` IS HOW MANY ENTRIES THE BAND'S WIRE QUEUE CARRIES**, which is what the `▼` end-stop
+## reads: an entry at the bottom of a TRUNCATED page still has a place below it to fall to, so the
+## count is the queue's and never the page's.
 func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
-        builders: int) -> PanelContainer:
+        builders: int, confirmed: int) -> PanelContainer:
     var row := PanelContainer.new()
-    row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_META,
-        int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)))
+    row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_META, _build_queue_row_rank(model))
     row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # **CLICKING AN ENTRY OPENS ITS SETTINGS, and only an entry that HAS any is clickable**
@@ -2467,9 +2641,25 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if expandable:
         row.mouse_filter = Control.MOUSE_FILTER_STOP
         row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+        # ⛔ **ON THE RELEASE, NOT THE PRESS — BECAUSE THE PRESS IS WHERE A DRAG BEGINS.**
+        # `_toggle_queue_settings` ends in `_repage_work_zone`, which frees every node in the zone.
+        # Fired on the PRESS, that rebuild ran before the pointer had travelled far enough for Godot
+        # to ask the marker for drag data: the Viewport's `mouse_focus` was the marker Label, the
+        # rebuild took it out of the tree, `_gui_remove_control` nulled the focus, and no drag was
+        # ever attempted. The reorder gesture therefore degraded to *a click that opens the settings
+        # strip* — which is exactly how it played — and it shipped that way because the harness drove
+        # the drag callables directly and never pressed a real mouse button. The reproduction is
+        # `band_panel_preview._assert_queue_reorder_by_real_gesture`, which pushes the events.
+        #
+        # **The release is also the event a completed drag CONSUMES**: the Viewport performs the drop
+        # on the button-up and never forwards it to `gui_input`, so a reorder cannot also open the row
+        # it moved. **And it must land INSIDE the row** — `mouse_focus` latches on the press, so a
+        # press here released three rows away would otherwise still toggle this one, which is the rule
+        # `BaseButton` keeps for the same reason.
         row.gui_input.connect(func(event: InputEvent) -> void:
             if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-                    and event.pressed:
+                    and not event.pressed \
+                    and Rect2(Vector2.ZERO, row.size).has_point(event.position):
                 _toggle_queue_settings(String(model.get("key", ""))))
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
@@ -2593,31 +2783,86 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if expandable:
         tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_ROW_OPEN_HINT)
     row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
-    var withdraw := Button.new()
-    withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
-        int(model.get("build_queue_position", SourceForecast.NOT_IN_ANY_BUILD_QUEUE)))
-    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH
-    withdraw.focus_mode = Control.FOCUS_NONE
-    withdraw.tooltip_text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_TOOLTIP
-    withdraw.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH, 0.0)
-    HudStyle.apply_button(withdraw, "ghost")
-    # The parties zone's recall treatment: a steady, full-opacity DANGER red, because the steady red
-    # already reads as destructive and there is nothing further to brighten to on hover. It squeezes
-    # its chrome for the same reason every board control does — the default padding busts the row.
-    HudWidgets.compact(withdraw, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    withdraw.add_theme_color_override("font_color", HudStyle.DANGER)
-    # **NO CONFIRM.** `unqueue` withdraws a DECLARATION: the banked meter survives it, the row keeps
-    # its crew and its kit, and re-declaring is one press of that row's own `⌃`. This panel's confirm
-    # path is for an act that loses something (`_confirm_destructive`), which is the parties zone's
-    # cancel-versus-recall rule read one surface over.
-    withdraw.pressed.connect(func() -> void: _emit_unqueue(band, model))
-    line.add_child(withdraw)
+    line.add_child(_build_queue_reorder_column(band, model, confirmed))
     return row
+
+## **THE REORDER PAIR, IN THE COLUMN THE `✕` USED TO HAVE** (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## **THE DRAG WAS INVISIBLE, WHICH IS WHY THIS EXISTS.** The handle only reveals itself under a press,
+## and a control a player cannot see is a control they do not have. The drag survives beside these —
+## it works now and it costs the row nothing — but the ARROWS are the primary reorder.
+##
+## **AND THE PLACEMENT COST ZERO PIXELS, which is the whole reason it is this one.** The row's ~356px
+## is spoken for and the job face is already ellipsised at its widest shipped value, so any new column
+## comes out of the one column with an unclipped-name guarantee. The `✕` was the only slot with
+## somewhere else to go: every queued entry expands into a settings strip, so the withdrawal moves
+## THERE and the arrows inherit its 32px. Two clicks to withdraw, one to reorder — which is the right
+## way round, a reorder being the commoner act.
+##
+## **DISABLED, NEVER ABSENT.** The head cannot climb and the last confirmed entry cannot fall, and a
+## control that vanished at either end would shift the column under the row beside it.
+##
+## **A PENDING ROW GETS NEITHER**, the drag handle's own rule: the wire has not placed it, so there is
+## no rank for `build_order` to name.
+##
+## ⛔ **BOTH END-STOPS ARE THE WIRE QUEUE'S, NOT THE DRAWN LIST'S.** `confirmed` is how many entries
+## the BAND's wire queue carries and the rank is this entry's index in it, so with `[A, B, C]` drawn
+## as `[B, C]` — `A` having no work-source model, which `_build_queue_models`' note shows is a
+## reachable and persistent state — `B`'s `▲` is ENABLED, because there really is somewhere above it
+## to go. An entry at the bottom of a truncated page likewise still has somewhere to fall to.
+func _build_queue_reorder_column(band: Dictionary, model: Dictionary,
+        confirmed: int) -> Control:
+    var column := HBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.BUILD_QUEUE_REORDER_SEPARATION)
+    column.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_REORDER_WIDTH, 0.0)
+    var rank := _build_queue_row_rank(model)
+    if _build_queue_row_is_pending(model):
+        # The slot is still RESERVED, so the dates above a pending tail row stay in one column.
+        column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        return column
+    column.add_child(_build_queue_reorder_button(band, model,
+        HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_PROMOTE_TOOLTIP,
+        HudWorkVocab.BUILD_QUEUE_PROMOTE_META,
+        rank - HudWorkVocab.BUILD_QUEUE_REORDER_STEP,
+        rank <= SourceForecast.BUILD_QUEUE_HEAD))
+    column.add_child(_build_queue_reorder_button(band, model,
+        HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_DEMOTE_TOOLTIP,
+        HudWorkVocab.BUILD_QUEUE_DEMOTE_META,
+        rank + HudWorkVocab.BUILD_QUEUE_REORDER_STEP,
+        rank >= confirmed - HudWorkVocab.BUILD_QUEUE_REORDER_STEP))
+    return column
+
+## One arrow. **IT SENDS THE SAME `build_order` THE DRAG DOES**, at the position it is valued with —
+## same command, same payload, nothing new on the wire.
+##
+## ⛔ **AND NO OPTIMISTIC ORDERING, for `_emit_build_order`'s own reason**: `buildQueue` is captured
+## live off the allocation the command mutates, so the new order arrives on THIS command's recapture.
+## An overlay here would be a second ordering beside the wire's — the drift §4.9 forbids.
+##
+## **THE SIDES ARE TRIMMED AS WELL AS THE TOP** (`HudWidgets.compact`'s `padding_h`): the ghost
+## button's 11px side margins are what made a 9px `✕` need 32, and a pair sharing that 32 has room for
+## neither pair of them.
+func _build_queue_reorder_button(band: Dictionary, model: Dictionary, glyph: String,
+        tooltip: String, meta: String, position: int, disabled: bool) -> Button:
+    var button := Button.new()
+    button.set_meta(meta, position)
+    button.text = glyph
+    button.focus_mode = Control.FOCUS_NONE
+    button.tooltip_text = tooltip
+    button.custom_minimum_size = Vector2(
+        HudWorkVocab.BUILD_QUEUE_REORDER_BUTTON_WIDTH, 0.0)
+    button.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(button, "ghost")
+    HudWidgets.compact(button, HudWorkVocab.BUILD_QUEUE_REORDER_FONT_SIZE,
+        HudWorkVocab.WORK_PAGER_PADDING_V, HudWorkVocab.BUILD_QUEUE_REORDER_PADDING_H)
+    button.disabled = disabled
+    button.pressed.connect(func() -> void: _emit_build_order(band, model, position))
+    return button
 
 ## **THE MARKER COLUMN, WHICH IS ALSO THE GRAB HANDLE** (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
 ## **NO NEW COLUMN, AND THE ARITHMETIC IS WHY.** The row's ~356px is spoken for — marker 10, face,
-## date 168, `✕` 32 and four separations — and the face is already ellipsised at its widest shipped
+## date 168, the reorder pair's 32 and four separations — and the face is already ellipsised at its widest shipped
 ## value, so a handle of its own would come straight out of the one column with an unclipped-name
 ## guarantee on it. This slot is reserved on every row already (that is what lines the faces up) and
 ## holds NOTHING on a non-head row, which makes it the only spare pixels in the row.
@@ -2701,11 +2946,16 @@ func _queue_can_drop(at: Vector2, data: Variant, key: String) -> bool:
     _queue_show_drop_mark(key, at.y < HudWorkVocab.WORK_ROW_HEIGHT * 0.5)
     return true
 
-## **THE DROP — one `build_order`, and the ordering the client draws until the turn resolves.**
+## **THE DROP — one `build_order`, and nothing else.**
 ##
 ## **THE POSITION IS AN INDEX INTO THE BAND'S OWN QUEUE, NOT A RANK OF OURS** (§4.9): the build queue
 ## IS the priority property's storage, so the whole gesture is *state the list again* and the number
 ## is where the dragged entry ended up in it.
+##
+## ⛔ **AND THE CLIENT DRAWS NOTHING OF ITS OWN WHILE IT WAITS.** The queue is captured live, so the
+## reordered list arrives on this command's own recapture; an optimistic ordering here would be a
+## second ordering beside the wire's, which is what made a drag paint the requested order and then
+## silently jump a turn later.
 func _queue_drop(_at: Vector2, data: Variant, band: Dictionary, key: String) -> void:
     if not (data is Dictionary):
         return
@@ -2717,10 +2967,13 @@ func _queue_drop(_at: Vector2, data: Variant, band: Dictionary, key: String) -> 
     _queue_show_drop_mark("", true)
     if dragged == "" or dragged == key:
         return
-    var entries := _confirmed_queue_entries(band)
-    var keys: Array = []
-    for entry_variant in entries:
-        keys.append(String((entry_variant as Dictionary).get("key", "")))
+    # ⛔ **THE ARITHMETIC IS DONE IN THE WIRE QUEUE, and the drawn rows only NAME the two entries.**
+    # The dragged key and the target key come off rows the player touched; everything after that is
+    # counted in `_queue_rank_keys`, because the position is resolved by the sim against its own
+    # list. Counted in the drawn list instead, a drag past a hidden entry lands on the wrong side of
+    # its target or does nothing at all — with `[A, B, C]` drawn as `[B, C]`, dragging `B` below `C`
+    # computed `1`, which the sim resolves straight back to `[A, B, C]`. It is `2`.
+    var keys := _queue_rank_keys(band)
     var from := keys.find(dragged)
     var onto := keys.find(key)
     if from < 0 or onto < 0:
@@ -2731,16 +2984,22 @@ func _queue_drop(_at: Vector2, data: Variant, band: Dictionary, key: String) -> 
     var insert := keys.find(key)
     if not above:
         insert += 1
-    keys.insert(insert, dragged)
     var model := {}
-    for entry_variant in entries:
+    for entry_variant in _confirmed_queue_entries(band):
         if String((entry_variant as Dictionary).get("key", "")) == dragged:
             model = entry_variant as Dictionary
             break
-    _emit_build_order(band, model, insert, keys)
+    _emit_build_order(band, model, insert)
 
-## The band's CONFIRMED queue entries, in the order the block draws them — the same list the block
-## itself derives, so the position the drop sends is an index into the list the player was looking at.
+## The band's CONFIRMED queue entries, in the order the block draws them — `_queue_drop`'s way of
+## recovering the dragged row's MODEL from its key, the payload `build_order` needs to name the
+## source.
+##
+## ⛔ **IT IS NOT WHERE A POSITION IS COUNTED, and it never should have been.** The drop's arithmetic
+## moved to `_queue_rank_keys`: this list is the DRAWN one, and it is short of the wire queue by any
+## entry whose source has no work-source model (`_build_queue_models`' note has the path). Every
+## index counted here was therefore wrong by the number of entries hidden above it — the regression
+## this comment used to call "correct all along".
 func _confirmed_queue_entries(band: Dictionary) -> Array:
     return _build_queue_models(band, _work_source_models(band, 0)).filter(
         func(m): return not _build_queue_row_is_pending(m as Dictionary))
@@ -2794,17 +3053,18 @@ func _ensure_queue_drag_watcher() -> void:
     _host.add_child(watcher)
     _queue_drag_watcher = watcher
 
-## **THE REORDER COMMAND** — `build_order <faction> <band> <source…> <position>`, 0-based, plus the
-## overlay's own write (`docs/plan_standing_upkeep.md` §4.7b ③).
+## **THE REORDER COMMAND** — `build_order <faction> <band> <source…> <position>`, 0-based
+## (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
-## **THE OVERLAY IS RECORDED BEFORE THE EMIT**, which is this layer's standing rollback precondition:
-## `Main` handles the signal synchronously and hands the payload back on a failure, so a record
-## written afterwards would survive its own failed command.
-func _emit_build_order(band: Dictionary, model: Dictionary, position: int, keys: Array) -> void:
+## ⛔ **NO OPTIMISTIC WRITE AND THEREFORE NO ROLLBACK HANDLE**, which is `build_kit`'s rule reaching
+## the second field to be captured live: `PopulationCohortState.buildQueue` comes off the allocation
+## the command mutates, and the server re-captures after every command, so the new order arrives on
+## THIS command's own recapture. The overlay that used to be recorded here was a second ordering
+## beside the wire's — the drift §4.9 forbids — so it went with the defect, and a send that does not
+## go now leaves nothing behind to undo.
+func _emit_build_order(band: Dictionary, model: Dictionary, position: int) -> void:
     if model.is_empty():
         return
-    var entity := int(band.get("entity", -1))
-    _band_labor.record_pending_order(entity, keys)
     emit_signal("build_order_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
@@ -2812,9 +3072,6 @@ func _emit_build_order(band: Dictionary, model: Dictionary, position: int, keys:
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
         "position": position,
-        # The rollback handle, and not a command token — `Main` hands it back to `drop_pending_order`
-        # when the send does not go.
-        "pending_entity": entity,
     })
 
 ## `+2 more` — the rest of the queue, at the same row height and in the quiet ink.
@@ -4085,18 +4342,22 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # so the row builder cannot ask the question a second way (see `build_stalled`).
             "build_stalled": build_stalled,
             "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
-            # **THE BAND'S BUILD QUEUE, DERIVED FROM THE ROWS IT ALREADY HAS** (§4.6b). A queue entry
-            # REQUIRES a labor assignment on its source (`LaborAllocation::prune_build_queue` →
-            # `holds_build_source`) and this list admits any source with a take crew, so every entry
-            # of this band's queue has a model here — and a source queued by ANOTHER band is not in
-            # this band's `effective_worker_map` at all, which is the per-band filter for free. That
-            # is why the queue block needs no band id on the wire.
-            "build_queue_position": SourceForecast.build_queue_position(
-                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
-            # …and the RAW countdown beside it, normalised by the one reader of that field. The two
-            # are read together and never one instead of the other: the countdown is chained down the
-            # queue, so on its own it cannot tell forty turns of work from eight turns queued behind
-            # four other jobs, and the position is what says which.
+            # **`build_queue_position` IS NOT ON THIS MODEL, AND ITS ABSENCE IS THE POINT**
+            # (`docs/plan_standing_upkeep.md` §4.9 item 9a). It rode here as the queue block's rank
+            # until the block learned that the field is published per SOURCE and rides the WINNING
+            # band — the soonest estimate among the bands working it — so it is routinely another
+            # band's place in another band's line. This model is BAND-scoped: every question it can be
+            # asked ("where is this in the queue?", "is it the head?", "has the wire placed it?") is a
+            # band's question, and none of them can be answered from that number. The rank is the
+            # index into `HudBandLaborState.build_queue_keys`, which `_build_queue_models` stamps onto
+            # the model as `BUILD_QUEUE_ROW_RANK_KEY` beside `BUILD_QUEUE_ROW_PENDING_KEY`. The field
+            # survives on the raw wire SOURCE,
+            # where the map annotation and the tile card read it as what it is.
+            #
+            # The RAW countdown does stay: it is the sim's own chained estimate for the source and the
+            # date column's only input. It is a source-addressed readout too — it rides the same
+            # winning band, which `snapshot.fbs` states — and the queue row quoting it is the best
+            # answer anyone has, which §4.9 records as deliberately out of that item's scope.
             "build_turns": SourceForecast.build_turns_remaining(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHERE THE QUEUED ENTRY IS TAKING THIS SOURCE, AND WHAT IS LEFT OF THE CLIMB**

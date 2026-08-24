@@ -3477,10 +3477,20 @@ re-added under any meta, any label or none.
 ### THE DECLARED STATE'S CREW TEST IS *ARE THEY ON THIS ONE*, WHICH IS THE QUEUE'S HEAD
 
 The improvement control renders RUNNING only where work is banked **or** the pool is staffed AND
-`SourceForecast.build_is_queue_head` says this entry is the one it is on. A staffed pool says nothing
-about an entry waiting third in line, and reading it as *in flight* would put the one-way
-`Cultivating 0 / 50 work (0%)` Label back on every queued-and-waiting rung — the state the DECLARED
-checkbox was built to escape.
+`HudBandLaborState.is_band_build_head(band, kind, source)` says this entry is the one it is on. A
+staffed pool says nothing about an entry waiting third in line, and reading it as *in flight* would
+put the one-way `Cultivating 0 / 50 work (0%)` Label back on every queued-and-waiting rung — the
+state the DECLARED checkbox was built to escape.
+
+> ⛔ **IT ASKS THE ACTING BAND'S OWN QUEUE, AND ASKING THE SOURCE RE-OPENS THE DEFECT ABOVE**
+> (`docs/plan_standing_upkeep.md` §4.9 item 9a). This test used to be
+> `SourceForecast.build_is_queue_head`, which read the per-source `buildQueuePosition` — a field that
+> rides the **winning** band, i.e. whichever of the bands working that source has the soonest
+> estimate. Two bands on one source is ordinary, so a band whose entry stood **third in its own line**
+> rendered as a build in flight whenever another band had the source at ITS head: the exact one-way
+> face this section exists to prevent, reached by a second door. That accessor is **deleted** — it
+> could not answer for a particular band, which is what this test needs. The frame is
+> `compose_queued_behind_another_band`.
 
 ### THE COMMIT SENDS TWO COMMANDS, AND THE SHRINKING CREW GOES FIRST
 
@@ -4067,8 +4077,10 @@ untick** — reported from play. The declaration was expressible and its withdra
 
 **The control now asks whether a build is ACTUALLY in flight**, which is the wire's own two facts:
 work banked on its meter (`improvement_progress > BUILD_METER_UNSTARTED`), or the band's `builders`
-pool staffed AND this entry at the HEAD of the queue it funds
-(`SourceForecast.build_is_queue_head`). Neither ⇒ **`IMPROVEMENT_STATE_DECLARED`**: the OFFER's own
+pool staffed AND this entry at the HEAD of **that band's own** queue
+(`HudBandLaborState.is_band_build_head`, off `PopulationCohortState.buildQueue` — see the ⛔ above for
+why the per-source answer it replaced was the wrong band's). Neither ⇒
+**`IMPROVEMENT_STATE_DECLARED`**: the OFFER's own
 face (verb and price, through the one `_improvement_offer_face` both states share) on a **ticked,
 live** checkbox, over the *not started* note — with the pen's zero-payoff note riding beneath exactly
 as it rides a running build, that being a warning about the RUNG rather than about work in flight,
