@@ -391,43 +391,68 @@ inversion is real; the fixture stages it deterministically for the harness.
 (`docs/plan_knowledge_screen.md` §7, Slice D). The map has marked the per-source case since issue
 #412: a *worked* source that can climb a rung wears a `⌃` on its own badge. This is the map-wide view
 of the same opportunity — and the legend is COUNT LINES rather than a ramp, because there is no "more
-ready": *"5 sources · 3 patches, 2 herds"* and *"3 unworked · nearest (9, 5)"*.
+ready": *"4 sources · 2 patches, 2 herds"* and *"Nearest (7, 6)"*.
 
 **WHAT LIGHTS IS FOUR CONDITIONS, AND A LIT HEX IS A STRICT SUBSET OF THE HEXES WEARING A `⌃`.**
-`ReadyForImprovement._offers_a_rung` asks, in this order:
+`ReadyForImprovement._offers_a_rung`, and the walk that feeds it, ask in this order:
 
-1. **The source has actually been improved** — its `current_rung` stands ABOVE its branch's bottom
-   rung (`SourceForecast.rung_above_branch_floor`). Wild land and wild herds never light.
-2. **The faction holds it** — for a PATCH, `has_owner` and `owner == MapView.PLAYER_FACTION_ID`.
+1. **A player band is WORKING the source** — it has a `labor_assignments` row on it, or it is a
+   hunting party's quarry. `ReadyForImprovement.worked_sources` is the whole test.
+2. **No OTHER faction owns it** — a refusal, never a requirement; see the trap below.
 3. **A rung above it is available** — `RungGates.next_rung_ready`.
 4. **Nothing is being built there** — `RungGates.rung_in_progress` answers empty.
 
-> **CONDITION 1 EXISTS BECAUSE "CAN BE IMPROVED" IS NOT A SCARCE PROPERTY.** Every wild patch admits
-> Cultivate, so the turn Cultivation was learned the channel lit **every land tile the faction could
-> see** — a green sheet that named nothing, on the one channel whose whole job is to point at
-> somewhere to go. The question the player is actually asking is *"which of the things I have already
-> built could go one step further"*, and that is what the channel answers now. Conditions 3 and 4 are
-> unchanged and still asked of `RungGates`; conditions 1 and 2 are **not ladder terms** and are
-> deliberately not pushed down into it — `RungGates` answering *"a wild patch could be cultivated"* is
-> correct for the compose sheet opened on wild ground. This channel is the one surface asking the
-> narrower question, so the narrowing lives here.
+> #### ⛔ CONDITION 1 IS "WORKED", AND IT WAS "ALREADY IMPROVED" FOR ONE ROUND — BOTH FAILURES ARE
+> WORTH KEEPING
+>
+> **The first cut had no condition 1 at all**, and lit **every land tile the faction could see** the
+> turn Cultivation was learned: every wild patch admits Cultivate, so "can be improved" is not a
+> scarce property, and the map became a sheet that named nothing on the one channel whose job is to
+> point somewhere.
+>
+> **The second cut demanded an EXISTING improvement to upgrade, and that is unshowable-by-construction
+> for the case that matters most.** The FIRST rung on a source is an improvement onto ground carrying
+> none, so a test requiring one can never surface a first improvement — which means **an entire
+> knowledge that only ever unlocks a first step is invisible**. Reported from play on the very next
+> build: a faction that had just learned Herding, hunting two fully tamable herds it could have
+> started taming that turn, saw an empty map.
+>
+> **Working the source is the scarcity that was actually wanted.** A band has hands on a handful of
+> sources and never on a continent, and every one of them is somewhere the player can act THIS turn.
+>
+> Conditions 3 and 4 are unchanged and still asked of `RungGates`. Conditions 1 and 2 are **not ladder
+> terms** and are deliberately not pushed down into it — `RungGates` answering *"a wild patch could be
+> cultivated"* is correct for a compose sheet opened on wild ground. This channel is the one surface
+> asking the narrower question, so the narrowing lives here.
 
-**CONDITION 1 IS ONE WIRE FIELD FOR EVERY BRANCH.** `ForagePatchState.currentRung` /
-`HerdTelemetryState.currentRung` spell the rung a source STANDS on as `<branch>:<id>` —
-`plant:tended`, `animal:pastoral` — so the branch travels inside the key and
-`SourceForecast.rung_above_branch_floor` answers without being told which food web it is looking at.
-The alternative it replaces is each web's private booleans (`is_cultivated` + `is_field` here,
-`domestication` against a threshold + `corralled` there), which costs every consumer a hand-written
-reader per web and would cost a route ladder (trail → road) a third. **A new branch costs this
-channel nothing at all: one entry in `SourceForecast.RUNG_BRANCHES`, and no code in the channel.** An
-unknown rung key — a branch a stale client has not been taught, or the `""` a hand-built fixture
-carries — answers `false`, which shows the player nothing rather than lighting a whole branch
-including its untouched floor.
+> #### ⛔ THE OWNER TEST IS A REFUSAL, AND A REQUIREMENT WOULD HAVE RE-BROKEN THE FIRST RUNG
+>
+> `ForagePatch::owner` is `Some` **only once an improvement meter is above zero**, so an unimproved
+> patch a band is working states no owner at all. `has_owner` as a REQUIREMENT would therefore have
+> refused every first-rung opportunity on the plant web — the whole of the early game — reintroducing
+> the defect above through a different door. `_not_another_faction_s` reads: no owner recorded is
+> fine, our own owner is fine, only a stated foreign owner refuses. A herd row carries no owner at
+> all (the pre-existing `RungGates.hunt_gates` gap), so there is nothing to ask on that web and
+> nothing is invented.
 
-`rung_above_branch_floor` is a **second** reading beside `SourceForecast._standing_rung_index` /
-`improvement_is_done`, which read the stamped achievement flags and carry repair semantics (a Field
-eroded to 99% is still stamped done). The two are separate questions and the older one has callers
-whose semantics `current_rung` does not share.
+**THE COUNTS DO NOT SPLIT INTO WORKED AND UNWORKED ANY MORE.** The legend's second line was
+*"3 unworked · nearest (9, 5)"*; under this rule every lit source is one a band is on, so "how many is
+nobody on" is always zero. It states the nearest lit source instead, measured from the SELECTED band,
+which is the half of that line that was ever actionable.
+
+> #### ⚠ `ForagePatchState.currentRung` HAS NO READER — see the PR that added it
+>
+> The wire field, `SourceForecast.rung_above_branch_floor` and `RUNG_BRANCHES` were built for the
+> **second** cut's condition 1 (*"is this above its branch's floor"*), and the rule above retired that
+> question. They are decoded, crossed into `tile_info` and fog-redacted, and nothing reads them.
+>
+> **They are worth keeping only if `_standing_rung_index` moves onto them**, which is the code the
+> field was really aimed at: that one walks the ladder calling `improvement_is_done` per rung per web,
+> and it is the per-web reading a route branch would have to be added to. **The two are provably one
+> fact** — `forage::patch_rung_key` IS `patch.standing().held`, and `ForagePatch::is_cultivated` is
+> `standing.held.is_at_or_above(PlantTended)` — so the retention-bar divergence that would have made
+> the migration unsafe does not exist (`forage.rs`, "RETIRED: `cultivation_meter_full`"). Do that, or
+> retire the field; do not leave it as it is.
 
 **THE UNLOCK NEVER LIGHTS THE MAP, and that is the whole reason this is a channel.** Nothing anywhere
 gets a timed highlight when a track completes; the attention row states a count and the player who

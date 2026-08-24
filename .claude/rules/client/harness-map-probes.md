@@ -654,56 +654,40 @@ identically: a lit hex is a strict SUBSET of the hexes wearing a ⌃, because th
 whether the source has been IMPROVED at all and whether it is the player's
 (`.claude/rules/client/overlay-channels.md` → `ready_for_improvement`).
 
-What the extension adds is the half the badge cannot have: **sources nobody is working**. A badge is
-drawn on a worked source's own marker, so a map of unworked opportunities is what the aggregate is
-FOR, and the legend's nearest-unworked line has nothing to name without them. It adds two unworked
-patches, one unworked tamed herd, four patches that must stay DARK, and a **second player band**
-parked beside the far patch.
+What the extension adds is the sources the badge cannot carry an argument about: **one control per
+condition, each staged so every OTHER condition passes**, plus a second player band. A dark control
+proves only its own condition if nothing else is also refusing it, and this state has now been
+restaged twice — once when the improved test went in front, once when "worked" replaced it — so the
+rule is worth stating flatly: **when a condition moves in front of another, re-run the sabotage before
+believing any control still guards what its name says.**
 
-**EVERY LIT SOURCE IS TENDED-OR-BETTER AND THE PLAYER'S**, because that is what the channel now
-requires: `_ready_patch` derives each row's `current_rung` from its own `tended` / field arguments —
-the wire's `forage::patch_rung_key` restated once, in `_patch_rung_key` — and defaults the owner to
-`MapView.PLAYER_FACTION_ID`. **Nothing may pass a `current_rung` in.** A fixture free to set the
-standing rung independently of `is_cultivated` could stage a patch the wire cannot produce and prove
-something about it; the herd rows go through `_herd_rung_key` for the same reason, off the
-`domestication` / `corralled` pair they already carry.
+| control | staged as | held dark by |
+|---|---|---|
+| `READY_UNWORKED_NEAR` | tended, ours, sowable, ungated, **nobody on it** | 1 |
+| `READY_UNWORKED_HERD` | tamed, penable, **nobody hunting it** | 1 |
+| `READY_FOREIGN` | worked, tended, sowable — **faction 1's ground** | 2 |
+| `READY_BARREN_LADDER` | worked, tended, **no crop may climb** | 3 |
+| `READY_MID_FIELD` | worked, tended, sowable — **Field meter part-filled, nothing declared** | 4 |
+| `(9, 8)` | worked, **crew DECLARES `cultivate`** | 4, via the declaration |
+| `READY_HALF_BUILT` | unworked **and** mid-build | 1 and 4 |
+| the wolf `(11, 4)` | worked, **`husbandry_ceiling: wild`** | 3 |
 
-**A LIT MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERY SOURCE IT CAN SEE**, which is why
-the frame stages SIX controls that must stay DARK and why the assertions ask for TILES rather than a
-count. On a fixture this size a count can be right for the wrong reason; `_lit_ready_tiles` reads the
-tiles back off the **raster the map paints**, not off the model's own counters, so the claim cannot be
-the assertion agreeing with itself.
+**AND TWO CONTROLS THAT MUST LIGHT, because the fixture's whole history is of rules that hid them.**
+`READY_FIRST_RUNG` is WILD ground band 2 works, and `READY_FIRST_RUNG_HERD` is a WILD herd band 1
+hunts — each one learned track away from its FIRST improvement. The rule this state was written for a
+day earlier demanded an existing improvement to upgrade and so could not show either; both are
+asserted positively, by name, for that reason.
 
-> **`READY_WILD` IS THE HEADLINE CONTROL.** An untouched patch at `(7, 5)` — inside band 1's
-> `work_range`, its plants admitting Cultivate, with the faction holding Cultivation — so every
-> question `RungGates` asks of it answers yes and the only thing holding it dark is that it stands on
-> its branch's FLOOR. Before the improved test, a faction that had merely *learned* Cultivation lit
-> every land tile it could see. Sabotage-verified: `rung_above_branch_floor` returning `true`
-> unconditionally fails it by name, along with the counts.
->
-> **`READY_FOREIGN` IS THE OTHER HALF OF "MINE".** Ladder-identical to the lit `READY_UNWORKED_NEAR`
-> — tended, sowable, unworked — and owned by faction 1, so ownership is the ONLY term between a lit
-> tile and a dark one and dropping the owner test fails here and nowhere else (sabotage-verified).
-> There is no herd twin, and cannot be: the wire carries no owner on a herd row.
+**`READY_MID_FIELD` IS THE ONLY PATCH HERE THAT CAN ISOLATE CONDITION 4**, and the two mid-Cultivate
+patches are why it exists. One of them is unworked and the other DECLARES its verb, which
+`next_rung_ready` excludes by itself — so neither can be the guard, and for one round condition 4 had
+no live guard at all. This one is worked, tended, owned and genuinely sowable, so only its meter
+refuses it.
 
-> **THE MID-BUILD CONTROLS ARE THREE, AND WHICH ONE GUARDS `rung_in_progress` HAS MOVED TWICE.** The
-> worked patch at `(9, 8)` has an assignment DECLARING `cultivate`, and `next_rung_ready` excludes a
-> declared verb by itself — so "it stays dark" held with the in-progress question deleted, and
-> sabotage caught it. `READY_HALF_BUILT` was added as the isolating case (unworked, nothing declared,
-> a Cultivate meter at 55%). **Then the improved test in front of both took that job away**: a patch
-> mid-Cultivate still STANDS on `plant:wild`, the rung it is climbing away from, so condition 1
-> refuses it before condition 4 is asked — which left the in-progress question with no live guard at
-> all.
->
-> **`READY_MID_FIELD` is what guards it now**, and it is the shape the other two cannot be: TENDED, so
-> it clears the improved test; owned; sowable and ungated, so `next_rung_ready` genuinely offers Sow.
-> Conditions 1, 2 and 3 all answer yes and only its part-filled FIELD meter holds it dark.
-> Sabotage-verified — deleting `rung_in_progress` lights that tile and no other in the state.
->
-> Keep all three: the first two still pin the meter-vs-declaration pair and that the aggregate reads
-> the same `improvement` axis the badge does. **The lesson is the one this file keeps re-learning** —
-> a control isolates a condition only until something is added in FRONT of that condition, and
-> nothing but re-running the sabotage will say which.
+**A LIT MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERYTHING**, which is why the assertions
+ask for TILES rather than a count. `_lit_ready_tiles` reads them back off the **raster the map
+paints**, never off the model's own counters, so the claim cannot be the assertion agreeing with
+itself.
 
 **THE WOLF'S `husbandry_ceiling` IS STATED, NOT INHERITED.** `SourceForecast.husbandry_ceiling`
 normalizes an ABSENT field to `"pen"` — the FULL ladder, so an untagged herd behaves as it did before

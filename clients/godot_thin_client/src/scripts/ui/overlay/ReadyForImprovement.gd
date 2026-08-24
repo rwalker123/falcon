@@ -1,26 +1,30 @@
 class_name ReadyForImprovement
 
-## THE AGGREGATE `⌃` — the map-wide answer to *"which of my faction's IMPROVED sources could go one
-## step further"*, as an ordinary overlay raster plus the count lines its legend states.
+## THE AGGREGATE `⌃` — the map-wide answer to *"which of the sources my people are WORKING could take
+## their next step right now"*, as an ordinary overlay raster plus the count lines its legend states.
 ##
-## ⛔ **IT IS NOT "which of my sources could climb a rung right now", AND THE DIFFERENCE IS THE WHOLE
-## POINT.** Read that way the channel lit every land tile on the map the moment Cultivation was
-## learned — every wild patch answers *"a rung is available"*, so "can be improved" stopped being a
-## scarce property and the map washed out into a green sheet that named nothing. A hex lights only if
-## a source on it satisfies ALL FOUR of:
+## ⛔ **IT IS NOT "which of my sources could climb a rung", AND THE DIFFERENCE IS THE WHOLE POINT.**
+## Read that way the channel lit every land tile on the map the moment Cultivation was learned — every
+## wild patch answers *"a rung is available"*, so "can be improved" stopped being a scarce property and
+## the map washed out into a sheet that named nothing. A hex lights only if a source on it satisfies
+## ALL FOUR of:
 ##
-## 1. **It has been improved** — its `current_rung` stands ABOVE its branch's bottom rung. Wild land
-##    and wild herds never light, however much the faction knows.
-## 2. **The faction holds it** — for a PATCH, `has_owner` and `owner == MapView.PLAYER_FACTION_ID`.
+## 1. **A player band is WORKING it** — a `labor_assignments` row, or a hunting party's quarry.
+## 2. **No OTHER faction owns it** — a refusal, not a requirement; see `_not_another_faction_s`.
 ## 3. **A rung above it is genuinely available** — `RungGates.next_rung_ready`.
 ## 4. **Nothing is being built there** — `RungGates.rung_in_progress` answers empty.
 ##
-## **CONDITION 1 IS ONE WIRE FIELD FOR EVERY BRANCH.** `current_rung` is branch-qualified
-## (`plant:tended`, `animal:pastoral`), so `SourceForecast.rung_above_branch_floor` answers it without
-## being told which food web it is looking at — where the alternative is reading `is_cultivated` +
-## `is_field` on one web and `domestication` + `corralled` on the other, and hand-writing a third
-## reader the day a route ladder (trail → road) ships. A new branch costs this channel nothing at all:
-## one entry in `SourceForecast.RUNG_BRANCHES`, and no code here.
+## ⛔ **CONDITION 1 WAS ONCE "it has already been improved", AND THAT WAS WRONG IN A WAY WORTH
+## RECORDING.** It was chosen to make the set scarce, and it did — but the FIRST rung on a source is an
+## improvement onto ground carrying none, so a test demanding an existing improvement can never show a
+## first improvement. Reported from play: a faction that had just learned Herding, holding two hunted
+## herds it could have started taming that turn, saw an empty map — the one knowledge it had spent
+## nothing of was the one the channel structurally could not talk about. Working the source is the
+## scarcity that was actually wanted: a band has hands on a handful of sources, never on a continent.
+##
+## **NOTHING HERE READS A PER-WEB BOOLEAN, and that is the property to keep.** Conditions 1 and 2 are
+## answered off the band's own assignment rows and one owner pair; 3 and 4 are `RungGates`. The day a
+## route ladder (trail → road) ships, a route worked by a band flows through this file unchanged.
 ##
 ## `docs/plan_knowledge_screen.md` §7. The map has marked the per-source case since issue #412: a
 ## worked patch or herd that can climb wears a `⌃` on its own badge. What that cannot show is the
@@ -91,20 +95,20 @@ const SOURCE_CURRENT_RUNG_KEY := "current_rung"
 const SOURCE_HAS_OWNER_KEY := "has_owner"
 const SOURCE_OWNER_KEY := "owner"
 
-## The model's keys. `unworked` is an `Array[Vector2i]` of the tiles carrying a ready source no player
-## band is on — the only part of the model that is a LIST rather than a count, because the legend
-## names one of them.
+## The model's keys. `ready` is an `Array[Vector2i]` of the tiles the raster lit — the only part of
+## the model that is a LIST rather than a count, because the legend names the nearest of them.
+##
+## **IT REPLACED an `unworked` list, which this rule made meaningless**: every lit source is one a band
+## is working, so "how many of them is nobody on" is now always zero.
 const MODEL_NORMALIZED := "normalized"
 const MODEL_RAW := "raw"
 const MODEL_PATCHES := "patches"
 const MODEL_HERDS := "herds"
-const MODEL_UNWORKED := "unworked"
+const MODEL_READY := "ready"
 
-const FACTS_NONE := "Nothing can be improved yet."
+const FACTS_NONE := "Nothing your people work can be improved yet."
 const FACTS_TOTAL_FORMAT := "%s · %s, %s"
-const FACTS_ALL_WORKED := "Every one is already worked."
-const FACTS_UNWORKED_FORMAT := "%d unworked · nearest (%d, %d)"
-const FACTS_UNWORKED_NO_ANCHOR_FORMAT := "%d unworked"
+const FACTS_NEAREST_FORMAT := "Nearest (%d, %d)"
 
 ## The count vocabulary, singular then plural. Spelled out rather than `+ "s"` so the legend's three
 ## nouns are all one edit away, and because "1 sources" in a card this small reads as a bug.
@@ -114,7 +118,7 @@ const NOUN_HERD := ["herd", "herds"]
 
 
 ## THE ONE PASS OVER EVERY SOURCE THE FACTION CAN SEE — the raster, the per-web counts, and the
-## unworked tiles, from one walk of the patches and one of the herds.
+## lit tiles, from one walk of the patches and one of the herds.
 ##
 ## **IT IS EXPENSIVE, AND THAT IS MEASURED RATHER THAN FEARED.** A live world seeds a `ForagePatch` on
 ## EVERY food-module tile that carries any human-edible capacity (`core_sim/src/forage.rs` →
@@ -137,13 +141,13 @@ static func derive(view: Object) -> Dictionary:
 	var raw := PackedFloat32Array()
 	raw.resize(total)
 	raw.fill(TILE_NONE)
-	var unworked: Array[Vector2i] = []
+	var ready: Array[Vector2i] = []
 	var model := {
 		MODEL_NORMALIZED: normalized,
 		MODEL_RAW: raw,
 		MODEL_PATCHES: 0,
 		MODEL_HERDS: 0,
-		MODEL_UNWORKED: unworked,
+		MODEL_READY: ready,
 	}
 	if total <= 0:
 		return model
@@ -155,14 +159,17 @@ static func derive(view: Object) -> Dictionary:
 		if not _on_map(tile, width, height):
 			continue
 		var key: String = view.secondary_food_key(tile.x, tile.y)
+		# **CONDITION 1, AND IT IS THE FIRST TEST ON PURPOSE.** It is a dictionary lookup, where the two
+		# `RungGates` questions behind it are the expensive half — and on a live world it refuses the
+		# overwhelming majority of patches, the sim seeding one on every food-module tile.
+		if not worked.has(key):
+			continue
 		if not _offers_a_rung(SourceForecast.LABOR_KIND_FORAGE,
-				view.forage_patch_lookup[tile],
-				String(worked.get(key, SourceForecast.IMPROVEMENT_NONE)), knowledge):
+				view.forage_patch_lookup[tile], String(worked[key]), knowledge):
 			continue
 		patches += 1
 		_stamp(normalized, raw, width, tile)
-		if not worked.has(key):
-			unworked.append(tile)
+		ready.append(tile)
 	var herds := 0
 	for herd_variant in view.herds:
 		if not (herd_variant is Dictionary):
@@ -172,16 +179,17 @@ static func derive(view: Object) -> Dictionary:
 		if not _on_map(herd_tile, width, height):
 			continue
 		var herd_key: String = view.secondary_herd_key(String(herd.get("id", "")))
+		if not worked.has(herd_key):
+			continue
 		if not _offers_a_rung(SourceForecast.LABOR_KIND_HUNT, herd,
-				String(worked.get(herd_key, SourceForecast.IMPROVEMENT_NONE)), knowledge):
+				String(worked[herd_key]), knowledge):
 			continue
 		herds += 1
 		_stamp(normalized, raw, width, herd_tile)
-		if not worked.has(herd_key):
-			# A herd standing on a ready patch adds a SECOND entry for the same hex, deliberately: the
-			# nearest-unworked answer is about a hex to walk to, and de-duplicating would only change
-			# which of two identical coordinates the legend prints.
-			unworked.append(herd_tile)
+		# A herd standing on a ready patch adds a SECOND entry for the same hex, deliberately: the
+		# nearest answer is about a hex to walk to, and de-duplicating would only change which of two
+		# identical coordinates the legend prints.
+		ready.append(herd_tile)
 	model[MODEL_PATCHES] = patches
 	model[MODEL_HERDS] = herds
 	return model
@@ -190,7 +198,7 @@ static func derive(view: Object) -> Dictionary:
 ## THE SOURCES A PLAYER BAND IS ON, as `{secondary key: declared improvement}`.
 ##
 ## Two jobs, one walk: it supplies the `improvement` axis every rung answer needs, and its KEY SET is
-## the "is anybody on this" test the unworked list is built from.
+## condition 1 itself — a source no band is on never reaches the ladder questions at all.
 ##
 ## **THE DECLARATION IS NOT REDUNDANT with the source's own meters.** `RungGates.rung_in_progress`
 ## resolves the verb off the meter and demotes `improvement` to a pending declaration — which is
@@ -246,11 +254,11 @@ static func worked_sources(view: Object) -> Dictionary:
 	return out
 
 
-## THE LEGEND'S LINES — `"104 sources · 61 patches, 38 herds"` and the nearest unworked coordinate.
+## THE LEGEND'S LINES — `"5 sources · 3 patches, 2 herds"` and the nearest one's coordinate.
 ##
 ## Derived from the cached `model` on demand rather than stamped into it at ingest, because the
 ## NEAREST answer moves with the selection and a selection change is not a snapshot. The scan is over
-## the unworked list (tens), never over the sources again.
+## the lit list (tens), never over the sources again.
 static func facts(view: Object, model: Dictionary) -> PackedStringArray:
 	var lines := PackedStringArray()
 	var patches := int(model.get(MODEL_PATCHES, 0))
@@ -261,15 +269,9 @@ static func facts(view: Object, model: Dictionary) -> PackedStringArray:
 		return lines
 	lines.append(FACTS_TOTAL_FORMAT % [
 		_counted(total, NOUN_SOURCE), _counted(patches, NOUN_PATCH), _counted(herds, NOUN_HERD)])
-	var unworked: Array = model.get(MODEL_UNWORKED, [])
-	if unworked.is_empty():
-		lines.append(FACTS_ALL_WORKED)
-		return lines
-	var nearest := _nearest(view, unworked)
-	if nearest.x < 0:
-		lines.append(FACTS_UNWORKED_NO_ANCHOR_FORMAT % unworked.size())
-	else:
-		lines.append(FACTS_UNWORKED_FORMAT % [unworked.size(), nearest.x, nearest.y])
+	var nearest := _nearest(view, model.get(MODEL_READY, []))
+	if nearest.x >= 0:
+		lines.append(FACTS_NEAREST_FORMAT % [nearest.x, nearest.y])
 	return lines
 
 
@@ -290,36 +292,31 @@ static func _offers_a_rung(kind: String, source: Dictionary, improvement: String
 		knowledge: Dictionary) -> bool:
 	if source.is_empty():
 		return false
-	if not _is_improved(source):
-		return false
-	if not _is_ours(kind, source):
+	if not _not_another_faction_s(kind, source):
 		return false
 	if not RungGates.rung_in_progress(kind, source, improvement).is_empty():
 		return false
 	return not RungGates.next_rung_ready(kind, source, improvement, knowledge).is_empty()
 
 
-## CONDITION 1 — **has anybody actually built anything here.** One read of one branch-qualified wire
-## field, so this function is identical on the plant web, the animal web and the branch that does not
-## exist yet; `SourceForecast.rung_above_branch_floor` owns the floor test and answers `false` for a
-## rung key it does not know, which is the safe direction for a stale client.
-static func _is_improved(source: Dictionary) -> bool:
-	return SourceForecast.rung_above_branch_floor(
-		String(source.get(SOURCE_CURRENT_RUNG_KEY, "")))
-
-
-## CONDITION 2 — **is it the player's.** A PATCH states its owner, so an improved patch another
-## faction holds stays dark.
+## **IS THIS SOMEBODY ELSE'S?** — the only ownership question worth asking, and it is spelled as a
+## REFUSAL rather than a requirement.
 ##
-## **A HERD STATES NO OWNER AT ALL** — the wire carries none (see the class docstring), so there is
-## nothing to test and the honest answer is to let condition 1 stand as the whole faction test on that
-## web. This is NOT a default-allow chosen for convenience: inventing an ownership signal from
-## `domestication` or a nearby band would give this channel a private definition of "our source".
-static func _is_ours(kind: String, source: Dictionary) -> bool:
+## ⛔ **A REQUIREMENT WOULD HAVE HIDDEN EXACTLY THE TILES THIS CHANNEL EXISTS FOR.** A patch's `owner`
+## is `Some` only once an improvement meter is above zero (`forage::ForagePatch::owner`), so an
+## UNIMPROVED patch your band is working states no owner at all — and demanding `has_owner` would have
+## refused every first-rung opportunity on the plant web, which is the whole of the early game.
+## Reported from play: a faction that had just learned Herding, with two hunted herds it could tame,
+## saw an empty map.
+##
+## So the test is "not another faction's": no owner recorded is FINE, an owner that is ours is fine,
+## and only a stated foreign owner refuses. A herd carries no owner on the wire at all (the
+## pre-existing `RungGates.hunt_gates` gap), so there is nothing to ask there and nothing is invented.
+static func _not_another_faction_s(kind: String, source: Dictionary) -> bool:
 	if kind != SourceForecast.LABOR_KIND_FORAGE:
 		return true
 	if not bool(source.get(SOURCE_HAS_OWNER_KEY, false)):
-		return false
+		return true
 	return int(source.get(SOURCE_OWNER_KEY, -1)) == MapView.PLAYER_FACTION_ID
 
 
@@ -343,7 +340,7 @@ static func _stamp(normalized: PackedFloat32Array, raw: PackedFloat32Array, widt
 	raw[idx] = raw[idx] + 1.0
 
 
-## The tile the nearest-unworked answer is measured FROM: the selected player band, else the first one
+## The tile the nearest answer is measured FROM: the selected player band, else the first one
 ## the frame carries. `(-1, -1)` when the player has no band on the map at all, which is what makes
 ## the legend drop the coordinate rather than print an arbitrary one — "nearest" with nothing to be
 ## near is not a fact.
@@ -366,17 +363,17 @@ static func _anchor_tile(view: Object) -> Vector2i:
 	return fallback
 
 
-## The unworked tile closest to the anchor, **through `MapView`'s own hex metric and its own wrap
+## The lit tile closest to the anchor, **through `MapView`'s own hex metric and its own wrap
 ## rule** — `_hex_distance` is what the work-range disks are drawn with, so "nearest" here is the same
 ## nearest the map draws, and `_wrapped_col_delta` is what keeps a source just across the seam from
 ## reading as a world away.
-static func _nearest(view: Object, unworked: Array) -> Vector2i:
+static func _nearest(view: Object, ready: Array) -> Vector2i:
 	var anchor := _anchor_tile(view)
 	if anchor.x < 0:
 		return anchor
 	var best := Vector2i(-1, -1)
 	var best_distance := -1
-	for tile_variant in unworked:
+	for tile_variant in ready:
 		var tile: Vector2i = tile_variant
 		var effective_col: int = anchor.x + view._wrapped_col_delta(anchor.x, tile.x)
 		var distance: int = view._hex_distance(anchor.x, anchor.y, effective_col, tile.y)
