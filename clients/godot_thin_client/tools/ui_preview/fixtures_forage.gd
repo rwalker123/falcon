@@ -5,6 +5,9 @@
 ## `.claude/rules/client/test-harnesses.md`.
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 # A floor BELOW the food peak, for the frames that need "this crew is drawing the source down" — the
 # `deplete`/`surplus` stances these fixtures were written against. It is one of the sim's own raid
@@ -693,7 +696,7 @@ static func sowing_tile_fixture() -> Dictionary:
 	# Re-price after re-dialling the meters: `work_done` is derived FROM the fraction, so a fixture
 	# that moves one without the other would render a percentage and an absolute that disagree —
 	# the one thing this readout exists to make visible.
-	return BaseFx.price_plant_build(tile)
+	return RungFx.stamp_patch(BaseFx.price_plant_build(tile), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 static func field_tile_fixture() -> Dictionary:
 	var tile := sowing_tile_fixture()
@@ -705,4 +708,4 @@ static func field_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
-	return BaseFx.seed_forage_rows(tile)
+	return RungFx.stamp_patch(BaseFx.seed_forage_rows(tile), HudComposeVocab.FORAGE_FORECAST_PREFIX)

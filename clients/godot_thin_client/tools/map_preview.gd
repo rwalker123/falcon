@@ -20,6 +20,9 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 # `ui_preview`'s real-pointer probe, for the picker's button-swap claim: it owns the canvas→window
 # conversion `push_input` needs, and a second copy of that arithmetic is a second thing to keep right.
 const INPUT_PROBE := preload("res://tools/ui_preview/input_probe.gd")
+## The whole test tree's one transcription of the sim's rung derivation — every fixture patch and
+## herd states its `current_rung` through it, never as a literal (see `fixtures_rung.gd`).
+const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 const OUT_DIR := "res://ui_preview_out"
 const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
@@ -2168,7 +2171,7 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 		"x": READY_FIRST_RUNG_HERD.x, "y": READY_FIRST_RUNG_HERD.y,
 		"biomass": 260.0, "huntable": true,
 		"domestication": 0.0, "husbandry_ceiling": "pen",
-		"current_rung": _herd_rung_key(0.0, false),
+		"current_rung": RUNG_FX.herd_rung_key(0.0, false),
 	})
 	# LIT — tamed, penable, and nobody is hunting it: the herd twin of the abandoned field.
 	herds.append({
@@ -2178,7 +2181,7 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 		"domestication": 1.0, "husbandry_ceiling": "pen",
 		# Tamed and unpenned → `animal:pastoral`, struck off the two meters beside it rather than
 		# written out, so this row cannot claim a rung its own state contradicts.
-		"current_rung": _herd_rung_key(1.0, false),
+		"current_rung": RUNG_FX.herd_rung_key(1.0, false),
 	})
 
 	# **BAND 1 IS PUT ON EVERY WORKED CONTROL, and on the sheep.** A dark control only proves its own
@@ -2220,7 +2223,7 @@ func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bo
 		"x": tile.x, "y": tile.y,
 		"ecology_phase": "thriving",
 		"is_cultivated": tended, "is_field": false,
-		"current_rung": _patch_rung_key(tended, false),
+		"current_rung": RUNG_FX.patch_rung_key(tended, false),
 		"has_owner": true, "owner": owner,
 		"cultivation_progress": progress,
 		# **A PART-FILLED METER IS NOT A BUILT RUNG**, so `is_field` stays false and the standing rung
@@ -2231,26 +2234,6 @@ func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bo
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": can_cultivate, "can_sow": can_sow}],
 	}
-
-## **THE WIRE'S OWN DERIVATION, RESTATED ONCE FOR THE WHOLE HARNESS** — `forage::patch_rung_key`'s
-## *"sown → field, cultivated → tended, else wild"*. Every fixture patch that states a
-## `current_rung` states it through here, so no row in this file can carry a standing rung that
-## disagrees with its own `is_cultivated` / `is_field` pair. Spelled with
-## `SourceForecast.RUNG_KEY_*` rather than string literals, so the client's one vocabulary is the
-## harness's too.
-func _patch_rung_key(tended: bool, field: bool) -> String:
-	if field:
-		return SourceForecast.RUNG_KEY_FIELD
-	return SourceForecast.RUNG_KEY_TENDED if tended else SourceForecast.RUNG_KEY_WILD_PLANT
-
-## The animal twin — `fauna::herd_rung_key`'s *"penned → pen, tamed → pastoral, else wild"*, off the
-## same `domestication` / `corralled` pair the fixture rows already carry.
-func _herd_rung_key(domestication: float, corralled: bool) -> String:
-	if corralled:
-		return SourceForecast.RUNG_KEY_PEN
-	if domestication >= SourceForecast.DOMESTICATION_COMPLETE:
-		return SourceForecast.RUNG_KEY_PASTORAL
-	return SourceForecast.RUNG_KEY_WILD_ANIMAL
 
 ## The SCALING probe's world: a full-size grid with a patch on every tile and one band, which is the
 ## ceiling on how many sources the derivation can ever be handed. Deliberately not a plausible map —
@@ -2781,7 +2764,9 @@ func _snapshot_pasture_wolf() -> Dictionary:
 ## footprint disc (enclosure green) instead of the roam-range ring.
 func _snapshot_pasture_pen() -> Dictionary:
 	var snapshot := _snapshot_pasture()
-	snapshot["herds"] = [{
+	# **THE STANDING RUNG IS STAMPED OFF THE ROW'S OWN FLAGS**, never written beside them: the pen flag
+	# below is what makes this `animal:pen`, and `RUNG_FX.stamp_herd` is the only thing that says so.
+	snapshot["herds"] = [RUNG_FX.stamp_herd({
 		"id": PASTURE_HERD_ID,
 		"label": "Red Deer (%s)" % PASTURE_HERD_ID,
 		"species": "Red Deer",
@@ -2799,7 +2784,7 @@ func _snapshot_pasture_pen() -> Dictionary:
 		"pen_footprint_tiles": 7,
 		"pen_pasture_fraction": 1.0,
 		"pen_fed_fraction": 1.0,
-	}]
+	})]
 	return snapshot
 
 ## The forage snapshot: the SAME earthlike terrain as pasture, painted by the `forage` overlay channel
@@ -2997,20 +2982,22 @@ func _snapshot_pens() -> Dictionary:
 	var fed := _deer_herd()
 	fed["corralled"] = true
 	fed["pen_fed_fraction"] = 1.0
-	var starving := {
+	# Every pen here states its standing rung off its own `corralled` flag rather than being told one.
+	RUNG_FX.stamp_herd(fed)
+	var starving := RUNG_FX.stamp_herd({
 		"id": "game_aurochs_03", "label": "Aurochs (game_aurochs_03)",
 		"x": 10, "y": 7, "biomass": 310.0, "huntable": true,
 		"corralled": true, "pen_fed_fraction": 0.4,
-	}
+	})
 	# A THIRD pen, starving, whose species has BUNDLED SPRITE ART (boar) — the aurochs above is an
 	# emoji species, so without this the frame never proves the distress ring/badge still reads over a
 	# sprite marker (the sprite is drawn untinted, exactly like the emoji, so the geometry is the whole
 	# distress signal on both paths).
-	var starving_sprite := {
+	var starving_sprite := RUNG_FX.stamp_herd({
 		"id": "game_boar_05", "label": "Wild Boar (game_boar_05)",
 		"x": 7, "y": 7, "biomass": 260.0, "huntable": true,
 		"corralled": true, "pen_fed_fraction": 0.3,
-	}
+	})
 	return _base_snapshot(_band([], 2, 2), [fed, starving, starving_sprite])
 
 ## Every species in `FoodIcons.HERD_SPECIES`, one herd per ALIAS GROUP, laid out on its own hex so
@@ -3169,9 +3156,9 @@ func _snapshot_work_ready() -> Dictionary:
 		"ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false,
 		# The STANDING rung and the owner, both struck from this row's own state rather than written
-		# out — see `_patch_rung_key`. The `ready_for_improvement` channel reads them (a source has to
+		# out — see `fixtures_rung.gd`. The `ready_for_improvement` channel reads them (a source has to
 		# be improved AND the player's before it can be offered a further rung); the ⌃ badge does not.
-		"current_rung": _patch_rung_key(true, false),
+		"current_rung": RUNG_FX.patch_rung_key(true, false),
 		"has_owner": true, "owner": MapView.PLAYER_FACTION_ID,
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
@@ -3186,7 +3173,7 @@ func _snapshot_work_ready() -> Dictionary:
 		"is_cultivated": false, "is_field": false,
 		# **STILL `plant:wild` AT 42%**, and that is the wire's own reading: a patch stands on the rung
 		# it has finished, not on the one it is climbing away from.
-		"current_rung": _patch_rung_key(false, false),
+		"current_rung": RUNG_FX.patch_rung_key(false, false),
 		"has_owner": true, "owner": MapView.PLAYER_FACTION_ID,
 		"cultivation_progress": 0.42,
 		"sow_site_refusal": "too_dry",
@@ -3215,7 +3202,7 @@ func _snapshot_work_ready() -> Dictionary:
 			herd["husbandry_ceiling"] = "pen"
 			# Tamed, unpenned → `animal:pastoral`. Struck off the meters set on the two lines above, so
 			# the rung and the state it is derived from move together.
-			herd["current_rung"] = _herd_rung_key(
+			herd["current_rung"] = RUNG_FX.herd_rung_key(
 				float(herd.get("domestication", 0.0)), bool(herd.get("corralled", false)))
 		# **AND THE WOLF'S CEILING IS STATED, because the ABSENT one is not the one this frame
 		# claims.** `SourceForecast.husbandry_ceiling` normalizes an absent field to `"pen"` — the
@@ -3229,7 +3216,7 @@ func _snapshot_work_ready() -> Dictionary:
 			# Untamed → `animal:wild`, the branch FLOOR. The wolf is now held dark by two independent
 			# terms (its ceiling admits no rung, and nothing has been built on it); it stays because the
 			# ceiling is the one a knowledge push could otherwise open.
-			herd["current_rung"] = _herd_rung_key(
+			herd["current_rung"] = RUNG_FX.herd_rung_key(
 				float(herd.get("domestication", 0.0)), bool(herd.get("corralled", false)))
 	return snap
 
@@ -3423,6 +3410,9 @@ func _snapshot_mixed_worked() -> Dictionary:
 	var herd: Dictionary = herds[0]
 	herd["domestication"] = 1.0
 	herd["husbandry_ceiling"] = "pen"
+	# Tamed, unpenned → `animal:pastoral`, struck off the meter above: this is the READY half of the
+	# chip's `⌃`, and a row stating no rung at all would read as a herd nothing has been built on.
+	RUNG_FX.stamp_herd(herd)
 	snap["populations"] = [_band([
 		{"kind": "forage", "workers": 3, "target_x": BAND_X, "target_y": BAND_Y, "floor": WORK_PEAK_FLOOR,
 			"actual_yield": 0.31, "sustainable_yield": 0.31, "overdraws": false},
@@ -3433,6 +3423,7 @@ func _snapshot_mixed_worked() -> Dictionary:
 	snap["forage_patches"] = [{
 		"x": BAND_X, "y": BAND_Y,
 		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"current_rung": RUNG_FX.patch_rung_key(false, false),
 		"sow_site_refusal": "too_dry",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": true, "can_sow": true}],

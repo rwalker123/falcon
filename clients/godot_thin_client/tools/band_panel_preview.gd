@@ -45,9 +45,15 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## **THE KIT ROSTER IS SHARED WITH `ui_preview`, and deliberately so.** It is world config the sim
 ## publishes once (`SubsistenceSection.kits`), not a per-harness prop: two copies could quote
 ## different tiers or a different job default, and the `kit <id>` command token asserted here is the
-## same token that harness's frames are read against. This is the ONE cross-harness fixture preload.
+## same token that harness's frames are read against. It is one of TWO cross-harness fixture
+## preloads, the rung derivation below being the other.
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
+## …and the SECOND, for the same reason: the standing rung a fixture states must be the sim's own
+## derivation off the flags the row already carries, and one transcription of it serves the whole tree
+## (`tools/ui_preview/fixtures_rung.gd`). Every patch and herd fixture below stamps its rung through
+## it, so no row here can stand on a rung its own `is_cultivated` / `corralled` pair contradicts.
+const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -3681,7 +3687,7 @@ func _keeping_pool_band_fixture(mode: String) -> Dictionary:
 ## The tended patch that band works, short of its keeping. Keys are BARE — this is a patch dict from
 ## the forage lookup, not a `patch_`-prefixed tile_info.
 func _keeping_pool_patch_fixtures() -> Array:
-	return [{
+	return RUNG_FX.stamp_patches([{
 		"x": KEEPING_POOL_TILE.x, "y": KEEPING_POOL_TILE.y,
 		"is_cultivated": true, "is_field": false,
 		"upkeep_demand": KEEPING_POOL_PATCH_DEMAND,
@@ -3694,7 +3700,7 @@ func _keeping_pool_patch_fixtures() -> Array:
 		# queue block at once. `band_panel_pools_wide` is that state on the 300px horizontal dock.
 		"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
 		"build_turns_remaining": KEEPING_POOL_BUILD_TURNS,
-	}]
+	}])
 
 ## …and the herd on the other web, short by the same construction.
 func _keeping_pool_herd_fixtures() -> Array:
@@ -3812,7 +3818,7 @@ func _unbuilt_work_herd_fixtures() -> Array:
 	}
 	# Owned, so the sim asks for keepers on the same arithmetic whichever crew is supplying them.
 	_set_managed_herders(taming, UNDER_HERDED_WORK_HERDERS_NEEDED)
-	return [taming]
+	return RUNG_FX.stamp_herds([taming])
 
 ## GUARD: **a HALF-BUILT rung whose keeping is short wears the SAME ⚠ and the SAME note as a held one**
 ## (`docs/plan_standing_upkeep.md` §4.6a). It was the other way round — its own `unbuilt` flag and a
@@ -8160,17 +8166,17 @@ func _ready_band_fixture() -> Dictionary:
 
 ## A TENDED patch on willing ground → its next rung is Sow.
 func _ready_patch_fixtures() -> Array:
-	return [{
+	return RUNG_FX.stamp_patches([{
 		"x": 71, "y": 18, "ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": true, "can_sow": true}],
-	}]
+	}])
 
 ## One fully tamed "pen"-ceiling herd (→ Corral) and one "wild"-ceiling herd that can never climb —
 ## the control that proves the mark is selective rather than decorative.
 func _ready_herd_fixtures() -> Array:
-	return [
+	return RUNG_FX.stamp_herds([
 		{"id": "ready_tamed", "species": "Aurochs", "x": 70, "y": 17,
 			"population": 210, "ecology_phase": "thriving", "huntable": true,
 			"domestication": 1.0, "husbandry_ceiling": "pen", "per_worker_yield": 0.15,
@@ -8181,7 +8187,7 @@ func _ready_herd_fixtures() -> Array:
 			"domestication": 0.0, "husbandry_ceiling": "wild", "per_worker_yield": 0.10,
 			"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.60, "deplete": 0.90,
 				"eradicate": 1.40}},
-	]
+	])
 
 ## The mark is SELECTIVE — two of the three rows offer a rung, the wild-ceiling herd none. Asserted
 ## rather than eyeballed: three chevrons and one chevron look similar in a thumbnail, and "the mark
@@ -8250,7 +8256,7 @@ func _track_tended_patch_fixtures() -> Array:
 ## The one patch row both boards are cut from, so the two states differ in the patch's POSITION and in
 ## the faction's knowledge and in nothing else.
 func _track_patch_row(is_cultivated: bool, cultivation_work_done: float) -> Dictionary:
-	return {
+	return RUNG_FX.stamp_patch({
 		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
 		"is_cultivated": is_cultivated, "is_field": false, "sow_site_refusal": "",
 		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
@@ -8260,7 +8266,7 @@ func _track_patch_row(is_cultivated: bool, cultivation_work_done: float) -> Dict
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
 			"share": 1.0, "can_cultivate": true, "can_sow": true,
 			"sow_work_cost": TRACK_FIELD_WORK_COST}],
-	}
+	})
 
 # ---- THE CROP STEP AND THE SOW'S PRICE (§4.15) ---------------------------------------------------
 #
@@ -8307,7 +8313,7 @@ const CROP_CASH_SOW_WORK_COST := 150.0
 ## price was struck against; `""` leaves the ground uncommitted, where the rung's auto-pick — the
 ## wire's share-DESC FIRST priced entry — is the answer instead.
 func _crop_patch_row(field_work_cost: float, committed: String = "") -> Dictionary:
-	return {
+	return RUNG_FX.stamp_patch({
 		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
 		"is_cultivated": false, "is_field": false, "sow_site_refusal": "",
 		"committed_species": committed,
@@ -8337,7 +8343,7 @@ func _crop_patch_row(field_work_cost: float, committed: String = "") -> Dictiona
 				"can_cultivate": true, "can_sow": true,
 				"sow_payoff": CROP_BARRED_SOW_PAYOFF, "cultivate_payoff": 0.40},
 		],
-	}
+	})
 
 ## **WHAT WILL *THIS PATCH'S* SOW COST** — the wire's own `fieldWorkCost`, on the destination track's
 ## Field row.
@@ -8466,7 +8472,7 @@ func _want_work_clause(work_cost: float) -> String:
 ## unit banked rather than a fixture of its own — the leg's own owing and its published fraction both
 ## follow it, which is what keeps the two states arithmetically the same board.
 func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -> Array:
-	return [{
+	return RUNG_FX.stamp_patches([{
 		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
 		"is_cultivated": false, "is_field": false, "sow_site_refusal": "",
 		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
@@ -8488,7 +8494,7 @@ func _track_climbing_patch_fixtures(work_done: float = TRACK_TENDED_WORK_DONE) -
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
 			"share": 1.0, "can_cultivate": true, "can_sow": true,
 			"sow_work_cost": TRACK_FIELD_WORK_COST}],
-	}]
+	}])
 
 ## **ONE WORK UNIT BANKED — the FIRST turn of a thirty-nine-turn climb**, which is the turn the
 ## reported defect starts on and the one an assertion at a comfortable 60% cannot reach.
@@ -8500,7 +8506,7 @@ const TRACK_FIRST_TURN_WORK_DONE := 1.0
 const TRACK_SINGLE_LEG_FIELD_WORK_DONE := 30.0
 
 func _track_single_leg_patch_fixtures() -> Array:
-	return [{
+	return RUNG_FX.stamp_patches([{
 		"x": TRACK_PATCH.x, "y": TRACK_PATCH.y, "ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
 		"cultivation_work_cost": TRACK_TENDED_WORK_COST,
@@ -8520,7 +8526,7 @@ func _track_single_leg_patch_fixtures() -> Array:
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
 			"share": 1.0, "can_cultivate": true, "can_sow": true,
 			"sow_work_cost": TRACK_FIELD_WORK_COST}],
-	}]
+	}])
 
 # ---- THE ANIMAL TWIN: a `corral` ordered on a herd that is not tamed yet ------------------------
 #
@@ -8539,7 +8545,7 @@ const TRACK_PASTORAL_LEG_TURNS := 6
 const TRACK_PEN_LEG_TURNS := 21
 
 func _track_climbing_herd_fixtures() -> Array:
-	return [{
+	return RUNG_FX.stamp_herds([{
 		"id": TRACK_HERD_ID, "species": "Wild Aurochs",
 		"x": TRACK_HERD_TILE.x, "y": TRACK_HERD_TILE.y,
 		"population": 40, "ecology_phase": "thriving",
@@ -8555,7 +8561,7 @@ func _track_climbing_herd_fixtures() -> Array:
 			{"rung": SourceForecast.RUNG_KEY_PEN, "work_remaining": 75.0,
 				"turns_remaining": TRACK_PEN_LEG_TURNS},
 		],
-	}]
+	}])
 
 ## The band that HUNTS that herd, carrying the `corral` token the wire derives for the entry — the
 ## animal twin of `_track_band_fixture`'s `build_job`, and load-bearing for the same reason.
@@ -8878,7 +8884,7 @@ const RING_PERCENT := 75
 ## climb, only more of the one the source is already on — and `build_destination_rung` is the pen
 ## rung it widens, which is what keeps the row titled `Corral …`.
 func _ring_herd_fixtures() -> Array:
-	return [{
+	return RUNG_FX.stamp_herds([{
 		"id": RING_HERD_ID, "species": "Wild Fowl",
 		"x": RING_HERD_TILE.x, "y": RING_HERD_TILE.y,
 		"population": 60, "ecology_phase": "thriving",
@@ -8893,7 +8899,7 @@ func _ring_herd_fixtures() -> Array:
 		"build_turns_remaining": RING_TURNS,
 		"build_destination_rung": SourceForecast.RUNG_KEY_PEN,
 		"build_legs": [],
-	}]
+	}])
 
 ## The band KEEPING that pen, carrying the wire's own `extend_pen` job token on its row — the one
 ## thing that tells a ring entry from a rung entry, and the reason no new wire field is needed.
@@ -9094,7 +9100,7 @@ func _declare_forage_modules() -> Array:
 
 ## A TENDED patch on willing ground → its next rung is Sow.
 func _declare_patch_fixtures() -> Array:
-	return [{
+	return RUNG_FX.stamp_patches([{
 		"x": DECLARE_PATCH.x, "y": DECLARE_PATCH.y, "ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
 		# **THE SOW RUNG IS PRICED, and that is what the ⌃'s hover reads.** A rung the wire prices
@@ -9109,7 +9115,7 @@ func _declare_patch_fixtures() -> Array:
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Grain",
 			"share": 1.0, "can_cultivate": true, "can_sow": true,
 			"sow_work_cost": DECLARE_SOW_WORK_COST}],
-	}]
+	}])
 
 ## The Sow rung's two published prices on the declare board — the pile once and the rate forever.
 ## Distinct numbers on purpose: one figure serving both would let a clause that quoted the wrong one
@@ -9123,7 +9129,7 @@ const DECLARE_SOW_UPKEEP_PER_TURN := 4.0
 ## Corral. One herd cannot stage both — `next_rung_ready` answers ONE rung — and the pair is what the
 ## grammar fork needs.
 func _declare_herd_fixtures() -> Array:
-	return [
+	return RUNG_FX.stamp_herds([
 		{"id": DECLARE_CORRAL_HERD, "species": "Aurochs",
 			"x": DECLARE_CORRAL_TILE.x, "y": DECLARE_CORRAL_TILE.y,
 			"population": 210, "ecology_phase": "thriving", "huntable": true,
@@ -9136,7 +9142,7 @@ func _declare_herd_fixtures() -> Array:
 			"domestication": 0.0, "husbandry_ceiling": "pastoral", "per_worker_yield": 0.12,
 			"hunt_policy_ceilings": {"sustain": 0.24, "surplus": 0.70, "deplete": 1.10,
 				"eradicate": 1.60}},
-	]
+	])
 
 ## A band working all three sources, so all three carry a WORK ROW — which is the whole precondition
 ## the `⌃` rests on: a row exists only for a source the band already works, which is exactly the sim's
@@ -9451,7 +9457,7 @@ func _investment_policy_herd_fixtures() -> Array:
 		# The build dips are FRACTIONS of the held stance now, not rows of the list above (#442).
 	}
 	_set_managed_herders(penned, INVESTMENT_ROW_HERDERS_NEEDED)
-	return [
+	return RUNG_FX.stamp_herds([
 		penned,
 		{
 			"id": EXTRACTIVE_ROW_HERD_ID, "species": "Red Deer", "x": 69, "y": 19,
@@ -9461,7 +9467,7 @@ func _investment_policy_herd_fixtures() -> Array:
 				"sustain": 0.20, "surplus": 0.60, "deplete": 0.90, "eradicate": 1.40,
 			},
 		},
-	]
+	])
 
 ## A band keeping an UNDER-CONTAINED pen: one keeper works the Corralled herd, but it needs 4 herders.
 ## The work board must flag its Hunt row (fauna neglect-escape arc). `herded_fraction` is left STALE at
@@ -9504,7 +9510,7 @@ func _under_herded_work_herd_fixtures(pool_share: int = KEEPER_POOL_UNFUNDED) ->
 	# says more than the source's card does.
 	penned["has_neglect_grace"] = true
 	penned["neglect_grace_remaining"] = UNDER_HERDED_WORK_GRACE_TURNS
-	return [penned]
+	return RUNG_FX.stamp_herds([penned])
 
 ## The turns of grace the under-kept herd has left — enough that the hover reads the COUNTDOWN form
 ## rather than the already-being-lost one.
@@ -9551,7 +9557,7 @@ func _herder_floor_herd_fixtures() -> Array:
 	}
 	_set_managed_herders(fowl, HERDER_FLOOR_HERDERS_NEEDED)
 	_set_keeper_demand(fowl, HERDER_FLOOR_HERDERS_NEEDED, KEEPER_POOL_UNFUNDED)
-	return [fowl]
+	return RUNG_FX.stamp_herds([fowl])
 
 ## THE INVARIANT AS A TEST — **and the invariant CHANGED with the keeping**
 ## (`docs/plan_standing_upkeep.md` §2.2, §2.5).
@@ -9687,7 +9693,7 @@ func _rung_band_fixture() -> Dictionary:
 ## `ceiling_*` — so `SourceForecast.max_useful_workers` stays UNBOUNDED and the steppers gate exactly as
 ## they did before patches were pushed here at all. This frame is about the mark, not the cap.
 func _rung_patch_fixtures() -> Array:
-	return [
+	return RUNG_FX.stamp_patches([
 		{"x": RUNG_WILD_TILE.x, "y": RUNG_WILD_TILE.y, "is_cultivated": false, "is_field": false},
 		{"x": RUNG_TENDED_TILE.x, "y": RUNG_TENDED_TILE.y, "is_cultivated": true, "is_field": false,
 			"committed_display_name": RUNG_TENDED_CROP},
@@ -9695,7 +9701,7 @@ func _rung_patch_fixtures() -> Array:
 		# fixture sets both rather than the field flag alone.
 		{"x": RUNG_FIELD_TILE.x, "y": RUNG_FIELD_TILE.y, "is_cultivated": true, "is_field": true,
 			"committed_display_name": RUNG_FIELD_CROP},
-	]
+	])
 
 ## The two herds those hunt rows work: one TAMED but unpenned (pastoral), one CORRALLED. The penned one
 ## is fully staffed so the frame carries no ⚠ competing with the rung mark for the eye.
@@ -9708,7 +9714,7 @@ func _rung_herd_fixtures() -> Array:
 	}
 	_set_managed_herders(penned, RUNG_PENNED_HERDERS)
 	_set_keeper_demand(penned, RUNG_PENNED_HERDERS)
-	return [
+	return RUNG_FX.stamp_herds([
 		{
 			"id": RUNG_PASTORAL_HERD_ID, "species": "Wild Boar", "x": 70, "y": 19,
 			"population": 140, "ecology_phase": "thriving", "huntable": true,
@@ -9717,7 +9723,7 @@ func _rung_herd_fixtures() -> Array:
 			"hunt_policy_ceilings": {"sustain": 1.20},
 		},
 		penned,
-	]
+	])
 
 ## Forage modules for the rung tiles, so each Forage row still resolves its map glyph and the rung mark
 ## is read BESIDE a source glyph rather than in isolation.
@@ -9744,7 +9750,7 @@ func _many_source_patch_fixtures() -> Array:
 			patch["is_cultivated"] = true
 			patch["committed_display_name"] = RUNG_TENDED_CROP
 		patches.append(patch)
-	return patches
+	return RUNG_FX.stamp_patches(patches)
 
 ## Every row on the rung board must carry the mark its rung wears — and, decisively, the WILD row must
 ## carry NONE. Asserting only the marked rows would pass a build that stamped a glyph on everything.
@@ -14762,7 +14768,7 @@ func _render_repair_and_declare_states() -> void:
 ## claim is about the CULTIVATE repair, and a patch that could also be sown would be offered a real
 ## climb and prove nothing about the eroded rung beneath it.
 func _repair_patch_fixture(progress: float) -> Dictionary:
-	return {
+	return RUNG_FX.stamp_patch({
 		"x": REPAIR_PATCH_TILE.x, "y": REPAIR_PATCH_TILE.y, "ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
 		"cultivation_progress": progress,
@@ -14776,7 +14782,7 @@ func _repair_patch_fixture(progress: float) -> Dictionary:
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
 			"share": 1.0, "can_cultivate": true, "can_sow": false}],
-	}
+	})
 
 ## The band working that patch, with NO improvement declared on the row — a repair nobody has ordered.
 func _repair_band_fixture() -> Dictionary:
@@ -14871,7 +14877,7 @@ func _keeping_declare_herd_fixture(shortfall: float = 0.0) -> Array:
 		"hunt_policy_ceilings": {"sustain": 0.30, "surplus": 0.90, "deplete": 1.40,
 			"eradicate": 2.00, "corral": 0.70},
 	}
-	return [herd]
+	return RUNG_FX.stamp_herds([herd])
 
 ## The band that queued it. `keepers` is the ONE thing the pair of states differs by.
 func _keeping_declare_band_fixture(keepers: int) -> Dictionary:
@@ -14943,7 +14949,7 @@ func _assert_kept_source_without_gatherers() -> void:
 ## The kept patch itself — the BARE forecast keys, which is how a raw wire patch spells them
 ## (`forage_patch_lookup`, never the `patch_`-prefixed `tile_info` cross-ref).
 func _kept_patch_fixture() -> Dictionary:
-	return {
+	return RUNG_FX.stamp_patch({
 		"x": KEEPING_KEPT_PATCH_TILE.x, "y": KEEPING_KEPT_PATCH_TILE.y,
 		"ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 		"cultivation_progress": 1.0,
@@ -14953,7 +14959,7 @@ func _kept_patch_fixture() -> Dictionary:
 		"build_work_per_worker_turn": KEEPING_DECLARE_PER_WORKER_TURN,
 		"build_queue_position": SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
-	}
+	})
 
 ## The band holding it. **The row SURVIVES at zero workers, which is the sim's own behaviour** — the
 ## take crew is not the row's licence to exist, the ground's at-risk meter is — so the fixture keeps

@@ -12,6 +12,9 @@ const EXPECTED_CHECKPOINTS := 24
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -307,7 +310,7 @@ func _kept_herd_fixture() -> Dictionary:
 ## The covered control carries the FULL grace window rather than omitting the pair, so its silence can
 ## only come from the shortfall — an absent countdown would have silenced it for the wrong reason.
 func _neglect_patches_fixture() -> Array:
-	return [
+	return RungFx.stamp_patches([
 		{"x": 70, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
 			"upkeep_demand": PLANT_TENDED_UPKEEP_DEMAND,
@@ -350,7 +353,7 @@ func _neglect_patches_fixture() -> Array:
 			"upkeep_shortfall": 0.0,
 			"upkeep_workers_needed": PLANT_TENDED_KEEPERS_WANTED,
 			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_FULL},
-	]
+	])
 
 ## The under-kept detail line the producer must compose for one source, built from the VOCABULARY and
 ## the fixture's own numbers rather than from `AttentionController`'s own composer — an expectation

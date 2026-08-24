@@ -29,6 +29,9 @@ const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -1930,6 +1933,8 @@ func run(harness) -> void:
 	var penned_boar := HerdFx.investment_pair_boar_herd()
 	penned_boar["domestication"] = 1.0
 	HerdFx.price_animal_build(penned_boar)
+	# A full meter IS the pastoral rung, which is what retires Tame and puts Corral on offer.
+	RungFx.stamp_herd(penned_boar)
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(penned_boar)
 	h._compose_herd(penned_boar, PELT_FRAME_HUNTERS)
@@ -3547,7 +3552,7 @@ func _retreat_crew_pen(stay: float) -> Dictionary:
 	pen["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
 	pen["corralled"] = true
 	pen["corral_yield"] = PEN_CORRAL_YIELD
-	return pen
+	return RungFx.stamp_herd(pen)
 
 ## A WILD herd that publishes `NO_ENGAGEMENT_STAGE` — the pen's value on the engagement field alone,
 ## and the reading the whole plant web gets by never publishing it. This is the case that really

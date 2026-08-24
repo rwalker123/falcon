@@ -17,6 +17,9 @@ const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -92,7 +95,7 @@ func _reopen_wild_herd_fixture() -> Dictionary:
 	HerdFx.price_animal_build(fixture)
 	fixture[HerdFx.HERDERS_NEEDED_KEY] = 0
 	fixture[HerdFx.HERDERS_NEEDED_IF_MANAGED_KEY] = REOPEN_WILD_WOULD_BE_HERDERS
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## The same herd one turn later, taming under way and owned — see `_reopen_wild_herd_fixture`.
 func _reopen_taming_herd_fixture() -> Dictionary:
@@ -100,7 +103,7 @@ func _reopen_taming_herd_fixture() -> Dictionary:
 	fixture["domestication"] = REOPEN_TAMING_DOMESTICATION
 	HerdFx.price_animal_build(fixture)
 	HerdFx.set_managed_herders(fixture, REOPEN_TAMING_HERDERS)
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## The Tame rung's running FACE at a given meter, composed through the shipped formats — the leading
 ## run of what the checked box says, which the stale-vs-fresh claim matches as a prefix.
@@ -706,7 +709,7 @@ func _offer_quarry(id: String, species: String, size_class: String, body_mass: f
 	# values are the real species' — a Red Deer never climbs, a Rabbit Warren pens — so the pairing
 	# below is a fact about the roster rather than two hand-picked flags.
 	herd["husbandry_ceiling"] = ceiling
-	return herd
+	return RungFx.stamp_herd(herd)
 
 ## Every entry the mounted kit picker is showing, as `{text, disabled}` in roster order — read off the
 ## LIVE `OptionButton` the sheet mounted, never off `KitRoster.build_kit_row` called a second time: an
@@ -1332,8 +1335,8 @@ func _kit_swap_herd() -> Dictionary:
 	var herd := _offer_quarry(KIT_SWAP_HERD_ID, "Rabbit Warren", "small", OFFER_RABBIT_BODY_MASS,
 		OFFER_RABBIT_DEFENSE, SourceForecast.HUSBANDRY_CEILING_PEN)
 	herd["domestication"] = KIT_SWAP_UNSTARTED_TAME
-	return HerdFx.price_animal_build(herd, HerdFx.ANIMAL_BUILD_TURNS_REMAINING,
-		HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR, KIT_SWAP_UPKEEP_PER_TURN)
+	return RungFx.stamp_herd(HerdFx.price_animal_build(herd, HerdFx.ANIMAL_BUILD_TURNS_REMAINING,
+		HerdFx.ANIMAL_BUILD_WORK_FROM_GEAR, KIT_SWAP_UPKEEP_PER_TURN))
 
 const KIT_SWAP_HERD_ID := "game_warren_kitswap"
 

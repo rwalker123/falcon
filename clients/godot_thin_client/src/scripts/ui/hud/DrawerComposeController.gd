@@ -1548,8 +1548,8 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## cost is BUILDING again with nothing declared — the state the player has to see, since the remedy is
 ## hands — and the old test (`composed != NONE and not improvement_is_done`) rendered the DONE label
 ## there and offered no way back. **The meter's fullness and the rung's achievement stay orthogonal**:
-## this reads fullness, `improvement_is_done` reads the stamped retention bar, so a patch at 90% shows
-## as *Cultivating* while the ground it stands on is still tended.
+## this reads fullness, `improvement_is_done` reads the rung the source STANDS on, so a patch at 90%
+## shows as *Cultivating* while the ground it stands on is still tended.
 ##
 ## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
 ##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries

@@ -29,6 +29,9 @@ extends Node
 ## Exits 0 on PASS, 1 on FAIL (CI-usable).
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 const PLAYER_FACTION := 0
 const GRID_W := 4
@@ -152,6 +155,8 @@ func _fixture() -> Dictionary:
 		"forage_patches": [
 			{"x": SITE_X, "y": SITE_Y, "biomass": 12.5, "carrying_capacity": 40.0,
 				"cultivation_progress": 0.25, "is_cultivated": false, "per_worker_yield": 0.6,
+				# The standing rung, off the flag beside it — a patch mid-Cultivate is still wild.
+				"current_rung": RUNG_FX.patch_rung_key(false, false),
 				"composition": [
 					{"species": "hazel", "share": 0.6},
 					{"species": "sedge", "share": 0.4},

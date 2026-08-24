@@ -17,6 +17,9 @@ const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -368,7 +371,7 @@ func _an_abandoned_cultivate_under_a_declared_sow() -> Dictionary:
 	tile["patch_field_progress"] = 0.0
 	tile["patch_upkeep_supplied"] = 0.0
 	tile["patch_upkeep_shortfall"] = BaseFx.PLANT_TENDED_UPKEEP_PER_TURN
-	return BaseFx.price_plant_build(tile, BOTH_METERS_FIELD_TURNS)
+	return RungFx.stamp_patch(BaseFx.price_plant_build(tile, BOTH_METERS_FIELD_TURNS), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## **A PATCH HOLDING A TENDED RUNG WHILE ITS FIELD GOES UP, WITH THE BAND'S KEEPING SHORT** — the one
 ## shape on which the at-risk mark has a choice of rows to land on, and the shape a mark on the wrong
@@ -382,7 +385,7 @@ func _two_live_meters_short_of_keeping() -> Dictionary:
 	tile["patch_field_progress"] = BOTH_METERS_FIELD_PROGRESS
 	tile["patch_upkeep_supplied"] = 0.0
 	tile["patch_upkeep_shortfall"] = BaseFx.PLANT_FIELD_UPKEEP_PER_TURN
-	return BaseFx.price_plant_build(tile, BOTH_METERS_FIELD_TURNS)
+	return RungFx.stamp_patch(BaseFx.price_plant_build(tile, BOTH_METERS_FIELD_TURNS), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## **A METER PARKED ON PURPOSE — the one rung state that is NOT a failure** (§4.6a). It replaced
 ## `_reverting_value`, whose row (`⚠ Reverting 96%`) fired on *work banked and nobody on it*: an
@@ -918,6 +921,8 @@ func run(harness) -> void:
 	# RAW wire patch's, and setting those here leaves `improvement_is_done` reading nothing at all.
 	tended_tile["patch_cultivation_progress"] = 1.0
 	tended_tile["patch_is_cultivated"] = true
+	# …and the STANDING RUNG re-derived from that flag, which is what `improvement_is_done` reads.
+	RungFx.stamp_patch(tended_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	h._hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
 	}])
@@ -1724,6 +1729,8 @@ func _a_declared_build_with_no_builders_says_so() -> void:
 	# declared, that row must still be absent.
 	var untamed := HerdFx.taming_herd_fixture()
 	untamed["domestication"] = POOL_UNSTARTED_METER
+	# Back down to the branch floor: the meter is the rung on this web, so the two move together.
+	RungFx.stamp_herd(untamed)
 	var promised := "\n".join(DetailFormat.herd_summary_lines(untamed,
 		h._hud._band_labor.world_herds(), SourceForecast.IMPROVEMENT_TAME))
 	var untouched := "\n".join(DetailFormat.herd_summary_lines(untamed,
@@ -2001,6 +2008,8 @@ func _both_live_meters_get_their_own_row() -> void:
 	both["patch_is_field"] = false
 	both["patch_field_progress"] = BOTH_METERS_FIELD_PROGRESS
 	BaseFx.price_plant_build(both, BOTH_METERS_FIELD_TURNS)
+	# Tended and NOT sown, so the patch stands on `plant:tended` while the Field meter climbs above it.
+	RungFx.stamp_patch(both, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	# The keeping is PAID, so the tended row above must be bare — which is what makes the Field row's
 	# own reading the only thing on this card that says anything is happening.
 	both["patch_upkeep_supplied"] = float(both["patch_upkeep_demand"])
@@ -2315,6 +2324,7 @@ func _the_five_states_are_a_SET(band: Dictionary) -> void:
 	var tended := TileFx.tended_tile_fixture()
 	tended["patch_cultivation_progress"] = 1.0
 	tended["patch_is_cultivated"] = true
+	RungFx.stamp_patch(tended, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	var host := VBoxContainer.new()
 	compose._build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tended,
 		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.DEFAULT_HARVEST_FLOOR,

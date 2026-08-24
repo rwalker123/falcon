@@ -15,6 +15,9 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -468,7 +471,7 @@ func _field_rung_tile_fixture(visibility_state: String) -> Dictionary:
 	tile["patch_carrying_capacity"] = FIELD_GROUND_CAPACITY * _field_capacity_gain()
 	tile["patch_is_field"] = true
 	tile["patch_field_progress"] = 1.0
-	return tile
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 
 ## The two webs' capacities on `TileFx.sight_tile_fixture`, read back OFF the fixture so the assertion above
@@ -578,7 +581,7 @@ func _weeded_crop_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
-	return BaseFx.seed_forage_rows(tile)
+	return RungFx.stamp_patch(BaseFx.seed_forage_rows(tile), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## **THE SAME TILE WITH ONE PLANT'S ROLE UNSTATED** — the `""` case, which the wire says means "this
 ## server's roster no longer knows this species", NOT "staple". The row must render its share and its

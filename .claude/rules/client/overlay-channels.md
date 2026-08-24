@@ -455,15 +455,32 @@ a reader per web and a route ladder a third. **A new branch costs this channel n
 `""` a hand-built fixture carries — answers `false`, which shows nothing rather than lighting a whole
 branch including its untouched floor.
 
-> **STILL READING THE PER-WEB BOOLEANS: `SourceForecast.improvement_is_done`**, which is inside
-> `next_rung_ready` and is asked of every candidate. It carries a TAME special case plus three keyed
-> tables, one of them existing only to say a Field is also tended. `current_rung` collapses all of it
-> to *is the label at or above this rung*, and **the two are provably one fact** —
-> `forage::patch_rung_key` IS `patch.standing().held`, and `ForagePatch::is_cultivated` is
-> `standing.held.is_at_or_above(PlantTended)` — so the retention-bar divergence that would have made
-> the swap unsafe does not exist (`forage.rs`, "RETIRED: `cultivation_meter_full`"). What it costs is a
-> fixture migration: every hand-built source dict in `ui_preview`, `band_panel_preview` and
-> `map_preview` would need a `current_rung`, and one that forgot it reads as *nothing is built*.
+> **`SourceForecast.improvement_is_done` READS THE SAME LABEL NOW**, which is what makes the branch
+> blindness the whole client's rather than this channel's. It is inside `next_rung_ready` and asked of
+> every candidate here, and it was a TAME special case plus three keyed tables, one of them existing
+> only to say a Field is also tended. It is one comparison — `rung_at_or_above(current_rung, the rung
+> this verb builds)` — over `IMPROVEMENT_RUNG_KEYS`, the inverse of `RUNG_KEY_IMPROVEMENTS` and the
+> table that must be kept in step with it. **The two readings are provably one fact**:
+> `forage::patch_rung_key` IS `patch.standing().held` and `ForagePatch::is_cultivated` is
+> `standing.held.is_at_or_above(PlantTended)`, so the retention-bar divergence that would have made the
+> swap unsafe does not exist (`forage.rs`, "RETIRED: `cultivation_meter_full`"). `FORECAST_DONE_FLAG_KEYS`
+> survives for `rung_needs_repair` alone — *achieved and short of its cost* is the one question a
+> standing rung cannot answer, a rung eroded to 99% still being the rung the source stands on — and
+> `FORECAST_RETIRED_BY_HIGHER_RUNG` is deleted: *a higher rung retires the one below it* is the ORDER
+> of `RUNG_BRANCHES` now rather than a table beside it.
+>
+> **AN UNKNOWN OR EMPTY RUNG KEY ANSWERS `false` ON BOTH SIDES OF THE COMPARISON**, for the reason the
+> paragraph above gives for `rung_above_branch_floor`: a stale client and a fixture that never stated
+> the field must read as *nothing has been built here*, which offers the player a rung they may already
+> hold, and never as *everything is built*, which would retire every climb on that branch in silence.
+>
+> **THE FIXTURE MIGRATION IS DONE, AND IT IS ONE DERIVATION FOR THE WHOLE TEST TREE.**
+> `tools/ui_preview/fixtures_rung.gd` transcribes the sim's own *"sown → field, cultivated → tended,
+> else wild"* (and its animal twin) once, and `map_preview`, `band_panel_preview`,
+> `snapshot_alias_guard` and the chapters all state their rows' `current_rung` through it — `stamp_patch`
+> / `stamp_herd` derive it from the row's OWN flags, so no fixture can stand on a rung its
+> `is_cultivated` / `corralled` pair contradicts, and a row re-dialled by a caller is re-stamped where
+> it is re-dialled.
 
 **THE UNLOCK NEVER LIGHTS THE MAP, and that is the whole reason this is a channel.** Nothing anywhere
 gets a timed highlight when a track completes; the attention row states a count and the player who

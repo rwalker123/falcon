@@ -21,6 +21,9 @@ const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -334,7 +337,7 @@ func _crowded_bands_fixture() -> Array:
 func _crowded_herds_fixture() -> Array:
 	return [
 		HerdFx.occupied_herd_only(),
-		{
+		RungFx.stamp_herd({
 			"id": "game_boar_04",
 			"label": "Wild Boar (game_boar_04)",
 			"species": "Wild Boar",
@@ -346,7 +349,7 @@ func _crowded_herds_fixture() -> Array:
 			"carrying_capacity": 1433.0,
 			"graze_range_radius": 1,
 			"x": 58, "y": 24,
-		},
+		}),
 	]
 
 ## The MapView snapshot behind `tile_panel_land_sticky` — the crowded hex's OWN bands and herds on a
@@ -377,7 +380,7 @@ func _deselect_map_snapshot() -> Dictionary:
 		"grid": {"width": STICKY_GRID_W, "height": STICKY_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
 		"populations": [],
-		"herds": [{
+		"herds": [RungFx.stamp_herd({
 			"id": DESELECT_HERD_ID,
 			"label": "Red Deer (%s)" % DESELECT_HERD_ID,
 			"species": "Red Deer",
@@ -389,7 +392,7 @@ func _deselect_map_snapshot() -> Dictionary:
 			"carrying_capacity": 2150.0,
 			"graze_range_radius": 1,
 			"x": DESELECT_HERD_TILE.x, "y": DESELECT_HERD_TILE.y,
-		}],
+		})],
 	}
 
 ## The MapView snapshot behind `tile_panel_occupant_cycle` — ONE band and TWO herds on a single hex,
@@ -412,7 +415,7 @@ func _cycle_map_snapshot() -> Dictionary:
 				"stores": {"provisions": 120.0}, "labor_assignments": []},
 		],
 		"herds": [
-			{
+			RungFx.stamp_herd({
 				"id": CYCLE_HERD_FIRST_ID,
 				"label": "Aurochs (%s)" % CYCLE_HERD_FIRST_ID,
 				"species": "Aurochs",
@@ -424,8 +427,8 @@ func _cycle_map_snapshot() -> Dictionary:
 				"carrying_capacity": 2400.0,
 				"graze_range_radius": 1,
 				"x": CYCLE_TILE.x, "y": CYCLE_TILE.y,
-			},
-			{
+			}),
+			RungFx.stamp_herd({
 				"id": CYCLE_HERD_SECOND_ID,
 				"label": "Wild Boar (%s)" % CYCLE_HERD_SECOND_ID,
 				"species": "Wild Boar",
@@ -437,7 +440,7 @@ func _cycle_map_snapshot() -> Dictionary:
 				"carrying_capacity": 1360.0,
 				"graze_range_radius": 1,
 				"x": CYCLE_TILE.x, "y": CYCLE_TILE.y,
-			},
+			}),
 		],
 	}
 

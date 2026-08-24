@@ -493,9 +493,9 @@ static func _state_color(state: String) -> Color:
 ## top-down for the reason `BandPanelController._work_source_rung` tests the higher rung first: a
 ## Field is ALSO cultivated, so a bottom-up walk would stop at the rung beneath the one it stands on.
 ##
-## **`improvement_is_done` IS THE TEST, and it carries `FORECAST_RETIRED_BY_HIGHER_RUNG`** — a Field
-## sown straight from wild ground reports `is_cultivated` false forever, and its Cultivate is still
-## bought and paid for.
+## **`improvement_is_done` IS THE TEST, and it compares the source's STANDING rung at-or-above** — a
+## Field sown straight from wild ground reports `is_cultivated` false forever, and its Cultivate is
+## still bought and paid for.
 static func _standing_index(branch: Array, source: Dictionary, prefix: String) -> int:
     for index in range(branch.size() - 1, 0, -1):
         var verb := String(SourceForecast.RUNG_KEY_IMPROVEMENTS.get(String(branch[index]),

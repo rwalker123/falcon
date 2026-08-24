@@ -15,6 +15,9 @@ const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -94,7 +97,7 @@ const HUNT_WASTE_NEEDLE := "wasted"
 ## than as a legacy per-stance table, so `ForageFx.floorify_ceilings` leaves every number exactly as authored —
 ## which is what lets the assertions recompose the sim's own take from them.
 func _building_herd_fixture() -> Dictionary:
-	return {
+	return RungFx.stamp_herd({
 		"id": "game_runner_09", "label": "Steppe Runners (game_runner_09)",
 		"species": "Steppe Runners", "size_class": "migratory",
 		"huntable": true, "ecology_phase": "thriving",
@@ -119,7 +122,7 @@ func _building_herd_fixture() -> Dictionary:
 		"herders_needed": 0,
 		"herders_needed_if_managed": HERD_DIP_WOULD_BE_HERDERS,
 		"tile_info": HerdFx.plain_herd_tile_info(),
-	}
+	})
 
 ## The band gentling it: standing ON the herd (distance 0 ≤ reach → the LOCAL branch, the only one
 ## that carries an improvement), `output_multiplier` 1.0 so the rendered numbers ARE the model's, and

@@ -16,6 +16,9 @@ const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -99,7 +102,7 @@ func _fully_herded_herd_fixture() -> Dictionary:
 	HerdFx.set_managed_herders(fixture, 4)
 	_set_keeper_upkeep(fixture, 4, POOL_COVERS_IT)
 	fixture["herded_fraction"] = 0.4
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## The SAME herd, UNDER-KEPT — its share of the pool did not cover it, so animals are drifting off
 ## (the shed is the animal web's shortfall penalty). The herd wants 6 keepers' worth and the pool paid
@@ -252,7 +255,7 @@ func _pastoral_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 0.6
 	HerdFx.price_animal_build(fixture)
 	fixture["tile_info"] = HerdFx.compact_herd_tile_fixture()
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## An OVERGRAZING herd: biomass (2100) exceeds the K (1352) its range can sustainably feed, so the
 ## merged pair reads "Biomass: 2100 / 1352" (current ABOVE max) and the drawer adds the WARN-amber
@@ -266,7 +269,7 @@ func _overgrazing_herd_fixture() -> Dictionary:
 	fixture["carrying_capacity"] = 1352.0
 	fixture["graze_range_radius"] = 1
 	fixture["tile_info"] = HerdFx.compact_herd_tile()
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## A SMALL-GAME herd (radius-0 range): it grazes only its own tile, so the drawer reads "Range: 1 tile"
 ## (singular) and the map draws a single-hex highlight. Biomass below its small K → no overgrazing.
@@ -282,7 +285,7 @@ func _small_game_herd_fixture() -> Dictionary:
 	fixture["carrying_capacity"] = 190.0
 	fixture["graze_range_radius"] = 0
 	fixture["tile_info"] = HerdFx.compact_herd_tile()
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## A composing-Corral herd that needs MORE than one keeper (Grazing 2d-δ herder deficit): the take/prepare
 ## max-useful for the Corral rung is 1 ("one worker suffices to prepare"), but this growing herd needs 2

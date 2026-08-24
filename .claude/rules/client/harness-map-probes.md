@@ -339,8 +339,11 @@ own buttons. **`push_input` takes WINDOW coordinates and a control's rect is in 
 this harness pins a canvas the window does not match, so an unconverted press lands somewhere else
 entirely: measured, it missed the bar on every leg and every claim failed with nothing open. The
 conversion is `ui_preview`'s `InputProbe.canvas_to_window` — SHARED rather than copied, for the reason
-`band_panel_preview` already shares `fixtures_band.gd`, and it makes this the second cross-harness
-preload in the tree.
+`band_panel_preview` already shares `fixtures_band.gd`, and it made this the second cross-harness
+preload in the tree. The third is `fixtures_rung.gd`, which this harness's patch and herd fixtures
+derive their `current_rung` through — `_patch_rung_key` / `_herd_rung_key` were local to this file
+until the whole client started reading that one field (`test-harnesses.md` → "A fixture's STANDING
+RUNG is DERIVED, never typed").
 
 **THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
 `map_overlay_legend` is the legend popover open on the channel menu's own selection, and
