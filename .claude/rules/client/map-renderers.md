@@ -201,15 +201,40 @@ answering gestures altogether.
 The patch block in `_tile_info_at` copies the `forage_patches` row across key by key from an explicit
 list, `patch_`-prefixing each one, and every forage compose sheet reads its source out of that
 `tile_info` and nowhere else. **A key the decoder emits but this block omits is silently absent on the
-plant web** — no error, no zero to notice — and it has shipped that way three times
-(`perWorkerBiomass`/`regrowthSamples`, then `materialPerBiomass`/`perWorkerMaterial`). Adding a
+plant web** — no error, no zero to notice — and it has shipped that way four times
+(`perWorkerBiomass`/`regrowthSamples`, then `materialPerBiomass`/`perWorkerMaterial`, then
+`buildKitId`, which crossed onto no `tile_info` for a release while `SourceForecast.build_kit_id`
+read it there and there only, so every forage build quoted no kit at all). Adding a
 `ForagePatchState` field is therefore **two edits here**: the copy line, and an entry in
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows.
+
+**`patch_current_rung` is the worked example of the fog half.** The wire's `currentRung` states the
+rung a patch STANDS on (`plant:tended`, `plant:field`) — which is exactly the ladder position
+`patch_is_cultivated` / `patch_is_field` are redacted to hide, and the same reading
+`patch_carrying_capacity` was added to that list to withhold. A cross-ref line without the redaction
+entry re-opens that leak in one token, on a hex the player cannot currently see.
 
 `tools/patch_crossref_guard.gd` enforces both as a partition over this block's own output, so an
 omission fails at the wiring rather than in a panel. **Why the copy exists at all, and why no preview
 frame can see it break, are one home over in `.claude/rules/client/labor-ui.md`** → "THE PATCH'S
 FORECAST FIELDS REACH THE SHEET THROUGH `tile_info`"; do not restate them here.
+
+## `set_overlay_channel`'s FIRST line builds a DEFERRED channel — it is not a channel branch
+
+`DEFERRED_OVERLAY_BUILDERS` is a `{key: builder method}` table and `_realize_deferred_overlay` is the
+one thing that reads it. A channel in it is **not** synthesized during the snapshot ingest the way
+`province` is; it is built the first time each frame that anything asks for it, and the per-turn
+refresh falls out of the overlay picker re-asserting the painted channel on `overlay_channels_ingested`.
+
+Two things to hold to if you touch that function. **The realize call has to stay ahead of the
+`overlay_channels.has(key)` test**, which would otherwise refuse a channel this renderer has simply
+not built yet. And it **names no channel on purpose** — `docs/plan_knowledge_screen.md` §6b forbids a
+second `if key ==` in the render path, so a new deferred channel is a row in that table and nothing
+else.
+
+Why any of it is deferred (a `RungGates` pass per SOURCE, measured at ~331 ms for a full-size world's
+worth) belongs to the channel that needed it: `.claude/rules/client/overlay-channels.md` →
+`ready_for_improvement`. **Do not restate it here**; one home per fact.
 
 ## Fog of war
 

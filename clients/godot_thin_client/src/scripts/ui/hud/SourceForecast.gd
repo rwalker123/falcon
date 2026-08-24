@@ -974,11 +974,37 @@ const RUNG_KEY_IMPROVEMENTS := {
     RUNG_KEY_PASTORAL: IMPROVEMENT_TAME,
     RUNG_KEY_PEN: IMPROVEMENT_CORRAL,
 }
+# **…AND THE INVERSE: THE RUNG EACH IMPROVEMENT VERB BUILDS.** `improvement_is_done` asks this of
+# every rung of every source the HUD draws, so it is written down rather than searched for in the
+# crossing above — a reverse scan at call time would walk six rows to answer what a `has` answers.
+#
+# ⛔ **THE PAIR IS ONE FACT WRITTEN TWICE AND MUST STAY IN STEP.** A rung added to one table and not
+# the other is either a verb naming no rung — which reads as *never built*, silently — or a rung no
+# verb can reach. The route ladder's `route:trail` / `route:road` go into BOTH or into neither.
+#
+# **`IMPROVEMENT_NONE` IS ABSENT, AND THAT ABSENCE IS THE ANSWER.** The floor is not something a band
+# builds, it is where every source starts, and it is spelled differently on each branch — so *is
+# `none` done?* answers `false`, which is what every rung walk in this client already relies on.
+const IMPROVEMENT_RUNG_KEYS := {
+    IMPROVEMENT_CULTIVATE: RUNG_KEY_TENDED,
+    IMPROVEMENT_SOW: RUNG_KEY_FIELD,
+    IMPROVEMENT_TAME: RUNG_KEY_PASTORAL,
+    IMPROVEMENT_CORRAL: RUNG_KEY_PEN,
+}
+# **THE RUNG THE SOURCE STANDS ON**, in that same `<branch>:<id>` spelling — the ONE wire field that
+# answers *"has this rung been built"* on both webs (`forage::patch_rung_key`, and its animal twin).
+# `prefix` spells it, so a `patch_`-prefixed `tile_info` cross-ref and a bare wire row read alike.
+const FORECAST_CURRENT_RUNG_KEY := "current_rung"
 # …and the branch each web climbs, BOTTOM RUNG FIRST. It is an ORDER as well as a membership list:
 # every consumer walks it to say where a source stands and what is above it, so a branch listed out
 # of climb order would mark the wrong rung as *banked*.
 const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
 const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
+# …and EVERY BRANCH THIS CLIENT KNOWS, in one list. It is what makes a question about a rung KEY
+# answerable without first being told which web the source is on — the wire spells a rung
+# `<branch>:<id>`, so the branch travels inside the key. A future third web (a route climbing
+# trail → road) is ONE ENTRY here and no per-source code anywhere.
+const RUNG_BRANCHES := [RUNG_BRANCH_PLANT, RUNG_BRANCH_ANIMAL]
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -1226,38 +1252,33 @@ const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 ## cycle between two `class_name`d scripts fails to load the whole client.
 const BUILD_GEAR_PER_WORKER := "per_worker"
 const BUILD_GEAR_SATURATING_CREW := "saturating_crew"
-# The wire flag/meter that says an improvement's rung is ALREADY BUILT — what turns the control's
-# Running state into its Done state. A bool for the plant rungs (never infer a rung from its float);
-# the animal rungs read `corralled` and a full `domestication` meter, since taming has no bool of its
-# own. `DONE_FLAG_KEYS` holds the bools; `IMPROVEMENT_TAME` is handled against
-# `DOMESTICATION_COMPLETE` by `improvement_is_done`, which is the one definition.
+## **THE STAMPED RETENTION BAR OF EACH PLANT RUNG** — the per-web bool that says the rung was
+## ACHIEVED, which a plant rung keeps while its meter erodes beneath it. Read by `rung_needs_repair`
+## and by nothing else in the client, which is the whole of its remaining job: *achieved and short of
+## its cost* is the one question the source's standing rung cannot answer, because a rung eroded to
+## 99% is still the rung the source stands on. (The test tree's `fixtures_rung.gd` reads it too — off
+## the same table, to DERIVE a fixture's standing rung rather than to spell one by hand.)
+##
+## ⛔ **IT IS NOT THE *IS THIS BUILT* TEST ANY MORE, AND MUST NOT BE READ AS ONE.** That question is
+## `improvement_is_done`, which reads the wire's `current_rung` — one field, both webs, and no
+## cross-rung table to keep in step (`RETIRED: FORECAST_RETIRED_BY_HIGHER_RUNG`, below). Reading these
+## bools for *built* is what needed that table: a Field sown from wild ground carries `is_cultivated`
+## false FOREVER, so the bare flag offered `Cultivate this patch` on ground the sim treats as already
+## cultivated. A standing rung of `plant:field` is at or above `plant:tended` and says so for free.
+##
+## **THE ANIMAL WEB HAS NO ENTRY FOR `Tame`, WHICH IS WHY IT CANNOT BE REPAIRED.** Taming has no bool
+## of its own — its achievement IS its meter — so `rung_needs_repair` answers `false` there by falling
+## through this table, and *done* and *short* stay the contradiction they are on that rung.
 const FORECAST_DONE_FLAG_KEYS := {
     IMPROVEMENT_CULTIVATE: "is_cultivated",
     IMPROVEMENT_SOW: "is_field",
     IMPROVEMENT_CORRAL: "corralled",
 }
-## **A HIGHER RUNG RETIRES THE ONE BELOW IT, and on the plant web that has to be said out loud** —
-## because `Sow` skips rung 2. A Field sown from wild ground carries `cultivation_progress == 0`
-## FOREVER (the sim: *"`Sow` needs no prior patch, so a Field may stand on ground that was never
-## tended"*), so `is_cultivated` is honestly false on a finished Field. Reading the bare flag made a
-## completed Field offer `Cultivate this patch` — an offer for a build the sim treats as already
-## built. Reported from play.
-##
-## **The sim already answers this correctly and this mirrors it**: `forage_rung_already_built` matches
-## `Improvement::Cultivate => patch.is_managed()`, whose own docstring says *"a Field is above rung
-## 2"* and records that a `cultivate` sent to a wild-sown Field "stalled forever, silently".
-##
-## **DO NOT reuse `source_is_managed` here, despite the sim's predicate being named `is_managed`.**
-## The word means different things on the two sides: the client's is rung-3 ONLY — the "the sim never
-## draws this source down" branch, which a Tended Patch deliberately fails — while the sim's is
-## `is_field() || is_cultivated()`. It would be right by accident on this line and wrong wherever
-## else it is read.
-##
-## The animal web needs no entry: `Corral` demands a herd already tamed, so its rung 2 cannot be
-## skipped, which is why `hunt_rung_already_built` carries no cross-rung term either.
-const FORECAST_RETIRED_BY_HIGHER_RUNG := {
-    IMPROVEMENT_CULTIVATE: [IMPROVEMENT_SOW],
-}
+## **RETIRED — `FORECAST_RETIRED_BY_HIGHER_RUNG`.** It was a second table saying only that a Field is
+## also cultivated, and it existed because *built* was asked of each web's private bools, which cannot
+## see a rung skipped by `Sow`. `improvement_is_done` now compares the source's standing rung against
+## the rung the verb builds, so *a higher rung retires the one below it* is the ORDER of
+## `RUNG_BRANCHES` rather than a table beside it — and the route ladder adds no entry to either.
 # Below this a component's rate is zero — nothing to divide by. NOT the same question as "did the wire
 # carry a forecast", which `known` now answers separately (see `forecast_inputs`).
 const FORECAST_MIN_PER_WORKER := 0.0001
@@ -4209,22 +4230,24 @@ static func build_is_in_flight(src: Dictionary, prefix: String, kind: String,
 ## Is this improvement's rung ALREADY BUILT on this source? The test that turns the improvement
 ## control's Running state into its Done state, and the one definition of it.
 ##
-## The plant rungs answer from their own bool (`is_cultivated` / `is_field`) — **never from the float
-## beside it**, which is a build meter and reads 1.0 for one turn before the flag flips. `Tame` has no
-## bool on the wire, so it reads a full `domestication` meter; `Corral` has both and takes the bool.
-## `prefix` spells the keys, so this works against a `patch_`-prefixed tile_info and a bare herd alike.
+## **IT IS ONE COMPARISON, ON ONE WIRE FIELD: is the rung the source STANDS on at or above the rung
+## this verb builds?** `current_rung` is branch-qualified (`plant:field`, `animal:pen`), so the same
+## read serves both webs and a third one costs a row in two tables and nothing here. `prefix` spells
+## the key, so a `patch_`-prefixed `tile_info` cross-ref and a bare wire row both work.
+##
+## ⛔ **IT USED TO READ EACH WEB'S PRIVATE FLAGS** (`is_cultivated` / `is_field` / `corralled`, with
+## `Tame` a special case against `DOMESTICATION_COMPLETE`) and needed a fourth table to say a Field is
+## also cultivated. The sim publishes the position those flags were being reassembled into — the two
+## are provably one fact, `forage::patch_rung_key(patch)` being `patch.standing().held` and
+## `is_cultivated()` being `held.is_at_or_above(PlantTended)` — so the reassembly is gone, along with
+## the way it silently forgot a rung the flags could not see.
+##
+## **A VERB NAMING NO RUNG ANSWERS `false`**, `IMPROVEMENT_NONE` included: nobody builds the floor.
 static func improvement_is_done(src: Dictionary, prefix: String, improvement: String) -> bool:
-    if improvement == IMPROVEMENT_TAME:
-        return float(src.get(prefix + FORECAST_BUILD_METER_KEYS[IMPROVEMENT_TAME], 0.0)) \
-            >= DOMESTICATION_COMPLETE
-    if not FORECAST_DONE_FLAG_KEYS.has(improvement):
+    if not IMPROVEMENT_RUNG_KEYS.has(improvement):
         return false
-    if bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false)):
-        return true
-    for higher_variant in FORECAST_RETIRED_BY_HIGHER_RUNG.get(improvement, []):
-        if bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[String(higher_variant)]), false)):
-            return true
-    return false
+    return rung_at_or_above(String(src.get(prefix + FORECAST_CURRENT_RUNG_KEY, "")),
+        String(IMPROVEMENT_RUNG_KEYS[improvement]))
 
 ## **HAS THIS SOURCE ACHIEVED THIS RUNG AND THEN LET IT SLIP?** — the two facts `build_verb`'s own
 ## docstring insists stay orthogonal, asked TOGETHER for the one question that needs both: the rung is
@@ -4237,17 +4260,18 @@ static func improvement_is_done(src: Dictionary, prefix: String, improvement: St
 ## BUILDING at once and offered nothing. This is the seam both of those now consult.
 ##
 ## **THE ANIMAL WEB CANNOT REACH IT TODAY, and that is a property of the ladder rather than of this
-## test.** `IMPROVEMENT_TAME`'s achievement IS its meter (`improvement_is_done` reads
-## `domestication >= DOMESTICATION_COMPLETE`), so *done* and *short* are contradictory there; and no
-## animal rung declares decay, so a corral's meter does not fall back below its flag. It is written
-## per-rung anyway because the asymmetry is the LADDER's and could move.
+## test.** Taming's achievement IS its meter — the sim stamps `animal:pastoral` at exactly
+## `DOMESTICATION_COMPLETE` — so *done* and *short* are contradictory there, which is why `Tame` has
+## no `FORECAST_DONE_FLAG_KEYS` row to fall through; and no animal rung declares decay, so a corral's
+## meter does not fall back below its flag. It is written per-rung anyway because the asymmetry is the
+## LADDER's and could move.
 ##
-## ⛔ **IT READS THE RUNG'S OWN FLAG, NEVER `improvement_is_done`, and that is not a shortcut — the
-## broader test answers TRUE for the wrong reason.** `improvement_is_done` also answers *built* when a
-## HIGHER rung retires this one (`FORECAST_RETIRED_BY_HIGHER_RUNG`), and a Field sown straight from
-## wild ground carries `cultivation_progress == 0` **forever** — Sow needs no prior patch — so through
-## that door every finished Field in the game reads as a Cultivate at 0% waiting to be repaired, and
-## the client re-offers a rung the sim treats as already built. That exact defect was reported from
+## ⛔ **IT READS THE RUNG'S OWN STAMPED FLAG, NEVER `improvement_is_done`, and that is not a shortcut —
+## the broader test answers TRUE for the wrong reason.** `improvement_is_done` compares the source's
+## STANDING rung at-or-above, so a Field answers *built* for Cultivate too (`plant:field` sits above
+## `plant:tended`) — and a Field sown straight from wild ground carries `cultivation_progress == 0`
+## **forever**, Sow needing no prior patch, so through that door every finished Field in the game reads
+## as a Cultivate at 0% waiting to be repaired and the client re-offers a rung the sim calls built. That exact defect was reported from
 ## play once and is pinned by `ui_preview`'s `forage_field_from_wild`; a rung a higher one stands on
 ## has nothing to repair, because the higher rung is what is holding the ground.
 ## ⛔ **AND THE METER MUST CARRY WORK, not merely read below its cost.** `improvement_progress` answers
@@ -4528,6 +4552,63 @@ static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
 ## for a herd. One picker, so the two webs' tracks cannot be walked in two different orders.
 static func rung_branch_for_kind(source_kind: String) -> Array:
     return RUNG_BRANCH_ANIMAL if source_kind == SOURCE_KIND_HERD else RUNG_BRANCH_PLANT
+
+## **HAS THIS SOURCE ACTUALLY BEEN IMPROVED** — is the rung it STANDS on (the wire's `current_rung`)
+## above the BOTTOM rung of whichever branch that key belongs to? Wild land and a wild herd answer
+## `false`; every rung a band ever built answers `true`.
+##
+## **IT TAKES A KEY, NOT A SOURCE, AND THAT IS THE WHOLE POINT.** The branch travels inside the key,
+## so this is ONE read for the plant web, the animal web and the branch that does not exist yet —
+## where the alternative is every consumer hand-writing `is_cultivated`/`is_field` on one web and
+## `domestication`/`corralled` on the other, and growing a third reader the day a route ladder ships.
+##
+## ⛔ **AN UNKNOWN KEY ANSWERS `false`, DELIBERATELY** — `""` included, which is what a hand-built
+## fixture carries. A key naming a branch this client has not been taught means a STALE CLIENT, and
+## the two ways of being wrong are not symmetric: `false` shows the player nothing, which is visible
+## and safe, while `true` would call every source on that branch improved — its untouched FLOOR
+## included — which is exactly the defect this test exists to remove.
+##
+## **IT IS NOT `_standing_rung_index`, AND MUST NOT BE FOLDED INTO IT.** That one reads the STAMPED
+## achievement flags and carries repair semantics (a Field eroded to 99% is still stamped done); this
+## one reads the position the sim publishes. Two questions, two readings.
+static func rung_above_branch_floor(rung_key: String) -> bool:
+    var key := rung_key.strip_edges()
+    if key == "":
+        return false
+    for branch_variant in RUNG_BRANCHES:
+        var branch: Array = branch_variant
+        var idx := branch.find(key)
+        if idx >= 0:
+            return idx > 0
+    return false
+
+## **IS THE RUNG A SOURCE STANDS ON AT OR ABOVE THIS ONE?** — the comparison `improvement_is_done` is,
+## and the only place the branch ORDER in `RUNG_BRANCHES` is turned into a verdict. Both arguments are
+## wire rung keys; the branch travels inside each of them, so this needs no source and no web.
+##
+## **AT OR ABOVE, NOT EQUAL, because a higher rung retires the one below it.** A Field sown straight
+## from wild ground never banked a Cultivate — the sim's `Sow` needs no prior patch — and offering
+## `Cultivate this patch` on finished ground was a defect reported from play. `plant:field` is one
+## step above `plant:tended` in the branch list, which is the whole of the answer now.
+##
+## ⛔ **AN UNKNOWN OR EMPTY KEY ANSWERS `false`, ON EITHER SIDE.** `""` is what a hand-built fixture and
+## a redacted remembered hex carry, and a key naming a branch this client has not been taught means a
+## STALE CLIENT. The two ways of being wrong are not symmetric: `false` reads as *nothing has been
+## built here*, which offers the player a rung they may already hold and is visible and harmless,
+## while `true` would call every rung on that branch BUILT and quietly retire the whole climb.
+## A standing key on a DIFFERENT branch from the target is unknown in exactly this sense.
+static func rung_at_or_above(rung_key: String, target_rung_key: String) -> bool:
+    var standing := rung_key.strip_edges()
+    var target := target_rung_key.strip_edges()
+    if standing == "" or target == "":
+        return false
+    for branch_variant in RUNG_BRANCHES:
+        var branch: Array = branch_variant
+        var target_idx := branch.find(target)
+        if target_idx < 0:
+            continue
+        return branch.find(standing) >= target_idx
+    return false
 
 ## **RETIRED — `build_is_queue_head`, *is this source at the head of the queue that funds it?***
 ##

@@ -5,6 +5,9 @@
 ## `.claude/rules/client/test-harnesses.md`.
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 const HUNT_FORECAST_PARTY := 4
 # The dialed-in hunter count for the LOCAL hunt preview states — deliberately dialed PAST every
@@ -322,7 +325,7 @@ static func taming_herd_fixture() -> Dictionary:
 	price_animal_build(fixture)
 	fixture["ecology_phase"] = "thriving"
 	fixture["tile_info"] = compact_herd_tile_fixture()
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## THE INVESTMENT PAYOFF FACES (issue #397) — a Wild Boar on a pen-ceiling species, so BOTH investment
 ## rungs are offered and both wear the payoff the faces render:
@@ -364,7 +367,7 @@ static func fully_tamed_herd_fixture() -> Dictionary:
 	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
 	price_animal_build(fixture)
 	set_managed_herders(fixture, TAMED_HERD_CREW)
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## Set BOTH herder counts on a MANAGED herd fixture. The sim exports them EQUAL there (see the
 ## field-pair guard `_guard_herd_fields` in `ui_preview.gd`), and setting them one at a time is
@@ -521,7 +524,7 @@ static func herd_fixture() -> Dictionary:
 	# a build is in flight, which is what lets the compose sheet quote a Tame before the player
 	# commits to it. `price_animal_build` derives each meter's `work_done` from the fraction stated
 	# below, so the two halves of a row can never disagree.
-	return price_animal_build({
+	return RungFx.stamp_herd(price_animal_build({
 		"id": "game_deer_07",
 		"label": "Red Deer (game_deer_07)",
 		"species": "Red Deer",
@@ -579,7 +582,7 @@ static func herd_fixture() -> Dictionary:
 		"upkeep_shortfall": 0.0,
 		"upkeep_workers_needed": 0,
 		"tile_info": BaseFx.food_tile_fixture(),
-	})
+	}))
 
 ## A DEADLY-TO-HUNT herd (Predators Phase 0): a woolly mammoth — high attack (8) and high ferocity
 ## (0.9, it fights back), but aggression 0 (a grazer never attacks unprovoked). Its drawer shows high
@@ -621,7 +624,7 @@ static func compact_herd_tile_fixture() -> Dictionary:
 
 ## The stressed herd sharing the occupied hex (amber ecology dot).
 static func occupied_herd_only() -> Dictionary:
-	return {
+	return RungFx.stamp_herd({
 		"id": "game_bison_02",
 		"label": "Steppe Bison (game_bison_02)",
 		"species": "Steppe Bison",
@@ -631,7 +634,7 @@ static func occupied_herd_only() -> Dictionary:
 		"domestication": 0.0,
 		"biomass": 240.0,
 		"x": 58, "y": 24,
-	}
+	})
 
 static func collapsing_herd_fixture() -> Dictionary:
 	var fixture := herd_fixture()
@@ -639,7 +642,7 @@ static func collapsing_herd_fixture() -> Dictionary:
 	fixture["ecology_phase"] = "collapsing"
 	fixture["domestication"] = 0.0
 	price_animal_build(fixture)
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## A compact NON-food tile_info (like the corral fixtures) so the Tile card stays short and the herd
 ## drawer's Biomass (current/max) / Range (+ overgrazing) rows land in-frame rather than below the fold.
@@ -664,7 +667,7 @@ static func grazing_healthy_herd_fixture() -> Dictionary:
 	fixture["carrying_capacity"] = 2150.0
 	fixture["graze_range_radius"] = 1
 	fixture["tile_info"] = compact_herd_tile()
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## A FULLY TAMED, not-yet-penned herd with no pen started, on the same compact tile as the corral-ready
 ## one — the ONE shape that can put a GATED 🐄 Corral on screen (issue #442).
@@ -705,7 +708,7 @@ static func corral_ready_herd_fixture() -> Dictionary:
 		"food_module": "",
 		"food_module_label": "None",
 	}
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 static func domesticated_herd_fixture() -> Dictionary:
 	var fixture := herd_fixture()
@@ -753,7 +756,7 @@ static func domesticated_herd_fixture() -> Dictionary:
 		"food_module": "",
 		"food_module_label": "None",
 	}
-	return fixture
+	return RungFx.stamp_herd(fixture)
 
 ## The SAME penned herd, STARVING: its keeper paid only 40% of the 1.74/turn feed, so the herd is
 ## shrinking (`pen.starve_shrink_rate × (1 − fed) × biomass`) every turn and its yield with it. The

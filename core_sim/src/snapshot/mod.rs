@@ -2232,6 +2232,61 @@ mod tests {
         assert_eq!(t.owner, Some(3));
     }
 
+    /// **EVERY PATCH PUBLISHES THE RUNG IT STANDS ON, all three of them.** The wire's `currentRung`
+    /// is what lets a client answer *"has this been improved, and what is above it"* without reading
+    /// `isCultivated`/`isField` in the right order, so the claim worth pinning is that each of the
+    /// plant branch's three positions crosses as its own token — a bottom rung included, since `""`
+    /// is not one of the three.
+    ///
+    /// **Asserted against `RungKey::…::wire_key()`, never a typed `"plant:tended"`.** A literal here
+    /// would keep passing if the `<branch>:<id>` spelling moved under it, which is the one change
+    /// that breaks every client parsing the token.
+    #[test]
+    fn snapshot_forage_patches_publish_the_rung_each_patch_stands_on() {
+        let ladder = LadderConfig::builtin();
+        let mut registry = ForageRegistry::default();
+        // One patch per rung, laid along `y = 0` so the capture's stable `(y, x)` order is `x`.
+        let wild = ForagePatch::new(UVec2::new(0, 0), 100.0);
+        let mut tended = ForagePatch::new(UVec2::new(1, 0), 100.0);
+        assert!(tended.complete_cultivation(FactionId(1), &ladder));
+        let mut field = ForagePatch::new(UVec2::new(2, 0), 100.0);
+        assert!(field.complete_field(FactionId(1), &ladder));
+        for patch in [wild, tended, field] {
+            registry.patches.insert(patch.tile, patch);
+        }
+
+        let labor = LaborConfig::builtin();
+        let patches = snapshot_forage_patches(
+            &registry,
+            &labor.forage,
+            crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                crate::equipment_config::EquipmentStat::ForageCarry,
+                labor.forage.per_worker_biomass_capacity,
+            ),
+            &FloraConfig::builtin(),
+            &ladder,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &FloraQuoteCache::default(),
+            &crate::snapshot::subsistence::BuildKitIds::default(),
+        );
+
+        let published: Vec<&str> = patches
+            .iter()
+            .map(|patch| patch.current_rung.as_str())
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                RungKey::PlantWild.wire_key(),
+                RungKey::PlantTended.wire_key(),
+                RungKey::PlantField.wire_key(),
+            ],
+            "each patch must publish its OWN rung, bottom rung included"
+        );
+    }
+
     #[test]
     fn snapshot_intensification_knowledge_reports_learned_ladders() {
         let mut ledger = DiscoveryProgressLedger::default();
@@ -2335,6 +2390,74 @@ mod tests {
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// **THE ANIMAL TWIN of `snapshot_forage_patches_publish_the_rung_each_patch_stands_on`** — all
+    /// three husbandry positions cross as their own token, so a client never has to read
+    /// `domestication` against a threshold and then `corralled` to work out where a herd stands.
+    ///
+    /// Same rule on the assertion: compared against `RungKey::…::wire_key()`, because a hand-typed
+    /// `"animal:pastoral"` would survive exactly the spelling change that breaks a client.
+    #[test]
+    fn herd_snapshot_publishes_the_rung_each_herd_stands_on() {
+        use crate::fauna_config::SizeClass;
+        let ladder = LadderConfig::builtin();
+        // One species for all three, so the only thing differing between the rows is the position:
+        // `Aurochs` is pennable, which is what lets one fixture reach the top of the branch.
+        let herd = |id: &str| {
+            Herd::new(
+                id.to_string(),
+                "Aurochs".to_string(),
+                SizeClass::Big,
+                vec![UVec2::new(4, 4)],
+                50.0,
+                100.0,
+                0.0,
+                0.05,
+                SNAPSHOT_BODY_MASS,
+            )
+        };
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(herd("herd_wild"));
+        // Rung 2 and rung 3 are both reached through the REAL mutators, so the husbandry ceiling and
+        // the owner lock apply exactly as they do in play — no fabricated meter.
+        let mut tamed = herd("herd_tamed");
+        assert!(
+            tamed.tame_outright(FactionId(1), &ladder),
+            "the fixture species must be tameable"
+        );
+        registry.herds.push(tamed);
+        let mut penned = herd("herd_penned");
+        assert!(
+            penned.corral_at(UVec2::new(4, 4), &ladder),
+            "the fixture species must be pennable"
+        );
+        registry.herds.push(penned);
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        let states = export_herds(
+            &telemetry,
+            &registry,
+            &fauna,
+            &labor,
+            &all_seeing_ledger(64),
+        );
+        for (id, expected) in [
+            ("herd_wild", RungKey::AnimalWild),
+            ("herd_tamed", RungKey::AnimalPastoral),
+            ("herd_penned", RungKey::AnimalPen),
+        ] {
+            let row = states.iter().find(|h| h.id == id).unwrap();
+            assert_eq!(
+                row.current_rung,
+                expected.wire_key(),
+                "{id} must publish its OWN rung, bottom rung included"
+            );
+        }
     }
 
     /// **The ownership-INDEPENDENT would-be herder count** (taming-startup-lag fix). A WILD (unowned)

@@ -117,6 +117,41 @@ const HUNT_DANGER_OVERLAY_KEY := "hunt_danger"
 static var HUNT_DANGER_OVERLAY_COLOR: Color = Color()  # DERIVED: HudStyle.HUNT_DANGER_ACCENT
 const THREAT_OVERLAY_KEY := "threat"
 static var THREAT_OVERLAY_COLOR: Color = Color()       # DERIVED: HudStyle.THREAT_ACCENT
+# --- READY FOR IMPROVEMENT (the aggregate ⌃) ----------------------------------------------------------
+# The map-wide view of the per-source `⌃` mark: every source that could climb a rung right now, at
+# once. Synthesized client-side from the patches, the herds and the faction's knowledge row (see
+# `ReadyForImprovement`) — there is no wire raster, and there could not be, the answer being about what the
+# PLAYER's faction knows.
+#
+# **IT IS `HudStyle.HEALTHY` — THE THEMED "well-supplied / good" GREEN.** The aggregate is a reading
+# about LAND — these hexes hold ground and herds that could carry more — and that is the same good
+# news every other healthy mark on this client states in green. **The per-source `⌃` badge keeps
+# `SIGNAL`**, and the two being different marks is deliberate rather than a drift: a badge pinned to
+# one source and a dim wash over a whole map are not one vocabulary said twice, and painting the map
+# in the badge's ink made a near-white cream blow the lit hexes out against the grid. It is still
+# DERIVED rather than authored: a hand-picked hue would agree with the palette in one theme and fight
+# it in three. Amber would be wrong twice over — it is the trouble channel on this map, and teaching a
+# player to read good news in it is how a warning stops being read.
+static var READY_FOR_IMPROVEMENT_OVERLAY_COLOR: Color = Color()  # DERIVED: HudStyle.HEALTHY
+
+## **CHANNELS THIS RENDERER SYNTHESIZES ON DEMAND — `{key: builder method}`.** A channel in this table
+## is NOT built during the snapshot ingest; it is built the first time each frame that something asks
+## for it, which in practice is `set_overlay_channel` accepting it — and the picker re-asserts the
+## painted channel on every `overlay_channels_ingested`, so a channel the player is HOLDING is rebuilt
+## once per turn, automatically, through a seam that already existed.
+##
+## **A MEASUREMENT PUT IT HERE, NOT A PREFERENCE.** `province` is derived eagerly beside the markers
+## because it is a partition over TILES; `ready_for_improvement` is a `RungGates` evaluation per SOURCE, and
+## the sim seeds a forage patch on every food-module tile carrying any human-edible capacity with no
+## cap in the capture. `map_preview`'s scale probe walks a full-size 256×192 world at **~7 µs a
+## source — 342 ms** for the ceiling of 49,152. Paying that on every turn boundary for a channel
+## nobody has selected is not a constant worth tuning; it is work that should not happen.
+##
+## **THE TABLE IS THE POINT.** §6b forbids a second `if key ==` in the render path, so this is a
+## registry and `_realize_deferred_overlay` names nothing: a second expensive channel is one row.
+const DEFERRED_OVERLAY_BUILDERS := {
+	ReadyForImprovement.CHANNEL_KEY: "_build_ready_for_improvement_channel",
+}
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
 # only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
@@ -348,12 +383,22 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# now, so it is redacted with the countdown it explains rather than with the ground readings: a
 	# remembered tile knows no more about a live refusal than it knows the date behind it.
 	"patch_build_blocked_reason",
+	# …and WHAT THAT BUILD IS BEING RAISED WITH. A resolved builders kit is a fact about a band's
+	# declared job, redacted with the queue position and the cause it rides beside.
+	"patch_build_kit_id",
 	# WHERE THE QUEUED ENTRY IS TAKING THIS PATCH, and what is left of the climb
 	# (`docs/plan_standing_upkeep.md` §2.8). Both are facts about a band's DECLARED job — the
 	# destination it named and the legs still owed from where the patch stands — so they are redacted
 	# with the queue position and the countdown they belong to. A remembered tile knows where the
 	# ground has been taken no better than it knows how far along the job is.
 	"patch_build_destination_rung", "patch_build_legs",
+	# …and WHERE THE PATCH ITSELF STANDS on that ladder. It is redacted for the same reason
+	# `patch_carrying_capacity` above is: `plant:tended` / `plant:field` state exactly the rung
+	# `patch_is_cultivated` and `patch_is_field` are struck out two entries up to hide, so leaving it
+	# out would hand a merely-remembered hex the redaction's own answer in one token. It travels with
+	# the destination rather than with the ground readings because it IS the ladder, not the terrain
+	# under it — `patch_tile_capacity` is what a remembered hex has instead.
+	"patch_current_rung",
 	# …and WHAT THE GROUND WILL CARRY at that destination. It rides the destination it belongs to, and
 	# it must: the figure is `tile K x the rung's field_capacity_gain`, so publishing it on a remembered
 	# hex hands over the same interpolated ladder position `patch_carrying_capacity` is redacted to
@@ -545,6 +590,7 @@ static func apply_palette(p: Dictionary) -> void:
 	# --- derived ---
 	THREAT_OVERLAY_COLOR = HudStyle.THREAT_ACCENT
 	HUNT_DANGER_OVERLAY_COLOR = HudStyle.HUNT_DANGER_ACCENT
+	READY_FOR_IMPROVEMENT_OVERLAY_COLOR = HudStyle.HEALTHY
 	HERD_DISTRESS_COLOR = HudStyle.DANGER
 	SUPPLY_LINK_COLOR = Color(HudStyle.SIGNAL, SUPPLY_LINK_OPACITY)
 	OVERLAY_COLORS = {
@@ -568,6 +614,13 @@ static func apply_palette(p: Dictionary) -> void:
 		# herd glows (hunt-danger orange, threat red, so the two read apart).
 		HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
 		THREAT_OVERLAY_KEY: THREAT_OVERLAY_COLOR,
+		# The aggregate ⌃ rides the generic lerp too — a hex with an offer wears a dim wash of this hue
+		# (`ReadyForImprovement.TILE_READY`), every other stays grid-coloured. Without a row it would
+		# paint `OVERLAY_FALLBACK_COLOR`, a blue meaning nothing, and — because the fallback is what the
+		# legend button would then state as well — the picker's roster-wide face guard would pass on it,
+		# the two agreeing honestly about a colour that says nothing. What the row buys is the HEALTHY
+		# GREEN, and that is what `map_preview` asserts by name.
+		ReadyForImprovement.CHANNEL_KEY: READY_FOR_IMPROVEMENT_OVERLAY_COLOR,
 	}
 
 const TERRAIN_TAG_KEYS := [
@@ -710,6 +763,17 @@ var scout_sites: Dictionary = {}
 var forage_patch_lookup: Dictionary = {}
 ## Player faction knowledge, pushed from the HUD — see `set_faction_knowledge`.
 var faction_knowledge: Dictionary = {}
+## The `ready_for_improvement` channel's cached model (`ReadyForImprovement.derive`) — the raster its channel was
+## built from plus the counts and unworked tiles its legend states. Empty until the frame builds it,
+## and on a world with no sources at all.
+var _ready_for_improvement: Dictionary = {}
+## **A COPY of the knowledge row the cached model was derived AGAINST**, and it is a copy for the same
+## reason `reset_world_state` rebinds rather than clears: `faction_knowledge` is the HUD's own dict
+## held by reference, so storing the reference would compare a row against itself and never fire.
+var _ready_for_improvement_knowledge: Dictionary = {}
+## Which deferred channels this frame has NOT built yet (`{key: true}`) — see
+## `DEFERRED_OVERLAY_BUILDERS` and `_realize_deferred_overlay`.
+var _deferred_overlay_pending: Dictionary = {}
 var tile_lookup: Dictionary = {}
 # Per-tile habitability (band-independent morale drain, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
@@ -1304,6 +1368,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	# **EVERY DEFERRED CHANNEL IS STALE AGAIN**, and this is the last moment it can be said: the
+	# listener below re-asserts the painted channel, which is what REBUILDS the one the player is
+	# actually holding. See `DEFERRED_OVERLAY_BUILDERS`.
+	_reset_deferred_overlays()
 	# BEFORE the legend: a listener that re-asserts a channel here wants the legend that follows to
 	# describe the channel it just re-asserted, not the cleared one.
 	overlay_channels_ingested.emit()
@@ -1848,6 +1916,11 @@ func set_culture_layer_highlight(layer_ids: PackedInt32Array, context_label: Str
 	_emit_overlay_legend()
 
 func set_overlay_channel(key: String) -> void:
+	# **BUILD A DEFERRED CHANNEL BEFORE ANYTHING ELSE LOOKS AT IT**, including the `overlay_channels`
+	# test below, which would otherwise refuse a channel this renderer has simply not built yet. It is
+	# a table lookup that names no channel (`DEFERRED_OVERLAY_BUILDERS`), so it is not the second
+	# `if key ==` §6b forbids, and every key not in that table falls straight through.
+	_realize_deferred_overlay(key)
 	if key == "terrain_tags":
 		if active_overlay_key == key:
 			return
@@ -2108,6 +2181,11 @@ func reset_world_state() -> void:
 	# masks that; dropping the reference is what makes it correct regardless of order. Same idiom as
 	# `BandOverlayRenderer.reset_world_state`'s `_labor_pending = {}`.
 	faction_knowledge = {}
+	# The model derived FROM that row goes with it — and so does the copy the staleness test compares
+	# against, or the first push into the new world would match the old world's row and be skipped.
+	_ready_for_improvement = {}
+	_ready_for_improvement_knowledge = {}
+	_reset_deferred_overlays()
 	herd_trails.clear()
 	culture_layer_map.clear()
 	selected_unit_id = -1
@@ -2906,6 +2984,13 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `site`, …). It crosses BESIDE the `-4` it explains: a countdown sentinel with no cause beside
 		# it is the state the field exists to end, and the client cannot re-derive the gate.
 		info["patch_build_blocked_reason"] = String(patch.get("build_blocked_reason", ""))
+		# **WHAT THIS PATCH'S BUILD IS BEING RAISED WITH** — the builders kit the winning band's queue
+		# entry RESOLVES to, `""` when nobody has it queued. It rides the queue position and the cause
+		# above because it is the same entry's property. **This line was MISSING while the decoder
+		# emitted the key**, which is the plant web's second-wiring bug for the fourth time: the
+		# compose sheet reads `build_kit_id` out of `tile_info` and there only, so every forage build
+		# read as carrying no kit at all.
+		info["patch_build_kit_id"] = String(patch.get("build_kit_id", ""))
 		# **WHERE THE ENTRY IS TAKING THIS PATCH, AND WHAT IS LEFT OF THE CLIMB** (§2.8). A queue entry
 		# names a DESTINATION rung rather than a single rung, so a `sow` declared on untended ground is
 		# a two-leg climb that holds the head of the queue through its Cultivate leg. The legs travel
@@ -2913,6 +2998,14 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# each `turns_remaining` is chained behind the legs above it, so nothing on this path may
 		# narrow, re-order or re-derive them.
 		info["patch_build_destination_rung"] = String(patch.get("build_destination_rung", ""))
+		# **WHERE THE PATCH STANDS RIGHT NOW**, in the destination's own `<branch>:<id>` spelling —
+		# the one field a consumer asks instead of reading this web's private `is_cultivated` /
+		# `is_field` pair, so a third food web costs it nothing. Read it BESIDE the destination: that
+		# one is a fact about a band's declared job and is `""` when nobody queued this patch, while
+		# every patch stands on a rung. The `""` default is the honest answer for a fixture the wire
+		# never touched; `SourceForecast.rung_above_branch_floor` reads an unnamed rung as "not
+		# improved" rather than guessing which rung was meant.
+		info["patch_current_rung"] = String(patch.get("current_rung", ""))
 		# **WHAT THIS PATCH WILL CARRY AT THAT DESTINATION** — the ceiling the rung buys, which is what
 		# says why the take falls while the build runs: the escapement floor is a fraction of `K` and the
 		# rung raises `K`, so the floor climbs underneath the player every turn. Its default is
@@ -4078,6 +4171,51 @@ func _resolve_province_for_layer(layer_id: int, regional_owner: Dictionary) -> i
 		guard += 1
 	return -1
 
+## **THE AGGREGATE ⌃ CHANNEL** (`docs/plan_knowledge_screen.md` §7) — the ready-source model and the
+## raster built from it, published as an ordinary channel through the `province` seam.
+##
+## **IT IS OFFERED WHETHER OR NOT ANYTHING IS READY, and the empty state is the teaching one.** A
+## channel that appeared the turn the first discovery landed would be the map lighting up for an
+## unlock, which §7 rules out by name; and a roster row that comes and goes is a row a player cannot
+## learn. With nothing ready the legend says so in a sentence, which is a better answer than a missing
+## channel. What it is gated on is a WORLD — `has_ready_for_improvement_data`, no grid or no source of either
+## web, and there is nothing for the channel to be about at all.
+func _build_ready_for_improvement_channel() -> void:
+	# Stamped whether or not a channel is built: a world with no sources still ANSWERED for this row,
+	# and leaving the stamp behind would make the next knowledge push compare against a world that is
+	# gone.
+	_ready_for_improvement_knowledge = faction_knowledge.duplicate()
+	if not has_ready_for_improvement_data():
+		_ready_for_improvement = {}
+		return
+	_ready_for_improvement = ReadyForImprovement.derive(self)
+	_add_overlay_channel(
+		ReadyForImprovement.CHANNEL_KEY,
+		_ready_for_improvement[ReadyForImprovement.MODEL_NORMALIZED],
+		_ready_for_improvement[ReadyForImprovement.MODEL_RAW],
+		ReadyForImprovement.CHANNEL_LABEL,
+		ReadyForImprovement.CHANNEL_DESCRIPTION)
+
+## Forget every deferred channel's last build. Called at the END of an ingest, because the sources a
+## deferred channel is derived from have just been replaced.
+func _reset_deferred_overlays() -> void:
+	_deferred_overlay_pending = {}
+	for key in DEFERRED_OVERLAY_BUILDERS:
+		_deferred_overlay_pending[key] = true
+
+## Build a deferred channel, unless this frame has already built it.
+##
+## **IT NAMES NO CHANNEL, and that is the requirement it exists to satisfy** (`plan_knowledge_screen`
+## §6b): a new deferred channel is one row in `DEFERRED_OVERLAY_BUILDERS`, never a second `if key ==`
+## in the render path. Every other key falls straight through, which is what makes it safe as
+## `set_overlay_channel`'s first line — `set_terrain_mode`, the fog clear and every offline harness
+## drive that function with keys this table has never heard of.
+func _realize_deferred_overlay(key: String) -> void:
+	if not bool(_deferred_overlay_pending.get(key, false)):
+		return
+	_deferred_overlay_pending[key] = false
+	call(String(DEFERRED_OVERLAY_BUILDERS[key]))
+
 func _add_overlay_channel(key: String, normalized: PackedFloat32Array, raw: PackedFloat32Array, label: String, description: String = "") -> void:
 	overlay_channels[key] = normalized
 	overlay_raw_channels[key] = raw
@@ -4419,9 +4557,44 @@ func set_targeting(info: Dictionary) -> void:
 ## MapView holds the patches and the herds already; this is the one input the ready mark needs that it
 ## cannot see, and it is deliberately the RAW row rather than a derived answer, so `RungGates` stays
 ## the single place the rung rules are written.
+## **AND IT STALES THE `ready_for_improvement` CHANNEL WHEN THE ROW ACTUALLY MOVES.** The knowledge push
+## arrives AFTER the map's own ingest — `Main._apply_snapshot` calls `display_snapshot` first and the
+## HUD fan-out that emits `faction_knowledge_changed` after it — so a channel built only during the
+## ingest would state the PREVIOUS turn's knowledge for the whole turn a discovery lands on, which is
+## the one turn it is wrong on and the one turn a player looks.
+##
+## Marking it stale is free; the REBUILD happens only where the answer is about to be read — here when
+## the channel is the one being painted, and otherwise at whatever later moment asks for it.
 func set_faction_knowledge(knowledge: Dictionary) -> void:
 	faction_knowledge = knowledge if knowledge is Dictionary else {}
+	if faction_knowledge == _ready_for_improvement_knowledge:
+		queue_redraw()
+		return
+	_ready_for_improvement = {}
+	_deferred_overlay_pending[ReadyForImprovement.CHANNEL_KEY] = true
+	if active_overlay_key == ReadyForImprovement.CHANNEL_KEY:
+		_realize_deferred_overlay(ReadyForImprovement.CHANNEL_KEY)
+		_emit_overlay_legend()
 	queue_redraw()
+
+## Is there anything for the aggregate ⌃ channel to be ABOUT — the registry row's `available`
+## predicate, and a question about the WORLD rather than about the count or the raster. A world with
+## sources offers the channel even when nothing is ready (the legend says so), and it must answer
+## without building anything: the picker asks it on every ingest, which is exactly the moment the
+## build is being kept off.
+func has_ready_for_improvement_data() -> bool:
+	return grid_width > 0 and grid_height > 0 \
+		and not (forage_patch_lookup.is_empty() and herds.is_empty())
+
+## The `facts` legend lines for that channel — the registry row names this method, and
+## `OverlayChannels.facts_for` calls it with no arguments.
+##
+## It REALIZES the channel, because a legend can be asked for one the map is not painting; past that
+## the answer is off the cached model, so opening the legend costs a scan of the unworked list (tens)
+## and never a second pass over the sources.
+func ready_for_improvement_facts() -> PackedStringArray:
+	_realize_deferred_overlay(ReadyForImprovement.CHANNEL_KEY)
+	return ReadyForImprovement.facts(self, _ready_for_improvement)
 
 func secondary_slot_of(key: String) -> int:
 	return _secondary_markers.slot_of(key)

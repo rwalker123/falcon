@@ -219,6 +219,33 @@ and skips in any worktree that has ever been imported, which is every worktree b
 being dropped into one. `cargo xtask fauna-icon-guard` does not either: it stats the PNG and its
 `.import` sidecar on disk, never the imported texture behind them.
 
+## A fixture's STANDING RUNG is DERIVED, never typed
+
+**`SourceForecast.improvement_is_done` reads one wire field — `current_rung` — and nothing else.** It
+used to reassemble the answer from each web's private flags (`is_cultivated` / `is_field` /
+`corralled`, with `Tame` a special case against a meter), which is why a fixture could once state
+those alone and be understood. It cannot now: **a source dict that omits `current_rung` reads as
+NOTHING HAS BEEN BUILT HERE**, which quietly changes what a compose sheet offers, what a work row
+says and what a badge draws — a perfectly plausible frame, with every other assertion green.
+
+**So every fixture states its rung through `tools/ui_preview/fixtures_rung.gd`**, the one
+transcription of the sim's own derivation (`forage::patch_rung_key`'s *"sown → field, cultivated →
+tended, else wild"* and its animal twin) for the whole test tree. `map_preview`,
+`band_panel_preview`, `snapshot_alias_guard` and the `ui_preview` chapters all `preload` it — the
+`input_probe.gd` shape, all-`static` and stateless.
+
+- **`patch_rung_key(tended, field)` / `herd_rung_key(domestication, corralled)`** are the primitives,
+  spelled in `SourceForecast.RUNG_KEY_*` rather than in string literals.
+- **`stamp_patch(row, prefix)` / `stamp_herd(row)`** are the form to reach for, and the reason is that
+  they read the row's OWN flags: a fixture cannot end up standing on a rung its `is_cultivated` /
+  `corralled` pair contradicts, which a hand-typed key can and which stages a source no server can
+  produce. `stamp_patches` / `stamp_herds` do a whole returned array.
+- **A `patch_` prefix is for a `tile_info` CROSS-REF and nothing else.** A raw wire patch row (what
+  `forage_patch_lookup` holds) is bare-keyed, and stamping both spellings onto one row is not
+  belt-and-braces — it is two answers to one question.
+- **STAMP AFTER THE MUTATION.** A chapter that flips a flag on a copy of a base fixture must re-stamp
+  it there; the rung it inherited is the rung it had before the edit.
+
 ## An assertion asks a CONTROL, not the subtree
 
 Three assertions in these harnesses were found passing for the wrong reason, and all three shared one

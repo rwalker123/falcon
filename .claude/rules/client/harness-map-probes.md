@@ -339,8 +339,11 @@ own buttons. **`push_input` takes WINDOW coordinates and a control's rect is in 
 this harness pins a canvas the window does not match, so an unconverted press lands somewhere else
 entirely: measured, it missed the bar on every leg and every claim failed with nothing open. The
 conversion is `ui_preview`'s `InputProbe.canvas_to_window` — SHARED rather than copied, for the reason
-`band_panel_preview` already shares `fixtures_band.gd`, and it makes this the second cross-harness
-preload in the tree.
+`band_panel_preview` already shares `fixtures_band.gd`, and it made this the second cross-harness
+preload in the tree. The third is `fixtures_rung.gd`, which this harness's patch and herd fixtures
+derive their `current_rung` through — `_patch_rung_key` / `_herd_rung_key` were local to this file
+until the whole client started reading that one field (`test-harnesses.md` → "A fixture's STANDING
+RUNG is DERIVED, never typed").
 
 **THE LEGEND IS ITS OWN FRAME NOW, AND `ui_preview` LOST THREE STATES TO THIS ONE.**
 `map_overlay_legend` is the legend popover open on the channel menu's own selection, and
@@ -644,3 +647,88 @@ take every visible slot, so both worked sources roll into the chip as `+2 ⌃`).
 ready" — the correct degradation, but an unreadable frame. `map_band_work`'s fixture gained a food site
 on each worked tile, and that is load-bearing: the first cut of the ring rendered nothing at all
 because the fixture had none, and the mark correctly degraded to the bare tile outline.
+
+### `map_ready_for_improvement` — the AGGREGATE ⌃, and why the frame is a contrast rather than a glow
+
+`docs/plan_knowledge_screen.md` §7. The `ready_for_improvement` channel painted over the ⌃-mark fixture, plus
+`map_ready_for_improvement_legend`, its `facts` card. It **extends `_snapshot_work_ready` rather than
+replacing it**, so the badges and the channel are asked about the SAME sources. The two do not answer
+identically: a lit hex is a strict SUBSET of the hexes wearing a ⌃, because the channel also asks
+whether the source has been IMPROVED at all and whether it is the player's
+(`.claude/rules/client/overlay-channels.md` → `ready_for_improvement`).
+
+What the extension adds is a source per outcome, **each staged so every OTHER term passes** — a dark
+control proves only its own term if nothing else is refusing it too.
+
+| source | staged as | outcome |
+|---|---|---|
+| `FORAGE_A` `(7, 6)` | worked, tended, sowable | **LIT** — the ordinary case |
+| `READY_FIRST_RUNG` | **wild**, worked by band 2 | **LIT** — worked, not improved |
+| `READY_FIRST_RUNG_HERD` | **wild** herd, hunted by band 1 | **LIT** — the reported defect |
+| `READY_UNWORKED_NEAR` | tended, sowable, **nobody on it** | **LIT** — improved, not worked |
+| `READY_UNWORKED_HERD` | tamed, penable, **nobody hunting it** | **LIT** — its herd twin |
+| `READY_MID_FIELD` | tended, Field meter part-filled, **nothing declared** | **LIT** — no in-progress test |
+| the deer `(13, 6)` | tamed, worked, ceiling `pen` | **LIT** |
+| `READY_FOREIGN` | worked, tended, sowable — **faction 1's** | dark — ownership |
+| `READY_BARREN_LADDER` | worked, tended, **no crop may climb** | dark — the ladder |
+| `(9, 8)` | worked, **crew DECLARES `cultivate`** | dark — `next_rung_ready` declines a declared verb |
+| `READY_HALF_BUILT` | wild, half-cultivated, **nobody on it** | dark — neither half of the union |
+| the wolf `(11, 4)` | worked, **`husbandry_ceiling: wild`** | dark — the ceiling |
+
+> #### ⛔ BOTH HALVES OF THE CANDIDATE UNION ARE ASSERTED POSITIVELY AND SEPARATELY, and that is the
+> whole lesson of this state
+>
+> The channel's candidate set was wrong three times — every tile on the map, then improved-only, then
+> worked-only — and **each wrong version shipped with a fixture built around its own set**, which
+> confirmed it instead of catching it. A count assertion cannot tell those apart: it moves for any
+> reason and reads plausibly at every wrong value.
+>
+> So `READY_FIRST_RUNG` / `READY_FIRST_RUNG_HERD` (worked, not improved) and `READY_UNWORKED_NEAR` /
+> `READY_UNWORKED_HERD` (improved, not worked) are asserted BY NAME as things that must LIGHT.
+> Sabotage-verified in both directions: dropping either half of `_is_candidate` fails its own pair and
+> leaves the other passing.
+>
+> **The same trap ate a control twice on the dark side.** `READY_MID_FIELD` was written to isolate an
+> "already being built" test, having watched the two mid-Cultivate patches stop isolating it when a
+> condition moved in FRONT of them; then that test was removed entirely and the control became a LIT
+> case instead. **When a term is added or removed anywhere in the chain, re-run the sabotage before
+> believing any control still guards what its name says.**
+
+**A LIT MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERYTHING**, which is why the assertions
+ask for TILES rather than a count. `_lit_ready_tiles` reads them back off the **raster the map
+paints**, never off the model's own counters, so the claim cannot be the assertion agreeing with
+itself.
+
+**THE WOLF'S `husbandry_ceiling` IS STATED, NOT INHERITED.** `SourceForecast.husbandry_ceiling`
+normalizes an ABSENT field to `"pen"` — the FULL ladder, so an untagged herd behaves as it did before
+the field existed — which made `_pelt_only_wolf_herd` offer `Tame` and wear a `⌃` of its own, in
+`map_worked_ready` as well as here. `_snapshot_work_ready` now says `"wild"` outright. Stated there
+rather than on `_pelt_only_wolf_herd` so only the two frames that push knowledge move; the frames that
+push none had no chevron on anything either way.
+
+The block beside it drives four things no picture can carry:
+
+- **THE KNOWLEDGE PUSH THAT ARRIVES LATE.** The snapshot goes in with the knowledge row EMPTY and the
+  row is pushed after it — the shipped order, since `Main._apply_snapshot` renders the map first and
+  fans the HUD out behind it. A channel derived only at ingest stays empty here, which is the state it
+  would be in for the whole turn a discovery lands on. The empty case is asserted first (the channel
+  is offered, states its empty sentence, lights nothing), so the push is a real A/B.
+- **THE COUNTS SPLIT BY WEB.** One web answering for both produces a perfectly plausible total.
+- **THE SECOND BAND, and it exists for one claim**: *nearest* is measured from the SELECTED band. With
+  one band the anchor and its fallback are the same tile and a hardcoded first-band read passes. The
+  leg changes the selection and **nothing else** — no snapshot, no re-derive — which also pins that
+  the facts are answered off the CACHED model rather than stamped into it at ingest.
+- **A WORLD WITH NO SOURCES OFFERS NO CHANNEL**, paired with the empty key surviving, for the reason
+  the `terrain_tags` claim beside it is paired: `""` prints identically to nothing at all.
+
+**`_assert_ready_for_improvement_scale` IS A REPORT, NOT A THRESHOLD.** §7 says to measure the all-sources
+pass before assuming it is cheap, so the probe builds a **full-size 256×192 world with a patch on
+every tile — every one of them tended and player-owned, so every source QUALIFIES**; a probe whose
+patches were refused by the improved test would measure the cost of rejecting them early rather than
+the cost of the full walk, and the ceiling would stop being a ceiling. That world is the ceiling on
+what the derivation can ever be handed, since the sim seeds a patch on every food-module tile that
+carries capacity and caps none of them, and the probe prints the microseconds it took. A
+timing ASSERTION on a shared machine fails for reasons that have nothing to do with the code under
+test, and a harness that cries wolf stops being read; what is asserted instead is the thing a number
+cannot drift on, that the probe really walked a full-size world. It is the last thing the state does,
+because it leaves `_map` on that world.

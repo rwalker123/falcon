@@ -395,6 +395,9 @@ fn create_herds<'a>(
         // *"this source has nothing left to climb"* and *"this source is not queued"* both read as no
         // list, which is what the destination string beside it disambiguates.
         let build_destination_rung = builder.create_string(herd.build_destination_rung.as_str());
+        // **WHERE THE HERD IS**, beside where it is going. Always written: every herd stands on a
+        // rung, so unlike the destination there is no "not queued" reading to encode.
+        let current_rung = builder.create_string(herd.current_rung.as_str());
         // **Always written, `""` included** — the empty string is *"no band has this queued"*, and a
         // client comparing its own selection against an absent field would read every source as a
         // mismatch, exactly as it would for `defaultKitId` above.
@@ -568,6 +571,9 @@ fn create_herds<'a>(
                 // **The pen ring's DENOMINATOR** — appended last (append-only wire). Rides beside
                 // `penExtendProgress` above in the same work units; `0` with no ring in flight.
                 penExtendCost: herd.pen_extend_cost,
+                // **The rung this herd STANDS on** — appended last (append-only wire), the
+                // twin of `buildDestinationRung`'s spelling at the source's own position.
+                currentRung: Some(current_rung),
             },
         );
         entries.push(entry);
@@ -593,6 +599,8 @@ fn create_forage_patches<'a>(
         // *"this source has nothing left to climb"* and *"this source is not queued"* both read as no
         // list, which is what the destination string beside it disambiguates.
         let build_destination_rung = builder.create_string(patch.build_destination_rung.as_str());
+        // **WHERE THE PATCH IS**, beside where it is going — see the herd twin.
+        let current_rung = builder.create_string(patch.current_rung.as_str());
         // Always written, `""` included — see the herd twin.
         let build_kit_id = builder.create_string(patch.build_kit_id.as_str());
         let build_legs = if patch.build_legs.is_empty() {
@@ -761,6 +769,9 @@ fn create_forage_patches<'a>(
                 // **What this patch's build is being raised with** — appended last (append-only
                 // wire); see the herd twin.
                 buildKitId: Some(build_kit_id),
+                // **The rung this patch STANDS on** — appended last (append-only wire); see the
+                // herd twin.
+                currentRung: Some(current_rung),
             },
         );
         entries.push(entry);

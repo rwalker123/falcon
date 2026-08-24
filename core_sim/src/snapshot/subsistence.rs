@@ -965,6 +965,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 build_destination_rung: published_destination_rung(
                     herd.and_then(|herd| herd.build_destination),
                 ),
+                // **THE RUNG THIS HERD STANDS ON**, beside the one it is headed for. Through
+                // `fauna::herd_rung_key`, the single home of that test — never a second reading of
+                // `domestication`/`corralled` here. `snapshot.fbs`'s `currentRung` carries the why.
+                // The unreachable "in telemetry, gone from the registry" row falls back to the
+                // branch's bottom rung, like every other field here falls back rather than lying.
+                current_rung: herd
+                    .map_or(RungKey::AnimalWild, crate::fauna::herd_rung_key)
+                    .wire_key(),
                 build_legs: herd
                     .map_or_else(Vec::new, |herd| published_build_legs(&herd.build_legs)),
                 // **WHERE THAT DESTINATION LEAVES THIS HERD'S `K`** — `None` (the wire's sentinel)
@@ -1341,6 +1349,10 @@ pub(crate) fn snapshot_forage_patches(
                 // holding wastes a turn, rotting destroys bought work, and a block is fixed by
                 // staffing the KEEPING rather than by adding builders.
                 build_destination_rung: published_destination_rung(patch.build_destination),
+                // **THE RUNG THIS PATCH STANDS ON**, beside the one it is headed for. Through
+                // `forage::patch_rung_key`, the single home of that test — never a second reading of
+                // `is_cultivated()`/`is_field()` here. `snapshot.fbs`'s `currentRung` carries the why.
+                current_rung: crate::forage::patch_rung_key(patch).wire_key(),
                 build_legs: published_build_legs(&patch.build_legs),
                 // **WHERE THAT DESTINATION LEAVES THIS PATCH'S `K`** — `None` (the wire's sentinel)
                 // when no band has queued it, which is a different statement from a capacity of

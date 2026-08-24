@@ -184,13 +184,13 @@ static func policy_face(policy: String) -> String:
 ## primitive `worker_take` and both upper rungs declare `worker_tend` — a managed source is never
 ## gather-drawn (the sim's `is_managed()` branch), so a crew standing on one is not foraging at all.
 ##
-## **ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` carries
-## `SourceForecast.FORECAST_RETIRED_BY_HIGHER_RUNG` — a completed Field retires Cultivate even when
-## `is_cultivated` is honestly false, because `Sow` needs no prior patch — so it is true on a Tended
-## Patch AND on a Field sown straight from wild ground, and a separate `SOW` test would only be a
-## second spelling of the same answer, free to drift. That is the const relied on here.
+## **ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` asks whether the patch
+## STANDS at or above `plant:tended` — a completed Field does, even though `is_cultivated` is honestly
+## false on it because `Sow` needs no prior patch — so it is true on a Tended Patch AND on a Field sown
+## straight from wild ground, and a separate `SOW` test would only be a second spelling of the same
+## answer, free to drift. That at-or-above reading is what is relied on here.
 ##
-## **A BUILD IN FLIGHT KEEPS THE WILD NOUN**, deliberately: this reads the source's DONE FLAGS and
+## **A BUILD IN FLIGHT KEEPS THE WILD NOUN**, deliberately: this reads the rung the patch STANDS on and
 ## never a composed improvement, so people part-way through a Cultivate or a Sow — who really are
 ## foraging the stand while they clear ground, which is what the build dip charges them for — stay
 ## Foragers until the rung COMPLETES. The animal web's `_herd_crew_noun` does read the composed axis,

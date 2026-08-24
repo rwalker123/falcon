@@ -1271,14 +1271,17 @@ climb*.
 
 **Two guards the first cut needed, both found by the harness rather than by review:**
 
-- **`improvement_is_done` is also true when a HIGHER rung retires this one.** A Field sown from wild
+- **`improvement_is_done` is also true when a HIGHER rung retires this one.** It compares the rung the
+  source STANDS on at-or-above, so a Field answers *built* for Cultivate too; a Field sown from wild
   ground carries `cultivation_progress == 0` forever, so a naive test re-offered Cultivate on every
-  finished Field. The test reads the rung's **own** flag.
+  finished Field. The repair test reads the rung's **own** stamped flag (`FORECAST_DONE_FLAG_KEYS`),
+  which is the only thing that table is still for.
 - **An absent meter reads 0 and is indistinguishable from "eroded to nothing"**, which put a spurious
   `⌃` on an unimproved patch. It requires `progress > BUILD_METER_UNSTARTED`.
 
-**Plant-only, and the fixture says why**: on the animal web `improvement_is_done` *is* the meter test,
-so done-and-short is a contradiction there and no honest fixture can produce one.
+**Plant-only, and the fixture says why**: taming's achievement IS its meter — the sim stamps
+`animal:pastoral` at exactly `DOMESTICATION_COMPLETE`, and `Tame` has no stamped flag of its own to
+fall through to — so done-and-short is a contradiction there and no honest fixture can produce one.
 
 > **RETIRED BEFORE IT SHIPPED — a `build_crew == 0` fork on the `-1` face.** An eroded unqueued source
 > now publishes no estimate, and it was tempting to render that as *"No estimate"* rather than
@@ -4249,7 +4252,7 @@ which is what makes a spent one inert rather than something to clean up.
   label, the work board's badge went quiet, and there was no way back but re-issuing the command the
   player had never withdrawn. **A player who has paid for a rung and watched it slip adds HANDS.**
 - **FULLNESS AND ACHIEVEMENT STAY ORTHOGONAL.** This reads the meter's fullness (who pays the rate);
-  `improvement_is_done` reads the stamped retention bar (what the ground pays out). A patch at 90% is
+  `improvement_is_done` reads the rung the source STANDS on (what the ground pays out). A patch at 90% is
   **building** — a repair — and **still tended**. Folding them would make a rung's LOSS and a rung's
   REPAIR one edge.
 - **EVERY SURFACE READS IT.** The compose control's RUNNING branch, both sheets' `standing`/`composed`
@@ -5062,9 +5065,9 @@ spelled and never a raw count.
       `This herd is 40% tamed — ◎ Tame it to finish`.
       **THE GATE RESHUFFLE (§4.3) — one knowledge per transition, and the client encodes it in
       `_hunt_policy_gates` / `_forage_policy_gates`** (mirroring the sim's `assign_labor` validation):
-      * `Cultivate` ← `cultivation >= 1` **and the rung not already built —
-        which is `is_cultivated` OR `is_field`**, since Sow can skip rung 2 (see "A FIELD IS NOT
-        NECESSARILY `is_cultivated`") —
+      * `Cultivate` ← `cultivation >= 1` **and the rung not already built — which is the patch
+        STANDING at or above `plant:tended`**, since Sow can skip rung 2 and a Field is therefore
+        cultivated without ever carrying the flag (see "A FIELD IS NOT NECESSARILY `is_cultivated`") —
         a finished patch retires Cultivate outright (`GATE_REASON_ALREADY_TENDED_FORMAT`, "Already a
         Tended Patch — ♻ Sustain-forage it to harvest"), because re-running the verb only pays the low
         prep dip forever. The completed reason SUPERSEDES the prep prerequisites (a done patch's
@@ -6235,12 +6238,12 @@ The verb and the dead-button hint are keyed off the label it returns (`PLANT_ASS
 `PLANT_NOOP_HINTS`, the shape `HUNT_NOOP_HINTS` already had), so noun, verb and singular are three
 readings of one answer.
 
-**ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` carries
-`FORECAST_RETIRED_BY_HIGHER_RUNG`, so it is true on a Tended Patch AND on a Field sown straight from
+**ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` asks whether the patch
+stands at or above `plant:tended`, so it is true on a Tended Patch AND on a Field sown straight from
 wild ground (where `is_cultivated` is honestly false forever). A separate `SOW` test would be a second
 spelling of the same answer, free to drift.
 
-**A BUILD IN FLIGHT KEEPS THE WILD NOUN.** The resolver reads the source's DONE FLAGS and never a
+**A BUILD IN FLIGHT KEEPS THE WILD NOUN.** The resolver reads the rung the patch STANDS on and never a
 composed improvement, so a crew part-way through a Cultivate or a Sow stays `Foragers`: those people
 really are foraging the stand *and* clearing ground, which is precisely what the build dip charges
 them for. The noun moves only when the rung COMPLETES. **This is where the plant web parts from the
@@ -6301,9 +6304,10 @@ is the one distinction the mark exists to draw.
 
 > **A FIELD IS NOT NECESSARILY `is_cultivated`, and assuming it was cost a defect.** `Sow` needs no
 > prior patch, so a Field sown from wild ground carries `cultivation_progress == 0` forever. Ordering
-> alone therefore does not retire the lower rung — `SourceForecast.improvement_is_done` carries
-> `FORECAST_RETIRED_BY_HIGHER_RUNG` for it, mirroring the sim's `forage_rung_already_built`
-> (`Cultivate => patch.is_managed()`). Without it a completed Field OFFERED `Cultivate this patch`:
+> alone therefore does not retire the lower rung — `SourceForecast.improvement_is_done` compares the
+> STANDING rung at-or-above (`plant:field` sits above `plant:tended` in `RUNG_BRANCHES`), mirroring the
+> sim's `forage_rung_already_built` (`Cultivate => patch.is_managed()`). It was a second table saying
+> only that, `FORECAST_RETIRED_BY_HIGHER_RUNG`, until the wire's `current_rung` answered it directly. Without it a completed Field OFFERED `Cultivate this patch`:
 > a live checkbox for a build the server treats as already built, which its own docstring records as
 > having "stalled forever, silently". Reported from play. The animal web needs no such term — Corral
 > demands a herd already tamed, so its rung 2 cannot be skipped.

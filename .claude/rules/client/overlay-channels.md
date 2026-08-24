@@ -25,6 +25,7 @@ Raster overlays streamed from `core_sim`:
 | `hunt_danger` | Danger orange (generic lerp) | **NOT a wire raster** — projected client-side, `attack × ferocity` per herd (see below) |
 | `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
 | `elevation` | Elevation ramp | `MapSection.elevationOverlay` — **and the DEFAULT channel** (below) |
+| `ready_for_improvement` | `HudStyle.HEALTHY`, a DIM wash of the good-news green (generic lerp) | **NOT a wire raster** — the aggregate `⌃`, synthesized client-side from the patches, the herds and the faction's knowledge row (see below) |
 
 Legend rendering: min/avg/max values + channel description.
 
@@ -35,9 +36,10 @@ picker, split by KIND so that adding a channel is a data edit and never a code o
 
 | Module | Kind | Holds |
 |---|---|---|
-| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Two rows today: the empty key (`PLACEMENT_FIRST`) and `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) |
+| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Three rows today: the empty key (`PLACEMENT_FIRST`), `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) and `ready_for_improvement` (`PLACEMENT_LAST`, gated on `MapView.has_ready_for_improvement_data`) — **and that placement is load-bearing precisely because the channel is built LAZILY**: the key is absent from `overlay_channel_order` for most of a frame's life, so the wire pass cannot place it and this row is what puts it in the list at all |
 | `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Two `legend_kind`s — `KIND_RAMP` (the channel's own legend rows) and `KIND_FACTS` (the lines a descriptor's provider answers) — and **no channel is named in the file** |
 | `ui/overlay/OverlayPicker.gd` | the widget | The TWO buttons docked on `MinimapPanel`'s top border and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
+| `ui/overlay/ReadyForImprovement.gd` | all-`static`, stateless | ONE channel's DERIVATION — the `ready_for_improvement` raster, its per-web counts and the tiles it lit (`MODEL_READY`), asked of `RungGates` (below). The registry names it; nothing else does |
 
 **A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
 `placeholder` flag per channel and `MapView._ingest_overlay_channels` holds them, so `roster()`
@@ -216,12 +218,15 @@ that table unconditionally with `""` as the initial selection, so the branch nev
 has opened on NO OVERLAY for as long as both halves have looked like this; the paragraph that used to
 stand here said otherwise, and was describing an intention rather than the code.
 
-**The intention is still a good one and is worth honouring deliberately, in its own change.** A
-default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`, which worldgen
-publishes for every world, so it is never a placeholder, and relative height is legible with no
-knowledge of the simulation's vocabulary. Wiring it means one thing — the picker's roster fallback
-consults `default_channel` before taking `_roster[0]` — and it is a change to what a player sees on
-their first frame, so it belongs to whoever decides that, not to a migration.
+**AND THE MAP OPENING PLAIN IS THE WANTED BEHAVIOUR — decided 2026-08-23, do not "fix" it.** The
+player gets bare terrain and picks an overlay if they want one. So `default_channel` is not a feature
+waiting to be wired: it is a field expressing an intention nobody holds. The argument it was written
+for still reads well — elevation rides `MapSection.elevationOverlay`, which worldgen publishes for
+every world, so a default channel would never be a placeholder — and it lost anyway, which is why the
+argument is recorded here rather than the field quietly deleted with no trace of what it wanted.
+
+Retiring it is a one-line change to `native/src/snapshot/mod.rs` whenever the dead wire field is worth
+the churn; nothing client-side would notice.
 
 **RETIRED: the `logistics` channel ("Logistics Throughput", blue), the top-level `contrast` alias,
 and the whole trade-link overlay.** The sim no longer publishes a `logisticsRaster` or a link
@@ -381,6 +386,228 @@ richest on pasture, and the shelf column glows on forage where it is barren on p
 `map_forage_legend` beside it — the honest twin: `No forage` barren row, no Water row,
 the gathering-sites sub-count). The forage `capacity_by_biome` table ships in the sim, so the live
 inversion is real; the fixture stages it deterministically for the harness.
+
+**`ready_for_improvement` — THE AGGREGATE `⌃`, and the first `KIND_FACTS` channel**
+(`docs/plan_knowledge_screen.md` §7, Slice D). The map has marked the per-source case since issue
+#412: a *worked* source that can climb a rung wears a `⌃` on its own badge. This is the map-wide view
+of the same opportunity — and the legend is COUNT LINES rather than a ramp, because there is no "more
+ready": *"4 sources · 2 patches, 2 herds"* and *"Nearest (7, 6)"*.
+
+**WHAT LIGHTS IS A CANDIDATE SET AND ONE QUESTION, and a lit hex is a strict subset of the hexes
+wearing a `⌃`.** `ReadyForImprovement._is_candidate` runs first because it is CHEAP — a dictionary
+lookup and one string comparison — and `RungGates.next_rung_ready` runs only on what survives it:
+
+1. **The source is IMPROVED, or a player band is WORKING it.** A union. Improved is read off the rung
+   label; worked is the band's own `labor_assignments` rows plus a hunting party's quarry.
+2. **No OTHER faction owns it** — a refusal, never a requirement; see below.
+3. **A rung above it is available RIGHT NOW** — `next_rung_ready`, **the same call that draws the `⌃`
+   on a marker's badge**. Knowing how, the ground taking seed and the species' own ceiling are all
+   inside that one answer, so this channel adds no ladder logic and must not.
+
+> #### ⛔ THE CANDIDATE SET TOOK THREE ATTEMPTS, AND EVERY WRONG ONE PASSED ITS OWN FIXTURE
+>
+> **No set at all** — every wild patch admits Cultivate, so the turn Cultivation was learned the
+> channel lit **every land tile the faction could see**: a sheet that named nothing, on the one channel
+> whose job is to point somewhere.
+>
+> **"Already improved"** — unshowable-by-construction for the case that matters most. The FIRST rung on
+> a source is an improvement onto ground carrying none, so requiring an existing one can never surface
+> a first one, and **an entire knowledge that only ever unlocks a first step goes invisible**. Reported
+> from play: a faction that had just learned Herding, hunting two fully tamable herds, saw an empty map.
+>
+> **"Worked"** — hid a field you built and walked away from, which is precisely what this channel
+> should be pointing at.
+>
+> It is the UNION because the two halves answer different questions — *what you hold* and *what you
+> have hands on*. **The lesson is the fixture, not the rule**: each wrong version shipped with a
+> harness state built around its own set, which confirmed it rather than catching it. Both halves are
+> now asserted POSITIVELY and separately, so losing either fails by name rather than moving a count.
+
+> #### ⛔ THE OWNER TEST IS A REFUSAL, AND A REQUIREMENT WOULD HAVE RE-BROKEN THE FIRST RUNG
+>
+> `ForagePatch::owner` is `Some` **only once an improvement meter is above zero**, so an unimproved
+> patch a band is working states no owner at all. `has_owner` as a REQUIREMENT would therefore have
+> refused every first-rung opportunity on the plant web — the whole of the early game — reintroducing
+> the defect above through a different door. `_not_another_faction_s` reads: no owner recorded is fine,
+> our own owner is fine, only a stated foreign owner refuses. A herd row carries no owner at all (the
+> pre-existing `RungGates.hunt_gates` gap), so there is nothing to ask on that web and nothing is
+> invented.
+
+**THERE IS NO "ALREADY BEING BUILT" TEST, and its absence is a decision.** `next_rung_ready` already
+declines the verb a crew has DECLARED, so a patch mid-Cultivate is not offered Cultivate by the one
+call this channel makes. Where a source genuinely has a DIFFERENT rung available while one is in
+flight — or a meter carrying work nobody ordered — that rung really is orderable, and saying so is
+correct. The marker's badge keeps its own in-progress branch because it must choose ONE face to draw;
+a channel that only lights or does not has no such choice, so the branch would be a special case
+bought for nothing.
+
+**THE LEGEND'S SECOND LINE IS THE NEAREST LIT SOURCE**, measured from the SELECTED band. It was
+*"N unworked · nearest (x, y)"*; an improved source nobody is on now lights in its own right, so the
+interesting ones are in the lit set rather than behind a second count.
+
+**THE RUNG LABEL IS WHAT MAKES THE IMPROVED HALF BRANCH-BLIND.** `ForagePatchState.currentRung` /
+`HerdTelemetryState.currentRung` spell the rung a source STANDS on as `<branch>:<id>` —
+`plant:tended`, `animal:pastoral` — so `SourceForecast.rung_above_branch_floor` answers without being
+told which food web it is looking at. The alternative is each web's private booleans (`is_cultivated` +
+`is_field` here, `domestication` against a threshold + `corralled` there), which costs every consumer
+a reader per web and a route ladder a third. **A new branch costs this channel nothing: one entry in
+`SourceForecast.RUNG_BRANCHES`.** An unknown key — a branch a stale client has not been taught, or the
+`""` a hand-built fixture carries — answers `false`, which shows nothing rather than lighting a whole
+branch including its untouched floor.
+
+> **`SourceForecast.improvement_is_done` READS THE SAME LABEL NOW**, which is what makes the branch
+> blindness the whole client's rather than this channel's. It is inside `next_rung_ready` and asked of
+> every candidate here, and it was a TAME special case plus three keyed tables, one of them existing
+> only to say a Field is also tended. It is one comparison — `rung_at_or_above(current_rung, the rung
+> this verb builds)` — over `IMPROVEMENT_RUNG_KEYS`, the inverse of `RUNG_KEY_IMPROVEMENTS` and the
+> table that must be kept in step with it. **The two readings are provably one fact**:
+> `forage::patch_rung_key` IS `patch.standing().held` and `ForagePatch::is_cultivated` is
+> `standing.held.is_at_or_above(PlantTended)`, so the retention-bar divergence that would have made the
+> swap unsafe does not exist (`forage.rs`, "RETIRED: `cultivation_meter_full`"). `FORECAST_DONE_FLAG_KEYS`
+> survives for `rung_needs_repair` alone — *achieved and short of its cost* is the one question a
+> standing rung cannot answer, a rung eroded to 99% still being the rung the source stands on — and
+> `FORECAST_RETIRED_BY_HIGHER_RUNG` is deleted: *a higher rung retires the one below it* is the ORDER
+> of `RUNG_BRANCHES` now rather than a table beside it.
+>
+> **AN UNKNOWN OR EMPTY RUNG KEY ANSWERS `false` ON BOTH SIDES OF THE COMPARISON**, for the reason the
+> paragraph above gives for `rung_above_branch_floor`: a stale client and a fixture that never stated
+> the field must read as *nothing has been built here*, which offers the player a rung they may already
+> hold, and never as *everything is built*, which would retire every climb on that branch in silence.
+>
+> **THE FIXTURE MIGRATION IS DONE, AND IT IS ONE DERIVATION FOR THE WHOLE TEST TREE.**
+> `tools/ui_preview/fixtures_rung.gd` transcribes the sim's own *"sown → field, cultivated → tended,
+> else wild"* (and its animal twin) once, and `map_preview`, `band_panel_preview`,
+> `snapshot_alias_guard` and the chapters all state their rows' `current_rung` through it — `stamp_patch`
+> / `stamp_herd` derive it from the row's OWN flags, so no fixture can stand on a rung its
+> `is_cultivated` / `corralled` pair contradicts, and a row re-dialled by a caller is re-stamped where
+> it is re-dialled.
+
+**THE UNLOCK NEVER LIGHTS THE MAP, and that is the whole reason this is a channel.** Nothing anywhere
+gets a timed highlight when a track completes; the attention row states a count and the player who
+wants to see them all turns the channel on. A channel is a thing the player asks for, which is what
+makes it the right shape for news that does not expire.
+
+**IT IS ALWAYS OFFERED ON A WORLD THAT HAS SOURCES, INCLUDING WHEN NOTHING IS READY** — the legend
+then reads *"Nothing can be improved right now."* — `ReadyForImprovement.FACTS_NONE`, and note that it says **improve**: "rung" and "climb" are this arc's internal vocabulary and never reach the player. Gating it on the COUNT would make the channel appear
+the turn the first discovery lands, which is the map lighting up for an unlock under another name,
+and a roster row that comes and goes is a row a player cannot learn. `has_ready_for_improvement_data` is
+therefore a question about the WORLD — a grid, and a source of either web — never about the count, and
+never about the raster, which for most of a frame's life does not exist (below).
+
+> #### ⛔ IT IS BUILT LAZILY, AND A MEASUREMENT IS WHY — `MapView.DEFERRED_OVERLAY_BUILDERS`
+>
+> The sim seeds a `ForagePatch` on **every** food-module tile carrying any human-edible capacity
+> (`core_sim/src/forage.rs` → `spawn_initial_forage`) and `snapshot_forage_patches` caps nothing, so
+> the pass is one `RungGates` evaluation per source over a world-sized set. `map_preview`'s scale
+> probe walks the ceiling — a full-size 256×192 world with a patch on every tile — at **~6.7 µs a
+> source, 331 ms for 49,152** (PR #572). Deriving that on every turn boundary for a channel nobody
+> has selected is not a constant worth tuning; it is work that should not happen.
+>
+> So `MapView` does **not** build it during the ingest, unlike `province` (which is a partition over
+> TILES and genuinely cheap). `DEFERRED_OVERLAY_BUILDERS` is a `{key: builder method}` table and
+> `set_overlay_channel`'s FIRST line realizes whatever that table names — which is not the second
+> `if key ==` §6b forbids, because it names no channel and a second expensive channel is one row.
+> **The per-turn refresh then falls out of a seam that already existed**: the picker re-asserts the
+> painted channel on every `overlay_channels_ingested`, so the channel the player is HOLDING is
+> rebuilt once per turn and every other one costs nothing at all.
+>
+> `ready_for_improvement_facts()` realizes too, because a legend can be opened on a channel the map is not
+> painting. Past that the facts are answered off the cached model.
+
+**AND THE KNOWLEDGE PUSH ARRIVES AFTER THE INGEST, so `set_faction_knowledge` stales it.**
+`Main._apply_snapshot` calls `display_snapshot` first and fans the HUD out after it, so
+`faction_knowledge_changed` always lands behind the map's own ingest — a channel built only during the
+ingest would state the PREVIOUS turn's knowledge for the whole turn a discovery arrives on, which is
+the one turn it is wrong on and the one turn a player looks. Marking it stale is free; the REBUILD
+happens there and then only when it is the channel being PAINTED. The staleness test compares against
+`_ready_for_improvement_knowledge`, a **COPY** — `faction_knowledge` is the HUD's own dict held by reference
+(`FactionReadouts.faction_tracks` returns it uncopied), so storing the reference would compare a row
+against itself and never fire.
+
+**`ReadyForImprovement` ASKS `RungGates`; IT DECIDES NOTHING ABOUT THE LADDER.** The ladder question is
+ONE call — `next_rung_ready`, the same one that draws the `⌃` on a marker's badge — so the aggregate
+and the mark on the hex under it cannot disagree. Knowing how, the ground taking seed and the species'
+own ceiling all live inside that answer, and none of them is re-derived here.
+
+> **A PARAGRAPH HERE USED TO DESCRIBE A SECOND CALL, and it survived the change that removed it.** It
+> said `_offers_a_rung` asked `rung_in_progress` first and `next_rung_ready` second, and that asking
+> only the ready test would wrongly light a patch mid-Cultivate. That function is gone, the channel
+> makes one call, and the harness now asserts a mid-Field patch nobody declared **lights** — see "THERE
+> IS NO 'ALREADY BEING BUILT' TEST" above, which is the live rule. It is recorded rather than deleted
+> because a rule file that contradicts itself is worse than one that is merely out of date: an agent
+> loading this file to fix a *"a mid-build tile is lit"* report would have followed the stale half and
+> re-broken the fixture that pins the fix.
+
+**THE `improvement` AXIS COSTS A WALK OVER BANDS, NOT OVER SOURCES.** `ReadyForImprovement.worked_sources`
+answers `{secondary key: declared improvement}` off `units` and their assignment rows (tens of
+iterations), and its KEY SET is also the WORKED half of the candidate union (`_is_candidate`) — two
+jobs, one walk. The declaration is not redundant with the meters: a Sow ordered this turn stands at 0% on
+every rung, so without it the source reads as untouched on the very turn the player committed it.
+**It is a SECOND reading of `BandOverlayRenderer`'s same set**, deliberately — that one is fused into
+a draw (effective columns, crew and builder accumulation, ring and badge all fall out of one loop),
+so there is no seam to share short of restructuring a shipped render path. What the two share is the
+IDENTITY (`secondary_food_key` / `secondary_herd_key`) and the gate layer, which is where a
+disagreement would actually come from.
+
+**THE FACTS ARE ANSWERED ON DEMAND, NOT STAMPED INTO THE MODEL.** *Nearest* is measured from the
+SELECTED band (falling back to the player's first, and dropping the coordinate entirely when there is
+no band at all), and a selection change is not a snapshot — so `ready_for_improvement_facts` scans the
+cached LIT list (`MODEL_READY`, tens) rather than re-deriving. It measures through `MapView._hex_distance` and
+`_wrapped_col_delta`, the map's own metric and its own seam rule, so "nearest" here is the nearest the
+map draws.
+
+**THE HERD WEB HAS NO OWNER ON THE WIRE, so condition 2 is a PATCH-ONLY test.** `HerdTelemetryState`
+carries no owning faction at all — the pre-existing gap `RungGates.hunt_gates`' own docstring records
+— so a herd another faction has tamed reads as ours here, exactly as on the compose sheet, and
+condition 1 is the whole faction test on that web. Nothing in the channel invents an ownership signal
+from `domestication` or a nearby band: closing the gap means putting an owner on the herd row and
+reading it in the shared gate, for all four surfaces at once.
+
+**ITS `OVERLAY_COLORS` ROW IS `HudStyle.HEALTHY`, DERIVED** — the themed "well-supplied / good"
+green. The aggregate is a reading about LAND, and land that could carry more is the same good news
+every other healthy mark on this client states in green. **The per-source `⌃` badge keeps `SIGNAL`**,
+and the two being different marks is deliberate: a badge pinned to one source and a dim wash over a
+whole map are not one vocabulary said twice. The channel wore `SIGNAL` for one release on the
+agreement-with-the-badge argument, and the shipped palette's `SIGNAL` is a near-white parchment cream
+— painted over a map it blew the lit hexes out against the dark grid, which is what retired that
+argument. It is still DERIVED rather than authored, and for the reason that survives the swap: a
+hand-picked value would agree with the palette in one theme and fight it in three. Amber would be
+wrong twice: it is the trouble channel here, and teaching a player to read good news in it is how a
+warning stops being read.
+
+> **THE ROSTER-WIDE FACE GUARD DOES NOT COVER THIS ROW, and it cannot — measured by sabotage.** That
+> guard (above, "THE GUARD WAS THE ACTUAL DEFECT") asks whether a face states a colour the map really
+> paints. This channel rides the GENERIC `GRID_COLOR.lerp(OVERLAY_COLORS.get(key, FALLBACK), value)`
+> path, so with its row DELETED the map paints the fallback blue and the button states that same blue
+> — honestly — and the guard passes, exactly as it does for `visibility`. It catches a channel with a
+> paint path of its OWN; that is how it caught `forage`. What a dropped row costs a GENERIC channel is
+> not a lie but the HEALTHY GREEN, so `map_preview` asserts that instead and by name — and as FOUR
+> terms, because the declared hue, the hue the legend button states and the tint a lit hex wears are
+> three different values: the channel declares `HudStyle.HEALTHY`, the button states it UNDIMMED, the
+> map paints `GRID_COLOR.lerp(HEALTHY, TILE_READY)` on some tile, and the map paints the undimmed hue
+> on NONE. That last term is what pins the dimness — the expected wash is composed from `TILE_READY`,
+> so it moves with the constant and the third term alone passes at a full fill (sabotage-verified).
+>
+> The guard is also out of reach here for a second reason worth knowing before writing one like it:
+> `_overlay_picker_state`'s fixture publishes no patches and no herds, so `has_ready_for_improvement_data`
+> is false in that world and this channel is not in that roster at all.
+
+The raster is BINARY — a hex with an offer wears a DIM WASH of the channel colour
+(`ReadyForImprovement.TILE_READY`), every other stays grid-coloured — because "there is an opportunity
+here" is the whole claim and shading by count would say a hex with three offers is a better place to
+stand than one with a Sow. The wash level is a fixed value rather than a per-hex strength, and it is a
+wash rather than a full fill because a full fill blew the lit hexes out against the grid and a map of
+them was a glare instead of a reading. The `raw` plane carries the count for anything that wants to
+quote it.
+
+Verify with `map_preview` state **"ready for improvement"** (`map_ready_for_improvement` — the CONTRAST, not the
+glow: SEVEN sources lit — four patches and three herds — while FIVE controls stay dark: a worked patch
+whose crew DECLARED its rung, a wild half-cultivated patch nobody works, the wild-ceiling wolf, a
+worked patch whose plants may climb no further, and a worked patch another faction owns. Read the
+counts off `map_preview`'s `READY_EXPECTED_*` constants rather than from here — this sentence has been
+wrong twice; `map_ready_for_improvement_legend` is its facts card) plus the
+assertion block beside it, which drives the late knowledge push, the counts split by web, the tiles a
+picture cannot separate, and the nearest answer moving with the selection off the cached model.
 
 ---
 

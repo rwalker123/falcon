@@ -8,6 +8,9 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 const VIS_ACTIVE := "active"
 
@@ -26,7 +29,7 @@ static func sight_tile_fixture(visibility_state: String) -> Dictionary:
 	return tile
 
 static func three_role_tile_fixture() -> Dictionary:
-	return {
+	return RungFx.stamp_patch({
 		"x": 64, "y": 8,
 		"terrain_label": "Alluvial Plain",
 		"tags_text": "Fertile, Fresh Water",
@@ -69,7 +72,7 @@ static func three_role_tile_fixture() -> Dictionary:
 		"graze_biomass": ForageFx.THREE_ROLE_GRAZE_CAPACITY,
 		"graze_capacity": ForageFx.THREE_ROLE_GRAZE_CAPACITY,
 		"graze_ecology_phase": "thriving",
-	}
+	}, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## An over-drawn, UNCULTIVATED forage patch: the Tile card's "Ecology" row must still render
 ## (the phase no longer gates cultivation, and the row shows on every patch regardless) as a
@@ -108,7 +111,7 @@ static func tended_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
-	return BaseFx.seed_forage_rows(tile)
+	return RungFx.stamp_patch(BaseFx.seed_forage_rows(tile), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
 static func occupied_tile_fixture() -> Dictionary:

@@ -17,6 +17,9 @@ const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## **RETIRED — `COMPOSE_PLAIN_STEPPERS_PER_SHEET`** (`docs/plan_standing_upkeep.md` §2.5). It counted
 ## the UNTAGGED steppers, because the build crew's row carried a meta of its own and only the keeping
@@ -362,7 +365,7 @@ func _yield_now_after(yields_text: String, account: String) -> Array:
 ## the crew is bound by the REGROWTH rather than by the room — and the per-biomass vector states the
 ## ceiling directly anyway. `ForageFx.floorify` still seeds the growth curve and the phase cuts from it.
 func _stale_verb_tile_fixture() -> Dictionary:
-	return {
+	return RungFx.stamp_patch({
 		"x": 68, "y": 12,
 		"terrain_label": "Alluvial Plain",
 		"tags_text": "Fertile, Fresh Water",
@@ -412,7 +415,7 @@ func _stale_verb_tile_fixture() -> Dictionary:
 				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		],
-	}
+	}, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## The band working that patch — 2 foragers, NO improvement (the sim cleared the assignment's verb the
 ## turn the Cultivate completed), no idle hands, and its rate filled in by the caller from the tile's
@@ -456,7 +459,7 @@ func _stale_verb_band_fixture(rate: float) -> Dictionary:
 ## gives: this frame is about a particular `B / K` — a hair under the food peak — and a shared
 ## capacity/stock pair would round the whole regime away.
 func _building_patch_tile_fixture() -> Dictionary:
-	return {
+	return RungFx.stamp_patch({
 		"x": 68, "y": 12,
 		"terrain_label": "Alluvial Plain",
 		"tags_text": "Fertile, Fresh Water",
@@ -503,7 +506,7 @@ func _building_patch_tile_fixture() -> Dictionary:
 				"cultivate_yield_ratio": 1.30, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
 		],
-	}
+	}, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## The band cultivating it — enough idle hands that the STEPPER, not the roster, is what bounds the
 ## crew. The reaching crew is the number the *clear it now* target now names, and a band that cannot
@@ -553,7 +556,7 @@ func _wild_sown_field_tile_fixture() -> Dictionary:
 	var tile := ForageFx.field_tile_fixture()
 	tile["patch_cultivation_progress"] = 0.0
 	tile["patch_is_cultivated"] = false
-	return tile
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## **A TILE THAT PAYS BOTH ACCOUNTS — the frame face treatment A is judged on (#426).** A hay meadow:
 ## thin human food and real FODDER, which is the account the whole plant web grew a column for. Every
@@ -732,7 +735,7 @@ func _cash_crop_field_tile_fixture() -> Dictionary:
 				{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": 0.31}],
 			"sow_material_payoff": [{"material_id": NO_FOOD_BASKET_TOBACCO_ID, "amount": 0.78}]},
 	]
-	return tile
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 ## The crop the Field is committed to, and the crew standing on it. **TWO, not one**: the reported
 ## defect staged the cap at `0`, and a floor asserted against a crew of one cannot tell a cap that
@@ -1271,10 +1274,10 @@ func run(harness) -> void:
 		HudComposeVocab.FORAGE_CREW_LABEL)
 	await _assert_plant_crew_noun("plant_crew_tended", TileFx.tended_tile_fixture(),
 		HudComposeVocab.TEND_CREW_LABEL)
-	# **BOTH UPPER RUNGS, NOT ONE.** A Tended Patch answers through `patch_is_cultivated` and a Field
-	# sown from wild ground through `patch_is_field` + `FORECAST_RETIRED_BY_HIGHER_RUNG` — two
-	# different flags reaching one noun, so a resolver that read only the first would pass above and
-	# fail here (`_wild_sown_field_tile_fixture` is the Field that was never cultivated).
+	# **BOTH UPPER RUNGS, NOT ONE.** A Tended Patch stands on `plant:tended` and a Field sown from wild
+	# ground on `plant:field`, two different rungs reaching one noun through the same at-or-above test —
+	# so a resolver that only matched the rung exactly would pass above and fail here
+	# (`_wild_sown_field_tile_fixture` is the Field that was never cultivated).
 	await _assert_plant_crew_noun("plant_crew_field", _wild_sown_field_tile_fixture(),
 		HudComposeVocab.TEND_CREW_LABEL)
 	# **THE CASE A NAIVE "IS AN IMPROVEMENT COMPOSED?" TEST GETS WRONG.** These people are foraging the

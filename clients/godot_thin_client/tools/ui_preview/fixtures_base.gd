@@ -4,6 +4,10 @@
 ## to one arc does not touch the same file as adding a state to another. See
 ## `.claude/rules/client/test-harnesses.md`.
 
+## The test tree's one transcription of the sim's rung derivation — every patch fixture stamps its
+## `patch_current_rung` off its own flags through this, and re-stamps after any mutation.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+
 const BARREN_PATCH_PER_BIOMASS := 0.01
 
 # **THE HAY MEADOW'S TWO NON-FOOD RATES.** Sized so the meadow's two accounts BIND DIFFERENTLY, which
@@ -242,7 +246,10 @@ static func unbuilt(tile: Dictionary) -> Dictionary:
 	# …and it is in NO band's queue, nothing having been declared on it. Set after the pricing above,
 	# which stamps the head position every priced build gets.
 	tile["patch_build_queue_position"] = SourceForecast.NOT_IN_ANY_BUILD_QUEUE
-	return tile
+	# **AND THE STANDING RUNG COMES BACK DOWN WITH THE FLAGS.** `improvement_is_done` reads
+	# `patch_current_rung` and nothing else, so a fixture that unbuilt the two bools and left the rung
+	# where it was would go on reporting a Field the frame is staged to have removed.
+	return RungFx.stamp_patch(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
 
 static func food_tile_fixture() -> Dictionary:
 	var tile := {
@@ -355,4 +362,8 @@ static func food_tile_fixture() -> Dictionary:
 	# The reference plant tile prices BOTH its rungs, because the wire does: `workCost` is published
 	# whether or not a build is in flight, which is what lets the compose sheet quote a rung before
 	# the player commits to it.
-	return seed_forage_rows(price_plant_build(tile))
+	# **THE STANDING RUNG IS DERIVED FROM THE TWO BOOLS ABOVE, never written beside them** — the whole
+	# plant tree is built by re-dialling this fixture, so a rung stated by hand here would be inherited
+	# by every derivation that then flips a flag. See `fixtures_rung.gd`.
+	return RungFx.stamp_patch(seed_forage_rows(price_plant_build(tile)),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)

@@ -2719,6 +2719,36 @@ table ForagePatchState {
   // kit taken from one band's queue beside a position from another's would be two answers pretending
   // to be one.
   buildKitId:string;
+
+  // WHAT RUNG THIS PATCH IS STANDING ON *NOW* (appended last, append-only wire) - `<branch>:<id>`,
+  // the SAME spelling `buildDestinationRung` above ships. Read the two as a pair, because the
+  // difference between them is the whole point: that one says where a QUEUED CLIMB IS HEADED and is
+  // "" when no band has queued this source, and this one says WHERE THE SOURCE IS - which is a fact
+  // every source has, queued or not.
+  //
+  // WHY IT SHIPS. Answering "has this been improved, and what is above it" off the wire otherwise
+  // means knowing each food web's PRIVATE SPELLING for its own ladder: a patch says `isCultivated`
+  // plus `isField` (two bools, read in the right order), a herd says `domestication` over a
+  // threshold plus `corralled` (a float and a flag). So every consumer hand-writes one reader per
+  // web, and a third source type - a route climbing trail -> road - would cost it a third. One
+  // branch-qualified token is the same read on every web, and costs the client nothing at all for
+  // the branch that does not exist yet.
+  //
+  // IT IS DERIVED AT CAPTURE FROM THE PATCH'S OWN METERS, by `forage::patch_rung_key` - the single
+  // home of the "sown -> field, cultivated -> tended, else wild" test, and the same seam the sim
+  // resolves a patch's rung through when it asks what that rung teaches or what stands above it. So
+  // this CANNOT disagree with the rung the sim is standing the patch on. It is a publication of that
+  // reading, never a second one that happens to agree today.
+  //
+  // NEVER "". The bottom rung is a rung: an untouched patch publishes `plant:wild`. An empty string
+  // would be a fourth state on a three-rung ladder and every client would have to guess which of the
+  // three it meant.
+  //
+  // IT ARRIVES UNREDACTED, exactly as `isCultivated`/`isField` beside it do - the fog rule on this
+  // table is the CLIENT's (see `carryingCapacity`). This token states the same ladder position those
+  // bools do, so a client that redacts them on a merely-remembered hex must redact this one with
+  // them.
+  currentRung:string;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -3998,6 +4028,19 @@ table HerdTelemetryState {
   // flight and on the turn one is begun but not yet worked. Read the pair together: `0 / 0` is "no
   // ring", never "0%".
   penExtendCost:float = 0;
+
+  // WHAT RUNG THIS HERD IS STANDING ON *NOW* (appended last, append-only wire) - the animal twin of
+  // `ForagePatchState.currentRung`; that field carries the whole rationale, including why it can
+  // never disagree with the rung the sim itself resolves and why it is never "".
+  //
+  // THE PRIVATE SPELLING IT REPLACES IS WORSE ON THIS WEB. A client asking "is this herd improved,
+  // and what is above it" today reads `domestication` against a threshold AND the `corralled` flag -
+  // a float and a bool, in the right order - where the plant web at least asks two bools.
+  // `fauna::herd_rung_key` is the single home of the "penned -> pen, tamed -> pastoral, else wild"
+  // test, and this is that answer, struck at capture off this herd's own meters.
+  //
+  // The bottom rung is `animal:wild`, which every untouched herd on the map publishes.
+  currentRung:string;
 }
 
 table CommandEventState {

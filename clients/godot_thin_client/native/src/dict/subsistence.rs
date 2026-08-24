@@ -295,6 +295,14 @@ pub(crate) fn herds_to_array(
             "build_destination_rung",
             herd.buildDestinationRung().unwrap_or_default(),
         );
+        // **WHERE THE HERD IS STANDING**, in the same `<branch>:<id>` spelling as the destination
+        // above — that one says where a queued climb is HEADED and is `""` when nothing is queued,
+        // this one is a fact every herd has. Read it instead of re-deriving the rung from
+        // `domestication` against a threshold plus `corralled`: the `.fbs` comment on `currentRung`
+        // carries why one branch-qualified token replaces each web's private booleans, and why a
+        // third food web then costs a consumer nothing. **Never `""`** on an honest payload — an
+        // untouched herd publishes `animal:wild`.
+        let _ = dict.insert("current_rung", herd.currentRung().unwrap_or_default());
         let _ = dict.insert("build_legs", &build_legs_to_array(herd.buildLegs()));
         // **WHAT THE POOL'S KITS ADD TO THIS BUILD EACH TURN**, in work units — the builders'
         // head count times what one equipped builder's kit delivers
@@ -821,6 +829,12 @@ pub(crate) fn forage_patches_to_array(
             "build_destination_rung",
             patch.buildDestinationRung().unwrap_or_default(),
         );
+        // The plant twin of the herd row's STANDING rung — `plant:wild` / `plant:tended` /
+        // `plant:field`, the private `isCultivated` + `isField` pair read once by the sim instead of
+        // once per consumer. See the herd block, and the `.fbs` comment for the fog obligation this
+        // one carries: it states the same ladder position `is_cultivated`/`is_field` do, so
+        // `MapView.FOW_DISCOVERED_HIDDEN_KEYS` redacts it with them.
+        let _ = dict.insert("current_rung", patch.currentRung().unwrap_or_default());
         let _ = dict.insert("build_legs", &build_legs_to_array(patch.buildLegs()));
         let _ = dict.insert("build_work_from_gear", patch.buildWorkFromGear());
         // The plant twin of the herd block's estimate TERM — see there for why it rides beside

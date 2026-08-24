@@ -3,8 +3,8 @@ paths:
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.tscn"
   # `command_guard` is gated HERE, not in `harness-headless-guards.md`, because the rationale it
-  # needs is the KIT PICKER's: it `preload`s `BandFx.kit_roster_fixture()` — the only cross-harness
-  # fixture preload in the tree — and the "compose a NON-DEFAULT kit on every path, and write the id
+  # needs is the KIT PICKER's: it `preload`s `BandFx.kit_roster_fixture()` — one of the tree's three
+  # cross-harness preloads — and the "compose a NON-DEFAULT kit on every path, and write the id
   # BEFORE the sheet opens" rule is what keeps its assertion capable of failing.
   - "clients/godot_thin_client/tools/command_guard.gd"
   - "clients/godot_thin_client/tools/command_guard.tscn"
@@ -876,12 +876,18 @@ SHORT tier renders three fewer rows than the TALL one.
 
 - **`BandFx.kit_roster_fixture()` is the ONE roster and BOTH preview harnesses plus `command_guard`
   drive it** — `band_panel_preview` and `command_guard` `preload` `tools/ui_preview/fixtures_band.gd`
-  for it, the only cross-harness fixture preload in the tree. It is world config the sim publishes
+  for it. It is world config the sim publishes
   once, not a per-harness prop, and two copies could quote different tiers or a different job default
   while the `kit <id>` token is asserted against one of them. Every entry states all THREE tiers with
   the BARE value on each axis its kit does not use, which is the wire's own shape and is what
   `KitRoster.unequipped_tier` reads the bare-handed tier off; `none` is authored LAST, exactly as
   `equipment.json` authors it.
+- **`band_panel_preview` shares a SECOND fixture module, and every patch and herd row here goes
+  through it**: `tools/ui_preview/fixtures_rung.gd` stamps each fixture's `current_rung` off its own
+  flags (`test-harnesses.md` → "A fixture's STANDING RUNG is DERIVED, never typed"). The stamp rides
+  the fixture FUNCTION's return — `return RUNG_FX.stamp_herds([...])` — which is one place per
+  function to forget rather than one place per row, and a row re-dialled afterwards is re-stamped
+  where it is re-dialled.
 - **The kit frames use their own band** (`_kit_worn_band_fixture`), not the shared one:
   `DetailFormat.band_states_kit` is a bare `has()` on the spears key, so putting durabilities on
   `_band_fixture` lights the `Kit` vitals row in 13 other states and overflows `Zone_band` — the note

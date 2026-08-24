@@ -11,6 +11,9 @@ extends RefCounted
 const EXPECTED_CHECKPOINTS := 28
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+## The test tree's one transcription of the sim's rung derivation: a fixture states its standing
+## rung off its own flags through this, and re-stamps after any mutation of them.
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -60,29 +63,32 @@ func run(harness) -> void:
 	# input, so a regression names which condition broke.
 	var rr_knows_all := {"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
 	var rr_knows_none := {"cultivation": 0.4, "seed_selection": 0.0, "herding": 0.3, "penning": 0.0}
-	var rr_wild_patch := {
+	# **EVERY SOURCE BELOW STATES ITS STANDING RUNG, and states it off its own flags** — `rung_has_room`
+	# reads `current_rung` and nothing else now, so a hand-built row that omitted it would report every
+	# rung as unbuilt and quietly make each of these claims about a wild patch.
+	var rr_wild_patch := RungFx.stamp_patch({
 		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
 		"sow_site_refusal": "too_dry",
 		"composition": [{"can_cultivate": true, "can_sow": true}],
-	}
-	var rr_tended_sowable := {
+	})
+	var rr_tended_sowable := RungFx.stamp_patch({
 		"ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
 		"sow_site_refusal": "",
 		"composition": [{"can_cultivate": true, "can_sow": true}],
-	}
-	# THE ORDERING FIXTURE, and it has to be a WILD patch on sowable ground. `is_cultivated` retires
-	# Cultivate outright, so on a TENDED patch the two rungs are mutually exclusive and the answer is
+	})
+	# THE ORDERING FIXTURE, and it has to be a WILD patch on sowable ground. A patch standing on
+	# `plant:tended` retires Cultivate outright, so on a TENDED patch the two rungs are mutually exclusive and the answer is
 	# Sow whichever order they are tested in — an ordering assertion there passes for the wrong reason
 	# (measured: swapping the branches left it green). Sow needs NO prior patch, so this is the one
 	# shape that clears BOTH gates at once and can tell the orders apart.
-	var rr_wild_sowable := {
+	var rr_wild_sowable := RungFx.stamp_patch({
 		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
 		"sow_site_refusal": "",
 		"composition": [{"can_cultivate": true, "can_sow": true}],
-	}
-	var rr_wild_herd := {"domestication": 0.0, "husbandry_ceiling": "pen"}
-	var rr_tamed_herd := {"domestication": 1.0, "husbandry_ceiling": "pen"}
-	var rr_forever_wild := {"domestication": 0.0, "husbandry_ceiling": "wild"}
+	})
+	var rr_wild_herd := RungFx.stamp_herd({"domestication": 0.0, "husbandry_ceiling": "pen"})
+	var rr_tamed_herd := RungFx.stamp_herd({"domestication": 1.0, "husbandry_ceiling": "pen"})
+	var rr_forever_wild := RungFx.stamp_herd({"domestication": 0.0, "husbandry_ceiling": "wild"})
 	# UNGATED: knowledge is the difference, nothing else.
 	h._assert_hud("ready — a Thriving wild patch offers Cultivate once Cultivation is known",
 		String(RungGates.next_rung_ready("forage", rr_wild_patch, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) == "cultivate")
@@ -113,11 +119,11 @@ func run(harness) -> void:
 	# in flight (a patch mid-Cultivate is progress, not an opportunity), which was right and left the
 	# in-flight case unmarked, so an actively-cultivated patch looked emptier than an untouched one.
 	# **THE GATE'S THIRD ARGUMENT IS THE IMPROVEMENT AXIS** (issue #442), never the harvest stance.
-	var rr_building_patch := {
+	var rr_building_patch := RungFx.stamp_patch({
 		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
 		"cultivation_progress": 0.42, "sow_site_refusal": "too_dry",
 		"composition": [{"can_cultivate": true, "can_sow": false}],
-	}
+	})
 	h._assert_hud("building — a patch under Cultivate reports that verb and its meter",
 		RungGates.rung_in_progress("forage", rr_building_patch, "cultivate") == \
 			{"policy": "cultivate", "glyph": FoodIcons.for_policy("cultivate"), "progress": 0.42})
