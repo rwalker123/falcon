@@ -2772,6 +2772,217 @@ on the harness's own label, which is what stops a band-addressed command being o
 check by being relabelled. The `builders` role is swept BARE there now: the sim refuses a `kit` token
 on it, and that refusal is in the handler rather than the parser, so a parser-level gate cannot see it.
 
+### THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c)
+
+`docs/plan_standing_upkeep.md` §4.9 item 9c. The block draws at most `BUILD_QUEUE_ROWS_MAX` entry
+rows plus `+N more`, and **there is no cap on the queue itself** — so a fourth job was queued and
+funded with no row, and nothing past the third could be seen, reordered or withdrawn from the UI at
+all. The `+N more` row said so and offered nothing.
+
+**THE 3-ROW BLOCK IS UNTOUCHED, AND THAT IS THE DESIGN.** It is a SUMMARY — what the pool is funding,
+and what is next — and it stays exactly as wide, as tall and as capped as it was; the ceiling was not
+raised and the reservation (`build_queue_block_height`, `_work_board_capacity`) is unchanged. The full
+list is a **MODE** over the same zone instead, so it spends **nothing permanent**: `_queue_expanded`
+is one bool, and every pixel it uses is a pixel the collapsed zone was already spending on the board.
+
+```
+WORK                                    16 sources  +3.48 /turn
+POOLS                                              3 of 16 on work
+[Agriculture 0] [Husbandry 0] [Builders 3]
+BUILD QUEUE ▴                            3 builders · Tillage kit
+┌────────────────────────────────────────────────────────────┐ ▲
+│ ▸ 🌱 Cultivate (71, 18)   Cultivating 0% · turn 82   ▲ ▼    │ █
+│ ⠿ ◎ Tame Red Deer         Taming 0% · turn 101       ▲ ▼    │ █
+│ ⠿ 🌱 Cultivate (60, 22)   Cultivating 0% · turn 130  ▲ ▼    │ ░
+│                       … every entry, scrolling …            │ ▼
+```
+
+**TWO DOORS IN, ONE DOOR OUT.** The `BUILD QUEUE` header is the toggle **both ways** and is available
+whenever the block exists — including a queue too short to draw an overflow row. `+N more` is a
+second door **IN only**: the expanded view has no overflow row left to press, so the header is the
+only way back. Its tooltip changed with it (`BUILD_QUEUE_OVERFLOW_TOOLTIP` had been stale twice over
+— it named the command line, which the drag replaced, and then said the hidden entries were out of
+reach, which this replaces).
+
+- **THE DISCLOSURE IS `▾` / `▴`, NOT THIS CLIENT'S OTHER CARET PAIR.** `DetailFormat.BREAKDOWN_CARET_*`
+  and `hud_crafting_vocab.GROUP_HEAD_CARET_*` fold with `▾`/`▸`, and **`▸` is `BUILD_QUEUE_HEAD_MARKER`
+  two rows below this head** — the entry the builders pool is standing on. One glyph meaning *folded*
+  on the head and *funded* on a row of the same block is a collision the block cannot afford, so the
+  pair is `hud_event_vocab`'s `CARET_DOWN`/`CARET_UP`. It comes out of the head's **EXPANDING spacer**,
+  inserted after the title: the right-hand readout states the builders count and their kit and may not
+  give up a character. Measured at both shipped docks, the head row is **356px on the tall LEFT dock
+  and 382 on the 1920 BOTTOM one** — unchanged by the glyph, which the spacer paid for.
+- ⛔ **BOTH DOORS FIRE ON THE RELEASE, INSIDE THE ROW.** `_toggle_queue_expanded` ends in
+  `_repage_work_zone`, which frees every node in the zone — *any press handler that rebuilds its own
+  subtree kills every drag that could start under it*, the general rule PR #574's autopsy named after
+  the queue rows' own toggle shipped on the press and left the reorder gesture dead. The release-inside
+  test is `mouse_focus`'s: the latch is taken on the press, so a release three rows away would
+  otherwise still toggle the row it started on.
+
+**WHAT THE MODE DOES NOT DRAW, and why a stub board was rejected.** The source board goes, and with it
+the chips (they filter the board), the pager (it pages it) and the work inspector (it inspects a row
+of it). A board squeezed to one or two rows is neither a list a player can use nor free — the zone has
+no pixels to give it. `_work_board_capacity` is **not called at all** in this mode.
+
+**WHAT IT KEEPS, and both are deliberate.** `_build_work_head` stays, so the player knows which zone
+they are in. **The POOLS block stays**, directly above the list it funds: §4.7 moved keeping onto this
+tab precisely because a pool on one tab and its consequences on another went unnoticed in playtest,
+and re-creating that separation one zone down would repeat it.
+
+#### THE THIRD SANCTIONED `ScrollContainer`, AND IT IS THE FIRST CONDITIONAL ONE
+
+The panel is no-scroll by construction with named exceptions (`PARTIES_LIST_NAME` under
+`ZONE_PARTIES`, `BAND_ZONE_SCROLL_NAME` under `ZONE_BAND`).
+`HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME` (`"BuildQueueList"`) is the third, paired with
+`BandCityPanel.ZONE_WORK`, and it is safe for the identical reason: a `ScrollContainer` reports no
+minimum on its scrolling axis, and what it DOES report is a fixed number the builder declares from the
+zone's own BOX.
+
+⛔ **ITS SANCTION IS CONDITIONAL WHERE THE OTHER TWO ARE UNCONDITIONAL** — it must exist **exactly**
+when `_queue_expanded` and never otherwise, because the collapsed zone is the paged, no-scroll board
+the whole zone model rests on. Both halves are asserted; *no stray scroll* is a claim a panel that
+never expands satisfies for free.
+
+`HudWorkVocab.build_queue_expanded_scroll_height(box_height, pools_fund_mode)` is the ONE expression:
+the box less the work head, the POOLS block, the queue head and the two block separations between the
+three blocks (the head and the list share one block at `separation` 0, so there is no gap inside it).
+**It is not clamped up to a floor** — a dock too short for the mode must FAIL the zone-fit assertion
+loudly, which is this zone's standing contract; a floor would turn that into a silent clip.
+
+| dock | WORK zone box | POOLS | list declares | rows it affords | list holds | bar |
+|---|---|---|---|---|---|---|
+| tall LEFT | 354 × **759** | 82 | **625px** (627 laid out) | 22.3 | 14 | hidden |
+| 1920 BOTTOM | 380 × **394** | 82 | **260px** (262 laid out) | 9.3 | 14 | **shown, 8px** |
+
+**THE SCROLLBAR COSTS THE ROW'S JOB FACE 8px AND NOTHING ELSE.** Measured on the same fixture: the
+face gets **126px on the tall LEFT dock** (no bar) and **144 on the 1920 BOTTOM one** (bar shown) —
+the bottom dock's zone is wider, so it is still ahead. The face is already ellipsised at its widest
+shipped value (`🐄 Corral Thunder Mammoths` needs 189), so the bar takes width from a column that was
+already trimming, and the zone-width guard still reads **354 of 356**.
+
+#### THE RULING ON "ONE EXPANSION AT A TIME" WHEN THE BOARD IS NOT DRAWN
+
+The rule above was written for a zone holding BOTH lists. **When the board is not drawn at all its
+premise is gone**: the work inspector has no host, so at most one expansion is drawn because only one
+expandable list is present — the rule holds **STRUCTURALLY rather than by enforcement**. The
+enforcement code stays, because collapsing returns to the mixed layout.
+
+⛔ **AND ENTERING THE MODE CLEARS `_work_open_key` / `_work_floor_open`, which is load-bearing rather
+than tidy.** The expanded fill never runs the board's own pruning path, so an inspector left open
+survives the whole mode and **springs back on the collapse** — beside an open queue settings strip,
+which is exactly the 460-into-a-396px-box overflow the exclusion rule closed. Sabotage-verified: with
+the clear removed the collapse comes back with the inspector open and the board down a row (9 → 8).
+
+#### THE STATE, AND WHAT IT IS AND IS NOT SCOPED TO
+
+`_queue_expanded` is **NOT reset on a band change** — it is zone MODE, which is the player's, the same
+reasoning `_work_filter` and `_work_sort` are kept under; a player comparing two bands' queues would
+otherwise have it fold on the first selection.
+
+⛔ **AND IT IS NOT PRUNED FOR AN EMPTY QUEUE EITHER, which it was.** No queue means no block, no block
+means no header, and the header is the only way out — so `_fill_work_zone` declines to DRAW the mode
+for a band with nothing queued (`if _queue_expanded and not queued.is_empty()`) and falls through to
+the collapsed path, which draws no block for an empty queue either. That is the whole of what the "no
+way back" argument requires. **Clearing the flag, which the first cut did, cancels the mode for EVERY
+band the moment an idle one is selected** — i.e. it re-creates on a three-band cycle precisely the
+band-change fold the paragraph above exists to prevent. Asserted by
+`_assert_queue_expanded_survives_an_empty_queue`; restoring the prune fails it and the reselection
+claim beside it (2).
+
+#### ⛔ THE LIST REMEMBERS WHERE THE PLAYER WAS, ACROSS THE REBUILD ITS OWN CLICK CAUSES
+
+Every in-mode interaction frees the zone: opening a row's settings strip runs `_toggle_queue_settings`
+→ `_repage_work_zone`, and an arrow, a drop or a withdrawal takes effect through the returning
+snapshot → `render_band`. A list rebuilt at 0 therefore throws the player back to the top on each of
+them and once more per turn — and the entries only a scrolled list can reach are exactly the ones the
+mode exists to reach. `_queue_expanded_scroll_offset` carries the offset across, captured at the top
+of `_fill_work_zone` (the last moment the outgoing node is readable on BOTH fill paths: `_repage_work_zone`
+has `queue_free`d it, and `render_band` builds the new zone before `set_zones` frees the old) and
+restored by `_build_build_queue_expanded`. It is `CraftingPanel._pending_scroll`'s contract exactly.
+
+- ⛔ **THE RESTORE IS DEFERRED ONE FRAME, AND THAT IS THE WHOLE CORRECTNESS OF IT.** `scroll_vertical`
+  is clamped to the CURRENT content extent on the way in, and at the moment the rows are added that
+  extent is not the list's — so an assignment made in the builder is silently clamped and the defect
+  survives under a fix that reads right. `_restore_queue_scroll_offset` awaits one `process_frame`
+  through `_host`, by which point the container has sorted and re-ranged its scrollbar. **A frame is
+  needed even though the naive form appears to work at small offsets**: a fresh `VScrollBar` is a
+  `Range` and a `Range` ships `max = 100`, so anything under 100px passes through the broken form
+  intact — measured at 84px it passes, at 112 it clamps to 100.
+- **The clamp is the container's** — a queue that lost entries has a shorter list, and the setter's own
+  range check is what stops the restore landing past its new end.
+- ⛔ **AND IT DECLINES UNDER A LIVE DRAG.** The edge auto-scroll writes `scroll_vertical` every frame
+  of a gesture; a deferred restore resuming beside it would fight the pump. `_queue_drag_in_flight`
+  already holds the rebuild off, so the only reachable case is a gesture starting inside the frame the
+  restore is waiting out, and the restore checks rather than assuming.
+- **ENTERING THE MODE RESETS IT** (`_toggle_queue_expanded`): the offset is a place in ONE list, and a
+  fresh expansion opens at the top of the queue.
+
+**THE MODE RE-SPELLS NOTHING.** `_build_build_queue_expanded` calls `_build_build_queue_head`,
+`_build_build_queue_row` and `_build_queue_settings_strip` — so the arrows, the `✕`, the drag handle,
+the head `▸`, the pending rules and the `▼` end-stop (`_queue_rank_keys(band).size()`) are inherited.
+`_queue_row_nodes` is populated the same way, so the drop indicator still reaches its target.
+`_queue_settings_state` is asked with `drawn == queued.size()`, so **any** entry can be open — the cap
+was what made an entry past the third unconfigurable. `is_head` is still
+`_build_queue_row_rank(entry) == SourceForecast.BUILD_QUEUE_HEAD`, the WIRE's head and not the first
+drawn row, and every position sent is still an index into `HudBandLaborState.build_queue_keys(band)`.
+Sabotage-verified on `_build_hidden_queue_band_fixture`, the one fixture whose drawn and wire lists
+disagree: ranking the expansion's own loop on the drawn index fails **seven** assertions.
+
+#### ⛔ EDGE AUTO-SCROLL — a scrolling list whose drag cannot leave the viewport is half a reorder
+
+The arrows name a rank and do not care. The drag names a ROW, and a row it cannot scroll to is a row
+it cannot reorder onto. Three mechanisms, each with a defect of its own:
+
+- **THE PUMP IS PER-FRAME, NOT PER-MOTION.** A player who parks the pointer at the edge and holds
+  still generates no motion events at all, and a scroll that only advanced on movement would be the
+  same dead-gesture shape this arc has already shipped once. `QueueDragWatcher` carries it — it is
+  already the one `Control` this `RefCounted` controller owns and the only thing that hears
+  `NOTIFICATION_DRAG_END` — with `set_process(true)` on `NOTIFICATION_DRAG_BEGIN` and `false` on
+  `DRAG_END`, and two independent guards inside the tick (`_queue_drag_key != ""`, and the expanded
+  list mounted).
+- ⛔ **ITS CLOCK IS WALL TIME, NOT `_process`'s DELTA, AND THAT IS NOT AN OPTIMISATION.** A frame
+  delta is scaled by `Engine.time_scale`, and **every render harness in `tools/` pins that to 0** for
+  determinism (`band_panel_preview`, `ui_preview`, `blend_probe` all do; `preview_watchdog` documents
+  it). A pump driven by the frame delta advances by **exactly nothing** under the only thing that can
+  test it — measured here as `0 → 0px over 45 frames` — so it would have shipped as a feature no frame
+  could see. `QueueDragWatcher` measures `Time.get_ticks_usec` instead. A pointer-driven gesture is
+  wall-clock by nature: it belongs to the player's hand, not to the simulation's clock.
+- **THE DIRECTION TEST READS THE PHYSICAL POINTER** — `Control.get_global_mouse_position`, i.e.
+  `Viewport.get_mouse_position` — against the scroll's global rect, gated on the pointer being inside
+  it horizontally. A pointer BEYOND the edge keeps scrolling; a player dragging past the bottom expects
+  that. It is the same quantity Godot localizes a drop with, which is what makes `Input.warp_mouse`
+  able to drive it.
+- ⛔ **A FRACTIONAL RATE NEEDS AN ACCUMULATOR.** `scroll_vertical` is an INT and
+  `BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND` (**6.0**) × `WORK_ROW_HEIGHT` at 60fps is **2.8px a frame**;
+  truncating per frame loses most of the travel. The remainder is carried in `_queue_autoscroll_carry`
+  and zeroed whenever the direction is 0 or flips. **One tick may never move the list more than one
+  row** (`BUILD_QUEUE_AUTOSCROLL_MAX_TICK_SECONDS`, stated as `1 / rows-per-second` rather than as a
+  number of seconds): a hitch hands the pump an arbitrarily long elapsed time, and a multi-row step
+  teleports the drop target past the row the player was aiming at.
+- ⛔ **THE HOVER MUST BE RE-RESOLVED AFTER A STEP, OR THE DROP LANDS ON A STALE ROW.** Godot resolves
+  the drag-over control on MOTION, so auto-scrolling under a stationary pointer moves the rows without
+  telling it and both the indicator and the drop keep naming the row that used to be there. One
+  zero-`relative` `InputEventMouseMotion` at the current pointer with `MOUSE_BUTTON_MASK_LEFT` held,
+  at most once per frame and only mid-drag, is what makes the engine look again — **`Input.parse_input_event`
+  is what does it**; `Viewport.push_input` was the documented fallback and was not needed. The
+  observable consequence is the frame's own claim: *the drop mark moves while the pointer does not*.
+- **THE HOT BAND IS ONE ROW** (`BUILD_QUEUE_AUTOSCROLL_MARGIN := WORK_ROW_HEIGHT`) at each edge of the
+  viewport, so a pointer holding a row over the last visible row is already in it.
+- **IT CHANGES `scroll_vertical` AND NOTHING ELSE.** No rebuild — `_queue_drag_in_flight()` already
+  holds `_repage_work_zone` and `render_band` off for the duration, and freeing the row the pointer
+  holds is what ends a drag. Setting the property past its range clamps itself, so the travel stops at
+  the bottom with no clamp spelled anywhere.
+
+**Frames:** `band_panel_queue_collapsed_long` (the PAIRED NEGATIVE, first, on the same 14-entry band —
+3 rows plus `+11 more`, no expanded list) · `band_panel_queue_expanded_doors` (both doors, both
+directions, all real clicks, plus the press-and-slide-off claim) · `band_panel_queue_expanded` ·
+`band_panel_queue_expanded_arrows` · `band_panel_queue_expanded_settings` (⛔ the 1920 BOTTOM dock,
+the expansion open AND a row's strip open) · `band_panel_queue_expanded_autoscroll` ·
+`band_panel_queue_expanded_scrolled` (the 1920 BOTTOM dock, the list scrolled and a below-the-fold
+row's strip opened on it) · `band_panel_queue_expanded_hidden_entry`, plus the PNG-less empty-queue
+survival block. `harness-band-panel.md` → "The EXPANSION's frames" carries what each one can tell
+apart.
+
 ### THE ORDER IS THE BAND'S OWN — and three surfaces were asking the wrong band (§4.9 item 9a)
 
 `docs/plan_standing_upkeep.md` §4.9 item 9a carries the model. **`buildQueuePosition` is published per

@@ -1385,11 +1385,12 @@ const BUILD_QUEUE_ANIMAL_FACE_FORMAT := "%s %s"
 ## the faction page's standing rule for a capped list, applied to the band's own.
 const BUILD_QUEUE_OVERFLOW_FORMAT := "+%d more"
 
-## **IT NO LONGER SENDS THE PLAYER TO THE COMMAND LINE** (`docs/plan_standing_upkeep.md` §4.7b ③):
-## the rows carry a drag handle now, so the sentence that named `build_order` is false. What is still
-## true is that the entries this row stands for are OUT OF REACH of that gesture — they have no row to
-## drag — which is the fact worth stating where the truncation is.
-const BUILD_QUEUE_OVERFLOW_TOOLTIP := "More entries are queued than this zone can show. Drag the rows above to reorder the queue; the entries behind them keep their order."
+## **AND IT IS A DOOR NOW, NOT A NOTICE** (`docs/plan_standing_upkeep.md` §4.9 item 9c). The sentence that
+## sent the player to the command line went with the drag handle (§4.7b ③), and the one that said the
+## hidden entries were out of reach went with the EXPANSION — pressing this row opens the whole queue
+## over the Work zone, where every entry has a row, both arrows and its own settings strip. The head
+## above is the same door and the only way back.
+const BUILD_QUEUE_OVERFLOW_TOOLTIP := "Show the whole queue. The Work board makes way for it; press the BUILD QUEUE header to come back."
 
 ## The withdrawal. Same `✕` and same steady DANGER ink the parties zone's recall control wears — a
 ## destructive control reads as one — and, like that one, it asks nothing first: `unqueue` withdraws a
@@ -1715,6 +1716,107 @@ static func build_queue_block_height(entries: int, rows_max: int,
         rows += 1
     return ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
         + build_queue_settings_height(settings_legs, settings_crop, settings_kit, settings_one_line)
+
+# ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
+#
+# The block above is a SUMMARY: what the builders pool is funding, and what is next. It draws three
+# entry rows and a `+N more`, and the queue itself has no cap — so a fourth job was funded with no
+# row, and nothing past the third could be seen, reordered or withdrawn from the UI at all. The
+# expansion is that list, in full, and it is a MODE rather than a widening: the 3-row block is
+# untouched, and the mode spends NOTHING while it is closed.
+#
+# **WHAT IT DOES NOT DRAW, and why a stub board was rejected.** The source board, the filter chips
+# that filter it, the pager that pages it and the work inspector that inspects a row of it all go —
+# the chips and the pager say nothing without the list they act on, and a board squeezed to one or
+# two rows is neither a list a player can use nor free. The work HEAD stays (the player must know
+# which zone this is) and the POOLS block stays directly above the list it funds, which is the whole
+# reason §4.7 moved keeping onto this tab.
+
+## The disclosure glyph on the BUILD QUEUE head, which is the toggle BOTH ways — `+N more` is a second
+## door IN only, the expanded view having no overflow row left to press.
+##
+## **`▾` / `▴` RATHER THAN THIS FILE'S OTHER CARET PAIR.** `DetailFormat.BREAKDOWN_CARET_*` and
+## `hud_crafting_vocab.GROUP_HEAD_CARET_*` fold with `▾`/`▸`, and `▸` is already
+## `BUILD_QUEUE_HEAD_MARKER` two rows below this head — the entry the builders pool is standing on.
+## One glyph meaning *folded* on the head and *funded* on a row of the same block is a collision this
+## block cannot afford, so the pair is `hud_event_vocab`'s `CARET_DOWN` / `CARET_UP` instead: down to
+## open the list downward, up to fold it back.
+const BUILD_QUEUE_DISCLOSURE_COLLAPSED := "▾"
+
+const BUILD_QUEUE_DISCLOSURE_EXPANDED := "▴"
+
+## It rides the head's own type size — it is part of the title, not a control beside it — and takes
+## its width out of the head's EXPANDING spacer rather than off the right-hand readout, which states
+## the builders count and their kit and may not give up a character.
+const BUILD_QUEUE_DISCLOSURE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
+
+const BUILD_QUEUE_DISCLOSURE_TOOLTIP := "Show the whole queue over the Work board, or fold it back to the top three and the sources."
+
+## The head row's own meta, so a frame can find the toggle and press it where the player presses it.
+## Valued the EXPANDED flag, so the glyph and the state cannot be asserted apart.
+const BUILD_QUEUE_DISCLOSURE_META := "build_queue_disclosure"
+
+## **THE THIRD AND LAST SANCTIONED `ScrollContainer` IN THIS PANEL** (`PARTIES_LIST_NAME` under
+## `ZONE_PARTIES`, `BAND_ZONE_SCROLL_NAME` under `ZONE_BAND`, this one under `ZONE_WORK`).
+##
+## It is safe for the identical reason the other two are: a `ScrollContainer` reports no minimum on
+## its scrolling axis, so what the list holds never reaches the zone's reservation, and what it DOES
+## report is a fixed number `build_queue_expanded_scroll_height` declares from the zone's own BOX —
+## geometry the panel states rather than anything the snapshot says.
+##
+## ⛔ **ITS SANCTION IS CONDITIONAL WHERE THE OTHER TWO ARE UNCONDITIONAL.** It must exist EXACTLY
+## when the queue is expanded and never otherwise — the collapsed zone is the paged, no-scroll board
+## the whole zone model is built on, and "no stray scroll" is a claim satisfied by a panel that never
+## expands. Both halves are asserted.
+const BUILD_QUEUE_EXPANDED_SCROLL_NAME := "BuildQueueList"
+
+## **WHAT THE EXPANDED LIST'S VIEWPORT IS DECLARED AT — the zone's box less everything above it.**
+## One arithmetic, in the same shape `_work_board_capacity` charges its chrome: the work head, the
+## POOLS block, the queue's own head, and the two block separations the column puts between the three
+## blocks (the head and the list share one block at separation 0, so there is no gap inside it).
+##
+## ⛔ **IT IS NOT CLAMPED UP TO A FLOOR.** A dock too short to hold this mode must FAIL the zone-fit
+## assertion loudly, which is this zone's standing contract; a floor would turn that into a silent
+## clip of the bottom row, since the zone `clip_contents`.
+static func build_queue_expanded_scroll_height(box_height: float, pools_fund_mode: bool) -> float:
+    return box_height - ZONE_HEAD_HEIGHT - pools_block_height(pools_fund_mode) - ZONE_HEAD_HEIGHT \
+        - float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_EXPANDED_GAP_COUNT
+
+## The gaps above that viewport: work head → pools, pools → queue block. Named rather than spelled,
+## the same way `BUILD_QUEUE_ROOM_GAP_COUNT` is, because it is a COUNT and not a height.
+const BUILD_QUEUE_EXPANDED_GAP_COUNT := 2.0
+
+# ---- EDGE AUTO-SCROLL, so a drag can reach past the viewport (§4.9 item 9c) ------------------------------
+#
+# A scrolling list whose drag cannot leave the viewport is a reorder that only works inside one
+# screenful. The arrows do not care — they name a rank — but the drag does.
+
+## The hot band at each edge of the expanded list's viewport. ONE ROW, so a pointer holding the row it
+## is dragging over the last visible row is already in it: any smaller and the player has to aim at a
+## strip thinner than the thing they are holding.
+const BUILD_QUEUE_AUTOSCROLL_MARGIN := WORK_ROW_HEIGHT
+
+## …and the speed, stated in ROWS PER SECOND rather than pixels per frame — the row is this list's
+## unit, and a frame is not a quantity the design has an opinion about. Six rows a second crosses a
+## nine-entry queue in a second and a half and is slow enough to stop on the row meant.
+##
+## ⛔ **A FRACTIONAL RATE NEEDS AN ACCUMULATOR.** `ScrollContainer.scroll_vertical` is an INT and
+## 6 rows/s at 60fps is 2.8px a frame, so truncating per frame loses most of the travel;
+## `_queue_autoscroll_carry` holds the remainder and is zeroed whenever the direction stops or flips.
+const BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND := 6.0
+
+## ⛔ **AND ONE TICK MAY NEVER MOVE THE LIST MORE THAN ONE ROW**, which is what this cap is stated as
+## rather than as a number of seconds: at the rate above, one row IS `1 / rows-per-second` of a
+## second. A hitch — a stalled frame, a resize, a harness capturing a PNG mid-gesture — hands the pump
+## an arbitrarily long elapsed time, and a step of several rows teleports the drop target past the row
+## the player was aiming at.
+const BUILD_QUEUE_AUTOSCROLL_MAX_TICK_SECONDS := 1.0 / BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND
+
+## The pump's clock is `Time.get_ticks_usec`, which is UNSCALED — see
+## `BandPanelController._queue_autoscroll_tick` for why a frame delta is unusable — so it needs the
+## one conversion. `SnapshotLoader` / `TurnProfile` carry a `USEC_PER_MSEC` for their own millisecond
+## readouts; this rate is stated per SECOND, so it states its own.
+const MICROSECONDS_PER_SECOND := 1_000_000.0
 
 ## **WHAT AN OPEN SETTINGS STRIP DRAWS AT — one expression, and `0.0` when there is nothing to open.**
 ## The crop picker costs its control row; each LEG of the entry's climb costs a line.

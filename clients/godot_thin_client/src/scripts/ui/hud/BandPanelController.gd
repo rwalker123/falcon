@@ -167,6 +167,47 @@ var _party_open_key: String = ""
 ## setting today (the crop); the key is dropped on any render where its entry has left the queue or
 ## has nothing to show, exactly as `_work_open_key` is dropped for a source that leaves the board.
 var _queue_open_key: String = ""
+## **IS THE BUILD QUEUE DRAWN OVER THE WHOLE WORK ZONE?** (`docs/plan_standing_upkeep.md` §4.9 item 9c).
+##
+## The 3-row block is a SUMMARY — what the pool is funding and what is next — and there is no cap on
+## the queue behind it, so an entry past the third had no row to be seen, reordered or withdrawn from.
+## Expanded, the zone draws the work head, the POOLS block and EVERY entry in a scrolling list, and
+## draws no board, no chips, no pager and no work inspector at all.
+##
+## **IT IS ZONE MODE, WHICH IS THE PLAYER'S, so it is NOT reset on a band change** — the same
+## reasoning `_work_filter` and `_work_sort` are kept under. A player who opened the full list to
+## compare two bands' queues would have it fold on the first selection.
+##
+## ⛔ **AN EMPTY QUEUE IS NOT DRAWN IN THE MODE, AND THE FLAG IS NOT CLEARED FOR IT.** No queue means
+## no block, no block means no header, and the header is the only way back out — so `_fill_work_zone`
+## falls through to the COLLAPSED path for a band with nothing queued, which draws no block either and
+## leaves the player nothing to be stranded in. Clearing the flag instead would cancel the mode for
+## EVERY band on the first selection of an idle one, which is the band-change fold the paragraph above
+## exists to prevent.
+var _queue_expanded: bool = false
+## The expanded list's `ScrollContainer` while it is mounted, held for the DRAG's edge auto-scroll
+## alone — the pump reads its rect and writes its `scroll_vertical`, and must reach it without
+## re-rendering the block the gesture is standing on. `null` in every collapsed render.
+var _queue_expanded_scroll: ScrollContainer = null
+## ⛔ **HOW FAR DOWN THE EXPANDED LIST THE PLAYER IS, CARRIED ACROSS EVERY REBUILD OF IT.**
+##
+## Every in-mode interaction frees the zone: a row's settings strip runs `_toggle_queue_settings` →
+## `_repage_work_zone`, and an arrow, a drag or a withdrawal takes effect through the returning
+## snapshot → `render_band`. A list rebuilt at 0 would throw the player back to the top on each of
+## them AND once a turn on the snapshot — and the entries only reachable that far down are precisely
+## the ones the mode exists to reach. It is the `CraftingPanel._pending_scroll` contract exactly.
+##
+## **IT IS AN OFFSET INTO ONE LIST, so entering the mode resets it** (`_toggle_queue_expanded`): a
+## fresh expansion opens at the top of the queue, and 0 is therefore both the initial value and a
+## restore that costs nothing.
+var _queue_expanded_scroll_offset: int = 0
+## ⛔ **THE AUTO-SCROLL'S SUB-PIXEL REMAINDER, AND THE DIRECTION IT WAS EARNED IN.**
+## `ScrollContainer.scroll_vertical` is an INT and `BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND` at 60fps
+## is ~2.8px a frame, so a truncating step would throw away most of the travel. Whole pixels are
+## applied and the remainder carried; the carry is zeroed the moment the direction is 0 or flips, or
+## a reversal would spend travel earned going the other way.
+var _queue_autoscroll_carry: float = 0.0
+var _queue_autoscroll_direction: int = 0
 ## **THE QUEUE ENTRY CURRENTLY BEING DRAGGED ("" = none), AND THE ROW THE DROP WOULD LAND ON**
 ## (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
@@ -1606,6 +1647,16 @@ func _queue_drag_in_flight() -> bool:
 
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     _ensure_queue_drag_watcher()
+    # ⛔ **THE PLAYER'S PLACE IN THE LIST IS TAKEN OFF THE OUTGOING NODE, HERE, BECAUSE THIS IS THE
+    # LAST MOMENT IT EXISTS.** Both fill paths reach this line with the previous list still readable —
+    # `_repage_work_zone` has `queue_free`d it (deferred, so it is still a valid instance) and
+    # `render_band` builds the new zone BEFORE `set_zones` frees the old one — and neither offers
+    # another hook. `_build_build_queue_expanded` restores it onto the list it is about to build.
+    if _queue_expanded_scroll != null and is_instance_valid(_queue_expanded_scroll):
+        _queue_expanded_scroll_offset = _queue_expanded_scroll.scroll_vertical
+    # The previous fill's nodes are about to be freed, so the auto-scroll's handle is dropped before
+    # anything can read a dangling one; the expanded builder is what re-seats it.
+    _queue_expanded_scroll = null
     # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8). The
     # card is anchored to a row this pass is about to free, and its every figure is a function of the
     # source's position, the faction's knowledge and the queue — so a card left up over the rebuilt
@@ -1635,8 +1686,21 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # of a 300px horizontal work zone, which is more than the authored ceiling can give back, while
     # the narrow shell's swapped host has 400px spare at that same ceiling. Resolved ONCE here so the
     # block and the capacity below cannot cap differently.
+    var pools_fund_mode := bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
+    # **THE EXPANSION IS A FORK, NOT A WIDENING** (§4.9 item 9c). The whole
+    # queue takes the whole zone: the work head above it, the POOLS block directly above the list they
+    # fund, and every entry in a scrolling list — and NO chips, no board, no pager, no inspector and
+    # no `+N more`, so `_work_board_capacity` is not consulted at all in this mode.
+    # ⛔ **AN EMPTY QUEUE FALLS THROUGH TO THE COLLAPSED PATH AND THE FLAG IS LEFT ALONE.** No queue
+    # means no block, no block means no header, and the header is the only way back — but the fall
+    # through already draws no block, so nothing is stranded. CLEARING the flag here (which it did)
+    # cancels the mode for every band the moment an idle one is selected, which is exactly the
+    # band-change fold `_queue_expanded` is documented as not doing.
+    if _queue_expanded and not queued.is_empty():
+        col.add_child(_build_build_queue_expanded(band, queued, pools_fund_mode))
+        return
     var queue_rows_max := HudWorkVocab.build_queue_rows_max(_zone_box().y,
-        bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)), queued.size())
+        pools_fund_mode, queued.size())
     if not queued.is_empty():
         col.add_child(_build_build_queue_block(band, queued, queue_rows_max))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
@@ -1662,7 +1726,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     # there are one decision; asking twice is idempotent (it only prunes a stale key).
     var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
     var capacity := _work_board_capacity(filtered.size(), inspected, queued.size(),
-        queue_rows_max, bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)),
+        queue_rows_max, pools_fund_mode,
         int(queue_settings["legs"]), bool(queue_settings["crop"]),
         bool(queue_settings["kit"]), bool(queue_settings["one_line"]))
     var page_size := int(capacity["page_size"])
@@ -2328,6 +2392,155 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
     return block
 
+## **THE QUEUE OVER THE WHOLE WORK ZONE — every entry, in a scrolling list** (§4.9 item 9c).
+##
+## **IT REUSES THE BLOCK'S OWN BUILDERS AND RE-SPELLS NOTHING.** The head is
+## `_build_build_queue_head`, the rows are `_build_build_queue_row` and the strip is
+## `_build_queue_settings_strip`, so the arrows, the `✕`, the drag handle, the `▸`, the pending rules
+## and the `▼` end-stop are INHERITED rather than restated — which is what keeps the two modes from
+## drifting into two answers about the same queue.
+##
+## **EVERY DRAWABLE ENTRY GETS A ROW, so `_queue_settings_state` is asked with `drawn ==
+## queued.size()`**: the cap is what made an entry past the third unopenable, and there is no cap
+## here. `is_head` is still the WIRE's head, not the first drawn row — an entry the block cannot draw
+## is still the one the builders pool is standing on.
+##
+## **THE LIST IS THE THIRD SANCTIONED `ScrollContainer` IN THIS PANEL** and it declares a FIXED
+## viewport height off the zone's own box (`HudWorkVocab.build_queue_expanded_scroll_height`), so what
+## the list holds never reaches the zone's reservation — the same contract the parties list and the
+## band zone's stack are sanctioned under.
+func _build_build_queue_expanded(band: Dictionary, queued: Array,
+        pools_fund_mode: bool) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.set_meta(HudWorkVocab.BUILD_QUEUE_BLOCK_META, queued.size())
+    block.add_theme_constant_override("separation", 0)
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    var settings := _queue_settings_state(band, queued, queued.size())
+    var open_index := int(settings["index"])
+    var confirmed := _queue_rank_keys(band).size()
+    var builders := int(_band_labor.effective_role_workers(
+        band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+    block.add_child(_build_build_queue_head(band, builders))
+    var scroll := ScrollContainer.new()
+    scroll.name = HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME
+    scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    scroll.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.build_queue_expanded_scroll_height(_zone_box().y, pools_fund_mode))
+    var list := VBoxContainer.new()
+    list.add_theme_constant_override("separation", 0)
+    list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # A scrolled child must not claim the viewport's height as its own, or a short queue would stretch
+    # its rows down the zone — the parties list's own rule, for the same reason.
+    list.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    scroll.add_child(list)
+    # The drop indicator is a stylebox swap on nodes the controller holds, so the map is rebuilt here
+    # exactly as the block rebuilds it — a drag over the expanded list reaches its target the same way.
+    _queue_row_nodes.clear()
+    for index in range(queued.size()):
+        var entry: Dictionary = queued[index] as Dictionary
+        var row := _build_build_queue_row(band, entry,
+            _build_queue_row_rank(entry) == SourceForecast.BUILD_QUEUE_HEAD,
+            builders, confirmed)
+        _queue_row_nodes[String(entry.get("key", ""))] = row
+        list.add_child(row)
+        if index == open_index:
+            list.add_child(_build_queue_settings_strip(band, entry))
+    block.add_child(scroll)
+    _queue_expanded_scroll = scroll
+    _restore_queue_scroll_offset(scroll)
+    return block
+
+## ⛔ **PUT THE PLAYER BACK WHERE HE WAS IN THE LIST — A FRAME LATER, AND THAT IS THE WHOLE TRAP.**
+## `ScrollContainer.scroll_vertical` is clamped to its scrollbar's CURRENT range on the way in, and
+## the rows added a line above have not been laid out — so an assignment made here is clamped to
+## whatever that un-ranged bar happens to allow and the rebuild-forgets-its-place defect survives
+## underneath a fix that reads right. **The clamp is not to zero, which is what makes it so easy to
+## miss**: a fresh `VScrollBar` is a `Range`, and a `Range` ships `max = 100`, so an offset under 100px
+## sails through the naive form intact and only a deeper scroll shows the truncation. One frame is
+## what it takes for the container to sort its children and re-range that bar, which is
+## `CraftingPanel.refit`'s own reason for awaiting one before restoring `_pending_scroll`.
+##
+## **THE CLAMP IS THE CONTAINER'S, DELIBERATELY** — a queue that lost entries has a shorter list, and
+## the setter's own range check is what stops the restore landing past its new end.
+##
+## ⛔ **AND IT MUST NEVER LAND UNDER A LIVE DRAG.** The edge auto-scroll writes `scroll_vertical`
+## every frame of the gesture; a deferred restore resuming beside it would fight the pump and yank the
+## list back to where the rebuild found it. `_queue_drag_in_flight` already holds the rebuild itself
+## off, so the only reachable case is a gesture starting in the frame this is waiting out — declined
+## here rather than assumed impossible.
+func _restore_queue_scroll_offset(scroll: ScrollContainer) -> void:
+    if _queue_expanded_scroll_offset <= 0:
+        return
+    var want := _queue_expanded_scroll_offset
+    await _host.get_tree().process_frame
+    if not is_instance_valid(scroll) or not scroll.is_inside_tree():
+        return
+    if _queue_expanded_scroll != scroll or _queue_drag_in_flight():
+        return
+    scroll.scroll_vertical = want
+
+## Open the whole queue over the Work zone, or fold it back to the summary block — the mode's ONE
+## mutator, driven by the BUILD QUEUE header both ways and by the `+N more` row inward.
+##
+## ⛔ **ENTERING IT CLEARS THE WORK INSPECTOR, and that line is load-bearing rather than tidy.** The
+## expanded fill never runs the board's own pruning path, so a `_work_open_key` left set would spring
+## the inspector back on the collapse BESIDE an open queue settings strip — which is exactly the
+## 460-into-a-396px-box overflow the one-expansion rule closed (§4.7b). It is the same clear
+## `_toggle_queue_settings` already carries.
+## **ENTERING IT ALSO OPENS THE LIST AT THE TOP.** `_queue_expanded_scroll_offset` is a place in ONE
+## list and is carried across that list's rebuilds; a fresh entry into the mode is not one of those.
+func _toggle_queue_expanded() -> void:
+    _queue_expanded = not _queue_expanded
+    if _queue_expanded:
+        _work_open_key = ""
+        _work_floor_open = false
+        _queue_expanded_scroll_offset = 0
+    _repage_work_zone()
+
+## **THE HEAD IS THE TOGGLE, BOTH WAYS** (§4.9 item 9c) — `+N more` is a second door IN only, the expanded
+## view having no overflow row left to press, so this is the only way back. It is available whenever
+## the block exists, including a queue short enough to draw no overflow row at all.
+##
+## **THE GLYPH COMES OUT OF THE HEAD'S EXPANDING SPACER**, inserted straight after the title: the
+## right-hand readout states the builders count and their kit and may not give up a character.
+##
+## ⛔ **IT FIRES ON THE RELEASE, INSIDE THE ROW.** `_toggle_queue_expanded` ends in
+## `_repage_work_zone`, which frees every node in the zone — and *any press handler that rebuilds its
+## own subtree kills every drag that could start under it* is the general rule PR #574's autopsy
+## named, after the queue rows' own toggle shipped on the press and left the reorder gesture dead.
+## Inside the row, because `mouse_focus` latches on the press.
+func _make_queue_head_a_toggle(head: HBoxContainer) -> void:
+    var glyph := Label.new()
+    glyph.text = HudWorkVocab.BUILD_QUEUE_DISCLOSURE_EXPANDED if _queue_expanded \
+        else HudWorkVocab.BUILD_QUEUE_DISCLOSURE_COLLAPSED
+    glyph.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    glyph.add_theme_font_size_override("font_size",
+        HudWorkVocab.BUILD_QUEUE_DISCLOSURE_FONT_SIZE)
+    glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    glyph.set_meta(HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META, _queue_expanded)
+    head.add_child(glyph)
+    head.move_child(glyph, 1)
+    head.set_meta(HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META, _queue_expanded)
+    head.mouse_filter = Control.MOUSE_FILTER_STOP
+    head.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    head.tooltip_text = HudWorkVocab.BUILD_QUEUE_DISCLOSURE_TOOLTIP
+    # The readout Label takes `STOP` for its own tooltip (`HudWidgets.set_label_tooltip`), which would
+    # swallow a press landing on it. `PASS` is the drag handle's shipped trick: the label is still
+    # found for the hover, so `BUILD_QUEUE_BUILDERS_TOOLTIP` survives, and the event carries on up to
+    # the row.
+    for child in head.get_children():
+        if child is Label and (child as Label).mouse_filter == Control.MOUSE_FILTER_STOP:
+            (child as Label).mouse_filter = Control.MOUSE_FILTER_PASS
+    head.gui_input.connect(func(event: InputEvent) -> void:
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+                and not event.pressed \
+                and Rect2(Vector2.ZERO, head.size).has_point(event.position):
+            _toggle_queue_expanded())
+
 ## **WHICH DRAWN ENTRY HAS ITS SETTINGS STRIP OPEN, AND WHAT THAT STRIP HOLDS** — `{index, legs,
 ## crop}`, `index == -1` for none. The block's one answer to that question, so the height it reserves,
 ## the row it draws beneath, the strip it builds and the board's own capacity are the same decision
@@ -2593,15 +2806,21 @@ func _build_queue_leg_line(leg: Dictionary, in_flight: bool) -> HBoxContainer:
 ## **THE KIT COMES FROM `_role_kit_id`, THE SAME RESOLUTION THE BUILDERS CARD'S GEAR LINE STATES.**
 ## One call, so the header and the card cannot name two different webs' tools for one pool.
 func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
+    var head: HBoxContainer
     if builders <= 0:
-        return HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
+        head = HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
             HudWorkVocab.BUILD_QUEUE_NO_BUILDERS_NOTE, null, HudStyle.WARN,
             HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
-    var kit_face := KitRoster.display_name_for_id(_band_labor.kits(),
-        _role_kit_id(band, HudConst.LABOR_KIND_BUILDERS))
-    return HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
-        HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [builders, kit_face], null, HudStyle.INK_DIM,
-        HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
+    else:
+        var kit_face := KitRoster.display_name_for_id(_band_labor.kits(),
+            _role_kit_id(band, HudConst.LABOR_KIND_BUILDERS))
+        head = HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
+            HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [builders, kit_face], null, HudStyle.INK_DIM,
+            HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
+    # **THE HEAD IS THE EXPANSION'S TOGGLE IN BOTH MODES AND ON BOTH FORKS** (§4.9 item 9c) — a band with no
+    # builders has a queue to read like any other, and the `⚠` head is the one it has.
+    _make_queue_head_a_toggle(head)
+    return head
 
 ## One queue entry: the head marker, the source's mark, the job face, its date, and the withdrawal.
 ##
@@ -3038,6 +3257,10 @@ func _on_queue_drag_end() -> void:
         return
     _queue_drag_key = ""
     _queue_drop_key = ""
+    # The auto-scroll's accumulator is per-GESTURE, not per-panel: a remainder left over from the last
+    # drag would be spent on the first frame of the next one.
+    _queue_autoscroll_carry = 0.0
+    _queue_autoscroll_direction = 0
     _repage_work_zone()
 
 ## The watcher node, parented once into the HUD host and reused. Invisible, zero-size and
@@ -3050,8 +3273,88 @@ func _ensure_queue_drag_watcher() -> void:
     watcher.mouse_filter = Control.MOUSE_FILTER_IGNORE
     watcher.custom_minimum_size = Vector2.ZERO
     watcher.on_drag_end = _on_queue_drag_end
+    # **AND IT IS THE AUTO-SCROLL'S PUMP TOO** (§4.9 item 9c), for the same reason it is the drag's ear: it
+    # is the one `Control` this `RefCounted` controller owns, so it is the only place a per-frame tick
+    # bounded by the gesture can live.
+    watcher.on_drag_tick = _queue_autoscroll_tick
     _host.add_child(watcher)
     _queue_drag_watcher = watcher
+
+## ⛔ **EDGE AUTO-SCROLL — a drag must be able to reach past the expanded list's viewport** (§4.9 item 9c).
+## The arrows name a rank and do not care; the drag names a ROW, and a row it cannot scroll to is a
+## row it cannot reorder onto.
+##
+## **THE PUMP IS PER-FRAME, NOT PER-MOTION.** A player who parks the pointer in the hot band and holds
+## still generates no motion events at all, and a scroll that only advanced on movement would be the
+## same dead-gesture shape this arc has already shipped once. Two independent guards keep it from
+## costing anything otherwise: a drag must be in flight, and the expanded list must be mounted.
+##
+## **THE DIRECTION TEST READS THE PHYSICAL POINTER** (`Control.get_global_mouse_position`, i.e.
+## `Viewport.get_mouse_position`) against the scroll's own rect, not a pushed event's position — which
+## is the same quantity Godot localizes a drop with, and therefore the one `Input.warp_mouse` moves
+## and a harness can drive. A pointer BEYOND the edge keeps scrolling: a player dragging past the
+## bottom of the list expects that.
+##
+## **IT CHANGES `scroll_vertical` AND NOTHING ELSE.** No rebuild — `_queue_drag_in_flight` already
+## holds `_repage_work_zone` and `render_band` off for the duration, and freeing the row under the
+## pointer is what ends a drag. Setting the property past its range clamps itself, so the travel stops
+## at the bottom with no clamp spelled here.
+## ⛔ **`seconds` IS WALL CLOCK, NOT `_process`'s DELTA, AND THAT IS NOT AN OPTIMISATION.** A frame
+## delta is scaled by `Engine.time_scale`, and every render harness in `tools/` pins that to **0** for
+## determinism (`band_panel_preview`, `ui_preview`, `blend_probe` all do, and `preview_watchdog`
+## documents it) — so a pump driven by the frame delta advances by exactly nothing under the only
+## thing that can test it, and would have shipped as a feature no frame could see. A pointer-driven
+## gesture is wall-clock by nature: it belongs to the player's hand, not to the simulation's clock.
+func _queue_autoscroll_tick(seconds: float) -> void:
+    if _queue_drag_key == "":
+        return
+    if _queue_expanded_scroll == null or not is_instance_valid(_queue_expanded_scroll) \
+            or not _queue_expanded_scroll.is_inside_tree():
+        return
+    var scroll := _queue_expanded_scroll
+    var rect := scroll.get_global_rect()
+    var pointer := scroll.get_global_mouse_position()
+    var direction := 0
+    if pointer.x >= rect.position.x and pointer.x <= rect.end.x:
+        if pointer.y < rect.position.y + HudWorkVocab.BUILD_QUEUE_AUTOSCROLL_MARGIN:
+            direction = -1
+        elif pointer.y > rect.end.y - HudWorkVocab.BUILD_QUEUE_AUTOSCROLL_MARGIN:
+            direction = 1
+    if direction != _queue_autoscroll_direction:
+        _queue_autoscroll_carry = 0.0
+        _queue_autoscroll_direction = direction
+    if direction == 0:
+        return
+    # **AND ONE TICK MAY NEVER MOVE THE LIST MORE THAN ONE ROW.** A hitch — a stalled frame, a window
+    # resize, a harness capturing a PNG mid-gesture — hands this an arbitrarily long elapsed time, and
+    # a step of several rows teleports the drop target past the row the player was aiming at.
+    var travel := _queue_autoscroll_carry + float(direction) \
+        * HudWorkVocab.BUILD_QUEUE_AUTOSCROLL_ROWS_PER_SECOND * HudWorkVocab.WORK_ROW_HEIGHT \
+        * minf(seconds, HudWorkVocab.BUILD_QUEUE_AUTOSCROLL_MAX_TICK_SECONDS)
+    var step := int(travel)
+    _queue_autoscroll_carry = travel - float(step)
+    if step == 0:
+        return
+    var before := scroll.scroll_vertical
+    scroll.scroll_vertical = before + step
+    if scroll.scroll_vertical == before:
+        return
+    _resolve_queue_drag_hover()
+
+## ⛔ **THE HOVER MUST BE RE-RESOLVED AFTER A STEP, OR THE DROP LANDS ON A STALE ROW.** Godot resolves
+## the drag-over control on MOTION, and auto-scrolling under a stationary pointer moves the rows
+## without telling it — so both the drop indicator and the drop itself keep naming the row that used
+## to be under the pointer. One zero-`relative` motion at the CURRENT pointer, with the left button
+## still held so it reads as part of the same gesture, is what makes the engine look again.
+##
+## At most once per frame and only while a drag is live, both of which the caller's own guards give.
+func _resolve_queue_drag_hover() -> void:
+    var motion := InputEventMouseMotion.new()
+    motion.position = _host.get_viewport().get_mouse_position()
+    motion.global_position = motion.position
+    motion.relative = Vector2.ZERO
+    motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+    Input.parse_input_event(motion)
 
 ## **THE REORDER COMMAND** — `build_order <faction> <band> <source…> <position>`, 0-based
 ## (`docs/plan_standing_upkeep.md` §4.7b ③).
@@ -3077,8 +3380,13 @@ func _emit_build_order(band: Dictionary, model: Dictionary, position: int) -> vo
 ## `+2 more` — the rest of the queue, at the same row height and in the quiet ink.
 ##
 ## **A TRUNCATED LIST WITH NOTHING UNDER IT READS AS THE WHOLE LIST**, which is the faction page's
-## standing rule for a capped list applied to the band's own. Reordering is `build_order` on the
-## command line until slice 7 gives the list a drag.
+## standing rule for a capped list applied to the band's own.
+##
+## **AND IT IS A DOOR NOW** (§4.9 item 9c): pressing it opens the whole queue over the Work zone, where the
+## entries it stands for each have a row, both arrows and their own settings strip. It is the SECOND
+## door in — the BUILD QUEUE header above is the first, and the only one back out — and it fires on
+## the RELEASE INSIDE THE ROW for the reason the header does: the handler rebuilds the zone it is
+## standing in.
 func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
     var row := PanelContainer.new()
     row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
@@ -3086,6 +3394,13 @@ func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
     row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
     row.set_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META, remaining)
     row.tooltip_text = HudWorkVocab.BUILD_QUEUE_OVERFLOW_TOOLTIP
+    row.mouse_filter = Control.MOUSE_FILTER_STOP
+    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    row.gui_input.connect(func(event: InputEvent) -> void:
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+                and not event.pressed \
+                and Rect2(Vector2.ZERO, row.size).has_point(event.position):
+            _toggle_queue_expanded())
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     row.add_child(line)
@@ -6940,7 +7255,30 @@ func _select_band_on_map(band: Dictionary) -> void:
 ## on a drop, so one invisible, input-transparent Control listens for it.
 class QueueDragWatcher extends Control:
     var on_drag_end: Callable
+    ## The expanded list's edge auto-scroll pump (§4.9 item 9c). It runs only between Godot's own
+    ## `NOTIFICATION_DRAG_BEGIN` and `NOTIFICATION_DRAG_END`, so a panel with no drag in flight — which
+    ## is every frame but a handful — processes nothing at all.
+    var on_drag_tick: Callable
+
+    func _ready() -> void:
+        set_process(false)
+
+    ## When the pump last ran, on the UNSCALED clock — see `_queue_autoscroll_tick` for why the frame
+    ## delta is unusable here.
+    var _ticked_usec: int = 0
+
+    func _process(_scaled_delta: float) -> void:
+        var now := Time.get_ticks_usec()
+        var seconds := float(now - _ticked_usec) / HudWorkVocab.MICROSECONDS_PER_SECOND
+        _ticked_usec = now
+        if on_drag_tick.is_valid():
+            on_drag_tick.call(seconds)
 
     func _notification(what: int) -> void:
-        if what == NOTIFICATION_DRAG_END and on_drag_end.is_valid():
-            on_drag_end.call()
+        if what == NOTIFICATION_DRAG_BEGIN:
+            _ticked_usec = Time.get_ticks_usec()
+            set_process(true)
+        elif what == NOTIFICATION_DRAG_END:
+            set_process(false)
+            if on_drag_end.is_valid():
+                on_drag_end.call()
