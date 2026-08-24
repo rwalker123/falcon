@@ -216,12 +216,15 @@ that table unconditionally with `""` as the initial selection, so the branch nev
 has opened on NO OVERLAY for as long as both halves have looked like this; the paragraph that used to
 stand here said otherwise, and was describing an intention rather than the code.
 
-**The intention is still a good one and is worth honouring deliberately, in its own change.** A
-default has to be REAL on every map: elevation rides `MapSection.elevationOverlay`, which worldgen
-publishes for every world, so it is never a placeholder, and relative height is legible with no
-knowledge of the simulation's vocabulary. Wiring it means one thing — the picker's roster fallback
-consults `default_channel` before taking `_roster[0]` — and it is a change to what a player sees on
-their first frame, so it belongs to whoever decides that, not to a migration.
+**AND THE MAP OPENING PLAIN IS THE WANTED BEHAVIOUR — decided 2026-08-23, do not "fix" it.** The
+player gets bare terrain and picks an overlay if they want one. So `default_channel` is not a feature
+waiting to be wired: it is a field expressing an intention nobody holds. The argument it was written
+for still reads well — elevation rides `MapSection.elevationOverlay`, which worldgen publishes for
+every world, so a default channel would never be a placeholder — and it lost anyway, which is why the
+argument is recorded here rather than the field quietly deleted with no trace of what it wanted.
+
+Retiring it is a one-line change to `native/src/snapshot/mod.rs` whenever the dead wire field is worth
+the churn; nothing client-side would notice.
 
 **RETIRED: the `logistics` channel ("Logistics Throughput", blue), the top-level `contrast` alias,
 and the whole trade-link overlay.** The sim no longer publishes a `logisticsRaster` or a link
