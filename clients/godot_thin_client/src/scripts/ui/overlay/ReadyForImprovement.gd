@@ -9,22 +9,25 @@ class_name ReadyForImprovement
 ## the map washed out into a sheet that named nothing. A hex lights only if a source on it satisfies
 ## ALL FOUR of:
 ##
-## 1. **A player band is WORKING it** — a `labor_assignments` row, or a hunting party's quarry.
+## 1. **It is IMPROVED, or a player band is WORKING it** — the union, and both halves matter; see
+##    `_is_candidate`. This is the cheap test and it runs first.
 ## 2. **No OTHER faction owns it** — a refusal, not a requirement; see `_not_another_faction_s`.
-## 3. **A rung above it is genuinely available** — `RungGates.next_rung_ready`.
-## 4. **Nothing is being built there** — `RungGates.rung_in_progress` answers empty.
+## 3. **A rung above it is genuinely available RIGHT NOW** — `RungGates.next_rung_ready`, which is the
+##    same call that draws the `⌃` on a marker's badge. There is no new ladder logic in this file and
+##    there must not be: knowing how, the ground taking seed and the species' own ceiling are all
+##    inside that one answer.
 ##
-## ⛔ **CONDITION 1 WAS ONCE "it has already been improved", AND THAT WAS WRONG IN A WAY WORTH
-## RECORDING.** It was chosen to make the set scarce, and it did — but the FIRST rung on a source is an
-## improvement onto ground carrying none, so a test demanding an existing improvement can never show a
-## first improvement. Reported from play: a faction that had just learned Herding, holding two hunted
-## herds it could have started taming that turn, saw an empty map — the one knowledge it had spent
-## nothing of was the one the channel structurally could not talk about. Working the source is the
-## scarcity that was actually wanted: a band has hands on a handful of sources, never on a continent.
+## ⛔ **CONDITION 1 TOOK THREE ATTEMPTS AND EVERY WRONG ONE PASSED ITS OWN TESTS.** First there was no
+## condition 1 at all, and the channel lit every land tile the faction could see. Then it was "already
+## improved", which can never surface a FIRST improvement and so hid an entire knowledge. Then it was
+## "worked", which hid a field you built and walked away from. It is the UNION because the two halves
+## answer different questions — what you hold, and what you have hands on — and a fixture built around
+## either one alone confirms it rather than catching it.
 ##
-## **NOTHING HERE READS A PER-WEB BOOLEAN, and that is the property to keep.** Conditions 1 and 2 are
-## answered off the band's own assignment rows and one owner pair; 3 and 4 are `RungGates`. The day a
-## route ladder (trail → road) ships, a route worked by a band flows through this file unchanged.
+## **NOTHING HERE READS A PER-WEB BOOLEAN, and that is the property to keep.** The improved half is one
+## branch-qualified rung label (`plant:tended`, `animal:pastoral`), the worked half is the band's own
+## assignment rows, and the ladder question is `RungGates`. The day a route branch (trail → road)
+## ships, a route flows through this file unchanged: one entry in `SourceForecast.RUNG_BRANCHES`.
 ##
 ## `docs/plan_knowledge_screen.md` §7. The map has marked the per-source case since issue #412: a
 ## worked patch or herd that can climb wears a `⌃` on its own badge. What that cannot show is the
@@ -98,15 +101,16 @@ const SOURCE_OWNER_KEY := "owner"
 ## The model's keys. `ready` is an `Array[Vector2i]` of the tiles the raster lit — the only part of
 ## the model that is a LIST rather than a count, because the legend names the nearest of them.
 ##
-## **IT REPLACED an `unworked` list, which this rule made meaningless**: every lit source is one a band
-## is working, so "how many of them is nobody on" is now always zero.
+## **IT REPLACED an `unworked` list.** That list existed to point at opportunities nobody was standing
+## on — but an improved source nobody is on now LIGHTS in its own right, so the interesting ones are in
+## the lit set rather than hiding behind a second count. The legend names the nearest instead.
 const MODEL_NORMALIZED := "normalized"
 const MODEL_RAW := "raw"
 const MODEL_PATCHES := "patches"
 const MODEL_HERDS := "herds"
 const MODEL_READY := "ready"
 
-const FACTS_NONE := "Nothing your people work can be improved yet."
+const FACTS_NONE := "Nothing can be improved right now."
 const FACTS_TOTAL_FORMAT := "%s · %s, %s"
 const FACTS_NEAREST_FORMAT := "Nearest (%d, %d)"
 
@@ -159,13 +163,11 @@ static func derive(view: Object) -> Dictionary:
 		if not _on_map(tile, width, height):
 			continue
 		var key: String = view.secondary_food_key(tile.x, tile.y)
-		# **CONDITION 1, AND IT IS THE FIRST TEST ON PURPOSE.** It is a dictionary lookup, where the two
-		# `RungGates` questions behind it are the expensive half — and on a live world it refuses the
-		# overwhelming majority of patches, the sim seeding one on every food-module tile.
-		if not worked.has(key):
+		var patch: Dictionary = view.forage_patch_lookup[tile]
+		if not _is_candidate(SourceForecast.LABOR_KIND_FORAGE, patch, worked.has(key)):
 			continue
-		if not _offers_a_rung(SourceForecast.LABOR_KIND_FORAGE,
-				view.forage_patch_lookup[tile], String(worked[key]), knowledge):
+		if RungGates.next_rung_ready(SourceForecast.LABOR_KIND_FORAGE, patch,
+				String(worked.get(key, SourceForecast.IMPROVEMENT_NONE)), knowledge).is_empty():
 			continue
 		patches += 1
 		_stamp(normalized, raw, width, tile)
@@ -179,10 +181,10 @@ static func derive(view: Object) -> Dictionary:
 		if not _on_map(herd_tile, width, height):
 			continue
 		var herd_key: String = view.secondary_herd_key(String(herd.get("id", "")))
-		if not worked.has(herd_key):
+		if not _is_candidate(SourceForecast.LABOR_KIND_HUNT, herd, worked.has(herd_key)):
 			continue
-		if not _offers_a_rung(SourceForecast.LABOR_KIND_HUNT, herd,
-				String(worked[herd_key]), knowledge):
+		if RungGates.next_rung_ready(SourceForecast.LABOR_KIND_HUNT, herd,
+				String(worked.get(herd_key, SourceForecast.IMPROVEMENT_NONE)), knowledge).is_empty():
 			continue
 		herds += 1
 		_stamp(normalized, raw, width, herd_tile)
@@ -198,7 +200,8 @@ static func derive(view: Object) -> Dictionary:
 ## THE SOURCES A PLAYER BAND IS ON, as `{secondary key: declared improvement}`.
 ##
 ## Two jobs, one walk: it supplies the `improvement` axis every rung answer needs, and its KEY SET is
-## condition 1 itself — a source no band is on never reaches the ladder questions at all.
+## HALF of the candidate test — the other half being the rung label, and either one alone admits a
+## source (`_is_candidate`).
 ##
 ## **THE DECLARATION IS NOT REDUNDANT with the source's own meters.** `RungGates.rung_in_progress`
 ## resolves the verb off the meter and demotes `improvement` to a pending declaration — which is
@@ -275,28 +278,36 @@ static func facts(view: Object, model: Dictionary) -> PackedStringArray:
 	return lines
 
 
-## DOES THIS SOURCE OFFER A RUNG — the four conditions of the class docstring, in order: **ours and
-## already improved** first, then the badge's own two questions in the badge's own order.
+## **IS THIS SOURCE WORTH ASKING THE LADDER ABOUT** — the CHEAP half, and it runs first for that
+## reason. A dictionary lookup and one string comparison, where `RungGates.next_rung_ready` behind it
+## walks a branch, reads a composition and builds a gate dictionary; on a live world this refuses the
+## overwhelming majority of sources, the sim seeding a forage patch on every food-module tile.
 ##
-## **THE TWO NEW CONDITIONS GO IN FRONT, and they are about the SOURCE rather than about the ladder.**
-## `RungGates` answers what a source *could* climb; it has no opinion on whether the source has ever
-## been touched or whose it is, and it should not — the compose sheet asks it about a wild patch on
-## purpose. This channel is the one surface asking a narrower question, so the narrowing lives here.
+## **THE SET IS "IMPROVED, OR BEING WORKED" — a union, and both halves are load-bearing.**
 ##
-## **A RUNG UNDER WAY IS NOT AN OFFER**, which is the whole reason `rung_in_progress` is asked at all:
-## `next_rung_ready` excludes the verb a crew DECLARED, but a patch whose Cultivate meter is at 42%
-## still admits its next rung and would count as an opportunity on a map of them. `rung_in_progress`
-## is what says "this one is already being climbed" — and it keys on the METER, so it also catches the
-## half-built source nobody is working, which is a standing rung rather than an invitation.
-static func _offers_a_rung(kind: String, source: Dictionary, improvement: String,
-		knowledge: Dictionary) -> bool:
+## - **Improved** is the standing case: a tended patch or a tamed herd can go one rung further, and it
+##   is an opportunity whether or not anybody is standing on it right now. A field you built and
+##   walked away from is exactly the thing this channel should be pointing at.
+## - **Worked** is what makes a FIRST rung reachable. The first improvement on a source is an
+##   improvement onto ground carrying none, so an improved-only test can never surface one — which
+##   silently hides any knowledge that only ever unlocks a first step. Reported from play: a faction
+##   that had just learned Herding, hunting two tamable herds, saw an empty map.
+##
+## **THERE IS NO "IS IT ALREADY BEING BUILT" TEST, DELIBERATELY.** `next_rung_ready` already declines
+## the verb a crew has DECLARED, so a patch mid-Cultivate is not offered Cultivate by the one call
+## that follows this one — and where a source genuinely has a *different* rung available while one is
+## in flight, that rung really is orderable and saying so is correct. The badge on the marker keeps its
+## own in-progress branch because it must choose ONE face to draw; a channel that only ever lights or
+## does not has no such choice to make, so the branch would be a special case bought for nothing.
+static func _is_candidate(kind: String, source: Dictionary, is_worked: bool) -> bool:
 	if source.is_empty():
 		return false
 	if not _not_another_faction_s(kind, source):
 		return false
-	if not RungGates.rung_in_progress(kind, source, improvement).is_empty():
-		return false
-	return not RungGates.next_rung_ready(kind, source, improvement, knowledge).is_empty()
+	if is_worked:
+		return true
+	return SourceForecast.rung_above_branch_floor(
+		String(source.get(SOURCE_CURRENT_RUNG_KEY, "")))
 
 
 ## **IS THIS SOMEBODY ELSE'S?** — the only ownership question worth asking, and it is spelled as a

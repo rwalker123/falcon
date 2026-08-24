@@ -654,35 +654,42 @@ identically: a lit hex is a strict SUBSET of the hexes wearing a ⌃, because th
 whether the source has been IMPROVED at all and whether it is the player's
 (`.claude/rules/client/overlay-channels.md` → `ready_for_improvement`).
 
-What the extension adds is the sources the badge cannot carry an argument about: **one control per
-condition, each staged so every OTHER condition passes**, plus a second player band. A dark control
-proves only its own condition if nothing else is also refusing it, and this state has now been
-restaged twice — once when the improved test went in front, once when "worked" replaced it — so the
-rule is worth stating flatly: **when a condition moves in front of another, re-run the sabotage before
-believing any control still guards what its name says.**
+What the extension adds is a source per outcome, **each staged so every OTHER term passes** — a dark
+control proves only its own term if nothing else is refusing it too.
 
-| control | staged as | held dark by |
+| source | staged as | outcome |
 |---|---|---|
-| `READY_UNWORKED_NEAR` | tended, ours, sowable, ungated, **nobody on it** | 1 |
-| `READY_UNWORKED_HERD` | tamed, penable, **nobody hunting it** | 1 |
-| `READY_FOREIGN` | worked, tended, sowable — **faction 1's ground** | 2 |
-| `READY_BARREN_LADDER` | worked, tended, **no crop may climb** | 3 |
-| `READY_MID_FIELD` | worked, tended, sowable — **Field meter part-filled, nothing declared** | 4 |
-| `(9, 8)` | worked, **crew DECLARES `cultivate`** | 4, via the declaration |
-| `READY_HALF_BUILT` | unworked **and** mid-build | 1 and 4 |
-| the wolf `(11, 4)` | worked, **`husbandry_ceiling: wild`** | 3 |
+| `FORAGE_A` `(7, 6)` | worked, tended, sowable | **LIT** — the ordinary case |
+| `READY_FIRST_RUNG` | **wild**, worked by band 2 | **LIT** — worked, not improved |
+| `READY_FIRST_RUNG_HERD` | **wild** herd, hunted by band 1 | **LIT** — the reported defect |
+| `READY_UNWORKED_NEAR` | tended, sowable, **nobody on it** | **LIT** — improved, not worked |
+| `READY_UNWORKED_HERD` | tamed, penable, **nobody hunting it** | **LIT** — its herd twin |
+| `READY_MID_FIELD` | tended, Field meter part-filled, **nothing declared** | **LIT** — no in-progress test |
+| the deer `(13, 6)` | tamed, worked, ceiling `pen` | **LIT** |
+| `READY_FOREIGN` | worked, tended, sowable — **faction 1's** | dark — ownership |
+| `READY_BARREN_LADDER` | worked, tended, **no crop may climb** | dark — the ladder |
+| `(9, 8)` | worked, **crew DECLARES `cultivate`** | dark — `next_rung_ready` declines a declared verb |
+| `READY_HALF_BUILT` | wild, half-cultivated, **nobody on it** | dark — neither half of the union |
+| the wolf `(11, 4)` | worked, **`husbandry_ceiling: wild`** | dark — the ceiling |
 
-**AND TWO CONTROLS THAT MUST LIGHT, because the fixture's whole history is of rules that hid them.**
-`READY_FIRST_RUNG` is WILD ground band 2 works, and `READY_FIRST_RUNG_HERD` is a WILD herd band 1
-hunts — each one learned track away from its FIRST improvement. The rule this state was written for a
-day earlier demanded an existing improvement to upgrade and so could not show either; both are
-asserted positively, by name, for that reason.
-
-**`READY_MID_FIELD` IS THE ONLY PATCH HERE THAT CAN ISOLATE CONDITION 4**, and the two mid-Cultivate
-patches are why it exists. One of them is unworked and the other DECLARES its verb, which
-`next_rung_ready` excludes by itself — so neither can be the guard, and for one round condition 4 had
-no live guard at all. This one is worked, tended, owned and genuinely sowable, so only its meter
-refuses it.
+> #### ⛔ BOTH HALVES OF THE CANDIDATE UNION ARE ASSERTED POSITIVELY AND SEPARATELY, and that is the
+> whole lesson of this state
+>
+> The channel's candidate set was wrong three times — every tile on the map, then improved-only, then
+> worked-only — and **each wrong version shipped with a fixture built around its own set**, which
+> confirmed it instead of catching it. A count assertion cannot tell those apart: it moves for any
+> reason and reads plausibly at every wrong value.
+>
+> So `READY_FIRST_RUNG` / `READY_FIRST_RUNG_HERD` (worked, not improved) and `READY_UNWORKED_NEAR` /
+> `READY_UNWORKED_HERD` (improved, not worked) are asserted BY NAME as things that must LIGHT.
+> Sabotage-verified in both directions: dropping either half of `_is_candidate` fails its own pair and
+> leaves the other passing.
+>
+> **The same trap ate a control twice on the dark side.** `READY_MID_FIELD` was written to isolate an
+> "already being built" test, having watched the two mid-Cultivate patches stop isolating it when a
+> condition moved in FRONT of them; then that test was removed entirely and the control became a LIT
+> case instead. **When a term is added or removed anywhere in the chain, re-run the sabotage before
+> believing any control still guards what its name says.**
 
 **A LIT MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERYTHING**, which is why the assertions
 ask for TILES rather than a count. `_lit_ready_tiles` reads them back off the **raster the map
