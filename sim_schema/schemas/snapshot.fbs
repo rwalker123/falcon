@@ -1347,6 +1347,19 @@ table BandKitTiers {
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
+// WHERE THE PLAYER PUT ONE WORKED ROW WHEN THE BAND RUNS SHORT (docs/plan_standing_upkeep.md 4.9
+// item 9b) - the OUTERMOST level of every scarcity handler's ordering.
+//
+// NORMAL IS 0 DELIBERATELY: the overwhelming majority of rows sit at the default, and a FlatBuffers
+// scalar equal to its default costs no bytes on the wire. The numbering is therefore NOT the
+// shedding order (which runs Low, then Normal, then High) - core_sim maps the two rather than
+// casting, so neither can drift into the other.
+enum SourcePriority : ubyte {
+  Normal = 0,
+  High = 1,
+  Low = 2,
+}
+
 table LaborAssignment {
   kind:string;       // "forage" | "hunt" | "scout" | "warrior"
   workers:uint = 0;
@@ -1648,6 +1661,26 @@ table LaborAssignment {
   // structurally, the way fodderYield is plant-only. Derived per-turn at capture. Appended last
   // (append-only).
   huntUsefulWorkers:uint = 0;
+  // --- THE PLAYER'S OWN RANK ON THIS ROW (appended last) ----------------------------------------
+  // WHAT THE BAND GIVES UP FIRST WHEN IT CANNOT COVER EVERYTHING IT HOLDS. It is a STATED VALUE on
+  // the row and NEVER a place in this list: the sim's `set_assignment` re-pushes an edited row to the
+  // END of the vector, so a rank read off an index would reset itself on the very `-`/`+` the player
+  // just pressed. A client must send the mark with `work_priority <faction> <band> <source...>
+  // high|normal|low` and must never infer one from the order these rows arrive in.
+  //
+  // WHAT IT ACTUALLY DOES, so a readout can say so: the shedding walk still chooses its STEP exactly
+  // as before - a spare scout before a spare builder, an unimproved source before an improved one -
+  // and then takes the hand off the LOWEST-ranked candidate within that step. So a rank orders
+  // candidates and never creates or removes one; a High mark does NOT lift a row out of the step it
+  // belongs to, and the last hand still comes off the last row whatever it is marked. The band's pen
+  // feed reads it too: a short FODDER store and then a short larder serve High pens in full, then
+  // Normal, then Low, and pens on the same rank split what is left in proportion to what they asked
+  // for.
+  //
+  // `Normal` on every row that has never been marked, and on every band-wide role (scout, warrior,
+  // agriculture, husbandry, builders): a role is not a worked source and has no rank to state.
+  // Captured live from the allocation, like the other intent fields. Appended last (append-only).
+  priority:SourcePriority = Normal;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -2276,7 +2309,7 @@ table ForagePatchState {
   // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
   // must name one rung.
   //
-  // FOUR NEGATIVES, FOUR FACTS, and they must not be collapsed:
+  // FIVE NEGATIVES, FIVE FACTS, and they must not be collapsed:
   //
   //   -1  NO ESTIMATE — there genuinely is no answer: this is already a Field, the next rung's own
   //       site/knowledge/species gates refuse it for this faction, or the rung's meter is at ZERO
@@ -2292,6 +2325,14 @@ table ForagePatchState {
   //       silence this state must not be read as. THE REMEDY IS OFF THE BUILD LINE - pair it with
   //       this source's own `upkeepShortfall`/`neglectGraceRemaining`, because what unsticks it is
   //       staffing the KEEPING. Every entry behind a blocked head publishes `-4` too.
+  //   -5  NOT YET ESTIMATED — the player queued this build since the last turn resolved, so no
+  //       estimate pass has ever run for it. IT IS NOT `-1`: `-1` is "the sim looked and had no
+  //       number" (which includes a genuine STALL), and this is "the sim has not looked". Render it
+  //       as "queued - starts next turn", NEVER as a warning: a build declared a second ago with a
+  //       staffed pool standing on it is not a hazard, and reading it as one put `Stalled 0%` on a
+  //       fresh Cultivate until the next turn cleared it. The meter cannot tell the two apart (a
+  //       stalled build sits at 0% too) - what does is that the estimate pass stamps every entry it
+  //       walks with `buildQueuePosition`, which the turn's own reset clears.
   //
   // `-2` IS NOT ONLY A FAILURE, and this is the one a reader gets wrong. With NO BUILDERS and the
   // keeping met it is the player PARKING a half-built improvement — held indefinitely, at no risk,
@@ -3793,7 +3834,7 @@ table HerdTelemetryState {
   // assignment's own `improvement`, or for the next rung up (`domestication`/`corralled`) when that
   // is empty.
   //
-  // FOUR NEGATIVES, FOUR FACTS — the same set the plant twin on `ForagePatchState` documents in
+  // FIVE NEGATIVES, FIVE FACTS — the same set the plant twin on `ForagePatchState` documents in
   // full:
   //   -1  NO ESTIMATE — already penned, the next rung's ceiling/knowledge/ownership gates refuse it,
   //       or the rung's meter is at ZERO with nobody building it.
@@ -3807,6 +3848,10 @@ table HerdTelemetryState {
   //       draw the flock to their floor, the unmet keeping suppresses its regrowth, and the Tame's
   //       escapement gate never reopens. Adding builders does NOTHING. Pair it with this herd's
   //       `upkeepShortfall`/`neglectGraceRemaining` and say STAFF THE KEEPING.
+  //   -5  NOT YET ESTIMATED — a Tame or Corral queued since the last turn resolved, which no
+  //       estimate pass has reached yet. Both webs share `publish_build_chain` and the same per-turn
+  //       reset, so this reads on a herd exactly as it does on a patch. Render "queued - starts next
+  //       turn"; it is NOT `-1` and it is NOT a warning.
   // Render -2/-3 as INFINITY, and not as each other. The boundary is WORK BANKED rather than
   // hands, so an unstaffed HALF-BUILT meter answers `-2`/`-3`; `-1` is a meter at zero with nobody
   // on it, or a gate that refuses somewhere other than a staffed queue's head. The client cannot

@@ -18,8 +18,8 @@ use core_sim::{
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
     MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
@@ -1080,6 +1080,7 @@ fn spawn_crew_of(
                             },
                             workers: hunters,
                             kit: None,
+                            priority: SourcePriority::default(),
                         }],
                         improvement.map_or(0, |_| hunters),
                     ),
@@ -1744,6 +1745,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
                 target: LaborTarget::Builders,
                 workers: keepers,
                 kit: None,
+                priority: SourcePriority::default(),
             });
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
@@ -3327,6 +3329,7 @@ fn set_hunt_improvement(
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
+                        priority: SourcePriority::default(),
                     }),
                 }
                 assert!(
@@ -3996,6 +3999,7 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
                     .kit("none")
                     .expect("the shipped roster carries the empty kit"),
             ),
+            priority: SourcePriority::default(),
         });
     }
     rows
@@ -4009,6 +4013,7 @@ fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborA
             target: LaborTarget::Husbandry,
             workers: keepers,
             kit: None,
+            priority: SourcePriority::default(),
         });
     }
     rows
@@ -4996,6 +5001,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             },
             workers: DIP_VISIBLE_HUNTERS,
             kit: None,
+            priority: SourcePriority::default(),
         };
         let rows = with_keeping_role(
             with_builders_pool(vec![hunt_row(&holding), hunt_row(&build)], BUILDERS),

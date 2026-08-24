@@ -21,7 +21,7 @@ use bevy::prelude::Entity;
 use core_sim::{
     build_test_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
     GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
+    SimulationConfig, SnapshotHistory, SourcePriority, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -133,6 +133,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
             },
             workers: workers.max(1),
             kit: None,
+            priority: SourcePriority::default(),
         }],
         ..Default::default()
     });

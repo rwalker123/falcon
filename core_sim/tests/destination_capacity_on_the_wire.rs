@@ -47,7 +47,7 @@ use core_sim::{
     scalar_zero, FactionId, FaunaConfigHandle, ForageRegistry, GenerationId, GrazeRegistry,
     HerdRegistry, Improvement, LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle,
     LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey, SnapshotHistory,
-    StartingUnit, TakeSelection, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    SourcePriority, StartingUnit, TakeSelection, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_schema::NO_BUILD_DESTINATION_CAPACITY;
 
@@ -309,16 +309,19 @@ fn spawn_the_farming_band(
                     },
                     workers: gatherers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
@@ -692,16 +695,19 @@ fn spawn_the_herding_band(
                     },
                     workers: hunters,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: A_STEADY_BUILD_POOL,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {

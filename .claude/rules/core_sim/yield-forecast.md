@@ -833,6 +833,46 @@ and capture all read `foddering`; `sim_schema/src/lib.rs`'s roundtrip asserts on
 `fb::IntensificationKnowledgeState::foddering()` rather than the in-process struct, because a field
 that never reached the codec still passes an in-process assertion.
 
+### Two ways of having no countdown, and the capture is what tells them apart
+
+A source stores `Option<BuildTurns>`, and its `None` covered two different facts:
+
+- **the estimate pass ran and had no number** — nobody works the source, its gate refuses, or a
+  running build banked nothing and is genuinely **stalled**;
+- **no estimate pass has ever run for this entry** — the player queued it since the last turn
+  resolved, and the server re-captures after every command, so that frame reaches the client.
+
+`published_build_countdown` (`snapshot/subsistence.rs`) is the one seam both webs' rows go through,
+and it splits them: `sim_schema::BUILD_NOT_YET_ESTIMATED` (`-5`) for the second,
+`NO_BUILD_TURNS_ESTIMATE` (`-1`) for the first. What each means, and why a client must not render
+`-5` as a warning, is in `intensification.md` → "THE COUNTDOWN HAS SIX ANSWERS".
+
+**The test is the estimate pass, never the meter.** A genuinely stalled build sits at `0%` too, so a
+rule reading progress reproduces the defect it is fixing. What *is* knowable is that
+`publish_build_chain` calls `publish_entry` for **every entry in the queue it walks** — whether or not
+that entry has a quote — and `publish_entry` always stamps the entry's 0-based place, while the
+Logistics decay passes (`forage::advance_cultivation`, `fauna::advance_husbandry`) clear the place
+back to `NOT_IN_ANY_BUILD_QUEUE` every turn along with `build_turns_remaining` itself.
+
+**Two terms, and each is load-bearing:**
+
+| term | what it rules out |
+|---|---|
+| the source is in a band's **live** queue (`BuildKitIds::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared place, reading as a build about to start |
+| its stamped place is still `NOT_IN_ANY_BUILD_QUEUE` | a genuinely stalled entry, which *is* live-queued, reading the same way |
+
+The queue membership is read **live off the bands' own `build_queue`s** rather than off the
+turn-written row, for the reason `buildKitId` beside it already is: the row's scratch lags a command
+by a whole turn, and this state exists precisely in the frame before that turn. `BuildKitIds` was
+already that index, so it grew a membership predicate rather than a second walk.
+
+**The legs keep `-1`.** `published_build_legs` maps an undated leg to `NO_BUILD_TURNS_ESTIMATE` and
+is untouched: `build_legs` is cleared by the same reset, so an entry no pass has reached publishes
+**no legs at all** and the case cannot arise there.
+
+`core_sim/tests/build_queue.rs` drives it on both webs — queued-with-no-turn, then one turn to a real
+count, then a live-queued entry the pass reached and could not date — plus the unqueued-patch control.
+
 ## Shedding a crew the band can no longer field
 
 `LaborAllocation::normalize(available, facts)` runs once per band at the head of
@@ -872,7 +912,7 @@ is positional.
 | 2 | a **warrior**, if nothing threatens the band | |
 | 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
 | 4 | a **builder**, while more than one remains and something is queued | |
-| 5 | **thin the least-productive worked source that has two or more hands** — "least productive" is the two-level test below, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
+| 5 | **thin the least-productive worked source that has two or more hands** — "least productive" is the three-level test below, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
 | 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
 | 8 | a **keeper below the demand** — improvements begin to rot | |
@@ -914,12 +954,14 @@ pre-shed allocation, and once below against what survived, which is the reading 
 band whose builders row was emptied funds no head at all, and the split must not fund one it no
 longer has the hands to bank.
 
-**"Least productive" is TWO levels, and the first one is a presence test.**
+**"Least productive" is THREE levels, and the top one is the player's own.**
 
-1. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
+1. **The row's `SourcePriority`** — `Low`, then `Normal`, then `High` (the variant order *is* this
+   order, and the derived `Ord` is what reads it). See "The player's rank on a worked row" below.
+2. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
    the same retained `SourceYield`). A row paying nothing ranks below one that pays something, so it
    is shed first.
-2. **Then `last_yields[i].realized ÷ crew`** — the row's own published headline yield, the number the
+3. **Then `last_yields[i].realized ÷ crew`** — the row's own published headline yield, the number the
    band panel and the map annotation state, divided by the hands on it. Ties go to the earliest row,
    so the choice is stable.
 
@@ -942,7 +984,11 @@ player has never been shown.
 >
 > **The levels are in this order so the standing behaviour cannot invert.** A food row pays *and*
 > carries a positive per-worker yield, so it still outranks every non-food row: a band short of hands
-> keeps its people on food and drops the tobacco. Level 1 decides only the tie beneath that.
+> keeps its people on food and drops the tobacco. The presence test decides only the tie beneath that.
+>
+> **The rank above them is the same kind of thing and carries the same ban.** It is a lexicographic
+> level, never a weight: multiplying or summing a stated preference with a food rate invents an
+> exchange rate between two things even less comparable than two accounts.
 >
 > The three accounts are asked in their own published terms, because that is what `SourceYield`
 > carries: `realized` for food (the forward projection, so a big-game hunt on a wait turn still reads
@@ -977,6 +1023,49 @@ must never be the shedding order again**; nothing in the eleven steps is positio
 `core_sim/tests/shedding_order.rs` pins the reported case on the **encoded envelope** — the raise
 stands and the poorer ground per head gives the hand — because the claim is about the crew count the
 player watched move.
+
+### The player's rank on a worked row
+
+`SourcePriority` (`components.rs`) is a field on `LaborAssignment` — `High`, `Normal` (the default)
+or `Low` — set by `work_priority <faction> <band> <source…> high|normal|low` and published as
+`LaborAssignmentState::priority` / `snapshot.fbs`'s `SourcePriority`. It is the **outermost** level of
+the shedding comparison above and of the pen-feed split (`graze.md` → "The pen feed is settled across
+every pen at once").
+
+**It is a stated value on the row and never a list position.** `set_assignment` removes the row it
+edits and re-pushes it at the **end** of `assignments`, so a rank derived from a vector index would be
+reset by the `−`/`+` that triggered the edit — the composition that made list position the shedding
+order in the first place (see the callout above). `set_assignment` therefore carries the rank across
+the re-push on **every** path, staffed or unstaffed, because `assign_labor` states a crew and a tier
+and says nothing about priority.
+
+**A rank orders candidates. It never creates or removes one.**
+
+- Steps 1–4, 7, 8 and 11 select by **role**, and none of them consults it: a spare scout still gives
+  before a spare builder.
+- It is a level **inside** a step, not a way out of one. An unimproved row marked `High` is still
+  emptied at step 6 while an improved `Normal` row waits at step 9 — pinned, because it is the design
+  and reads like a bug.
+- `LastHand` still takes the band's last worker off its last row whatever it is marked.
+- With every row at the default the level is **constant**, so the comparison collapses to exactly the
+  two it had before. That is what makes an explicit rank a rule that fires only on a deliberate pick.
+
+**It is intent, so it is inside `LaborAllocation`'s hand-written `PartialEq`** (it rides
+`assignments`), unlike `last_yields` and `last_pen_feed_upkeep`, which are derived telemetry and are
+deliberately outside it. Two allocations differing only in a mark are two different orders, and a
+rollback record or a command no-op guard that could not tell them apart would report *nothing changed*
+on the one input the scarcity handlers read.
+
+**The wire numbering is not the shedding order.** `snapshot.fbs` puts `Normal = 0` so the default
+costs no bytes, while the Rust variants are declared `Low < Normal < High` so `min_by` lands on the
+row the player marked to give up. The codec maps the two rather than casting, so neither can drift
+into the other.
+
+`work_priority` names a **band**, like `build_order` and unlike the source-addressed `unqueue` /
+`build_kit`: the orderings it feeds partition one band's own rows and serve one band's own stores.
+`xtask`'s command guard classifies it as band-addressed for that reason. An unknown level is refused
+**by name** (`upkeep_mode`'s rule) — a mistyped rank must not silently land on the default, which is
+the one value that would look like it worked.
 
 ### `normalize` and the commands measure different pools
 

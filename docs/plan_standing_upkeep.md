@@ -1047,11 +1047,82 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > **NEITHER CONTROL NEEDS AN OPTIMISTIC OVERLAY**, which is 9a paying for itself: `buildQueue` is
    > captured live, so an arrow press and a drop both land on the command's own recapture.
 
-   **9b — THE WORKED ROWS TAKE THE EXPLICIT RANK, and the shedding order reads it.** Still open. The
-   player orders their worked rows; §2.9's walk consults that rank where it consults list position
-   nowhere, and a shed **names the row it took**. The rank sits **on top** of the shipped ordering,
-   which survives as the tie-break — most sources sit at the default, so a rule that only fires on an
-   explicit pick is what keeps the default behaviour exactly where it is.
+   **9b — THE WORKED ROWS TAKE AN EXPLICIT PRIORITY, and every scarcity reads it. LANDED.** The
+   player marks a row **High / Normal / Low**; §2.9's walk consults that mark where it consults list
+   position nowhere, and a shed **names the row it took** (`announce_shed_crew`, already shipped).
+   The mark sits **on top** of the shipped ordering, which survives as the tie-break — most sources
+   sit at Normal, so a rule that fires only on an explicit pick keeps the default behaviour exactly
+   where it is.
+
+   > **IT IS A THREE-TIER VALUE, NOT A RANKED LIST, AND §2.9 IS THE REASON.** Item 9 sketched
+   > "player-ordered, drag-and-drop" before the eleven steps existed, and a total order is a promise
+   > the walk cannot keep: it sheds from **four disjoint pools** selected on structure — step 5 thins
+   > a row holding two or more hands, 6 empties an unimproved unqueued row, 9 an improved one, 10 one
+   > carrying a build — so a wild patch ranked first is emptied at step 6 while an improved row
+   > ranked last is not a candidate until step 9. The player would build a nine-row ordering and
+   > watch it honoured in four unrelated pieces. A tier claims only a preference **within** a step,
+   > which is exactly what the walk can deliver, and "I am done with this source" already has a verb
+   > (`abandon`).
+   >
+   > **AND A TIER IS SELF-CANCELLING AT THE EXTREMES**, which is why it needs no guard: marking every
+   > row High leaves the level constant and the comparator falls straight through to what it did
+   > before. There is no degenerate config to defend against.
+
+   > **THE COMPARATOR GAINS A LEXICOGRAPHIC LEVEL, NEVER A COMBINED SCORE.** `least_productive_row`
+   > is three levels now — **priority → `pays_any_account` → `yield_per_worker`**, ties still to the
+   > earliest row. A tier is a sentence the player typed rather than a measured quantity, so ranking
+   > one above the presence test invents no exchange rate between food and materials;
+   > `labor_config.json`'s `_comment_weeding` still refuses exactly what it always refused. Only
+   > `least_productive_row` changed: the role steps (scout, warrior, keepers, builders) select by
+   > ROLE and are not ranked.
+   >
+   > **A PRIORITY NEVER MAKES A ROW INELIGIBLE.** It orders candidates and does nothing else, so the
+   > terminal step still takes the band's last worker off its last row. Pinned by test, because the
+   > tempting reading of "High" is a veto.
+
+   **THE PROPERTY IS GENERAL, AND WORKERS ARE ONLY ITS FIRST CONSUMER** — which is item 9's own
+   sentence ("pooled maintenance is its *first consumer*, not its owner"), now literal. Every verb
+   considered for the face — *shed*, *cut*, *keep running* — named the labor consumer and would have
+   lied the moment a second scarcity read the same field, so the face is a bare importance word and
+   each consumer states its own consequence. The picker's one line says it without naming a resource:
+   *"When something runs short, the band spends it on high priority first."*
+
+   > **SO THE PEN FEED WAS SETTLED IN THE SAME SLICE, because it was positional and nobody had
+   > noticed.** A band's pens drew hay and larder food inside
+   > `for (idx, assignment) in allocation.assignments.iter().enumerate()`, so when the `FODDER` store
+   > or the larder could not cover every pen, **the pen earliest in the vector ate and the last one
+   > starved** — and `set_assignment` re-pushes an edited row to the end, so the pen the player had
+   > just adjusted was the one fed last. That is §2.9's own defect living in a system that never got
+   > §2.9's fix.
+   >
+   > `settle_pen_feed` now runs **before** the assignment loop and sees every pen at once:
+   > **High served whole, then Normal, then Low, and proportional to demand within a tier.**
+   > Proportional needs no new ordering rule to invent and cannot depend on vector position, which is
+   > the property that was missing. The loop applies each pen's settled share instead of taking from
+   > the store itself; `last_pen_feed_upkeep` still sums the real debits and the pinned identity
+   > `larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit` still holds.
+   >
+   > **WHAT IT COSTS: a pen eats hay harvested on a PREVIOUS turn.** `FODDER` is credited inside the
+   > same loop, so settling ahead of it reads the store as it stands at the top of the pass. What
+   > that replaced was not same-turn hay as a rule — it was same-turn hay **iff** the pen's row
+   > happened to sit after the hay Field's, which is the same accident being removed. The store is
+   > documented as a stock (it is the buffer the overwintering carry rides), and that is the reading
+   > taken. Rationale in `.claude/rules/core_sim/graze.md`.
+   >
+   > **A COMPARATOR TEST WOULD HAVE PROVED NOTHING**, so both consumers are driven end to end: a band
+   > at zero slack losing a worker with one Low row and one Normal, asserting which row gave; and two
+   > pens on a thin store asserting the same outcome across **three vector arrangements** — natural
+   > order, reversed, and after an edit re-pushed the fed row to the end. The first arrangement passes
+   > with the defect restored, which is why there are three.
+
+   > **THE FACE, AND WHY IT IS WORDS.** A glyph in line two's free 20px indent was drawn first and
+   > rejected in prototype: a symbol nobody was taught, on a line that is otherwise plain text. A
+   > ranked row prefixes line two with **`High priority ·`** / **`Low priority ·`** in the tier's
+   > colour, and a Normal row prints nothing at all. **LEADING, not trailing** — the four-cash-crop
+   > worst case already elides onto the floor clause, so a trailing mark would vanish exactly when a
+   > famine made it matter. The control is a fourth inspector link opening a three-button picker
+   > **mutually exclusive with the floor picker**, so the strip's tallest state is the one it already
+   > reserves in a zone reading 396 of 396.
 
    **9c — AND THE RANK NEEDS A SURFACE THAT REACHES EVERY ENTRY. LANDED.** The block draws at most
    `BUILD_QUEUE_ROWS_MAX` (3) rows plus `+N more`, and **the queue itself has no cap** — the sim

@@ -1610,3 +1610,120 @@ NAME is allocated at least the rate column's own width (1 of 46)`, and
 on the board reported outside the box. With the accounts on their own line both states read
 **354 / 356**, the name **146 of the 91 its own font needs**, and the four-crop line **322 of 218** —
 i.e. the defect is not merely bounded, it is unreachable at the shipped roster's widths.
+
+
+## The RANK's frames — one board carrying all three marks, with the picker open on it (§4.9 item 9b)
+
+`_render_work_priority_states` renders three states, and the FIRST is the one this arc keeps having to
+re-learn the need for.
+
+- **`band_panel_work_priority`** — the REQUIRED combined state: a LEFT-docked Work tab whose board
+  carries a **HIGH row, a NORMAL row and a LOW row at once**, with the inspector open on the low one
+  and the **priority picker showing in the same frame**. Two disjoint frame families with the defect
+  living in the gap has hidden three separate defects in this arc already (the strip's own reserved
+  height, the queue strip vs the inspector, the materials fall-through); a marked-rows frame beside a
+  picker frame is that shape again. `_assert_work_row_priority_marks` asserts both halves together —
+  exactly HIGH and LOW carry a mark, the NORMAL row carries none — because "the marked rows carry a
+  prefix" passes on a board that prefixes every row and "the normal one carries none" passes on a
+  board that dropped the feature.
+- **`band_panel_work_priority_floor_swap`** — the same row with the FLOOR picker in, reached by a real
+  press on `Change policy` while the priority picker was standing. **The mutual exclusion is
+  unassertable from any single-picker frame**: two pickers that are never asked for together always
+  look exclusive. The claim is that the priority picker is *gone, not merely covered*
+  (`_find_meta_control` answers null), and the reverse press is driven too so neither picker is the
+  privileged one.
+- **`band_panel_work_priority_widest`** — the four-cash-crop worst case with a HIGH mark on it. It is
+  what the LEADING placement exists for, and `_assert_marked_row_accounts_still_fit` prints the split:
+  **310px of a 322px line, 69 mark + 241 accounts**, with the accounts allocated 253 — so they still
+  render whole and the trim still lands on the trailing floor clause.
+
+**⛔ EVERY PRESS IS A REAL PRESS.** `_press_work_inspector_link` finds the inline link by FACE (an
+inline link carries no meta, and the four faces are fixed vocabulary) and drives it through
+`_drive_click`; `_assert_work_priority_click` drives each of the three picker buttons the same way and
+asserts the **command LINE** `Main.format_work_priority` produces, not the payload dict — so the token
+order, the source form and the level word are judged as the socket would see them. All three levels
+are driven, because a picker that sent one level whatever was pressed satisfies any single-button
+claim. The link is a TOGGLE, so the helper presses it only when the picker is shut, which after the
+first pick is every time (committing closes it — itself part of the contract, and asserted here rather
+than in a frame of its own).
+
+**The picker's LIT test is `_assert_lit_rung`'s**, the primary stylebox's own background colour, so
+the two pickers cannot be judged by two different notions of *selected*. Which button is primary is
+invisible in a thumbnail — three buttons in a row look the same — and a picker that lit nothing would
+read as a row with no rank at all.
+
+**`_assert_work_inspector_worst_case_fits` now stages the PRIORITY picker**, which is the taller of
+the two by its hint line. The two are mutually exclusive, so the strip's documented ceiling is a max
+over the pair rather than a sum; staging the floor picker there would understate it by that line and
+leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that is no longer the worst one.
+
+**Falsified, four ways, and every one of them failed loudly.** Baseline before the slice: **761 PASS,
+0 FAIL**; after: **789 PASS, 0 FAIL** (exit 0 both times — and the exit STATUS is the verdict, since a
+scene that fails to parse exits 0 with no assertions run at all, which is exactly what the first draft
+of this chapter did).
+
+| Restored defect | Failures |
+|---|---|
+| `work_row_priority_prefix` returns `""` (no mark) | **2** — `exactly the HIGH and LOW rows are marked … (got [])`, and `the widest row carries no priority mark, so this measures nothing` |
+| the priority picker renders under *any* open picker (both at once) | **7** — including `…and the priority picker is GONE with it, not merely covered` and both strips' `RESERVES what it DRAWS (96 reserved, 141 drawn)` |
+| the commit always sends `normal` | **2** — the `high` and `low` clicks by name; the `normal` one correctly still passes |
+| the `Priority` link set `MOUSE_FILTER_IGNORE` (a dead control) | **7** — the link claim, the picker's three buttons, the lit claim and the swap-back |
+
+The last of those is the one worth keeping in mind: it is `pressed.emit()`'s blind spot, the shape
+that shipped a completely dead drag green in #570, and it is caught only because the link is driven
+through `_drive_click` rather than called.
+
+
+## The `-5` frame — a fresh entry and a stalled one have to be in ONE frame (§4.9)
+
+`band_panel_build_queue_not_yet_estimated` renders a three-entry BUILD QUEUE whose rows read three
+different faces at once: `Queued 0%` (the `-5` head), `⚠ Stalled 0%` (the `-1` herd behind it) and
+`⚠ ∞ turns, losing ground (0%)` (the `-3` patch behind that).
+
+**ONE FRAME, BECAUSE THE DEFECT IS THAT TWO OF THEM LOOKED IDENTICAL.** A frame staging only the fresh
+entry proves nothing — it is green with the fix and green with the defect restored, on a board that
+has never drawn a genuine stall beside it. `_assert_not_yet_estimated_reads_apart` therefore asserts
+the pair AND their inequality: the head's exact composed face, that it carries no
+`RUNG_HAZARD_GLYPH`, that the entry behind it still carries one, that the two strings differ, and both
+inks (`INK` for the head, `WARN` for the stalled one) — because a neutral word in amber still says
+*warning*.
+
+**`_assert_not_yet_estimated_producers` IS PNG-LESS AND DELIBERATELY SO.** Three of the four swept
+producers cannot be seen in any one frame — a pace tints a compose face, a stall verdict marks a map
+badge — and the stated failure mode in this client is *two producers disagreeing about one meter*. It
+asks the producers themselves (`build_turns_remaining` passes `-5` through and specifically not onto
+`-1`; `build_pace` answers `BUILD_PACE_UNKNOWN` and neither stops the sheet nor paints it as climbing;
+`build_is_stalled` is false for a staffed `-5` **and still true for a `-3` beside it**, so the verdict
+has not simply stopped firing; `build_turns_clause` states no clause), so a consumer rendering
+correctly off a producer that has quietly stopped passing the sentinel still fails here.
+
+**Nothing on this frame is pressable**, so nothing is driven: it is a readout defect end to end.
+
+### `UNKNOWN_BUILD_TURNS_SENTINEL` had to be re-aimed, for the THIRD time
+
+`tools/ui_preview/chapters/improvements.gd` keeps a value *one past the last the schema defines* and
+asserts that an unrecognised negative renders as the STALLED hazard. It was `-5`. **The day the wire
+spelled `-5`, that claim stopped pinning the rule and started pinning the bug** — it was asserting the
+`⚠ Stalled` that this fix removes, and it is what failed the `ui_preview` run. It moves to `-6`; the
+constant's own doc has said since its second re-aim that this is required maintenance, and this is the
+third round. **It is the sharpest of the three**, because `-5` is the one value the client must render
+as a NEUTRAL face rather than merely a different one.
+
+### Falsifications
+
+Baseline before the slice: **789 PASS / 0 FAIL**; after: **805 PASS / 0 FAIL** (`band_panel_preview`,
+exit 0 both). `ui_preview` is **1344 PASS / 0 FAIL** before and after, the re-aim included.
+
+| Restored defect | Failures |
+|---|---|
+| `build_sentinel_value` folds `-5` onto the stalled face (the shipped pre-fix render) | **4** — the head's face, `carries NO hazard mark`, `the two READ APART … (["⚠ Stalled 0%", "⚠ Stalled 0%", …])`, and the head's ink |
+| …the same branch deleted outright instead | **1** — the head's face only, and it renders `Cultivating 0% · turn 37`: with `-5` still passed through, `build_completion_value` adds a NEGATIVE count to the turn and dates the job five turns in the PAST |
+| `build_pace` loses its `-5` arm (a swept consumer left un-swept) | **2** — `` `build_pace` answers no verdict for it (got "growing") `` and `neither stops the sheet nor paints it as climbing` |
+| `build_turns_remaining` collapses `-5` onto `-1` again (the root) | **6** — all four render claims plus both producer claims |
+
+**One of them is weaker than the others and it is worth saying so.** Deleting the branch outright
+(row 2) trips only ONE assertion, because the resulting face is neither the queued one nor the stalled
+one — so `carries NO hazard mark`, `READ APART` and the ink claim all pass on it. They are not
+vacuous (rows 1 and 4 fail all four), but the set's floor against *some other wrong face* is the exact
+string comparison alone.
+

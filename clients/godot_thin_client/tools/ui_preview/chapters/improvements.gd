@@ -135,18 +135,22 @@ const STAFFED_CREW := 1
 ## IS declared. Any value strictly between empty and full stages it; this one is the reference tile's.
 const ABANDONED_CULTIVATE_METER := 0.6
 
-## **A NEGATIVE THIS CLIENT DOES NOT RECOGNISE** — one past the THREE the wire spells
-## (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS}`). It stands for
-## whatever the field grows next, and the claim it pins is that an unknown answer renders as the
-## STALLED hazard rather than falling into whichever branch happens to be last.
+## **A NEGATIVE THIS CLIENT DOES NOT RECOGNISE** — one past the FIVE the wire spells
+## (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED,
+## BUILD_NOT_YET_ESTIMATED}`). It stands for whatever the field grows next, and the claim it pins is
+## that an unknown answer renders as the STALLED hazard rather than falling into whichever branch
+## happens to be last.
 ##
-## **IT HAS BEEN RE-AIMED TWICE NOW, AND EACH TIME IT WAS PINNING A DEFECT UNTIL IT WAS.** It was
-## `-3` while the sim split `BUILD_METER_ROTS` out of `BUILD_METER_HOLDS`, and `-4` while §4.6b added
-## `BUILD_QUEUE_BLOCKED` — each time the harness went on asserting that the newly-spelled value
-## "renders as NO answer", holding the client's failure to follow in place, green. **A
-## sentinel-is-unknown claim has to be re-aimed the day the wire spells that value**; the value below
-## is one past the LAST one the schema defines, and it moves again the next time the schema grows.
-const UNKNOWN_BUILD_TURNS_SENTINEL := -5
+## **IT HAS BEEN RE-AIMED THREE TIMES NOW, AND EACH TIME IT WAS PINNING A DEFECT UNTIL IT WAS.** It
+## was `-3` while the sim split `BUILD_METER_ROTS` out of `BUILD_METER_HOLDS`, `-4` while §4.6b added
+## `BUILD_QUEUE_BLOCKED`, and `-5` while §4.9 added `BUILD_NOT_YET_ESTIMATED` — each time the harness
+## went on asserting that the newly-spelled value "renders as NO answer", holding the client's failure
+## to follow in place, green. The `-5` round is the sharpest of the three: that value is the one the
+## client must render as the NEUTRAL `Queued`, so this claim was actively asserting the `⚠ Stalled`
+## the fix removes. **A sentinel-is-unknown claim has to be re-aimed the day the wire spells that
+## value**; the value below is one past the LAST one the schema defines, and it moves again the next
+## time the schema grows.
+const UNKNOWN_BUILD_TURNS_SENTINEL := -6
 
 ## ---- THE REPAIR (`improvement_rung_slipped`) --------------------------------------------------
 ## Where a slipped tended patch's meter sits: below its cost, so the rung is BUILDING again, and
@@ -1162,9 +1166,10 @@ func run(harness) -> void:
 	# **THE UNRECOGNISED SENTINEL, ASKED OF THE PRODUCER.** A negative this client does not know is
 	# *no answer*, never a guess — and with the row now leading on the count, "no answer" has to
 	# render as the STALLED hazard rather than as a bare percentage, which is the silence the whole
-	# redesign exists to remove. `-5` stands for whatever the wire grows next; it was `-3`, then `-4`,
-	# each until the wire spelled that value — at which point this claim was pinning a bug rather than
-	# the rule.
+	# redesign exists to remove. `UNKNOWN_BUILD_TURNS_SENTINEL` stands for whatever the wire grows
+	# next; it was `-3`, then `-4`, then `-5`, each until the wire spelled that value — at which point
+	# this claim was pinning a bug rather than the rule. See that constant for the `-5` round, which
+	# is the one where the bug it pinned was a `⚠ Stalled` on a build queued a second ago.
 	h._assert_hud("…and an unrecognised negative is marked as STALLED, never rendered bare",
 		_rung_value_for_turns(UNKNOWN_BUILD_TURNS_SENTINEL)
 			== HudSelectionVocab.RUNG_STALLED_FORMAT % [

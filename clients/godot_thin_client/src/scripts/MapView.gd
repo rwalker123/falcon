@@ -2967,9 +2967,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_field_work_done"] = float(patch.get("field_work_done", 0.0))
 		info["patch_field_work_cost"] = float(patch.get("field_work_cost", 0.0))
 		# **THE NEGATIVES MUST SURVIVE THE COPY AS THEMSELVES** — `-1` no estimate, `-2` the meter
-		# holds, `-3` the meter rots. A `0` default here would hand every unworked patch a "this build
-		# lands next turn" reading, and the int cast is what keeps the whole family intact; nothing on
-		# this path may collapse one negative into another (`SourceForecast.build_turns_remaining`).
+		# holds, `-3` the meter rots, `-4` the queue is blocked on it, `-5` it is queued and the sim has
+		# not looked yet. A `0` default here would hand every unworked patch a "this build lands next
+		# turn" reading, and the int cast is what keeps the whole family intact; nothing on this path may
+		# collapse one negative into another (`SourceForecast.build_turns_remaining`), which is what put
+		# the `⚠ Stalled` hazard on a build queued one command ago.
 		info["patch_build_turns_remaining"] = int(patch.get(
 			"build_turns_remaining", SourceForecast.BUILD_TURNS_NO_ESTIMATE))
 		info["patch_build_work_from_gear"] = float(patch.get("build_work_from_gear", 0.0))

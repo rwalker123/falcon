@@ -726,11 +726,13 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > disagree. Only the shortfall **fraction** is shared — `intensification::upkeep_shortfall_fraction`,
 > stated once, applied at each web's own rate.
 
-> #### THE COUNTDOWN HAS FIVE ANSWERS, AND FOUR OF THEM ARE NEGATIVE
+> #### THE COUNTDOWN HAS SIX ANSWERS, AND FIVE OF THEM ARE NEGATIVE
 >
 > `intensification::BuildTurns` is what a source stores;
-> `build_turns_estimate(cost, done, balance, gate_holds, builders)` fills the first four, and the
-> band's **chain pass** (`systems::labor::publish_build_chain`) mints the fifth:
+> `build_turns_estimate(cost, done, balance, gate_holds, builders)` fills the first four, the band's
+> **chain pass** (`systems::labor::publish_build_chain`) mints the fifth, and the **capture** mints
+> the sixth by splitting the stored `None` in two (`yield-forecast.md` → "Two ways of having no
+> countdown"):
 >
 > | stored | wire | meaning |
 > |---|---|---|
@@ -738,10 +740,32 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > | `Some(Holding)` | `BUILD_METER_HOLDS` (**`-2`**) | **the meter holds exactly where it is** — `build_work − rot` is exactly `0` |
 > | `Some(Rotting)` | `BUILD_METER_ROTS` (**`-3`**) | **the meter is going backwards** — that balance is negative |
 > | `Some(Blocked)` | `BUILD_QUEUE_BLOCKED` (**`-4`**) | **the queue is stuck here** — the pool is staffed and standing on this entry, and its own gate refuses it |
-> | `None` | `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) | there is genuinely no answer |
+> | `None`, pass ran | `NO_BUILD_TURNS_ESTIMATE` (**`-1`**) | the sim looked and there is genuinely no answer |
+> | `None`, no pass yet | `BUILD_NOT_YET_ESTIMATED` (**`-5`**) | the sim has not looked — the entry was queued since the last turn resolved |
 >
-> **All four negatives are ANSWERS or the absence of one, never a mix**, and the three the player can
-> act on are the middle group. Folded into `-1` they rendered as **no line at all** on the tile card
+> **All five negatives are ANSWERS or the absence of one, never a mix**, and the three the player can
+> act on are the middle group.
+>
+> > #### ⛔ `-5` IS NOT `-1` EITHER, AND THE DIFFERENCE IS *"HAS THE SIM LOOKED"*
+> >
+> > `-1` means **the estimate pass ran and had no number**, which includes a running build that
+> > banked nothing — a genuine **stall**. `-5` means no pass has run for this entry at all. The client
+> > renders `-1` as `⚠ Stalled 0%`, so folding the two together put that warning on a `Cultivate` the
+> > player had declared a second ago with two builders standing on it, and cleared it on the next
+> > turn. **A warning that appears from a correct action and withdraws itself is the worst shape a
+> > warning can have**, and it is reachable on every build the player queues.
+> >
+> > **THE METER CANNOT TELL THEM APART.** A genuinely stalled build sits at `0%` too, so any rule
+> > reading progress reproduces the bug. The distinguishing fact is the **pass**, and it is knowable
+> > because `publish_build_chain` stamps every entry it walks with `buildQueuePosition` while the
+> > Logistics decay passes clear that place every turn.
+> >
+> > **Both webs, one fix.** A patch and a herd share `publish_build_chain` and share the reset, so a
+> > fresh `Tame` or `Corral` reads `-5` exactly as a fresh `Cultivate` does; `build_queue.rs` asserts
+> > the animal arm rather than inferring it from the shared publisher.
+> >
+> > A reader renders it **"queued — starts next turn"**, never as a warning and never as `-1`'s
+> > silence. Folded into `-1` they rendered as **no line at all** on the tile card
 > and the herd drawer, visible only to a compose sheet that happened to redo the comparison itself.
 >
 > > #### ⛔ `-4` IS NOT `-1`, AND THE DIFFERENCE IS WHAT THE PLAYER IS BEING TOLD

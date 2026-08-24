@@ -31,7 +31,7 @@ use core_sim::{
     HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER,
     FODDERING_DISCOVERY_ID, FOOD,
 };
@@ -224,6 +224,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                     },
                     workers: KEEPER_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

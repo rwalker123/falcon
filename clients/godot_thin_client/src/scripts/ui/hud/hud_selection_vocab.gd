@@ -255,6 +255,26 @@ const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 # is the silence this whole family exists to remove).
 const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 
+# **NOT A HAZARD: THE SIM HAS NOT LOOKED AT THIS ENTRY YET**
+# (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`, the wire's own `-5`,
+# `docs/plan_standing_upkeep.md` §4.9). The player queued the build since the last turn resolved, so
+# no estimate pass has run over it: there is no number because nothing has been asked.
+#
+# ⛔ **IT TAKES NO HAZARD GLYPH AND NO HAZARD INK, and that is the whole of the fix it belongs to.**
+# It was folded onto `-1` and wore `RUNG_STALLED_FORMAT`, which put `⚠ Stalled 0%` on a fresh
+# `Cultivate (4, 19)` with two builders standing on it — a warning about a build one command old,
+# which the next turn then cleared by itself. A mark that appears when nothing is wrong and vanishes
+# on its own is how a player is taught to ignore every other mark (`selection-card.md` → "THE ABSENCE
+# OF A HAZARD IS THE ONLY SIGNAL THAT THINGS ARE FINE"). So it is one neutral word, and the one
+# `*_value_hex` rule falls it through to `INK_HEX` **because it carries neither needle** — which is
+# the tint rule working as designed rather than by luck.
+#
+# **NOR IS IT THE SILENCE `-1` EARNS ELSEWHERE.** A queued entry has a ROW, and a row with an empty
+# date column reads as a job the queue has forgotten. *Queued* is a true, complete statement of where
+# the entry stands, and the meter beside it is the entry's own — `0%` on the turn it is declared,
+# which is honest.
+const RUNG_QUEUED_FORMAT := "Queued %d%%"
+
 # **AND IT COVERS A CREWLESS `-1` TOO — there is deliberately no *no estimate* twin.** A crew fork was
 # built here for the 99% repair, on the reading that *Stalled* blames builders who do not exist, and
 # it was REVERTED: `RungDef::build_accrual`'s `eligible` takes no crew count, so the sim publishes

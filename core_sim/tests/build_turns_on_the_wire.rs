@@ -10,7 +10,8 @@
 //! | `BUILD_METER_HOLDS` (`-2`) | a real, priced build banking **exactly** what its meter is bleeding — the ground stands still |
 //! | `BUILD_METER_ROTS` (`-3`) | the same build banking **less** than the bleed — work already bought is being lost |
 //! | `BUILD_QUEUE_BLOCKED` (`-4`) | the band's builders are **staffed and standing on this entry** and its own gate refuses it — nothing banks, and nothing behind it moves |
-//! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | there is genuinely no answer — nothing queued here, or a gate refusing a *waiting* entry |
+//! | `NO_BUILD_TURNS_ESTIMATE` (`-1`) | the sim looked and there is genuinely no answer — nothing queued here, or a gate refusing a *waiting* entry |
+//! | `BUILD_NOT_YET_ESTIMATED` (`-5`) | the sim has not looked — the entry was queued since the last turn resolved. Driven in `build_queue.rs` on both webs |
 //!
 //! **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
 //! nothing toward the maintenance rate — the band's keeping pool owes that for every meter carrying
@@ -59,10 +60,11 @@ use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
     LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
-    SnapshotHistory, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    SnapshotHistory, SourcePriority, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_schema::{
-    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
+    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED,
+    NO_BUILD_TURNS_ESTIMATE,
 };
 
 /// **A GATHERING SITE THE CULTIVATE GATE ADMITS.** Every plant rung requires one
@@ -420,6 +422,7 @@ fn spawn_the_holding_band(
                     },
                     workers: gatherers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 // **The builders are a band-level POOL** (`docs/plan_standing_upkeep.md` §2.5), and
                 // the whole of it goes on the head of the queue below. `builders == 0` is the
@@ -429,6 +432,7 @@ fn spawn_the_holding_band(
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             build_queue: declared
@@ -1042,18 +1046,28 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
 /// **THE FOUR SENTINELS ARE OUTSIDE THE RANGE A REAL COUNT LIVES IN, and are not each other** — the
 /// property every reader leans on when it branches on the sign.
 #[test]
-fn the_four_sentinels_are_distinct_and_below_every_real_count() {
+fn the_five_sentinels_are_distinct_and_below_every_real_count() {
     const {
-        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_HOLDS);
-        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_METER_ROTS);
-        assert!(NO_BUILD_TURNS_ESTIMATE != BUILD_QUEUE_BLOCKED);
-        assert!(BUILD_METER_HOLDS != BUILD_METER_ROTS);
-        assert!(BUILD_METER_HOLDS != BUILD_QUEUE_BLOCKED);
-        assert!(BUILD_METER_ROTS != BUILD_QUEUE_BLOCKED);
-        assert!(NO_BUILD_TURNS_ESTIMATE < 0);
-        assert!(BUILD_METER_HOLDS < 0);
-        assert!(BUILD_METER_ROTS < 0);
-        assert!(BUILD_QUEUE_BLOCKED < 0);
+        // **Pairwise, over the whole set**, because a new sentinel wired to an existing value is the
+        // exact defect the fifth one was added to undo: `-1` carrying both *"the sim looked and had
+        // no number"* and *"the sim has not looked"* is what put `⚠ Stalled 0%` on a fresh build.
+        let sentinels = [
+            NO_BUILD_TURNS_ESTIMATE,
+            BUILD_METER_HOLDS,
+            BUILD_METER_ROTS,
+            BUILD_QUEUE_BLOCKED,
+            BUILD_NOT_YET_ESTIMATED,
+        ];
+        let mut left = 0;
+        while left < sentinels.len() {
+            assert!(sentinels[left] < 0);
+            let mut right = left + 1;
+            while right < sentinels.len() {
+                assert!(sentinels[left] != sentinels[right]);
+                right += 1;
+            }
+            left += 1;
+        }
     }
 }
 

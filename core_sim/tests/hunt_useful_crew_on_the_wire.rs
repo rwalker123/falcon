@@ -32,7 +32,7 @@ use core_sim::{
     scalar_zero, BandEquipment, BandId, CombatConfigHandle, CreaturesConfigHandle, EquipmentConfig,
     FactionId, FaunaConfigHandle, GenerationId, Herd, HerdRegistry, HuntDraw, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PartyResolution, PopulationCohort,
-    ResidentBand, SizeClass, SnapshotHistory, TileRegistry, NO_USEFUL_CREW,
+    ResidentBand, SizeClass, SnapshotHistory, SourcePriority, TileRegistry, NO_USEFUL_CREW,
 };
 use sim_runtime::commands::{HuntCrewTakeQuery, QueryPayload, QueryReply};
 
@@ -165,6 +165,7 @@ fn world_hunting_at(
                 // No kit named — the row resolves to the hunt job's default, which is the kit the
                 // query below is asked at.
                 kit: None,
+                priority: SourcePriority::default(),
             }],
             ..Default::default()
         },

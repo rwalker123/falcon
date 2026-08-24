@@ -1269,6 +1269,56 @@ static func build_floor_picker(
     block.add_child(grid)
     return block
 
+## **THE RANK CONTROL** — the three priority levels as a radio over `on_pick(level: String)`, with a
+## single hint line beneath saying what the rank does (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+##
+## **IT IS `build_floor_picker`'S SHAPE ON PURPOSE, down to the cell builder.** The two live one link
+## apart in the same inspector strip, they are mutually exclusive, and a player who has used one has
+## learned the other; a second layout for three buttons in a row would be a new thing to learn for no
+## new meaning. `_policy_rung_cell` is shared rather than copied, so the resting/selected tints, the
+## padding and the two-line face allowance move for both at once.
+##
+## **THE ORDER IS `HudWorkVocab.WORK_PRIORITY_LEVELS`, NEVER THE WIRE'S.** `SourcePriority` numbers
+## Normal first (a default costs no wire bytes) while the band sheds Low, Normal, High — so a picker
+## built by walking the ordinals would put the default in the leftmost slot and read as a scale that
+## starts in the middle. The vocab states the reading order once and this is its only consumer.
+##
+## **THE HINT NAMES NO RESOURCE**, deliberately: the rank orders workers and pen feed today and
+## whatever the next scarcity handler is tomorrow, and a per-consumer list would grow forever. It is
+## ELIDING with its own hover, the treatment every other one-line label in this strip takes, since the
+## zone is a fixed-width box and this sentence is the longest thing in the block.
+static func build_work_priority_picker(on_pick: Callable, selected_level: String) -> VBoxContainer:
+    var current := HudWorkVocab.work_priority_of(selected_level)
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var grid := GridContainer.new()
+    # The three levels fit one row exactly, at the SAME ceiling the floor presets wrap on — a zone is
+    # a fixed-width box, and a picker whose buttons sum past it widens the whole zone column.
+    grid.columns = mini(HudWorkVocab.WORK_PRIORITY_LEVELS.size(), HudWorkVocab.POLICY_PICKER_COLUMNS)
+    grid.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    for level in HudWorkVocab.WORK_PRIORITY_LEVELS:
+        var btn := Button.new()
+        var is_selected := level == current
+        var variant := "primary" if is_selected else "ghost"
+        # The LEVEL as meta, not the face: the face is presentation, and the level is the token the
+        # command carries — so a harness reads the button by what it would SEND.
+        btn.set_meta(HudWorkVocab.WORK_PRIORITY_RUNG_META, level)
+        HudStyle.apply_button(btn, variant)
+        btn.pressed.connect(func() -> void: on_pick.call(level))
+        # A LEVEL AT REST IS QUIETER THAN A BUTTON AT REST — `build_floor_picker`'s rule: an unpicked
+        # rung is a shortcut to a value rather than an action, so it reads `INK_DIM`.
+        var tint := HudStyle.button_font_color(variant, btn.disabled)
+        if not is_selected:
+            tint = HudStyle.INK_DIM
+        var cell := _policy_rung_cell(btn, String(HudWorkVocab.WORK_PRIORITY_FACES.get(level, level)),
+            "", tint)
+        cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        grid.add_child(cell)
+    block.add_child(grid)
+    block.add_child(build_status_part(HudWorkVocab.WORK_PRIORITY_HINT, HudStyle.INK_FAINT, true))
+    return block
+
 ## **THE DIAL BETWEEN THE PRESETS** — a whole-percent slider over the same floor the presets set, so
 ## every value in `0..1` is reachable and the three buttons stay shortcuts rather than the whole axis.
 ## `on_change` fires with the new floor.

@@ -122,6 +122,19 @@ signal build_kit_requested(payload: Dictionary)
 ## ordering left to roll back.
 signal build_order_requested(payload: Dictionary)
 
+## Emitted when the player marks ONE worked row with their own rank — where the band gives it up when
+## it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item 9b). Payload keys:
+## { faction, band_id, x, y, herd_id, level }, `level` being `high` / `normal` / `low`. Main formats
+## `work_priority <faction> <band_id> <source…> <level>`.
+##
+## **THE MARK IS A WORD ALL THE WAY DOWN.** `SourcePriority`'s ordinals put Normal at 0 (a default
+## costs no wire bytes) while the band sheds Low, Normal, High, so the native decoder hands GDScript
+## the WORD and nothing on this path ever holds a number it could sort on.
+##
+## No optimistic overlay and so no `pending_entity`: the mark is captured live off the allocation, and
+## the server re-captures after every command, so it arrives on this command's own recapture.
+signal work_priority_requested(payload: Dictionary)
+
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
 ## `spread` or `priority`. Main formats `upkeep_mode <faction> <band_id> <mode>`.
@@ -547,6 +560,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
     _bandpanel.build_order_requested.connect(
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
+    _bandpanel.work_priority_requested.connect(
+        func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)

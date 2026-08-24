@@ -29,7 +29,7 @@ use core_sim::{
     HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
@@ -252,6 +252,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     },
                     workers: KEEPER_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },
@@ -552,6 +553,7 @@ fn begin_extension(
                 target: LaborTarget::Builders,
                 workers: KEEPER_WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }),
         }
         assert!(

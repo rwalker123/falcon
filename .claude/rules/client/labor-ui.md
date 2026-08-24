@@ -3769,6 +3769,13 @@ the `∞` pair survives with a new denominator:
   `build_turns_remaining` from the wire alone and `build_pace` classifies it as a FOURTH arm
   (`BUILD_PACE_BLOCKED`). Blocked ≠ holding ≠ rotting ≠ silent, and a client rendering three of them
   cannot derive the fourth.
+- **A SIXTH ANSWER RIDES IT SINCE §4.9** — `BUILD_TURNS_NOT_YET_ESTIMATED` (`-5`), *the player
+  queued this since the last turn resolved, so no estimate pass has ever run for it*. It is not this
+  form's to return either, and for a sharper reason than `-4`'s: the client can evaluate arithmetic
+  and cannot know what the sim has LOOKED at. **It is the one member of the family that is not a
+  hazard** — `build_pace` answers `BUILD_PACE_UNKNOWN` and the face is a neutral `Queued N%` — and
+  collapsing it onto `-1` put `⚠ Stalled 0%` on a build one command old. The full split and the sweep
+  are in `selection-card.md` → "A build QUEUED THIS TURN IS NOT A STALLED ONE".
 - `core_sim/tests/build_turns_closed_form.rs` still pins the two producers equal at the committed
   crew, and `SourceForecast.BUILD_BALANCE_HOLDS` is still the ONE cut point the two `∞` answers fork
   on.

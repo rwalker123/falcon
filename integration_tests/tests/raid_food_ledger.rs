@@ -19,7 +19,8 @@ use core_sim::TakeSelection;
 use core_sim::{
     available_workers, build_test_app, run_turn, scalar_from_f32, CommandEventKind,
     CommandEventLog, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
-    LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, Tile, FOOD,
+    LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, SourcePriority,
+    Tile, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own.
@@ -71,6 +72,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
             },
             workers: workers.max(1),
             kit: None,
+            priority: SourcePriority::default(),
         }],
         ..Default::default()
     });

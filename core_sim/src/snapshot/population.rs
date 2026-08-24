@@ -78,6 +78,15 @@ pub(crate) fn labor_assignment_to_state(
         // has no quarry to fight. Answered by the sim precisely because the client cannot: the
         // fight arm needs `combat_config.hit_chance`, which never crosses the wire.
         hunt_useful_workers,
+        // **THE PLAYER'S OWN RANK ON THIS ROW**, captured live off the allocation exactly as the
+        // other intent fields are — the mark is set at command time and the server re-captures after
+        // every command, so it arrives on the command's own recapture with no optimistic overlay.
+        // Mapped rather than cast: the wire puts the default at `0` and the shedding order does not.
+        priority: match assignment.priority {
+            SourcePriority::Normal => SourcePriorityState::Normal,
+            SourcePriority::High => SourcePriorityState::High,
+            SourcePriority::Low => SourcePriorityState::Low,
+        },
         ..Default::default()
     };
     match &assignment.target {
@@ -1365,6 +1374,7 @@ mod tests {
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
         ExpeditionPhase, FertilityFactors, LocalStore, MoraleCause, MoraleContributions,
+        SourcePriority,
     };
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
 
@@ -1511,6 +1521,7 @@ mod tests {
                 },
                 workers: 4,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -1640,6 +1651,7 @@ mod tests {
                 target: LaborTarget::Scout,
                 workers: 4,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()
@@ -1745,6 +1757,7 @@ mod tests {
                     },
                     workers: 1,
                     kit: None,
+                    priority: SourcePriority::default(),
                 })
                 .collect(),
             build_queue: queue

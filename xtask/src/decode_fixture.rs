@@ -74,6 +74,19 @@ const GRID_CELLS: usize = (GRID_W * GRID_H) as usize;
 /// builder that returns the first element for every row (or reuses one offset) is visible.
 const ROWS: usize = 2;
 
+/// **EVERY `SourcePriority` THE WIRE CAN CARRY**, one per fixture labor row — the one repeated
+/// section that is deliberately sized by an *enum* rather than by [`ROWS`].
+///
+/// An enum survives saturation (its serialized form is a variant name, which is not the empty
+/// default a string leaf is replaced on), so the only way a non-default variant reaches the decoder
+/// is for it to be written here. Covering all three end to end is what makes a mis-mapped arm move
+/// the golden.
+const EVERY_SOURCE_PRIORITY: [SourcePriorityState; 3] = [
+    SourcePriorityState::Normal,
+    SourcePriorityState::High,
+    SourcePriorityState::Low,
+];
+
 /// The length of the seeded `regrowthSamples` curve — the **shipped** sample count
 /// (`core_sim::snapshot::REGROWTH_CURVE_SAMPLES`), restated here rather than imported because
 /// `xtask` does not depend on `core_sim`. It only has to be a plausible non-empty length: saturation
@@ -1022,7 +1035,27 @@ fn seed_snapshot() -> WorldSnapshot {
         // carries no element type, so the decode guard would never see the field at all. The rank
         // is the INDEX, so the golden's element ORDER is part of what it pins.
         cohort.build_queue = rows();
-        cohort.labor_assignments = rows();
+        // **ONE ROW PER `SourcePriority`, WHICH IS WHY THIS LIST IS NOT `rows()`.**
+        //
+        // The rank is a serde *enum*, so saturation leaves it alone (a variant name is a non-empty
+        // string — see the module docs' two saturation rules), and `Default` is `Normal`. A fixture
+        // built from `rows()` therefore exercised the decoder's **default arm only**: the client's
+        // mapping ends in a `_ => "normal"` catch-all, so a `High` or `Low` arm wired to the wrong
+        // word would decode as `"normal"` and the golden would not move.
+        //
+        // **It was invisible for a reason worth stating: `Normal` is wire value `0`**, and a
+        // FlatBuffers scalar equal to its default costs no bytes — so the fixture `.bin`s did not
+        // change at all when the field was appended, and neither did the golden.
+        //
+        // The three rows are the whole enum, in declaration order, so a variant added to
+        // `SourcePriorityState` without a row here is a variant this guard does not cover.
+        cohort.labor_assignments = EVERY_SOURCE_PRIORITY
+            .iter()
+            .map(|priority| LaborAssignmentState {
+                priority: *priority,
+                ..Default::default()
+            })
+            .collect();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];
             // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same

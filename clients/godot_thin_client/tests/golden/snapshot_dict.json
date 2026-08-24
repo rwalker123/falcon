@@ -2222,6 +2222,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "normal",
           "realized_yield": 50.82,
           "species": "populations[0].labor_assignments[0].species",
           "sustainable_yield": 16.4,
@@ -2258,6 +2259,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
           "sustainable_yield": 35.830002,
@@ -2270,6 +2272,43 @@
           "wasted_yield": 32.889999,
           "workers": 1,
           "workers_needed": 77
+        },
+        {
+          "actual_yield": 93.540001,
+          "actual_yield_high": 56.189999,
+          "actual_yield_low": 110.970001,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [57.700001, 101.660004, 22.690001, 98.309998]},
+          "fauna_id": "populations[0].labor_assignments[2].fauna_id",
+          "floor": 97.739998,
+          "fodder_yield": 99.410004,
+          "hunt_useful_workers": 121,
+          "improvement": "populations[0].labor_assignments[2].improvement",
+          "kind": "populations[0].labor_assignments[2].kind",
+          "kit_id": "populations[0].labor_assignments[2].kit_id",
+          "material_yield": [
+            {
+              "amount": 72.800003,
+              "material_id": "populations[0].labor_assignments[2].material_yield[0].material_id"
+            },
+            {
+              "amount": 26.49,
+              "material_id": "populations[0].labor_assignments[2].material_yield[1].material_id"
+            }
+          ],
+          "overdraws": true,
+          "priority": "low",
+          "realized_yield": 40.889999,
+          "species": "populations[0].labor_assignments[2].species",
+          "sustainable_yield": 68.709999,
+          "take_species": [
+            "flax",
+            "wild_emmer"
+          ],
+          "target_x": 167,
+          "target_y": 178,
+          "wasted_yield": 56.630001,
+          "workers": 96,
+          "workers_needed": 166
         }
       ],
       "last_emigrated": 197,
@@ -2813,6 +2852,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
           "sustainable_yield": 23.76,
@@ -2849,6 +2889,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "high",
           "realized_yield": 16.93,
           "species": "populations[1].labor_assignments[1].species",
           "sustainable_yield": 31.49,
@@ -2861,6 +2902,43 @@
           "wasted_yield": 58.150002,
           "workers": 120,
           "workers_needed": 78
+        },
+        {
+          "actual_yield": 109.07,
+          "actual_yield_high": 26.1,
+          "actual_yield_low": 105.809998,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [50.82, 70.839996, 97.290001, 53.330002]},
+          "fauna_id": "populations[1].labor_assignments[2].fauna_id",
+          "floor": 20.67,
+          "fodder_yield": 59.09,
+          "hunt_useful_workers": 184,
+          "improvement": "populations[1].labor_assignments[2].improvement",
+          "kind": "populations[1].labor_assignments[2].kind",
+          "kit_id": "populations[1].labor_assignments[2].kit_id",
+          "material_yield": [
+            {
+              "amount": 108.209999,
+              "material_id": "populations[1].labor_assignments[2].material_yield[0].material_id"
+            },
+            {
+              "amount": 73.0,
+              "material_id": "populations[1].labor_assignments[2].material_yield[1].material_id"
+            }
+          ],
+          "overdraws": true,
+          "priority": "low",
+          "realized_yield": 33.75,
+          "species": "populations[1].labor_assignments[2].species",
+          "sustainable_yield": 65.809998,
+          "take_species": [
+            "flax",
+            "wild_emmer"
+          ],
+          "target_x": 148,
+          "target_y": 137,
+          "wasted_yield": 31.450001,
+          "workers": 17,
+          "workers_needed": 5
         }
       ],
       "last_emigrated": 24,

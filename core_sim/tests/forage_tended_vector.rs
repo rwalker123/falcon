@@ -43,7 +43,7 @@ use core_sim::{
     HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
     LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
     PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     BUILTIN_LABOR_CONFIG, FODDER, FOOD,
 };
@@ -297,6 +297,7 @@ fn spawn_forager_with_workers(
                     },
                     workers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

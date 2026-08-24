@@ -596,6 +596,61 @@ state escaping the mark is the bug, and a per-state frame samples rather than cl
 `HerdFx.price_animal_build`), so a fixture that re-dials a meter cannot end up with a percentage and
 an absolute that disagree — which is the one thing this readout exists to make visible.
 
+### A build QUEUED THIS TURN IS NOT A STALLED ONE — the fifth sentinel (`-5`, §4.9)
+
+`buildTurnsRemaining` carried two facts on one value and the client rendered both as a hazard.
+`sim_schema::BUILD_NOT_YET_ESTIMATED` (`-5`) now separates them:
+
+| value | what the sim is saying | the face |
+|---|---|---|
+| `-1` `NO_BUILD_TURNS_ESTIMATE` | **the estimate pass RAN and had no number** — nobody on it, a gate refusing, a running build banking nothing | `⚠ Stalled N%`, WARN |
+| `-5` `BUILD_NOT_YET_ESTIMATED` | **no pass has ever run for this entry** — the player queued it since the last turn resolved | `Queued N%`, **neutral INK, no mark** |
+
+**Reported from play**: a fresh `Cultivate (4, 19)` reading `⚠ Stalled 0%` in the BUILD QUEUE block
+with two builders staffed and nothing wrong, which the next turn then cleared by itself. **A mark that
+appears when nothing is wrong and vanishes on its own is the worst shape a warning can have** — it
+teaches the player to ignore every other mark, which costs the whole family its meaning (see "THE
+ABSENCE OF A HAZARD IS THE ONLY SIGNAL THAT THINGS ARE FINE" above).
+
+**THE DISTINGUISHING FACT IS THE ESTIMATE PASS, NEVER THE METER, and the client cannot see it.** A
+genuinely stalled build sits at `0%` too, so no progress comparison separates them. What does is that
+`publish_build_chain` stamps every entry it walks with its place in the line and the decay passes
+clear that place each turn — so *live in a band's queue AND still carrying the cleared place* is
+exactly *queued since the last pass*. The client holds neither the queues nor the passes; it reads the
+word the wire sends and re-derives nothing.
+
+**IT LANDED INSIDE THE TWO EXISTING FORKS, WHICH IS THE WHOLE POINT OF THEM.**
+`DetailFormat.build_sentinel_value` is the one place a countdown's sentinels are worded and
+`SourceForecast.build_pace` the one place they are classified — extracted precisely because this
+family had already left a reader behind twice (`-3` split out of `-2`, then `-4` beside them). `-5` is
+the third time, and it is a branch in each rather than a third fork anywhere.
+
+- **`build_pace` needed an explicit arm even though nothing renders a "pace" for `-5`.** Its
+  fall-through is `BUILD_PACE_GROWING` — *the meter climbs and the face quotes a real count* — so a
+  missing arm paints a compose face `HudStyle.HEALTHY` off a number that does not exist. `-5` answers
+  `BUILD_PACE_UNKNOWN`: no verdict, neutral render.
+- **The tint needed no leaf at all, and that is the tint rule working.** `rung_value_hex` is *red if
+  it says the meter is going backwards, amber if it carries the hazard mark, green if it carries the
+  BUILT badge, neutral otherwise*; `Queued N%` carries none of those needles and falls through to
+  `INK_HEX`. A face that MEANT to be amber would have to earn it by wearing the mark — which is what
+  keeps a new state from shipping without its colour, in both directions.
+
+**THE SWEEP — every reader of the family, and why each is neutral for `-5`:**
+
+| reader | how it answers | change |
+|---|---|---|
+| `SourceForecast.build_turns_remaining` | the ONE wire read | **passes `-5` through**; it used to collapse it onto `-1`, which is the whole defect |
+| `SourceForecast.build_pace` | the ONE pace classifier | **new `UNKNOWN` arm** (see above) |
+| `build_is_losing` / `build_is_stalled` | written on `build_pace` | unchanged — false for `-5`, so the MAP badge and the work row's rung slot are both quiet |
+| `DetailFormat.build_sentinel_value` | the ONE sentinel wording | **new neutral branch**, tested before `-1` |
+| `build_countdown_value` / `build_completion_value` / `rung_row_value` | all delegate to it | unchanged — the tile card, the herd drawer and the BUILD QUEUE date column follow for free |
+| `DetailFormat.build_turns_clause` | `<= BUILD_TURNS_NONE_TO_STATE` | unchanged — no clause, which is right |
+| `rung_value_hex` / `rung_value_color` | the one tint rule | unchanged — neutral by the needle test |
+| `HudWidgets.improvement_pace_color` / `_stops` | read `build_pace` | unchanged — neutral once the arm exists |
+| `SourceForecast.floor_climbing`, `husbandry_payoff_lines` | `> 0` guards | unchanged — every negative already excluded |
+| `MapView` `patch_build_turns_remaining` | verbatim `int` copy | unchanged — the family must survive the copy as itself |
+| `RungLadder` leg turns | a different wire field | out of scope — the sim's leg publisher has no `-5` arm |
+
 ### A build DECLARED with nobody on it is a fourth state, and it said nothing at all
 
 The `-1` rule above is right and it left a hole. A source **nobody has staffed** answers

@@ -280,6 +280,45 @@ pub struct LaborAssignmentState {
     /// capture. Appended last (append-only).
     #[serde(default)]
     pub hunt_useful_workers: u32,
+    /// **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — the outermost level of every
+    /// scarcity handler's ordering (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+    ///
+    /// **It is a stated value on the row and never a place in this list.** core_sim's
+    /// `set_assignment` re-pushes an edited row to the *end* of its vector, so a rank read off an
+    /// index would reset itself on the very `−`/`+` the player just pressed. Send the mark with
+    /// `work_priority <faction> <band> <source…> high|normal|low`; never infer one from the order
+    /// these rows arrive in.
+    ///
+    /// **What it does, so a readout can say so.** The shedding walk still chooses its *step* exactly
+    /// as before — a spare scout before a spare builder, an unimproved source before an improved one
+    /// — and then takes the hand off the **lowest-ranked candidate within that step**. A rank orders
+    /// candidates and never creates or removes one, so a `High` mark does not lift a row out of the
+    /// step it belongs to and the last hand still comes off the last row. The band's pen feed reads
+    /// it too: a short `FODDER` store and then a short larder serve `High` pens in full, then
+    /// `Normal`, then `Low`, and pens on the same rank split what is left in proportion to demand.
+    ///
+    /// [`SourcePriorityState::Normal`] on every unmarked row and on every band-wide role, which is
+    /// not a worked source and has no rank to state. Captured live from the allocation. Appended
+    /// last (append-only).
+    #[serde(default)]
+    pub priority: SourcePriorityState,
+}
+
+/// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and
+/// `snapshot.fbs`'s `SourcePriority` enum.
+///
+/// **`Normal` is the default and is wire value 0**, because most rows sit there and a FlatBuffers
+/// scalar equal to its default costs no bytes. The numbering is therefore *not* the shedding order
+/// (which runs `Low`, then `Normal`, then `High`); the codec maps the two rather than casting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SourcePriorityState {
+    /// The default: this row takes its turn like every other.
+    #[default]
+    Normal,
+    /// Served first, and the last thing a short band takes a hand off.
+    High,
+    /// The first thing given up.
+    Low,
 }
 
 /// **One item's remaining condition in a band's TOE** — a row of

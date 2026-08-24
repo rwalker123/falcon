@@ -18,9 +18,9 @@ use core_sim::{
     ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle,
+    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, WellbeingConfigHandle,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -189,6 +189,7 @@ fn spawn_hunter(
                     },
                     workers: HUNT_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

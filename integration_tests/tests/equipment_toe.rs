@@ -27,7 +27,7 @@ use core_sim::{
     CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat, FaunaConfigHandle, ForageRegistry,
     Herd, HerdRegistry, LaborAllocation, LaborAssignment, LaborConfig, LaborTarget,
     MaterialsConfig, PopulationCohort, RecipesConfig, SimulationConfig, SizeClass, SnapshotHistory,
-    Tile,
+    SourcePriority, Tile,
 };
 use sim_schema::state::PopulationCohortState;
 
@@ -115,6 +115,7 @@ fn hunting_world_of(
                 },
                 workers: crew.unwrap_or(workers).max(1),
                 kit: None,
+                priority: SourcePriority::default(),
             }],
             ..Default::default()
         },
@@ -147,6 +148,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                 },
                 workers: workers.max(1),
                 kit: None,
+                priority: SourcePriority::default(),
             }],
             ..Default::default()
         },
@@ -165,6 +167,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             target: LaborTarget::Scout,
             workers: workers.max(1),
             kit: None,
+            priority: SourcePriority::default(),
         }],
         ..Default::default()
     });
@@ -1948,6 +1951,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             },
             workers: workers.max(1),
             kit: None,
+            priority: SourcePriority::default(),
         }],
         ..Default::default()
     });

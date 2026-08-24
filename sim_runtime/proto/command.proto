@@ -510,6 +510,25 @@ message BuildKitCommand {
   optional string kit_id = 5;
 }
 
+// Mark ONE WORKED ROW of one band with the player's own rank - `high` | `normal` | `low`, defaulting
+// to normal.
+//
+// IT IS A STATED VALUE ON THE ROW AND NEVER A LIST POSITION. The band's scarcity handlers read it as
+// the OUTERMOST level of their ordering: the shedding walk takes a hand off the lowest-ranked
+// candidate WITHIN the step it had already chosen, and a short pen-feed store serves high-ranked pens
+// first. It orders candidates and never creates or removes one, so a rank cannot move a row between
+// the walk's steps, and with every row at the default the behaviour is exactly what it was.
+//
+// SOURCE ADDRESSING is the queue family's: two integer tokens name a TILE, one token names a HERD id.
+message WorkPriorityCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  optional uint32 target_x = 3;
+  optional uint32 target_y = 4;
+  optional string herd_id = 5;
+  string level = 6;     // "high" | "normal" | "low"
+}
+
 message UpkeepModeCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -999,5 +1018,7 @@ message CommandEnvelope {
     BuildOrderCommand build_order = 59;
     // 59 is held by `build_order`, so the queue entry's kit takes 60 (append-only; never renumber).
     BuildKitCommand build_kit = 60;
+    // 60 is held by `build_kit`, so the worked row's rank takes 61 (append-only; never renumber).
+    WorkPriorityCommand work_priority = 61;
   }
 }

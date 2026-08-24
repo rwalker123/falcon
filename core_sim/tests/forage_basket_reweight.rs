@@ -29,9 +29,9 @@ use core_sim::{
     GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    BUILTIN_LABOR_CONFIG, FODDER, FODDERING_DISCOVERY_ID, WHOLE_BASKET,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
+    WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FODDERING_DISCOVERY_ID, WHOLE_BASKET,
 };
 use sim_runtime::TerrainType;
 
@@ -1534,6 +1534,7 @@ fn spawn_forager(
                     },
                     workers: FORAGE_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

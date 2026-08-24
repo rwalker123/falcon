@@ -3235,9 +3235,9 @@ readout, and the name column measures **146px**.
 > the chart's caption use, so one number is never worded two ways.
 >
 > **What the strip still carries:** its head (icon + name + `✕`), the overdraw line, the under-kept
-> `note`, the `muted_note`, the `ArrivalStrip` when the schedule is gappy, the three links
-> (Jump to source / Change policy / **Unassign**) and the floor picker when open. Every one of those
-> is either a control or a warning the row has no room for.
+> `note`, the `muted_note`, the `ArrivalStrip` when the schedule is gappy, the FOUR links
+> (Jump to source / Change policy / **Priority** / **Unassign**) and, when open, exactly ONE of the
+> two pickers. Every one of those is either a control or a warning the row has no room for.
 
 **A HUNT ROW'S FODDER IS A STRUCTURAL ZERO** (no animal is harvested for feed) and renders no term;
 the material terms read the assignment's **RESOLVED `material_yield`** — what the source actually
@@ -3270,6 +3270,114 @@ on-tile plate sizes to its measured run, so no caller had one fixed slot left an
 is a thing the next reader assumes is load-bearing. `signed_material_components` is the plain joiner
 again. Frames: `band_panel_work_material_forage` / `band_panel_work_material_crops`, whose four-crop
 row reads `+0.06 fibre · +0.07 grape · +0.06 tea · +0.07 tobacco` whole.
+
+### THE PLAYER'S RANK LEADS LINE TWO, AND LEADING IS THE WHOLE ARGUMENT (§4.9 item 9b)
+
+A worked row carries the player's own rank — *where this band gives it up when it cannot cover
+everything it holds* — and a marked row prints it at the **head** of line two:
+
+```
+High priority · +0.07 tobacco · 50% left standing
+Low priority · +0.18 /turn · 50% left standing
+```
+
+**A `Normal` row prints NOTHING, and its line two is byte-identical to what it printed before the
+mark existed.** The default is the overwhelming majority of rows, and a prefix on it would spend this
+board's scarcest resource — line width — saying that nothing has been decided.
+
+**LEADING, BECAUSE THIS LINE ALREADY ELIDES AND THE TRIM LANDS ON THE TAIL.** The four-cash-crop
+worst case reaches the elide by design (241px of accounts, 322px of line, the trailing
+`50% left standing` taking it past), so a rank hung on the END would be the first thing cut — on the
+widest board, which is to say exactly when a famine makes the rank matter. First on the line is the
+one position the trim cannot reach. **Measured with the mark on: 310px of that 322px line — 69 mark
++ 241 accounts — so the accounts still render whole (253 allocated) and the floor is still what the
+trim takes.** `band_panel_work_priority_widest` is the frame and
+`_assert_marked_row_accounts_still_fit` the claim; the number is printed beside it, because a future
+account format has to be measured against it.
+
+**IT IS ITS OWN `Label`, NOT A SPLICE INTO THE ACCOUNTS STRING.** The accounts carry
+`OVERRUN_TRIM_ELLIPSIS`, an unconditional hover of their own whole text and `MOUSE_FILTER_PASS`;
+a spliced prefix would sit inside the text the trim measures AND inside the tooltip that repeats it,
+so the accounts would start being cut to make room for a word that never needs cutting. The prefix is
+fixed-width and `MOUSE_FILTER_IGNORE` (the accounts own this line's hover), and the 20px
+`WORK_ROW_ACCOUNTS_INDENT` is unspent — the mark sits inside the name's column with the accounts, not
+beside the stripe. The two share one `HBoxContainer` at **zero separation**: the prefix carries
+`WORK_INSPECT_SENTENCE_SEPARATOR` in its own text exactly as the accounts carry the one before the
+floor clause, so line two's spacing is stated in one place instead of half in a string and half in a
+container constant.
+
+**THE INK IS `SIGNAL` FOR HIGH AND `DANGER` FOR LOW** — this HUD's two ends of *the player has
+singled this out*: SIGNAL is what a surface wears when it is the thing being attended to, DANGER what
+it wears when it is the thing that gets given up. Both are resolved by
+`HudWorkVocab.work_priority_ink`, a **function** rather than a `const` table, because `HudStyle`'s
+palette entries are `static var` (the theme is swappable) and a `const` initialised from one is a
+parse error.
+
+**⛔ THE WIRE ORDINALS ARE NOT THE SHEDDING ORDER, AND NO GDScript EVER SEES THEM.**
+`SourcePriority` numbers `Normal = 0, High = 1, Low = 2` — Normal first because a FlatBuffers scalar
+equal to its default costs no bytes — while the band sheds **Low, Normal, High**. The native decoder
+therefore inserts the lowercase WORD (`dict/population.rs`), which is also exactly the token
+`work_priority` takes, so the picker echoes back the string it was shown and nothing between the
+button and the socket has a second spelling to invent. A client handed the number would sooner or
+later sort on it and paint that untruth. The words, the reading order (`WORK_PRIORITY_LEVELS`), the
+faces, the prefixes and the hint all live in `hud_work_vocab.gd`; `HudWorkVocab.work_priority_of`
+normalizes anything unrecognised to `normal`, the `upkeep_fund_mode` rule — a control offering three
+choices must not be handed a fourth token that lights none of them.
+
+**THE MARK SURVIVES A PENDING CREW EDIT.** `assign_labor` states no priority — it is
+`work_priority`'s alone — so `HudBandLaborState.effective_worker_map` carries the CONFIRMED rank onto
+the pending row, exactly as it does the published crew ceiling and the improvement. Without it a High
+mark would blank for the one frame the `+` is being clicked in, and the player would watch their own
+prefix flicker off their own press.
+
+### …AND THE CONTROL IS A FOURTH LINK, WITH THE TWO PICKERS MUTUALLY EXCLUSIVE
+
+The work inspector's links row is **Jump to source · Change policy · Priority · Unassign** —
+the rank beside the floor because the two are the same kind of control (a standing property of this
+row, picked from three buttons), and ahead of the destructive one, which stays last. Measured: the
+four-link row asks **289px of the 356px side-dock zone**, and the zone's widest content is unmoved at
+**354 of 356** (`_report_work_links_row_width`, `_assert_zone_content_width_fits`).
+
+`HudWidgets.build_work_priority_picker` is `build_floor_picker`'s shape down to the shared
+`_policy_rung_cell`: three equal cells — **High · Normal · Low**, the current one wearing the primary
+treatment — under a single hint line, `WORK_PRIORITY_HINT`:
+
+> When something runs short, the band spends it on high priority first.
+
+**ONE sentence, naming no resource, deliberately.** The rank orders the shedding walk's workers today
+and the pen-feed split as of the same slice; a per-consumer list would have to grow every time
+another scarcity handler learns to read it.
+
+> #### ⛔ `_work_picker_open` IS A THREE-VALUED STATE, NOT TWO BOOLS
+>
+> It was `_work_floor_open: bool`. Two bools would admit a fourth state — **both pickers open** —
+> that `_work_inspector_height` would have to reserve for, and the strip's tallest state is what the
+> work zone's box is sized against (`band_panel_pools_wide_selected` reads its box with nothing
+> spare). A three-valued state cannot express it: opening either picker CLOSES the other by
+> assignment, through the one `_toggle_work_picker`, so the exclusion is structural rather than a
+> discipline two link handlers have to keep.
+>
+> **The base extent is unmoved** — the links row gained a fourth link, not a line, so
+> `WORK_INSPECTOR_EXTENT` is still 58. What moved is the picker term: the priority picker is
+> `WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT` = the floor picker's three cells **plus one hint line and
+> its block gap** (52 against 32), so it is the taller of the two and
+> `WORK_INSPECTOR_CEILING_HEIGHT` counts IT — the ceiling is a max over the pair, never a sum.
+> Measured: 116 reserved / 109 drawn with the priority picker open, 96 / 90 with the floor picker.
+
+**THE COMMAND IS `work_priority <faction> <band> <x> <y> <level>` / `… <herd_id> <level>`**, emitted
+as `BandPanelController.work_priority_requested`, relayed by `HudLayer` and formatted by
+`Main.format_work_priority` — `build_order`'s relay path exactly, including how the tile-vs-herd tail
+is chosen (a non-empty herd id is the herd form, else two integer tokens name a tile), which is how
+the sim's own parser chooses. **It names a BAND** for `build_order`'s reason: the ordering it feeds is
+a band's — the shedding walk partitions that band's rows and the pen-feed split serves that band's
+stores — where `unqueue` and `build_kit` are source-addressed because their subject is the ground.
+
+**⛔ NO OPTIMISTIC OVERLAY, AND THEREFORE NO ROLLBACK HANDLE.** `LaborAssignment.priority` is captured
+LIVE off the allocation the command mutates and the server re-captures after every command, so the
+new mark arrives on this command's own recapture — `buildKitId`'s rule and item 9a's `buildQueue`'s.
+A local pending copy would be a second statement of one value, which is the drift §4.9 forbids, and a
+send that does not go leaves nothing behind to undo. The pick CLOSES the picker, exactly as a floor
+pick does.
 
 ## The aggregates carry a SIBLING (issues #337 / #449 / #527)
 

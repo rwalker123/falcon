@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/graze.rs"
   - "core_sim/tests/grazing_*.rs"
+  - "core_sim/tests/pen_feed_priority.rs"
 ---
 
 <!-- Extracted verbatim from lines 2826-3193 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -343,6 +344,53 @@ entirely from the larder) and becomes **a piece of fenced land the herd grazes**
 - **Wire** (append-only on `HerdTelemetryState`): `penRadius`, `penFootprintTiles` (server in-bounds
   count), `penPastureFraction`, `penExtendProgress`. Convergence gated by
   `core_sim/tests/grazing_2d_pen.rs` (a pen converges at radius 0/1; lush → free, barren → full bill).
+
+### The pen feed is settled across every pen at once
+
+**A band keeps more than one pen, and the two stores that feed them are shared.** The FEED phase's
+draws — hay off `FODDER`, then bread off the larder — are struck by `settle_pen_feed`
+(`systems/labor.rs`) **before** the assignment loop, across every corralled-herd row the band holds;
+the corral-tend arm then spends each pen's settled share and takes no allocation decision of its own.
+`last_pen_feed_upkeep` keeps its meaning — the summed *actual* `LocalStore::take`, which is what the
+food-ledger identity `larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit`
+is closed with.
+
+**Each store is served by priority tier, and proportionally within one.** `High` pens in full, then
+`Normal`, then `Low`; when the remainder cannot cover a tier, every pen in it gets
+`demand_i × (remaining ÷ tier_demand)`. Proportional-within-a-tier is what makes the split need no
+second ordering rule at all, so there is nothing left for a vector position to decide. The rank is the
+row's own `SourcePriority` (`yield-forecast.md` → "The player's rank on a worked row").
+
+> #### ⛔ IT USED TO BE THE LIST ORDER, WITH THE EDIT ORDER ON TOP OF IT
+>
+> The draws ran *inside* the assignment loop, each taking what it wanted off the store through
+> `LocalStore::take`'s partial payment. So a store that could not cover every pen fed the **earliest**
+> row in `assignments` and starved the **last** — and because `set_assignment` re-pushes an edited row
+> to the end, the pen the player had just adjusted was the one fed last. It is the same composition the
+> shedding order was repaired for, one arc later and on a different scarce thing.
+>
+> `core_sim/tests/pen_feed_priority.rs` drives the real turn and asserts one outcome across **three
+> arrangements** — marked row first, marked row last, and marked row re-pushed to the end by an edit —
+> because a fixture with a single layout passes on the old code half the time.
+
+**The `FODDER` store it reads is the one standing at the top of the pass**, so a pen eats hay its band
+harvested on a *previous* turn. That is the store's own nature (a stock — the buffer the overwintering
+carry rides), and it is the deliberate consequence of settling before the loop: same-turn hay used to
+be reachable only by a pen whose row happened to sit after the hay Field's in `assignments`, which is
+the same positional artifact.
+
+**The Foddering gate is asked once, for the faction, in the settlement.** A band that has not learned
+it bids `0` hay, so every term downstream collapses to the pasture-only pen exactly as before hay
+existed — pinned by `a_faction_without_foddering_draws_no_hay_however_full_the_store_is`, which must
+pass *both* before and after this change.
+
+**Only the rows the corral arm will actually reach are settled** — the herd must exist and be inside
+the hunt leash, the two gates the arm applies before its tend branch. A pen the arm lapses would
+otherwise hold a reservation nothing draws, starving a pen that is in reach.
+
+**This is not `upkeep_mode`.** That option (`spread` | `priority`) splits the band's **work** pool
+across keeping demands; this splits two **stores** across pens. They are different scarcities with
+different currencies and are deliberately not wired to one dial.
 
 **2d-β — the `ExtendPen` command + build ladder** (§4). Growing a pen's fenced footprint is a labor
 investment worked off over turns, reusing the corral build ladder — no materials economy:

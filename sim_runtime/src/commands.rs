@@ -216,6 +216,26 @@ pub enum CommandPayload {
         /// Absent = clear the override; present = this roster kit, the bare one included.
         kit_id: Option<String>,
     },
+    /// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `high` | `normal` | `low`, on the named
+    /// band's assignment for that source (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+    ///
+    /// **It is a stated value on the row, never a list position.** The band's scarcity handlers read
+    /// it as the *outermost* level of their ordering — the shedding walk takes its hand off the
+    /// lowest-ranked candidate **within** the step it had already chosen, and a short pen-feed store
+    /// serves the high-ranked pens first — so a rank orders candidates and never creates or removes
+    /// one. With every row at `normal` the behaviour is exactly what it was.
+    ///
+    /// The level token is lower-cased before it travels, as `upkeep_mode`'s mode is, and anything the
+    /// sim does not know is refused by name rather than guessed at.
+    WorkPriority {
+        faction_id: u32,
+        band_id: u64,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        herd_id: Option<String>,
+        /// The level token: `"high"`, `"normal"` or `"low"`.
+        level: String,
+    },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
@@ -1189,6 +1209,21 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 kit_id: kit_id.clone(),
             }),
+            CommandPayload::WorkPriority {
+                faction_id,
+                band_id,
+                target_x,
+                target_y,
+                herd_id,
+                level,
+            } => pb::command_envelope::Command::WorkPriority(pb::WorkPriorityCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                herd_id: herd_id.clone(),
+                level: level.clone(),
+            }),
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -1657,6 +1692,14 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 kit_id: cmd.kit_id,
+            },
+            pb::command_envelope::Command::WorkPriority(cmd) => CommandPayload::WorkPriority {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                herd_id: cmd.herd_id,
+                level: cmd.level,
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,

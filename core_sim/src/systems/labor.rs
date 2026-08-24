@@ -36,6 +36,15 @@ fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
 /// boundary `max(0, B − floor·K)` is clamped at.
 const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
 
+/// **A CLAIM THAT ASKS FOR NOTHING** — the boundary [`settle_scarce_store`] skips a tier at and the
+/// value it settles an unserved claim to. Named for [`NOTHING_STANDS_ABOVE_THE_FLOOR`]'s reason: a
+/// bare `0.0` there reads as an epsilon rather than as the exact "no demand" boundary.
+const NOTHING_DEMANDED: f32 = 0.0;
+
+/// **THE WHOLE OF A CLAIM'S DEMAND** — the cap on [`settle_scarce_store`]'s per-tier served
+/// fraction, so a tier the remaining store covers is paid in full and never more than once.
+const FULLY_SERVED: f32 = 1.0;
+
 /// **"Is there anything here for this crew to work with?"** — THE eligibility term a **build** is
 /// gated on, asked of [`crate::fauna::take_room`]: the escapement room **or** the share of this
 /// turn's growth the player's own floor left takeable, whichever is larger.
@@ -1248,6 +1257,212 @@ fn source_with_keeping_already_banked(
         })
 }
 
+/// **WHAT ONE PEN IS SETTLED TO DRAW THIS TURN** — the whole feed decision for a corralled herd,
+/// struck by [`settle_pen_feed`] *before* the assignment loop and merely applied inside it.
+///
+/// Every field is the number the loop stamps or spends; nothing here is recomputed downstream, which
+/// is the point. The two share values are the **caps** the loop's `LocalStore::take` calls are made
+/// with, and both are covered by the store by construction (the settlement never hands out more than
+/// it saw), so a take returns its share in full.
+#[derive(Debug, Clone, Copy)]
+struct PenFeedShare {
+    /// The share of this pen's grass demand its footprint already covers
+    /// (`Herd::pen_pasture_fraction`).
+    pasture_fraction: f32,
+    /// Grass units off the band's `FODDER` store — `0.0` without Foddering, which is what keeps a
+    /// pen byte-identical to the pre-hay pasture-only one.
+    fodder_share: f32,
+    /// The share of the grass demand the LAND and the settled HAY cover together, before the larder
+    /// is touched.
+    land_hay_fraction: f32,
+    /// The hay's food-equivalent — the share of the gross bread bill it paid off
+    /// (`Herd::pen_hay_food`).
+    hay_food: f32,
+    /// The NET larder bill after pasture and hay: the full amount this pen is owed
+    /// (`Herd::pen_larder_bill`), which is what its fed fraction is measured against.
+    larder_bill: f32,
+    /// The part of that bill the larder is settled to actually pay. Below `larder_bill` exactly when
+    /// the band could not cover this pen's tier.
+    larder_share: f32,
+}
+
+/// **SERVE ONE SCARCE STORE ACROSS EVERY CLAIM ON IT AT ONCE** — [`SourcePriority::High`] in full,
+/// then `Normal`, then `Low`, and **within a tier, proportionally to demand** when the remainder
+/// cannot cover that tier.
+///
+/// Returns one settled amount per input claim, index-aligned to `demands`.
+///
+/// # ⛔ PROPORTIONAL WITHIN A TIER IS THE WHOLE REASON THIS IS NOT A LOOP
+///
+/// The draws it replaces ran *inside* the assignment loop, each taking what it wanted off the store
+/// in turn — so the earliest claim in the vector ate and the last starved, and since
+/// [`LaborAllocation::set_assignment`] re-pushes an edited row to the **end**, the row the player had
+/// just adjusted was the one served last. Splitting a short tier in proportion needs no second
+/// ordering rule at all, so there is nothing left for a vector position to decide.
+fn settle_scarce_store(demands: &[(SourcePriority, f32)], available: f32) -> Vec<f32> {
+    let mut settled = vec![NOTHING_DEMANDED; demands.len()];
+    let mut remaining = available.max(NOTHING_DEMANDED);
+    for tier in SourcePriority::SERVED_FIRST_TO_LAST {
+        let tier_demand: f32 = demands
+            .iter()
+            .filter(|(priority, _)| *priority == tier)
+            .map(|(_, demand)| demand)
+            .sum();
+        if tier_demand <= NOTHING_DEMANDED {
+            continue;
+        }
+        // The fraction of its demand every claim in this tier gets. `FULLY_SERVED` is the cap, so a
+        // tier the remainder covers is paid in full and nothing is ever handed out twice.
+        let served = (remaining / tier_demand).min(FULLY_SERVED);
+        for (index, (priority, demand)) in demands.iter().enumerate() {
+            if *priority == tier {
+                settled[index] = demand * served;
+            }
+        }
+        remaining = (remaining - tier_demand.min(remaining)).max(NOTHING_DEMANDED);
+    }
+    settled
+}
+
+/// **THE PEN FEED SPLIT, STRUCK ONCE FOR EVERY PEN THIS BAND KEEPS** — the fix for the positional
+/// allocation described on [`settle_scarce_store`], and the one place the corral arm's feed
+/// arithmetic lives.
+///
+/// Two stores are served, in the order the pen economy already spends them: the `FODDER` store first
+/// (hay is delivered graze-flow and covers the footprint's gap *before* any human food is hauled),
+/// then the larder for whatever bread bill each pen has left. Each is served by
+/// [`settle_scarce_store`], so within one priority tier a short store splits in proportion to demand
+/// and no pen's place in `assignments` decides anything.
+///
+/// **The arithmetic is the corral arm's own, lifted rather than re-derived.** The Foddering gate is
+/// applied here, once for the faction, and a band that has not learned it settles a `0.0` hay share
+/// — so every term below collapses to the pasture-only pen exactly as it did before hay existed.
+///
+/// **It settles only the rows the corral arm will actually reach**: the herd must exist and must be
+/// inside the hunt leash, the two gates the arm itself applies before its tend branch. A pen the arm
+/// lapses would otherwise hold a reservation nothing ever draws, starving a pen that is in reach.
+///
+/// **The `FODDER` store it reads is the one standing at the top of the pass**, so a pen eats the hay
+/// its band harvested on a *previous* turn. That is the store's own nature — a stock, the buffer the
+/// overwintering carry rides — and the alternative is the defect: same-turn hay was reachable only by
+/// a pen whose row happened to sit after the hay Field's in `assignments`.
+#[allow(clippy::too_many_arguments)] // two stores, the config, the leash, and the knowledge gate
+fn settle_pen_feed(
+    assignments: &[LaborAssignment],
+    registry: &HerdRegistry,
+    fauna: &FaunaConfig,
+    stores: &LocalStore,
+    foddering_known: bool,
+    band_pos: UVec2,
+    hunt_reach: u32,
+    grid_width: u32,
+    wrap_horizontal: bool,
+) -> HashMap<String, PenFeedShare> {
+    /// One pen's bid: its id, the player's rank on the row, its grass demand, the share of that
+    /// demand the footprint covers, and the hay it is asking the `FODDER` store for.
+    struct PenBid<'a> {
+        fauna_id: &'a str,
+        priority: SourcePriority,
+        demand_grass: f32,
+        pasture_fraction: f32,
+        fodder_demand: f32,
+    }
+    // The pens in hand, each with the demands it is about to bid with. Collected first so both
+    // stores are split across the whole set rather than one row at a time.
+    let mut pens: Vec<PenBid> = Vec::new();
+    for assignment in assignments {
+        let LaborTarget::Hunt { fauna_id, .. } = &assignment.target else {
+            continue;
+        };
+        let Some(herd) = registry.find(fauna_id) else {
+            continue;
+        };
+        if !herd.is_corralled() {
+            continue;
+        }
+        if crate::grid_utils::hex_distance_wrapped(
+            band_pos,
+            herd.position(),
+            grid_width,
+            wrap_horizontal,
+        ) > hunt_reach
+        {
+            continue;
+        }
+        // The grass this pen would eat if nothing else fed it, and the gap its footprint leaves —
+        // the corral arm's own two lines.
+        let demand_grass = (herd.fodder_per_biomass * herd.biomass).max(0.0);
+        let pasture_fraction = if demand_grass > 0.0 {
+            (herd.footprint_intake / demand_grass).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let grass_shortfall = (demand_grass - herd.footprint_intake).max(0.0);
+        // **THE FODDERING GATE, ASKED ONCE.** No Foddering, no hay bid at all.
+        let fodder_demand = if foddering_known {
+            grass_shortfall
+        } else {
+            NOTHING_DEMANDED
+        };
+        pens.push(PenBid {
+            fauna_id: fauna_id.as_str(),
+            priority: assignment.priority,
+            demand_grass,
+            pasture_fraction,
+            fodder_demand,
+        });
+    }
+    if pens.is_empty() {
+        return HashMap::new();
+    }
+    let fodder_bids: Vec<(SourcePriority, f32)> = pens
+        .iter()
+        .map(|bid| (bid.priority, bid.fodder_demand))
+        .collect();
+    let fodder_shares = settle_scarce_store(&fodder_bids, stores.get(FODDER).to_f32());
+    // With the hay settled, every pen's larder bill is known — hay pays the bread bill down exactly
+    // as pasture does, so the two are one `land_hay_fraction` term.
+    let mut larder_bids: Vec<(SourcePriority, f32)> = Vec::with_capacity(pens.len());
+    let mut settled: Vec<(String, PenFeedShare)> = Vec::with_capacity(pens.len());
+    for (index, bid) in pens.iter().enumerate() {
+        let herd = registry
+            .find(bid.fauna_id)
+            .expect("every bid was collected from this registry");
+        let fodder_share = fodder_shares[index];
+        let land_hay_fraction = if bid.demand_grass > 0.0 {
+            ((herd.footprint_intake + fodder_share) / bid.demand_grass).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let gross_upkeep = pen_upkeep(herd, fauna);
+        let hay_food = if bid.demand_grass > 0.0 {
+            gross_upkeep * (fodder_share / bid.demand_grass)
+        } else {
+            0.0
+        };
+        let larder_bill = gross_upkeep * (1.0 - land_hay_fraction);
+        larder_bids.push((bid.priority, larder_bill));
+        settled.push((
+            bid.fauna_id.to_string(),
+            PenFeedShare {
+                pasture_fraction: bid.pasture_fraction,
+                fodder_share,
+                land_hay_fraction,
+                hay_food,
+                larder_bill,
+                // Filled in once the larder is split below — every pen has to bid before any of them
+                // is served.
+                larder_share: NOTHING_DEMANDED,
+            },
+        ));
+    }
+    let larder_shares = settle_scarce_store(&larder_bids, stores.get(FOOD).to_f32());
+    for (index, (_, share)) in settled.iter_mut().enumerate() {
+        share.larder_share = larder_shares[index];
+    }
+    settled.into_iter().collect()
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
@@ -1639,6 +1854,28 @@ pub fn advance_labor_allocation(
         // fodder term. Collected in the loop; the rate is stamped on them post-loop (the take arm
         // already borrows the herd mutably, so a second pass keeps the borrows simple).
         let mut kept_pens: Vec<String> = Vec::new();
+        // **EVERY PEN'S FEED, SETTLED BEFORE A SINGLE ROW IS VISITED** (`docs/plan_standing_upkeep.md`
+        // §4.9 item 9b). The corral arm used to draw hay and then bread off the band's stores *inside*
+        // the loop below, so a store that could not cover every pen fed the earliest row in
+        // `assignments` and starved the last — and since `set_assignment` re-pushes an edited row to
+        // the end, the pen the player had just adjusted was the one fed last. One pass that sees every
+        // pen at once has no vector position left to spend: see [`settle_pen_feed`].
+        let pen_feed = settle_pen_feed(
+            &allocation.assignments,
+            &registry,
+            &fauna,
+            &cohort.stores,
+            knows(
+                &discovery,
+                faction,
+                FODDERING_DISCOVERY_ID,
+                knowledge_threshold,
+            ),
+            band_pos,
+            hunt_reach,
+            grid_width,
+            wrap_horizontal,
+        );
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             // **A ROW WITH NO TAKE CREW IS STILL VISITED, because the row is the band's HOLDING**
@@ -3019,52 +3256,46 @@ pub fn advance_labor_allocation(
                     // the tended-patch arm in Forage.
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
-                        // **The larder offset (Grazing 2d §2.3).** A penned herd grazes its fenced
-                        // footprint (`advance_herd_grazing`, Logistics → `footprint_intake`), and that
-                        // grass covers part of its feed. The keeper's larder pays only the remainder:
+                        // **THE FEED IS ALREADY SETTLED** (`docs/plan_standing_upkeep.md` §4.9 item
+                        // 9b). Every term below — the pasture offset (Grazing 2d §2.3), the hay draw
+                        // and its Foddering gate (Flora Roster F3 §5.2), and the three-terms-of-one-
+                        // demand split — is struck by [`settle_pen_feed`] across **every** pen this
+                        // band keeps, before the loop. What is left here is applying this pen's share:
+                        // the arm stamps the herd and spends the settled amounts, and takes no
+                        // allocation decision of its own.
+                        //
+                        // **Why it moved.** The draws used to happen here, in loop order, so a store
+                        // that could not cover every pen fed the earliest row and starved the last.
+                        //
                         //   demand_grass     = fodder_per_biomass × biomass   (grass to fully feed it)
                         //   pasture_fraction = clamp(footprint_intake / demand_grass, 0, 1)
-                        //   larder_upkeep    = pen.upkeep_per_biomass × biomass × (1 − pasture_fraction)
+                        //   larder_bill      = pen_upkeep × (1 − land_hay_fraction)
+                        //
                         // A lush footprint (pasture_fraction → 1) feeds the pen for free; a barren one
-                        // (→ 0) pays the full bill (today's worst case, preserved).
-                        let demand_grass = (herd.fodder_per_biomass * herd.biomass).max(0.0);
-                        let pasture_fraction = if demand_grass > 0.0 {
-                            (herd.footprint_intake / demand_grass).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
-                        herd.pen_pasture_fraction = pasture_fraction;
-                        // **HAY, drawn BEFORE the lossy larder (Flora Roster F3, §5.2).** Hay is
-                        // delivered graze-flow: it enters the pen economy at exactly the point graze
-                        // does, covering the gap the footprint left BEFORE any human food is hauled.
-                        // Gated on **Foddering** — no Foddering, no draw, and everything below is
-                        // byte-identical to the pre-F3 pasture-only pen. The draw is bounded by the gap
-                        // AND the `FODDER` store (a stock — this is the buffer the overwintering carry
-                        // rides), and `LocalStore::take` returns what it *actually* took.
-                        let grass_shortfall = (demand_grass - herd.footprint_intake).max(0.0);
-                        let fodder_draw = if grass_shortfall > 0.0
-                            && knows(
-                                &discovery,
-                                faction,
-                                FODDERING_DISCOVERY_ID,
-                                knowledge_threshold,
-                            ) {
+                        // (→ 0) pays the full bill.
+                        //
+                        // **A pen with no settled share is a pen the settlement did not see**, which
+                        // is only possible if this arm and [`settle_pen_feed`] disagree about which
+                        // rows are pens in reach — so it feeds on nothing rather than silently
+                        // inventing a draw the split never accounted for.
+                        let share = pen_feed.get(fauna_id).copied();
+                        herd.pen_pasture_fraction =
+                            share.map_or(0.0, |share| share.pasture_fraction);
+                        // The settled hay, spent. The share is bounded by what the store held when it
+                        // was struck and nothing takes `FODDER` between then and here, so this take
+                        // pays in full; `LocalStore::take` still reports what it actually took, which
+                        // is the number the herd is stamped with.
+                        let fodder_draw = share.map_or(0.0, |share| {
                             cohort
                                 .stores
-                                .take(FODDER, scalar_from_f32(grass_shortfall))
+                                .take(FODDER, scalar_from_f32(share.fodder_share))
                                 .to_f32()
-                        } else {
-                            0.0
-                        };
+                        });
                         herd.fodder_draw = fodder_draw;
                         // The share fed by the LAND and HAY together (grass + delivered hay), before
                         // the larder is touched. Hay *is* feed, so it pays down the larder bill exactly
                         // as pasture does — one term, both jobs.
-                        let land_hay_fraction = if demand_grass > 0.0 {
-                            ((herd.footprint_intake + fodder_draw) / demand_grass).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
+                        let land_hay_fraction = share.map_or(0.0, |share| share.land_hay_fraction);
                         // **The three-terms-of-one-demand split (Flora Roster F3).** The gross bread
                         // bill (`pen_upkeep`, on the SAME basis `corralYield` uses) is paid down by three
                         // sources that PARTITION it — the footprint's pasture, delivered hay, and the
@@ -3075,18 +3306,20 @@ pub fn advance_labor_allocation(
                         // Hay's food-equivalent is the share of the bread bill it paid off — its grass
                         // draw over the grass demand — converting `fodder_draw` out of grass units (~25×
                         // the food scale) so it sits in the same row as the food-unit pasture/larder
-                        // terms. Computed from the same locals, so the wire cannot disagree with what the
-                        // pen paid.
-                        let gross_upkeep = pen_upkeep(herd, &fauna);
-                        herd.pen_hay_food = if demand_grass > 0.0 {
-                            gross_upkeep * (fodder_draw / demand_grass)
-                        } else {
-                            0.0
-                        };
-                        let demand = gross_upkeep * (1.0 - land_hay_fraction);
-                        // The NET larder bill after pasture + hay — the exact number billed just below.
+                        // terms. Struck from the same settlement, so the wire cannot disagree with what
+                        // the pen paid.
+                        herd.pen_hay_food = share.map_or(0.0, |share| share.hay_food);
+                        // The NET larder bill after pasture + hay. It is the pen's whole remaining
+                        // demand, **not** what the band could afford — the fed fraction below is
+                        // measured against it, so a pen served short reads short.
+                        let demand = share.map_or(0.0, |share| share.larder_bill);
                         herd.pen_larder_bill = demand;
-                        let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
+                        let paid = share.map_or(0.0, |share| {
+                            cohort
+                                .stores
+                                .take(FOOD, scalar_from_f32(share.larder_share))
+                                .to_f32()
+                        });
                         pen_feed_paid += paid;
                         // The herd's TOTAL fed fraction: the land+hay share plus the paid share of the
                         // (further-reduced) larder bill. Fully fed when the larder covers its remainder
@@ -5865,7 +6098,8 @@ mod labor_yield_tests {
 
     use crate::components::{
         BuildJob, BuildSource, Improvement, LaborAllocation, LaborAssignment, LaborTarget,
-        LocalStore, MoraleCause, PopulationCohort, SourceYield, TakeSelection, Tile,
+        LocalStore, MoraleCause, PopulationCohort, SourcePriority, SourceYield, TakeSelection,
+        Tile,
     };
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
@@ -6187,6 +6421,7 @@ mod labor_yield_tests {
             // below rides the entry instead.
             kit: None,
             workers: builders,
+            priority: SourcePriority::default(),
         });
         assert!(
             allocation.enqueue_build(source.clone(), declared),
@@ -6332,6 +6567,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -6340,6 +6576,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
         );
@@ -6411,6 +6648,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -6451,6 +6689,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -6593,6 +6832,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -6623,6 +6863,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
 
@@ -6688,6 +6929,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
 
@@ -6766,6 +7008,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         let keeper = spawn_band(
@@ -6785,6 +7028,7 @@ mod labor_yield_tests {
                         .kit("husbandry")
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
+                priority: SourcePriority::default(),
             }],
         );
 
@@ -6937,6 +7181,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
             );
             declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -7071,6 +7316,7 @@ mod labor_yield_tests {
                 },
                 workers: GATHERERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -7132,6 +7378,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
             );
             if let Some(declared) = improvement {
@@ -7242,6 +7489,7 @@ mod labor_yield_tests {
                 },
                 workers,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7263,6 +7511,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7492,6 +7741,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -7699,6 +7949,7 @@ mod labor_yield_tests {
                             },
                             workers,
                             kit: None,
+                            priority: SourcePriority::default(),
                         }],
                     );
                     if let Some(declared) = improvement {
@@ -7786,6 +8037,7 @@ mod labor_yield_tests {
                                 },
                                 workers,
                                 kit: None,
+                                priority: SourcePriority::default(),
                             }],
                         );
                         if let Some(declared) = improvement {
@@ -7995,6 +8247,7 @@ mod labor_yield_tests {
                 },
                 workers: field_workers_needed,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         let short_handed = spawn_band(
@@ -8019,6 +8272,7 @@ mod labor_yield_tests {
                         .kit("husbandry")
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -8126,6 +8380,7 @@ mod labor_yield_tests {
                         .kit("husbandry")
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
+                priority: SourcePriority::default(),
             }],
         );
         // A start-stocked ledger — `spawn_band` builds no equipment, and wear is only charged on an
@@ -8247,6 +8502,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
 
@@ -8342,6 +8598,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -8423,6 +8680,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -8440,6 +8698,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
 
@@ -8486,6 +8745,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
 
@@ -8587,6 +8847,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -8617,6 +8878,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -8709,6 +8971,7 @@ mod labor_yield_tests {
                     },
                     workers: SOLE_FORAGER,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
             );
             if let Some(declared) = improvement {
@@ -8803,6 +9066,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -8839,6 +9103,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -8906,6 +9171,7 @@ mod labor_yield_tests {
                     },
                     workers: SOLE_HUNTER,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
             );
             if let Some(declared) = improvement {
@@ -9096,6 +9362,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -9250,11 +9517,13 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
         );
@@ -9386,11 +9655,13 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
         );
@@ -9543,6 +9814,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     kit: Some(kit.clone()),
+                    priority: SourcePriority::default(),
                 },
                 // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
                 // because a build's gear is a property of the queue ENTRY and not of the band.
@@ -9550,6 +9822,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
         );
@@ -9774,6 +10047,7 @@ mod labor_yield_tests {
                         .kit(HURDLING_KIT)
                         .expect("the shipped roster carries the hurdling kit"),
                 ),
+                priority: SourcePriority::default(),
             }],
         );
         world
@@ -9928,6 +10202,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -10008,6 +10283,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -10037,6 +10313,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -10067,6 +10344,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -10110,6 +10388,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -10129,6 +10408,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
         );
         world.run_system_once(advance_labor_allocation);

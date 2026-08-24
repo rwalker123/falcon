@@ -1357,7 +1357,7 @@ func _ready() -> void:
 	_assert_work_fodder_readouts()
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
-	# until it got these (`_work_floor_open` is otherwise never true in either harness). Two rows: one
+	# until it got these (no harness otherwise opens `_work_picker_open`). Two rows: one
 	# BUILDING a pen beside one that is not, and the claim is that the picker cannot tell them apart.
 	# The standing-investment WARN line and the discard confirm that used to ride the first row are
 	# gone with issue #442 — a stance re-pick leaves the improvement alone, so there is nothing to warn
@@ -1393,7 +1393,7 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_lit_rung(EXTRACTIVE_ROW_PRESET)
 	_assert_policy_pick_confirms(EXTRACTIVE_ROW_HERD_ID, false)
-	_hud._bandpanel._work_floor_open = false
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# UNDER-CONTAINED managed herd in the WORK board (fauna neglect-escape arc): a Corralled herd that
@@ -2419,6 +2419,10 @@ func _ready() -> void:
 	await _render_work_inspector_width_states()
 
 	await _render_work_material_width_states()
+
+	await _render_work_priority_states()
+
+	await _render_not_yet_estimated_states()
 
 	_assert_pending_assign_rollback()
 
@@ -3491,11 +3495,15 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# A schedule with a zero in it is what `ArrivalStrip.has_gap` admits — the whole of what makes the
 	# strip mount at all.
 	model["schedule"] = PackedFloat32Array(WORST_CASE_INSPECTOR_SCHEDULE)
-	var was_open: bool = _hud._bandpanel._work_floor_open
-	_hud._bandpanel._work_floor_open = true
+	# **THE TALLER PICKER, WHICH IS THE PRIORITY ONE** (§4.9 item 9b). The two are mutually exclusive,
+	# so the strip's ceiling takes a max rather than a sum — and staging the FLOOR picker here would
+	# understate it by the hint line and leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that
+	# is no longer the worst one.
+	var was_open: StringName = _hud._bandpanel._work_picker_open
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_PRIORITY
 	var reserved: float = _hud._bandpanel._work_inspector_height(model)
 	var strip: Control = _hud._bandpanel._build_work_inspector(band, model)
-	_hud._bandpanel._work_floor_open = was_open
+	_hud._bandpanel._work_picker_open = was_open
 	strip.visible = false
 	add_child(strip)
 	await _settle()
@@ -10006,7 +10014,7 @@ func _collect_rung_labels(node: Node, out: Array) -> void:
 		_collect_rung_labels(child, out)
 
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
-## repage so the picker actually renders. `_work_floor_open` is otherwise never true in either
+## repage so the picker actually renders. No harness otherwise opens `_work_picker_open` in either
 ## harness, which is why this control had zero frame coverage.
 ## Open the work inspector on the row working a NAMED herd — the trade-row frames need a specific
 ## source (the wolf), not "the first row", which is the forage patch.
@@ -10031,7 +10039,7 @@ func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 		if String(model.get("herd_id", "")) != herd_id:
 			continue
 		_hud._bandpanel._work_open_key = String(model.get("key", ""))
-		_hud._bandpanel._work_floor_open = true
+		_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_FLOOR
 		_hud._bandpanel._repage_work_zone()
 		return
 	_fail("%s" % _work_row_absence_report(herd_id, band, models))
@@ -14077,7 +14085,7 @@ func _assert_queue_expanded_shape(where: String, entries: int) -> void:
 		chips == 0)
 	_assert_band_panel("…and the pager went with the pages (%d)" % pagers, pagers == 0)
 	_assert_band_panel("…and no work inspector can be open in this mode",
-		_hud._bandpanel._work_open_key == "" and not _hud._bandpanel._work_floor_open)
+		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
 	_assert_band_panel("…and there is no `+N more` row left, every entry having a row of its own",
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null)
 	# **WHAT IT KEEPS.** The zone's own head, so the player knows where they are; and the POOLS block
@@ -14133,7 +14141,7 @@ func _assert_queue_expansion_doors() -> void:
 	# ⛔ …AND ENTERING THE MODE CLEARED THE WORK INSPECTOR WITH IT.
 	_assert_band_panel("⛔ …and entering the mode CLEARED the open work inspector, so it cannot spring back on the collapse (`%s`)"
 			% _hud._bandpanel._work_open_key,
-		_hud._bandpanel._work_open_key == "" and not _hud._bandpanel._work_floor_open)
+		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
 	# ② THE HEADER FOLDS IT BACK — the expanded view has no overflow row left, so this is the only way.
 	var head := _queue_head_toggle()
 	if head == null:
@@ -14535,7 +14543,7 @@ func _assert_queue_expanded_settings() -> void:
 				and strip.global_position.y >= owner.global_position.y)
 	# ⛔ THE EXCLUSION, on the frame where both expansions are asked for at once.
 	_assert_band_panel("…and no work inspector is open beside it — entering the mode cleared it",
-		_hud._bandpanel._work_open_key == "" and not _hud._bandpanel._work_floor_open)
+		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_scroll_only_where_sanctioned()
@@ -17057,3 +17065,487 @@ func _work_row_accounts_label(name_label: Label) -> Label:
 	if walk == null:
 		return null
 	return _find_meta_control(walk, HudWorkVocab.WORK_ROW_ACCOUNTS_META) as Label
+
+
+# =====================================================================================
+#  THE PLAYER'S OWN RANK ON A WORKED ROW (`docs/plan_standing_upkeep.md` §4.9 item 9b)
+# =====================================================================================
+#
+# **ONE FRAME CARRIES EVERY STATE AT ONCE, and that is the point of it.** This arc has hidden three
+# separate defects in the gap between two disjoint frame families — a strip-open frame with no picker
+# beside a picker-open frame with no strip, and so on — so the required state here is a board carrying
+# a HIGH row, a LOW row and a NORMAL row TOGETHER, with the inspector open on one of them and the
+# priority picker showing in the same frame. A second frame swaps the floor picker in on that very
+# row, which is the only way to see the mutual exclusion at all: two pickers that are never asked for
+# together always look exclusive.
+#
+# **THE CLICKS ARE REAL CLICKS.** `pressed.emit()` cannot see a covered, disabled, zero-size or
+# IGNORE-filtered control and a directly-called Callable cannot see any of it — which is how a
+# completely dead drag shipped green in #570 — so the link and every picker button are driven through
+# `_drive_click`, and the claim is the COMMAND LINE the press produced.
+
+## The three rows the board carries at once. The hunt row is the one the inspector opens on, so the
+## marked row and the picker are in one frame; the two forage rows carry the other two ranks.
+const PRIORITY_HIGH_TILE := Vector2i(71, 18)
+const PRIORITY_NORMAL_TILE := Vector2i(72, 19)
+const PRIORITY_LOW_HERD_ID := "game_deer_07"
+
+## The rank each of those rows is published at. Stated as the WORDS the decoder writes — this fixture
+## is shaped exactly like `dict::population`'s output, and a fixture spelling the wire ordinal would
+## be testing a decode this client deliberately does not do.
+const PRIORITY_HIGH_LEVEL := "high"
+const PRIORITY_NORMAL_LEVEL := "normal"
+const PRIORITY_LOW_LEVEL := "low"
+
+## A band working three sources at three different ranks. Everything else is
+## `_concerning_food_band_fixture`'s, which already gives the tab a POOLS block, a work board and the
+## chips above it.
+##
+## **THE NORMAL ROW STATES ITS RANK EXPLICITLY rather than omitting the key.** The wire always carries
+## the field, so a fixture that left it out would be asserting that a MISSING mark prints nothing —
+## a weaker claim than the one that matters, which is that the DEFAULT prints nothing.
+func _work_priority_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "target_x": PRIORITY_HIGH_TILE.x,
+			"target_y": PRIORITY_HIGH_TILE.y, "floor": 0.5,
+			"actual_yield": 0.15, "sustainable_yield": 0.15,
+			"priority": PRIORITY_HIGH_LEVEL},
+		{"kind": "forage", "workers": 2, "target_x": PRIORITY_NORMAL_TILE.x,
+			"target_y": PRIORITY_NORMAL_TILE.y, "floor": 0.5,
+			"actual_yield": 0.11, "sustainable_yield": 0.11,
+			"priority": PRIORITY_NORMAL_LEVEL},
+		{"kind": "hunt", "workers": 2, "fauna_id": PRIORITY_LOW_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17,
+			"actual_yield": 0.46, "sustainable_yield": 0.20, "realized_yield": 0.46,
+			"priority": PRIORITY_LOW_LEVEL},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+## …and the MEASURED WORST CASE with a mark on it: the four-cash-crop patch, whose line two already
+## elides onto its floor clause, marked HIGH. It is the state the leading placement exists for — a
+## trailing mark would be the first thing the trim took, on the one board where the rank matters most.
+func _work_priority_widest_band_fixture() -> Dictionary:
+	var band := _material_forage_band_fixture(
+		MATERIAL_CROPS_ROWS, Vector2i(MATERIAL_CROPS_X, MATERIAL_CROPS_Y))
+	var rows: Array = band["labor_assignments"]
+	(rows[0] as Dictionary)["priority"] = PRIORITY_HIGH_LEVEL
+	return band
+
+func _render_work_priority_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_push_bands([_work_priority_band_fixture()])
+	# The LEFT dock is the shipped default edge and the narrowest box the work zone is ever given, so
+	# every width claim below is measured where it binds.
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(PRIORITY_LOW_HERD_ID)
+	await _settle()
+	# ⛔ THE PICKER IS OPENED BY A REAL PRESS ON THE REAL LINK, never by poking `_work_picker_open`.
+	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	await _save("band_panel_work_priority")
+	_assert_shell_is_wide(false, "band_panel_work_priority")
+	_assert_band_panel("band_panel_work_priority: the `%s` link really opened the PRIORITY picker (%s)"
+			% [HudWorkVocab.WORK_INSPECT_PRIORITY, _hud._bandpanel._work_picker_open],
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY)
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_work_inspector_fits("band_panel_work_priority")
+	_report_zone_content_extent("band_panel_work_priority")
+	# THE COMBINED CLAIM: all three ranks on the board, in this frame, beside the open picker.
+	_assert_work_row_priority_marks("band_panel_work_priority")
+	_assert_work_priority_picker_lit("band_panel_work_priority", PRIORITY_LOW_LEVEL)
+	_report_work_links_row_width("band_panel_work_priority")
+
+	# ⛔ THE MUTUAL EXCLUSION, on the one row both pickers are offered on. Driven with a real press on
+	# `Change policy` while the priority picker is standing, so what is asserted is that opening one
+	# CLOSED the other — a claim no frame showing a single picker can make.
+	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_POLICY)
+	await _save("band_panel_work_priority_floor_swap")
+	_assert_band_panel("band_panel_work_priority_floor_swap: `%s` swapped the strip to the FLOOR picker (%s)"
+			% [HudWorkVocab.WORK_INSPECT_POLICY, _hud._bandpanel._work_picker_open],
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR)
+	_assert_band_panel("…and the priority picker is GONE with it, not merely covered",
+		_find_meta_control(_panel, HudWorkVocab.WORK_PRIORITY_RUNG_META) == null)
+	_assert_band_panel("…and the floor picker really is the one showing",
+		_find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) != null)
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_work_inspector_fits("band_panel_work_priority_floor_swap")
+	# …and back the other way, so neither picker is the privileged one.
+	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	_assert_band_panel("…and pressing `%s` again swaps back, closing the floor picker (%s)"
+			% [HudWorkVocab.WORK_INSPECT_PRIORITY, _hud._bandpanel._work_picker_open],
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY
+			and _find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) == null)
+
+	# ⛔ WHAT EACH BUTTON SENDS, read off the command LINE. All three, because a picker that sent one
+	# level whatever was pressed would satisfy any single-button claim.
+	for level in HudWorkVocab.WORK_PRIORITY_LEVELS:
+		await _assert_work_priority_click(String(level))
+
+	# THE WIDEST LINE TWO IN THE GAME, WITH A MARK ON IT.
+	_push_bands([_work_priority_widest_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_priority_widest")
+	_assert_shell_is_wide(false, "band_panel_work_priority_widest")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_priority_widest")
+	_assert_work_row_states_its_materials("band_panel_work_priority_widest",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
+		MATERIAL_CROPS_ROWS)
+	_assert_marked_row_accounts_still_fit("band_panel_work_priority_widest",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
+
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## Press one of the work inspector strip's inline links the way a player presses it — found by FACE,
+## because an inline link's face IS its identity (`HudWidgets.build_inline_link` carries no meta and
+## the four faces are fixed vocabulary), and driven through `_drive_click` so a link that is covered,
+## zero-size or filtered out fails here rather than passing on a Callable nobody could reach.
+func _press_work_inspector_link(face: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("work priority — no work inspector strip is open to press `%s` on" % face)
+		return
+	var buttons: Array[Button] = []
+	_collect_buttons_typed(strip, buttons)
+	for button in buttons:
+		if button.text != face:
+			continue
+		await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
+		await _settle()
+		return
+	_fail("work priority — the strip carries no `%s` link to press" % face)
+
+## GUARD: **all three ranks are on this board at once, and the DEFAULT one prints nothing.** The two
+## halves are asserted together because either alone is satisfiable by a defect: "the marked rows
+## carry a prefix" passes on a board that prefixes every row, and "the normal row carries none" passes
+## on a board that dropped the feature entirely.
+##
+## The mark is found by META rather than by text — the face is composed from the vocab, so a text
+## match would be asserting the string the assertion itself built.
+func _assert_work_row_priority_marks(state_name: String) -> void:
+	var found: Array[Control] = []
+	var marks := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_PRIORITY_META, found)
+	var levels: Array[String] = []
+	for mark in marks:
+		levels.append(String(mark.get_meta(HudWorkVocab.WORK_ROW_PRIORITY_META)))
+	levels.sort()
+	var want: Array[String] = [PRIORITY_HIGH_LEVEL, PRIORITY_LOW_LEVEL]
+	want.sort()
+	_assert_band_panel("%s: exactly the HIGH and LOW rows are marked — the NORMAL one prints no prefix (got %s)"
+		% [state_name, str(levels)], levels == want)
+	for mark in marks:
+		var level := String(mark.get_meta(HudWorkVocab.WORK_ROW_PRIORITY_META))
+		var label := mark as Label
+		if label == null:
+			_fail("%s — the %s mark is not a Label" % [state_name, level])
+			continue
+		# The FACE, which is the whole of what the player reads: the word, then the sentence joiner
+		# the rest of line two uses, and the ink that says which end of the scale it is.
+		_assert_band_panel("%s: the %s row leads line two with \"%s\" (got \"%s\")"
+				% [state_name, level, HudWorkVocab.work_row_priority_prefix(level), label.text],
+			label.text == HudWorkVocab.work_row_priority_prefix(level))
+		_assert_band_panel("%s: …in the %s ink" % [state_name, level],
+			label.get_theme_color("font_color") == HudWorkVocab.work_priority_ink(level))
+		# ⛔ **AND THE ACCOUNTS BESIDE IT ARE UNTOUCHED.** The prefix is its own node precisely so the
+		# accounts keep their own elide and their own hover; a prefix spliced into that string would
+		# be inside the text the trim measures AND inside the tooltip it repeats.
+		var accounts := _find_meta_control(mark.get_parent(),
+			HudWorkVocab.WORK_ROW_ACCOUNTS_META) as Label
+		if accounts == null:
+			_fail("%s — the %s row's mark has no accounts label beside it" % [state_name, level])
+			continue
+		_assert_band_panel("%s: …and the %s row's ACCOUNTS carry no rank text of their own (\"%s\")"
+				% [state_name, level, accounts.text],
+			not accounts.text.contains(String(HudWorkVocab.WORK_ROW_PRIORITY_PREFIXES[level]))
+				and accounts.tooltip_text == accounts.text)
+
+## GUARD: the open picker shows three buttons and lights the row's CURRENT rank. Lighting the wrong
+## one is invisible in a thumbnail — three buttons in a row look the same whichever is primary — and
+## a picker that lit nothing would read as a row with no rank at all.
+func _assert_work_priority_picker_lit(state_name: String, want_level: String) -> void:
+	var found: Array[Control] = []
+	var rungs := _collect_meta_controls(_panel, HudWorkVocab.WORK_PRIORITY_RUNG_META, found)
+	_assert_band_panel("%s: the priority picker offers all three levels (%d)"
+		% [state_name, rungs.size()], rungs.size() == HudWorkVocab.WORK_PRIORITY_LEVELS.size())
+	var lit: Array[String] = []
+	for rung in rungs:
+		# The SAME lit test `_assert_lit_rung` makes of a floor preset — the primary stylebox's own
+		# background — so the two pickers cannot be judged by two different notions of "selected".
+		var box := (rung as Button).get_theme_stylebox("normal")
+		if box is StyleBoxFlat \
+				and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG):
+			lit.append(String(rung.get_meta(HudWorkVocab.WORK_PRIORITY_RUNG_META)))
+	var want_lit: Array[String] = [want_level]
+	_assert_band_panel("%s: …and lights the row's own rank, %s, and only it (lit %s)"
+		% [state_name, want_level, str(lit)], lit == want_lit)
+
+## ⛔ GUARD: **one REAL click on one level button sends that level and no other.** Asserted on the
+## command LINE rather than on the payload dict, so the token order, the source form and the level
+## word are all judged as the socket would see them.
+##
+## The picker is re-opened by pressing the link again, because committing CLOSES it — which is itself
+## part of the contract and is asserted here rather than in a frame of its own.
+func _assert_work_priority_click(level: String) -> void:
+	# The link is a TOGGLE, so this presses it only when the picker is shut — which after the first
+	# pick is every time, the commit having closed it. Pressing unconditionally would close the picker
+	# the caller had just opened and the button would be gone before it could be found.
+	if _hud._bandpanel._work_picker_open != HudWorkVocab.WORK_PICKER_PRIORITY:
+		await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	var button := _find_meta_control_valued(_panel, HudWorkVocab.WORK_PRIORITY_RUNG_META, level) \
+		as Button
+	if button == null:
+		_fail("work priority — the open picker carries no `%s` button" % level)
+		return
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.work_priority_requested.connect(sink)
+	await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
+	await _settle()
+	_hud.work_priority_requested.disconnect(sink)
+	if seen.is_empty():
+		_fail("work priority — a REAL click on `%s` emitted no work_priority at all (this is the press the player makes)"
+			% level)
+		return
+	var payload: Dictionary = seen[0]
+	var line := String(MAIN_SCRIPT.format_work_priority(payload).get("line", ""))
+	var want := "work_priority %d %d %s %s" % [HudConst.PLAYER_FACTION_ID,
+		int(payload.get("band_id", HudConst.NO_BAND_ID)), PRIORITY_LOW_HERD_ID, level]
+	_assert_band_panel("work priority — a REAL click on `%s` sends `%s` (got \"%s\")"
+		% [level, want, line], line == want)
+	_assert_band_panel("…and the pick CLOSES the picker (%s)"
+		% _hud._bandpanel._work_picker_open,
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
+
+## GUARD + REPORT: **the mark did not cost the accounts their room.** Line two elides onto its floor
+## clause at the four-cash-crop worst case, and the whole placement argument is that a LEADING mark
+## still leaves the accounts whole — so this asserts what the two-line row promises (the accounts are
+## never cut) and PRINTS what the prefix actually spent, which is the figure a future account format
+## has to be measured against.
+func _assert_marked_row_accounts_still_fit(state_name: String, row_name: String) -> void:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	var name_label: Label = null
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text == row_name:
+			name_label = label
+			break
+	if name_label == null:
+		_fail("%s — no work row named \"%s\" to judge the mark on" % [state_name, row_name])
+		return
+	var accounts := _work_row_accounts_label(name_label)
+	if accounts == null:
+		_fail("%s — the row has no accounts line to judge" % state_name)
+		return
+	var mark := _find_meta_control(accounts.get_parent(),
+		HudWorkVocab.WORK_ROW_PRIORITY_META) as Label
+	if mark == null:
+		_fail("%s — the widest row carries no priority mark, so this measures nothing" % state_name)
+		return
+	var accounts_width := _accounts_clause_width(accounts)
+	_assert_band_panel(
+		"%s: with the mark leading, every account still renders whole, un-elided (%.0f of the %.0f they need)"
+			% [state_name, accounts.size.x, accounts_width],
+		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width)
+	# …and the mark itself is not the thing that got cut. It is fixed-width, so a shortfall here means
+	# the line ran out before the accounts even began.
+	_assert_band_panel("%s: …and the mark itself renders whole (%.0f of %.0f)"
+			% [state_name, mark.size.x, _label_text_width(mark)],
+		mark.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= _label_text_width(mark))
+	print("band_panel_preview: %s — line two is %.0fpx of a %.0fpx line: %.0f mark + %.0f accounts (the floor clause is what the trim takes)"
+		% [state_name, mark.size.x + accounts_width, mark.get_parent().size.x,
+			mark.size.x, accounts_width])
+
+## REPORT: **what the FOUR-link row asks of the zone's fixed box.** The strip gained a fourth inline
+## link (`Priority`) and the zone is 356px on a side dock with ~2px of margin on the widest state, so
+## the number is worth printing beside the fit claim: `_assert_zone_content_width_fits` fails loudly
+## if it overruns, and this says how close it came.
+##
+## **IT PRINTS RATHER THAN ASSERTS** — the fit assertion is the claim, and a second one against a
+## hand-picked threshold would state a design answer (a narrower face, a wider flank) this harness may
+## not choose. The `_report_zone_content_extent` rule.
+func _report_work_links_row_width(state_name: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("%s — no work inspector strip to measure the links row on" % state_name)
+		return
+	var buttons: Array[Button] = []
+	_collect_buttons_typed(strip, buttons)
+	var links: Control = null
+	for button in buttons:
+		if button.text == HudWorkVocab.WORK_INSPECT_PRIORITY:
+			links = button.get_parent() as Control
+			break
+	if links == null:
+		_fail("%s — the strip carries no `%s` link to measure from" % [
+			state_name, HudWorkVocab.WORK_INSPECT_PRIORITY])
+		return
+	var host: Control = _hud._bandpanel._work_zone_host
+	var box := host.size.x if host != null and is_instance_valid(host) else 0.0
+	print("band_panel_preview: %s — the %d-link row asks %.0fpx of a %.0fpx zone (%.0f spare)"
+		% [state_name, links.get_child_count(), links.get_combined_minimum_size().x, box,
+			box - links.get_combined_minimum_size().x])
+
+
+# =====================================================================================
+#  A BUILD QUEUED THIS TURN IS NOT A STALLED ONE (`sim_schema::BUILD_NOT_YET_ESTIMATED`, `-5`)
+# =====================================================================================
+#
+# **REPORTED FROM PLAY.** A fresh `Cultivate (4, 19)` rendered `⚠ Stalled 0%` in the BUILD QUEUE
+# block, with two builders staffed and nothing whatever wrong, and the next turn cleared it. The
+# warning said *something needs your attention* when the answer was *its first turn has not run yet* —
+# and a mark that appears when nothing is wrong and then vanishes on its own is how a player is taught
+# to ignore every other mark.
+#
+# **ONE WIRE VALUE WAS CARRYING TWO FACTS.** The sim now spells them apart: `-1` is *the estimate pass
+# ran and had no number* (a real stall), `-5` is *no pass has ever run for this entry*. The client had
+# never heard of `-5`, so `SourceForecast.build_turns_remaining` collapsed it onto `-1` and the whole
+# family of readers below it inherited the hazard.
+#
+# ⛔ **THE FRAME CARRIES BOTH AT ONCE, AND IT HAS TO.** The entire defect is that the two look
+# identical, so a frame showing only the fresh entry proves nothing — it would be green with the fix
+# and green with the defect restored on a board that had never seen a genuine stall. This block's
+# three rows therefore read three DIFFERENT faces in one render: `Queued 0%`, `⚠ Stalled 0%` and the
+# rotting `⚠ ∞`.
+
+## The head entry — queued since the last turn resolved, so the sim has not looked at it yet.
+const NOT_YET_ESTIMATED_TURNS := SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED
+## …and the herd behind it, genuinely stalled: the pass RAN for this one and had no number.
+const GENUINELY_STALLED_TURNS := SourceForecast.BUILD_TURNS_NO_ESTIMATE
+## The meter both of them sit at. **They sit at the SAME percentage on purpose** — progress is exactly
+## what cannot tell the two apart (a real stall is at `0%` too), which is why the sim answers on the
+## estimate pass and not on the meter.
+const NOT_YET_ESTIMATED_PERCENT := 0
+
+## The three-entry queue with a `-5` head and a `-1` herd behind it. Built from
+## `_build_queue_patches(3)` so the composition, the blocked-reason key and the positions stay the
+## block's own; only the two countdowns are stated here, because stating them is the whole fixture.
+func _not_yet_estimated_patches() -> Array:
+	var patches := _build_queue_patches(3)
+	for patch_variant in patches:
+		var patch: Dictionary = patch_variant
+		if Vector2i(int(patch["x"]), int(patch["y"])) == QUEUE_HEAD_PATCH:
+			patch["build_turns_remaining"] = NOT_YET_ESTIMATED_TURNS
+	return patches
+
+func _render_not_yet_estimated_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_set_forage_patches(_not_yet_estimated_patches())
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1,
+		GENUINELY_STALLED_TURNS))
+	_push_bands([_build_queue_band_fixture(3)])
+	await _settle()
+	await _save("band_panel_build_queue_not_yet_estimated")
+	_assert_shell_is_wide(false, "band_panel_build_queue_not_yet_estimated")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_build_queue_not_yet_estimated")
+	_assert_build_queue_block(3, "the not-yet-estimated queue")
+	_assert_not_yet_estimated_reads_apart()
+	_assert_not_yet_estimated_producers()
+
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## ⛔ GUARD: **the fresh entry and the stalled one read DIFFERENTLY, in one frame, off the rendered
+## block.** Three claims, and the set is what makes any of them worth anything:
+##
+##   1. the `-5` head reads `Queued 0%` — the exact composed face, with NO hazard glyph anywhere in it;
+##   2. the `-1` herd behind it still reads `⚠ Stalled 0%`, so the fix did not simply delete the
+##      hazard for everybody (which is what folding the two the other way would look like);
+##   3. the two faces are NOT EQUAL, which is the defect stated directly. Asked as its own claim
+##      because 1 and 2 are both satisfiable by a table that answers one string for every sentinel if
+##      the composed expectations ever collapsed onto each other.
+##
+## The expectations are composed from the shipped vocabulary rather than written as literals, so this
+## asserts the RENDER agrees with the format table and not that the table agrees with itself.
+func _assert_not_yet_estimated_reads_apart() -> void:
+	var rows := _build_queue_rows()
+	if rows.size() < 2:
+		_fail("not-yet-estimated — the block drew %d rows; the frame needs the head AND the herd"
+			% rows.size())
+		return
+	var faces: Array[String] = []
+	for row in rows:
+		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
+		faces.append("" if date == null \
+			else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META)))
+	var queued := HudSelectionVocab.RUNG_QUEUED_FORMAT % NOT_YET_ESTIMATED_PERCENT
+	var stalled := HudSelectionVocab.RUNG_STALLED_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, NOT_YET_ESTIMATED_PERCENT]
+	_assert_band_panel("not-yet-estimated: the head reads \"%s\" (got \"%s\")"
+		% [queued, faces[0]], faces[0] == queued)
+	_assert_band_panel("…and carries NO hazard mark, nothing being wrong with it",
+		not faces[0].contains(HudSelectionVocab.RUNG_HAZARD_GLYPH))
+	_assert_band_panel("…and the entry BEHIND it, genuinely stalled, still reads \"%s\" (got \"%s\")"
+		% [stalled, faces[1]], faces[1] == stalled)
+	_assert_band_panel("⛔ …so the two READ APART in one frame, which is the whole defect (%s)"
+		% str(faces), faces[0] != faces[1])
+	# **THE INK IS THE OTHER HALF OF THE FACE.** A neutral word in amber still says *warning*, and the
+	# one tint rule is what is being asserted: `Queued` carries neither needle and must fall through to
+	# `INK`, while the stalled row beside it must still earn `WARN` off its hazard mark.
+	_assert_band_panel("…the head's date is in the NEUTRAL ink (%s)"
+			% DetailFormat.rung_value_color(faces[0]).to_html(false),
+		DetailFormat.rung_value_color(faces[0]) == HudStyle.INK)
+	_assert_band_panel("…and the stalled one beside it is still AMBER (%s)"
+			% DetailFormat.rung_value_color(faces[1]).to_html(false),
+		DetailFormat.rung_value_color(faces[1]) == HudStyle.WARN)
+
+## GUARD: **the SWEEP — every producer that forks on this family answers neutrally for `-5`.** PNG-less
+## and deliberately so: three of the four cannot be seen in any one frame (a pace tints a compose
+## face, a stall verdict marks a map badge), and the stated failure mode in this client is exactly
+## *two producers disagreeing about one meter*. Asked of the producers themselves, so a consumer that
+## renders correctly off a producer that has quietly stopped passing the sentinel still fails here.
+func _assert_not_yet_estimated_producers() -> void:
+	# (1) THE ONE WIRE READER passes it through rather than collapsing it — the read that started the
+	# defect. Asked with the wire's own key spelling, off a bare source dict.
+	var wire := {SourceForecast.FORECAST_BUILD_TURNS_KEY: NOT_YET_ESTIMATED_TURNS}
+	var read := SourceForecast.build_turns_remaining(wire, HudComposeVocab.BARE_FORECAST_PREFIX)
+	_assert_band_panel("not-yet-estimated: `build_turns_remaining` passes `-5` through as itself (got %d)"
+		% read, read == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED)
+	_assert_band_panel("…and specifically does NOT collapse it onto `-1`, which is the defect",
+		read != SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	# (2) THE PACE CLASSIFIER answers *no verdict*, and NOT the growing arm it would otherwise fall
+	# through to — which paints a compose face HEALTHY green off a number that does not exist.
+	var pace := SourceForecast.build_pace(NOT_YET_ESTIMATED_TURNS, QUEUE_BUILDERS)
+	_assert_band_panel("…`build_pace` answers no verdict for it (got \"%s\")" % pace,
+		pace == SourceForecast.BUILD_PACE_UNKNOWN)
+	# The fallback is the caller's neutral in the shipped hosts, so it is what a pace with no verdict
+	# must come back as — and the GROWING arm beside it is what "not painted as climbing" is measured
+	# against rather than against a colour written here.
+	_assert_band_panel("…so it neither stops the sheet nor paints it as climbing",
+		not HudWidgets.improvement_pace_stops(pace)
+			and HudWidgets.improvement_pace_color(pace, HudStyle.INK) == HudStyle.INK
+			and HudWidgets.improvement_pace_color(pace, HudStyle.INK)
+				!= HudWidgets.improvement_pace_color(
+					SourceForecast.BUILD_PACE_GROWING, HudStyle.INK))
+	# (3) THE STALL VERDICT the map badge and the work row's rung slot BOTH call. A staffed entry the
+	# sim has not looked at is not stalled; the paired positive keeps it from passing on a function
+	# that has stopped answering `true` at all.
+	_assert_band_panel("…and `build_is_stalled` is FALSE for a staffed `-5` (map badge + work row)",
+		not SourceForecast.build_is_stalled(wire,
+			SourceForecast.BUILD_METER_UNSTARTED, QUEUE_BUILDERS))
+	_assert_band_panel("…while a `-3` beside it still IS stalled, so the verdict still fires",
+		SourceForecast.build_is_stalled(
+			{SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_ROTS},
+			SourceForecast.BUILD_METER_UNSTARTED, QUEUE_BUILDERS))
+	# (4) THE TURNS CLAUSE — the compose sheet's half — states no clause, exactly as it does for every
+	# reading with no number to state. A `≈-5 turns` is what a missing guard here would print.
+	_assert_band_panel("…and `build_turns_clause` states no clause for it (got \"%s\")"
+			% DetailFormat.build_turns_clause(NOT_YET_ESTIMATED_TURNS, QUEUE_BUILDERS),
+		DetailFormat.build_turns_clause(NOT_YET_ESTIMATED_TURNS, QUEUE_BUILDERS) == "")

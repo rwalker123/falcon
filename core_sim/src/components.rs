@@ -1864,6 +1864,74 @@ impl LaborTarget {
     }
 }
 
+/// **HOW THE PLAYER RANKS ONE WORKED ROW AGAINST ANOTHER WHEN THE BAND CANNOT COVER EVERYTHING**
+/// (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+///
+/// **It is a STATED VALUE on the row, and it is never a list position.** The rank the scarcity
+/// handlers read has to survive an edit, and [`LaborAllocation::set_assignment`] removes the row it
+/// edits and re-pushes it at the **end** — so a rank derived from a vector index would reset itself
+/// on the `−`/`+` the player just pressed, which is the exact defect
+/// [`LaborAllocation::normalize`]'s own callout was written for. Nothing anywhere may derive one of
+/// these from `assignments`' iteration order.
+///
+/// # ⛔ THE VARIANT ORDER IS THE SHEDDING ORDER, AND THE DERIVED `Ord` IS WHAT READS IT
+///
+/// Declared **lowest-served first**, so `Low < Normal < High` and a `min_by` over rows lands on the
+/// row the player marked as the one to give up. Re-ordering the variants silently inverts every
+/// scarcity handler; add a variant only at the end that keeps that reading true.
+///
+/// **The wire numbering is deliberately NOT this order** (`snapshot.fbs`: `Normal = 0`, so the
+/// default costs no bytes), which is why the codec maps the two rather than casting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum SourcePriority {
+    /// **Give this up first.** The row a scarcity handler reaches for before any other candidate in
+    /// the same step.
+    Low,
+    /// The default, and where the overwhelming majority of rows sit — which is what makes an
+    /// explicit rank a rule that fires only on a deliberate pick and leaves everything else exactly
+    /// where the shipped ordering put it.
+    #[default]
+    Normal,
+    /// **Serve this first, take from it last.**
+    High,
+}
+
+impl SourcePriority {
+    /// **THE ORDER A SCARCE STORE IS HANDED OUT IN** — the reverse of the shedding order, which is
+    /// the same statement read from the other end: the row you would take a worker from last is the
+    /// row you feed first.
+    ///
+    /// Spelled as an array rather than as `Self::ALL.rev()` so a reader of the pen-feed split sees
+    /// the tiers in the order they are actually served.
+    pub const SERVED_FIRST_TO_LAST: [SourcePriority; 3] = [
+        SourcePriority::High,
+        SourcePriority::Normal,
+        SourcePriority::Low,
+    ];
+
+    /// Stable command/wire token — the [`crate::intensification::UpkeepFundMode::as_str`]
+    /// convention, so the two band-level dials read the same way in a command line and a log.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourcePriority::Low => "low",
+            SourcePriority::Normal => "normal",
+            SourcePriority::High => "high",
+        }
+    }
+
+    /// Parse a command/wire token. `None` for anything else, which the caller reports **by name**
+    /// rather than guessing at — `upkeep_mode`'s discipline, for the same reason: a rank the player
+    /// mistyped must not silently become the default.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "low" => Some(SourcePriority::Low),
+            "normal" => Some(SourcePriority::Normal),
+            "high" => Some(SourcePriority::High),
+            _ => None,
+        }
+    }
+}
+
 /// One staffed labor demand: a target and the whole-worker head-count assigned to it.
 ///
 /// **The build is not one of its axes any more** (`docs/plan_standing_upkeep.md` §2.5). A row used
@@ -1888,6 +1956,19 @@ pub struct LaborAssignment {
     /// along. `assign_labor` stores the *resolved* choice for a Forage/Hunt row, so a replayed
     /// command lands on the kit it named rather than on whatever the default is today.
     pub kit: Option<crate::equipment_config::KitChoice>,
+    /// **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — see [`SourcePriority`].
+    ///
+    /// It is **intent**, so it is inside this type's `PartialEq` (unlike `LaborAllocation`'s
+    /// `last_yields`, which is derived telemetry and deliberately outside it): two allocations that
+    /// differ only in which row is marked `High` are two different orders, and a rollback record or
+    /// a command no-op guard that could not tell them apart would report *nothing changed* on the
+    /// one input the scarcity handlers read.
+    ///
+    /// **It survives an edit to the row.** [`LaborAllocation::set_assignment`] carries it across the
+    /// remove-and-re-push, exactly as it carries a standing kit — a `−`/`+` on a marked row is not a
+    /// statement about priority, and a rank that reset itself on a stepper press is the positional
+    /// defect this property replaces.
+    pub priority: SourcePriority,
 }
 
 // **RETIRED: `ActivityCrew` / `LaborAssignment::improvement_workers` / `LaborAllocation::idle_for`**
@@ -3510,6 +3591,13 @@ impl LaborAllocation {
         // **zero**, where the caller resolves no kit at all: an unstaffed row must not silently
         // forget what it was equipped with.
         let mut standing_kit = None;
+        // **THE RANK THE PLAYER PUT ON THIS ROW, CARRIED ACROSS THE RE-PUSH.** This method removes
+        // the edited row and appends it at the **end**, so a rank read off a vector index would be
+        // reset by the very `−`/`+` that triggered the edit — the positional defect
+        // [`SourcePriority`] exists to replace. Unlike the kit, it is kept on **every** path,
+        // staffed or not: `assign_labor` states a crew and a tier and says nothing at all about
+        // priority, so there is no reading of this command that could be an order to clear it.
+        let mut standing_priority = SourcePriority::default();
         let mut had_row = false;
         if let Some(idx) = self
             .assignments
@@ -3517,6 +3605,7 @@ impl LaborAllocation {
             .position(|a| a.target.same_source(&target))
         {
             standing_kit = self.assignments[idx].kit.clone();
+            standing_priority = self.assignments[idx].priority;
             had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
@@ -3536,6 +3625,7 @@ impl LaborAllocation {
                 // command deliberately resolves no kit when it is unstaffing, and writing that
                 // `None` onto a surviving row would forget the tier the band was working at.
                 kit: if keep_holding { standing_kit } else { kit },
+                priority: standing_priority,
             });
             self.last_yields.push(SourceYield::ZERO);
         }
@@ -3568,6 +3658,26 @@ impl LaborAllocation {
         self.assignments.remove(idx);
         self.last_yields.remove(idx);
         let _ = self.prune_build_queue();
+        true
+    }
+
+    /// **MARK ONE SOURCE ROW WITH THE PLAYER'S RANK** — the whole of `work_priority`
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9b). Returns `false` when this band holds no row
+    /// for that source, which the caller reports the way the queue verbs report the same miss.
+    ///
+    /// **It touches nothing else on the row.** The take crew, the floor, the kit and the queue entry
+    /// are all statements the player made separately; this one says only *where this row stands when
+    /// the band runs short*, so a rank is settable on a row held at zero exactly as it is on a
+    /// staffed one.
+    pub fn set_source_priority(&mut self, target: &LaborTarget, priority: SourcePriority) -> bool {
+        let Some(assignment) = self
+            .assignments
+            .iter_mut()
+            .find(|a| a.target.same_source(target))
+        else {
+            return false;
+        };
+        assignment.priority = priority;
         true
     }
 
@@ -4053,17 +4163,44 @@ impl LaborAllocation {
                 .any(|payoff| payoff.amount > PAYS_NOTHING)
     }
 
-    /// The least productive row `admits` names, on **two levels**: a row paying into no account at
-    /// all ([`Self::pays_any_account`]) ranks below every row that pays into one, and beneath that
-    /// the order is [`Self::yield_per_worker`] exactly as before. Ties go to the **earliest** row
+    /// **THE ROW'S OWN RANK** — the outermost level of the shedding comparison, read straight off
+    /// the assignment. A row past the end of the vector cannot be a candidate, so its reading is the
+    /// default and never decides anything.
+    fn priority_of(&self, index: usize) -> SourcePriority {
+        self.assignments
+            .get(index)
+            .map_or_else(SourcePriority::default, |assignment| assignment.priority)
+    }
+
+    /// The least productive row `admits` names, on **three levels**: the player's own rank
+    /// ([`SourcePriority`], `Low` first), then a row paying into no account at all
+    /// ([`Self::pays_any_account`]) ranking below every row that pays into one, and beneath that the
+    /// order is [`Self::yield_per_worker`] exactly as before. Ties go to the **earliest** row
     /// (`min_by` keeps the first minimum), so the choice is stable across turns rather than depending
     /// on how the vector happens to be ordered.
     ///
     /// **The levels are in that order so the existing behaviour cannot invert.** A food row pays and
     /// carries a positive per-worker yield, so it still outranks every non-food row — a band short of
     /// hands keeps its people on food and drops the tobacco, which was always the intent. What the
-    /// first level decides is only the tie *beneath* that: between a Field paying materials and a row
-    /// paying nothing, the dead one goes first.
+    /// second level decides is only the tie *beneath* that: between a Field paying materials and a
+    /// row paying nothing, the dead one goes first.
+    ///
+    /// # ⛔ THE RANK ORDERS CANDIDATES; IT NEVER CREATES OR REMOVES ONE
+    ///
+    /// `admits` is untouched by it, and so is every step of [`Self::row_that_gives`] that selects by
+    /// **role** rather than by productivity (the scout, the warrior, the keepers, the builders). A
+    /// `High` mark on an unimproved source therefore does **not** save it from step 6 while an
+    /// improved `Normal` row waits at step 9 — the rank is a level *within* a step, which is what
+    /// makes it a tie-break on top of the shipped eleven-step walk rather than a second walk beside
+    /// it. And the terminal step still takes the band's last hand off its last row, whatever it is
+    /// marked.
+    ///
+    /// **AND IT MAY NEVER BECOME A COMBINED SCORE.** It is a lexicographic level above
+    /// [`Self::pays_any_account`], nothing else: multiplying, weighting or summing a rank with a
+    /// yield would invent an exchange rate between a stated preference and a food rate, which is the
+    /// same invention `labor_config.json`'s `_comment_weeding` refuses between two accounts. With
+    /// every row at the default this level is **constant**, so the comparison collapses to exactly
+    /// the two it had before.
     fn least_productive_row(
         &self,
         admits: impl Fn(usize, &LaborAssignment) -> bool,
@@ -4073,8 +4210,12 @@ impl LaborAllocation {
             .enumerate()
             .filter(|(index, assignment)| admits(*index, assignment))
             .min_by(|(left, _), (right, _)| {
-                self.pays_any_account(*left)
-                    .cmp(&self.pays_any_account(*right))
+                self.priority_of(*left)
+                    .cmp(&self.priority_of(*right))
+                    .then_with(|| {
+                        self.pays_any_account(*left)
+                            .cmp(&self.pays_any_account(*right))
+                    })
                     .then_with(|| {
                         self.yield_per_worker(*left)
                             .total_cmp(&self.yield_per_worker(*right))
@@ -4685,6 +4826,7 @@ mod tests {
             },
             workers: take,
             kit: None,
+            priority: SourcePriority::default(),
         }
     }
 
@@ -4700,6 +4842,7 @@ mod tests {
             target,
             workers,
             kit: None,
+            priority: SourcePriority::default(),
         }
     }
 
@@ -4961,6 +5104,219 @@ mod tests {
             )),
             vec![staffed_forage(PATCH_B, 0).target],
             "a source part-way to a rung is skipped while another candidate can give instead"
+        );
+    }
+
+    /// A forage row on `tile` staffed with `take` gatherers and carrying the player's `priority` —
+    /// the shape the rank fixtures below need, and the only difference from [`staffed_forage`].
+    #[cfg(test)]
+    fn ranked_forage(
+        tile: bevy::math::UVec2,
+        take: u32,
+        priority: SourcePriority,
+    ) -> LaborAssignment {
+        LaborAssignment {
+            priority,
+            ..staffed_forage(tile, take)
+        }
+    }
+
+    /// **THE RANK DECIDES *WHICH* ROW GIVES, AND IT SITS ABOVE THE YIELD** — driven through
+    /// `normalize`, not through the comparator, because a rank nothing consults would still satisfy a
+    /// comparator test (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+    ///
+    /// Both rows are step-5 candidates (two hands each, neither learning), and A out-yields B four to
+    /// one per head — so the shipped two-level order picks **B** every time and the marks below are
+    /// each strictly against it.
+    #[test]
+    fn the_marked_row_is_the_one_a_shrunk_band_thins() {
+        let fixture = || LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 2)],
+            // 8 ÷ 2 = 4.0 a head on A against 2 ÷ 2 = 1.0 on B: B is the natural giver.
+            last_yields: vec![realized(8.0), realized(2.0)],
+            ..Default::default()
+        };
+
+        // The control — every row at the default, which is where almost every row sits. The outer
+        // level is constant, so this is the answer the two-level order gave before the rank existed.
+        let mut unmarked = fixture();
+        assert_eq!(
+            shed_targets(&unmarked.normalize(3, ShedFacts::default())),
+            vec![staffed_forage(PATCH_B, 0).target],
+            "with nothing marked the poorer row per head still gives, exactly as before"
+        );
+
+        // A `Low` on the RICH row drags it under the poor one: the rank is above the yield, not
+        // blended with it.
+        let mut rich_row_marked_low = fixture();
+        rich_row_marked_low.assignments[0].priority = SourcePriority::Low;
+        assert_eq!(
+            shed_targets(&rich_row_marked_low.normalize(3, ShedFacts::default())),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "the row the player marked Low gives, though it is the better ground per hand"
+        );
+
+        // …and the mirror: a `High` on the POOR row lifts it above the rich one, so the rich row
+        // gives instead. The two together are the flip — each answer is the opposite of the control.
+        let mut poor_row_marked_high = fixture();
+        poor_row_marked_high.assignments[1].priority = SourcePriority::High;
+        assert_eq!(
+            shed_targets(&poor_row_marked_high.normalize(3, ShedFacts::default())),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "a High mark holds the poor row and sends the hand off the rich one instead"
+        );
+    }
+
+    /// **AND THE ANSWER DOES NOT MOVE WHEN THE VECTOR DOES.** The same two rows, the same marks, the
+    /// order of `assignments` reversed — the rank is a property of the row, so the row that gives is
+    /// the same one.
+    #[test]
+    fn the_marked_row_gives_whatever_order_the_vector_is_in() {
+        let mut forward = LaborAllocation {
+            assignments: vec![
+                ranked_forage(PATCH_A, 2, SourcePriority::Low),
+                staffed_forage(PATCH_B, 2),
+            ],
+            last_yields: vec![realized(8.0), realized(2.0)],
+            ..Default::default()
+        };
+        let mut reversed = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_B, 2),
+                ranked_forage(PATCH_A, 2, SourcePriority::Low),
+            ],
+            last_yields: vec![realized(2.0), realized(8.0)],
+            ..Default::default()
+        };
+        let marked = vec![staffed_forage(PATCH_A, 0).target];
+        assert_eq!(
+            shed_targets(&forward.normalize(3, ShedFacts::default())),
+            marked,
+            "the marked row gives when it sits first"
+        );
+        assert_eq!(
+            shed_targets(&reversed.normalize(3, ShedFacts::default())),
+            marked,
+            "…and when it sits last — the mark is a property of the row, not of the vector"
+        );
+    }
+
+    /// **THE RANK ORDERS WITHIN A STEP AND NEVER ACROSS ONE** — the design, pinned so it cannot be
+    /// "fixed" into a second walk beside [`ShedStep`]'s eleven.
+    ///
+    /// An unimproved row marked `High` is still emptied at **step 6**, before the improved row
+    /// marked `Normal` is so much as a candidate at **step 9**. Neither row can thin (one hand each),
+    /// so step 6 is the first step with anything to give.
+    #[test]
+    fn a_high_mark_does_not_lift_a_row_out_of_the_step_it_belongs_to() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                ranked_forage(PATCH_A, 1, SourcePriority::High),
+                staffed_forage(PATCH_B, 1),
+            ],
+            // The marked row is also the RICHER one, so nothing but the step order can explain it
+            // giving.
+            last_yields: vec![realized(9.0), realized(1.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            1,
+            ShedFacts {
+                sources: vec![
+                    SourceShedFacts::default(),
+                    SourceShedFacts {
+                        improved: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "step 6 empties the unimproved row even marked High — a rank is a level inside a step, \
+             never a way out of it"
+        );
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "and the improved row it was ranked against is untouched"
+        );
+    }
+
+    /// **THE LAST HAND STILL COMES OFF THE LAST ROW.** A rank orders candidates; it never makes one
+    /// ineligible, so a band reduced to nothing cannot be held back by a `High` mark.
+    #[test]
+    fn a_high_mark_does_not_save_the_bands_last_row() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![ranked_forage(PATCH_A, 1, SourcePriority::High)],
+            last_yields: vec![realized(5.0)],
+            ..Default::default()
+        };
+        assert_eq!(
+            shed_targets(&allocation.normalize(0, ShedFacts::default())),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "the terminal step takes the last worker off the last row whatever it is marked"
+        );
+        assert!(allocation.assignments.is_empty());
+    }
+
+    /// **THE MARK SURVIVES AN EDIT TO THE ROW**, which is the whole reason it is a stated value and
+    /// not a list position: [`LaborAllocation::set_assignment`] removes the edited row and re-pushes
+    /// it at the **end**, so a rank derived from an index would be reset by the very `−`/`+` that
+    /// triggered the edit.
+    #[test]
+    fn a_stepper_press_does_not_clear_the_rank_it_moves_to_the_back() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 2)],
+            last_yields: vec![realized(8.0), realized(2.0)],
+            ..Default::default()
+        };
+        let marked = staffed_forage(PATCH_A, 0).target;
+        assert!(allocation.set_source_priority(&marked, SourcePriority::Low));
+
+        // The `−` the player presses next: same source, one fewer hand.
+        allocation.set_assignment(marked.clone(), 1, 4, None);
+
+        let index = allocation
+            .assignments
+            .iter()
+            .position(|row| row.target.same_source(&marked))
+            .expect("the edited row is still held");
+        assert_eq!(
+            index,
+            allocation.assignments.len() - 1,
+            "the edit really did re-push the row to the end — a positional rank would have moved"
+        );
+        assert_eq!(
+            allocation.assignments[index].priority,
+            SourcePriority::Low,
+            "and the mark came with it"
+        );
+        assert_eq!(allocation.assignments[index].workers, 1, "the edit applied");
+    }
+
+    /// **THE RANK IS INTENT, SO IT IS INSIDE EQUALITY** — unlike `last_yields`, which is derived
+    /// telemetry and deliberately outside it. Two allocations differing only in a mark are two
+    /// different orders, and a rollback record or a no-op guard that could not tell them apart would
+    /// report *nothing changed* on the one input the scarcity handlers read.
+    #[test]
+    fn two_allocations_differing_only_in_a_mark_are_not_equal() {
+        let plain = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2)],
+            last_yields: vec![realized(8.0)],
+            ..Default::default()
+        };
+        let mut marked = plain.clone();
+        marked.assignments[0].priority = SourcePriority::High;
+        assert_ne!(plain, marked, "a mark is part of an allocation's identity");
+
+        let mut telemetry_only = plain.clone();
+        telemetry_only.last_yields = vec![realized(1.0)];
+        assert_eq!(
+            plain, telemetry_only,
+            "…while the derived telemetry beside it still is not"
         );
     }
 

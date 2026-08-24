@@ -63,7 +63,8 @@ use core_sim::{
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds,
     CombatConfig, CombatConfigHandle, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
     HuntDraw, HuntingParty, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry,
+    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, SourcePriority,
+    TileRegistry,
 };
 
 /// A stock far above anything a crew can take, so the escapement floor never binds and the *fight*
@@ -215,6 +216,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     },
                     workers: CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },
@@ -907,6 +909,7 @@ fn a_gather_reports_a_point_and_pays_it() {
                         },
                         workers: CREW,
                         kit: None,
+                        priority: SourcePriority::default(),
                     }],
                     ..Default::default()
                 },

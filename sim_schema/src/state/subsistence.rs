@@ -87,6 +87,30 @@ pub const BUILD_METER_ROTS: i32 = -3;
 /// Appended below its siblings (append-only wire; the three existing values keep their numbers).
 pub const BUILD_QUEUE_BLOCKED: i32 = -4;
 
+/// **"THIS BUILD HAS NOT HAD A TURN YET"** — the wire value of `buildTurnsRemaining` for an entry the
+/// player has queued since the last turn resolved, so **no estimate pass has ever run for it**.
+///
+/// **It is NOT [`NO_BUILD_TURNS_ESTIMATE`], and that is the whole reason it exists.** `-1` means the
+/// sim looked and had no number: nobody is working the source, its gate refuses, or a running build
+/// banked nothing and is genuinely **stalled**. This one means the sim has not looked. A build the
+/// player queued a second ago is not a hazard, and folding the two together is what put
+/// `⚠ Stalled 0%` on a freshly declared `Cultivate` with two builders standing on it — a warning
+/// that cleared itself on the next turn, which is the worst shape a warning can have.
+///
+/// **The distinguishing fact is the ESTIMATE PASS, never the meter.** A genuinely stalled build also
+/// sits at `0%`, so progress cannot tell them apart. What can is that `publish_build_chain` stamps
+/// every entry it walks with its 0-based place in the line, and the Logistics decay passes clear that
+/// place back to [`NOT_IN_ANY_BUILD_QUEUE`] every turn — so a source that is in a band's **live**
+/// queue and still carries the cleared place is one no pass has reached since it was queued.
+///
+/// **Both webs**: a patch and a herd share `publish_build_chain` and the same per-turn reset, so a
+/// fresh `Tame` or `Corral` reads this exactly as a fresh `Cultivate` does.
+///
+/// A reader should render it as **"queued — starts next turn"**, never as a warning, and never as the
+/// silence `-1` earns. Appended below its siblings (append-only wire; the four existing values keep
+/// their numbers).
+pub const BUILD_NOT_YET_ESTIMATED: i32 = -5;
+
 /// **"THIS SOURCE IS IN NO BAND'S BUILD QUEUE"** — the neutral of `buildQueuePosition`, whose real
 /// values are **0-based** places in the winning band's queue.
 ///
@@ -569,7 +593,7 @@ pub struct HerdTelemetryState {
     /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
     /// would actually go.
     ///
-    /// **FOUR NEGATIVES, FOUR FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **FIVE NEGATIVES, FIVE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
     /// reject), or a gate refuses a *waiting* entry — which may well be eligible by the time it
@@ -578,6 +602,13 @@ pub struct HerdTelemetryState {
     /// same build with a **negative** net: the meter is going backwards and banked work is being
     /// lost. [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) = the band's builders are **staffed and standing
     /// on this entry** and its own gate refuses it, so nothing banks and nothing behind it moves.
+    /// [`crate::BUILD_NOT_YET_ESTIMATED`] (`-5`) = the player queued this build **since the last turn
+    /// resolved**, so no estimate pass has ever run for it — *"the sim has not looked"*, as against
+    /// `-1`'s *"the sim looked and had no number"*.
+    ///
+    /// Render `-5` as **"queued — starts next turn"** and never as a warning: a build declared a
+    /// second ago with a staffed pool on it is not a hazard, and folding it into `-1` put
+    /// `⚠ Stalled 0%` on a fresh `Cultivate` until the next turn cleared it.
     ///
     /// Render `-2`/`-3` as **infinity**, and distinguish them — both are answers, and one of them is
     /// costing the player progress they already paid for. `-4` is neither: it is a **stuck queue**,
@@ -1241,7 +1272,7 @@ pub struct ForagePatchState {
     /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
     /// would actually go.
     ///
-    /// **FOUR NEGATIVES, FOUR FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **FIVE NEGATIVES, FIVE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
     /// reject), or a gate refuses a *waiting* entry — which may well be eligible by the time it
@@ -1250,6 +1281,13 @@ pub struct ForagePatchState {
     /// same build with a **negative** net: the meter is going backwards and banked work is being
     /// lost. [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) = the band's builders are **staffed and standing
     /// on this entry** and its own gate refuses it, so nothing banks and nothing behind it moves.
+    /// [`crate::BUILD_NOT_YET_ESTIMATED`] (`-5`) = the player queued this build **since the last turn
+    /// resolved**, so no estimate pass has ever run for it — *"the sim has not looked"*, as against
+    /// `-1`'s *"the sim looked and had no number"*.
+    ///
+    /// Render `-5` as **"queued — starts next turn"** and never as a warning: a build declared a
+    /// second ago with a staffed pool on it is not a hazard, and folding it into `-1` put
+    /// `⚠ Stalled 0%` on a fresh `Cultivate` until the next turn cleared it.
     ///
     /// Render `-2`/`-3` as **infinity**, and distinguish them — both are answers, and one of them is
     /// costing the player progress they already paid for. `-4` is neither: it is a **stuck queue**,

@@ -3,7 +3,7 @@
 use crate::codec::{create_known_fragments, FbBuilder};
 use crate::state::population::{
     AccessibleStockpileEntryState, GenerationState, MaterialShortfallState, PopulationCohortState,
-    PopulationDemographicsState,
+    PopulationDemographicsState, SourcePriorityState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -288,6 +288,15 @@ fn create_populations<'a>(
                                 // board's `+` gate reads it instead of dividing by a fightless
                                 // reach. `0` on every non-hunt row. Appended last.
                                 huntUsefulWorkers: assignment.hunt_useful_workers,
+                                // **THE PLAYER'S OWN RANK ON THIS ROW** — mapped rather than cast,
+                                // because the wire numbering puts the DEFAULT at 0 (so it costs no
+                                // bytes) while the shedding order runs Low → Normal → High. Appended
+                                // last.
+                                priority: match assignment.priority {
+                                    SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                                    SourcePriorityState::High => fb::SourcePriority::High,
+                                    SourcePriorityState::Low => fb::SourcePriority::Low,
+                                },
                             },
                         )
                     })

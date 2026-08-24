@@ -238,16 +238,19 @@ pub(crate) fn herds_to_array(
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
         // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
         // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
-        // **FOUR NEGATIVES, FOUR FACTS** — `-1` is *no estimate*, `-2` is *the meter holds exactly
-        // where it is*, `-3` is *the meter is going backwards* and `-4` is *the builders are
-        // staffed and standing on this entry, and its own gate refuses it*
+        // **FIVE NEGATIVES, FIVE FACTS** — `-1` is *no estimate*, `-2` is *the meter holds exactly
+        // where it is*, `-3` is *the meter is going backwards*, `-4` is *the builders are staffed and
+        // standing on this entry, and its own gate refuses it*, and `-5` is *the player queued this
+        // since the last turn resolved, so no estimate pass has ever run for it*
         // (`sim_schema::{NO_BUILD_TURNS_ESTIMATE, BUILD_METER_HOLDS, BUILD_METER_ROTS,
-        // BUILD_QUEUE_BLOCKED}`). Passed through verbatim so GDScript reads the sim's own answer
-        // rather than deriving a second opinion — and **every one of them has to be READ on the
-        // other side**: the client accepted the first two and flattened `-3` back to *no estimate*,
-        // which rendered a bleeding build as no line at all. `-4` arrived with the build QUEUE
-        // (`docs/plan_standing_upkeep.md` §4.6b) and is the one a client cannot derive — the other
-        // three are arithmetic about one meter, and a queue is not arithmetic.
+        // BUILD_QUEUE_BLOCKED, BUILD_NOT_YET_ESTIMATED}`). Passed through verbatim so GDScript reads
+        // the sim's own answer rather than deriving a second opinion — and **every one of them has to
+        // be READ on the other side**: the client accepted the first two and flattened `-3` back to
+        // *no estimate*, which rendered a bleeding build as no line at all, then did the same to `-5`
+        // and put the `⚠ Stalled 0%` hazard on a build queued one command ago. `-4` arrived with the
+        // build QUEUE (`docs/plan_standing_upkeep.md` §4.6b) and `-5` with §4.9; neither is derivable
+        // client-side — the other three are arithmetic about one meter, and neither a queue nor an
+        // estimate pass is arithmetic.
         let _ = dict.insert("build_turns_remaining", herd.buildTurnsRemaining() as i64);
         // **WHERE THIS SOURCE SITS IN THE WINNING BAND'S BUILD QUEUE** — 0-based, and
         // `sim_schema::NOT_IN_ANY_BUILD_QUEUE` (`-1`) when no band has queued it
@@ -792,7 +795,8 @@ pub(crate) fn forage_patches_to_array(
         // herd block above, and the same contract: `*_work_done / *_work_cost` IS the `*_progress`
         // fraction beside it, the cost is the resolved price of that job on THIS patch and is
         // published whether or not a build runs, and `build_turns_remaining` of `-1` means NO
-        // ESTIMATE rather than zero (with `-2` / `-3` the two never-finishing answers). TWO pairs for two rungs, the `cultivate_build_fraction` /
+        // ESTIMATE rather than zero (with `-2` / `-3` the two never-finishing answers, `-4` a blocked
+        // queue and `-5` an entry no estimate pass has reached). TWO pairs for two rungs, the `cultivate_build_fraction` /
         // `sow_build_fraction` rule: independently tunable jobs must not share a number. ONE
         // turns/gear pair for both, because at most one improvement is ever in flight on one source.
         // MapView cross-refs all six onto `tile_info` (as `patch_*`), like the rest of the payload.
@@ -800,7 +804,9 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("cultivation_work_cost", patch.cultivationWorkCost());
         let _ = dict.insert("field_work_done", patch.fieldWorkDone());
         let _ = dict.insert("field_work_cost", patch.fieldWorkCost());
-        // The plant twin of the herd row's — `-1` no estimate, `-2` the meter holds, `-3` it rots.
+        // The plant twin of the herd row's — `-1` no estimate, `-2` the meter holds, `-3` it rots,
+        // `-4` the queue is blocked on it, `-5` it is queued and the sim has not looked yet. See the
+        // herd row for why each of the five has to be read as itself on the other side.
         let _ = dict.insert("build_turns_remaining", patch.buildTurnsRemaining() as i64);
         // The plant twin of the herd row's queue position — 0-based, `-1` = in no band's queue. See
         // there for why the countdown beside it is a CHAINED date and why the three build fields are

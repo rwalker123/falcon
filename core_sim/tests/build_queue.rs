@@ -27,10 +27,11 @@ use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     BuildJob, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation, LaborAssignment,
     LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
-    TileRegistry,
+    SourcePriority, TileRegistry,
 };
 use sim_schema::{
-    BUILD_METER_HOLDS, BUILD_QUEUE_BLOCKED, NOT_IN_ANY_BUILD_QUEUE, NO_BUILD_TURNS_ESTIMATE,
+    BUILD_METER_HOLDS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED, NOT_IN_ANY_BUILD_QUEUE,
+    NO_BUILD_TURNS_ESTIMATE,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -187,6 +188,7 @@ fn world_with_a_queue_knowing(
             },
             workers: GATHERERS,
             kit: None,
+            priority: SourcePriority::default(),
         })
         .collect();
     assignments.push(LaborAssignment {
@@ -195,12 +197,14 @@ fn world_with_a_queue_knowing(
         // ⛔ A `builders` ROW carries no kit — the bare isolation rides the queue entry
         // (`docs/plan_standing_upkeep.md` §4.7a ②).
         kit: None,
+        priority: SourcePriority::default(),
     });
     if keepers > 0 {
         assignments.push(LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keepers,
             kit: None,
+            priority: SourcePriority::default(),
         });
     }
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
@@ -741,6 +745,7 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
             target: LaborTarget::Husbandry,
             workers: keepers,
             kit: None,
+            priority: SourcePriority::default(),
         });
     }
 
@@ -863,11 +868,13 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
             },
             workers: HUNTERS,
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
+            priority: SourcePriority::default(),
         },
     ];
     if keepers > 0 {
@@ -875,6 +882,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
             target: LaborTarget::Husbandry,
             workers: keepers,
             kit: None,
+            priority: SourcePriority::default(),
         });
     }
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
@@ -1060,6 +1068,130 @@ fn keeping_a_herd_needs(app: &App, id: &str) -> u32 {
         .get()
         .rung(RungKey::AnimalPastoral)
         .upkeep_crew_needed(at_capacity)
+}
+
+// ---------------------------------------------------------------------------------------------
+// (5b) A build queued since the last turn is not a stall
+// ---------------------------------------------------------------------------------------------
+
+/// **A BUILD QUEUED SINCE THE LAST TURN IS NOT A STALL, AND THE WIRE MUST NOT SAY IT IS.**
+///
+/// One value carried two meanings: `NO_BUILD_TURNS_ESTIMATE` (`-1`) was published both when the
+/// estimate pass ran and had no number — nobody on it, a gate refusing, or a running build that
+/// banked nothing and is genuinely **stalled** — and when *no pass had ever run for the entry*. The
+/// client renders `-1` as `⚠ Stalled 0%`, so a `Cultivate` the player declared a second ago, with a
+/// staffed pool standing on it, was reported as a hazard until the next turn cleared it.
+///
+/// **The three arms are the whole claim**, and each fails on its own:
+/// 1. queued, no turn yet → [`BUILD_NOT_YET_ESTIMATED`];
+/// 2. one turn with the pool staffed → a **real count**, so the sentinel is transient and not sticky;
+/// 3. a live-queued entry the pass *did* reach and could not date → still `-1`, so a genuine stall
+///    keeps its own value. **This is the arm the meter cannot decide**: it sits at the same progress
+///    as arm 1.
+///
+/// Plus the control that stops the fix leaking across the map: an **unqueued** patch — which also
+/// carries the cleared queue place — must keep reading `-1`.
+#[test]
+fn a_build_queued_since_the_last_turn_publishes_not_yet_estimated_rather_than_a_stall() {
+    // ① QUEUED, AND NO TURN HAS RUN. The fixture spawns the band with its entry already in place,
+    //    which is exactly the frame after `cultivate` — the server re-captures on every command.
+    let (mut app, _band, sources) = world_with_a_queue(1, BUILDERS);
+    let source = sources[0];
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        published_turns(&app, source),
+        BUILD_NOT_YET_ESTIMATED,
+        "a build the player just queued has not been estimated — it is not stalled"
+    );
+    assert_eq!(
+        published_position(&app, source),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "fixture: the turn's own reset still stands, which is what says no pass has reached it"
+    );
+
+    // …AND THE CONTROL: a patch in NO band's queue carries the same cleared place, and must go on
+    // reading the plain no-answer sentinel. Without this the fix would put "starts next turn" on
+    // every unworked patch on the map.
+    let unqueued = {
+        let registry = app.world.resource::<core_sim::ForageRegistry>();
+        registry
+            .patches
+            .values()
+            .map(|patch| patch.tile)
+            .find(|tile| *tile != source)
+            .expect("the generated map carries more than one patch")
+    };
+    assert_eq!(
+        published_turns(&app, unqueued),
+        NO_BUILD_TURNS_ESTIMATE,
+        "a patch nobody has queued has no answer — it is not a build waiting to start"
+    );
+
+    // ② ONE TURN, POOL STAFFED → a real count. The sentinel is a state the first turn leaves.
+    resolve_a_turn(&mut app);
+    let counted = published_turns(&app, source);
+    assert!(
+        counted >= 0,
+        "the first turn turns the placeholder into a real finish date, got {counted}"
+    );
+
+    // ③ A GENUINE STALL KEEPS `-1`. The entry is live-queued and its meter is at the same zero as
+    //    arm ①; what differs is that the pass reached it and had no number. Nobody on the pool, so
+    //    it is not the blocked head's `-4` either.
+    // Nobody on the pool, which is what sends a refused gate down the *no answer* branch instead of
+    // the blocked head's `-4`.
+    const NOBODY_BUILDING: u32 = 0;
+    let (mut app, _band, sources) =
+        world_with_a_queue_knowing(1, NOBODY_BUILDING, !THE_GATE_IS_OPEN);
+    let stalled_source = sources[0];
+    resolve_a_turn(&mut app);
+    assert_eq!(
+        published_turns(&app, stalled_source),
+        NO_BUILD_TURNS_ESTIMATE,
+        "a queued entry the pass reached and could not date is a real stall and still says so"
+    );
+    assert!(
+        published_position(&app, stalled_source) >= BUILD_QUEUE_HEAD_POSITION,
+        "…because the pass stamped its place in the line, which is the whole test"
+    );
+}
+
+/// **The 0-based head of a queue**, named because the assertion it appears in is *"the pass stamped
+/// a real place"* and not an index comparison.
+const BUILD_QUEUE_HEAD_POSITION: i32 = 0;
+
+/// **THE ANIMAL WEB HAS IT TOO, AND FOR THE SAME REASON** — a `Tame` or `Corral` queued since the
+/// last turn is not a stall.
+///
+/// Both webs go through `publish_build_chain` and the same per-turn reset, so this is one fix; it is
+/// asserted rather than assumed because the player's report guessed it and a shared publisher is
+/// exactly the thing that can be half-wired.
+///
+/// **The fixture herd is HALF-BUILT**, which is the point: the sentinel is not a reading of the
+/// meter. A progress bar cannot tell a fresh entry from a frozen one — only *"has a pass reached
+/// it"* can.
+#[test]
+fn a_herds_build_queued_since_the_last_turn_publishes_not_yet_estimated_too() {
+    /// A floor the hunters do not strip to, so the escapement gate stays open and arm ② gets a real
+    /// count rather than the stall this file's other animal test walks to.
+    const LEAVE_IT_STANDING: f32 = 0.5;
+
+    let (mut app, _band, herd_id) = world_with_a_half_tamed_herd(NOBODY_KEEPING, LEAVE_IT_STANDING);
+    recapture_snapshot_in_place(&mut app.world);
+    let (turns, _, _, _, _) = published_herd(&app, &herd_id);
+    assert_eq!(
+        turns, BUILD_NOT_YET_ESTIMATED,
+        "a Tame the player just queued is waiting for its first turn, not stalled — and the meter \
+         is HALF built, so nothing about this is a progress reading"
+    );
+
+    resolve_an_animal_turn(&mut app);
+    let (counted, _, _, _, _) = published_herd(&app, &herd_id);
+    assert!(
+        counted >= 0,
+        "the first turn dates the animal web's entry exactly as it dates the plant web's, got \
+         {counted}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1537,6 +1669,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             },
             workers: RING_KEEPERS,
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Forage {
@@ -1547,21 +1680,25 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             },
             workers: GATHERERS,
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keeping_for(ONE_SOURCE),
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Husbandry,
             workers: RING_KEEPERS,
             kit: None,
+            priority: SourcePriority::default(),
         },
     ];
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
@@ -1883,6 +2020,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         },
         workers: GATHERERS,
         kit: None,
+        priority: SourcePriority::default(),
     };
     let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
         source: BuildSource::Patch(source),
@@ -1896,11 +2034,13 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             target: LaborTarget::Builders,
             workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keeping_for(ONE_SOURCE),
             kit: None,
+            priority: SourcePriority::default(),
         },
     ];
     let survivor = vec![
@@ -1910,11 +2050,13 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
+            priority: SourcePriority::default(),
         },
         LaborAssignment {
             target: LaborTarget::Agriculture,
             workers: keeping_for(2),
             kit: None,
+            priority: SourcePriority::default(),
         },
     ];
     let finisher_staffed: u32 = finisher.iter().map(|row| row.workers).sum();

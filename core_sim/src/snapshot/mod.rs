@@ -29,18 +29,19 @@ use sim_runtime::{
     PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState,
     ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
-    SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
-    TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState, VictoryResultState,
-    VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta, WorldSnapshot,
-    GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
+    SettlementStageViewState, SnapshotHeader, SourcePriorityState, StanceAxisState, StanceState,
+    StartMarkerState, TerrainOverlayState, TerrainSample, TileState, VictoryModeSnapshotState,
+    VictoryResultState, VictorySnapshotState, VoiceLineState, VoiceMediumState, WorldDelta,
+    WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE, GRAZE_PHASE_STRESSED,
+    GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
     components::{
         available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, BuildSource,
         Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
-        PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, FODDER, FOOD,
-        NO_RAID_FLOOR,
+        PendingMigration, PopulationCohort, PowerNode, SourcePriority, SourceYield, Tile, FODDER,
+        FOOD, NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
@@ -904,7 +905,9 @@ mod tests {
     use super::*;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
-    use crate::components::{ElementKind, LocalStore, MoraleCause, TakeSelection, YieldRange};
+    use crate::components::{
+        ElementKind, LocalStore, MoraleCause, SourcePriority, TakeSelection, YieldRange,
+    };
     use crate::forage::ForagePatch;
     use crate::power::PowerNodeId;
     use crate::{
@@ -1404,6 +1407,7 @@ mod tests {
                     },
                     workers: 10,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1412,6 +1416,7 @@ mod tests {
                     },
                     workers: 5,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             build_queue: Vec::new(),
@@ -1525,6 +1530,7 @@ mod tests {
                     },
                     workers: 10,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1533,6 +1539,7 @@ mod tests {
                     },
                     workers: 5,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             build_queue: Vec::new(),
@@ -1595,6 +1602,7 @@ mod tests {
                 },
                 workers: 10,
                 kit: None,
+                priority: SourcePriority::default(),
             }],
             build_queue: Vec::new(),
             last_yields: Vec::new(),
@@ -1638,6 +1646,7 @@ mod tests {
             target,
             workers: 6,
             kit: None,
+            priority: SourcePriority::default(),
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1672,6 +1681,7 @@ mod tests {
             },
             workers: 6,
             kit: None,
+            priority: SourcePriority::default(),
         };
         let state = labor_assignment_to_state(
             &assignment,

@@ -1158,6 +1158,33 @@ const BUILD_TURNS_ROTS := -3
 ## rather than merely waiting its turn.
 const BUILD_TURNS_QUEUE_BLOCKED := -4
 
+## **THE ANSWER FOR A BUILD THE SIM HAS NOT LOOKED AT YET** — `sim_schema::BUILD_NOT_YET_ESTIMATED`
+## (`docs/plan_standing_upkeep.md` §4.9). The player queued this entry SINCE THE LAST TURN RESOLVED,
+## so no estimate pass has ever run for it: there is no number because nothing has been asked, not
+## because the answer came back empty.
+##
+## **IT IS NOT `BUILD_TURNS_NO_ESTIMATE`, AND FOLDING THE TWO IS THE DEFECT IT EXISTS TO CLOSE.** `-1`
+## is *the sim looked and had no number* — nobody on it, a gate refusing, a running build banking
+## nothing — and a card renders that as the `⚠ Stalled` hazard, which is right for a build that has
+## had its chance. This is *the sim has not looked*, one command old, and it was reported from play as
+## `⚠ Stalled 0%` on a fresh `Cultivate (4, 19)` with two builders standing on it — a warning that
+## cleared itself on the next turn, which is the worst shape a warning can have. **It is therefore
+## NEUTRAL: no hazard mark, no hazard ink, no pace verdict.** Nothing is wrong; its first turn has not
+## run.
+##
+## **THE DISTINGUISHING FACT IS THE ESTIMATE PASS, NEVER THE METER, and only the sim holds it.** A
+## genuinely stalled build sits at `0%` too, so no progress comparison can separate them — what can is
+## that `publish_build_chain` stamps every entry it walks with its place in the line and the decay
+## passes clear that place every turn, so *live in a band's queue AND still carrying the cleared place*
+## is exactly *queued since the last pass*. The client holds neither the queues nor the passes and must
+## not re-derive any part of it.
+##
+## **THE FIFTH SENTINEL IS THE THIRD TIME THIS FAMILY HAS GROWN** (`-3` split out of `-2`, then `-4`
+## beside them, each time with a client reader left behind). Both readers that fork on the family —
+## `build_pace` here and `DetailFormat.build_sentinel_value` — answer for it inside their own single
+## fork; a third fork is the thing those two extractions exist to prevent.
+const BUILD_TURNS_NOT_YET_ESTIMATED := -5
+
 ## **THIS SOURCE IS IN NO BAND'S BUILD QUEUE** — the neutral of `FORECAST_BUILD_QUEUE_POSITION_KEY`,
 ## the client's copy of `sim_schema::NOT_IN_ANY_BUILD_QUEUE`. A real position is 0-based, so the
 ## sentinel sits outside the range exactly as the countdown's negatives do.
@@ -4181,6 +4208,10 @@ static func build_is_unstaffed(state: String) -> bool:
 ## ONLY SIGNAL THAT THINGS ARE FINE").
 ##
 ## **EACH ∞ SENTINEL HAS ITS OWN PACE, because the wire publishes two of them.**
+## **A `-5` IS NOT A PACE AT ALL**, and it is answered here rather than left to the fall-through: the
+## sim has run no estimate pass over the entry, so there is no direction to classify. See the arm
+## itself for what falling through would have painted.
+##
 ## `sim_schema::BUILD_METER_HOLDS` is the meter standing still and `BUILD_METER_ROTS` the meter losing
 ## ground — the red the schema promises for work already paid for and now bleeding. The amber used to
 ## cover both, which told a player whose build was being destroyed the same thing it tells one merely
@@ -4192,6 +4223,14 @@ static func build_pace(turns: int, build_workers: int = BUILD_CREW_ANY) -> Strin
         return BUILD_PACE_LOSING
     if turns == BUILD_TURNS_HOLDS:
         return BUILD_PACE_HOLDING if build_workers > BUILD_CREW_NONE else BUILD_PACE_HELD
+    # ⛔ **A BUILD THE SIM HAS NOT LOOKED AT HAS NO PACE, AND MUST NOT FALL THROUGH TO ONE.** Without
+    # this arm `-5` lands on `BUILD_PACE_GROWING` — the arm that means *the meter climbs and the face
+    # quotes a real turn count* — which paints a compose face HEALTHY green off a number that does not
+    # exist (`HudWidgets.improvement_pace_color`). Nor is it `HOLDING` or `LOSING`: those are verdicts
+    # about a crew's arithmetic, and no arithmetic has been done here. `UNKNOWN` is the honest answer
+    # and the neutral render, which is exactly what this state wants.
+    if turns == BUILD_TURNS_NOT_YET_ESTIMATED:
+        return BUILD_PACE_UNKNOWN
     if turns == BUILD_TURNS_NO_ESTIMATE:
         return BUILD_PACE_UNKNOWN
     return BUILD_PACE_GROWING
@@ -4407,14 +4446,21 @@ static func meter_rot_per_turn(src: Dictionary, prefix: String) -> float:
 ## the crew that is on it; `BUILD_TURNS_HOLDS` is *this staffing holds the meter where it is*, an amber
 ## `∞`; `BUILD_TURNS_ROTS` is *this staffing is losing work already paid for*, a red one;
 ## `BUILD_TURNS_QUEUE_BLOCKED` is *the builders are standing here and this rung's own gate refuses
-## them*, a hazard whose remedy is off the build line entirely; and `BUILD_TURNS_NO_ESTIMATE` is
-## *there is genuinely no answer*, which renders as no line.
+## them*, a hazard whose remedy is off the build line entirely; `BUILD_TURNS_NOT_YET_ESTIMATED` is
+## *the sim has not looked at this entry yet*, which is neutral and renders as `Queued`; and
+## `BUILD_TURNS_NO_ESTIMATE` is *there is genuinely no answer*, which renders as no line.
 ##
 ## **EVERY SENTINEL THE WIRE SPELLS MUST BE PASSED THROUGH, and each new one is a fresh chance to get
 ## this wrong.** This read accepted `>= 0` and `-2` and flattened everything else to *no answer*, so
 ## when the sim split `-3` out of `-2` a real, staffed, priced build that was actively bleeding banked
 ## work rendered as NO LINE — the same silence the tile card and the herd drawer showed for a source
 ## nobody had touched. Twice now, silence has read as success on this exact row.
+##
+## **AND THE FIFTH IS THE ONE THIS READER WAS LAST LEFT BEHIND BY.** `BUILD_NOT_YET_ESTIMATED` was
+## collapsed onto `-1` by the fall-through below — the client had never heard of it — and the build
+## queue's date column then wore the `⚠ Stalled 0%` hazard on an entry queued one command ago. Passing
+## a sentinel through is the whole job of this function; each new one is a fresh chance to get it
+## wrong, and this is the third time.
 ##
 ## **THE SIM DRAWS TWO BOUNDARIES HERE THAT A CLIENT-SIDE COMPARISON WOULD BLUR**, and both reach this
 ## reader as `-1`: an UNSTAFFED source has promised nothing (a comparison would call every idle
@@ -4427,7 +4473,7 @@ static func meter_rot_per_turn(src: Dictionary, prefix: String) -> float:
 static func build_turns_remaining(src: Dictionary, prefix: String) -> int:
     var turns := int(src.get(prefix + FORECAST_BUILD_TURNS_KEY, BUILD_TURNS_NO_ESTIMATE))
     if turns >= 0 or turns == BUILD_TURNS_HOLDS or turns == BUILD_TURNS_ROTS \
-            or turns == BUILD_TURNS_QUEUE_BLOCKED:
+            or turns == BUILD_TURNS_QUEUE_BLOCKED or turns == BUILD_TURNS_NOT_YET_ESTIMATED:
         return turns
     return BUILD_TURNS_NO_ESTIMATE
 

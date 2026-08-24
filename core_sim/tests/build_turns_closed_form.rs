@@ -39,7 +39,7 @@ use core_sim::{
     scalar_zero, BandEquipment, DiscoveryProgressLedger, EquipmentConfig, FactionId,
     FaunaConfigHandle, ForageRegistry, GenerationId, HerdRegistry, Improvement, LaborAllocation,
     LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, RungKey, SimulationConfig, SnapshotHistory, TileRegistry,
+    ResidentBand, RungKey, SimulationConfig, SnapshotHistory, SourcePriority, TileRegistry,
     DEFAULT_ESCAPEMENT_FLOOR, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
@@ -310,6 +310,7 @@ fn spawn_keepers_of(
                         // check needs.
                         workers: KEEPERS,
                         kit: Some(kit.clone()),
+                        priority: SourcePriority::default(),
                     },
                     // **The build is staffed by the band's own POOL**, at the crew the caller
                     // named (`docs/plan_standing_upkeep.md` §2.5). **The row carries no kit** — a
@@ -320,6 +321,7 @@ fn spawn_keepers_of(
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                 ],
                 build_queue: improvement
@@ -1259,6 +1261,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         },
                         workers: GATHERERS,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                     // **The builders are a band-level pool** since `docs/plan_standing_upkeep.md` §2.5,
                     // and the whole of it goes on the head of the queue below — which is this patch.
@@ -1268,6 +1271,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         target: LaborTarget::Builders,
                         workers: BUILDERS,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                 ],
                 build_queue: vec![core_sim::BuildQueueEntry {

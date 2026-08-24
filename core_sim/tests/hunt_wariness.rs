@@ -48,7 +48,7 @@ use core_sim::{
     scalar_one, scalar_zero, spawn_initial_herds, CombatConfig, CombatConfigHandle, FactionId,
     FaunaConfig, FaunaConfigHandle, GenerationId, Herd, HerdRegistry, HuntDraw, HuntingParty,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MoraleCause,
-    PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry, NO_RETREAT,
+    PopulationCohort, ResidentBand, SnapshotHistory, SourcePriority, TileRegistry, NO_RETREAT,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -294,6 +294,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     },
                     workers: CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

@@ -1536,7 +1536,7 @@ mod demographics_tests {
 mod food_flow_tests {
     use super::band_food_flow;
     use crate::components::{
-        LaborAllocation, LaborAssignment, LaborTarget, SourceYield, TakeSelection,
+        LaborAllocation, LaborAssignment, LaborTarget, SourcePriority, SourceYield, TakeSelection,
     };
 
     use bevy::math::UVec2;
@@ -1551,6 +1551,7 @@ mod food_flow_tests {
             },
             workers: 4,
             kit: None,
+            priority: SourcePriority::default(),
         }
     }
 

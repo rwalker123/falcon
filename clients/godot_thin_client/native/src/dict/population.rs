@@ -590,6 +590,29 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `actual > sustainable`, which false-positives on a hunt's kill turn (banked animal spikes
             // actual above the steady sustainable even under Sustain).
             let _ = entry.insert("overdraws", assignment.overdraws());
+            // **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — the mark
+            // `work_priority <faction> <band> <source…> high|normal|low` sets
+            // (`docs/plan_standing_upkeep.md` §4.9 item 9b), inserted as the LOWERCASE WORD rather
+            // than the wire ordinal.
+            //
+            // ⛔ **THE ORDINALS ARE NOT THE SHEDDING ORDER.** `Normal` is `0` because the
+            // overwhelming majority of rows sit at the default and a FlatBuffers scalar equal to its
+            // default costs no bytes; the order the band actually sheds in runs Low, Normal, High. A
+            // client handed the number would sooner or later sort on it and paint that untruth, so
+            // the number never leaves this function — GDScript is handed a word it cannot subtract.
+            //
+            // The three tokens are exactly the ones the command takes, so a picker echoes back what
+            // it was shown and no layer between here and the socket has a second spelling to invent.
+            // Always inserted (`Normal` on every unmarked row and on every band-wide role) so the
+            // entry shape is stable.
+            let _ = entry.insert(
+                "priority",
+                match assignment.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }

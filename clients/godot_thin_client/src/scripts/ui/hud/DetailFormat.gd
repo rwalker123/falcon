@@ -1352,7 +1352,7 @@ static func rung_badge_word(improvement: String) -> String:
 ## that function is ROUTING (which of a card's two rows may print the source's one countdown, and
 ## whether this row is a built badge or a bare declaration); this is the part that reads the wire's
 ## `buildTurnsRemaining` and answers for every value it can carry — a positive count, `-2` holding,
-## `-3` rotting, `-4` the queue blocked, `-1` no answer.
+## `-3` rotting, `-4` the queue blocked, `-5` queued and not yet estimated, `-1` no answer.
 ##
 ## **IT IS EXTRACTED RATHER THAN COPIED, and that is the whole point.** The BUILD QUEUE block's date
 ## column asks exactly this question and has none of the routing problem — a queue entry IS the rung,
@@ -1418,6 +1418,7 @@ static func build_completion_value(turns: int, build_crew: int, percent: int,
 ## wire can put on `buildTurnsRemaining` otherwise. **A second fork is how this client has twice been
 ## left behind by a newly-spelled sentinel** (`-3` split out of `-2`, then `-4` added beside them), so
 ## a caller that wants a new rendering of a COUNT writes it in terms of this rather than beside it.
+## **`-5` IS THE THIRD TIME**, and it landed INSIDE this fork for exactly that reason.
 static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> String:
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
         if build_crew <= SourceForecast.BUILD_CREW_NONE:
@@ -1442,6 +1443,23 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> S
     # and gating the client's own answer on a crew is a defect this client already shipped once and
     # fixed (`chapters/improvements.gd`'s `tile_meter_stalled`, where the sheet answered the neutral
     # *held* while the card said `⚠ Stalled`: two producers disagreeing about one meter).
+    # **THE SIM HAS NOT LOOKED AT THIS ENTRY YET** (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`,
+    # `docs/plan_standing_upkeep.md` §4.9). Queued since the last turn resolved, so no estimate pass
+    # has run over it — which is a different fact from `-1`'s *the pass ran and had no number*, and it
+    # is the one the branch below used to swallow.
+    #
+    # ⛔ **NO HAZARD GLYPH AND NO CREW FORK.** Nothing is wrong: a build one command old with a staffed
+    # pool on it is not a stall, and folding it into `-1` put `⚠ Stalled 0%` on a fresh `Cultivate`
+    # until the next turn cleared it. The crew is irrelevant for the same reason it is on `-1` — this
+    # says what the SIM has done, not what a crew is doing — so a staffed and an unstaffed fresh entry
+    # read alike here, and whether anybody is on it is the queue's own head/tail question.
+    #
+    # **IT IS TESTED BEFORE `-1`** so the two cannot be read as one by a future edit that widens either
+    # test, and it is written HERE rather than beside this function: a caller wanting a new rendering
+    # of a count writes it in terms of this fork, which is what stopped `-3` and `-4` being missed a
+    # third time.
+    if turns == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED:
+        return HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
@@ -1455,6 +1473,12 @@ const BUILD_METER_EMPTY := 0.0
 ## crew is red, any other value carrying the hazard mark is amber, a value carrying its rung's BUILT
 ## badge is signal green, and everything else is neutral ink — so the four `*_value_hex` leaves are one
 ## shape and a new hazard state cannot ship without its colour.
+##
+## **THE RULE IS WHY A NON-HAZARD STATE NEEDS NO LEAF OF ITS OWN.** `RUNG_QUEUED_FORMAT` (`-5`, queued
+## and not yet estimated) carries neither needle, so it falls through to `INK_HEX` — the neutral it
+## wants — without a branch. That is the rule working rather than a coincidence: a face that MEANT to
+## be amber would have to earn it by wearing the hazard mark, which is the property this test exists
+## to enforce in both directions.
 ##
 ## **THE ROTTING TEST RUNS FIRST BECAUSE THAT ROW WEARS BOTH NEEDLES.** It leads with the hazard mark
 ## like every other failure state — it must, or the mark stops meaning *something is wrong here* — so
