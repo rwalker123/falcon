@@ -2216,6 +2216,14 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     # An entry scrolled past the row cap cannot be open either: it has no row to hang beneath.
     var settings := _queue_settings_state(band, queued, drawn)
     var open_index := int(settings["index"])
+    # **THE `▼` END-STOP IS THE WIRE QUEUE'S LENGTH, NOT THE PAGE'S.** Pending entries sit at the tail
+    # (`_build_queue_models` appends them behind the wire's own order) and have no rank at all, so the
+    # last row a `build_order` can name is the last CONFIRMED one — counted here once and handed to
+    # every row, rather than each row re-deriving it.
+    var confirmed := 0
+    for entry_variant in queued:
+        if not _build_queue_row_is_pending(entry_variant as Dictionary):
+            confirmed += 1
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
         queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"]),
         bool(settings["kit"]), bool(settings["one_line"])))
@@ -2234,13 +2242,13 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         # has not placed is not that yet, and a `▸` on it would promise funding nobody has committed.
         var row := _build_build_queue_row(band, entry,
             index == SourceForecast.BUILD_QUEUE_HEAD and not _build_queue_row_is_pending(entry),
-            builders, index)
+            builders, index, confirmed)
         _queue_row_nodes[String(entry.get("key", ""))] = row
         block.add_child(row)
         # …and its SETTINGS strip directly beneath the row it belongs to, which is what makes the
         # expansion read as that row's rather than as a panel of its own.
         if index == open_index:
-            block.add_child(_build_queue_settings_strip(band, entry))
+            block.add_child(_build_queue_settings_strip(band, entry, index))
     if queued.size() > drawn:
         block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
     return block
@@ -2324,7 +2332,8 @@ func _toggle_queue_settings(key: String) -> void:
 ##
 ## It wears the work inspector's own stylebox and its own reserved height, so the two expansions in
 ## this zone read as one idea.
-func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelContainer:
+func _build_queue_settings_strip(band: Dictionary, model: Dictionary,
+        rank: int) -> PanelContainer:
     var content := _queue_settings_content(band, model)
     var strip := PanelContainer.new()
     strip.set_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META, String(model.get("key", "")))
@@ -2374,7 +2383,54 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
         var kit_picker := _build_queue_kit_picker(band, model)
         if kit_picker != null:
             line.add_child(kit_picker)
+    # **THE WITHDRAWAL RIDES THE STRIP'S LAST LINE, RIGHT-ALIGNED** (§4.7b ③). The `✕` left the row
+    # when the reorder arrows took its 32px column, and the strip is where it went: every queued entry
+    # expands, so there is always a line to hang it on, and withdrawing becomes two clicks where
+    # reordering is one — the right way round, a reorder being the commoner act.
+    #
+    # ⛔ **IT ADDS NO LINE, and the predicate is what pays for that.** The strip already stacks to two
+    # lines on every shipped dock and this zone reads its full height, so a button that opened a THIRD
+    # line would come off the bottom of the board in silence. `queue_settings_one_line_width` counts
+    # the button and its separation, so the wrap the reservation reads is the wrap this line draws.
+    if line == null:
+        # A strip with no pickers at all — legs only, which nothing the sim publishes reaches, every
+        # queued entry having a kit. `build_queue_settings_height` takes the same branch, so the line
+        # bought here is a line that was reserved.
+        line = _build_queue_settings_line(column, "")
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(spacer)
+    line.add_child(_build_queue_unqueue_button(band, model, rank))
     return strip
+
+## **THE WITHDRAWAL — same button, same command, same optimistic write; only its HOST moved** (§4.7b
+## ③). It keeps `BUILD_QUEUE_UNQUEUE_META` and the entry's own rank on it, so every reader that found
+## it by name finds it in the strip.
+##
+## **NO CONFIRM.** `unqueue` withdraws a DECLARATION: the banked meter survives it, the row keeps its
+## crew and its kit, and re-declaring is one press of that row's own `⌃`. This panel's confirm path is
+## for an act that loses something (`_confirm_destructive`), which is the parties zone's
+## cancel-versus-recall rule read one surface over.
+func _build_queue_unqueue_button(band: Dictionary, model: Dictionary, rank: int) -> Button:
+    var withdraw := Button.new()
+    # The entry's own rank — a FINDER value, never asserted on, and the same number its row wears so
+    # the two cannot state one entry's place two ways.
+    withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
+        SourceForecast.NOT_IN_ANY_BUILD_QUEUE if _build_queue_row_is_pending(model) else rank)
+    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH
+    withdraw.focus_mode = Control.FOCUS_NONE
+    withdraw.tooltip_text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_TOOLTIP
+    withdraw.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH, 0.0)
+    HudStyle.apply_button(withdraw, "ghost")
+    # The parties zone's recall treatment: a steady, full-opacity DANGER red, because the steady red
+    # already reads as destructive and there is nothing further to brighten to on hover. It squeezes
+    # its chrome for the same reason every control in this strip does — the default padding busts the
+    # control line's declared height.
+    HudWidgets.compact(withdraw, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    withdraw.add_theme_color_override("font_color", HudStyle.DANGER)
+    withdraw.pressed.connect(func() -> void: _emit_unqueue(band, model))
+    return withdraw
 
 ## One control line inside the settings strip: a fixed-height row led by its declared-width key. The
 ## height is `BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT`, the strip's control half — DECLARED here rather
@@ -2485,8 +2541,11 @@ func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
 ## list it drew — `NOT_IN_ANY_BUILD_QUEUE` for a pending tail row, whose place no queue has named.
 ## It replaced `build_queue_position` on this meta because that field is the WINNING band's answer
 ## (§4.9 item 9a) and every reader of the meta was taking it for this band's.
+## **`confirmed` IS HOW MANY ENTRIES THE BAND'S WIRE QUEUE CARRIES**, which is what the `▼` end-stop
+## reads: an entry at the bottom of a TRUNCATED page still has a place below it to fall to, so the
+## count is the queue's and never the page's.
 func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
-        builders: int, rank: int) -> PanelContainer:
+        builders: int, rank: int, confirmed: int) -> PanelContainer:
     var row := PanelContainer.new()
     row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_META,
         SourceForecast.NOT_IN_ANY_BUILD_QUEUE if _build_queue_row_is_pending(model) else rank)
@@ -2509,9 +2568,25 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if expandable:
         row.mouse_filter = Control.MOUSE_FILTER_STOP
         row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+        # ⛔ **ON THE RELEASE, NOT THE PRESS — BECAUSE THE PRESS IS WHERE A DRAG BEGINS.**
+        # `_toggle_queue_settings` ends in `_repage_work_zone`, which frees every node in the zone.
+        # Fired on the PRESS, that rebuild ran before the pointer had travelled far enough for Godot
+        # to ask the marker for drag data: the Viewport's `mouse_focus` was the marker Label, the
+        # rebuild took it out of the tree, `_gui_remove_control` nulled the focus, and no drag was
+        # ever attempted. The reorder gesture therefore degraded to *a click that opens the settings
+        # strip* — which is exactly how it played — and it shipped that way because the harness drove
+        # the drag callables directly and never pressed a real mouse button. The reproduction is
+        # `band_panel_preview._assert_queue_reorder_by_real_gesture`, which pushes the events.
+        #
+        # **The release is also the event a completed drag CONSUMES**: the Viewport performs the drop
+        # on the button-up and never forwards it to `gui_input`, so a reorder cannot also open the row
+        # it moved. **And it must land INSIDE the row** — `mouse_focus` latches on the press, so a
+        # press here released three rows away would otherwise still toggle this one, which is the rule
+        # `BaseButton` keeps for the same reason.
         row.gui_input.connect(func(event: InputEvent) -> void:
             if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-                    and event.pressed:
+                    and not event.pressed \
+                    and Rect2(Vector2.ZERO, row.size).has_point(event.position):
                 _toggle_queue_settings(String(model.get("key", ""))))
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
@@ -2635,33 +2710,82 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if expandable:
         tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_ROW_OPEN_HINT)
     row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
-    var withdraw := Button.new()
-    # The row's own rank again — a FINDER value, never asserted on, and the same number the row wears
-    # so the two cannot state one entry's place two ways.
-    withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META,
-        SourceForecast.NOT_IN_ANY_BUILD_QUEUE if _build_queue_row_is_pending(model) else rank)
-    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH
-    withdraw.focus_mode = Control.FOCUS_NONE
-    withdraw.tooltip_text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_TOOLTIP
-    withdraw.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH, 0.0)
-    HudStyle.apply_button(withdraw, "ghost")
-    # The parties zone's recall treatment: a steady, full-opacity DANGER red, because the steady red
-    # already reads as destructive and there is nothing further to brighten to on hover. It squeezes
-    # its chrome for the same reason every board control does — the default padding busts the row.
-    HudWidgets.compact(withdraw, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    withdraw.add_theme_color_override("font_color", HudStyle.DANGER)
-    # **NO CONFIRM.** `unqueue` withdraws a DECLARATION: the banked meter survives it, the row keeps
-    # its crew and its kit, and re-declaring is one press of that row's own `⌃`. This panel's confirm
-    # path is for an act that loses something (`_confirm_destructive`), which is the parties zone's
-    # cancel-versus-recall rule read one surface over.
-    withdraw.pressed.connect(func() -> void: _emit_unqueue(band, model))
-    line.add_child(withdraw)
+    line.add_child(_build_queue_reorder_column(band, model, rank, confirmed))
     return row
+
+## **THE REORDER PAIR, IN THE COLUMN THE `✕` USED TO HAVE** (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## **THE DRAG WAS INVISIBLE, WHICH IS WHY THIS EXISTS.** The handle only reveals itself under a press,
+## and a control a player cannot see is a control they do not have. The drag survives beside these —
+## it works now and it costs the row nothing — but the ARROWS are the primary reorder.
+##
+## **AND THE PLACEMENT COST ZERO PIXELS, which is the whole reason it is this one.** The row's ~356px
+## is spoken for and the job face is already ellipsised at its widest shipped value, so any new column
+## comes out of the one column with an unclipped-name guarantee. The `✕` was the only slot with
+## somewhere else to go: every queued entry expands into a settings strip, so the withdrawal moves
+## THERE and the arrows inherit its 32px. Two clicks to withdraw, one to reorder — which is the right
+## way round, a reorder being the commoner act.
+##
+## **DISABLED, NEVER ABSENT.** The head cannot climb and the last confirmed entry cannot fall, and a
+## control that vanished at either end would shift the column under the row beside it.
+##
+## **A PENDING ROW GETS NEITHER**, the drag handle's own rule: the wire has not placed it, so there is
+## no rank for `build_order` to name.
+##
+## `confirmed` is how many entries the BAND's wire queue carries — not how many rows this block drew.
+## An entry at the bottom of a truncated page still has somewhere to fall to.
+func _build_queue_reorder_column(band: Dictionary, model: Dictionary, rank: int,
+        confirmed: int) -> Control:
+    var column := HBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.BUILD_QUEUE_REORDER_SEPARATION)
+    column.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_REORDER_WIDTH, 0.0)
+    if _build_queue_row_is_pending(model):
+        # The slot is still RESERVED, so the dates above a pending tail row stay in one column.
+        column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        return column
+    column.add_child(_build_queue_reorder_button(band, model,
+        HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_PROMOTE_TOOLTIP,
+        HudWorkVocab.BUILD_QUEUE_PROMOTE_META,
+        rank - HudWorkVocab.BUILD_QUEUE_REORDER_STEP,
+        rank <= SourceForecast.BUILD_QUEUE_HEAD))
+    column.add_child(_build_queue_reorder_button(band, model,
+        HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_DEMOTE_TOOLTIP,
+        HudWorkVocab.BUILD_QUEUE_DEMOTE_META,
+        rank + HudWorkVocab.BUILD_QUEUE_REORDER_STEP,
+        rank >= confirmed - HudWorkVocab.BUILD_QUEUE_REORDER_STEP))
+    return column
+
+## One arrow. **IT SENDS THE SAME `build_order` THE DRAG DOES**, at the position it is valued with —
+## same command, same payload, nothing new on the wire.
+##
+## ⛔ **AND NO OPTIMISTIC ORDERING, for `_emit_build_order`'s own reason**: `buildQueue` is captured
+## live off the allocation the command mutates, so the new order arrives on THIS command's recapture.
+## An overlay here would be a second ordering beside the wire's — the drift §4.9 forbids.
+##
+## **THE SIDES ARE TRIMMED AS WELL AS THE TOP** (`HudWidgets.compact`'s `padding_h`): the ghost
+## button's 11px side margins are what made a 9px `✕` need 32, and a pair sharing that 32 has room for
+## neither pair of them.
+func _build_queue_reorder_button(band: Dictionary, model: Dictionary, glyph: String,
+        tooltip: String, meta: String, position: int, disabled: bool) -> Button:
+    var button := Button.new()
+    button.set_meta(meta, position)
+    button.text = glyph
+    button.focus_mode = Control.FOCUS_NONE
+    button.tooltip_text = tooltip
+    button.custom_minimum_size = Vector2(
+        HudWorkVocab.BUILD_QUEUE_REORDER_BUTTON_WIDTH, 0.0)
+    button.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(button, "ghost")
+    HudWidgets.compact(button, HudWorkVocab.BUILD_QUEUE_REORDER_FONT_SIZE,
+        HudWorkVocab.WORK_PAGER_PADDING_V, HudWorkVocab.BUILD_QUEUE_REORDER_PADDING_H)
+    button.disabled = disabled
+    button.pressed.connect(func() -> void: _emit_build_order(band, model, position))
+    return button
 
 ## **THE MARKER COLUMN, WHICH IS ALSO THE GRAB HANDLE** (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
 ## **NO NEW COLUMN, AND THE ARITHMETIC IS WHY.** The row's ~356px is spoken for — marker 10, face,
-## date 168, `✕` 32 and four separations — and the face is already ellipsised at its widest shipped
+## date 168, the reorder pair's 32 and four separations — and the face is already ellipsised at its widest shipped
 ## value, so a handle of its own would come straight out of the one column with an unclipped-name
 ## guarantee on it. This slot is reserved on every row already (that is what lines the faces up) and
 ## holds NOTHING on a non-head row, which makes it the only spare pixels in the row.

@@ -2557,13 +2557,49 @@ did not leave the block until the turn resolved. All three land on the row that 
   selection. **No optimistic overlay**: `buildKitId` is captured LIVE, so the recapture the command
   triggers already carries the pick.
 
-#### ③ THE MARKER COLUMN IS THE DRAG HANDLE — no new width
+#### ③ THE REORDER IS TWO ARROWS PLUS A DRAG — and neither costs the row a pixel
 
-The row's width is spoken for: marker 10 + face + date 168 + `✕` 32 + separations, and the face is
-**already ellipsised** at its widest shipped value (`🐄 Corral Thunder Mammoths` needs 189 of ~126). A
-handle column of its own would come straight out of the one column carrying an unclipped-name
-guarantee. The marker slot is reserved on every row already (that is what lines the faces up) and
-holds nothing on a non-head row.
+The row's width is spoken for: marker 10 + face + date 168 + a 32px trailing column + four
+separations, and the face is **already ellipsised** at its widest shipped value
+(`🐄 Corral Thunder Mammoths` needs 189 of the 126 it gets, measured by
+`band_panel_preview._report_queue_row_columns`). Any new column comes straight out of the one column
+carrying an unclipped-name guarantee, so the whole design question was *which existing slot gives*.
+Two of them did, and the arithmetic is what made the placement decidable rather than a preference.
+
+**THE ARROWS ARE THE PRIMARY REORDER, AND THEY TOOK THE `✕`'s COLUMN.** Ray, from play, once the drag
+worked at all: a grab handle that only reveals itself under a press is not a control a player finds.
+Four placements were prototyped; the one that ships is the only one costing **zero pixels** while
+still giving full-height targets — `▲` then `▼` side by side inside
+`BUILD_QUEUE_REORDER_WIDTH`, which is `BUILD_QUEUE_UNQUEUE_WIDTH` **stated as arithmetic** rather
+than re-typed as a second 32. The split is `(32 − 2) / 2 = 15` each with
+`BUILD_QUEUE_REORDER_SEPARATION` between them, and both fill the row's content line (24px inside a
+28px row) — a *stacked* pair would have made two ~12px targets, which is the placement this one beat.
+Verified as a measurement: `band_panel_preview._assert_queue_reorder_arrows` prints the column at
+**32 of 32** and the zone-width guard still reads **354 of 356**, unchanged from before the arrows.
+
+- ⛔ **15px IS UNDER THE GHOST BUTTON'S OWN CHROME, so the arrows trim their SIDES.**
+  `HudStyle`'s `BUTTON_PADDING_H` is 11 each — that is why a 9px `✕` needed a 32px column — and two of
+  those inside 15 leaves the glyph nothing. `HudWidgets.compact` grew a fourth parameter,
+  `padding_h`, defaulting to `KEEP_BUTTON_PADDING_H` (negative, because zero is a real trim a caller
+  may want); the arrows are its **one** caller. Everything else keeps `HudStyle`'s side margins, the
+  standing rule being that a zone row is short on height and not on width.
+- **SAME COMMAND, NOTHING NEW ON THE WIRE.** `▲` sends `build_order … <rank − 1>` and `▼`
+  `<rank + 1>`, through the same `_emit_build_order` and the same `build_order_requested` payload the
+  drag uses. `build_order`'s semantics are *remove, then insert at* — so one step swaps an entry with
+  its neighbour and needs no index of its own (`BUILD_QUEUE_REORDER_STEP`).
+- **DISABLED AT THE ENDS, NEVER ABSENT.** `▲` is dead on the head, `▼` on the **last confirmed
+  entry** — the wire queue's length, not the drawn page's, since an entry at the bottom of a truncated
+  page still has somewhere to fall to. A control that vanished at either end would shift the column
+  under the row beside it.
+- **A PENDING ROW GETS NEITHER, and keeps the column reserved.** Same rule the drag handle already
+  followed: the wire has not placed it, so there is no rank for `build_order` to name.
+- ⛔ **AND NO OPTIMISTIC OVERLAY, for the reason spelled out at the end of this section.** The arrows
+  inherit the drag's rule because they inherit the drag's command.
+
+**THE DRAG SURVIVES BESIDE THEM** — Ray: *"the drag and drop can stay if it is easy to just use the
+code already shipped."* It works now and it costs the row nothing, so the handle stays exactly where
+it was. The marker slot is reserved on every row already (that is what lines the faces up) and holds
+nothing on a non-head row.
 
 - **The head keeps `▸`** — that marker is load-bearing, it names the entry the pool is funding — and is
   still a handle, demotion being the most likely reorder there is. Every other confirmed row draws
@@ -2573,6 +2609,17 @@ holds nothing on a non-head row.
   and the drop off the ROW (a 10px column is not a drop target a player should have to aim at twice).
   The handle takes `MOUSE_FILTER_PASS`, so a plain click still reaches the row's click-to-open —
   Godot only asks for drag data past a movement threshold.
+- ⛔ **AND THE ROW'S CLICK-TO-OPEN FIRES ON THE RELEASE, BECAUSE THE PRESS IS WHERE A DRAG BEGINS.**
+  This shipped on the press and the reorder was therefore **dead in the real client**: the press
+  reached the row through the `PASS` handle, `_toggle_queue_settings` → `_repage_work_zone` freed every
+  node in the zone, `_gui_remove_control` nulled the Viewport's `mouse_focus` — which was the marker —
+  and by the time the pointer crossed the drag threshold there was nothing left to ask for drag data.
+  The gesture degraded to *a click that opens the settings strip*, which is exactly how it played. The
+  release is also the event a completed drag CONSUMES (the Viewport performs the drop on the button-up
+  and never forwards it to `gui_input`), so a reorder cannot also open the row it moved; and it must
+  land INSIDE the row, because `mouse_focus` latches on the press and a release three rows away would
+  otherwise still toggle this one. **Any press handler that rebuilds its own subtree kills every drag
+  that could start under it** — the general form of the rule.
 - **THE DROP INDICATOR COSTS NO HEIGHT.** The block's `separation` is 0, so an indicator drawn
   *between* two rows would need a new term in `build_queue_block_height` on the reservation side as
   well as the render side. `HudStyle.work_row_drop_stylebox` lights one edge of the target row's OWN
@@ -2607,7 +2654,38 @@ holds nothing on a non-head row.
   `drop_pending_order` and `Main`'s rollback branch are all **deleted**; the send and its failure path
   stay, with nothing to roll back.
 
-#### ④ THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED
+#### ④ THE WITHDRAWAL MOVED INTO THE SETTINGS STRIP, and still leaves the block on the frame it is pressed
+
+**THE `✕` IS THE SLOT THAT GAVE, because it had somewhere to go.** The arrows above needed 32px and
+the row had none spare; every queued entry expands into a settings strip (§4.7a ② — every entry has a
+KIT), so the withdrawal moved into that strip, **right-aligned on its LAST control line**. Ray, on the
+trade: *"two-click withdrawal is acceptable."* It is the right way round — a reorder is the commoner
+act and is one click; a withdrawal is rarer and is now two.
+
+⛔ **IT MUST NOT ADD A LINE, AND THE PREDICATE IS WHAT PAYS FOR THAT.** The strip already stacks to
+two lines on every shipped dock and the exclusion rule below leaves that zone reading **396 of 396**,
+so a third line would come off the bottom of a clipping board in silence.
+`HudWorkVocab.queue_settings_one_line_width()` — the one expression both the reservation and the
+builder read, now exported so nothing re-spells it — grew the button's own width and one separation:
+
+| | pickers + keys | `✕` + gap | one line needs | tall LEFT dock has | 1920 BOTTOM has |
+|---|---|---|---|---|---|
+| before | 408 | — | **408** | 342 | 368 |
+| after | 408 | 4 + 32 | **444** | 342 | 368 |
+
+Both shipped docks were already two lines and both still are, so
+`build_queue_settings_height` comes out at the same **56px drawn against 56 reserved** it did before
+(`_assert_queue_settings_flow` prints the pair). What the term buys is the case that has not arrived:
+the moment a board earns a second column and the strip is wide enough for both pickers, the button is
+paid for on that line instead of being squeezed off the right edge.
+
+- **`build_queue_settings_height` grew ONE branch with it** — a strip with legs and no pickers at all
+  now charges a control line, because the `✕` needs one to ride. Nothing the sim publishes reaches it
+  (every queued entry has a kit), and the builder takes the same branch, so a strip cannot draw a
+  button on a line it was not paid for.
+- **THE BUTTON ITSELF IS UNCHANGED** — same glyph, same DANGER ink, same `BUILD_QUEUE_UNQUEUE_META`
+  valued the entry's rank, same `_emit_unqueue` and the same optimistic withdrawal below. **Only its
+  host moved**, which is why every harness that found it by that meta finds it in the strip.
 
 ⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
 **every** command, so a "hide it until the next snapshot" rule flickers the row straight back a frame
@@ -2656,7 +2734,9 @@ the 460 above.
 - **`BUILD_QUEUE_UNQUEUE_WIDTH` 22 → 32.** `HudWidgets.compact` squeezes the type size and the
   VERTICAL padding — that is what keeps a control inside a 28px row — and leaves the ghost button its
   horizontal margins, so the reservation was 10px under what the `✕` draws and the row's expanding
-  face paid the difference.
+  face paid the difference. **That 32 is now the reorder pair's column** (`BUILD_QUEUE_REORDER_WIDTH`
+  is defined from it), and the same left-alone side padding is why the arrows are the one caller that
+  trims theirs.
 - **`BUILD_QUEUE_SETTINGS_HEIGHT` 30 → 34** — a 22px compact picker plus the strip's own 12px of
   `HudStyle.ROLE_CARD_PADDING` (it wears `work_inspector_stylebox`, which is the role card's). A live
   4px under-reserve every time a strip opened, and correcting it is what makes the flow arithmetic
@@ -2667,7 +2747,17 @@ the 460 above.
 is printed) · `band_panel_queue_settings_exclusive` · `band_panel_queue_drag` (a drag in flight, with
 the indicator on the target row and the block asserted NOT to have rebuilt under it) ·
 `band_panel_queue_withdrawn` (the row gone, and STILL gone across a re-push of the same fixture on the
-same turn — the command's own recapture).
+same turn — the command's own recapture; the `✕` is pressed there through the STRIP, with a real
+`push_input` click).
+
+⛔ **THE ARROWS AND THE STRIP'S `✕` ARE DRIVEN WITH REAL INPUT, NEVER `pressed.emit()`**
+(`_assert_queue_reorder_arrows`, `_assert_queue_arrow_click`, `_render_queue_withdrawal_state`). An
+emitted signal cannot see a button that is covered, zero-size, disabled or filtered out of the hit
+test, and these are three brand-new controls in a row with two pixels of slack and a strip whose
+height is reserved rather than measured — the exact shape in which the drag gesture shipped completely
+dead and completely green. `_drive_click` pushes the player's own events through the viewport and lets
+Godot decide whether anything was pressed; sabotage-verified by disabling the `✕`, which the emitted
+form would have pressed anyway.
 
 **`build_kit` and `build_order` are driven in `command_guard`**, both source forms each, because a
 well-formed line that means the wrong thing is exactly what that gate exists for. `build_kit` is the

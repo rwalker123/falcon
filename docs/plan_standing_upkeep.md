@@ -1000,6 +1000,53 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > date is the best answer anyone has. Per-band estimates are a bigger change than the gesture
    > warrants and would want their own slice.
 
+   **AND THE CONTROL THAT SPENDS THE RANK WAS DEAD, which the playtest found before it found
+   anything else.** Drag-to-reorder shipped in §4.7b ③ and **did not work at all** in the real
+   client: the handle tooltipped and wore the move cursor, and the gesture degraded to a click that
+   opened the row's settings strip.
+
+   > **THE CAUSE WAS THE ROW'S OWN PRESS HANDLER, and the fix is a general rule.** Click-to-open
+   > fired on the **press**; `_toggle_queue_settings` ends in `_repage_work_zone`, which frees every
+   > node in the zone — including the marker Label the Viewport had just latched `mouse_focus` onto.
+   > `_gui_remove_control` nulled the focus before the pointer had travelled far enough for Godot to
+   > ask for drag data, so no drag was ever attempted. It fires on the **release** now, inside the
+   > row's own rect, which is `BaseButton`'s rule for the same reason. **Any press handler that
+   > rebuilds its own subtree kills every drag beneath it** — that is the class, not the instance.
+   >
+   > ⛔ **NO TEST COULD HAVE CAUGHT IT, AND THE RULE FILE HAD WRITTEN DOWN WHY.** The harness drove
+   > `_queue_drag_data` / `_queue_can_drop` / `_queue_drop` **directly** and never pressed a mouse
+   > button, under an explicit note that *"Godot exposes no public getter for the callables
+   > `set_drag_forwarding` installs"*. That is true and beside the point: a harness can push real
+   > `InputEventMouseButton` / `InputEventMouseMotion` through the Viewport and let the engine's own
+   > drag machinery run. Rationalising the gap is what let a completely dead gesture ship green, and
+   > the reproduction — three assertions, one of them *"the reorder also opened the row's settings
+   > strip"* — is Ray's report in the harness's own words.
+
+   **THE ARROWS ARE THE PRIMARY CONTROL NOW, and the drag survives beside them.** Ray, on the
+   playtest: *"There should also be little up/down buttons I think to order, that is more obvious
+   than dragging anyways."* A 10px handle that appears only on hover is a poor way to state the one
+   list whose order is an input.
+
+   > **THE PLACEMENT WAS DECIDED FROM THE WIDTH ARITHMETIC, on a prototype rather than in code** —
+   > Ray's precondition: *"if you are going to do that, I need to see a UX prototype before changing
+   > the UX."* The row's ~356px is fully spoken for (marker 10 · face ~126, already ellipsised · date
+   > 168 · `✕` 32 · four separations), so an arrow pair has to come out of a column that exists. Four
+   > placements were drawn and priced: widening the marker slot (−6px off a face that already
+   > truncates, and 16 × 13 targets), taking the `✕`'s column (free, full-height targets), the
+   > settings strip (free in width, **+22px of height** in a box reading 396 of 396), and a
+   > hover-only control (free, and invisible — the very failing being fixed).
+   >
+   > **THE `✕`'s COLUMN WON**: `▲`/`▼` at 15 × 24 in the 32px it held, so the face, the row and both
+   > zone budgets are **bit-identical** — 126px face, 354 of 356 wide, strip 56 of 56 in two lines.
+   > What it spends is the one-click withdrawal, which moves right-aligned onto the strip's last
+   > line; Ray took that trade explicitly, reordering being the frequent act and withdrawing the rare
+   > one. `queue_settings_one_line` — the one width predicate the reservation and the builder share —
+   > counts the `✕` now, so its threshold moves 408 → 444 and the two cannot disagree on a dock wide
+   > enough to put crop and kit on one line.
+   >
+   > **NEITHER CONTROL NEEDS AN OPTIMISTIC OVERLAY**, which is 9a paying for itself: `buildQueue` is
+   > captured live, so an arrow press and a drop both land on the command's own recapture.
+
    **9b — THE WORKED ROWS TAKE THE EXPLICIT RANK, and the shedding order reads it.** Still open. The
    player orders their worked rows; §2.9's walk consults that rank where it consults list position
    nowhere, and a shed **names the row it took**. The rank sits **on top** of the shipped ordering,

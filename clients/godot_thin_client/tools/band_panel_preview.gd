@@ -13063,6 +13063,18 @@ func _render_queue_control_states() -> void:
 	# callables — the ones `set_drag_forwarding` installs — so this is the gesture's own path rather
 	# than a state poke, and the indicator is read off the target row's own handle.
 	await _render_queue_drag_state()
+	# **(d2) …AND THE SAME REORDER DRIVEN AS A REAL MOUSE GESTURE.** (d) asks the three callables
+	# directly, which pins the ARITHMETIC and cannot see the WIRING; this one pushes the player's own
+	# `InputEventMouseButton`/`InputEventMouseMotion` through the viewport and lets Godot's GUI drag
+	# machinery decide whether a drag ever starts. Both are kept: a gesture that never begins and a
+	# drop that computes the wrong index are different defects and neither claim implies the other.
+	await _assert_queue_reorder_by_real_gesture()
+	# **(d3) …AND THE ARROWS, WHICH ARE THE PRIMARY REORDER NOW.** The drag was invisible — a handle
+	# that only reveals itself under a press — so the row carries an explicit `▲`/`▼` pair in the
+	# column the `✕` used to have. Driven with REAL input for the reason the gesture above is: these
+	# are two brand-new buttons in a row with two pixels of slack, and `pressed.emit()` cannot see a
+	# button that is covered, zero-size or filtered out of the hit test.
+	await _assert_queue_reorder_arrows()
 	# **(e) THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED** (§4.7b ④), where it used
 	# to sit there until the turn resolved. The PAIRED claim is that the OTHER entries stay: a block
 	# that emptied itself would pass "the row is gone".
@@ -13112,11 +13124,10 @@ func _assert_queue_settings_flow(where: String, want_one_line: bool) -> void:
 	# **THE WIDTH IS REPORTED BESIDE THE VERDICT**, because the verdict is a pure function of it: the
 	# strip flows on the room the WORK ZONE has, and that zone's width is the board's column count
 	# times a column — so *"which layout gets one line"* is answerable from this line alone.
-	print("band_panel_preview: %s — settings strip line width %.0f of the %.0f one line needs"
+	print("band_panel_preview: %s — settings strip line width %.0f of the %.0f one line needs (the pair, plus the withdrawal's %.0f)"
 		% [where, _hud._bandpanel._queue_settings_line_width(),
-			HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH * 2.0
-				+ HudWorkVocab.BUILD_QUEUE_CROP_WIDTH + HudWorkVocab.BUILD_QUEUE_KIT_WIDTH
-				+ float(HudWorkVocab.WORK_ROW_SEPARATION) * 3.0])
+			HudWorkVocab.queue_settings_one_line_width(),
+			HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH])
 	_assert_band_panel("%s draws the settings pair on %s — crop y %.0f, kit y %.0f"
 			% [where, "ONE line" if want_one_line else "TWO lines",
 				crop.global_position.y, kit.global_position.y],
@@ -13150,13 +13161,24 @@ func _assert_queue_settings_flow(where: String, want_one_line: bool) -> void:
 ## without a layout, and the reserved height moves with it — which is the invariant a clipping zone
 ## has no other way to keep.
 func _assert_queue_settings_predicate() -> void:
-	var needed := HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH * 2.0 \
-		+ HudWorkVocab.BUILD_QUEUE_CROP_WIDTH + HudWorkVocab.BUILD_QUEUE_KIT_WIDTH \
-		+ float(HudWorkVocab.WORK_ROW_SEPARATION) * 3.0
+	var needed := HudWorkVocab.queue_settings_one_line_width()
 	_assert_band_panel("the flow predicate says ONE line at exactly the width the pair needs — %.0fpx"
 		% needed, HudWorkVocab.queue_settings_one_line(needed))
 	_assert_band_panel("…and TWO a pixel under it, so neither picker is ever asked to shrink",
 		not HudWorkVocab.queue_settings_one_line(needed - 1.0))
+	# ⛔ **AND THE WITHDRAWAL IS A TERM IN THAT WIDTH** (§4.7b ③). The `✕` rides the strip's LAST
+	# control line now, so a predicate priced at the two keys and two pickers alone would call ONE
+	# LINE at a width where the button does not fit — and this zone answers an overhang by clipping it
+	# off the right edge. The claim is the arithmetic: the pair's own width plus a separation plus the
+	# button is what one line costs.
+	var pair_only := HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH * 2.0 \
+		+ HudWorkVocab.BUILD_QUEUE_CROP_WIDTH + HudWorkVocab.BUILD_QUEUE_KIT_WIDTH \
+		+ float(HudWorkVocab.WORK_ROW_SEPARATION) * 3.0
+	_assert_band_panel("…and one line PAYS FOR THE WITHDRAWAL riding it — %.0fpx of pickers plus %.0f of `%s` and its gap = %.0f"
+			% [pair_only, HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH,
+				HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH, needed],
+		is_equal_approx(needed, pair_only + float(HudWorkVocab.WORK_ROW_SEPARATION)
+			+ HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH))
 	# **AND THE RESERVATION MOVES WITH IT**, which is the half that keeps the board honest: a strip
 	# that wrapped without the height following would take the second line off the bottom of a zone
 	# that clips.
@@ -13189,12 +13211,12 @@ func _render_queue_drag_state() -> void:
 	if handle == null:
 		_fail("queue drag — the head row has no marker column to grab")
 		return
-	# **THE HANDLE'S AFFORDANCES ARE ASSERTED ON THE NODE; THE GESTURE'S LOGIC THROUGH THE
-	# CONTROLLER'S OWN CALLABLES.** Godot exposes no public getter for the callables
-	# `set_drag_forwarding` installs (`_get_drag_data` is a virtual the Viewport calls), so what a
-	# harness CAN read is what the player can see — the move cursor, the tooltip and a mouse filter
-	# that still lets the click through to the row — and what it can DRIVE is the three functions
-	# those callables are bound to.
+	# **THE HANDLE'S AFFORDANCES ARE ASSERTED ON THE NODE; THE GESTURE'S ARITHMETIC THROUGH THE
+	# CONTROLLER'S OWN CALLABLES — AND ITS WIRING THROUGH REAL EVENTS, one block down.** This used to
+	# claim that a harness could do no better than the callables, because Godot exposes no public
+	# getter for what `set_drag_forwarding` installs. That was false and it let a completely dead
+	# gesture ship green: a harness does not need to READ the callables, it needs to make the ENGINE
+	# call them, which `Viewport.push_input` does. See `_assert_queue_reorder_by_real_gesture`.
 	_assert_band_panel("the marker column offers the MOVE cursor, so it reads as a handle",
 		handle.mouse_default_cursor_shape == Control.CURSOR_MOVE)
 	_assert_band_panel("…with its own tooltip, saying what the order decides",
@@ -13275,6 +13297,312 @@ func _render_queue_drag_state() -> void:
 	_push_bands([_build_queue_band_fixture(3)])
 	_hud._bandpanel.rerender()
 	await _settle()
+
+## **THE UP/DOWN ARROWS — the reorder a player can SEE** (`docs/plan_standing_upkeep.md` §4.7b ③).
+##
+## **THE DRAG IS NOT ENOUGH, AND THAT IS A PLAY REPORT.** A grab handle that only reveals itself under
+## a press is not a control a player finds, so the row carries an explicit pair in the `✕`'s old
+## column and the drag survives beside it.
+##
+## ⛔ **DRIVEN WITH REAL INPUT (`_drive_click`), NEVER `pressed.emit()`.** These are two brand-new
+## buttons sharing 32px with 2px of separation between them, in a row whose zone clips — the exact
+## shape where a signal emitted directly passes on a control that is covered, zero-width, disabled or
+## filtered out of the hit test. The gesture one block up shipped dead for precisely that reason.
+##
+## The claims: both arrows on every CONFIRMED row; the head's `▲` and the last entry's `▼` DISABLED
+## rather than absent (a control that vanished would shift the column under the row beside it); a real
+## click on row 2's `▲` sending position 0 and on row 1's `▼` sending position 1; and the row's total
+## width unchanged, which is what makes the placement free.
+func _assert_queue_reorder_arrows() -> void:
+	var rows := _build_queue_rows()
+	if rows.size() < 3:
+		_fail("queue arrows — need three queue rows, found %d" % rows.size())
+		return
+	# **THE COLUMN COSTS THE ROW NOTHING, WHICH IS THE WHOLE REASON THIS PLACEMENT WON.** Measured as
+	# the pair's own box against the budget the `✕` used to hold — the row's expanding job face pays
+	# for any overrun, and `_assert_queue_row_settings` is the assertion that would then fail.
+	var promote_head := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+	var demote_head := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DEMOTE_META) as Button
+	if promote_head == null or demote_head == null:
+		_fail("queue arrows — the head row carries no `%s`/`%s` pair"
+			% [HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH])
+		return
+	var column: Control = promote_head.get_parent() as Control
+	print("band_panel_preview: queue arrows — the pair's column is %.0fpx of the %.0f `%s` had (`%s` %.0f × %.0f, `%s` %.0f × %.0f, row %.0f tall)"
+		% [column.size.x, HudWorkVocab.BUILD_QUEUE_REORDER_WIDTH,
+			HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH,
+			HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, promote_head.size.x, promote_head.size.y,
+			HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH, demote_head.size.x, demote_head.size.y,
+			rows[0].size.y])
+	_assert_band_panel("the reorder pair fits the %.0fpx column the `%s` used to have — it draws %.0f"
+			% [HudWorkVocab.BUILD_QUEUE_REORDER_WIDTH, HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH,
+				column.size.x],
+		column.size.x <= HudWorkVocab.BUILD_QUEUE_REORDER_WIDTH + QUEUE_FACE_WIDTH_TOLERANCE)
+	# **THE WHOLE CONTENT LINE EACH, which is what a side-by-side pair buys over a stacked one** — a
+	# stacked pair would split that line in half and leave two ~12px targets, which is the placement
+	# this one was measured against and beat. The line is the row's height less the row stylebox's own
+	# padding, so the claim is made against the LINE and the row's outer height is reported beside it.
+	_assert_band_panel("…and each arrow takes the pair column's FULL height — %.0f and %.0f of the %.0fpx line inside a %.0fpx row"
+			% [promote_head.size.y, demote_head.size.y, column.size.y, rows[0].size.y],
+		promote_head.size.y >= column.size.y - QUEUE_ARROW_HEIGHT_TOLERANCE
+			and demote_head.size.y >= column.size.y - QUEUE_ARROW_HEIGHT_TOLERANCE
+			and column.size.y > rows[0].size.y * QUEUE_ARROW_STACKED_FRACTION)
+	# **THE END-STOPS ARE DISABLED, NOT ABSENT.** The head cannot climb and the last confirmed entry
+	# cannot fall; a control removed at either end would shift the column under the row beside it.
+	_assert_band_panel("the HEAD's `%s` is DISABLED — there is nowhere above it"
+			% HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, promote_head.disabled)
+	_assert_band_panel("…and its `%s` is live, the head being the most likely demotion there is"
+			% HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH, not demote_head.disabled)
+	var last: Control = rows[rows.size() - 1]
+	var demote_last := _find_meta_control(last, HudWorkVocab.BUILD_QUEUE_DEMOTE_META) as Button
+	var promote_last := _find_meta_control(last, HudWorkVocab.BUILD_QUEUE_PROMOTE_META) as Button
+	_assert_band_panel("the LAST entry's `%s` is DISABLED — there is nowhere below it"
+			% HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH,
+		demote_last != null and demote_last.disabled)
+	_assert_band_panel("…while its `%s` is live" % HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH,
+		promote_last != null and not promote_last.disabled)
+	# …and both tooltips say what the ORDER decides, in the drag handle's own words.
+	_assert_band_panel("…and both arrows say what the order decides",
+		promote_head.tooltip_text == HudWorkVocab.BUILD_QUEUE_PROMOTE_TOOLTIP
+			and demote_head.tooltip_text == HudWorkVocab.BUILD_QUEUE_DEMOTE_TOOLTIP)
+	if _is_headless():
+		push_warning("band_panel_preview: the reorder arrows need a real viewport for their press — skipped under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		return
+	# **THE ORDER AS DRAWN, CAPTURED BEFORE ANY PRESS** — the whole sequence, since the no-optimistic
+	# claim below is about what the presses did NOT change and a claim about the head alone passes on
+	# a list that merely rotated back past it.
+	var order_before := _queue_row_faces()
+	# ① ROW 2's `▲` — a real click, sending the position that swaps it with the head.
+	await _assert_queue_arrow_click(1, HudWorkVocab.BUILD_QUEUE_PROMOTE_META,
+		HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, QUEUE_HERD_ID, SourceForecast.BUILD_QUEUE_HEAD)
+	# ② …AND ROW 1's `▼`, THE SAME SWAP FROM THE OTHER END. Both, because a builder that wired one
+	# callable to both buttons passes either claim alone.
+	await _assert_queue_arrow_click(0, HudWorkVocab.BUILD_QUEUE_DEMOTE_META,
+		HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH,
+		"%d %d" % [QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y],
+		SourceForecast.BUILD_QUEUE_HEAD + HudWorkVocab.BUILD_QUEUE_REORDER_STEP)
+	# **AND NOTHING WAS PAINTED IN THE MEANTIME** — `buildQueue` is captured live off the allocation
+	# `build_order` mutates, so the new order arrives on the command's own recapture. A client-side
+	# ordering here would be the second ordering §4.9 forbids, so the block must still be drawing the
+	# fixture's order after two presses that changed nothing on the wire.
+	_assert_band_panel("…and the block paints NO order of its own while it waits — %s, still %s"
+			% [str(order_before), str(_queue_row_faces())],
+		_queue_row_faces() == order_before)
+	_assert_band_panel("…and neither press opened the row's settings strip",
+		_hud._bandpanel._queue_open_key == "")
+
+## How far short of its line an arrow may draw before the pair has stopped being a full-height
+## target. One pixel, for the container rounding.
+const QUEUE_ARROW_HEIGHT_TOLERANCE := 1.0
+
+## …and the fraction of the row a STACKED pair would have left each arrow. The side-by-side placement
+## has to beat it, or the measurement above is satisfied by a line that is itself half a row.
+const QUEUE_ARROW_STACKED_FRACTION := 0.5
+
+## One arrow, pressed the way a player presses it, read off the command LINE it produced. `source` is
+## the `build_order` source token the row names — a herd id or an `x y` pair — so the claim is the
+## whole line rather than the position alone.
+func _assert_queue_arrow_click(row_index: int, meta: String, glyph: String,
+		source: String, position: int) -> void:
+	var rows := _build_queue_rows()
+	if row_index >= rows.size():
+		_fail("queue arrows — row %d is gone" % row_index)
+		return
+	var button := _find_meta_control(rows[row_index], meta) as Button
+	if button == null:
+		_fail("queue arrows — row %d carries no `%s`" % [row_index, glyph])
+		return
+	_assert_band_panel("row %d's `%s` is valued the position it would send — %d (meta %d)"
+			% [row_index, glyph, position, int(button.get_meta(meta))],
+		int(button.get_meta(meta)) == position)
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.build_order_requested.connect(sink)
+	await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
+	await _settle()
+	_hud.build_order_requested.disconnect(sink)
+	if seen.is_empty():
+		_fail("queue arrows — a REAL click on row %d's `%s` emitted no build_order at all (this is the press the player makes)"
+			% [row_index, glyph])
+		return
+	var payload: Dictionary = seen[0]
+	var line := String(MAIN_SCRIPT.format_build_order(payload).get("line", ""))
+	var want := "build_order %d %d %s %d" % [HudConst.PLAYER_FACTION_ID,
+		int(payload.get("band_id", HudConst.NO_BAND_ID)), source, position]
+	_assert_band_panel("…and a REAL click on it sends `%s` (got \"%s\")" % [want, line],
+		line == want)
+
+## ⛔ **THE REORDER, DRIVEN AS THE PLAYER DRIVES IT — real events through the real viewport.**
+##
+## The block above asks `_queue_drag_data` / `_queue_can_drop` / `_queue_drop` directly. That pins the
+## arithmetic and **cannot see the wiring**, which is how a completely dead gesture shipped green: the
+## handle wore the move cursor and the tooltip, the three functions all answered correctly, and
+## pressing on it in the game merely opened the row's settings. So this pushes
+## `InputEventMouseButton`/`InputEventMouseMotion` into `get_viewport()` and lets Godot's own GUI
+## machinery decide whether a drag begins, which control it begins from, and who takes the drop.
+##
+## **THREE CLAIMS, and the first is the one the fix must not cost.** A plain click on the handle still
+## opens the row's settings (that is what `MOUSE_FILTER_PASS` is for); a press-and-drag on the very
+## same pixels starts a real drag (`Viewport.gui_is_dragging`); and releasing it over the row above
+## emits `build_order` at that row's position — WITHOUT also toggling the settings strip, since a
+## gesture that reorders and opens an inspector has done two things the player asked once for.
+func _assert_queue_reorder_by_real_gesture() -> void:
+	if _is_headless():
+		push_warning("band_panel_preview: the reorder gesture needs a real viewport — skipped under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		return
+	var rows := _build_queue_rows()
+	if rows.size() < 2:
+		_fail("queue reorder gesture — need two queue rows to reorder, found %d" % rows.size())
+		return
+	# **THE ANIMAL ENTRY IS THE ONE DRAGGED**, because it sits second in this fixture's queue and is
+	# therefore both a non-head row (it wears the grab glyph) and one with somewhere to go: dropped on
+	# the upper half of the head it lands at position 0.
+	var source := _find_queue_row(true)
+	if source == null or source == rows[0]:
+		_fail("queue reorder gesture — the animal entry is not a draggable non-head row")
+		return
+	var handle := _find_meta_control(source, HudWorkVocab.BUILD_QUEUE_MARKER_META)
+	if handle == null:
+		_fail("queue reorder gesture — the dragged queue row has no marker column to grab")
+		return
+	var grab := _canvas_to_window(handle.get_global_rect().get_center())
+	# ① THE PLAIN CLICK, on the very pixels the drag will use. Asserted BEFORE the drag so it is a
+	# statement about the shipped handle rather than about whatever the drag left behind.
+	var opened_before := _hud._bandpanel._queue_open_key
+	await _drive_click(grab)
+	await _settle()
+	_assert_band_panel("a plain click on the drag handle still opens the row's settings strip (%s → %s)"
+			% [opened_before, _hud._bandpanel._queue_open_key],
+		_hud._bandpanel._queue_open_key != opened_before
+			and _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null)
+	# …and closed again, so the drag starts from the same tree the block normally draws.
+	if _hud._bandpanel._queue_open_key != "":
+		_hud._bandpanel._toggle_queue_settings(_hud._bandpanel._queue_open_key)
+		await _settle()
+	# ② + ③ THE DRAG ITSELF. The rows were freed by the re-render, so both ends are re-found.
+	rows = _build_queue_rows()
+	source = _find_queue_row(true)
+	if rows.size() < 2 or source == null:
+		_fail("queue reorder gesture — the queue lost its rows re-opening the settings strip")
+		return
+	handle = _find_meta_control(source, HudWorkVocab.BUILD_QUEUE_MARKER_META)
+	if handle == null:
+		_fail("queue reorder gesture — the re-found dragged row has no marker column")
+		return
+	grab = _canvas_to_window(handle.get_global_rect().get_center())
+	var target := rows[0].get_global_rect()
+	var drop := _canvas_to_window(target.position
+		+ Vector2(target.size.x * 0.5, target.size.y * QUEUE_GESTURE_DROP_HEIGHT_FRACTION))
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.build_order_requested.connect(sink)
+	var gesture := await _drive_drag(grab, drop, handle)
+	_hud.build_order_requested.disconnect(sink)
+	_assert_band_panel("the PRESS leaves the grab handle in the tree, so a drag still has something to start from",
+		bool(gesture["witness_survived_press"]))
+	_assert_band_panel("…and moving past the drag threshold starts a REAL drag",
+		bool(gesture["dragging"]))
+	if seen.is_empty():
+		_fail("queue reorder gesture — the real press-drag-release emitted no build_order at all (this is the gesture the player performs)")
+	else:
+		var payload: Dictionary = seen[0]
+		var line := String(MAIN_SCRIPT.format_build_order(payload).get("line", ""))
+		var want := "build_order %d %d %s 0" % [HudConst.PLAYER_FACTION_ID,
+			int(payload.get("band_id", HudConst.NO_BAND_ID)), QUEUE_HERD_ID]
+		_assert_band_panel("…and the drop over the row ABOVE sends `%s` (got \"%s\")" % [want, line],
+			line == want)
+	_assert_band_panel("…and the reorder did NOT also open the dragged row's settings strip",
+		_hud._bandpanel._queue_open_key == "")
+	_hud._bandpanel._on_queue_drag_end()
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_build_queue_band_fixture(3)])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## How far the reproduction throws the pointer on its FIRST motion, in window px. Godot only asks a
+## control for drag data once the accumulated movement passes its threshold, and it measures that as a
+## VECTOR SUM of `relative` rather than a path length — so one deliberate over-shoot makes the gesture
+## start independently of how far apart two `WORK_ROW_HEIGHT` rows happen to sit on this canvas.
+const QUEUE_GESTURE_KICK := 40.0
+## How many motion events carry the pointer from the kick to the target row. More than one, because a
+## single teleporting motion is not a gesture any player performs.
+const QUEUE_GESTURE_STEPS := 6
+## Where inside the target row the drop lands, as a fraction of its height: the upper quarter, which is
+## unambiguously the ABOVE edge (`_queue_can_drop` splits the row at its own midpoint).
+const QUEUE_GESTURE_DROP_HEIGHT_FRACTION := 0.25
+
+## A press and a release on one window point, with nothing in between — the click a player makes when
+## they mean to click. Deliberately NOT `_click_control`, which synthesises a `gui_input` on one node
+## and therefore cannot tell a click from a dead handle.
+func _drive_click(window_point: Vector2) -> void:
+	var hover := InputEventMouseMotion.new()
+	hover.position = window_point
+	get_viewport().push_input(hover)
+	await get_tree().process_frame
+	for pressed in [true, false]:
+		var button := InputEventMouseButton.new()
+		button.button_index = MOUSE_BUTTON_LEFT
+		button.pressed = pressed
+		button.position = window_point
+		get_viewport().push_input(button)
+		await get_tree().process_frame
+
+## Press at `from`, travel to `to` past the drag threshold, release there.
+##
+## Reports two things a harness calling the callables directly can never see: whether the Viewport
+## ever had a drag in flight (`gui_is_dragging`, which only the engine can answer), and whether
+## `witness` — the node the drag must start FROM — was still in the tree after the press. The second
+## is the defect's own signature: a press handler that rebuilds its zone takes that node out of the
+## tree, the Viewport's `mouse_focus` clears with it, and the gesture is over before it began.
+##
+## ⛔ **THE PHYSICAL CURSOR IS WARPED ALONG WITH THE EVENTS, and the drop edge is why.** Godot picks
+## the drag-over CONTROL from the event it was handed, but it localizes the point it passes to
+## `can_drop_data` / `drop_data` from `Viewport.get_mouse_position()` — which on a root window reads
+## `DisplayServer.mouse_get_position()`, i.e. the REAL pointer, not the pushed event. Without the warp
+## the target row is found correctly and then asked *"which edge?"* about wherever the human's mouse
+## happens to be sitting, so `above` is noise: measured here as a drop that landed BELOW a row the
+## pointer was in the top quarter of. `Input.warp_mouse` is the only lever that moves the quantity
+## Godot actually reads; the pointer is put back where it was found when the gesture ends.
+func _drive_drag(from: Vector2, to: Vector2, witness: Control) -> Dictionary:
+	var parked := DisplayServer.mouse_get_position()
+	var hover := InputEventMouseMotion.new()
+	hover.position = from
+	get_viewport().push_input(hover)
+	await get_tree().process_frame
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = from
+	get_viewport().push_input(press)
+	await get_tree().process_frame
+	var witness_survived := is_instance_valid(witness) and witness.is_inside_tree()
+	var dragging := false
+	var previous := from
+	var waypoints: Array[Vector2] = [from + Vector2(0.0, QUEUE_GESTURE_KICK)]
+	for step in range(1, QUEUE_GESTURE_STEPS + 1):
+		waypoints.append(waypoints[0].lerp(to, float(step) / float(QUEUE_GESTURE_STEPS)))
+	for point in waypoints:
+		var motion := InputEventMouseMotion.new()
+		motion.position = point
+		motion.relative = point - previous
+		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+		Input.warp_mouse(point)
+		get_viewport().push_input(motion)
+		await get_tree().process_frame
+		dragging = dragging or get_viewport().gui_is_dragging()
+		previous = point
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	release.position = to
+	Input.warp_mouse(to)
+	get_viewport().push_input(release)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	DisplayServer.warp_mouse(parked - DisplayServer.window_get_position())
+	return {"dragging": dragging, "witness_survived_press": witness_survived}
 
 ## The drawn queue rows' FACES, in the order the block drew them — the one readable statement of
 ## *what order is on screen*, since a row's position meta is now a per-source readout rather than its
@@ -13451,16 +13779,62 @@ func _assert_shared_source_queue_drop() -> void:
 ## entries stay — the paired claim, without which a block that simply emptied itself would pass.
 func _render_queue_withdrawal_state() -> void:
 	var before := _build_queue_rows().size()
-	var rows := _build_queue_rows()
-	if rows.is_empty():
+	if before == 0:
 		_fail("queue withdrawal — no queue row to withdraw")
 		return
-	var button := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	# ⛔ **THE `✕` IS IN THE SETTINGS STRIP NOW, so the withdrawal is TWO clicks** (§4.7b ③): the
+	# arrows took its column on the row, and Ray took that trade — a reorder is the commoner act and
+	# it is one click, where a withdrawal is rarer and is now two. Opening the head's strip is the
+	# first of them.
+	var head_key := _queue_entry_key(false)
+	if head_key == "":
+		_fail("queue withdrawal — no PLANT entry to open the settings strip on")
+		return
+	_hud._bandpanel._toggle_queue_settings(head_key)
+	await _settle()
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		_fail("queue withdrawal — the head row opened no settings strip to withdraw from")
+		return
+	var button := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
 	if button == null:
-		_fail("queue withdrawal — the head row carries no `%s`"
+		_fail("queue withdrawal — the settings strip carries no `%s`"
 			% HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH)
 		return
-	button.pressed.emit()
+	# **AND IT IS RIGHT-ALIGNED ON THE STRIP'S LAST LINE, WHICH IS THE PLACEMENT THAT COSTS NO LINE.**
+	# Measured against the strip's own box: a button hanging past the right edge would be clipped by
+	# this zone in silence, and one sitting below the last control line would mean the strip drew
+	# taller than `build_queue_settings_height` reserved.
+	print("band_panel_preview: queue withdrawal — the `%s` sits at x %.0f..%.0f of the strip's %.0f..%.0f, y %.0f..%.0f of %.0f..%.0f (strip %.0fpx tall, reserved %.0f)"
+		% [HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH,
+			button.global_position.x, button.global_position.x + button.size.x,
+			strip.global_position.x, strip.global_position.x + strip.size.x,
+			button.global_position.y, button.global_position.y + button.size.y,
+			strip.global_position.y, strip.global_position.y + strip.size.y,
+			strip.size.y, strip.custom_minimum_size.y])
+	_assert_band_panel("the withdrawal sits INSIDE the strip it rides — %.0f..%.0f within %.0f..%.0f"
+			% [button.global_position.x, button.global_position.x + button.size.x,
+				strip.global_position.x, strip.global_position.x + strip.size.x],
+		button.global_position.x + button.size.x
+			<= strip.global_position.x + strip.size.x + QUEUE_FACE_WIDTH_TOLERANCE
+			and button.global_position.y + button.size.y
+				<= strip.global_position.y + strip.size.y + QUEUE_FACE_WIDTH_TOLERANCE)
+	# …and RIGHT-aligned, not merely inside: it is the last thing on the line, past both pickers.
+	_assert_band_panel("…hard against the strip's RIGHT edge, past the pickers",
+		button.global_position.x + button.size.x
+			>= strip.global_position.x + strip.size.x
+				- HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH - float(HudStyle.ROLE_CARD_PADDING)
+				- QUEUE_FACE_WIDTH_TOLERANCE)
+	# ⛔ **PRESSED WITH REAL INPUT, for the reason the reorder gesture is** — the control MOVED, into a
+	# strip whose height is reserved rather than measured, so "the signal fires" is the one claim that
+	# would pass on a button clipped out of its own host. Under the dummy display driver there is no
+	# hit test to run, so the state still renders off the signal.
+	if _is_headless():
+		push_warning("band_panel_preview: the withdrawal's press needs a real viewport — emitting the signal instead under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		button.pressed.emit()
+	else:
+		await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
 	# ⛔ **AND THEN THE SNAPSHOT THE COMMAND ITSELF TRIGGERS, ON THE SAME TURN.** The server re-captures
 	# and broadcasts after EVERY command, and that capture still carries the stale turn-written
 	# `buildQueuePosition` — so re-pushing this fixture UNCHANGED is exactly the frame a "hide it until
@@ -13840,16 +14214,37 @@ func _assert_unqueue_command_grammar() -> void:
 	var sink := func(payload: Dictionary) -> void: seen.append(payload)
 	_hud.unqueue_requested.connect(sink)
 	var lines := {}
-	for row in _build_queue_rows():
-		var button := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	# **THE `✕` IS IN THE ROW'S SETTINGS STRIP NOW** (§4.7b ③) — the reorder arrows took its column —
+	# so each entry is reached by OPENING it first. The keys are taken off the model list before the
+	# loop rather than off the rows: opening a strip re-renders the block, and the first withdrawal
+	# renumbers every rank behind it.
+	var keys := {SourceForecast.BUILD_QUEUE_HEAD: _queue_entry_key(false), 1: _queue_entry_key(true)}
+	for rank in keys:
+		var key := String(keys[rank])
+		if key == "":
+			continue
+		# ⛔ **THE BAND IS RE-SEATED BEFORE EACH PASS.** `Hud._after_pending_change` re-renders the
+		# SELECTION card, whose occupant this harness stages separately — so the FIRST withdrawal
+		# swaps the panel band for the queue-less `_band_fixture()` of the same entity and the second
+		# entry loses the row whose strip its `✕` hangs in. A live client cannot reach this: both
+		# dicts come from one snapshot. The withdrawal overlay survives the re-push, which is the
+		# point of keying it on the turn.
+		_push_bands([_build_queue_band_fixture(3)])
+		_hud._bandpanel._queue_open_key = ""
+		_hud._bandpanel._toggle_queue_settings(key)
+		var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+		if strip == null:
+			continue
+		var button := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
 		if button == null:
 			continue
 		seen.clear()
 		button.pressed.emit()
 		if seen.is_empty():
 			continue
-		lines[int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META))] = String(
-			MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
+		lines[rank] = String(MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
+	# …and the last strip opened closes with the probe, so no later state inherits an expansion.
+	_hud._bandpanel._queue_open_key = ""
 	_hud.unqueue_requested.disconnect(sink)
 	var patch_line := "unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
 		QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y]
@@ -14364,11 +14759,19 @@ const QUEUE_FACE_WIDTH_TOLERANCE := 1.0
 
 ## Press a control through its own `gui_input`, which is where both the queue row and the work row
 ## put their toggle — never by calling the handler, which would assert the harness's own routing.
+##
+## **BOTH HALVES OF THE CLICK, because the queue row's toggle moved to the RELEASE** (a press-fired
+## toggle rebuilds the zone under a drag that has not started yet, which is how the reorder gesture
+## shipped dead). The work board's row still toggles on the press and simply ignores the button-up, so
+## sending the pair is the one shape that drives every row this harness clicks. It is still a
+## synthetic `gui_input` on ONE node and therefore still cannot see the wiring — that is
+## `_drive_click`'s job.
 func _click_control(control: Control) -> void:
-	var event := InputEventMouseButton.new()
-	event.button_index = MOUSE_BUTTON_LEFT
-	event.pressed = true
-	control.gui_input.emit(event)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		control.gui_input.emit(event)
 
 ## The patch the pending declaration lands on, carrying a BASKET so its queue row has crops to choose
 ## between. Two plants, both legal for Cultivate, so the picker holds `Sim picks` plus two real
@@ -14826,9 +15229,25 @@ func _assert_pending_queue_row() -> void:
 	_assert_band_panel("…and wears NO head marker — the head is the entry the pool is funding, which the sim decides",
 		marker != null and not bool(marker.get_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META))
 			and (marker as Label).text == "")
-	var button := _find_meta_control(pending_row, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
+	# **AND IT CARRIES NEITHER REORDER ARROW** (§4.7b ③), the drag handle's own rule: the wire has not
+	# placed this entry, so there is no rank for `build_order` to name and nothing it can be moved
+	# above. The COLUMN is still reserved, or the dates above it would step sideways.
+	_assert_band_panel("…and offers NO reorder arrows — an unplaced entry has no position to move from",
+		_find_meta_control(pending_row, HudWorkVocab.BUILD_QUEUE_PROMOTE_META) == null
+			and _find_meta_control(pending_row, HudWorkVocab.BUILD_QUEUE_DEMOTE_META) == null)
+	# **THE `✕` MOVED INTO THE SETTINGS STRIP**, so reaching it is a click on the row first. Opening it
+	# here frees every row this function is holding, so the pending row's own claims are all made
+	# above and only the COMMAND is probed below.
+	_hud._bandpanel._toggle_queue_settings(_hud._band_labor.pending_key(
+		SourceForecast.LABOR_KIND_FORAGE, PENDING_QUEUE_TILE.x, PENDING_QUEUE_TILE.y, ""))
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	if strip == null:
+		_fail("the pending queue row opened no settings strip to withdraw from")
+		return
+	var button := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
 	if button == null:
-		_fail("the pending queue row has no `%s` control" % HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH)
+		_fail("the pending entry's settings strip has no `%s` control"
+			% HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH)
 		return
 	var seen: Array = []
 	var sink := func(payload: Dictionary) -> void: seen.append(payload)
@@ -14855,6 +15274,9 @@ func _assert_pending_queue_row() -> void:
 	# PATCHES, which no re-seat touches; the band's own `build_queue` is the membership now, so the
 	# confirmed head vanished and the wide-dock state below inherited a one-row block. A live client
 	# cannot reach this: both dicts come from one snapshot.
+	# …and the strip opened to reach that `✕` closes with it, or the wide-dock state below inherits an
+	# expansion it never asked for — and a strip costs the block height the board would have as rows.
+	_hud._bandpanel._queue_open_key = ""
 	_push_bands([_build_queue_band_fixture(1)])
 	_hud._bandpanel.rerender()
 	_assert_band_panel("…and its `%s` still withdraws the declaration — `%s` (got \"%s\")"

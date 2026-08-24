@@ -1294,13 +1294,15 @@ const BUILD_QUEUE_MARKER_WIDTH := 10.0
 # ---- DRAG-TO-REORDER — the marker column IS the handle (`docs/plan_standing_upkeep.md` §4.7b ③) ---
 #
 # **THE ROW HAS NO WIDTH FOR A COLUMN OF ITS OWN, and that is measured rather than felt.** At the tall
-# LEFT dock the row's content line is ~356px, of which the marker, the date, the `✕` and the
+# LEFT dock the row's content line is ~356px, of which the marker, the date, the reorder column and the
 # separations take everything but the job face — and the face is ALREADY ellipsised at its widest
 # shipped value (`🐄 Corral Thunder Mammoths` needs 189 of the ~126 it gets). A handle column would
 # come straight out of that face, which is the one column with an unclipped-name guarantee on it.
 #
 # So the handle is the marker slot, which is reserved on every row already (so the faces line up) and
-# holds nothing at all on a non-head row. It keeps `▸` on the HEAD — that marker is load-bearing, it
+# holds nothing at all on a non-head row. **The drag is no longer the ONLY reorder** — the row grew
+# explicit `▲`/`▼` arrows in the `✕`'s old column, because a handle that only reveals itself under a
+# press is not a control a player finds — but it costs the row nothing, so it stayed. It keeps `▸` on the HEAD — that marker is load-bearing, it
 # says which entry the builders pool is funding — and draws a faint grab glyph everywhere else.
 #
 # **A PENDING ROW IS NOT DRAGGABLE**, and its slot stays empty: the wire has not placed it, so there
@@ -1403,6 +1405,60 @@ const BUILD_QUEUE_UNQUEUE_WIDTH := 32.0
 
 const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already banked is kept, and the source keeps its crew."
 
+# ---- UP/DOWN REORDER — the arrows take the `✕`'s column (`docs/plan_standing_upkeep.md` §4.7b ③) --
+#
+# **THE DRAG WAS INVISIBLE, AND THAT IS WHAT THESE ANSWER.** Ray, from play, once the gesture worked
+# at all: a handle that only reveals itself on a press is not a control a player finds. So the queue
+# grows an EXPLICIT reorder — two arrows on every confirmed row — and the drag stays beside it,
+# because it now works and costs the row nothing.
+#
+# **THEY COST ZERO PIXELS, WHICH IS WHY THIS PLACEMENT WON.** The row's ~356px content line is
+# already spoken for (marker 10, face expanding, date 168, this column 32, four separations) and the
+# face is ellipsised at its widest shipped value — so the only placement that adds no column is one
+# that TAKES a column. The `✕` is the slot with somewhere else to go: the row expands into a settings
+# strip on every entry, and a withdrawal is a rarer act than a reorder.
+#
+# **AND THE ARROWS KEEP THE FULL ROW HEIGHT** — a stacked pair inside 28px would be two 13px targets,
+# which is the placement this one was measured against and beat.
+
+## The reorder column IS the withdrawal's old one, stated as arithmetic rather than as a second 32.
+const BUILD_QUEUE_REORDER_WIDTH := BUILD_QUEUE_UNQUEUE_WIDTH
+
+## The gap between the pair, so two adjacent buttons read as two targets rather than as one wide one.
+const BUILD_QUEUE_REORDER_SEPARATION := 2
+
+## …and what each arrow gets from the split. **NEITHER BUTTON IS GIVEN A HEIGHT**: they fill the row,
+## which is the whole reason a side-by-side pair beat a stacked one.
+const BUILD_QUEUE_REORDER_BUTTON_WIDTH := \
+    (BUILD_QUEUE_REORDER_WIDTH - float(BUILD_QUEUE_REORDER_SEPARATION)) / 2.0
+
+## **THE GHOST BUTTON'S SIDE PADDING IS 11px EACH, AND TWO OF THOSE DO NOT FIT IN 15.**
+## `HudWidgets.compact` deliberately leaves the horizontal margins alone — a zone row is short on
+## height, not on width — which is exactly why the `✕` needed 32 for a 9px glyph. A pair sharing that
+## same 32 is the one control on this row that IS short on width, so it trims the sides too
+## (`HudWidgets.compact`'s `padding_h`) and the glyph is what the column then holds.
+const BUILD_QUEUE_REORDER_PADDING_H := 1
+
+## …and the type size that leaves the glyph room inside the trimmed box. Smaller than
+## `WORK_ROW_FONT_SIZE` because a solid triangle reads at a size a letterform would not, and because
+## the arrows are an affordance beside the row's information rather than part of it.
+const BUILD_QUEUE_REORDER_FONT_SIZE := 11
+
+const BUILD_QUEUE_PROMOTE_GLYPH := "▲"
+
+const BUILD_QUEUE_DEMOTE_GLYPH := "▼"
+
+## Both tooltips say what the ORDER decides, in `BUILD_QUEUE_DRAG_TOOLTIP`'s own words — the two
+## controls do one thing and a player who learned it from the handle must read it again here.
+const BUILD_QUEUE_PROMOTE_TOOLTIP := "Move this build UP one place. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+
+const BUILD_QUEUE_DEMOTE_TOOLTIP := "Move this build DOWN one place. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+
+## How far one press moves an entry: one place, in either direction. The `build_order` position is
+## `rank ∓ this`, and the command's own semantics are *remove, then insert at* — so a single step
+## swaps the entry with its neighbour rather than needing an index of its own.
+const BUILD_QUEUE_REORDER_STEP := 1
+
 ## **THE JOB'S SETTINGS ARE A ROW EXPANSION, NOT COLUMNS ON THE ROW**
 ## (`docs/plan_standing_upkeep.md` §4.7a ②, ③). Ray, from play: *"The CROP TO TEND shouldn't be a
 ## selection here as the user can't do the cultivate here."* — so the crop left the compose sheet for
@@ -1489,9 +1545,24 @@ const BUILD_QUEUE_KIT_TOOLTIP := "Which tools this build is raised with. Left al
 ## derives it once from the zone box less the strip's own chrome and feeds the same answer to the
 ## reservation and the builder.
 static func queue_settings_one_line(line_width: float) -> bool:
-    return line_width >= BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) \
+    return line_width >= queue_settings_one_line_width()
+
+## **WHAT ONE LINE COSTS — the two keys, the two pickers, AND THE WITHDRAWAL RIDING THE LAST LINE.**
+## One expression, exported so nothing re-spells it: the predicate above and every report of *how far
+## short this dock is* read the same number, and a harness that added the terms up itself would be
+## asserting its own arithmetic.
+##
+## ⛔ **THE `✕`'s WIDTH IS A TERM HERE BECAUSE THE `✕` IS ON THIS LINE** (§4.7b ③). It left the row
+## when the reorder arrows took that column, and it lands right-aligned on the strip's LAST control
+## line — so a predicate that still priced two keys and two pickers alone would say ONE LINE at a
+## width where the pair plus the button does not fit, and the withdrawal would be squeezed off the
+## right edge of a zone that clips. The separations are one per gap: 3 between the four settings
+## controls, and a fourth before the button.
+static func queue_settings_one_line_width() -> float:
+    return BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) \
         + BUILD_QUEUE_CROP_WIDTH + float(WORK_ROW_SEPARATION) \
-        + BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) + BUILD_QUEUE_KIT_WIDTH
+        + BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) + BUILD_QUEUE_KIT_WIDTH \
+        + float(WORK_ROW_SEPARATION) + BUILD_QUEUE_UNQUEUE_WIDTH
 
 ## The strip's key label — the word the retired compose-sheet picker's own header carried, so a player
 ## who learned it there reads it here.
@@ -1593,7 +1664,16 @@ const BUILD_QUEUE_FACE_META := "build_queue_face"
 
 const BUILD_QUEUE_DATE_META := "build_queue_date"
 
+## **THE `✕` LIVES IN THE SETTINGS STRIP NOW**, not on the row — the arrows took its column. The meta
+## did not move with it: it is still the withdrawal control's handle, still valued the entry's rank,
+## and every harness that finds it by this name finds the same button in a new host.
 const BUILD_QUEUE_UNQUEUE_META := "build_queue_unqueue"
+
+## The row's two reorder arrows, each valued the POSITION its press would send — so an assertion can
+## read what the button would do without pressing it, and a disabled one still states its intent.
+const BUILD_QUEUE_PROMOTE_META := "build_queue_promote"
+
+const BUILD_QUEUE_DEMOTE_META := "build_queue_demote"
 
 ## The settings strip's two controls, each valued its own selected id — so an assertion can name the
 ## picker it wants rather than taking whichever `OptionButton` the strip happens to build first.
@@ -1667,6 +1747,13 @@ static func build_queue_settings_height(legs: int, has_crop: bool, has_kit: bool
     if controls > 0:
         height = BUILD_QUEUE_SETTINGS_HEIGHT if (controls <= 1 or one_line) \
             else BUILD_QUEUE_SETTINGS_HEIGHT + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+    elif legs > 0:
+        # **THE WITHDRAWAL RIDES THE LAST CONTROL LINE, so a strip with no pickers still buys one**
+        # (§4.7b ③). Every queued entry has a KIT, so this branch does not fire on anything the sim
+        # publishes today — but a strip that opened on legs alone and then drew a `✕` with no line
+        # under it would draw taller than it was paid for, in a zone that answers that by clipping
+        # the board. The reservation and the builder take the same branch.
+        height = BUILD_QUEUE_SETTINGS_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     return height
