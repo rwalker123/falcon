@@ -1163,6 +1163,57 @@ pub struct PopulationCohortState {
     /// (append-only).
     #[serde(default)]
     pub upkeep_fund_mode: String,
+    /// **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a) — the wire copy of
+    /// `core_sim`'s `LaborAllocation::build_queue`. The whole `builders` pool goes on entry `0`
+    /// until its meter fills, then on the next.
+    ///
+    /// **THE RANK IS THE INDEX.** An entry's place in the line *is* its position in this vector, and
+    /// there is deliberately no second integer to disagree with it — §4.9's own rule for whichever
+    /// ordering ships first (*"if the queue ships with a rank of its own, they will drift"*), and
+    /// one ordered list has nothing to drift against.
+    ///
+    /// **It is THIS band's own order, which
+    /// [`ForagePatchState::build_queue_position`](crate::state::subsistence::ForagePatchState::build_queue_position)
+    /// is not.**
+    /// That field is source-addressed and rides the *winning* band (the soonest estimate), so it
+    /// states the winning band's place in the winning band's line — routinely another band's answer,
+    /// two bands on one source being ordinary. A band's queue block ordered on it draws a list that
+    /// is not the band's, and the drag arithmetic then inverts the gesture computed from it.
+    ///
+    /// **Captured LIVE off the allocation, not stamped by the turn** — the same discipline as
+    /// [`LaborAssignmentState::kit_id`]. The server re-captures after every dispatched command, so a
+    /// `build_order` / `unqueue` / declaration lands on that command's own recapture and a client
+    /// needs no optimistic ordering overlay.
+    ///
+    /// Unfiltered: exactly what the band holds, in the band's order. Appended last (append-only).
+    #[serde(default)]
+    pub build_queue: Vec<BuildQueueEntryState>,
+}
+
+/// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
+/// naming only the **source** the entry is a build on.
+///
+/// An entry names its source and nothing else, deliberately: the declared job, the kit, the
+/// destination rung, the legs, the chained date and the blocked cause are all published on the
+/// **source** row (`ForagePatchState` / the herd twin) and agree across every band holding the
+/// source by construction — `cultivate`/`sow`/`tame` enqueue the same declaration on every band
+/// working it, and `build_kit` is source-addressed and sets every holder's entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BuildQueueEntryState {
+    /// Which web the entry is on, in the [`LaborAssignmentState::kind`] vocabulary — `"forage"` for
+    /// a patch, `"hunt"` for a herd. The same token the band's own labor row publishes for the same
+    /// source, so a client joins the two on one spelling.
+    #[serde(default)]
+    pub kind: String,
+    /// The patch's tile. `0,0` on a hunt entry, which names its herd in [`Self::fauna_id`].
+    #[serde(default)]
+    pub target_x: u32,
+    #[serde(default)]
+    pub target_y: u32,
+    /// The herd's id. Empty on a forage entry.
+    #[serde(default)]
+    pub fauna_id: String,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

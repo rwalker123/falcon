@@ -1573,8 +1573,16 @@ const BUILD_QUEUE_PENDING_STATUS := FoodIcons.STATUS_PENDING
 ## which is the no-queue-no-block rule's whole claim and one no picture can carry.
 const BUILD_QUEUE_BLOCK_META := "build_queue_block"
 
-## Valued the entry's own queue POSITION, so a harness can tell the head from the rest without
-## reading the marker it is trying to assert.
+## Valued the entry's RANK IN THE BAND'S OWN QUEUE — its index in the list as drawn — so a harness
+## can tell the head from the rest without reading the marker it is trying to assert.
+## `NOT_IN_ANY_BUILD_QUEUE` on a row the band's wire queue does not carry (a declaration still
+## crossing the round trip), which is the client's one meaning of *pending* here.
+##
+## ⛔ **IT IS NOT `ForagePatchState.buildQueuePosition`, AND IT WAS** (`docs/plan_standing_upkeep.md`
+## §4.9 item 9a). That field is published per SOURCE and rides the WINNING band, so on a source two
+## bands hold it is another band's place in another band's line — a value every reader of this meta
+## was reading as *this* band's rank. It is a readout of the source, never a rank, and the block no
+## longer puts it on a node.
 const BUILD_QUEUE_ROW_META := "build_queue_row"
 
 const BUILD_QUEUE_OVERFLOW_META := "build_queue_overflow"

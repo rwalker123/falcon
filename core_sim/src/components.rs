@@ -1780,12 +1780,20 @@ pub enum LaborTarget {
     Builders,
 }
 
+/// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
+/// its source with. One constant rather than two literals, so [`LaborTarget::kind`] and
+/// [`BuildSource::kind`] cannot drift apart — a client joins a band's queue to its labor rows on
+/// this spelling.
+pub const FORAGE_ROLE_KEY: &str = "forage";
+/// The **Hunt** twin of [`FORAGE_ROLE_KEY`].
+pub const HUNT_ROLE_KEY: &str = "hunt";
+
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
     pub fn kind(&self) -> &'static str {
         match self {
-            LaborTarget::Forage { .. } => "forage",
-            LaborTarget::Hunt { .. } => "hunt",
+            LaborTarget::Forage { .. } => FORAGE_ROLE_KEY,
+            LaborTarget::Hunt { .. } => HUNT_ROLE_KEY,
             LaborTarget::Scout => "scout",
             LaborTarget::Warrior => "warrior",
             LaborTarget::Agriculture => "agriculture",
@@ -3218,6 +3226,17 @@ impl BuildSource {
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
             | LaborTarget::Builders => None,
+        }
+    }
+
+    /// **The role key of the labor row that works this source** — [`FORAGE_ROLE_KEY`] for a patch,
+    /// [`HUNT_ROLE_KEY`] for a herd, the same tokens [`LaborTarget::kind`] publishes. It is what a
+    /// published queue entry says its web is, so a client joins the band's queue to the band's
+    /// labor rows on one spelling.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            BuildSource::Patch(_) => FORAGE_ROLE_KEY,
+            BuildSource::Herd(_) => HUNT_ROLE_KEY,
         }
     }
 

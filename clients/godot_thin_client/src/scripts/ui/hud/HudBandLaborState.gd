@@ -427,6 +427,39 @@ func pending_key(kind: String, x: int, y: int, herd_id: String) -> String:
 		_:
 			return kind  # scout / warrior — one band-wide role each
 
+## **THIS BAND'S OWN BUILD QUEUE, AS THE KEYS THE QUEUE MODELS ARE KEYED BY** — the wire's
+## `PopulationCohortState.buildQueue` in the band's own order, each row mapped through `pending_key`,
+## `[]` for a band with nothing queued (`docs/plan_standing_upkeep.md` §4.9 item 9a).
+##
+## **THE RANK IS THE INDEX.** Entry 0 is the head and there is deliberately no second integer to
+## disagree with it, so this list IS the order and nothing re-sorts it.
+##
+## ⛔ **`SourceForecast.build_queue_position` IS NOT THIS.** That field is published per SOURCE and
+## rides the WINNING band (the soonest estimate), so on a source two bands hold it states another
+## band's place in another band's line — which drew band B's `[X, Y, Z]` as `[Y, X, Z]` and then had
+## the drag arithmetic compute an insert index from the wrong list. It is a READOUT; this is the rank.
+##
+## **ONE DERIVATION, SHARED BY THE BLOCK AND THE DROP.** The queue block orders on it and
+## `_queue_drop` indexes into it, so the position a drag sends is an index into the list the player
+## was looking at — the property a second walk of the wire would only be able to get wrong.
+##
+## The keys are `pending_key`'s own shape and the wire's `kind` is the `LaborAssignment` vocabulary
+## (`"forage"` / `"hunt"`), so an entry joins its work row on ONE spelling rather than on two that
+## merely happen to match.
+func build_queue_keys(band: Dictionary) -> Array:
+	var keys: Array = []
+	var entries: Variant = band.get("build_queue", [])
+	if not (entries is Array):
+		return keys
+	for entry_variant in (entries as Array):
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		keys.append(pending_key(String(entry.get("kind", "")).strip_edges().to_lower(),
+			int(entry.get("target_x", -1)), int(entry.get("target_y", -1)),
+			String(entry.get("fauna_id", ""))))
+	return keys
+
 func pending_assigns_for(entity: int) -> Dictionary:
 	var e: Variant = _pending_labor.get(entity, {})
 	if not (e is Dictionary):
@@ -474,17 +507,31 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 	_pending_labor[entity] = entry
 	changed.emit(&"pending")
 
-# ---- THE WITHDRAWALS AND THE ORDER — the queue's own two optimistic facts --------------------------
+# ---- THE WITHDRAWAL — the queue's one remaining optimistic fact -----------------------------------
 #
-# **BOTH RIDE THE EXISTING PER-BAND RECORD, beside `assign` and `move`** (`docs/plan_standing_upkeep.md`
-# §4.7b ③, ④), so `reconcile_pending` and `_prune_pending_entity` cover them with no second lifecycle
-# to keep in step.
+# **IT RIDES THE EXISTING PER-BAND RECORD, beside `assign` and `move`** (`docs/plan_standing_upkeep.md`
+# §4.7b ④), so `reconcile_pending` and `_prune_pending_entity` cover it with no second lifecycle to
+# keep in step.
 #
-# ⛔ **THEY ARE KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts
-# after EVERY command (`recapture_and_broadcast`), and that snapshot still carries the stale
-# turn-written `buildQueuePosition` — so a "hide it until the next snapshot" rule flickers the row
-# straight back a frame later. `reconcile_pending` already keys additions on *a snapshot with a NEWER
-# turn*; these take the identical rule for free by living in the same record.
+# ⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT — AND THE REASON IS NO LONGER THE ONE THAT
+# WAS WRITTEN HERE.** The justification used to be the stale turn-written `buildQueuePosition`: the
+# recapture every command triggers still carried the withdrawn entry at its old position, so a "hide
+# it until the next snapshot" rule flickered the row straight back. **That reason is dead.**
+# `PopulationCohortState.buildQueue` is captured LIVE off the allocation (§4.9 item 9a), so the
+# recapture an `unqueue` triggers has already dropped the entry, and so has the `improvement` token
+# on the source's own labor row.
+#
+# What the overlay still covers is the ROUND TRIP: the frame is drawn the instant the `✕` is pressed
+# and the recapture is a network hop away, so without it the row sits there until the reply lands.
+# Keying on the TURN is what carries it across that window and no further — `reconcile_pending`
+# already drops additions on *a snapshot with a NEWER turn*, and this takes the identical rule for
+# free by living in the same record.
+#
+# ⛔ **THE ORDERING OVERLAY THAT USED TO SHARE THIS RECORD IS GONE**, for exactly the fact that
+# changed: a client-side ordering beside a live wire one is a SECOND ordering, which is the drift
+# `buildQueue`'s own doc comment forbids ("a client therefore needs no optimistic ordering overlay,
+# and must not keep one"). A withdrawal has nothing to drift against — it removes a row rather than
+# ranking one — which is why it survives where the ordering did not.
 
 ## The keys this band has WITHDRAWN this turn — `pending_key`'s own shape, so it cannot drift from
 ## what the queue models are keyed by.
@@ -495,15 +542,6 @@ func pending_unqueues_for(entity: int) -> Dictionary:
 	var u: Variant = (e as Dictionary).get("unqueue", {})
 	return u if u is Dictionary else {}
 
-## …and the ORDER the player dragged this band's confirmed queue into, `[]` when they have dragged
-## nothing. `buildQueuePosition` is turn-written, so without this the list snaps back to the wire's
-## order the moment the command's own recapture lands.
-func pending_order_for(entity: int) -> Array:
-	var e: Variant = _pending_labor.get(entity, {})
-	if not (e is Dictionary):
-		return []
-	var o: Variant = (e as Dictionary).get("order", [])
-	return o if o is Array else []
 
 ## **WITHDRAW A DECLARATION OPTIMISTICALLY.** The row leaves the BUILD QUEUE block on the frame the
 ## `✕` is pressed rather than a turn later, which is the asymmetry the declaration's own optimistic
@@ -535,28 +573,6 @@ func drop_pending_unqueue(entity: int, key: String) -> bool:
 	if not (withdrawn is Dictionary) or not (withdrawn as Dictionary).has(key):
 		return false
 	(withdrawn as Dictionary).erase(key)
-	_prune_pending_entity(entity, entry as Dictionary)
-	changed.emit(&"pending")
-	return true
-
-## **THE ORDER A DRAG LEFT THE QUEUE IN** — the band's confirmed entry keys, in the order the block
-## should now draw them. One slot per band like the move overlay: a second drag states the whole
-## ordering again rather than a delta, so there is nothing to compose and nothing to get out of step.
-func record_pending_order(entity: int, keys: Array) -> void:
-	if entity < 0:
-		return
-	var entry: Dictionary = _pending_labor.get(entity, {})
-	entry["turn"] = _current_turn
-	entry["order"] = keys.duplicate()
-	_pending_labor[entity] = entry
-	changed.emit(&"pending")
-
-## …and its rollback, for a `build_order` that never went.
-func drop_pending_order(entity: int) -> bool:
-	var entry: Variant = _pending_labor.get(entity, null)
-	if not (entry is Dictionary) or not (entry as Dictionary).has("order"):
-		return false
-	(entry as Dictionary).erase("order")
 	_prune_pending_entity(entity, entry as Dictionary)
 	changed.emit(&"pending")
 	return true
@@ -617,14 +633,11 @@ func _prune_pending_entity(entity: int, entry: Dictionary) -> void:
 	if (assigns is Dictionary) and (assigns as Dictionary).is_empty():
 		entry.erase("assign")
 	# The withdrawal set is the assign map's twin and prunes on the same rule: an empty one is a husk,
-	# and a record still holding ANY of the band's four un-acknowledged edits must survive untouched.
+	# and a record still holding ANY of the band's three un-acknowledged edits must survive untouched.
 	var withdrawn: Variant = entry.get("unqueue", {})
 	if (withdrawn is Dictionary) and (withdrawn as Dictionary).is_empty():
 		entry.erase("unqueue")
-	var order: Variant = entry.get("order", [])
-	if (order is Array) and (order as Array).is_empty():
-		entry.erase("order")
-	if entry.has("assign") or entry.has("move") or entry.has("unqueue") or entry.has("order"):
+	if entry.has("assign") or entry.has("move") or entry.has("unqueue"):
 		_pending_labor[entity] = entry
 		return
 	_pending_labor.erase(entity)
@@ -1034,34 +1047,65 @@ static func role_kit_id(band: Dictionary, kind: String) -> String:
 			return String((entry as Dictionary).get("kit_id", KitRoster.NO_KIT_ID))
 	return KitRoster.NO_KIT_ID
 
-## **WHICH WEB THIS BAND'S BUILDERS ARE ACTUALLY OUT ON** — the branch of the entry at the HEAD of its
-## build queue, `KitRoster.BUILD_BRANCH_NONE` when it has nothing queued.
+# ---- THE HEAD OF THE QUEUE — one derivation, two consumers -----------------------------------------
+#
+# **THE WHOLE `builders` POOL STANDS ON THE HEAD ENTRY** until its meter fills, then on the next
+# (`docs/plan_standing_upkeep.md` §4.6b). Two surfaces spend that fact and they must not derive it
+# twice: the Builders card picks and greys its kit for the web the head is on, and the compose sheet
+# tells a build IN FLIGHT from one merely `◷ Queued` by whether the pool is standing on THIS source.
+#
+# ⛔ **BOTH USED TO ASK `SourceForecast.build_is_queue_head`, AND THAT WAS THE WRONG BAND'S HEAD.**
+# `buildQueuePosition` is published per SOURCE and rides the winning band — the soonest estimate among
+# the bands working it — so `position == 0` means *some* band has it at the head, routinely not this
+# one. Band B with a plant Cultivate at its own head read the ANIMAL branch whenever band C's head was
+# a herd B also worked; and band B's sheet on a source standing THIRD in B's line rendered a running
+# meter because C had it first — putting the one-way `Cultivating 0 / 50 work (0%)` face back through
+# a door the play report never came in by. Same defect as the queue block's, one consumer over
+# (§4.9 item 9a).
+
+## **THE ENTRY THIS BAND'S BUILDERS ARE STANDING ON** — the first row of its own `buildQueue`, `{}`
+## when it has nothing queued. THE one derivation of "the head"; the two answers below are its only
+## readers, so the card and the sheet cannot come to disagree about which entry is being funded.
+func build_queue_head(band: Dictionary) -> Dictionary:
+	var entries: Variant = band.get("build_queue", [])
+	if not (entries is Array) or (entries as Array).is_empty():
+		return {}
+	var head: Variant = (entries as Array)[0]
+	return head if head is Dictionary else {}
+
+## **WHICH WEB THIS BAND'S BUILDERS ARE ACTUALLY OUT ON** — the branch of the entry at the head of its
+## own queue, `KitRoster.BUILD_BRANCH_NONE` when it has nothing queued.
 ##
-## The whole pool goes on the head entry until its meter fills, so the head is the one entry whose
-## gear is being spent — which is what the Builders card's picker is choosing for, and therefore what
-## its greying is asked about (`KitRoster.kit_offer`'s third rule).
+## The head is the one entry whose gear is being spent, which is what the Builders card's picker is
+## choosing for and therefore what its greying is asked about (`KitRoster.kit_offer`'s third rule).
 ##
-## **THE HEAD IS READ OFF THE SOURCE, not off the row.** `buildQueuePosition` is published per source
-## and `0` is the head, so the branch falls out of which WEB that source is on — a patch is plant, a
-## herd animal, the same fact `systems::labor` stamps an entry with. It is the acting band's own rows
-## that are walked, so the answer is about this band's queue and no other's; the position itself rides
-## the winning band's queue, the same reading `_build_improvement_control` already takes off
-## `SourceForecast.build_is_queue_head`.
+## The branch falls out of the entry's own `kind` — the `LaborAssignment` vocabulary the wire spells
+## it in, a patch plant and a herd animal, the same fact `systems::labor` stamps an entry with. No
+## source lookup and no walk of the band's rows: the queue names its own entries now.
 func head_build_branch(band: Dictionary) -> String:
-	for entry in labor_assignments_of(band):
-		if not (entry is Dictionary):
-			continue
-		var assignment: Dictionary = entry
-		var kind := String(assignment.get("kind", "")).to_lower()
-		var branch := KitRoster.build_branch_for_kind(kind)
-		if branch == KitRoster.BUILD_BRANCH_NONE:
-			continue
-		var source := _upkeep_source_for(assignment, kind)
-		if source.is_empty():
-			continue
-		if SourceForecast.build_is_queue_head(source, HudComposeVocab.BARE_FORECAST_PREFIX):
-			return branch
-	return KitRoster.BUILD_BRANCH_NONE
+	var head := build_queue_head(band)
+	if head.is_empty():
+		return KitRoster.BUILD_BRANCH_NONE
+	return KitRoster.build_branch_for_kind(String(head.get("kind", "")).strip_edges().to_lower())
+
+## **IS THIS SOURCE THE ENTRY THIS BAND'S BUILDERS ARE STANDING ON?** — *are they on THIS one*, which
+## is what separates a build in flight from one waiting its turn.
+##
+## It takes the SOURCE dict because its two callers hold one and not an identity: a hunt sheet's
+## subject is the herd (named by `id`) and a forage sheet's is the tile_info (named by its `x`/`y`,
+## which are the patch's). Resolving that shape here rather than at the call site keeps the whole
+## question one answer, which is the property this pair exists to have.
+func is_band_build_head(band: Dictionary, kind: String, source: Dictionary) -> bool:
+	var head := build_queue_head(band)
+	if head.is_empty():
+		return false
+	var head_kind := String(head.get("kind", "")).strip_edges().to_lower()
+	if head_kind != kind:
+		return false
+	if kind == LABOR_KIND_HUNT:
+		return String(head.get("fauna_id", "")) == String(source.get("id", ""))
+	return int(head.get("target_x", -1)) == int(source.get("x", -1)) \
+		and int(head.get("target_y", -1)) == int(source.get("y", -1))
 
 ## Coerce a wire `arrival_schedule` to a PackedFloat32Array. The native decoder already hands over a
 ## packed array; a fixture (or an absent field) may hand over a plain Array or null.

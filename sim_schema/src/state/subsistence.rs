@@ -705,6 +705,18 @@ pub struct HerdTelemetryState {
     /// **It rides the same winner** as [`Self::build_turns_remaining`] and
     /// [`Self::build_work_from_gear`]: several bands may work one source, the sooner estimate wins,
     /// and all three come from that band. Appended (append-only).
+    ///
+    /// **⛔ IT IS NOT THE RANK, and no band's queue may be ordered on it**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a). It is a **source-addressed readout** of the
+    /// *winning* band's place in the *winning* band's line — the map annotation, the tile card and
+    /// the compose sheet all ask about the source and get the best answer anyone has. It is not an
+    /// answer about any *particular* band, because the winner is routinely somebody else: a band's
+    /// queue `[X, Y, Z]` sorted on this field came out `[Y, X, Z]` when a second band also held `Y`
+    /// and had the sooner estimate, so the drag gesture took its insert index off a list that was
+    /// not that band's.
+    ///
+    /// **[`crate::state::population::PopulationCohortState::build_queue`] is the rank** — the band's
+    /// own entries in the band's own order, position being the vector index.
     #[serde(default = "not_in_any_build_queue")]
     pub build_queue_position: i32,
     /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — `""` whenever this source is not a
@@ -1364,6 +1376,18 @@ pub struct ForagePatchState {
     /// **It rides the same winner** as [`Self::build_turns_remaining`] and
     /// [`Self::build_work_from_gear`]: several bands may work one source, the sooner estimate wins,
     /// and all three come from that band. Appended (append-only).
+    ///
+    /// **⛔ IT IS NOT THE RANK, and no band's queue may be ordered on it**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9a). It is a **source-addressed readout** of the
+    /// *winning* band's place in the *winning* band's line — the map annotation, the tile card and
+    /// the compose sheet all ask about the source and get the best answer anyone has. It is not an
+    /// answer about any *particular* band, because the winner is routinely somebody else: a band's
+    /// queue `[X, Y, Z]` sorted on this field came out `[Y, X, Z]` when a second band also held `Y`
+    /// and had the sooner estimate, so the drag gesture took its insert index off a list that was
+    /// not that band's.
+    ///
+    /// **[`crate::state::population::PopulationCohortState::build_queue`] is the rank** — the band's
+    /// own entries in the band's own order, position being the vector index.
     #[serde(default = "not_in_any_build_queue")]
     pub build_queue_position: i32,
     /// **WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE** — `""` whenever this source is not a

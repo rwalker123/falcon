@@ -1189,6 +1189,35 @@ table PopulationCohortState {
   // change. Set with `upkeep_mode <faction> <band> spread|priority`. Empty is only ever a frame the
   // sim did not write; read it as "spread".
   upkeepFundMode:string;
+
+  // --- THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM ------------------------
+  // (appended last, append-only wire; docs/plan_standing_upkeep.md section 4.9 item 9a). The whole
+  // `builders` pool goes on entry 0 until its meter fills, then on the next.
+  //
+  // *** THE RANK IS THE INDEX. *** An entry's place in the line IS its position in this vector, and
+  // there is deliberately NO second integer to disagree with it. Section 4.9 states the rule for
+  // whichever ordering ships first - "if the queue ships with a rank of its own, they will drift" -
+  // and one ordered list has nothing to drift against. A client renders this order and sends
+  // `build_order <faction> <band> <source...> <position>` with an index into it; nothing re-sorts.
+  //
+  // *** IT IS THIS BAND'S OWN ORDER, WHICH `ForagePatchState.buildQueuePosition` IS NOT. *** That
+  // field is source-addressed and rides the winning band (the soonest estimate), so it publishes the
+  // WINNING band's place in the WINNING band's line - routinely another band's answer, since two
+  // bands holding one source is ordinary. It is therefore useless as a rank for any PARTICULAR band,
+  // and a queue block ordered on it draws a list that is not the band's: band B's `[X, Y, Z]` came
+  // out `[Y, X, Z]` because band C also held Y and had the sooner estimate, and the drag arithmetic
+  // then inverted the gesture it was computed from. THIS field is the rank; that one is a readout.
+  //
+  // *** IT IS CAPTURED LIVE off `LaborAllocation::build_queue`, NOT stamped by the turn *** - the
+  // same discipline as `buildKitId` on the source rows. The server re-captures and broadcasts after
+  // every dispatched command, so a `build_order`, an `unqueue` or a fresh declaration arrives on
+  // THAT COMMAND'S OWN recapture rather than a turn later. A client therefore needs no optimistic
+  // ordering overlay, and must not keep one: an overlay is a second ordering beside this one, which
+  // is exactly the drift the "rank is the index" rule above exists to forbid.
+  //
+  // UNFILTERED: exactly what the band holds, in the band's order. The sim prunes dead entries
+  // (`prune_build_queue`), so anything here is a build this band is really going to raise.
+  buildQueue:[BuildQueueEntryState];
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -2476,6 +2505,19 @@ table ForagePatchState {
   // work one source, the sooner estimate wins, and all three come from that band. Reading a date
   // from one band's queue beside a position from another's would be two answers pretending to be
   // one.
+  //
+  // *** IT IS NOT THE RANK, AND NO BAND'S QUEUE MAY BE ORDERED ON IT ***
+  // (docs/plan_standing_upkeep.md section 4.9 item 9a). It is a SOURCE-ADDRESSED READOUT of the
+  // WINNING band's place in the WINNING band's line - the map annotation, the tile card and the
+  // compose sheet, all of which ask about the source and get the best answer anyone has. It is not
+  // an answer about any PARTICULAR band, because the winner is routinely somebody else: band B's
+  // queue `[X, Y, Z]` sorted on this field came out `[Y, X, Z]` when band C also held Y and had the
+  // sooner estimate, so the drag gesture computed its insert index off a list that was not B's and
+  // moved the entry to the wrong place.
+  //
+  // *** `PopulationCohortState.buildQueue` IS THE RANK *** - the band's own entries in the band's
+  // own order, where position is the vector index. A per-band question is answered there; this
+  // field answers the per-source one and keeps the winner rule it was designed with.
   buildQueuePosition:int = -1;
   // WHY THE QUEUE IS BLOCKED HERE (appended, docs/plan_standing_upkeep.md 4.6b) - "" whenever this
   // source is not a blocked build, else a short lowercase cause key on the free-form-string
@@ -2708,6 +2750,28 @@ table BuildLegState {
   // The same negative vocabulary as `buildTurnsRemaining` - -1 no estimate, -2 holding, -3 rotting,
   // -4 blocked - because a leg cannot be dated when the entry carrying it cannot.
   turnsRemaining:int = -1;
+}
+
+// ONE ENTRY OF ONE BAND'S BUILD QUEUE (appended, docs/plan_standing_upkeep.md section 4.9 item 9a) -
+// a row of [PopulationCohortState].buildQueue, naming only the SOURCE the entry is a build on.
+//
+// AN ENTRY NAMES ITS SOURCE AND NOTHING ELSE, deliberately. The declared job, the kit, the
+// destination rung, the legs, the chained date and the blocked cause are all published on the
+// SOURCE row (ForagePatchState / the herd twin), and they agree across every band holding that
+// source BY CONSTRUCTION: `cultivate`/`sow`/`tame` enqueue the same declaration on every band
+// working it, and `build_kit` is source-addressed and sets every holder's entry. Repeating any of
+// them here would be a second copy of a fact that already has a home, which is how two copies come
+// to disagree.
+table BuildQueueEntryState {
+  // WHICH WEB THIS ENTRY IS ON, in the LaborAssignment `kind` vocabulary - "forage" for a patch,
+  // "hunt" for a herd. The same token the band's own labor row publishes for the same source, so a
+  // client joins the two on ONE spelling rather than on two that merely happen to match.
+  kind:string;
+  // The patch's tile. `0,0` on a hunt entry, which names its herd in `faunaId` instead.
+  targetX:uint = 0;
+  targetY:uint = 0;
+  // The herd's id. "" on a forage entry.
+  faunaId:string;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -3879,6 +3943,12 @@ table HerdTelemetryState {
   // WHERE THIS HERD SITS IN THE WINNING BAND'S BUILD QUEUE (appended,
   // docs/plan_standing_upkeep.md 4.6b) - 0-BASED, `-1` when no band has queued it. The animal twin
   // of `ForagePatchState.buildQueuePosition`; that field carries the full rationale.
+  //
+  // *** IT IS NOT THE RANK, on this web either. *** Like its plant twin it is a source-addressed
+  // readout of the WINNING band's place in the WINNING band's line, for the map annotation, the
+  // tile card and the compose sheet - and a band's queue block ordered on it draws another band's
+  // order (docs/plan_standing_upkeep.md section 4.9 item 9a).
+  // *** `PopulationCohortState.buildQueue` IS THE RANK. ***
   buildQueuePosition:int = -1;
   // WHY THE QUEUE IS BLOCKED HERE (appended) - the animal twin of
   // `ForagePatchState.buildBlockedReason`; that field carries the full key table and the rationale.

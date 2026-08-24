@@ -1017,6 +1017,11 @@ fn seed_snapshot() -> WorldSnapshot {
                 ..Default::default()
             })
             .collect();
+        // **THE BAND'S OWN BUILD QUEUE** (`docs/plan_standing_upkeep.md` §4.9 item 9a) — a repeated
+        // field on the cohort, seeded for the reason every other one here is: an empty vector
+        // carries no element type, so the decode guard would never see the field at all. The rank
+        // is the INDEX, so the golden's element ORDER is part of what it pins.
+        cohort.build_queue = rows();
         cohort.labor_assignments = rows();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];

@@ -3662,6 +3662,8 @@ func _keeping_pool_band_fixture(mode: String) -> Dictionary:
 	band["entity"] = 921
 	band["id"] = "Band 21"
 	band["upkeep_fund_mode"] = mode
+	# The band's OWN queue, which is what the block orders on — the forage row's declared Sow.
+	band["build_queue"] = [_queue_forage_entry(KEEPING_POOL_TILE)]
 	band["labor_assignments"] = [
 		# The forage row DECLARES a build, so this band carries a queue as well as a fund-mode row —
 		# which is the WORK zone's genuine worst case and the one its 300px horizontal box is
@@ -8563,6 +8565,7 @@ func _track_herd_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 948
 	band["id"] = "Band 18"
+	band["build_queue"] = [_queue_hunt_entry(TRACK_HERD_ID)]
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": 3, "workers_needed": 3, "floor": 0.5,
 			"fauna_id": TRACK_HERD_ID,
@@ -8593,6 +8596,8 @@ func _track_band_fixture(build_job: String = SourceForecast.IMPROVEMENT_NONE) ->
 	var band := _band_fixture()
 	band["entity"] = 947
 	band["id"] = "Band 17"
+	band["build_queue"] = [] if build_job == SourceForecast.IMPROVEMENT_NONE \
+		else [_queue_forage_entry(TRACK_PATCH)]
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
 			"target_x": TRACK_PATCH.x, "target_y": TRACK_PATCH.y, "improvement": build_job,
@@ -8901,6 +8906,7 @@ func _ring_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 951
 	band["id"] = "Band 21"
+	band["build_queue"] = [_queue_hunt_entry(RING_HERD_ID)]
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": 3, "workers_needed": 3, "floor": 0.5,
 			"fauna_id": RING_HERD_ID,
@@ -9402,9 +9408,13 @@ func _assert_ready_mark_declares() -> void:
 		_hud._bandpanel._work_source_models(band, 0))
 	_assert_band_panel("declare — all %d declarations are in the build queue on the same frame (found %d)"
 		% [DECLARE_ROW_COUNT, queued.size()], queued.size() == DECLARE_ROW_COUNT)
+	# **READ OFF THE BLOCK'S OWN VERDICT, NOT OFF THE SOURCE'S POSITION** (§4.9 item 9a). *Pending* is
+	# "this key is not in the BAND's wire queue" now — a band-dependent question the per-source
+	# `build_queue_position` cannot answer, and one it only appeared to answer here because this
+	# fixture's patches are in nobody's queue.
 	_assert_band_panel("declare — …and every one of them is a PENDING entry the wire has not placed",
-		queued.filter(func(m): return int(m.get("build_queue_position",
-			SourceForecast.NOT_IN_ANY_BUILD_QUEUE)) >= SourceForecast.BUILD_QUEUE_HEAD).is_empty())
+		queued.filter(func(m): return not BandPanelController._build_queue_row_is_pending(
+			m as Dictionary)).is_empty())
 	_assert_band_panel("declare — and no ⌃ survives on the board, the rung now being in flight (found %d)"
 		% _ready_mark_buttons().size(), _ready_mark_buttons().is_empty())
 	_hud._band_labor._pending_labor.clear()
@@ -12042,6 +12052,23 @@ func _kit_worn_band_fixture() -> Dictionary:
 		BandFx.KIT_SCOUT_VANTAGE_EQUIPPED)
 	return band
 
+## **ONE ROW OF A BAND'S OWN BUILD QUEUE** — the wire's `PopulationCohortState.buildQueue` shape
+## (`docs/plan_standing_upkeep.md` §4.9 item 9a): the four keys a `labor_assignments` entry spells its
+## source with, and NO position, because the RANK IS THE INDEX.
+##
+## **EVERY FIXTURE WITH A QUEUED SOURCE NEEDS ONE**, and that is new: the block's membership and its
+## order come from this list now rather than from the sources' own `build_queue_position`, so a band
+## dict without it renders an EMPTY queue block however its patches and herds are dialled.
+static func _queue_forage_entry(tile: Vector2i) -> Dictionary:
+	return {"kind": SourceForecast.LABOR_KIND_FORAGE,
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": ""}
+
+## …and its animal twin. A hunt entry names its herd and states `0,0` for the tile, which is exactly
+## what the sim writes — the key is built off `fauna_id` alone on this web.
+static func _queue_hunt_entry(herd_id: String) -> Dictionary:
+	return {"kind": SourceForecast.LABOR_KIND_HUNT,
+		"target_x": 0, "target_y": 0, "fauna_id": herd_id}
+
 ## Stamp a fixture cohort with the `band_id` the real wire carries, DELIBERATELY DIFFERENT from its
 ## `entity`. `band_id` is the durable handle every band-addressed command names
 ## (`HudConst.NO_BAND_ID`); `entity` is client-local ECS allocation state. Both are plain ints, so a
@@ -12670,9 +12697,10 @@ func _render_builders_segment_state() -> void:
 ## **THE HANDS ARE A ROW OF THEIR OWN, not a second count on the source** (`docs/plan_standing_upkeep.md`
 ## §2.5). `improvementWorkers` is off the wire: a verb declares and names nobody, and the pool is an
 ## ordinary standing role in the same list as `scout`.
-func _builders_band_fixture() -> Dictionary:
+func _builders_band_fixture(queue: Array = []) -> Dictionary:
 	var band := _band_fixture()
 	band["idle_workers"] = 0
+	band["build_queue"] = queue
 	var rows: Array = band["labor_assignments"]
 	var forage: Dictionary = (rows[0] as Dictionary).duplicate(true)
 	forage["improvement"] = SourceForecast.IMPROVEMENT_CULTIVATE
@@ -12712,8 +12740,12 @@ func _builders_band_fixture() -> Dictionary:
 # satisfies either frame alone. Each state asserts the head's WHOLE readout by EQUALITY — the pool
 # count and the kit's display name — composed from the vocabulary rather than through the producer.
 
-## The two sources the reference band already works, one per web. The head moves by dialling those
-## SOURCES' own `buildQueuePosition`, so the band itself is byte-identical across the pair.
+## The two sources the reference band already works, one per web.
+##
+## **THE HEAD MOVES ON THE BAND, not on the sources.** It used to move by dialling those SOURCES' own
+## `buildQueuePosition` with the band held byte-identical; membership and order are the band's own
+## `build_queue` now (§4.9 item 9a), so the ONE thing that differs across the pair is which entry that
+## list holds. The sources keep their positions because the row's readouts still quote them.
 const BUILDERS_KIT_PATCH := Vector2i(71, 18)
 const BUILDERS_KIT_HERD := "game_deer_07"
 const BUILDERS_KIT_HERD_TILE := Vector2i(70, 17)
@@ -12725,7 +12757,7 @@ func _render_builders_kit_states() -> void:
 	#   (a) A PLANT build at the head — the Cultivate this band has declared on its own patch.
 	_set_forage_patches([_builders_kit_patch(SourceForecast.BUILD_QUEUE_HEAD)])
 	_set_world_herds([_builders_kit_herd(SourceForecast.NOT_IN_ANY_BUILD_QUEUE)])
-	_push_bands([_builders_band_fixture()])
+	_push_bands([_builders_band_fixture([_queue_forage_entry(BUILDERS_KIT_PATCH)])])
 	await _settle()
 	await _save("band_panel_builders_kit_plant")
 	_assert_zones_within_bounds()
@@ -12736,7 +12768,7 @@ func _render_builders_kit_states() -> void:
 	# takes it, so nothing but the head's web moves between the two frames.
 	_set_forage_patches([_builders_kit_patch(SourceForecast.NOT_IN_ANY_BUILD_QUEUE)])
 	_set_world_herds([_builders_kit_herd(SourceForecast.BUILD_QUEUE_HEAD)])
-	_push_bands([_builders_band_fixture()])
+	_push_bands([_builders_band_fixture([_queue_hunt_entry(BUILDERS_KIT_HERD)])])
 	await _settle()
 	await _save("band_panel_builders_kit_animal")
 	_assert_zones_within_bounds()
@@ -12808,6 +12840,11 @@ func _assert_queue_head_kit(where: String, kit_id: String) -> void:
 
 ## The band's own patch, plus two more it works, and the herd its hunt row already names. Positions
 ## interleave the webs deliberately: plant at the head, animal behind it, plant behind that.
+## **THE PLACE A SHARED PATCH PUBLISHES WHEN IT IS NOT THE WINNER'S HEAD** — a real position behind
+## one, deliberately not `NOT_IN_ANY_BUILD_QUEUE`: the sentinel would let a resolver that merely
+## skips unqueued sources reach the right answer for the wrong reason.
+const SHARED_HEAD_WAITING_POSITION := 1
+
 const QUEUE_HEAD_PATCH := Vector2i(71, 18)
 const QUEUE_SECOND_PATCH := Vector2i(72, 18)
 const QUEUE_THIRD_PATCH := Vector2i(73, 18)
@@ -12944,6 +12981,10 @@ func _render_build_queue_states() -> void:
 	# reorder drag, the optimistic withdrawal and the zone's one-expansion rule.
 	await _render_queue_control_states()
 	_assert_unqueue_command_grammar()
+	# **AND THE SHARED SOURCE — the one state whose two wire statements DISAGREE** (§4.9 item 9a).
+	# APPENDED here rather than folded into the block above, whose fixture is self-consistent by
+	# construction and therefore cannot stage it.
+	await _render_shared_source_queue_state()
 	# Put the roster and the reference band back — `update_band_alerts` diffs against the last roster
 	# pushed, and everything below reads whatever this block leaves behind.
 	_set_forage_patches([])
@@ -13210,17 +13251,201 @@ func _render_queue_drag_state() -> void:
 			int((seen[0] as Dictionary).get("band_id", HudConst.NO_BAND_ID)),
 			QUEUE_HEAD_PATCH.x, QUEUE_HEAD_PATCH.y]
 		_assert_band_panel("…and the drop sends `%s` (got \"%s\")" % [want, line], line == want)
-		# **THE LIST HOLDS THE NEW ORDER UNTIL THE TURN RESOLVES** — `buildQueuePosition` is
-		# turn-written, so without the overlay the block snaps back on the command's own recapture.
+		# ⛔ **AND THE NEW ORDER ARRIVES ON THE WIRE, WHICH IS THE OTHER HALF OF THE GESTURE** (§4.9
+		# item 9a). This used to claim *the block draws the DRAGGED order rather than the wire's*, off
+		# an optimistic ordering overlay — a SECOND ordering beside a live one, which is the drift the
+		# `buildQueue` field's own doc comment forbids, and which painted the requested order until the
+		# turn silently replaced it. `PopulationCohortState.buildQueue` is captured LIVE off the
+		# allocation `build_order` mutates, so the honest claim is the RECAPTURE's: push the same
+		# fixture with the band's queue reordered — the withdrawal state below re-pushes for the same
+		# reason — and the block draws it. The client itself now draws nothing of its own in between.
 		_hud._bandpanel._on_queue_drag_end()
+		var recaptured := _build_queue_band_fixture(3)
+		recaptured["build_queue"] = [_queue_hunt_entry(QUEUE_HERD_ID),
+			_queue_forage_entry(QUEUE_HEAD_PATCH), _queue_forage_entry(QUEUE_SECOND_PATCH)]
+		_push_bands([recaptured])
 		await _settle()
 		var reordered := _build_queue_rows()
-		_assert_band_panel("…and the block draws the DRAGGED order rather than the wire's",
-			reordered.size() >= 2 and int(reordered[1].get_meta(
-				HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD)
+		var reordered_faces := _queue_row_faces()
+		_assert_band_panel("…and the recapture carrying the band's NEW `build_queue` draws it — %s"
+				% str(reordered_faces),
+			reordered.size() == 3 and reordered_faces[0] == _build_queue_face_for(
+				_queue_entry_key(true)))
 	_hud._band_labor._pending_labor.clear()
+	_push_bands([_build_queue_band_fixture(3)])
 	_hud._bandpanel.rerender()
 	await _settle()
+
+## The drawn queue rows' FACES, in the order the block drew them — the one readable statement of
+## *what order is on screen*, since a row's position meta is now a per-source readout rather than its
+## rank (§4.9 item 9a) and cannot be read as one.
+func _queue_row_faces() -> Array:
+	var faces: Array = []
+	for row in _build_queue_rows():
+		var label := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_FACE_META)
+		faces.append("" if label == null else String(
+			label.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)))
+	return faces
+
+## …and the face ONE key would draw, composed through the panel's own producer so a claim about the
+## order compares two of the block's own strings rather than one of its strings against a guess.
+func _build_queue_face_for(key: String) -> String:
+	var band := _hud._band_labor.panel_band()
+	for entry_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		var entry: Dictionary = entry_variant
+		if String(entry.get("key", "")) == key:
+			return _hud._bandpanel._build_queue_job_face(entry)
+	return ""
+
+# =====================================================================================
+#  THE SHARED SOURCE — a queue ordered on `buildQueuePosition` is ANOTHER BAND'S ORDER
+# =====================================================================================
+# `docs/plan_standing_upkeep.md` §4.9 item 9a, found in PR #570's own review.
+#
+# **THE DEFECT.** `buildQueuePosition` is published per SOURCE and rides the WINNING band — the one
+# with the soonest estimate among the bands working it — so on a source two bands hold, the number is
+# routinely another band's place in another band's line. Band B's queue is `[X, Y, Z]`; band C also
+# holds Y and has the sooner estimate, so Y publishes `0` and X publishes `1`. A block ordered on that
+# field drew **`[Y, X, Z]`**, and `_queue_drop` then computed its insert index from that wrong list:
+# dragging Z above X sent `build_order B Z 1` and the sim yielded `[X, Z, Y]` — Z BEHIND X, the
+# opposite of the gesture.
+#
+# **THE FIXTURE IS THE CLAIM, and its whole content is the DISAGREEMENT.** The band's own
+# `build_queue` says `[X, Y, Z]` while the sources say `X = 1`, `Y = 0`, `Z = 2` — a state no
+# self-consistent fixture can stage, and the reason every other queue frame in this file (whose two
+# statements agree) passes on the defect as happily as on the fix.
+#
+# **AND BOTH HALVES ARE ASSERTED**: the ORDER as drawn, and the POSITION a drop computes from it. The
+# ordering alone would pass on a block that drew B's list and then handed `_queue_drop` a differently
+# derived one, which is exactly the shape the two used to be in.
+
+## The three sources of band B's queue, in B's own order. `SHARED` is the one band C also holds.
+const SHARED_QUEUE_TILE_X := Vector2i(58, 31)
+const SHARED_QUEUE_TILE_SHARED := Vector2i(59, 31)
+const SHARED_QUEUE_TILE_Z := Vector2i(60, 31)
+
+## The positions the SOURCES publish — the winning band's answer, and deliberately NOT B's order.
+## `SHARED` is at the head of band C's line, so B's true head publishes `1` behind it.
+const SHARED_QUEUE_WINNER_POSITION := 0
+const SHARED_QUEUE_X_POSITION := 1
+const SHARED_QUEUE_Z_POSITION := 2
+
+const SHARED_QUEUE_BAND_ENTITY := 968
+const SHARED_QUEUE_BAND_ID := "Band 36"
+
+## …and the place the drag under test asks for: Z above X is the HEAD of B's list.
+const SHARED_QUEUE_DROP_POSITION := 0
+
+func _render_shared_source_queue_state() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_set_world_herds([])
+	_set_forage_patches(_shared_queue_patch_fixtures())
+	_push_bands([_shared_queue_band_fixture()])
+	await _settle()
+	await _save("band_panel_queue_shared_source")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_shared_source_queue_order()
+	_assert_shared_source_queue_drop()
+	# Put the world and the reference band back, this file's own rule.
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## The three patches, each publishing the WINNING band's position for it rather than B's.
+func _shared_queue_patch_fixtures() -> Array:
+	var tiles := [SHARED_QUEUE_TILE_X, SHARED_QUEUE_TILE_SHARED, SHARED_QUEUE_TILE_Z]
+	var positions := [SHARED_QUEUE_X_POSITION, SHARED_QUEUE_WINNER_POSITION, SHARED_QUEUE_Z_POSITION]
+	# **THREE LIVE, ASCENDING COUNTS AND NO SENTINEL**, deliberately: the chained dates rise down a
+	# correctly ordered queue, so the PNG shows `42 · 61 · 140` when the block draws B's order and a
+	# visibly out-of-order `61 · 42 · 140` when it draws the sources'. The sentinel cases are
+	# `band_panel_build_queue_blocked`'s; this frame's whole subject is the ORDER.
+	var turns := [QUEUE_TURNS_HEAD, QUEUE_TURNS_SECOND, QUEUE_TURNS_FOURTH]
+	var out: Array = []
+	for i in range(tiles.size()):
+		out.append({
+			"x": (tiles[i] as Vector2i).x, "y": (tiles[i] as Vector2i).y,
+			"build_queue_position": positions[i],
+			"build_turns_remaining": turns[i],
+			"build_blocked_reason": "",
+		})
+	return out
+
+## Band B: three worked patches, each with a Cultivate declared, and its OWN queue in its OWN order.
+func _shared_queue_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = SHARED_QUEUE_BAND_ENTITY
+	band["id"] = SHARED_QUEUE_BAND_ID
+	band["idle_workers"] = 0
+	band["build_queue"] = [
+		_queue_forage_entry(SHARED_QUEUE_TILE_X),
+		_queue_forage_entry(SHARED_QUEUE_TILE_SHARED),
+		_queue_forage_entry(SHARED_QUEUE_TILE_Z),
+	]
+	band["labor_assignments"] = [
+		_build_queue_forage_row(SHARED_QUEUE_TILE_X, SourceForecast.IMPROVEMENT_CULTIVATE),
+		_build_queue_forage_row(SHARED_QUEUE_TILE_SHARED, SourceForecast.IMPROVEMENT_CULTIVATE),
+		_build_queue_forage_row(SHARED_QUEUE_TILE_Z, SourceForecast.IMPROVEMENT_CULTIVATE),
+		{"kind": HudConst.LABOR_KIND_BUILDERS, "workers": QUEUE_BUILDERS,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+	]
+	return band
+
+## One of band B's queue keys, by the tile it names.
+func _shared_queue_key(tile: Vector2i) -> String:
+	return _hud._band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE, tile.x, tile.y, "")
+
+## **THE BLOCK DRAWS BAND B's ORDER — `X, Y, Z` — AND NOT THE SOURCES'.** Asserted on the model list's
+## own keys, which is what the rows are built from, and stated as the WHOLE sequence: a claim about
+## the head alone passes on `[X, Z, Y]`, and the defect's own answer `[Y, X, Z]` differs from the fix
+## in its first two entries.
+func _assert_shared_source_queue_order() -> void:
+	var band := _hud._band_labor.panel_band()
+	var drawn: Array = []
+	for entry_variant in _hud._bandpanel._build_queue_models(band,
+			_hud._bandpanel._work_source_models(band, 0)):
+		drawn.append(String((entry_variant as Dictionary).get("key", "")))
+	var wanted: Array = [_shared_queue_key(SHARED_QUEUE_TILE_X),
+		_shared_queue_key(SHARED_QUEUE_TILE_SHARED), _shared_queue_key(SHARED_QUEUE_TILE_Z)]
+	_assert_band_panel("shared source — the block draws the BAND's queue %s, not the sources' positions (got %s)"
+		% [str(wanted), str(drawn)], drawn == wanted)
+	# …and the rows really are those three, or the claim above is about a model list nothing renders.
+	_assert_band_panel("…and it renders one row per entry (%d)" % _build_queue_rows().size(),
+		_build_queue_rows().size() == wanted.size())
+
+## **AND THE DROP COMPUTES ITS POSITION FROM THAT SAME LIST.** Z dragged ABOVE X is B's new head, so
+## the command names `0`. Under the defect the block's list was `[Y, X, Z]`, X sat at index 1, and the
+## same gesture sent `1` — which put Z BEHIND X, the opposite of what was asked.
+##
+## Driven through the REAL `_queue_drop`, off the REAL drag payload, and read off the emitted command
+## LINE: the position is the only thing this gesture produces, so a claim on anything else is a claim
+## about the harness.
+func _assert_shared_source_queue_drop() -> void:
+	var band := _hud._band_labor.panel_band()
+	var dragged := _shared_queue_key(SHARED_QUEUE_TILE_Z)
+	var onto := _shared_queue_key(SHARED_QUEUE_TILE_X)
+	var data := {"type": HudWorkVocab.BUILD_QUEUE_DRAG_TYPE, "key": dragged}
+	# Above the target's midpoint, which is the promotion a player dragging Z up is asking for.
+	var above := Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT * 0.25)
+	_hud._bandpanel._queue_can_drop(above, data, onto)
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.build_order_requested.connect(sink)
+	_hud._bandpanel._queue_drop(above, data, band, onto)
+	_hud.build_order_requested.disconnect(sink)
+	if seen.is_empty():
+		_fail("shared source — dragging Z above X emitted no build_order")
+		return
+	var line := String(MAIN_SCRIPT.format_build_order(seen[0] as Dictionary).get("line", ""))
+	var want := "build_order %d %d %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+		int((seen[0] as Dictionary).get("band_id", HudConst.NO_BAND_ID)),
+		SHARED_QUEUE_TILE_Z.x, SHARED_QUEUE_TILE_Z.y, SHARED_QUEUE_DROP_POSITION]
+	_assert_band_panel("shared source — dragging Z above X sends `%s` (got \"%s\")" % [want, line],
+		line == want)
+	_hud._bandpanel._on_queue_drag_end()
 
 ## **A WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED** (§4.7b ④), and the two other
 ## entries stay — the paired claim, without which a block that simply emptied itself would pass.
@@ -13276,11 +13501,18 @@ func _render_queue_withdrawal_state() -> void:
 ## the sim derives from its queue entries, plus however many extra patches this state needs and the
 ## `builders` ROLE ROW that funds the lot.
 ##
-## `entries == 0` is the NEGATIVE fixture — the same band with every declaration dropped, so the
-## board is unchanged and only the queue is gone.
+## **AND ITS OWN ORDERED `build_queue`, which is what the block draws** (§4.9 item 9a). The first
+## `entries` rows of `_build_queue_entries`, so the list agrees entry-for-entry with the
+## declarations below it and with the positions `_build_queue_patches` / `_build_queue_herds`
+## publish — the fixture states the same queue twice because the wire does, once as the band's rank
+## and once as each source's readout.
+##
+## `entries == 0` is the NEGATIVE fixture — the same band with every declaration dropped and an empty
+## queue, so the board is unchanged and only the queue is gone.
 func _build_queue_band_fixture(entries: int) -> Dictionary:
 	var band := _band_fixture()
 	band["idle_workers"] = 0
+	band["build_queue"] = _build_queue_entries(entries)
 	var rows: Array = band["labor_assignments"]
 	var forage: Dictionary = (rows[0] as Dictionary).duplicate(true)
 	forage["improvement"] = SourceForecast.IMPROVEMENT_CULTIVATE if entries >= 1 \
@@ -13301,6 +13533,18 @@ func _build_queue_band_fixture(entries: int) -> Dictionary:
 		"target_x": -1, "target_y": -1, "fauna_id": "",
 	})
 	return band
+
+## **THE BAND'S QUEUE, IN THE ORDER THE SOURCES' OWN POSITIONS SPELL** — the head patch at 0, the
+## herd at 1, then the second and third patches. Stated once here so a state that needs a DIFFERENT
+## order (the shared-source frame below) states its own rather than dialling this one.
+func _build_queue_entries(entries: int) -> Array:
+	var order: Array = [
+		_queue_forage_entry(QUEUE_HEAD_PATCH),
+		_queue_hunt_entry(QUEUE_HERD_ID),
+		_queue_forage_entry(QUEUE_SECOND_PATCH),
+		_queue_forage_entry(QUEUE_THIRD_PATCH),
+	]
+	return order.slice(0, clampi(entries, 0, order.size()))
 
 func _build_queue_forage_row(tile: Vector2i, improvement: String) -> Dictionary:
 	return {
@@ -13635,20 +13879,41 @@ func _assert_unqueue_command_grammar() -> void:
 ## `bare_kit_id` is the honest answer to *nothing is chosen and nothing can be derived*. With the
 ## Builders card's gear line retired the empty queue renders no surface at all (no queue, no block, no
 ## head), so the reachable shape of that state is a queue holding ONLY a PENDING entry: the wire has
-## placed nothing, `build_is_queue_head` answers false, and the head has nothing to derive from.
+## placed nothing, so the band's own `build_queue` is empty, `head_build_branch` answers
+## `BUILD_BRANCH_NONE` and the head has nothing to derive from.
 func _assert_builders_card_kit_faces() -> void:
+	# **THE BAND'S OWN QUEUE RIDES EACH CASE NOW** (§4.9 item 9a): the block's membership comes from
+	# it, so the sources' positions alone render no block at all to read a head off. Both statements
+	# are dialled per case because both are what the wire carries — the band's rank and the source's
+	# readout — and it is `head_build_branch` that still reads the second.
 	var cases := [
 		["a PLANT queue head", SourceForecast.BUILD_QUEUE_HEAD,
-			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_TILLAGE],
+			SourceForecast.NOT_IN_ANY_BUILD_QUEUE, BandFx.KIT_ID_TILLAGE,
+			[_queue_forage_entry(BUILDERS_KIT_PATCH)]],
 		["an ANIMAL queue head", SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
-			SourceForecast.BUILD_QUEUE_HEAD, BandFx.KIT_ID_HURDLING],
+			SourceForecast.BUILD_QUEUE_HEAD, BandFx.KIT_ID_HURDLING,
+			[_queue_hunt_entry(BUILDERS_KIT_HERD)]],
 	]
 	for case in cases:
 		_set_forage_patches([_builders_kit_patch(int(case[1]))])
 		_set_world_herds([_builders_kit_herd(int(case[2]))])
-		_push_bands([_builders_band_fixture()])
+		_push_bands([_builders_band_fixture(case[4] as Array)])
 		await _settle()
 		_assert_queue_head_kit(String(case[0]), String(case[3]))
+	# ⛔ **…AND THE CASE WHERE THE TWO STATEMENTS DISAGREE, which is the one the pair above cannot
+	# make** (§4.9 item 9a). Both cases are self-consistent — the band's head is on the same web as
+	# the source publishing `0` — so a resolver reading either statement passes them both. Here the
+	# band's OWN queue holds the PATCH while the HERD publishes position `0`, because another band
+	# working that herd has the sooner estimate and it is at the head of THEIR line. The pool this
+	# band's builders are standing on is the plant one, so the head must state the TILLAGE kit; a
+	# resolver reading the source's position derives the animal web and prints `Hurdling kit`, which
+	# this asserts by EQUALITY. It is the Builders-card twin of the queue block's own defect: the same
+	# wrong band, one consumer over.
+	_set_forage_patches([_builders_kit_patch(SHARED_HEAD_WAITING_POSITION)])
+	_set_world_herds([_builders_kit_herd(SourceForecast.BUILD_QUEUE_HEAD)])
+	_push_bands([_builders_band_fixture([_queue_forage_entry(BUILDERS_KIT_PATCH)])])
+	await _settle()
+	_assert_queue_head_kit("a PLANT head under ANOTHER band's animal head", BandFx.KIT_ID_TILLAGE)
 	# **…AND THE PENDING-ONLY HEAD, WHICH DERIVES** (`docs/plan_standing_upkeep.md` §4.7a). It read
 	# `No kit` for one slice and Ray reported it: `head_build_branch` needs the entry the WIRE put at
 	# position 0, and a declaration made THIS turn has none, so nothing derived and the fall-through
@@ -14486,7 +14751,14 @@ func _render_pending_queue_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	_hud._band_labor.set_turn(_hud._band_labor.current_turn() + 1)
 	_set_forage_patches(_pending_queue_confirmed_patches())
-	_push_bands([_build_queue_band_fixture(1)])
+	# **THE BAND'S OWN QUEUE IS WHERE "the sim placed it" IS SAID NOW** (§4.9 item 9a): the entry is
+	# APPENDED behind the confirmed head, which is the same fact `PENDING_QUEUE_CONFIRMED_POSITION`
+	# states one field over. Stated explicitly rather than through `_build_queue_band_fixture`'s own
+	# order, whose second entry is the HERD.
+	var placed := _build_queue_band_fixture(1)
+	placed["build_queue"] = [_queue_forage_entry(QUEUE_HEAD_PATCH),
+		_queue_forage_entry(PENDING_QUEUE_TILE)]
+	_push_bands([placed])
 	await _settle()
 	_assert_build_queue_block(2, "the queue after the sim placed the declaration")
 	_assert_no_pending_queue_row()
@@ -14575,6 +14847,15 @@ func _assert_pending_queue_row() -> void:
 		int(_hud._band_labor.panel_band().get("entity", -1)),
 		_hud._band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE,
 			PENDING_QUEUE_TILE.x, PENDING_QUEUE_TILE.y, ""))
+	# ⛔ **AND THE PRESS RE-SEATED THE PANEL BAND, WHICH NOW CARRIES THE QUEUE** (§4.9 item 9a).
+	# `Hud._after_pending_change` re-renders the SELECTION card, whose occupant this harness stages
+	# separately — the `_band_fixture()`-shaped Band 2 pushed long before this block — so the band
+	# under the panel becomes the OTHER fixture of the same entity, the hazard `_declare_pending_build`
+	# already records. That used to be harmless here because the block's membership came from the
+	# PATCHES, which no re-seat touches; the band's own `build_queue` is the membership now, so the
+	# confirmed head vanished and the wide-dock state below inherited a one-row block. A live client
+	# cannot reach this: both dicts come from one snapshot.
+	_push_bands([_build_queue_band_fixture(1)])
 	_hud._bandpanel.rerender()
 	_assert_band_panel("…and its `%s` still withdraws the declaration — `%s` (got \"%s\")"
 			% [HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH, patch_line, line], line == patch_line)
@@ -14878,6 +15159,7 @@ func _keeping_declare_band_fixture(keepers: int) -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = KEEPING_DECLARE_BAND_ENTITY
 	band["id"] = KEEPING_DECLARE_BAND_ID
+	band["build_queue"] = [_queue_hunt_entry(KEEPING_DECLARE_HERD_ID)]
 	band["labor_assignments"] = [
 		{"kind": SourceForecast.LABOR_KIND_HUNT, "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"fauna_id": KEEPING_DECLARE_HERD_ID,

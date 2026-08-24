@@ -4529,12 +4529,16 @@ static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
 static func rung_branch_for_kind(source_kind: String) -> Array:
     return RUNG_BRANCH_ANIMAL if source_kind == SOURCE_KIND_HERD else RUNG_BRANCH_PLANT
 
-## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
-## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other
-## people's work.
-static func build_is_queue_head(src: Dictionary, prefix: String) -> bool:
-    return build_queue_position(src, prefix) == BUILD_QUEUE_HEAD
-
+## **RETIRED — `build_is_queue_head`, *is this source at the head of the queue that funds it?***
+##
+## ⛔ **IT COULD NOT ANSWER FOR A PARTICULAR BAND, AND BOTH ITS CALLERS WERE ASKING FOR ONE**
+## (`docs/plan_standing_upkeep.md` §4.9 item 9a). It read `build_queue_position == 0`, which is
+## published per SOURCE and rides the WINNING band — the soonest estimate among the bands working it —
+## so it meant *some* band has this at its head, routinely not the band asking. The Builders card
+## derived the wrong web's kit and the compose sheet drew a running meter over an entry standing third
+## in the acting band's line. `HudBandLaborState.is_band_build_head` / `head_build_branch` answer off
+## `PopulationCohortState.buildQueue`, the only list that is a particular band's.
+##
 ## **THE WORK UNITS THE POOL'S KITS ADD TO ITS OUTPUT THIS TURN** — `workers × gear_per_worker`, the
 ## gear-only remainder of the build's supply (`intensification::gear_work_supply`). `0` when no build
 ## is in flight or the crew carries nothing that helps, which is what every readout gates its gear

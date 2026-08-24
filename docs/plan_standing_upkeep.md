@@ -939,6 +939,72 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > **The build queue of §4.6b IS this property's storage**, not a second ordering beside it. If the
    > queue ships with a rank of its own, they will drift — so whichever lands first owns the rank and
    > the other reads it.
+
+   > **HALF OF THIS HAS LANDED — the QUEUE's half, in PR #570 (§4.7b ③).** Drag-to-reorder ships on
+   > the build queue block, the drop sends `build_order <faction> <band> <source…> <position>`, and
+   > by the note above **that queue IS the storage**: the client keeps no rank beside it. So the
+   > property exists, on the one list whose order is already an input.
+   >
+   > **What remains is the WORKED ROWS**, and it is stated here rather than left implicit: the player
+   > orders their worked jobs, and a band that runs short **sheds from the bottom of that order,
+   > saying which row it took**. The shape is the one this item already names — an **explicit rank on
+   > top, with the shipped ordering surviving as the tie-break beneath it**. §2.9's eleven coded steps
+   > **are** that tie-break; they are not replaced, and nothing in them becomes positional (see §2.9's
+   > own closing paragraph, which is the reason list position must never be the shedding order).
+
+   **9a — THE QUEUE'S ORDER BELONGS TO A BAND, AND ON THE WIRE IT DOES NOT. This is 9's foundation
+   and it comes first**, because 9b cannot be built on a queue whose ordering belongs to the wrong
+   band. Found in PR #570's own review and fixed nowhere until this slice.
+
+   **The defect.** `buildQueuePosition` is published **per SOURCE** — one `int` on `ForagePatchState`
+   and one on the herd state — and it "rides the same winner as `buildTurnsRemaining`"
+   (`BuildEstimateClaims::publish_running`, `core_sim/src/systems/labor.rs`): among the bands working
+   a source, the one with the **soonest estimate** writes the field. Two bands holding one source is
+   ordinary, so the number a source publishes is routinely **another band's place in another band's
+   line**.
+
+   What that does to the gesture: band B's queue is `[X, Y, Z]`; band C also holds Y and has the
+   sooner estimate, so Y publishes `position = 0`. B's block ties X and Y at `0`, breaks the tie on
+   the key string, and draws **`[Y, X, Z]`**. Dragging Z above X computes `insert = 1` from that wrong
+   list and sends `build_order B Z 1`, and `move_build_entry` yields **`[X, Z, Y]`** — Z lands
+   *behind* X. The optimistic overlay then paints the requested order until the turn resolves, so the
+   list **silently jumps** a turn later.
+
+   > **IT IS NOT FIXABLE ON THE CLIENT, and no tie-break papers over it.** There is no band-keyed
+   > queue anywhere on the wire, and the chained date rides the same winner — so the client holds no
+   > second signal to recover the true order from. Established in #570's review; it is not to be
+   > re-derived, and a cleverer tie-break would only pick a different wrong order.
+
+   **The fix is a per-band queue on the wire, and it is the BAND-SIDE ORDERED LIST.**
+   `PopulationCohortState` gains `buildQueue` — the band's own entries, in the band's own order, each
+   naming only its source. **The rank is the vector INDEX**: there is no second integer to disagree
+   with anything, which is what this item's own note demands of whichever ordering lands first.
+   > **Why not per-source `[{band, position}]` rows**, the other shape considered: it answers a
+   > band-shaped question in source-shaped storage, so building one band's queue means scanning every
+   > source, and its explicit `position` ints carry an invariant — dense, per band, spread across N
+   > sources — that no codec can enforce. The band-side list has neither problem, and it mirrors what
+   > the sim already holds (`LaborAllocation::build_queue`), so it is **captured live** rather than
+   > turn-written.
+   >
+   > **AND THE LIVE CAPTURE RETIRES THE OPTIMISTIC ORDERING.** `build_order` mutates the allocation
+   > at command time and the server re-captures after every command, so the new order arrives on the
+   > command's own recapture — exactly the reasoning `buildKitId` already ships on. The client's
+   > pending-order overlay was a **second ordering beside the wire's**, which is the drift this item
+   > exists to forbid, so it goes with the defect.
+   >
+   > **WHAT IT DELIBERATELY DOES NOT FIX: the per-entry READOUTS still ride the winner.** The date,
+   > the legs, the gear and the blocked cause are source-addressed fields and keep the
+   > sooner-estimate rule they were designed with, so a shared entry in B's queue can still quote a
+   > countdown chained down C's. That is a stated rule (`snapshot.fbs`, "IT RIDES THE SAME WINNER"),
+   > not this defect, and the ordering fix is strictly an improvement over it: the list is B's, the
+   > date is the best answer anyone has. Per-band estimates are a bigger change than the gesture
+   > warrants and would want their own slice.
+
+   **9b — THE WORKED ROWS TAKE THE EXPLICIT RANK, and the shedding order reads it.** Still open. The
+   player orders their worked rows; §2.9's walk consults that rank where it consults list position
+   nowhere, and a shed **names the row it took**. The rank sits **on top** of the shipped ordering,
+   which survives as the tie-break — most sources sit at the default, so a rule that only fires on an
+   explicit pick is what keeps the default behaviour exactly where it is.
 10. **Symmetric partial credit — AND the one-position ladder it needs.** **The model is §2.8; this is
    only its place in the order.** A rung's benefit and its cost both scale with how far up the ladder
    the source has been worked, and the two independent meters per source collapse into one cumulative

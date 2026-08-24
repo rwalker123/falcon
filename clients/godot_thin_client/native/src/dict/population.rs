@@ -663,6 +663,37 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("labor_assignments", &array);
+    // **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
+    // (`docs/plan_standing_upkeep.md` §4.9 item 9a). An Array of `{kind, target_x, target_y,
+    // fauna_id}` Dictionaries — the SAME four keys a `labor_assignments` entry spells its source
+    // with, deliberately, so a client keys both lists with one call and cannot join them on two
+    // spellings that merely happen to match.
+    //
+    // **THE RANK IS THE INDEX.** There is no `position` int on the wire and there must be none
+    // here: entry 0 is the head, and one ordered list has nothing to drift against. It is the
+    // BAND's own order, which `ForagePatchState.build_queue_position` is not — that field rides the
+    // winning band (the soonest estimate) and so publishes another band's place in another band's
+    // line, which is what drew band B's `[X, Y, Z]` as `[Y, X, Z]`.
+    //
+    // **CAPTURED LIVE** off `LaborAllocation::build_queue` rather than stamped by the turn, the same
+    // discipline `kit_id` above ships on, so a reorder arrives on its own command's recapture and a
+    // client needs no optimistic ordering overlay.
+    //
+    // Always inserted (an empty Array when the wire vector is absent), the `labor_assignments`
+    // rule directly above: the band dict has one shape whether or not the server serialized an
+    // empty vector.
+    let mut build_queue = VarArray::new();
+    if let Some(entries) = cohort.buildQueue() {
+        for wire_entry in entries {
+            let mut entry = VarDictionary::new();
+            let _ = entry.insert("kind", wire_entry.kind().unwrap_or_default());
+            let _ = entry.insert("target_x", wire_entry.targetX() as i64);
+            let _ = entry.insert("target_y", wire_entry.targetY() as i64);
+            let _ = entry.insert("fauna_id", wire_entry.faunaId().unwrap_or_default());
+            build_queue.push(&entry.to_variant());
+        }
+    }
+    let _ = dict.insert("build_queue", &build_queue);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     // **THE AGE BRACKETS ARE WHOLE PEOPLE, AND THERE ARE ONLY THREE NUMBERS HERE.**
     // `working_age` IS the working bracket — the count of assignable workers — so `children` +
