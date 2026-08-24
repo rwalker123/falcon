@@ -651,6 +651,9 @@ fn spawn_resident_crew(
     workers: u32,
     improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
+    // The builders pool this fixture stands up: the take crew's count when a verb is declared, and
+    // nobody at all when there is nothing queued for them to raise.
+    let build_crew = if improvement.is_some() { workers } else { 0 };
     let tile = app
         .world
         .resource::<TileRegistry>()
@@ -663,8 +666,14 @@ fn spawn_resident_crew(
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
                 size: 200,
+                // **BIG ENOUGH TO FIELD EVERY ROW IT STAFFS.** The hunters and the builders draw on
+                // one pool (`docs/plan_standing_upkeep.md` §2.2), so a band sized at `workers` while
+                // staffing `workers` on each row is over-committed and `LaborAllocation::normalize`
+                // sheds one of them before the pass has resolved anything — which is what this
+                // fixture used to do, dropping the builders on every call and running every "with a
+                // build in flight" case with nobody raising it.
                 children: scalar_zero(),
-                working: scalar_from_f32(workers as f32),
+                working: scalar_from_f32((workers + build_crew) as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -686,28 +695,30 @@ fn spawn_resident_crew(
             },
             ResidentBand,
             LaborAllocation {
-                assignments: vec![
-                    LaborAssignment {
-                        target: LaborTarget::Hunt {
-                            fauna_id: fauna_id.to_string(),
-                            floor,
-                        },
-                        workers,
-                        kit: None,
+                assignments: std::iter::once(LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: fauna_id.to_string(),
+                        floor,
                     },
-                    // **The build's hands are a band-level pool** since
-                    // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so
-                    // the declared build is genuinely running beside the hunters.
-                    LaborAssignment {
-                        target: LaborTarget::Builders,
-                        workers,
-                        kit: Some(bare_builders()),
-                    },
-                ],
+                    workers,
+                    kit: None,
+                })
+                // **The build's hands are a band-level pool** since
+                // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so the
+                // declared build is genuinely running beside the hunters — and staffed **only when
+                // something is declared**, because a builders row with an empty queue is hands the
+                // band is paying for and nobody is spending.
+                .chain((build_crew > 0).then_some(LaborAssignment {
+                    target: LaborTarget::Builders,
+                    workers: build_crew,
+                    kit: None,
+                }))
+                .collect(),
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
+                        kit: Some(bare_builders()),
                     })
                     .into_iter()
                     .collect(),
@@ -2398,10 +2409,12 @@ fn the_exported_crew_pays_for_the_retreat() {
 /// count) and the shipped `wariness 0.65` is high enough that the retreat moves it by a lot.
 const WARY_SPECIES: &str = SMALL_BODIED_SPECIES;
 
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S `builders` ROW** — an isolation, not a default.
+/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
 ///
-/// An absent kit means *derive per entry*, and the roster's answer (`tillage` for a patch,
-/// `hurdling` for a herd) adds `+0.5` work per covered worker per turn. Naming `none` holds the gear
+/// It rides the **entry** because that is where a build's kit lives
+/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
+/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
+/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. Naming `none` holds the gear
 /// axis at its identity so these arms measure what they say they measure; the geared default is
 /// pinned in `core_sim/tests/build_turns_closed_form.rs`.
 fn bare_builders() -> core_sim::KitChoice {

@@ -28,16 +28,16 @@ use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     herd_build_verb, hunt_source_yield_preview, knows, load_simulation_config_for_new_world,
-    output_multiplier, patch_build_verb, resolve_active_profile, resolve_committed_species,
-    resolve_take_selection, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
-    ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle,
-    CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
-    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
-    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
-    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
-    StartProfileOverrides, TakeSelection, UpkeepFundMode, WellbeingConfigHandle,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    output_multiplier, patch_build_verb, patch_composition, resolve_active_profile,
+    resolve_committed_species, resolve_take_selection, rung_site_refusal, species_stands_in,
+    tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment,
+    BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle, BeatLedger, BuildJob,
+    BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle, Expedition,
+    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag,
+    ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
+    LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
+    RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection,
+    UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -451,12 +451,12 @@ fn main() {
     }
 }
 
-/// **HOW THE THREE QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
+/// **HOW THE FOUR QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
 /// (`docs/plan_standing_upkeep.md` §2.5).
 ///
-/// One type rather than three copies of the same optional triple, because `abandon`, `unqueue` and
-/// `build_order` address a source identically and a per-verb spelling is how one of them comes to
-/// accept a shape the others reject. It resolves to a [`LaborTarget`] once, in
+/// One type rather than four copies of the same optional triple, because `abandon`, `unqueue`,
+/// `build_order` and `build_kit` address a source identically and a per-verb spelling is how one of
+/// them comes to accept a shape the others reject. It resolves to a [`LaborTarget`] once, in
 /// [`BuildSourceRef::target`].
 #[derive(Debug, Clone)]
 struct BuildSourceRef {
@@ -677,6 +677,14 @@ enum Command {
         band_id: u64,
         source: BuildSourceRef,
         position: u32,
+    },
+    /// **Name the kit ONE queued build is raised with** — set it on the source's queue entry, on
+    /// every band of the faction that has it queued. `kit_id` absent **clears** the override back to
+    /// the entry's own web derivation (`docs/plan_standing_upkeep.md` §4.7a ②).
+    BuildKit {
+        faction: FactionId,
+        source: BuildSourceRef,
+        kit_id: Option<String>,
     },
     /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
     /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
@@ -2016,9 +2024,8 @@ fn seed_source_yield(
                 .cloned()
                 .unwrap_or_default();
             // **A PENNED herd is priced at the husbandry gear's tier, a wild one at the sled's** —
-            // the same split `advance_labor_allocation` makes on the same predicate, because
-            // `hunt_forecast` early-returns the managed path for a corralled herd and the seed has
-            // to arrive at that branch holding the rate the turn will pay it at. Pricing a pen at
+            // the same split `advance_labor_allocation` makes on the same predicate, and the seed has
+            // to reach `hunt_forecast` holding the rate the turn will pay it at. Pricing a pen at
             // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
             // player commits from.
             // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped
@@ -2129,12 +2136,7 @@ fn validate_labor_policy(
             }
             Ok(())
         }
-        LaborTarget::Forage {
-            tile,
-            species,
-            take_species,
-            ..
-        } => {
+        LaborTarget::Forage { tile, species, .. } => {
             // **CAN THEY GATHER HERE AT ALL?** The plant branch's rung 1 carries a
             // `site_requirement` of its own — the ground must be a **gathering site** — and this is
             // where it is enforced. It is the whole of the early game's scarcity: a `FoodModuleTag`
@@ -2160,15 +2162,15 @@ fn validate_labor_policy(
             // judging at `PlantField` here would refuse a crop the player may legitimately intend
             // to `cultivate`, and the stance command does not yet know which verb will follow.
             // `handle_sow` re-judges the crew's crop at its own rung.
-            // **WHICH PLANTS ARE THEY HERE FOR?** — judged before the commit crop because it is
-            // the live one: the take selection changes what this turn banks, while the crop below
-            // does nothing until an improvement completes.
+            // **WHICH PLANTS ARE THEY HERE FOR? — NOT ASKED HERE.** The take selection is
+            // *resolved* rather than gated, because most of what is wrong with one is the ground
+            // having moved under it rather than the player having mistyped it — see
+            // [`resolve_take_for_ground`], which `handle_assign_labor` runs immediately after this
+            // and which prunes the stale names instead of refusing the command that carries them.
             //
-            // **It FAILS CLOSED, and that is the whole of why it is validated at all.** A silently
-            // dropped selection produces exactly the numbers *"take everything"* produces, on every
-            // readout the player has, so the mistake would be undiagnosable. The floor's rule,
-            // applied to the other half of the same command.
-            validate_take_selection(app, *tile, take_species)?;
+            // It lives outside this gate because this function only ever answers *may they*, and a
+            // repair is not a verdict: threading a rewritten selection back out of a
+            // `Result<(), String>` would make every other arm carry a value it has no opinion about.
             let Some(named) = species.as_deref() else {
                 return Ok(());
             };
@@ -2549,28 +2551,66 @@ fn validate_sow(
     validate_species_selection(app, tile, species, RungKey::PlantField)
 }
 
-/// **May this crew gather these plants HERE?** — the take selection's gate, phrased for the player.
+/// **THE TAKE SELECTION THIS COMMAND WILL STORE, and the names the ground has taken off it** — the
+/// selection resolved against the mix the take will actually narrow.
+///
+/// `selection` is what the row must carry; `dropped` is the display names pruned out of it, empty
+/// when the player's selection stood as given. The caller stores the one and announces the other.
+struct ResolvedTake {
+    selection: TakeSelection,
+    dropped: Vec<String>,
+}
+
+/// **What may this crew gather HERE, given what it asked for?** — the take selection's command-side
+/// resolution, phrased for the player.
 ///
 /// It resolves through the *same* `forage::resolve_take_selection` seam the take path narrows with,
-/// against the tile's own basket via `forage::tile_flora_composition` (never
-/// `FloraConfig::composition` on a raw terrain), so a selection this accepts is one the turn can
-/// actually gather. **There is no rung in it**: a take selection says what the crew carries home
-/// from the stand that is standing, so a `wild`-ceiling plant is a perfectly good answer.
+/// against **the mix that take will narrow** — `forage::patch_composition`, the patch's live
+/// rung-reweighted basket, falling back to the tile's own realization
+/// (`forage::tile_flora_composition`, never `FloraConfig::composition` on a raw terrain) where no
+/// patch stands yet. **There is no rung *asked* in it**: a take selection says what the crew carries
+/// home from the stand that is standing, so a `wild`-ceiling plant is a perfectly good answer — but
+/// the stand that is standing on a tended or sown patch is the reweighted one, not the wild
+/// realization it grew out of.
 ///
-/// The whole basket (an empty selection) is always accepted — it names no plant to be wrong about.
-fn validate_take_selection(
+/// **Judging the wild basket was a defect, not a simplification.** The two baskets differ on every
+/// committed patch, so a selection naming a plant weeding or sowing had already displaced was
+/// accepted at the command boundary — freshly typed, no staleness involved — and then valued at
+/// exactly zero by the very next turn's take.
+///
+/// > #### ⛔ AN ABSENT PLANT IS PRUNED. ONLY A PLANT NO ROSTER CARRIES IS REFUSED.
+/// >
+/// > Judging the patch's own mix is right; **hard-refusing on it was not.** The mix moves under a
+/// > stored selection — that is what a `Cultivate`/`Sow` *is* — so the names this finds absent are
+/// > typically ones that were legal when the player made them and that the player's own crop then
+/// > weeded out.
+/// >
+/// > Refusing them refused the **whole `assign_labor`**, worker count included: reported from play on
+/// > a Field at `Wild Emmer 100%` whose row still named Wild Pulses, where raising the tenders did
+/// > nothing at all and the feed said only *"Harvest failed — Wild Pulses does not grow at (13,
+/// > 10)"*. There was no way out of it from the panel either — a chip is only drawn for a plant the
+/// > **current** mix carries, so the stale key had no control to clear it with.
+/// >
+/// > So the absent case **prunes** ([`TakeSelection::pruned_to`], the same narrowing the turn's own
+/// > commitment repair runs) and the command lands. An **unknown** key is still refused by name: that
+/// > is a typo, nothing can be inferred from it, and the player should be told.
+fn resolve_take_for_ground(
     app: &bevy::prelude::App,
     tile: UVec2,
     take: &TakeSelection,
-) -> Result<(), String> {
+) -> Result<ResolvedTake, String> {
+    let unchanged = || ResolvedTake {
+        selection: take.clone(),
+        dropped: Vec::new(),
+    };
     if take.is_everything() {
-        return Ok(());
+        return Ok(unchanged());
     }
     // **No map, nothing to judge** — the same carve-out `validate_species_selection` makes, and for
     // the same reason: the command-unit harnesses and the idle boot carry no `TileRegistry`, and the
     // labor arm (which always has the real tiles) remains the authority.
     let Some(registry) = app.world.get_resource::<TileRegistry>() else {
-        return Ok(());
+        return Ok(unchanged());
     };
     let Some(ground) = registry
         .index(tile.x, tile.y)
@@ -2581,22 +2621,33 @@ fn validate_take_selection(
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let flora = app.world.resource::<FloraConfigHandle>().get();
     let map_seed = app.world.resource::<SimulationConfig>().map_seed;
-    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-    match resolve_take_selection(take, &composition, &flora) {
-        Ok(()) => Ok(()),
-        Err((species, SpeciesRefusal::Unknown)) => {
-            Err(format!("Your people know no plant called '{species}'."))
-        }
-        Err((species, _)) => Err(format!(
-            "{} does not grow at ({}, {}).",
+    let tile_composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+    // The patch's own mix where one stands — the same seam `forage_take` narrows against.
+    let registry = app.world.resource::<ForageRegistry>();
+    let composition = registry.patch(tile).map_or_else(
+        || Cow::Borrowed(tile_composition.as_ref()),
+        |patch| patch_composition(patch, &tile_composition, &flora, &labor.forage),
+    );
+    let absent = match resolve_take_selection(take, &composition, &flora) {
+        Ok(absent) => absent,
+        Err(species) => return Err(format!("Your people know no plant called '{species}'.")),
+    };
+    if absent.is_empty() {
+        return Ok(unchanged());
+    }
+    let dropped = absent
+        .iter()
+        .map(|species| {
             flora
                 .species
-                .get(species)
-                .map_or_else(|| species.to_string(), |def| def.display_name.clone()),
-            tile.x,
-            tile.y
-        )),
-    }
+                .get(*species)
+                .map_or_else(|| (*species).to_string(), |def| def.display_name.clone())
+        })
+        .collect();
+    Ok(ResolvedTake {
+        selection: take.pruned_to(|species| species_stands_in(&composition, species)),
+        dropped,
+    })
 }
 
 /// **May a `Cultivate`/`Sow` on this tile commit to this plant?** — the species-side gate
@@ -2849,7 +2900,7 @@ fn handle_assign_labor(
             return;
         }
     };
-    let target = match role.to_ascii_lowercase().as_str() {
+    let mut target = match role.to_ascii_lowercase().as_str() {
         "forage" => match (target_x, target_y) {
             (Some(x), Some(y)) => LaborTarget::Forage {
                 tile: UVec2::new(x, y),
@@ -2934,10 +2985,36 @@ fn handle_assign_labor(
     // abandon an investment even if its gates have since lapsed. **The improvement's gates are NOT
     // re-run here** (issue #442): this command does not set an improvement, so re-asserting one the
     // band already carries would refuse a crew change on a paused build — the trap §6 removes.
+    //
+    // **THE TAKE SELECTION IS REPAIRED HERE, NOT REFUSED** — see [`resolve_take_for_ground`]. It
+    // rides the same `workers > 0` guard as the gate above and for the same reason: an unassign must
+    // never be refused, and a row going to zero gathers nothing for a selection to be wrong about.
+    // The names it drops are announced once, beside the applied event at the foot of this function,
+    // because a pruned selection is a change the player did not ask for.
+    let mut pruned_take: Vec<String> = Vec::new();
     if workers > 0 {
         if let Err(reason) = validate_labor_policy(app, faction, &target) {
             emit_command_failure(app, event_kind, faction, reason);
             return;
+        }
+        if let LaborTarget::Forage {
+            tile, take_species, ..
+        } = &target
+        {
+            match resolve_take_for_ground(app, *tile, take_species) {
+                Err(reason) => {
+                    emit_command_failure(app, event_kind, faction, reason);
+                    return;
+                }
+                Ok(resolved) => {
+                    if !resolved.dropped.is_empty() {
+                        pruned_take = resolved.dropped;
+                        if let LaborTarget::Forage { take_species, .. } = &mut target {
+                            *take_species = resolved.selection;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2963,14 +3040,17 @@ fn handle_assign_labor(
     // absent-token door instead. `default_kits.hunt` stays the answer wherever there is no quarry
     // to score: every other role, and a Hunt row whose herd or species will not resolve.
     //
-    // **A BUILDERS ROW WITH NO KIT NAMED STORES NOTHING**, which is the one row where "resolve the
-    // absent case here" is the wrong move. The builders' default is **per queue entry** — a hoe for
-    // a Cultivate, hurdles for a Tame (`docs/plan_standing_upkeep.md` §4.6b) — and that derivation
-    // is reachable only while the row carries no named kit
-    // ([`EquipmentConfig::builders_kit_for`] rule ②, keyed off `named_kit_on`). Storing
-    // `default_kits.builders` (`none`) here made rule ① fire on every row the UI ever wrote, so the
-    // pool really did build bare-handed ([`BuildersGear::resolve`] reads the same field) and the
-    // panel's *"No kit"* was an honest readout of it.
+    // ⛔ **A BUILDERS ROW CARRIES NO KIT AT ALL, AND NAMING ONE IS REFUSED**
+    // (`docs/plan_standing_upkeep.md` §4.7a ②). The builders' kit is a property of the **queue
+    // entry** — a hoe for a Cultivate, hurdles for a `Tame` — so a single stored id per *band* is
+    // the one thing the derivation cannot express. It was an override that won permanently: one
+    // pick pinned the animal web's tool onto every later plant build with no way back, and `none`
+    // (bare-handed) is a different statement, not an undo. `build_kit <faction> <source…> kit <id>`
+    // is where the override lives, one job at a time.
+    //
+    // **Refused rather than ignored.** A token the command silently drops is the same class of
+    // defect as the one this replaces — the player names a tool and the sim does something else —
+    // so the row says so by name.
     //
     // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
     // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
@@ -2979,15 +3059,22 @@ fn handle_assign_labor(
     // builders arm is touched — the other six roles' stored default is load-bearing (the wire and
     // the turn both read the row's kit for them, and there is nothing per-entry to derive).
     //
-    // **An explicit `kit <id>` on a builders row is still stored and still wins**, `none` included:
-    // that is how a player sends the pool out bare-handed to conserve gear, and it is validated by
-    // the same failing-closed resolution as every other role.
-    //
-    // The two are separate rules reaching the same store, so they are named separately and OR'd
+    // The rules below are separate and reach the same store, so they are named separately and OR'd
     // rather than written as two arms of one `if` — which is the same block twice, and reads as an
     // accident.
     let unstaffing = workers == 0;
-    let builders_default_is_per_entry = matches!(target, LaborTarget::Builders) && kit_id.is_none();
+    let staffing_the_builders = matches!(target, LaborTarget::Builders);
+    if staffing_the_builders && kit_id.is_some() {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            "assign_labor: the builders kit is set per queue entry — use \
+             `build_kit <faction> <source…> kit <id>`."
+                .to_string(),
+        );
+        return;
+    }
     // **AND THE TWO KEEPING ROLES ARE THE SAME RULE, ONE ACCOUNT OVER**
     // (`docs/plan_standing_upkeep.md` §4.8). An upkeep reads the same per-worker supply a build
     // does now, so `agriculture` derives the plant tool and `husbandry` the animal one
@@ -2998,7 +3085,7 @@ fn handle_assign_labor(
     // than discovered again.
     let keeping_default_is_per_web =
         matches!(target, LaborTarget::Agriculture | LaborTarget::Husbandry) && kit_id.is_none();
-    let crew_kit = if unstaffing || builders_default_is_per_entry || keeping_default_is_per_web {
+    let crew_kit = if unstaffing || staffing_the_builders || keeping_default_is_per_web {
         None
     } else {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
@@ -3063,6 +3150,38 @@ fn handle_assign_labor(
     seed_source_yield(app, band.entity, &target, improvement, applied);
 
     let tick = app.world.resource::<SimulationTick>().0;
+    // **ONE LINE FOR THE NAMES THE GROUND TOOK OFF THE SELECTION**, ahead of the applied row it
+    // explains. It is stated because the player did not ask for it; it is stated *briefly* because
+    // the row underneath already says what the crew now carries.
+    if !pruned_take.is_empty() {
+        let names = pruned_take.join(", ");
+        // **`band=` NAMES THE WORK BOARD THIS NARROWING HAPPENED ON** — the token the event dock's
+        // per-row *"Work tab"* link reads (`systems::labor::band_detail_token` says why it is the
+        // durable `BandId` and never the entity). Read off the selected band rather than the
+        // command's own argument, because that argument is absent whenever the player let the
+        // default-band picker choose.
+        //
+        // **It sits BEFORE `dropped=`, and it has to.** Detail tokens are space-delimited
+        // `key=value`, so the comma-joined display names can only be the trailing remainder
+        // (`.claude/rules/core_sim/event-feed.md`) — anything appended after them is swallowed by
+        // that value.
+        let band_token = app
+            .world
+            .get::<BandId>(band.entity)
+            .map(|id| format!(" band={}", id.0))
+            .unwrap_or_default();
+        push_command_event(
+            app,
+            tick,
+            event_kind,
+            faction,
+            format!("{} no longer stands here — dropped from the take", names),
+            Some(format!(
+                "status=pruned reason=not_here role={}{} dropped={}",
+                kind_label, band_token, names
+            )),
+        );
+    }
     let clamp_note = if applied < workers {
         format!(" (clamped from {} — only {} idle)", workers, available)
     } else {
@@ -6321,7 +6440,114 @@ fn handle_build_order(
     );
 }
 
-/// Every band of `faction` with a row on this source — the set all three queue verbs act over, and
+/// **NAME THE KIT ONE QUEUED BUILD IS RAISED WITH** — `build_kit <faction> <x> <y> [kit <id>]` /
+/// `build_kit <faction> <herd_id> [kit <id>]` (`docs/plan_standing_upkeep.md` §4.7a ②).
+///
+/// Sets [`core_sim::BuildQueueEntry::kit`] on every band of the faction that has the source queued —
+/// the same `bands_working_source` reach [`handle_unqueue`] has, narrowed to the bands that actually
+/// carry an entry. The row, its take crew and the meter are untouched.
+///
+/// # THE BUILDERS' KIT IS PER ENTRY, AND THIS IS THE ONLY OVERRIDE
+///
+/// A build's default kit is derived from that entry's own food web — a hoe for a Cultivate, hurdles
+/// for a `Tame` — so a kit stored on the band's `builders` **row** is the one thing that derivation
+/// cannot express: one pick pinned the animal web's tool onto every later plant build with no way
+/// back. `handle_assign_labor` refuses a `kit` token on that role, and the override lives here.
+///
+/// # AN ABSENT `kit` TOKEN CLEARS IT
+///
+/// Back to the derivation, on the existing *"an absent `kitId` means the job's default"* rule — which
+/// is what lets a client express *"back to default"* with no new vocabulary, since it already omits
+/// the token whenever the selection equals the default. **`kit none` is bare-handed and is a real
+/// selection**, which is how a player conserves gear on one job.
+fn handle_build_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    source: BuildSourceRef,
+    kit_id: Option<String>,
+) {
+    let label = source.label();
+    let Some(target) = source.target() else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            "build_kit needs a source: two numbers name a tile, one token names a herd."
+                .to_string(),
+        );
+        return;
+    };
+    let Some(build_source) = BuildSource::of(&target) else {
+        return;
+    };
+    // **The kit resolves at the command boundary and FAILS CLOSED**, exactly as every other role's
+    // does: an unknown id, or one whose `jobs` does not cover `builders`, is refused by name rather
+    // than quietly becoming the derivation — naming a kit is how the player compares tools, so a
+    // silent substitution answers a different question than the one asked.
+    //
+    // **The `absent` arm is never taken**: an absent token is handled above this call as *"clear the
+    // override"*, so `resolve_kit_or` is only reached with a real id. The job default is passed
+    // because the signature needs one, and it is the same fall-back `builders_kit_for` ends on.
+    let kit = match kit_id {
+        None => None,
+        Some(id) => {
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            let absent = equipment_cfg.default_kit(KitJob::Builders);
+            match equipment_cfg.resolve_kit_or(Some(id.as_str()), KitJob::Builders, absent) {
+                Ok(kit) => Some(kit),
+                Err(reason) => {
+                    emit_command_failure(
+                        app,
+                        CommandEventKind::CancelOrder,
+                        faction,
+                        format!("build_kit: {reason}."),
+                    );
+                    return;
+                }
+            }
+        }
+    };
+    let mut set = 0usize;
+    for band in bands_working_source(app, faction, &target) {
+        if band_allocation_mut(app, band).set_build_entry_kit(&build_source, kit.clone()) {
+            set += 1;
+        }
+    }
+    if set == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("Nothing of yours is queued to be built at {label}."),
+        );
+        return;
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    // **The feed says which kit, or that the job is back on its own default** — a player who cleared
+    // an override must be able to see that they did, and `none` is a kit id rather than a clearing.
+    let (sentence, action) = match kit.as_ref() {
+        Some(kit) => (
+            format!("{label} will be built with {}", kit.id()),
+            format!("kit={}", kit.id()),
+        ),
+        None => (
+            format!("{label} is back on the kit its own web wants"),
+            "kit=default".to_string(),
+        ),
+    };
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        sentence,
+        Some(format!(
+            "status=applied action=build_kit source={label} {action} bands={set}"
+        )),
+    );
+}
+
+/// Every band of `faction` with a row on this source — the set all four queue verbs act over, and
 /// the same "a verb reaches only bands that already work the source" rule
 /// [`queue_build_on_working_bands`] applies.
 ///
@@ -7242,6 +7468,21 @@ fn command_from_payload(
             },
             position,
         }),
+        ProtoCommandPayload::BuildKit {
+            faction_id,
+            target_x,
+            target_y,
+            herd_id,
+            kit_id,
+        } => Some(Command::BuildKit {
+            faction: FactionId(faction_id),
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+            },
+            kit_id,
+        }),
         ProtoCommandPayload::UpkeepMode {
             faction_id,
             band_id,
@@ -8136,6 +8377,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
         }
         Command::Unqueue { faction, source } => {
             handle_unqueue(app, faction, source);
+        }
+        Command::BuildKit {
+            faction,
+            source,
+            kit_id,
+        } => {
+            handle_build_kit(app, faction, source, kit_id);
         }
         Command::BuildOrder {
             faction,
@@ -10028,14 +10276,17 @@ mod tests {
         );
     }
 
-    /// **A TAKE SELECTION IS JUDGED BY THE COMMAND THAT CARRIES IT** (the selective gather).
+    /// **A TAKE SELECTION IS JUDGED BY THE COMMAND THAT CARRIES IT** (the selective gather) — and
+    /// the two ways it can be wrong get two different answers.
     ///
-    /// `assign_labor` is the only command that can set `LaborTarget::Forage::take_species`, and the
-    /// selection **fails closed** there for the reason the floor does: a silently dropped selection
-    /// produces exactly the numbers *"take everything"* produces — the same take, the same crew
-    /// count, the same row — so the mistake would be undiagnosable from any readout the player has.
+    /// `assign_labor` is the only command that can set `LaborTarget::Forage::take_species`. An
+    /// **unknown** key fails closed there for the reason the floor does: nothing can be inferred from
+    /// a typo, and a silently dropped one produces exactly the numbers *"take everything"* produces —
+    /// the same take, the same crew count, the same row — so the mistake would be undiagnosable. A
+    /// plant that merely **does not stand here** is pruned instead; that half is
+    /// `a_take_selection_the_ground_no_longer_offers_is_pruned_not_refused`.
     ///
-    /// Both refusals are asserted **through the command**, never through the validator it calls:
+    /// The refusal is asserted **through the command**, never through the validator it calls:
     /// `cultivation.md` records a guard that went on passing while no command path validated
     /// anything, because it fed the validator an input no command could supply.
     ///
@@ -10043,7 +10294,7 @@ mod tests {
     /// legal case is a plant the tile really grows — the selective gather has **no rung gate**, so a
     /// `wild`-ceiling plant nobody can ever commit to is a perfectly good thing to carry home.
     #[test]
-    fn assign_labor_rejects_a_take_selection_this_ground_cannot_offer() {
+    fn assign_labor_rejects_a_take_selection_naming_a_plant_that_does_not_exist() {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
 
@@ -10060,7 +10311,7 @@ mod tests {
         let growing = a_species_growing_at(&app, coord);
         assign_forage_take(&mut app, faction, coord, &[growing.as_str()]);
         assert!(
-            !forage_failure_detail_contains(&app, "does not grow at"),
+            !forage_failure_detail_contains(&app, "know no plant"),
             "control: a plant this tile's basket carries is a legal thing to gather"
         );
 
@@ -10072,23 +10323,356 @@ mod tests {
             "an unknown plant is refused where it is named, never quietly dropped"
         );
 
-        // 2. A real plant that does not grow on this ground — legal to gather somewhere, not here.
-        let mut app = forage_ground_with_baskets(faction, coord);
-        let elsewhere = a_tendable_species_absent_from(&app, coord);
-        assign_forage_take(&mut app, faction, coord, &[elsewhere.as_str()]);
-        assert!(
-            forage_failure_detail_contains(&app, "does not grow at"),
-            "a plant this tile's basket does not carry is refused, naming the tile"
-        );
-
-        // 3. …and one bad key spoils the whole selection, rather than being quietly filtered out of
-        //    it. Half a selection is a different order than the one the player gave.
+        // 2. …and one unknown key spoils the whole selection, rather than being quietly filtered out
+        //    of it. A typo is not a narrowing, so half a selection is a different order than the one
+        //    the player gave — and the refusal leaves the standing selection exactly as it was.
         let mut app = forage_ground_with_baskets(faction, coord);
         let growing = a_species_growing_at(&app, coord);
+        assign_forage_take(&mut app, faction, coord, &[growing.as_str()]);
+        assert_eq!(
+            band_take_selection(&app, coord),
+            vec![growing.clone()],
+            "fixture: the band is standing on a narrowed selection, or nothing is being preserved"
+        );
         assign_forage_take(&mut app, faction, coord, &[growing.as_str(), "not_a_plant"]);
         assert!(
             forage_failure_detail_contains(&app, "know no plant"),
             "one unknown plant refuses the whole selection; it is not silently narrowed"
+        );
+        assert_eq!(
+            band_take_selection(&app, coord),
+            vec![growing],
+            "and a refused command changes nothing — not even the half of it that was legal"
+        );
+    }
+
+    /// **A PLANT THE GROUND NO LONGER OFFERS IS PRUNED OUT OF THE SELECTION, NOT REFUSED WITH IT** —
+    /// the reported defect, end to end.
+    ///
+    /// Judging the take against the patch's own rung-reweighted mix is right (see
+    /// `assign_labor_judges_a_take_selection_against_the_patchs_own_mix`). **Hard-refusing on it was
+    /// not.** A `Sow` reweights the ground out from under a selection the player made before it, so
+    /// the stored names go stale through the player's own investment — and the refusal then rejected
+    /// the *whole* `assign_labor`, worker count included. Reported from play at T120 on a Field
+    /// standing at `Wild Emmer 100%` whose row still named Wild Pulses: raising the tenders did
+    /// nothing at all, turn after turn, and the only thing said was *"Harvest failed — Wild Pulses
+    /// does not grow at (13, 10)"*. The panel offered no way out either, because a chip is drawn only
+    /// for a plant the **current** mix carries.
+    ///
+    /// So the crew count is what this asserts, **off the published wire row** rather than the
+    /// in-process allocation: what the player is looking at when they say it did not take is the
+    /// snapshot, and an assertion on the component would pass on a frame that never shipped.
+    #[test]
+    fn a_take_selection_the_ground_no_longer_offers_is_pruned_not_refused() {
+        let faction = FactionId(0);
+        // **A REAL world, because the assertion is on the WIRE** — the baskets fixture never
+        // resolves a turn, so it publishes no frame at all.
+        let (mut app, coord) = sowable_ground_with_a_resident_band(faction);
+        let (crop, displaced) = a_crop_and_what_it_displaces(&app, coord);
+
+        // The band is gathering the plant the Sow is about to weed out — a selection that was
+        // perfectly legal when it was made.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "forage".to_string(),
+            BAND_WORKERS,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            None,
+            None,
+            vec![displaced.clone()],
+        );
+        assert_eq!(
+            band_take_selection(&app, coord),
+            vec![displaced.clone()],
+            "fixture: the stale selection has to be standing before the ground moves under it"
+        );
+
+        // …and now the ground is a Field of `crop`, which `planted` weeded `displaced` out of.
+        sow_the_patch_to(&mut app, faction, coord, &crop);
+
+        // The player raises the crew. The selection is stale and the command must still land.
+        let raised = BAND_WORKERS + 1;
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "forage".to_string(),
+            raised,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            None,
+            None,
+            vec![displaced.clone()],
+        );
+
+        assert!(
+            !forage_failure_detail_contains(&app, "does not grow at"),
+            "a plant the player's own Sow displaced must not refuse the command that names it"
+        );
+        assert_eq!(
+            band_take_selection(&app, coord),
+            Vec::<String>::new(),
+            "nothing survived the prune, so the crew is back on the whole basket"
+        );
+        assert!(
+            forage_event_detail_contains(&app, "status=pruned"),
+            "a selection the sim narrowed on the player's behalf is said once in the feed"
+        );
+        // **AND IT NAMES THE BAND**, because the event dock offers a *"Work tab"* jump on this row
+        // and the `band=` token is its only channel. Asserted as the whole token, ahead of
+        // `dropped=`: a bare `contains("90001")` would also pass on a tile coordinate, and a token
+        // appended *after* the comma-joined display names would be swallowed by that trailing value.
+        assert!(
+            forage_event_detail_contains(&app, &format!("band={FIXTURE_BAND_ID} dropped=")),
+            "the narrowed row names the band whose work board it is, by its durable BandId"
+        );
+
+        // …and the crew the player asked for is still there on the frame they are looking at.
+        app.update();
+        assert_eq!(
+            published_forage_workers(&app, coord),
+            Some(raised),
+            "the crew the player asked for must reach the wire — this is the reported defect"
+        );
+    }
+
+    /// **Sowable ground in a REAL world, with a resident band standing on it and gathering it** —
+    /// the fixture for anything that has to read the published frame, which `build_world_app` is the
+    /// only way to get (the baskets fixture runs no turn, so it publishes nothing).
+    ///
+    /// The band is planted on the tile's own entity because `spawn_working_band` gives it a bare
+    /// `spawn_empty` home: the labor pass reads `current_tile` for the in-range test, and a band that
+    /// is nowhere lapses its row off the wire before any assertion can see it.
+    fn sowable_ground_with_a_resident_band(faction: FactionId) -> (bevy::prelude::App, UVec2) {
+        let mut app = build_world_app();
+        let coord = find_sowable_tile(&app);
+        seed_thriving_patch(&mut app, coord);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+        );
+        // **ADDRESSABLE, because a real world already has a resident band of this faction** and an
+        // unaddressed `assign_labor` picks whichever one the query hands back first.
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        let ground = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("the pinned map carries this tile");
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band has a cohort");
+        cohort.home = ground;
+        cohort.current_tile = ground;
+        (app, coord)
+    }
+
+    /// **A PARTIALLY STALE SELECTION KEEPS WHAT STILL STANDS** — the prune narrows, it does not
+    /// reset. Blanket-resetting to the whole basket would start carrying home the very plants the
+    /// player had deliberately unticked, which is overriding a stated preference in the other
+    /// direction — the same rule `TakeSelection::pruned_for_commitment` already holds on the turn's
+    /// side of the repair.
+    #[test]
+    fn a_partially_stale_take_selection_keeps_the_names_that_still_stand() {
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let (crop, displaced) = a_crop_and_what_it_displaces(&app, coord);
+        sow_the_patch_to(&mut app, faction, coord, &crop);
+
+        // Half of this selection is what the ground is made of; half is what it weeded out.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "forage".to_string(),
+            BAND_WORKERS,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            None,
+            None,
+            vec![crop.clone(), displaced],
+        );
+
+        assert_eq!(
+            band_take_selection(&app, coord),
+            vec![crop],
+            "the surviving name is kept; only the one the ground no longer grows is dropped"
+        );
+    }
+
+    /// The **crop** a Sow would commit this ground to, and the clearable plant that Sow displaces —
+    /// resolved through the same `tile_flora_composition` seam the command judges with, so neither
+    /// can go stale against the shipped roster.
+    fn a_crop_and_what_it_displaces(app: &bevy::prelude::App, coord: UVec2) -> (String, String) {
+        let displaced = {
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let flora = app.world.resource::<FloraConfigHandle>().get();
+            let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+            let ground = app
+                .world
+                .resource::<TileRegistry>()
+                .index(coord.x, coord.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .expect("the fixture seeded this tile");
+            let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+            // The least abundant clearable member — the first thing a Sow displaces, and still a
+            // legal selection against the *wild* basket, which is the whole point.
+            composition
+                .iter()
+                .filter(|entry| flora.stands_in_worked_ground(&entry.species))
+                .min_by(|a, b| a.share.total_cmp(&b.share))
+                .expect("the fixture tile grows something clearable")
+                .species
+                .clone()
+        };
+        let crop = a_species_growing_at(app, coord);
+        assert_ne!(
+            crop, displaced,
+            "fixture: the crop must displace a different plant, or nothing is being judged"
+        );
+        (crop, displaced)
+    }
+
+    /// Put a finished Field of `crop` under `coord`. `planted` takes the whole basket less whatever
+    /// stands outside the worked ground, so every clearable plant but the crop stops standing here.
+    fn sow_the_patch_to(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        coord: UVec2,
+        crop: &str,
+    ) {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry
+            .patch_mut(coord)
+            .expect("the fixture seeded a patch here");
+        patch.species = Some(crop.to_string());
+        patch.complete_field(faction, &ladder);
+    }
+
+    /// The band's standing take selection on `coord`, off the labor allocation — empty is the whole
+    /// basket.
+    fn band_take_selection(app: &bevy::prelude::App, coord: UVec2) -> Vec<String> {
+        app.world
+            .iter_entities()
+            .filter_map(|entity| entity.get::<LaborAllocation>())
+            .flat_map(|allocation| allocation.assignments.iter())
+            .find_map(|assignment| match &assignment.target {
+                LaborTarget::Forage {
+                    tile, take_species, ..
+                } if *tile == coord => {
+                    Some(take_species.keys().map(str::to_string).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// **The crew on `coord` AS PUBLISHED** — the wire row, which is what the player is actually
+    /// looking at, rather than the allocation the capture reads.
+    fn published_forage_workers(app: &bevy::prelude::App, coord: UVec2) -> Option<u32> {
+        app.world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()?
+            .populations
+            .iter()
+            .flat_map(|cohort| cohort.labor_assignments.iter())
+            .find(|row| {
+                // The wire's `kind` is `LaborTarget::kind()` verbatim, so the row is matched
+                // through that one spelling rather than a literal repeated here.
+                row.kind
+                    == LaborTarget::Forage {
+                        tile: coord,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        species: None,
+                        take_species: TakeSelection::EVERYTHING,
+                    }
+                    .kind()
+                    && row.target_x == coord.x
+                    && row.target_y == coord.y
+            })
+            .map(|row| row.workers)
+    }
+
+    /// Did any `Forage` event carry `needle` in its detail? The success twin of
+    /// [`forage_failure_detail_contains`], for the lines a *landed* command pushes.
+    fn forage_event_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Forage)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// **A TAKE SELECTION IS JUDGED AGAINST THE MIX THE TAKE WILL NARROW**, which on a sown patch is
+    /// not the tile's wild realization.
+    ///
+    /// The command used to judge `tile_flora_composition` while the take path narrows against
+    /// `forage::patch_composition` — the rung-reweighted mix. On any tended or sown patch those
+    /// differ, so the boundary **stored** a selection the very next turn's take valued at exactly
+    /// zero: a `+0.00 /turn` row with nothing said.
+    ///
+    /// **What the mix decides is what is PRUNED, not what is refused** — the refusal that first
+    /// carried this reading broke every crew edit on a committed Field
+    /// (`a_take_selection_the_ground_no_longer_offers_is_pruned_not_refused`). So the assertion is on
+    /// the selection the row ends up carrying, which is the thing the zero take was ever about.
+    ///
+    /// The control is asserted from the same fixture: the crop the ground was sown to is still a
+    /// perfectly good thing to gather, so the prune cannot be the sown patch dropping everything.
+    #[test]
+    fn assign_labor_judges_a_take_selection_against_the_patchs_own_mix() {
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let (crop, displaced) = a_crop_and_what_it_displaces(&app, coord);
+
+        // The wild basket still carries `displaced`, so judging THAT would keep it.
+        assign_forage_take(&mut app, faction, coord, &[displaced.as_str()]);
+        assert_eq!(
+            band_take_selection(&app, coord),
+            vec![displaced.clone()],
+            "control: on wild ground the plant is standing, so the selection is stored verbatim"
+        );
+
+        // Sow the ground to `crop`: `planted` takes the whole basket less whatever stands outside
+        // the worked ground, so `displaced` is no longer standing here.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        sow_the_patch_to(&mut app, faction, coord, &crop);
+
+        assign_forage_take(&mut app, faction, coord, &[displaced.as_str()]);
+        assert_eq!(
+            band_take_selection(&app, coord),
+            Vec::<String>::new(),
+            "a plant the Sow displaced is pruned out — the take would value it at zero"
+        );
+
+        let mut app = forage_ground_with_baskets(faction, coord);
+        sow_the_patch_to(&mut app, faction, coord, &crop);
+        assign_forage_take(&mut app, faction, coord, &[crop.as_str()]);
+        assert_eq!(
+            band_take_selection(&app, coord),
+            vec![crop],
+            "control: the sown crop is what the patch is made of, so gathering it survives"
         );
     }
 
@@ -12482,25 +13066,187 @@ mod tests {
         );
     }
 
-    /// **A `builders` row the player named no kit on leaves the per-entry derivation LIVE**
-    /// (`docs/plan_standing_upkeep.md` §4.6b).
+    /// **`build_kit` SETS ONE JOB'S TOOL, AND AN ABSENT TOKEN CLEARS IT BACK TO THE DERIVATION**
+    /// (`docs/plan_standing_upkeep.md` §4.7a ②).
     ///
-    /// The command boundary resolved *every* row's absent kit into a stored id, so a builders row
-    /// carried `default_kits.builders` = `none` — and `builders_kit_for`'s rule ① (*"a kit named on
-    /// the row wins"*) then beat rule ② (the head entry's web-derived kit) on every row the UI ever
-    /// wrote. The whole derivation was unreachable through the client, which deliberately emits no
-    /// `kit` token on that row precisely so it would stay reachable. It is not cosmetic:
-    /// `BuildersGear::resolve` reads the same field, so the pool built bare-handed.
-    ///
-    /// **Every previous fixture hand-built the assignment** (`tests/build_queue.rs`,
-    /// `tests/build_turns_closed_form.rs` both write `kit: Some(bare_builders())`), which is why
-    /// nothing caught it — this one drives the real `assign_labor … builders <n>` handler.
-    ///
-    /// **The explicit case is asserted with the two derived ones and is what makes them mean
-    /// something**: a fix that simply never stored anything on a builders row would satisfy the
-    /// first two and silently retire the bare-handed override the design keeps.
+    /// The three states are three different statements and the command has to keep them apart:
+    /// **a named kit** is an override, **an absent token** is *"whatever this entry's web wants"*,
+    /// and **`kit none`** is a real selection — send this job's builders out bare-handed. The absent
+    /// case is what lets the client express *"back to default"* with no new vocabulary, since
+    /// `Main._kit_token` already omits the token whenever the selection equals the default.
     #[test]
-    fn an_unnamed_builders_kit_is_derived_from_the_head_entry_rather_than_stored() {
+    fn build_kit_sets_the_entrys_kit_and_an_absent_token_clears_it() {
+        /// The plant web's own builders kit — what the roster derives for a Cultivate.
+        const PLANT_BUILD_KIT: &str = "tillage";
+        /// The bare-handed roster entry, which is a selection and not an absence.
+        const BARE_KIT: &str = "none";
+
+        let (mut app, band, patch) = a_band_with_a_queued_cultivate();
+        let named = |app: &bevy::prelude::App| -> Option<String> {
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .build_queue_entry(&BuildSource::Patch(patch))
+                .expect("the fixture entry survives")
+                .kit
+                .as_ref()
+                .map(|kit| kit.id().to_string())
+        };
+        assert_eq!(
+            named(&app),
+            None,
+            "fixture: a fresh entry names no kit, so its own web answers"
+        );
+
+        handle_build_kit(
+            &mut app,
+            FactionId(0),
+            patch_source(patch),
+            Some(PLANT_BUILD_KIT.to_string()),
+        );
+        assert_eq!(
+            named(&app),
+            Some(PLANT_BUILD_KIT.to_string()),
+            "a named kit is stored on the ENTRY — the band's `builders` row carries none at all"
+        );
+
+        handle_build_kit(&mut app, FactionId(0), patch_source(patch), None);
+        assert_eq!(
+            named(&app),
+            None,
+            "an ABSENT `kit` token clears the override back to the entry's own derivation — the \
+             existing 'an absent kitId means the job's default' rule, and the client's only way to \
+             say 'back to default'"
+        );
+
+        handle_build_kit(
+            &mut app,
+            FactionId(0),
+            patch_source(patch),
+            Some(BARE_KIT.to_string()),
+        );
+        assert_eq!(
+            named(&app),
+            Some(BARE_KIT.to_string()),
+            "…and `kit none` is a REAL selection that survives the round trip: bare-handed is a \
+             different statement from 'derive', and collapsing the two makes conserving gear on \
+             one job unexpressible"
+        );
+    }
+
+    /// **`build_kit` FAILS CLOSED** — on a source nothing of the faction's has queued, on an id the
+    /// roster does not carry, and on a kit that cannot do the `builders` job.
+    ///
+    /// The same failing-closed resolution every other role uses: naming a kit is how the player
+    /// compares tools, so a silent substitution answers a different question than the one asked.
+    #[test]
+    fn build_kit_refuses_an_unqueued_source_and_a_kit_that_cannot_build() {
+        /// A roster kit that lists no `builders` job — collecting from a pen is all it can do.
+        const NOT_A_BUILD_KIT: &str = "husbandry";
+        /// An id no roster entry carries.
+        const NO_SUCH_KIT: &str = "adamantine_trowel";
+
+        // A refusal is a `CancelOrder` event whose DETAIL carries the reason —
+        // `emit_command_failure` puts the sentence there and leaves the label generic.
+        let refused = |app: &bevy::prelude::App, needle: &str| -> bool {
+            app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                matches!(entry.kind, CommandEventKind::CancelOrder)
+                    && entry
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains(needle))
+            })
+        };
+
+        // **A source in nobody's queue** — mirrors `handle_unqueue`'s own refusal, by name.
+        let (mut app, _, patch) = a_band_with_a_queued_cultivate();
+        let elsewhere = UVec2::new(patch.x + 7, patch.y + 7);
+        handle_build_kit(&mut app, FactionId(0), patch_source(elsewhere), None);
+        assert!(
+            refused(&app, "queued to be built"),
+            "a source nothing of yours has queued has no job to re-kit, and inventing one would \
+             enrol a build the player never declared"
+        );
+
+        // **An unknown id**, and **a kit that does not list the job** — both through `resolve_kit_or`.
+        for bad in [NO_SUCH_KIT, NOT_A_BUILD_KIT] {
+            let (mut app, band, patch) = a_band_with_a_queued_cultivate();
+            handle_build_kit(
+                &mut app,
+                FactionId(0),
+                patch_source(patch),
+                Some(bad.to_string()),
+            );
+            assert!(
+                refused(&app, "build_kit"),
+                "'{bad}' cannot raise a build and must be refused by name"
+            );
+            assert!(
+                app.world
+                    .get::<LaborAllocation>(band)
+                    .expect("the fixture band carries an allocation")
+                    .build_queue_entry(&BuildSource::Patch(patch))
+                    .expect("the fixture entry survives")
+                    .kit
+                    .is_none(),
+                "…and a refused command stores nothing: the entry stays on its own derivation"
+            );
+        }
+    }
+
+    /// The `build_kit` fixture: one band foraging one patch, with a `Cultivate` declared on it.
+    fn a_band_with_a_queued_cultivate() -> (bevy::prelude::App, Entity, UVec2) {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let patch = UVec2::new(2, 2);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: patch,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        assert!(
+            app.world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .enqueue_build(
+                    BuildSource::Patch(patch),
+                    BuildJob::Rung(Improvement::Cultivate),
+                ),
+            "fixture: the band works this patch, so a declaration on it is accepted"
+        );
+        (app, band, patch)
+    }
+
+    /// A tile named the way the queue family names one.
+    fn patch_source(tile: UVec2) -> BuildSourceRef {
+        BuildSourceRef {
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            herd_id: None,
+        }
+    }
+
+    /// **A `builders` row CANNOT NAME A KIT, and the head entry's own web answers instead**
+    /// (`docs/plan_standing_upkeep.md` §4.7a ②).
+    ///
+    /// The command boundary used to resolve *every* row's absent kit into a stored id, so a builders
+    /// row carried `default_kits.builders` = `none` and the pool built bare-handed. That was fixed by
+    /// storing nothing — but the row could still carry an **explicit** kit, and that override won
+    /// permanently: measured in play, one pick pinned `hurdling` onto every later builders command,
+    /// locking a band raising a *plant* Cultivate to the animal web's tool with no way back. So the
+    /// row's kit is gone entirely and `build_kit` sets it per queue entry.
+    ///
+    /// **The refusal is asserted with the two derived cases and is what makes them mean something**:
+    /// a fix that merely stopped *storing* the token would satisfy the first two while silently
+    /// swallowing a kit the player named.
+    #[test]
+    fn a_builders_row_takes_no_kit_and_derives_from_the_head_entry() {
         /// The roster kit the plant web's builds want (`equipment.json` → `build_work` on `hoes`).
         const PLANT_BUILD_KIT: &str = "tillage";
         /// …and the animal web's (`hurdles`).
@@ -12528,6 +13274,7 @@ mod tests {
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Herd(herd_id.clone()),
                         declared: BuildJob::Rung(Improvement::Tame),
+                        kit: None,
                     },
                 )
             } else {
@@ -12541,6 +13288,7 @@ mod tests {
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(patch),
                         declared: BuildJob::Rung(Improvement::Cultivate),
+                        kit: None,
                     },
                 )
             };
@@ -12580,6 +13328,44 @@ mod tests {
             allocation.builders_kit(&equipment).id().to_string()
         }
 
+        /// **Does `assign_labor … builders <n> kit <id>` refuse?** Measured by the row staying
+        /// unstaffed: the handler returns before it touches the allocation.
+        fn builders_kit_token_is_refused(named: &str) -> bool {
+            let mut app = build_test_app();
+            let faction = FactionId(0);
+            let patch = UVec2::new(2, 2);
+            let band = spawn_resident_working_band(
+                &mut app,
+                faction,
+                LaborTarget::Forage {
+                    tile: patch,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
+                },
+            );
+            app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(FIXTURE_BAND_ID),
+                "builders".to_string(),
+                BUILDERS,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(named.to_string()),
+                Vec::new(),
+            );
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .workers_on(&LaborTarget::Builders)
+                == 0
+        }
+
         assert_eq!(
             resolved_builders_kit(false, None),
             PLANT_BUILD_KIT,
@@ -12592,11 +13378,15 @@ mod tests {
             ANIMAL_BUILD_KIT,
             "…and the same row on an animal-web head must work the roster's animal build kit"
         );
-        assert_eq!(
-            resolved_builders_kit(true, Some(BARE_KIT)),
-            BARE_KIT,
-            "an EXPLICIT `kit none` is a real selection and must still beat the derivation — that \
-             is how a player conserves gear"
+        // **A kit token on the row is REFUSED, not swallowed.** The command leaves the row
+        // unstaffed, so the fixture's own liveness assertion inside `resolved_builders_kit` would
+        // trip — which is exactly the observable difference between refusing and ignoring, and is
+        // why this arm reads the refusal directly rather than through that helper.
+        assert!(
+            builders_kit_token_is_refused(BARE_KIT),
+            "naming a kit on the builders row must be refused by name: the builders kit is per \
+             queue entry, and a silently-dropped token is the same defect as the pinning override \
+             it replaced"
         );
     }
 

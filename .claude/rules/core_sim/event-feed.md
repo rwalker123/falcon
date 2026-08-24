@@ -223,6 +223,35 @@ with that sentence rather than mutely breaking the arithmetic.
 | `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
 | `migrated` | `band= count= direction={out\|in}` |
 | `hunt_report` | `engaged= fled= killed= carried_biomass= wasted_biomass= hunters_killed= hunters_wounded= bound={engagement\|floor\|carry\|fight} species=` |
+| a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|scout\|warrior\|agriculture\|husbandry\|builders} [x= y=\|herd=] workers= lost= band=` |
+| a lapsed source row | `status=lapsed reason={out_of_range\|herd_gone\|out_of_leash} …source terms… band=` |
+| a narrowed take | `status=pruned reason=not_here role= band= dropped=` |
+
+## The `band=` token is what makes a loss line clickable
+
+The event dock renders a **"Work tab"** link on a `status=trimmed` / `lapsed` / `pruned` row — a jump
+to the band whose crew the sim cut without being asked — and it renders it **only where the detail
+carries a `band=` token**. `CommandEventState` on the wire is `{tick, kind, faction, label, detail,
+seq}` and has no band field, so the detail token is the whole channel; the dock will not recover a
+band by reading the label's prose, because a link that jumped to whatever band the panel happened to
+be showing is worse than no link.
+
+- **`systems::labor::band_detail_token` is the one writer for the labor system's lines** —
+  `announce_shed_crew` plus the `out_of_range`, `herd_gone` and `out_of_leash` lapses — and the
+  `assign_labor` command writes its own on the `status=pruned` line. `advance_labor_allocation` takes
+  `Option<&BandId>` for it, on the same rule the demographic feed follows: a band with no durable id
+  publishes its rows unchanged and simply renders linkless.
+- **⛔ THE DURABLE `BandId`, NEVER THE `Entity`.** Both are `u64` and neither fails to compile; the
+  client resolves the id through a roster join keyed on `band_id`, so entity bits name a band that
+  does not exist. `xtask/src/command_guard.rs` exists because that confusion once silently broke every
+  band-addressed order. `labor_allocation::every_labor_loss_line_names_the_band_by_its_durable_id`
+  asserts on the emitted detail and against the entity's bits — a test that only checked the token was
+  *present* would pass on the wrong number.
+- **The band-wide roles name no source at all** (`kind=scout` / `warrior` / `builders`), which is the
+  second reason the band is stated rather than inferred: on those lines there is nothing to infer it
+  from.
+- **On the `pruned` line it sits before `dropped=`.** That value is a comma-joined list of display
+  names, so it can only be the trailing remainder; an appended token would be swallowed by it.
 
 ## The hunt report: facts, and the sim's guess at importance is deliberately absent
 

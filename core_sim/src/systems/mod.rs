@@ -23,10 +23,10 @@ use crate::{
         available_workers, fragments_from_contract, fragments_to_contract, raid_is_recurring,
         BandEquipment, BandId, BandTravel, BuildJob, BuildQueueEntry, BuildSource, DeathCause,
         DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
-        Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, YieldRange,
-        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
+        Improvement, KnowledgeFragment, LaborAllocation, LaborTarget, LocalStore, MoraleCause,
+        MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
+        ResidentBand, ShedCrew, ShedFacts, SourceShedFacts, SourceYield, StartingUnit,
+        TakeSelection, Tile, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -58,7 +58,7 @@ use crate::{
     intensification::{
         distribute_upkeep_pool, gear_work_supply, knows, BuildGate, BuildQuote, BuildTurns,
         LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef, RungKey,
-        NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+        NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,

@@ -110,6 +110,14 @@ const IMPROVEMENT_CORRAL := "corral"
 # webs never share a rung, and read by nothing that needs "all four".
 const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
 const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
+# **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
+# publishes this in the `improvement` slot for a queue entry whose declared job is
+# `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter
+# for a rung verb to name and the entry publishes the command's own name instead. It is therefore
+# absent from `HUNT_IMPROVEMENTS` and from every `FORECAST_BUILD_*_KEYS` table — the ring's meter is
+# the herd's own `pen_extend_progress` / `pen_extend_cost` pair, read by `pen_extend_fraction`. This
+# token is how a reader tells a RING entry from a RUNG entry with what is already on the wire.
+const BUILD_JOB_EXTEND_PEN := "extend_pen"
 # A herd at or above this domestication progress is fully tamed (pastoral); its crew are keepers.
 const DOMESTICATION_COMPLETE := 1.0
 # WHICH KIND OF SOURCE a forecast dict describes, stated explicitly by every `forecast_inputs` caller:
@@ -679,11 +687,6 @@ const NO_ROOM_IN_BIOMASS := -1.0
 # The value the dropped term contributes to a `min()` / the crew `max()` — an unbounded reach cannot
 # be the binding arm, and `INF` says so without a branch at every call site.
 const ENGAGEMENT_UNBOUNDED := INF
-# **A PARTY THAT EXISTS REACHES AT LEAST ONE ANIMAL** — the sim's `fauna::animals_engaged` `max(1.0)`.
-# A fractional engagement means a small band cannot corner the quarry EFFICIENTLY, not that it cannot
-# walk up to it: three hunters do reach a mammoth and then fail at the FIGHT, which is where the gate
-# lives. Flooring to zero would put a headcount threshold in front of the attack-vs-defense one.
-const ENGAGED_AT_LEAST := 1.0
 # **THE RETREAT, AS A TERM — `1 − wariness`** (`HerdTelemetryState.stayFraction`): what fraction of the
 # animals a party REACHES actually stays to be fought. It is the stage between the engagement and the
 # fight, and it prices BOTH the take and the CREW: a party that keeps one animal in four brings down a
@@ -718,20 +721,34 @@ const FORECAST_STRESSED_FRACTION_KEY := "stressed_fraction"
 const ECOLOGY_PHASE_COLLAPSING := "collapsing"
 const ECOLOGY_PHASE_STRESSED := "stressed"
 const ECOLOGY_PHASE_THRIVING := "thriving"
-# **A RUNG-3 MANAGED SOURCE HAS NO ESCAPEMENT ROOM AND IGNORES THE FLOOR ENTIRELY** (sim
-# `SourceYieldForecast::managed`): a Field and a Pen are YOURS — you control their reproduction, so
-# there is no wild stock to stop short of and the axis honestly collapses onto the one managed
-# production they hand over. The wire still carries their raw `biomass`/`carrying_capacity`/rates
-# (they are facts about the herd or the crop), so composing an escapement ceiling on one is silently
-# wrong; the managed production is the rung's own payoff field, which for a BUILT rung is the live
-# number the sim pays. Rung 2 (a Tended Patch, a pastoral herd) is still a wild stand being drawn
-# down, so it takes the composition like rung 1.
+# **A MANAGED SOURCE HAS NO ESCAPEMENT ROOM AND IGNORES THE FLOOR ENTIRELY** (sim
+# `SourceYieldForecast::managed`): a built Pen is YOURS — you control its reproduction, so there is no
+# wild stock to stop short of and the axis honestly collapses onto the one managed production it hands
+# over. The wire still carries its raw `biomass`/`carrying_capacity`/rates (they are facts about the
+# herd), so composing an escapement ceiling on one is silently wrong; the managed production is the
+# rung's own payoff field, which for a BUILT rung is the live number the sim pays. Rung 2 (a pastoral
+# herd) is still a wild stand being drawn down, so it takes the composition like rung 1.
+#
+# > #### ⛔ THE PLANT WEB HAS NO MANAGED RUNG. A FIELD IS DRAWN DOWN LIKE ANY OTHER STAND.
+# >
+# > `SOURCE_KIND_FORAGE: "is_field"` sat in this table until `forage.rs`'s **RETIRED: the whole rung-3
+# > MANAGED HARVEST** landed — *"A Field is now foraged through the ordinary `forage_take` path exactly
+# > as a tended patch and a wild stand are — floor-live, worker-capped, drawn down"* — and the entry
+# > outliving that retirement is what made a completed cash-crop Field read `max 0 workers useful
+# > here` beneath a tile card stating two tenders. The chain: a Field took the managed branch of
+# > `forecast_inputs`, whose material ceiling comes from `FORECAST_PAYOFF_MATERIAL_KEYS`, which has no
+# > plant entry by design (a plant's materials are per PLANT), so its ceiling was structurally `[]`;
+# > `off_axis_useful_workers` then divided a `0` room by a live 1.12 tobacco/worker and answered `0`,
+# > while `hold_crew` / `reach_crew` — §7.2's rescue for exactly that shape — returned `0` because the
+# > source was "managed". Reported from play 2026-08-22.
+# >
+# > **`field_yield` is still a real quote and is still read** — it is the MSY skim on the Field rung's
+# > own curve (`forage::rung_payoff`), i.e. what the rung PAYS, which is what `FORECAST_PAYOFF_KEYS`
+# > asks it for. What it is not is a per-turn production a crew collects off a stock nobody draws down.
 const FORECAST_MANAGED_FLAG_KEYS := {
-    SOURCE_KIND_FORAGE: "is_field",
     SOURCE_KIND_HERD: "corralled",
 }
 const FORECAST_MANAGED_IMPROVEMENTS := {
-    SOURCE_KIND_FORAGE: IMPROVEMENT_SOW,
     SOURCE_KIND_HERD: IMPROVEMENT_CORRAL,
 }
 # The PAYOFF an IMPROVEMENT buys — the food/turn the source pays once the rung is built (one worker
@@ -889,6 +906,19 @@ const FORECAST_BUILD_BLOCKED_REASON_KEY := "build_blocked_reason"
 # above it against a build queue this client cannot see. Reconstructing either would be a second
 # producer of a verdict that already has one, which is the failure the whole `buildTurnsRemaining`
 # family exists to prevent.
+# **WHAT THE QUEUED ENTRY IS BEING RAISED WITH** — the builders kit id that entry RESOLVES to, `""`
+# when the source is in nobody's queue (`docs/plan_standing_upkeep.md` §4.7a ②). It rides the SAME
+# winning band as the four fields above it.
+#
+# **IT IS THE RESOLVED KIT, NEVER THE STORED OVERRIDE**, which is what makes it renderable: the
+# builders' default is derived per entry from that entry's own food web, so an entry naming nothing
+# would read EMPTY while the pool was out with hurdles. The `(default)` mark beside it is the
+# client's own — `KitRoster.build_kit_for_branch` mirrors the sim's roster derivation — exactly as
+# the hunt row's per-quarry default mark is.
+#
+# **AND IT IS CAPTURED LIVE**, so the recapture the `build_kit` command triggers already carries the
+# new value and the pick needs no optimistic overlay of its own.
+const FORECAST_BUILD_KIT_KEY := "build_kit_id"
 const FORECAST_BUILD_DESTINATION_KEY := "build_destination_rung"
 const FORECAST_BUILD_LEGS_KEY := "build_legs"
 # **WHAT THE SOURCE WILL CARRY AT THAT DESTINATION** — the same `K` as `FORECAST_CAPACITY_KEY`,
@@ -2113,9 +2143,9 @@ static func escapement_room_next_turn(src: Dictionary, prefix: String, floor: fl
         0.0, capacity)
     return maxf(0.0, grown - clamp_floor(floor) * capacity)
 
-## Is this source RUNG-3 MANAGED — a Field, or a built Pen? Such a source is never drawn down, so it
-## pays its managed production at EVERY floor and the escapement composition does not apply to it (see
-## `FORECAST_MANAGED_FLAG_KEYS`).
+## Is this source MANAGED — a built Pen? Such a source is never drawn down, so it pays its managed
+## production at EVERY floor and the escapement composition does not apply to it. **The plant web
+## answers `false` at every rung**, a Field included: see `FORECAST_MANAGED_FLAG_KEYS`.
 ##
 ## **IT IS THE STANDING RUNG THAT DECIDES THIS, NEVER THE COMPOSED ONE.** The wire flag is the only
 ## input, and a source the crew is merely BUILDING toward rung 3 — mid-`Sow`, mid-`Corral` — is
@@ -2346,8 +2376,8 @@ static func peak_animal_drop(ceiling: float, body: float) -> int:
 
 ## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers`: how many
 ## hunters it takes to bring the peak animal drop DOWN in one turn. It is the inverse of the pair
-## `animals_engaged` → `animals_stayed` — those floor `workers × engage_rate × dip` and then cut it by
-## the retreat, so the crew that lands `n` animals is `ceil(n / (engage_rate × dip × stay))`.
+## `animals_engaged` → `animals_stayed` — those take `workers × engage_rate` unrounded and then cut it
+## by the retreat, so the crew that lands `n` animals is `ceil(n / (engage_rate × stay))`.
 ##
 ## **THE RETREAT PRICES THE CREW AS WELL AS THE TAKE**, because a party that keeps one animal in four
 ## needs four times the hands to draw the same stock down. Sizing on the RAW reach put this crew — and
@@ -2443,9 +2473,22 @@ static func take_workers(ceiling: float, body: float, per_worker: float,
 
 ## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
 ## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
-## about how many it could reach. `floor(workers × engage_rate × dip)`, never below one for a party
-## that exists (`ENGAGED_AT_LEAST`); a party of no workers engages nothing, which is a different
-## statement and is why the worker test comes first.
+## about how many it could reach. `workers × engage_rate`, **UNROUNDED**: a reach is a RATE, and the
+## floor and floor-of-one this used to carry are both retired with the sim's.
+##
+## **THE ROUNDING IS WHAT MADE EXTRA HUNTERS WORTHLESS.** `floor(w × rate).max(1)` answered one animal
+## for every crew from 1 to 6 on the shipped Wild Boar (`engage_rate 0.33`), so four hunters reached
+## exactly what one reached — and below `1 / engage_rate` it quoted a reach the turn never delivered,
+## three times over for a lone boar hunter. The reach is strictly increasing in the crew now, which is
+## the property the whole engagement stage exists to have.
+##
+## **NOTHING NEEDS A FLOOR OF ONE, BECAUSE NOTHING REACHES ZERO.** The retired minimum defended a
+## headcount threshold standing in front of the attack-vs-defense gate — with the floor gone,
+## `floor(1 × 0.05)` would have been `0` and a lone mammoth hunter would fail for the wrong reason. A
+## plain multiply cannot produce that (a lone mammoth hunter reaches `0.05`), and the sub-one-animal
+## fraction is not a failure to arrive: the sim's retreat and wound ledger carry it between turns.
+## **A party of no workers engages nothing**, which is a different statement and is why the worker test
+## comes first.
 ##
 ## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage, so the caller's `min()` drops the arm.
 static func animals_engaged(workers: int, engage_rate: float) -> float:
@@ -2453,14 +2496,14 @@ static func animals_engaged(workers: int, engage_rate: float) -> float:
         return 0.0
     if engage_rate <= NO_ENGAGEMENT_STAGE:
         return ENGAGEMENT_UNBOUNDED
-    return maxf(floorf(float(workers) * engage_rate), ENGAGED_AT_LEAST)
+    return float(workers) * engage_rate
 
 ## **HOW MANY OF THE ENGAGED ANIMALS STAY TO BE FOUGHT** — the retreat, the stage between engagement
 ## and the fight, mirroring `fauna::animals_that_stay` at the quantile a FORECAST reads it at. The sim
 ## draws a binomial per animal; a forecast cannot draw, so it takes the analytic mean
-## `floor(engaged) × stay`, which is `snapshot.fbs`'s own `stayers = workers × engageRate ×
-## buildFraction × stayFraction` with the engagement already floored. `animals_engaged` floors, so
-## nothing here does.
+## `engaged × stay`, which is `snapshot.fbs`'s own `stayers = workers × engageRate × stayFraction`.
+## **Neither stage rounds** — `animals_engaged` reaches a rate and this cuts a rate by a fraction, and
+## the whole-animal quantisation is the take's, one `min()` further on.
 ##
 ## **IT BOUNDS THE TAKE AND, THROUGH `engage_workers`, THE CREW.** A hand that keeps one animal in four
 ## draws a stock down a quarter as fast, so the crew that draws it down at all is four times as large —
@@ -2622,11 +2665,12 @@ static func crew_take_reaching(per_crew: Array, animals: float) -> int:
 ## **WHERE THE CURVE STOPS RISING** — the smallest crew no larger crew out-takes, which is what
 ## *"max N workers useful here"* has always meant and what the closed form could only guess at.
 ##
-## **IT IS THE LAST RISE, NOT THE FIRST FLAT.** The engagement is a staircase — `floor(w × engageRate)`
-## is flat across whole runs and steps at integer boundaries — so a scan that stopped at the first crew
-## whose take equalled its predecessor's would report the bottom of a tread as the top of the stairs.
-## Reported on the shipped Wild Boar, where crews one through six all bring the same single animal to
-## bay and the seventh brings two.
+## **IT IS THE LAST RISE, NOT THE FIRST FLAT.** The reach itself rises with every hand now, but the
+## bounds around it do not: the room clamp and the whole-animal quantiser both hold a run of crews at
+## one figure before the next steps, so a scan that stopped at the first crew whose take equalled its
+## predecessor's would report the bottom of a tread as the top of the stairs. It was reported on the
+## shipped Wild Boar back when the reach was floored and crews one through six all brought the same
+## single animal to bay — the tread is shorter now, and the reading it breaks is the same one.
 ##
 ## `NO_CREW_ANSWER` where there is no curve; a curve that rises to its own last row plateaus AT that
 ## row, which is the honest answer to a question asked about a bounded pool — every hand the band has
@@ -2759,10 +2803,12 @@ static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float
 ## to name, because this answer is only ever a FLOOR on a cap: a dead-season patch prices no crew, and
 ## a floor of "unpriceable" is a floor of none.
 ##
-## **A RUNG-3 MANAGED SOURCE IS EXCLUDED**, on the same grounds its ceiling is: the sim never draws a
-## Field or a built Pen down, so "the crew that takes what grows back" is not a question its wire
-## curve answers — its cap is `production / per_worker`, and flooring that on a wild-drawdown number
-## would staff a source against a projection it does not follow.
+## **A MANAGED SOURCE IS EXCLUDED**, on the same grounds its ceiling is: the sim never draws a built
+## Pen down, so "the crew that takes what grows back" is not a question its wire curve answers — its
+## cap is `production / per_worker`, and flooring that on a wild-drawdown number would staff a source
+## against a projection it does not follow. **A FIELD IS NOT SUCH A SOURCE** — the plant web's managed
+## rung is retired and a Field is drawn down like any other stand, so this floor answers for one; see
+## `FORECAST_MANAGED_FLAG_KEYS` for what a Field reading `0` here cost.
 static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float,
         per_crew: Array = []) -> int:
     if source_is_managed(src, kind, prefix):
@@ -2787,8 +2833,9 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
 ## quotient's (they draw the stock further down every turn instead of settling above the floor), so
 ## capping there reported them useless while the verdict was naming them as the remedy.
 ##
-## A RUNG-3 MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a
-## Field or a built Pen down, so a drawdown projection says nothing about how many hands it can use.
+## A MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a built Pen
+## down, so a drawdown projection says nothing about how many hands it can use. A Field is NOT one —
+## see `FORECAST_MANAGED_FLAG_KEYS`.
 static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float,
         per_crew: Array = []) -> int:
     if source_is_managed(src, kind, prefix):
@@ -3564,8 +3611,10 @@ static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
 ## (retired) and the old herd witness was the per-worker pair — which reads zero on a herd stripped to
 ## its floor, the exact state the sheet most needs to report.
 ##
-## A MANAGED source is described by its payoff instead: a Field's stock is not what it pays from, so
-## its per-biomass vector is beside the point and may honestly be anything.
+## A MANAGED source is described by its payoff instead: a built Pen's stock is not what it pays from,
+## so its per-biomass vector is beside the point and may honestly be anything. **No plant rung takes
+## that arm** — a Field is drawn down and answers this question through its own rate vector, exactly
+## as a wild stand does.
 static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> bool:
     if source_is_managed(src, kind, prefix):
         return true
@@ -3607,9 +3656,11 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
 static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor: float,
         per_crew: Array = []) -> Dictionary:
     # ---- THE CEILING, PER ACCOUNT ---------------------------------------------------------------
-    # A rung-3 MANAGED source (a Field, a built Pen) is never drawn down: it pays its managed
-    # production at every floor, so it reads the rung's own payoff fields instead of composing an
-    # escapement room out of a stock the sim does not touch.
+    # A MANAGED source (a built Pen) is never drawn down: it pays its managed production at every
+    # floor, so it reads the rung's own payoff fields instead of composing an escapement room out of a
+    # stock the sim does not touch. **A FIELD IS NOT ONE** — every plant rung takes the composition
+    # below, which is what gives a cash Field a material ceiling at all
+    # (`FORECAST_MANAGED_FLAG_KEYS`).
     var ceiling := 0.0
     var ceiling_fodder := 0.0
     # …AND THE CEILING ONCE THE SOURCE IS SITTING AT THE FLOOR, which is a DIFFERENT quantity and the
@@ -4239,6 +4290,55 @@ static func build_work_cost(src: Dictionary, prefix: String, improvement: String
         prefix + String(FORECAST_BUILD_WORK_COST_KEYS[improvement]), BUILD_WORK_COST_NONE)),
         BUILD_WORK_COST_NONE)
 
+# ---- THE IN-FLIGHT FENCE RING'S METER -----------------------------------------------------------
+# The two herd-dict keys the ring's meter lives in, BOTH IN WORK UNITS. `pen_extend_progress` is the
+# work banked toward the ring in flight and `pen_extend_cost` is the `animal:pen` rung's own
+# `work_cost`, which `Herd::accrue_pen_extension` stamps beside it while the meter is incomplete.
+# The pair is unprefixed: it rides the raw herd dict `herds_to_array` decodes, which is the same
+# `BARE_FORECAST_PREFIX` source every other herd readout reads.
+const PEN_EXTEND_PROGRESS_KEY := "pen_extend_progress"
+const PEN_EXTEND_COST_KEY := "pen_extend_cost"
+
+# What `pen_extend_fraction` answers for a ring the wire has not priced yet — an EMPTY meter, which
+# is what a ring with nothing banked is.
+const PEN_EXTEND_EMPTY_METER := 0.0
+
+## **WORK BANKED TOWARD THE RING IN FLIGHT**, in work units — the numerator of `pen_extend_fraction`,
+## and the left-hand absolute of the badge's `Fencing N / M work (P%)` hover.
+static func pen_extend_work_done(herd: Dictionary) -> float:
+    return maxf(float(herd.get(PEN_EXTEND_PROGRESS_KEY, 0.0)), 0.0)
+
+## **WHAT THE RING IN FLIGHT COMPLETES AT**, in work units — the `animal:pen` rung's own `work_cost`,
+## stamped on the herd by the sim's accrual seam. `BUILD_WORK_COST_NONE` where no ring has been
+## priced yet.
+static func pen_extend_cost(herd: Dictionary) -> float:
+    return maxf(float(herd.get(PEN_EXTEND_COST_KEY, BUILD_WORK_COST_NONE)), BUILD_WORK_COST_NONE)
+
+## **THE RING'S METER AS A FRACTION — the ONE place that division is written.** Two surfaces quote a
+## ring: the herd drawer's WARN-amber `Fencing N%` badge (and its in-place patch) and the build
+## queue's percentage for an `extend_pen` entry. All of them come through here, so one ring can never
+## be quoted two ways.
+##
+## **`pen_extend_progress` IS WORK, NOT A FRACTION.** It was normalized `0..1` until unit-costed work
+## landed; a reader that still scales it by `PROGRESS_PERCENT_SCALE` prints `Fencing 6900%` off 69
+## banked work units. The denominator is on the wire beside it, so there is nothing to guess.
+##
+## **IT IS NOT A RUNG METER AND HAS NO `FORECAST_BUILD_*_KEYS` ROW.** A ring widens the pen rung its
+## herd already stands on — the herd reads `Corralled 100%` for the ring's whole life — so
+## `improvement_progress` has nothing to answer for it and `build_completion_value`'s ladder credit is
+## structurally zero.
+##
+## **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `Herd::begin_pen_extension` leaves both
+## fields at zero and `accrue_pen_extension` is what stamps the cost, so a ring that has banked no
+## turn yet has no denominator to divide by: `0 / 0` is *no ring*, not `0%` and certainly not `100%`.
+## It answers `PEN_EXTEND_EMPTY_METER` there rather than dividing. The drawer badge additionally gates
+## on `pen_extend_progress > 0`, so it never renders that state at all.
+static func pen_extend_fraction(herd: Dictionary) -> float:
+    var cost := pen_extend_cost(herd)
+    if cost <= BUILD_WORK_COST_NONE:
+        return PEN_EXTEND_EMPTY_METER
+    return clampf(pen_extend_work_done(herd) / cost, 0.0, 1.0)
+
 ## **WHAT THIS IMPROVEMENT'S RUNG COSTS TO HOLD, PER TURN** — the STANDING price of the rung being
 ## quoted, read at the rung being PRICED rather than at the rung the source is billed for today. It
 ## sits on the offered face beside `build_work_cost`'s one-off price: *this much to build it, this
@@ -4324,6 +4424,12 @@ static func build_queue_position(src: Dictionary, prefix: String) -> int:
 ## refused (`docs/plan_standing_upkeep.md` §4.6b). Passed through verbatim, unrecognised keys
 ## included — the wording table is the client's and answers an unknown key honestly rather than
 ## dropping it, exactly as `HudFloraVocab.SOW_REFUSAL_FALLBACK` does for a site refusal.
+## **THE BUILDERS KIT THE WINNING BAND'S QUEUE ENTRY RESOLVES TO** — `""` for a source no band has
+## queued, which is also the honest answer for a wire that says nothing. Read it BESIDE
+## `build_queue_position`: this is a property of the ENTRY, so a source with no position has no kit.
+static func build_kit_id(src: Dictionary, prefix: String) -> String:
+    return String(src.get(prefix + FORECAST_BUILD_KIT_KEY, "")).strip_edges()
+
 static func build_blocked_reason(src: Dictionary, prefix: String) -> String:
     return String(src.get(prefix + FORECAST_BUILD_BLOCKED_REASON_KEY, "")).strip_edges()
 
@@ -4848,6 +4954,35 @@ static func off_axis_useful_workers(forecast: Dictionary) -> int:
         crew = maxi(crew, ceili(room / rate))
     return crew
 
+## **DOES THIS SOURCE PRICE A WORKER IN ANY ACCOUNT AT ALL?** — a test on the RATES alone, deliberately
+## not on the rooms: it asks what this source PAYS, which is a structural fact, where every ceiling
+## above is a function of the floor and of what happens to be standing there this turn.
+##
+## **IT IS THE PREDICATE THE STAGED-CREW GUARD IS SCOPED BY**, and that guard is an ASSERTION rather
+## than a clamp — `ui_preview`'s `forage_cash_crop_field` pins that a sheet stages at least the crew
+## already committed on a source paying into any account, and `DrawerComposeController
+## ._forecast_worker_cap` records why a runtime floor there was tried and reverted.
+##
+## **THE SCOPE IS WHAT KEEPS `MAX_USEFUL_BARREN` REACHABLE.** A source that genuinely pays nothing in
+## any account answers `false`, so the barren cap of one worker still binds however many hands are
+## standing on it — the same argument `max_useful_workers` makes for withholding its own crew floors
+## there.
+static func pays_any_account(forecast: Dictionary) -> bool:
+    if float(forecast.get("axis_per_worker", forecast.get("per_worker", 0.0))) \
+            >= FORECAST_MIN_PER_WORKER:
+        return true
+    if float(forecast.get("per_worker_fodder", 0.0)) >= FORECAST_MIN_PER_WORKER:
+        return true
+    # **THE MATERIAL ACCOUNT IS ASKED ROW BY ROW, never summed** — the standing rule for this account,
+    # and here any single paying row is enough to answer the question.
+    for row_variant in forecast.get(FORECAST_PER_WORKER_MATERIAL_KEY, []):
+        if not (row_variant is Dictionary):
+            continue
+        if float((row_variant as Dictionary).get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)) \
+                >= FORECAST_MIN_PER_WORKER:
+            return true
+    return false
+
 ## Workers beyond this produce nothing at this source under the selected policy —
 ## ceil(ceiling / per_worker). A tended patch / corralled herd reports every ceiling == per_worker, so
 ## this collapses to 1 (policy irrelevant).
@@ -5118,8 +5253,8 @@ static func expected_next_turn_yield(forecast: Dictionary, workers: int,
     return expected_yield_account(forecast, workers, band, "per_worker", "next_ceiling",
         FORECAST_FOOD_PER_ANIMAL_KEY)
 
-## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `floor(workers × engageRate × dip)`
-## whole animals, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
+## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `workers × engageRate` animals,
+## unrounded as the sim's reach is, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
 ## <account>PerBiomass` (the wire publishes the product as `food_per_animal`), so
 ## this is the schema's `reach(workers, rung)` with no second derivation of the body.
 ##
@@ -5137,10 +5272,10 @@ static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key:
 ## rather than an account's `*_per_animal`. `engagement_reach` is this function reading a forecast, so
 ## the sheet's take and the chart's projection bound themselves on ONE definition.
 ##
-## **IT BOUNDS THE WHOLE-ANIMAL COUNT AND THEN CONVERTS**, never the other way about: `animals_engaged`
-## floors `workers × engageRate × dip` to whole animals exactly as the sim does, and the quantum is
-## applied to that count. Multiplying first and flooring after can land a whole engagement one animal
-## short on a rounding.
+## **IT BOUNDS THE ANIMAL COUNT AND THEN CONVERTS**, never the other way about: `animals_engaged`
+## answers in ANIMALS, the retreat cuts that count, and only then does the quantum value it. Converting
+## first would price a reach in one account's units and then cut it in another's — and the whole-animal
+## quantisation, which is the take's and not the reach's, would have nothing left to round.
 ## **THE RETREAT IS APPLIED HERE AND NOT ONE STAGE EARLIER**, in the sim's own order — engage, retreat,
 ## then convert — so `stay` cuts the whole-animal count the quantum then values. It defaults to the
 ## wire's "nothing breaks off", which is what leaves a pen, the plant web and every source that
@@ -5477,6 +5612,23 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             "sow_material_payoff": material_payoff_rows(entry.get("sow_material_payoff", [])),
             "cultivate_material_payoff":
                 material_payoff_rows(entry.get("cultivate_material_payoff", [])),
+            # **WHAT SOWING THIS CROP WOULD COST, in work units** (`docs/plan_standing_upkeep.md`
+            # §4.15) — the one figure on this entry that is not a payoff, and the COST half of the
+            # crop decision. A Sow is priced by how much of the tile the chosen crop still has to
+            # replace, so the patch's own `field_work_cost` prices exactly ONE crop (its commitment,
+            # or the rung's auto-pick) while every other row of a crop list quoted that same number.
+            #
+            # **PRESENCE IS ITS OWN KEY, and here it means *this plant cannot climb to a Field on
+            # this ground*** — the sim omits the figure rather than publishing a `0`, the multiplier
+            # being floored precisely because laying the rows and putting the seed in costs work on
+            # any ground. A missing-means-zero reading would advertise a free Sow for a job that
+            # cannot be ordered at all.
+            #
+            # ⛔ **IT IS NEITHER DERIVED FROM `share` NOR A DERIVATION OF IT.** A committed patch's
+            # published `share` is its REWEIGHTED one while this is struck on the tile's own basket,
+            # which is what the sim charges against; the two are deliberately different questions.
+            "sow_work_cost": float(entry.get("sow_work_cost", 0.0)),
+            "has_sow_work_cost": entry.has("sow_work_cost"),
             # WHAT THIS PLANT IS FOR — the sim's own display tag ("staple"/"fodder"/"cash"), carried
             # so the tile card's basket rows can lead with a role icon. **`""` is UNSTATED and must
             # stay `""`**: defaulting a missing tag to "staple" would invent a fact, and re-deriving
@@ -5561,6 +5713,25 @@ const SELECTION_PROVISIONS := "provisions"
 const SELECTION_FODDER := "fodder"
 const SELECTION_MATERIAL := "material"
 
+## **AND WHY IT IS UNQUOTABLE, BECAUSE THERE ARE TWO REASONS AND THEY HAVE DIFFERENT REMEDIES.** The
+## key is meaningless on a QUOTED selection and is present regardless, so a reader never has to know
+## which arm produced the dict.
+##
+## `SELECTION_REASON_UNPRICED` — the wire priced no per-species rate for something the player ticked.
+## Nothing the player can do fixes it; the sheet says so and quotes nothing.
+##
+## `SELECTION_REASON_ABSENT` — the ticked plants are not in this tile's basket at all, or carry no
+## share of it. **That state has an obvious remedy the unpriced sentence never mentions** — tick a
+## plant that grows here — and it is reachable through a roster change or a natural composition shift
+## that drops a plant a standing selection still names. (A commitment now prunes a crew's stale
+## `take_species`, which is what made it rare rather than what made it impossible.)
+##
+## **A CASH CROP PAYING `0.0` IS NEITHER OF THESE.** It is fully quoted, and `yield_rows`' own
+## render-where-it-pays rule decides whether a FOOD row exists at all.
+const SELECTION_REASON := "reason"
+const SELECTION_REASON_UNPRICED := "unpriced"
+const SELECTION_REASON_ABSENT := "absent"
+
 ## Compose `selection` (species keys, EMPTY meaning the whole basket) against `basket` —
 ## `flora_basket_entries`' answer for the same tile.
 ##
@@ -5579,8 +5750,12 @@ static func selection_rates(basket: Array[Dictionary],
         selection: PackedStringArray) -> Dictionary:
     var unquoted := {SELECTION_KNOWN: false, SELECTION_SHARE: 0.0,
         SELECTION_PROVISIONS: 0.0, SELECTION_FODDER: 0.0,
-        SELECTION_MATERIAL: ([] as Array[Dictionary])}
+        SELECTION_MATERIAL: ([] as Array[Dictionary]),
+        SELECTION_REASON: SELECTION_REASON_ABSENT}
     if selection.is_empty() or basket.is_empty():
+        # Nothing ticked, or a tile whose basket the wire does not describe. Neither is a NARROWING,
+        # so no caller renders an aside for it — the reason stands at its default rather than
+        # claiming the wire priced something badly.
         return unquoted
     var share_sum := 0.0
     var provisions := 0.0
@@ -5604,6 +5779,10 @@ static func selection_rates(basket: Array[Dictionary],
         if not bool(entry.get("has_provisions_per_biomass", false)) \
                 or not bool(entry.get("has_fodder_per_biomass", false)) \
                 or not bool(entry.get("has_material_per_biomass", false)):
+            # **THIS PLANT IS IN THE BASKET AND THE WIRE PRICED IT BADLY** — the one arm that is
+            # genuinely about the SERVER rather than about the selection, so it is the one arm that
+            # overwrites the default reason.
+            unquoted[SELECTION_REASON] = SELECTION_REASON_UNPRICED
             return unquoted
         var share := maxf(float(entry.get("share", 0.0)), 0.0)
         matched += 1
@@ -5620,7 +5799,8 @@ static func selection_rates(basket: Array[Dictionary],
             material_weighted[material_id] = float(material_weighted[material_id]) \
                 + share * float((row as Dictionary).get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0))
     # A selection naming nothing this tile grows, or naming only plants the tile carries no share of,
-    # divides by zero — there is no stand to price and no mean to take.
+    # divides by zero — there is no stand to price and no mean to take. **The remedy is the player's**
+    # (tick a plant that grows here), which is why this reason is worded apart from the unpriced one.
     if matched == 0 or share_sum <= 0.0:
         return unquoted
     # **THE DENOMINATOR IS THE WHOLE SELECTION'S SHARE, on every material.** A plant that pays no fibre
@@ -5784,8 +5964,8 @@ static func scaled_material_rows(rows: Array, factor: float) -> Array[Dictionary
 ## > engagement stage and no whole-animal quantum, so both accounts are linear in workers and track by
 ## > construction. On a HERD the food row is `min(room, crew carry, engagement→retreat) × the per-body
 ## > carry clamp`, quantised to whole bodies — four bounds, of which this expression has one — so a
-## > pastoral Wild Boar herd (`engage_rate` 0.33, hence `floor(workers × 0.33)` pinned by its
-## > floor-of-one at exactly ONE animal reached for every crew from one to six) quoted five herders
+## > pastoral Wild Boar herd (`engage_rate` 0.33, whose reach was floored back then and so pinned at
+## > exactly ONE animal reached for every crew from one to six) quoted five herders
 ## > five times the bone and hide one herder brings home, beside a food row that correctly did not
 ## > move. The sim credits BOTH accounts off one `take.carried` (`systems/labor.rs`), so quote and
 ## > payout provably disagreed.

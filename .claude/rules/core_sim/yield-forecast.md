@@ -187,14 +187,21 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > party can *reach* at all — `HerdTelemetryState.engageRate`, appended for exactly this:
 >
 > ```text
-> reach(workers)    = floor(workers × engageRate) × bodyMass × <account>PerBiomass
+> reach(workers)    = workers × engageRate × bodyMass × <account>PerBiomass
 > expected(workers) = min(crew term, ceiling(floor), reach(workers))
 > ```
 >
 > It is a term rather than an answer for the same reason the two beside it are: linear in the crew and
 > exact. **`engageRate <= 0` means "no engagement stage" and the term is dropped** — the wire's finite
-> reading of the sim's `f32::INFINITY` for a **pen** (a penned animal is not stalked) and for the plant
-> web, which never publishes the field. Measured before it shipped: a Wild Fowl herd with one hunter
+> reading of the sim's `f32::INFINITY`, which is what an unresolvable species answers and what the
+> plant web (never publishing the field) is.
+>
+> **A PEN publishes that same sentinel while the sim bounds it by a real number.** `engage_rate` is
+> filtered on `is_corralled()` in `snapshot::subsistence`, so a penned row drops the term client-side;
+> sim-side the tend branch, the forecast and both projections all bound the collection by
+> `fauna::herd_engage_rate` — the species' rate times `husbandry.pen_engage_gain`. The shipped gain of
+> `20` keeps the keepers' *carry* binding first on every pennable species, so the two readings agree
+> except where the handling arm is genuinely reached. Measured before it shipped: a Wild Fowl herd with one hunter
 > read **307 birds/turn** on the compose sheet (one hunter's 40 biomass of carry) against a take of
 > **10** — the sheet promising 30× what the sim would pay, for the whole life of the field's absence.
 > Pinned on the exported wire by
@@ -306,10 +313,11 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > ceiling is `B − floor·K ≤ B` for any floor `≥ 0` — and kept because a future ceiling that *could*
 > exceed the stock must not silently over-report. `stock_cap` stays populated for wire stability.
 >
-> A **rung-3 managed** source has `stock_cap: None` — it is never drawn down. *"This rung is not
-> offerable here"* used to be said by publishing a dip of `0`; with the fractions retired it is said
-> by the rung's own state (`isField` / `corralled`) and by `buildTurnsRemaining`'s
-> `NO_BUILD_TURNS_ESTIMATE`, which is what the top of a ladder answers.
+> A **corralled herd** has `stock_cap: None` — it is never drawn down by the compose sheet's own
+> reading. **A sown FIELD is not one**: the plant web's managed harvest is retired and a Field is
+> drawn down like any other stand. *"This rung is not offerable here"* used to be said by publishing a
+> dip of `0`; with the fractions retired it is said by the rung's own state (`isField` / `corralled`)
+> and by `buildTurnsRemaining`'s `NO_BUILD_TURNS_ESTIMATE`, which is what the top of a ladder answers.
 
 `ForagePatchState.tendedYield` and, on a herd, `corralYield` are what the source will pay **once the
 improvement completes**, so the client can show **"now X → then Y"** *before* the player commits the
@@ -333,10 +341,10 @@ ladder is expressible at all: **`pastoral_yield < managed_yield`** (pastoral `r�
 MSY-capped; measured ≈ 1.0 < 2.0 on a full Wild Boar). The old escapement projection read
 `pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field exists for.
 **A stance/floor ceiling is NOT on that ladder and must not be ordered against it** — it is a stock
-and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
-`hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
-constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
-projection* is the sustained MSY. Pinned by
+and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **A live pen reads the same
+sustained MSY**: with the managed harvest retired the pen is drawn down like every other rung, and the
+rate it settles at *is* that MSY, so the payoff line and the take coincide at the operating point
+rather than being two shapes. Pinned by
 `fauna::tests::the_tame_rung_advertises_its_payoff_above_wild_sustain`.
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
@@ -396,9 +404,11 @@ projection* is the sustained MSY. Pinned by
   `sowCrewNeeded` wire slots are gone (the slots `(deprecated)`). **`herdersNeeded` /
   `herdersNeededIfManaged` keep their own fields** — a herd's keeper count is a fact about the herd,
   not about a build — and no longer fold into `workers_needed`.
-- A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the floor axis
-  collapses**: `ceiling_at` returns its `managed_production` at every floor
-  (`SourceYieldForecast::managed`). **The worker cap does
+- A **corralled herd** is *yours*, so **the floor axis collapses**: `ceiling_at` returns its
+  `managed_production` at every floor (`SourceYieldForecast::managed`). **A sown FIELD is no longer one
+  of these** — the plant web's rung-3 managed harvest is retired, so a Field is floor-live and drawn
+  down through ordinary `forage_take`; see ":343" below, which states the same for the pen's own
+  collection. **The worker cap does
   not collapse** — `perWorkerYield` is the crew's real throughput, so `max_useful_workers =
   ceil(production / perWorkerYield)` is an honest count that grows with the source (slice 7; it used to
   be a hardcoded `1`, which claimed one worker could carry home whatever the land offered). A **tended
@@ -587,6 +597,24 @@ client's compose-time "Expected yield" row promises. Shape:
   draw either way, so this is bit-identical to what the seed produced; what it buys is that a sub-1
   chance now yields the **expectation** instead of one arbitrary sample. See "THE INVARIANT IS
   RESTATED" below.
+
+  > **⛔ A PEN FORECASTS NO FIGHT, BECAUSE ITS PAYOUT RESOLVES NONE.** A corralled herd never reaches
+  > `systems::hunt_take`: the Hunt arm's tend branch `continue`s before it and walks the animal out
+  > (`fauna::animals_handled`). So `hunt_forecast` builds `fight: NO_FIGHT_STAGE` for it, and the three
+  > readings that price a pen — `forecast_production_and_take_at`, `project_realized_hunt`,
+  > `project_arrivals_hunt` — each fork on `Herd::is_corralled()` and run the tend branch's own three
+  > terms: the room above the floor, the keepers' handling, the crew's carry. `fight: Some(..)` for
+  > **every** herd ran an engagement, a retreat and a fight the pen does not, gated on the quarry's
+  > `defense` and the crew's *hunting* kit — so a bare-handed band with a penned **Wild Aurochs**
+  > (`defense 6`) was quoted `0`, projected a steady `0` and an empty arrival schedule, and was then
+  > paid a real take on the turn. The quantised readings call `animals_handled` itself rather than
+  > re-composing it, so the quote and the payout are one expression; the smooth one
+  > (`project_realized_hunt`) drops only the whole-animal floor, as it does on the wild arm.
+  > Guarded on the exported wire by `hunt_useful_crew_on_the_wire.rs`
+  > (`a_bare_handed_pen_is_quoted_the_take_the_turn_pays`,
+  > `a_pens_quote_is_its_payout_at_every_keeper_count`,
+  > `a_bare_handed_pen_projects_a_steady_income_and_a_delivery`), with the wild arm's fight gate pinned
+  > beside them by `a_wild_row_is_still_gated_by_the_fight`.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
@@ -805,5 +833,169 @@ and capture all read `foddering`; `sim_schema/src/lib.rs`'s roundtrip asserts on
 `fb::IntensificationKnowledgeState::foddering()` rather than the in-process struct, because a field
 that never reached the codec still passes an in-process assertion.
 
----
+## Shedding a crew the band can no longer field
 
+`LaborAllocation::normalize(available, facts)` runs once per band at the head of
+`advance_labor_allocation` and trims `Σ workers` back to what the band actually has. It answers the
+one question a command-side clamp cannot: the band **lost people** since the command landed, so hands
+already committed have to go somewhere.
+
+**It fires only at zero slack.** Idle hands absorb a shrinking pool by themselves, so only a fully
+committed band ever reaches the order below — it is an edge-case handler, which is why the order is
+decided in code and there is no config lever competing with it.
+
+### Every shed is announced, and a trim is a shed
+
+It returns a `ShedCrew` per row it touched — `remaining > 0` for a row it merely cut, `0` for one it
+destroyed outright — and `announce_shed_crew` pushes a `status=trimmed` or `status=lapsed` line for
+each on that source's own feed channel. **Each of those lines names the band on a `band=` detail
+token**, which is what carries the dock's per-row *"Work tab"* link — see `event-feed.md` → "The
+`band=` token is what makes a loss line clickable".
+
+The trim half was silent for the whole life of the pass: only destroyed rows were handed back, so a
+crew going `6 → 3` on a band one worker short published a smaller number with **no event anywhere**.
+From the player's side that is a crew they had just raised moving on its own, which is
+indistinguishable from the command having been refused.
+`a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left` asserts on the **event**, because the
+worker count was correct throughout and a test that read only the count would have passed the whole
+time.
+
+### The shedding order — the eleven steps, and why they are in that order
+
+`ShedStep` (`components.rs`) is the list, one variant per step, walked top to bottom; the first step
+that names a staffed row gives **one** hand, and the walk re-runs for the next hand. Nothing about it
+is positional.
+
+| | Step | Band |
+|---|---|---|
+| 1 | a **scout** | *Nothing is lost* |
+| 2 | a **warrior**, if nothing threatens the band | |
+| 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
+| 4 | a **builder**, while more than one remains and something is queued | |
+| 5 | **thin the least-productive worked source that has two or more hands** — "least productive" is the two-level test below, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
+| 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
+| 7 | a **warrior**, unconditionally | |
+| 8 | a **keeper below the demand** — improvements begin to rot | |
+| 9 | **empty the least-productive improved source with no queued build** | |
+| 10 | **empty a source carrying a queued build** — the row drops and the declaration goes with it | |
+| 11 | **the last builder** — every queued build stalls | |
+
+Below that, `ShedStep::LastHand`: a single worker on a single row, taken, and the row ends. Steps 6,
+9 and 10 partition every staffed *source* row between them and the role steps name every staffed
+*role* row, so the walk is already total and that arm is the assertion rather than a case.
+
+**Thinning beats emptying, and that is the sharp line.** The builders have been a band-level pool
+since `docs/plan_standing_upkeep.md` §2.5, so taking a hand off a source mid-build does not slow that
+build at all — only **emptying** the row does, because an entry requires a row (§3.2) and dropping
+the row drops the entry. The cliff is emptying, never building. Two consequences of the same
+reasoning: **9 is worse than 8** (an improved source with no take crew still owes its upkeep and now
+pays nothing, where rot is gradual and recoverable), and **7 sits after 6** (pulling the guard under
+a real threat can cost people, which is worse than losing a row nothing was invested in).
+
+**One hand per pass of the walk**, because the picture changes with every hand taken — a keeper
+surplus falls, a two-hand row becomes a one-hand row, a builder pool reaches its last. A step that
+*empties* a row still takes one hand, and that is not a coincidence: step 5 names every source row
+with two or more hands, so by the time the walk reaches step 6 no source row has more than one.
+
+**`normalize` does not hold the facts the order needs**, so `advance_labor_allocation` resolves them
+into `ShedFacts` and hands them in — and **only the facts**: the steps are walked in one place, so no
+seam knows half the order. Every fact is struck against the allocation the *player* left, before a
+hand is shed:
+
+| Fact | Resolved from |
+|---|---|
+| `threatened` | the **same trigger** `advance_predator_raids` fires on — a carnivore with `aggression > 0` inside `predators.raid_radius`. That pass runs straight after this one off the same herd positions, so a band the pack reaches this turn keeps its guard. A band whose tile will not resolve reads **threatened**: the guard is the reading that costs people when it is wrong |
+| `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make |
+| `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one |
+| `improved` | `patch_at_risk_cost` / `herd_at_risk_cost` above `RUNG_UNSTARTED` — work on the ladder, finished or in flight |
+
+`banking` and the keeping gear are therefore resolved **twice** per band: once here against the
+pre-shed allocation, and once below against what survived, which is the reading the split funds. A
+band whose builders row was emptied funds no head at all, and the split must not fund one it no
+longer has the hands to bank.
+
+**"Least productive" is TWO levels, and the first one is a presence test.**
+
+1. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
+   the same retained `SourceYield`). A row paying nothing ranks below one that pays something, so it
+   is shed first.
+2. **Then `last_yields[i].realized ÷ crew`** — the row's own published headline yield, the number the
+   band panel and the map annotation state, divided by the hands on it. Ties go to the earliest row,
+   so the choice is stable.
+
+It is the retained telemetry rather than a fresh derivation: this pass runs before the take, so it is
+the only yield reading that exists, and a second source here would order the shedding on a number the
+player has never been shown.
+
+> #### ⛔ LEVEL 1 IS A PRESENCE TEST AND MAY NEVER BECOME A COMBINED SCORE
+>
+> A hay Field and the five cash crops read **zero in both scalar accounts and are paid entirely by
+> their materials rows** (`flora_config.json`), so a productive tobacco Field and a genuinely dead row
+> both quote `0` provisions per worker. Under `realized ÷ crew` alone they *tie*, and which one was
+> shed came down to list position — the thing nothing in this order is allowed to depend on.
+>
+> The obvious repair is a combined number, and `labor_config.json`'s `_comment_weeding` refuses
+> exactly it: ranking by amount would mean *"comparing a food rate against a trade rate, an exchange
+> rate this codebase does not have and should not invent"*. Asking only **whether** a row pays
+> sidesteps the question — a presence check invents no exchange rate — which is why level 1 is a
+> `bool` and not a term.
+>
+> **The levels are in this order so the standing behaviour cannot invert.** A food row pays *and*
+> carries a positive per-worker yield, so it still outranks every non-food row: a band short of hands
+> keeps its people on food and drops the tobacco. Level 1 decides only the tie beneath that.
+>
+> The three accounts are asked in their own published terms, because that is what `SourceYield`
+> carries: `realized` for food (the forward projection, so a big-game hunt on a wait turn still reads
+> as paying), `fodder` and `materials` for the other two, both of which are this turn's credited
+> amounts and have no projected twin to read. The material account is asked **row by row and never
+> summed** — the standing rule for it — though any one paying row answers the question.
+>
+> `shedding_order.rs` pins all three claims on the **published wire rows**: the dead row gives from
+> either list position, a food row still outranks a materials-only row, and two dead rows fall back
+> to the earliest-row tie-break rather than becoming order-dependent.
+
+**An edited row is not a zero-yield row.** `set_assignment` drops the edited row's telemetry with the
+row, and the `assign_labor` command re-seeds it immediately from the source's pre-commit forecast
+(`set_source_yield`) — so a crew the player has just staffed carries the number the compose sheet
+quoted rather than a `0.0` that would make it the first thing thinned. That seeding is load-bearing
+to this order, not merely a display nicety.
+
+#### ⛔ It used to be the EDIT order, and that is what this replaced
+
+`set_assignment` removes the row it is editing and re-pushes it at the **end** of `assignments`, and
+`normalize` trimmed from the **end**. So the row a player had just touched was always first in the
+shedding order. Reported from play: a Field's tenders were raised `2 → 3`, an elder died that turn,
+and the worker came straight back off the row that had just been chosen — which reads as the game
+ignoring the order.
+
+The two halves were individually reasonable — an edited row is naturally re-appended, and shedding
+from the tail means *"where each row falls in the shedding order is where the player put it in the
+list"*, which is a statement the player can make. Their composition is what nobody chose: the list
+position a player controls is silently overwritten by the act of editing the row. **List position
+must never be the shedding order again**; nothing in the eleven steps is positional.
+
+`core_sim/tests/shedding_order.rs` pins the reported case on the **encoded envelope** — the raise
+stands and the poorer ground per head gives the hand — because the claim is about the crew count the
+player watched move.
+
+### `normalize` and the commands measure different pools
+
+`normalize` bounds on `available_workers(cohort.working)` — the **raw** pool. Every command clamps
+against `BandWorkforce::assignable()`, which is `pool − benched`. So the shedding pass tolerates an
+allocation that spends the bench's hands twice.
+
+Nothing reaches that state today: `set_bench` clamps on `benchable()` (`pool − assigned`), so
+`assigned + benched ≤ pool` holds from the command side and `normalize`'s looser bound is never the
+binding one. It is recorded because the two passes nonetheless disagree about what a band's spendable
+pool *is*, and `BandWorkforce::assignable`'s own doc comment claims the type is the single authority
+over that number.
+
+### The pool `normalize` reads is not the pool the player composed against
+
+`simulate_population` and `advance_labor_allocation` are chained in that order inside
+`TurnStage::Population` (`lib.rs`). A command therefore clamps against the pool the **published
+frame** showed, and `normalize` re-clamps one system later against the pool demographics has already
+rewritten for this turn. The formula is the same on both sides — it is the instant that differs — so
+a band sitting at full commitment sheds on any turn that costs it a working-age person.
+
+---

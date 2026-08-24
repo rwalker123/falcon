@@ -549,8 +549,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > >
 > > **⛔ AND THE PEN CURVE IS THE SAME CURVE.** `pen_crew_take_curve` published
 > > `quantise_animal_take(…).killed as f32` — whole animals — while every stalking row beside it
-> > published the un-floored rate, and `quantise_animal_take` returns `killed = 0` whenever the
-> > affordable count is below one. So a **penned** aurochs whose next-turn room is 54 biomass read
+> > published the un-floored rate, and the take path pays `killed = 0` whenever the room affords less
+> > than one whole animal. So a **penned** aurochs whose next-turn room is 54 biomass read
 > > `0.0` at every crew size, `hunt_useful_crew` fell to `NO_USEFUL_CREW`, and the Work board's `+`
 > > shut on a pen collecting a beast every two and a half turns — the same cadence-as-a-never, one
 > > function over. It publishes the rate now (`animals_sparable`, `ONE_WHOLE_ANIMAL`).
@@ -682,13 +682,69 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   carried would not compile.
 >
 > **THE ONE CLAUSE A DENIAL RAID DROPS.** `quantise_animal_take` takes a `fauna::EngagementStop`:
-> a hunt bounds the kill by `max(1, carryable)` — *hunters do not kill what they cannot use* — and a
-> **denial raid** does not, which is the single line separating the two missions. `carried` is the
-> same expression under both, so a raid still banks what it can haul and the rest is `wasted`. The
+> a hunt bounds the kill by what its pack seats (`fauna::animals_the_pack_seats`) — *hunters do not
+> kill what they cannot use* — and a **denial raid** does not, which is the single line separating
+> the two missions. `carried` is the same expression under both, so a raid still banks what it can
+> haul and the rest is `wasted`. The
 > escapement floor is a *number* and the pack is a *bound*, so no value of the first reaches the
 > second — which is why denial is a mission and not a floor preset. `fauna::herd_past_recovery` is
 > its win condition (`collapse_fraction · K`, read through `classify_ecology_phase`). Rationale:
 > `.claude/rules/core_sim/expeditions.md` → "Denial is a MISSION, not a floor".
+>
+> **THE TAKE IS FOUR STEPS, AND THE WHOLE-ANIMAL QUANTUM SITS ON EXACTLY ONE OF THEM.**
+>
+> ```text
+> 1. engage    reach = workers × engage_rate, bounded by what the herd can spare above the floor
+> 2. retreat   a fraction of what was reached gets away (wariness)
+> 3. fight     whole animals dead; the unfinished remainder banks on Herd::wounds
+> 4. carry     min(pack, killed) in BIOMASS, unrounded — the rest is wasted on the ground
+> ```
+>
+> *An animal dies whole; meat divides.* The quantum belongs on the **kill** (step 3), because that is
+> the step that produces bodies; a hunter field-dresses and takes what fits. Three roundings sat
+> outside that step and each cost the player food:
+>
+> - **`animals_engaged` no longer floors and no longer has a `max(1)`.** `floor(w × engage_rate).max(1)`
+>   answered **one animal for every crew from 1 to 6** on the shipped Wild Boar, so four hunters fed a
+>   band exactly as well as one (`0.18 food/turn` either way, from play). The reach is a rate and is
+>   now written as one. The retired floor's stated defence — that flooring to zero would put a
+>   headcount threshold in front of the attack-vs-defense gate — does not survive a plain multiply:
+>   nothing reaches zero for a party that exists (a lone mammoth hunter reaches `0.05`). **A crew below
+>   `1 / engage_rate` therefore takes strictly less than it used to**, which is the authored
+>   `engage_rate` finally meaning what its config comment always said.
+> - **A sub-body reach carries between turns on `Herd::wounds`, not on a second bank.** With the reach
+>   fractional the retreat keeps the part body in closed form (`animals_that_stay` draws the whole
+>   bodies and multiplies the remainder by `1 − wariness`), and `combat::DamageLedger` banks the damage
+>   struck at it — so a lone boar hunter finishes a body about every fourth turn instead of flooring to
+>   zero for ever. `Herd::hunt_credit` stays the expedition's alone: fight progress is already
+>   accumulated, and a second meter over the same wait would count it twice.
+> - **The carry arm rounds UP** (`fauna::animals_the_pack_seats`, `ceil`, never below one body). It was
+>   `floor(collection / body_mass)`, so a party able to carry `1.5` animals killed one and left half its
+>   pack idle every turn. It now kills the animal at the top of the load, hauls what fits and wastes the
+>   remainder — the general form of the `max(1)` arm that has always said *a party that cannot carry one
+>   still takes one*. `carried` itself was never rounded and still is not.
+>
+> **THE ESCAPEMENT ROOM IS SPENT AT STEP 1 — BY EVERY CALLER — AND `quantise_animal_take` NO LONGER
+> HOLDS IT AT ALL.** The quantiser's `affordable` arm, its `affordable < 1 ⇒ take nothing` early
+> return and its `policy_ceiling` parameter are **gone**: the engagement is already clamped by
+> `animals_affordable`, the fight can only bring down what stayed, and `DamageLedger::pending` is below
+> one body by invariant, so the arm was dead on every hunting path. What kept it alive was **the pen**,
+> which has no engagement stage — and that is exactly the argument for removing it. A bound applied to
+> bodies already on the ground let the one caller with no bound of its own look correct: `systems::labor`'s
+> tend branch handed its keepers' raw handling rate in as `brought_down` and the post-hoc clamp quietly
+> covered for it. The pen now spends the room at its own call site (`fauna::animals_handled` —
+> `husbandry.md` → "THE PEN BOUNDS ITS COLLECTION"), so a caller that forgets is a **stripped herd in a
+> test**, not a silent save.
+>
+> **The wait-for-regrowth turn moved with the room, and is unchanged.** A source that cannot spare a
+> whole animal hands the quantiser a `brought_down` of `0` — the same nothing the early return used to
+> produce — so the hunt still pauses while the herd regrows.
+>
+> **A curve is no longer a staircase.** With the reach linear in the crew and the fight linear in it
+> too, on a herd nobody can exhaust one of them is smaller at *every* crew size — the fight/engagement
+> flip that used to appear mid-sweep was the rounding, not a fact about hunting. What still bends a
+> crew-take curve is the **room**, which does not grow with the crew at all, and gear coverage
+> re-resolved per crew size. `hunt_useful_crew` still reads the **last rise** for those.
 >
 > **Quantisation never divides by a food number it has not established is positive.** The old
 > "flooring in provisions and in biomass agree, a positive linear factor cancels" note is **false** for
@@ -813,11 +869,15 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   - **The herder term dominates at a SHALLOW draw.** It counts the whole herd's heads; the other two
 >     count only the drop standing above the floor. A fowl herd worked at floor `0.9` owes its full
 >     keeper crew while the drop it can pay is a fraction of it.
->   - **A PEN and the plant web have no engagement stage at all** — `engage_rate_for` /
->     `SourceYieldForecast::managed` answer `f32::INFINITY`, `hunt_engage_workers` returns `0` for it,
->     and the `max()` collapses to the two terms those sources always had. A penned animal is not
->     stalked — and, since the fight landed, not fought either (`SourceYieldForecast::fight` is `None`
->     there and on every plant source).
+>   - **The PLANT WEB has no engagement stage at all** — its `engage_rate` is `f32::INFINITY`,
+>     `hunt_engage_workers` returns `0` for it, and the `max()` collapses to the two terms it always
+>     had.
+>   - **A PEN HAS ONE, and it counts KEEPERS.** Its rate is `herd_engage_rate` (the species' own,
+>     times `husbandry.pen_engage_gain`) and its `stay` is `NO_RETREAT_STAGE_STAY` — `1.0` as the
+>     *answer*, since nothing walks away from a keeper — so this term sizes the crew that walks the
+>     room out. A penned animal is not stalked and **not fought**: `SourceYieldForecast::fight` is
+>     `NO_FIGHT_STAGE` there and on every plant source, and the readings that price a pen run the tend
+>     branch's stages instead (`yield-forecast.md` → "A PEN FORECASTS NO FIGHT").
 >   - **THE FIGHT IS A FOURTH BOUND, and it is not a crew term** (`docs/plan_hunt_through_combat.md`
 >     §4, slice 4). `quantise_animal_take`'s fourth argument is no longer the raw engagement: it is
 >     `fauna::resolve_hunt_fight(...).brought_down` — the animals the party actually put on the
@@ -830,10 +890,10 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     **WHICH bound actually ran out is an OUTPUT now** — `fauna::hunt_take_bound` →
 >     `HuntTakeBound { Engagement, Floor, Throughput, Carry, Fight }`, carried on `HuntOutcome` beside
 >     `engaged` and `fled` and published on the `hunt_report` feed line (`event-feed.md`). It is a
->     *reading* of the same terms `quantise_animal_take` was handed, through the same `whole_animals`
->     helper, so the named bound and the paid take cannot disagree about what "affordable" or
->     "carryable" mean; ties resolve `Floor/Throughput → Carry → Fight/Engagement`, stated on the
->     function.
+>     *reading* of the same terms `quantise_animal_take` was handed, through the same helpers
+>     (`whole_animals` for the room, `animals_the_pack_seats` for the carry), so the named bound and
+>     the paid take cannot disagree about what "affordable" or "carryable" mean; ties resolve
+>     `Floor/Throughput → Carry → Fight/Engagement`, stated on the function.
 >
 >     **`Throughput` is split out of `Floor`, and the function takes a SECOND ceiling to do it.** A
 >     detached party's take ceiling is its kill-credit bank clamped to the herd's escapement room
@@ -916,9 +976,10 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >
 >   **It is the inverse of the rate, NOT of `fauna::animals_engaged`.** That helper answers how many
 >   animals the party gets near, which is strictly more than it kills wherever a species has any
->   wariness — and it floors, so composing the two would lose up to a whole animal before the stay
->   multiplies. The engagement is still asserted to cover the drop (you cannot bring down what you
->   never reached); the *count* comes from the unfloored rate.
+>   wariness. The engagement is still asserted to cover the drop (you cannot bring down what you never
+>   reached); the *count* comes from the rate. The two are now the same arithmetic in both directions
+>   — `animals_engaged` is a plain `workers × engage_rate` — where the crew count used to invert a
+>   rate the reach itself then floored, so the crew a panel named could under-deliver by up to a body.
 >
 >   Its absence was the same defect as the haul term's `carried` inversion, in the opposite direction
 >   and on the same panel: a Wild Fowl herd standing ~470 head above its floor is **61 biomass**, so the

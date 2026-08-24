@@ -486,6 +486,30 @@ message BuildOrderCommand {
   uint32 position = 6;
 }
 
+// Name the kit ONE queued build is raised with, on every band of the faction that has the source
+// queued. The row, its take crew and the meter are untouched - this sets a property of the QUEUE
+// ENTRY.
+//
+// THE BUILDERS' KIT IS PER QUEUE ENTRY, NOT PER BAND (docs/plan_standing_upkeep.md 4.7a). A build's
+// default kit is derived from that entry's own food web - a hoe for a Cultivate, hurdles for a Tame -
+// so one stored id per band is the one thing the derivation cannot express: naming a kit on the
+// `builders` labor row pinned the animal web's tool onto every later plant build with no way back.
+// `assign_labor` refuses a `kit` token on that role; this is where the override lives.
+//
+// AN ABSENT `kit_id` CLEARS THE OVERRIDE back to the derivation - the same "an absent kitId means the
+// job's default" rule every other kit selection follows, and what lets a client say "back to default"
+// with no new vocabulary. An explicit bare-handed kit is a REAL selection and survives the round trip.
+//
+// SOURCE ADDRESSING is the queue family's: two integer tokens name a TILE, one token names a HERD id.
+message BuildKitCommand {
+  uint32 faction_id = 1;
+  optional uint32 target_x = 2;
+  optional uint32 target_y = 3;
+  optional string herd_id = 4;
+  // Absent = clear the override; present = this roster kit, `none` included.
+  optional string kit_id = 5;
+}
+
 message UpkeepModeCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -973,5 +997,7 @@ message CommandEnvelope {
     AbandonCommand abandon = 57;
     UnqueueCommand unqueue = 58;
     BuildOrderCommand build_order = 59;
+    // 59 is held by `build_order`, so the queue entry's kit takes 60 (append-only; never renumber).
+    BuildKitCommand build_kit = 60;
   }
 }

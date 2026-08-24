@@ -322,6 +322,13 @@ pub struct Herd {
     /// already handed over. The accumulator that role needed is the herd's own standing biomass, which
     /// crosses one `body_mass` on exactly the cadence the bank used to meter.
     ///
+    /// **Nor is it what a sub-body REACH banks in.** Since [`animals_engaged`] became a plain
+    /// `w × engage_rate`, a crew below `1 / engage_rate` engages a *fraction* of an animal and would
+    /// floor to nothing every turn — but the quantity that has to carry between those turns is the
+    /// party's **fight progress**, which [`crate::combat::DamageLedger`] on [`Herd::wounds`] already
+    /// banks, one accumulator for every party working the herd. Restoring a second bank here would
+    /// meter the same wait twice.
+    ///
     /// Its one remaining writer is the hunting **expedition** (`systems::expedition_take_biomass`),
     /// where it banks a different quantity: the *party's* per-turn processing throughput, metering
     /// **when** the next whole animal is ready for a body heavier than one turn's work. That bank is
@@ -393,14 +400,17 @@ pub struct Herd {
     /// count) so β only has to grow it. Authoritative sim state — rewound by rollback with the cloned
     /// registry.
     pub pen_radius: u32,
-    /// Pen-**extension** build progress `[0.0, 1.0]` for the in-flight ring (the `ExtendPen` labor
-    /// ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at that crew's own work
-    /// output; at [`Self::pen_extend_cost`] the ring completes (`pen_radius += 1`, this meter and its
-    /// cost reset, `pen_extending` clears). Exported as `penExtendProgress` for a "Fencing N%"
-    /// badge. Authoritative sim state, alongside `pen_radius`.
+    /// Pen-**extension** build progress **in absolute work units** for the in-flight ring (the
+    /// `ExtendPen` labor ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at that
+    /// crew's own work output; at [`Self::pen_extend_cost`] the ring completes (`pen_radius += 1`,
+    /// this meter and its cost reset, `pen_extending` clears). Authoritative sim state, alongside
+    /// `pen_radius`.
     ///
-    /// **In absolute work units**, completing at [`Self::pen_extend_cost`] — a ring rides the *same*
-    /// `animal:pen` rung as the pen it widens, so it cannot drift from the initial build.
+    /// **It is not a `0..1` fraction** — it was one before `docs/plan_standing_upkeep.md` §4.8 priced
+    /// improvements in work — so it is exported as `penExtendProgress` **together with its
+    /// denominator** `penExtendCost`, and a "Fencing N%" badge is the quotient of the two. A ring
+    /// rides the *same* `animal:pen` rung as the pen it widens, so its cost cannot drift from the
+    /// initial build's.
     pub pen_extend_progress: f32,
     /// **What the in-flight fence ring costs, in work units** — the `animal:pen` rung's own
     /// `work_cost`, stamped when the ring is worked. Reset with the meter when a ring completes.
@@ -1138,9 +1148,11 @@ impl Herd {
     }
 
     /// Accrue one turn of pen-**extension** progress (2d-β), the twin of [`accrue_corral`] on an
-    /// already-penned herd: while `pen_extending`, add `amount` to `pen_extend_progress`; at `1.0` the
-    /// ring completes — `pen_radius += 1` (saturating at `radius_max`), the meter resets and the
-    /// extending state clears. Returns `true` on the completion turn so the caller can announce it.
+    /// already-penned herd: while `pen_extending`, add `amount` (**work units**) to
+    /// `pen_extend_progress` and **stamp `cost` into [`Self::pen_extend_cost`]**, so the meter always
+    /// ships with the denominator it completes against; at `cost` the ring completes — `pen_radius +=
+    /// 1` (saturating at `radius_max`), both meter and cost reset and the extending state clears.
+    /// Returns `true` on the completion turn so the caller can announce it.
     /// Called **after** the turn's (dipped) take, mirroring `accrue_corral`.
     pub(crate) fn accrue_pen_extension(&mut self, amount: f32, cost: f32, radius_max: u32) -> bool {
         if !self.pen_extending {
@@ -4921,9 +4933,10 @@ pub struct SourceYieldForecast {
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
     /// (`tended_provisions`), or, for an **un-penned** herd, the pen's **sustained MSY** projected on
     /// the pen ecology (`sustainable_yield` at the pen `r`, the long-run rate that shows the ladder).
-    /// A **penned** herd instead reads its actual constant-escapement corral take (`corral_yield`,
-    /// via the `is_corralled()` early-return in `hunt_forecast`), so forecast == actual there. Lets
-    /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
+    /// A **penned** herd reads the same pen MSY: with the pen's harvest drawn down like every other
+    /// rung's, that long-run rate is what the pen settles at, so the payoff line and the take agree
+    /// at the operating point rather than being two shapes. Lets the client show the payoff
+    /// ("preparing X → then Y") *before* the player commits to the dip.
     /// Crosses the wire as `ForagePatchState.tendedYield` / `HerdTelemetryState.corralYield`.
     pub managed_yield: YieldAccounts,
     /// Food/turn a herd pays **once tamed** — the **Tame rung's payoff**: the pastoral **sustained
@@ -4980,9 +4993,14 @@ pub struct SourceYieldForecast {
     /// take the party could never reach, which is exactly the forecast-vs-actual split
     /// `.claude/rules/core_sim/yield-forecast.md` forbids.
     ///
-    /// **[`f32::INFINITY`] on a continuous source and on a pen** — a plant is not stalked and a penned
-    /// animal is not either, so there is no engagement stage for either. Same shape as
-    /// `body_mass_yield`, which is likewise inert on the plant web.
+    /// **[`f32::INFINITY`] on a continuous source** — a plant is not stalked, so there is no
+    /// engagement stage at all. Same shape as `body_mass_yield`, which is likewise inert on the
+    /// plant web.
+    ///
+    /// **A PEN CARRIES A REAL RATE**: the keepers' handling ([`herd_engage_rate`], the species' own
+    /// rate times `husbandry.pen_engage_gain`), because the tend branch is bounded by how many
+    /// animals a crew can walk out and butcher in a turn. An infinite bound was never *"a fenced
+    /// animal is not stalked"*, it was no bound.
     pub engage_rate: f32,
     /// **The fight the take resolves through** (`docs/plan_hunt_through_combat.md` §4) — the party's
     /// per-hunter profile and the quarry's body, so the preview brings down exactly the animals the
@@ -5004,14 +5022,27 @@ pub(crate) const NO_INVESTMENT_RUNG_BIOMASS: f32 = 0.0;
 /// twin of `PLANTS_DO_NOT_QUANTISE`.
 pub(crate) const NO_PASTORAL_YIELD: YieldAccounts = YieldAccounts::ZERO;
 
+/// **THE FIGHT OF A SOURCE THAT RESOLVES NONE** — every plant patch and every pen, named rather than
+/// a bare `None` because it is the statement *"there is no fight stage here"* rather than an
+/// unresolved party.
+///
+/// A penned beast is walked out and killed ([`animals_handled`]) and a plant is not stalked at all,
+/// so neither take path runs an engagement, a retreat or a fight — and a forecast that ran them
+/// would price stages its payout does not. [`NO_RETREAT_STAGE_STAY`] is the term the retreat
+/// collapses to alongside it.
+pub(crate) const NO_FIGHT_STAGE: Option<(HuntingParty, QuarryFight)> = None;
+
 /// **The retreat term of a source that has no retreat stage** — every plant patch and every pen,
 /// which [`SourceYieldForecast::fight`] answers `None` for (a plant does not bolt, a penned animal is
 /// slaughtered rather than stalked).
 ///
-/// `1.0` is the identity, and it is safe *here specifically* because those same sources forecast
-/// `engage_rate: f32::INFINITY`: their engagement crew is already `0` whatever this term says, so the
-/// value cannot reach an answer. **It is not a stand-in for an unresolved party** — a hunting source
-/// must pass its own [`HuntingParty::stay_fraction`], or the crew stops matching the take.
+/// `1.0` is the identity, and on these sources it is the **answer** rather than a filler: nothing
+/// walks away from a keeper, so the whole of a pen's handling reaches the take and the crew
+/// inversion beside it ([`hunt_engage_workers`]) counts keepers against the un-retreated rate. The
+/// plant web cannot reach a stay at all, its `engage_rate` being [`f32::INFINITY`].
+///
+/// **It is not a stand-in for an unresolved party** — a hunting source must pass its own
+/// [`HuntingParty::stay_fraction`], or the crew stops matching the take.
 pub(crate) const NO_RETREAT_STAGE_STAY: f32 = 1.0;
 
 /// The biomass a **per-unit rate** is the yield of — `1.0`, so `HuntYield::apply(ONE_UNIT_OF_BIOMASS)`
@@ -5233,9 +5264,10 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// total, so simulating the smooth escapement take ([`hunt_escapement_ceiling`]) gives the smooth
 /// average directly — which is the whole point, since the lumpy quantised take is what `actual`
 /// already reports. A Sustain herd converges on `K/2` and reads flat at ~MSY; a Surplus/Deplete herd
-/// declines to its floor within the horizon and the average honestly reflects it; a corralled herd
-/// projects its managed pen yield (already smooth). Reuses the shared model helpers
-/// ([`regrow_biomass`], [`hunt_escapement_ceiling`], [`pen_yield_biomass`], [`HuntYield::apply`],
+/// declines to its floor within the horizon and the average honestly reflects it; a **corralled** herd
+/// projects the collection its tend branch runs — the keepers' handling against the room, with no
+/// retreat and no fight, since a penned beast is walked out rather than stalked. Reuses the shared
+/// model helpers ([`regrow_biomass`], [`hunt_take_room`], [`herd_engage_rate`], [`HuntYield::apply`],
 /// [`herd_ecology`]/[`herd_capacity`]) — no second copy of the ecology or take math.
 ///
 /// # Unquantised is NOT unbounded — the engagement cap still binds here
@@ -5275,7 +5307,11 @@ pub fn project_realized_hunt(
     let capacity = herd_capacity(&quarry, fauna);
     // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
     let hunt_yield = herd_hunt_yield(&quarry, fauna);
-    let _corralled = quarry.is_corralled();
+    // **WHICH TAKE PATH THIS RUN IS PROJECTING** — a wild herd is stalked and fought, a penned one is
+    // walked out of its pen; the loop below runs one or the other, never a blend. It is a fact about
+    // the herd and cannot change mid-run (the quarry is never penned by the projection), so it is
+    // resolved once beside the ecology.
+    let corralled = quarry.is_corralled();
     // **`workers` IS THE TAKE CREW** (`docs/plan_standing_upkeep.md` §2.2) — the same term
     // `systems::hunt_take` is paid at, so the projection and the take stay one model. A build on
     // this herd is its own allocation with its own hands and scales nothing here.
@@ -5283,11 +5319,14 @@ pub fn project_realized_hunt(
     // **The party's REACH, in animals** — how many it can bring into contact each projected turn
     // (`docs/plan_hunt_through_combat.md` §2). Constant for the run: the crew does not change size
     // mid-projection and the quarry is never re-speciated. What the herd can *spare* is not constant,
-    // so the escapement clamp and the retreat that follows it live inside the loop below. A **pen**
-    // has no engagement stage at all (a penned animal is not stalked), so it is unbounded there — the
-    // same exemption `project_arrivals_hunt` states by passing `f32::INFINITY` to the quantiser on
-    // its corral branch.
-    let reach = animals_engaged(workers, fauna.engage_rate_for(&quarry.species));
+    // so the escapement clamp and the retreat that follows it live inside the loop below.
+    //
+    // **A PEN HAS ONE TOO, and it is the keepers' handling rate** — [`herd_engage_rate`] folds
+    // `husbandry.pen_engage_gain` in, and hands the wild rate straight back on an un-penned herd, so
+    // this one term serves both arms. It read `FaunaConfig::engage_rate_for` (the *wild* rate at
+    // every rung) while the pen was exempt from the bound altogether; the exemption is retired and
+    // an infinite bound was never *"a fenced animal is not stalked"*, it was no bound.
+    let reach = animals_engaged(workers, herd_engage_rate(&quarry, fauna));
     let wariness = fauna.wariness_for(&quarry.species);
     // **The FIGHT is resolved INSIDE the loop, and it is the wounds that force that** (§4.2). It used
     // to be hoisted out as a constant, which was right for a stateless resolver and is now wrong: a
@@ -5323,7 +5362,16 @@ pub fn project_realized_hunt(
         // bare-handed party brings down **nothing** from a mammoth herd however much room stands
         // above the floor, and a `realized` that ignored that would quote a steady food rate the
         // party can never collect.
-        let engagement_biomass = {
+        // **A PEN RUNS NEITHER THE RETREAT NOR THE FIGHT, SO NEITHER DOES ITS PROJECTION** — the
+        // tend branch of `advance_labor_allocation` `continue`s before `systems::hunt_take` and
+        // walks the animal out ([`animals_handled`]). The keepers' handling is the only bound this
+        // stage contributes; the room is `offered` below and the carry is `collection`, which are
+        // the tend branch's other two terms. **Un-floored**, because this projection is the smooth
+        // one — the whole-animal quantum is the arrivals schedule's business
+        // ([`project_arrivals_hunt`]), and the herd's own biomass is the accumulator either way.
+        let engagement_biomass = if corralled {
+            reach * quarry.body_mass
+        } else {
             // **Engagement, then the retreat's EXPECTATION, then the fight** — the take's three
             // stages in the take's order. The reach is clamped by what the herd can spare *before*
             // the retreat ([`animals_affordable`]), because the retreat keeps a fraction of whatever
@@ -5377,8 +5425,8 @@ pub fn project_realized_hunt(
 ///
 /// Returns exactly `horizon` entries: **index `i` is the food delivered `i + 1` turns from now**, and
 /// `0.0` is an honest *wait* turn (the herd could not yet spare a whole body), not a missing reading.
-/// A **continuous** source — a pen, or fast game whose escapement clears a body every turn — simply
-/// has a positive value in every slot, which the client draws as a solid run.
+/// A source whose room clears a body every turn — fast game, and most pens — simply has a positive
+/// value in every slot, which the client draws as a solid run.
 ///
 /// # Why this and `realized` are two functions, not one
 ///
@@ -5394,9 +5442,9 @@ pub fn project_realized_hunt(
 /// **post-take** state so slot 0 is the *next* delivery rather than the one this turn already paid.
 ///
 /// Simulated on a private clone (the caller's herd is never touched) through the same shared helpers
-/// the take path uses ([`regrow_biomass`], [`hunt_escapement_ceiling`], [`quantise_animal_take`],
-/// [`pen_yield_biomass`], [`HuntYield::apply`], [`herd_ecology`]/[`herd_capacity`]) — **no second copy
-/// of the take math**, so the schedule is what the sim will really pay.
+/// the take path uses ([`regrow_biomass`], [`hunt_take_room`], [`quantise_animal_take`],
+/// [`animals_handled`] on the pen branch, [`HuntYield::apply`], [`herd_ecology`]/[`herd_capacity`]) —
+/// **no second copy of the take math**, so the schedule is what the sim will really pay.
 // Same shape as its `realized` sibling — the projection needs the full take context.
 #[allow(clippy::too_many_arguments)]
 pub fn project_arrivals_hunt(
@@ -5428,14 +5476,20 @@ pub fn project_arrivals_hunt(
     // **`workers` IS THE TAKE CREW** (`docs/plan_standing_upkeep.md` §2.2) — the same term
     // `systems::hunt_take` is paid at, so the projection and the take stay one model. A build on
     // this herd is its own allocation with its own hands and scales nothing here.
-    let reach = animals_engaged(workers, fauna.engage_rate_for(&quarry.species));
+    //
+    // **The keepers' handling on a pen** — [`herd_engage_rate`], which folds the pen gain in and
+    // hands the wild rate back on an un-penned herd, so the twin in [`project_realized_hunt`] and
+    // this one read one term at both rungs.
+    let reach = animals_engaged(workers, herd_engage_rate(&quarry, fauna));
     let wariness = fauna.wariness_for(&quarry.species);
     // **The fight is resolved PER TURN, not once for the run**, because its wounds accumulate
     // (§4.2): a sub-threshold party lands nothing for several turns and then a whole animal, and that
     // pulse is exactly what this schedule exists to draw. Only the quarry's *body* is constant.
     // Inert to the seed at the shipped `hit_chance` (see [`FORECAST_FIGHT_SEED`]).
     let mut quarry_fight = herd_quarry_fight(&quarry, fauna);
-    let _corralled = quarry.is_corralled();
+    // **WHICH TAKE PATH IS BEING SCHEDULED** — see the twin in [`project_realized_hunt`]. A pen is
+    // collected, not stalked, and the loop below runs the stages its tend branch runs.
+    let corralled = quarry.is_corralled();
     let collection = workers as f32 * per_worker_biomass_capacity;
     for slot in schedule.iter_mut() {
         // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows `quarry.biomass`).
@@ -5458,28 +5512,37 @@ pub fn project_arrivals_hunt(
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
             let ceiling =
                 hunt_take_room(floor, quarry.biomass, capacity, quarry.growth_this_turn());
-            // Engagement clamped by what the herd can spare, **then** the retreat's expectation,
-            // then the fight — the take's order, because the retreat keeps a fraction of whatever
-            // it is handed and clamping after it would quote a take off a bigger party than the
-            // one the sim sends ([`animals_affordable`]).
-            let engaged = party.stayers(
-                reach.min(animals_affordable(ceiling, quarry.body_mass)),
-                wariness,
-                HuntDraw::EXPECTED,
-            );
-            let fight = resolve_hunt_fight(
-                engaged,
-                workers as f32,
-                party,
-                &quarry_fight,
-                HuntDraw::EXPECTED,
-            );
-            quarry_fight = quarry_fight.with_wounds(fight.wounds);
+            let brought_down = if corralled {
+                // **THE PEN'S OWN COLLECTION STAGE, through the very function its tend branch
+                // calls** — the keepers' handling floored to whole bodies and bounded by the room
+                // above the floor. A slaughter has no engagement to clamp, no retreat and no fight,
+                // so a schedule that ran them would date deliveries by a stalking party's `defense`
+                // check on a herd standing in a fence.
+                animals_handled(reach, ceiling, quarry.body_mass)
+            } else {
+                // Engagement clamped by what the herd can spare, **then** the retreat's expectation,
+                // then the fight — the take's order, because the retreat keeps a fraction of whatever
+                // it is handed and clamping after it would quote a take off a bigger party than the
+                // one the sim sends ([`animals_affordable`]).
+                let engaged = party.stayers(
+                    reach.min(animals_affordable(ceiling, quarry.body_mass)),
+                    wariness,
+                    HuntDraw::EXPECTED,
+                );
+                let fight = resolve_hunt_fight(
+                    engaged,
+                    workers as f32,
+                    party,
+                    &quarry_fight,
+                    HuntDraw::EXPECTED,
+                );
+                quarry_fight = quarry_fight.with_wounds(fight.wounds);
+                fight.brought_down
+            };
             let take = quantise_animal_take(
-                ceiling,
                 collection,
                 quarry.body_mass,
-                fight.brought_down,
+                brought_down,
                 EngagementStop::WhenPackFull,
             );
             quarry.biomass -= take.killed_biomass();
@@ -5539,34 +5602,45 @@ fn forecast_production_and_take_at(
     {
         Some(axis) => {
             let quantum = forecast.body_mass_yield;
-            let engaged = animals_engaged(workers, forecast.engage_rate)
-                // **Restraint is free, and the forecast has to say so too** — the escapement floor
-                // bounds what the party *goes after*, exactly as `systems::hunt_take` bounds it
-                // (`docs/plan_hunt_through_combat.md` §1). Clamping here rather than leaving it to the
-                // quantiser is what keeps the retreat below running on the same population the take
-                // retreats; see [`animals_affordable`]. Both terms are read on `axis`, and an animal
-                // count is a ratio, so the currency cancels.
-                .min(animals_affordable(
-                    ceiling.component(axis),
-                    quantum.component(axis),
-                ));
-            // **Engagement, then retreat, then the fight** — the same three stages in the same order
-            // `systems::hunt_take` runs (`docs/plan_hunt_through_combat.md` §1), through the same
-            // helpers. The forecast cannot *draw* the retreat or the attack rolls, so it reads them
-            // at `draw`'s quantile instead of guessing a seed (see [`HuntDraw`]); the wariness is the
-            // quarry's own, off the fight the forecast already carries.
-            //
-            // **No fight stage means no retreat stage either** — a pen and the plant web, whose
-            // `engage_rate` is already `f32::INFINITY`.
+            // **What this crew can bring into contact in a turn** — a party's stalking reach on a
+            // wild herd, the keepers' handling rate on a pen; one term either way, because
+            // [`herd_engage_rate`] is what fills [`SourceYieldForecast::engage_rate`] at both rungs.
+            let reach = animals_engaged(workers, forecast.engage_rate);
+            // **Each source runs the stages ITS take path runs, and no others** — that is the whole
+            // of `forecast == actual` on this web (`.claude/rules/core_sim/yield-forecast.md`), so
+            // the fork is on the fight the forecast carries rather than on a rung read here.
             let brought_down = match &forecast.fight {
+                // **Engagement, then retreat, then the fight** — the same three stages in the same
+                // order `systems::hunt_take` runs (`docs/plan_hunt_through_combat.md` §1), through
+                // the same helpers. The forecast cannot *draw* the retreat or the attack rolls, so it
+                // reads them at `draw`'s quantile instead of guessing a seed (see [`HuntDraw`]); the
+                // wariness is the quarry's own, off the fight the forecast already carries.
                 Some((party, quarry)) => {
+                    // **Restraint is free, and the forecast has to say so too** — the escapement
+                    // floor bounds what the party *goes after*, exactly as `systems::hunt_take`
+                    // bounds it (§1). Clamping here rather than leaving it to the quantiser is what
+                    // keeps the retreat running on the same population the take retreats; see
+                    // [`animals_affordable`]. Both terms are read on `axis`, and an animal count is a
+                    // ratio, so the currency cancels.
+                    let engaged = reach.min(animals_affordable(
+                        ceiling.component(axis),
+                        quantum.component(axis),
+                    ));
                     let stayed = party.stayers(engaged, quarry.profile.wariness, draw);
                     resolve_hunt_fight(stayed, workers as f32, party, quarry, draw).brought_down
                 }
-                None => engaged,
+                // **A PEN COLLECTS — one call to the very function its tend branch calls**
+                // ([`animals_handled`], `systems::labor`'s corral arm): the keepers' handling rate
+                // floored to whole bodies and bounded by the room this assignment's floor leaves
+                // sparable. There is no engagement to clamp, no retreat and no fight, so the quote
+                // and the payout are one expression rather than two that agree today. Read on `axis`
+                // for the reason the wild arm's clamp is: an animal count is a ratio.
+                //
+                // The plant web never arrives here — it does not quantise, so it takes the
+                // continuous arm below.
+                None => animals_handled(reach, ceiling.component(axis), quantum.component(axis)),
             };
             let take = quantise_animal_take(
-                ceiling.component(axis),
                 collection.component(axis),
                 quantum.component(axis),
                 brought_down,
@@ -5707,7 +5781,8 @@ pub(crate) fn forecast_source_yield(
                 forecast.per_worker_yield.component(axis),
                 // **The engagement term is the third unit** — `hunt_engage_workers` reads it exactly
                 // as `animals_engaged` does, so the crew inverts the bound the take was actually
-                // paid. A pen forecasts `f32::INFINITY` and contributes no engagement crew at all.
+                // paid. On a pen that bound is the keepers' handling rate, so the term counts
+                // keepers; only the plant web's `f32::INFINITY` drops it entirely.
                 forecast.engage_rate,
                 // **The retreat, off THIS forecast's own party and quarry** — the same
                 // `stay_fraction` the take above was priced with, so the crew and the take can
@@ -5992,13 +6067,27 @@ pub fn herd_past_recovery(biomass: f32, carrying_capacity: f32, ecology: &Ecolog
 /// `docs/plan_hunt_through_combat.md` §2, and the single definition of it, so no two hunters of a
 /// herd can disagree about how many they could reach.
 ///
-/// `workers × engage_rate`, floored to whole animals — **but never below one for a party that
-/// exists**. A fractional engagement means a small band cannot corner the quarry *efficiently*, not
-/// that it cannot walk up to it: three hunters do reach a mammoth, and then fail at the *fight*,
-/// which is where the gate lives. Flooring to zero would put a headcount threshold in front of the
-/// attack-vs-defense one and hide the reason.
+/// `workers × engage_rate`, **unrounded** — a reach is a *rate*, and rounding it is what made extra
+/// hunters worthless. `floor(w × rate).max(1)` answered **one animal for every crew from 1 to 6** on
+/// the shipped Wild Boar (`engage_rate 0.33`), so four hunters took exactly what one took
+/// (`0.18 food/turn` either way, reported from play). The reach is now strictly increasing in the
+/// crew, which is the property the whole engagement stage exists to have.
 ///
-/// A party of no workers engages nothing, which is not the same statement.
+/// # Nothing here needs a floor of one, because nothing reaches zero
+///
+/// The retired `.max(1.0)` defended a headcount threshold standing in front of the
+/// attack-vs-defense gate: with the floor removed, `floor(1 × 0.05)` would have been `0` and a lone
+/// mammoth hunter would fail for the wrong reason. A plain multiply cannot produce that — a lone
+/// mammoth hunter reaches `0.05`, not `0` — so the gate is still the fight's and the defence is no
+/// longer needed. **A party of no workers engages nothing**, which is a different statement and is
+/// the one arm kept.
+///
+/// # A fractional reach is progress, not a failure to arrive
+///
+/// A crew below `1 / engage_rate` reaches less than one body a turn, and what carries it between
+/// turns is the fight's own accumulator: the retreat keeps the fraction ([`animals_that_stay`]) and
+/// [`crate::combat::DamageLedger`] banks the damage struck at it, so a lone boar hunter finishes a
+/// body roughly every fourth turn instead of flooring to zero forever. See [`Herd::wounds`].
 ///
 /// # `workers` IS THE TAKE CREW — no build term, and no dip
 ///
@@ -6012,7 +6101,7 @@ pub fn animals_engaged(workers: u32, engage_rate: f32) -> f32 {
     if workers == 0 {
         return 0.0;
     }
-    (workers as f32 * engage_rate.max(0.0)).floor().max(1.0)
+    workers as f32 * engage_rate.max(0.0)
 }
 
 /// **The per-event seed for a retreat draw** — `(map_seed, tick, herd, party)`, order-independent by
@@ -6080,6 +6169,18 @@ pub fn stay_fraction(wariness: f32, dispersion: f32) -> f32 {
 /// every existing yield test pinning the numbers it pins today, and it is asserted directly rather
 /// than assumed.
 ///
+/// # THE PART BODY IS RETREATED IN CLOSED FORM, and it has to be
+///
+/// [`animals_engaged`] is a **rate**, so an engagement is `3.4` animals as readily as `3` — and the
+/// bodies-only reading floored that to `3` and threw the remainder away one stage before the fight
+/// could bank it. A crew below `1 / engage_rate` then engaged `0.33` and retreated it to **zero, on
+/// every turn forever**, which is the one shape the fractional reach must not produce.
+///
+/// So the whole bodies are drawn as they always were and the part body is kept in **expectation**,
+/// `frac × (1 − wariness)`: you cannot roll a fraction of an animal breaking off, and the fraction
+/// is *progress toward contact* rather than an animal standing there. An integral engagement has no
+/// remainder, so every take that engaged whole bodies is bit-for-bit unchanged.
+///
 /// A non-finite `engaged` (a pen, a plant — no engagement stage at all) is returned unchanged: there
 /// is nothing to retreat from, and iterating it would not terminate.
 pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
@@ -6087,7 +6188,10 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         return engaged;
     }
     let stayers = engaged.floor();
-    match draw {
+    // The part body above the last whole one — kept at its expectation below, never drawn.
+    let partial = (engaged - stayers).max(0.0);
+    let stay_chance = 1.0 - wariness.min(1.0);
+    let whole = match draw {
         HuntDraw::Seeded(seed) => {
             let odds = f64::from(wariness.min(1.0));
             let mut rng = SmallRng::seed_from_u64(seed);
@@ -6095,12 +6199,12 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         }
         // **A forecast makes no draw** — it reads the same binomial analytically (see [`HuntDraw`]).
         HuntDraw::Quantile { sigmas } => {
-            let stay_chance = 1.0 - wariness.min(1.0);
             let mean = stayers * stay_chance;
             let deviation = (stayers * stay_chance * (1.0 - stay_chance)).sqrt();
             (mean + sigmas * deviation).clamp(0.0, stayers)
         }
-    }
+    };
+    whole + partial * stay_chance
 }
 
 /// **[`animals_that_stay`] ON A FRACTIONAL ENGAGEMENT** — the retreat as a rate
@@ -6114,8 +6218,9 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
 ///
 /// **A [`HuntDraw::Seeded`] draw falls back to the whole-animal form**, and that is not a shortcut:
 /// a live take resolves *bodies* — you cannot roll a fraction of an animal breaking off — so a rate
-/// has nothing to draw. No caller reaches it (only the curve asks for a rate, and a curve never
-/// draws); the arm exists so the function is total rather than panicking on an unreachable state.
+/// has nothing to draw, and the fallback keeps the fraction in closed form for exactly that reason.
+/// No caller reaches it (only the curve asks for a rate, and a curve never draws); the arm exists so
+/// the function is total rather than panicking on an unreachable state.
 ///
 /// The `wariness <= 0` and non-finite guards are [`animals_that_stay`]'s, unchanged: a calm quarry
 /// and a source with no engagement stage at all answer their exact identities on both forms.
@@ -6470,11 +6575,11 @@ impl HuntingParty {
     /// **[`stayers`](Self::stayers) WITHOUT THE WHOLE-ANIMAL FLOOR** — the retreat applied to a
     /// fractional engagement, for [`EngagementQuantum::Rate`].
     ///
-    /// **The retreat re-floors what the room clamp already floored, one stage later**, and that is
-    /// why un-flooring [`animals_sparable`] alone changes nothing: `animals_that_stay` opens with
-    /// `let stayers = engaged.floor()`, so an engagement of `0.45` is handed to the binomial as `0`
-    /// and the whole curve is zero however the room was measured. Both floors have to go, or neither
-    /// does.
+    /// **The whole rate reads one continuous binomial**, rather than [`stayers`](Self::stayers)'s
+    /// drawn bodies plus a closed-form remainder. The two agree on the mean and differ only in the
+    /// spread a [`HuntDraw::Quantile`] reports — this one takes its deviation over the whole
+    /// fractional `n`, which is the reading a *rate* wants, while a turn's draw can only deviate on
+    /// the bodies it actually rolled.
     pub fn stayers_at_rate(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
         animals_that_stay_at_rate(engaged, effective_wariness(wariness, self.dispersion), draw)
     }
@@ -6708,7 +6813,9 @@ pub struct StrikeCharge {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HuntFight {
     /// **Whole animals brought down** — the bound [`quantise_animal_take`] takes as its fight arm.
-    /// [`f32::INFINITY`] for a source with no fight stage at all (a pen).
+    /// A source with **no fight stage at all** — a pen, the plant web — never reaches
+    /// [`resolve_hunt_fight`]: it hands the quantiser its own collection instead
+    /// ([`animals_handled`]).
     pub brought_down: f32,
     /// **Animals a turn, UN-floored** — [`Self::brought_down`]'s rate
     /// ([`crate::combat::StruckBlow::expected_units_down`]), and what every *per-turn* readout must
@@ -6855,8 +6962,8 @@ pub fn resolve_hunt_fight(
     if !stayed.is_finite() || stayed <= 0.0 || hunters <= 0.0 {
         return HuntFight {
             brought_down: stayed,
-            // No fight ran, so the rate is the bound itself: [`f32::INFINITY`] for a pen (no fight
-            // stage at all) and `<= 0` for an empty engagement. Quantising nothing and rating
+            // No fight ran, so the rate is the bound itself — `<= 0` for an empty engagement, and
+            // a non-finite one for a caller that passed no bound. Quantising nothing and rating
             // nothing are the same answer here.
             expected_brought_down: stayed,
             casualties: FightCasualties::default(),
@@ -7130,22 +7237,36 @@ pub const FORECAST_FIGHT_SEED: u64 = 0;
 ///
 /// **A herd is not a fluid.** You kill *whole animals*, and a big animal is a lot of food at once:
 /// ```text
-/// affordable = floor(policy_ceiling / body_mass)   // whole animals the herd can spare
-/// carryable  = floor(collection    / body_mass)    // whole animals the party can haul
-/// killed     = min(affordable, max(1, carryable))  IF affordable >= 1, else 0
-/// carried    = min(killed × body_mass, collection)
-/// wasted     = killed × body_mass − carried
+/// carryable = ceil(collection / body_mass), never below 1   // whole animals the party can haul
+/// killed    = min(carryable, brought_down)                  // …of the ones it put on the ground
+/// carried   = min(killed × body_mass, collection)
+/// wasted    = killed × body_mass − carried
 /// ```
 ///
-/// Two clauses carry the whole design:
+/// # ⛔ THE ESCAPEMENT ROOM IS NOT A BOUND HERE — EVERY CALLER SPENDS IT BEFORE THE TAKE
+///
+/// `killed` used to carry a third arm — `affordable = floor(policy_ceiling / body_mass)` — and an
+/// `affordable < 1 ⇒ take nothing` early return with it. Both are gone, and the *ceiling* parameter
+/// went with them, because a bound applied to bodies already on the ground is a bound in the wrong
+/// place. A hunt clamps its **engagement** by the room before the retreat and the fight
+/// ([`resolve_hunt_engagement`], [`animals_affordable`]) and a pen clamps its **collection** by it
+/// before the keepers walk an animal out ([`animals_handled`]) — so the arm was provably dead on
+/// every path, and the one caller that had **no** bound of its own (the pen) stayed invisible for
+/// exactly as long as this one silently covered for it. Restraint is free precisely because of that
+/// ordering (`docs/plan_hunt_through_combat.md` §1).
+///
+/// **The wait-for-regrowth turn is unchanged; it is stated at those call sites instead.** A source
+/// that cannot spare a whole animal reaches this function with `brought_down == 0` — the same
+/// nothing the early return used to hand back — so the hunt still pauses while the herd regrows.
+/// Constant escapement, discretised: the rhythm falls straight out as `body_mass / MSY` turns per
+/// animal at the operating point — small game every turn, boar/deer ~2, mammoth ~7, *then you eat
+/// for a week*.
+///
+/// One clause still carries the design:
 /// - **`max(1, carryable)` — you cannot half-kill a mammoth.** A party that cannot carry a whole
 ///   animal may still take one and **waste most of it**. That is not forbidden and not hidden: it is
 ///   what makes party size mean *"how much of the kill do you keep"* (one hunter keeps 80% of a boar,
 ///   33% of a steppe runner, **5%** of a mammoth; ~20 hunters bring a whole mammoth home).
-/// - **`affordable < 1` ⇒ take **nothing** and WAIT.** When the herd cannot yet spare a whole animal
-///   the hunt pauses while it regrows — constant escapement, discretised. The rhythm falls straight
-///   out as `body_mass / MSY` turns per animal at the operating point: small game every turn,
-///   boar/deer ~2, mammoth ~7 — *then you eat for a week*.
 ///
 /// `body_mass <= 0` is impossible (`FaunaConfig::validate` requires it finite & positive on every
 /// species) and would mean a herd of infinitely many animals; it takes **nothing** and screams in a
@@ -7200,6 +7321,43 @@ pub fn animals_affordable(policy_ceiling: f32, body_mass: f32) -> f32 {
         return 0.0;
     }
     whole_animals(policy_ceiling.max(0.0), body_mass)
+}
+
+/// **WHAT A KEEPER CREW WALKS OUT OF A PEN THIS TURN** — the pen's collection stage, and the exact
+/// counterpart of the `reach.min(animals_affordable(ceiling))` every hunt runs before its retreat
+/// ([`resolve_hunt_engagement`]).
+///
+/// ```text
+/// collected = min( floor(handling), animals_affordable(policy_ceiling) )
+/// ```
+///
+/// # A pen has no engagement stage, so it needs a stage of its own
+///
+/// `handling` is [`herd_engage_rate`] × the crew — what the keepers can bring out and butcher in a
+/// turn — and it used to be handed to [`quantise_animal_take`] raw. **The pen was therefore the one
+/// take path that bounded nothing before taking it**: enough keepers collected straight past the
+/// escapement floor, and the only thing stopping them was a post-hoc `affordable` clamp inside the
+/// quantiser that was dead on every other path and has since been removed. A hunt bounds what it
+/// *goes after*; a pen bounds what it *collects*; both spend the room before the take, so neither
+/// can take an animal the herd cannot spare.
+///
+/// # It is FLOORED, because a keeper does not half-kill an animal
+///
+/// A fight hands back whole bodies ([`resolve_hunt_fight`]) and a pen must too, or
+/// [`AnimalTake::killed`] (a `u32`) and [`AnimalTake::killed_biomass`] describe two different
+/// events: a handling rate of `3.6` reported **3 killed** while the herd lost **3.6 bodies**.
+///
+/// **The remainder is not lost, it is left standing.** The unfilled fraction of the crew's handling
+/// stays in the pen as biomass and regrows there — the herd's own stock is the accumulator, exactly
+/// as `SpeciesDef::body_mass` says of every whole-animal wait ("there is no credit meter"). The
+/// wait-for-regrowth turn is this function answering `0`: a pen at its floor collects nothing rather
+/// than shaving a fraction off the animals it is keeping.
+///
+/// **A curve is a rate and does not come through here** — [`pen_crew_take_curve`] composes the same
+/// three terms unfloored ([`animals_sparable`], [`EngagementQuantum::Rate`]), because a pen paying
+/// one beast every two and a half turns must read as a cadence rather than as a never.
+pub fn animals_handled(handling: f32, policy_ceiling: f32, body_mass: f32) -> f32 {
+    animals_affordable(policy_ceiling, body_mass).min(whole_units(handling.max(0.0)))
 }
 
 /// **[`animals_affordable`] AS A RATE — the same room, unrounded.** `ceiling ÷ body_mass`, with no
@@ -7258,12 +7416,43 @@ pub enum EngagementQuantum {
 /// [`ANIMAL_COUNT_EPSILON`] of relative slop so the same take counts the same animals whether it is
 /// quantised in biomass or in provisions.
 fn whole_animals(available: f32, body_mass: f32) -> f32 {
-    let ratio = available / body_mass;
-    (ratio * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
+    whole_units(available / body_mass)
+}
+
+/// [`whole_animals`] for a count that is **already** in animals — the same `floor` and the same
+/// [`ANIMAL_COUNT_EPSILON`], factored out so a rate expressed in animals ([`animals_handled`]'s
+/// handling term) and one expressed in biomass round on one rule rather than two copies of it.
+fn whole_units(count: f32) -> f32 {
+    (count * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
+}
+
+/// **How many animals a pack of `collection` biomass stops a party killing** — `ceil`, never below
+/// one body ([`ONE_WHOLE_ANIMAL`]).
+///
+/// # It rounds UP because the top animal of a load is killed whole
+///
+/// The carry arm used [`whole_animals`], and flooring it left the pack's last part-load **unused**:
+/// a party able to carry `1.5` bodies killed `1`, carried `1`, and left half its capacity idle every
+/// turn of the game. Rounding up kills the animal the pack cannot seat whole, carries what fits and
+/// wastes the rest — which is not a new rule but the general form of the `max(1)` arm that has
+/// always said *"a party that cannot carry one still takes one and wastes the rest"*. `ceil` and
+/// that floor are the same statement about the indivisibility of the animal, one of them stated for
+/// every load rather than only for a load under one body.
+///
+/// **`max(1)` therefore only survives for a pack with no room at all** — a raid whose pack is
+/// exactly full, where `ceil(0) == 0` would stall the trip instead of ending it on one forced
+/// partial kill (`systems::expeditions::expedition_take_biomass`).
+///
+/// The slop is [`ANIMAL_COUNT_EPSILON`]'s, applied **downward** because the rounding is upward: a
+/// collection of exactly three bodies must seat three, not four on a last-mantissa-bit overshoot.
+fn animals_the_pack_seats(collection: f32, body_mass: f32) -> f32 {
+    let ratio = collection / body_mass;
+    (ratio * (1.0 - ANIMAL_COUNT_EPSILON))
+        .ceil()
+        .max(ONE_WHOLE_ANIMAL)
 }
 
 pub fn quantise_animal_take(
-    policy_ceiling: f32,
     collection: f32,
     body_mass: f32,
     brought_down: f32,
@@ -7276,37 +7465,31 @@ pub fn quantise_animal_take(
         );
         return AnimalTake::default();
     }
-    let ceiling = policy_ceiling.max(0.0);
     let collection = collection.max(0.0);
-    let affordable = whole_animals(ceiling, body_mass);
-    if affordable < 1.0 {
-        // The herd cannot spare a whole animal — wait for it to regrow. THE mechanic.
-        return AnimalTake::default();
-    }
-    let carryable = whole_animals(collection, body_mass);
-    // `max(1.0)`: a party that can't carry one still takes one — and wastes the rest.
-    //
-    // **`brought_down` is the THIRD bound, and it is THE FIGHT** (`docs/plan_hunt_through_combat.md`
-    // §4): the animals the party actually put on the ground, which the engagement bound (§2) already
-    // caps from above because you cannot bring down an animal you never reached. It arrives already
-    // whole — [`resolve_hunt_fight`] floors it — so `killed` below stays integral and
-    // `killed_biomass` cannot disagree with the reported count. A pen passes [`f32::INFINITY`]: a
-    // penned animal is not stalked and not fought.
+    // **What the pack seats, rounded UP** — see [`animals_the_pack_seats`]: the animal the load
+    // cannot hold whole is still killed whole, carried as far as the pack goes and wasted after
+    // that.
+    let carryable = animals_the_pack_seats(collection, body_mass);
+    // **`brought_down` is the OTHER bound, and on a hunt it is THE FIGHT**
+    // (`docs/plan_hunt_through_combat.md` §4): the animals the party actually put on the ground,
+    // which the engagement bound (§2) already caps from above because you cannot bring down an
+    // animal you never reached. It arrives already **whole** — [`resolve_hunt_fight`] floors it,
+    // [`animals_handled`] floors the pen's — so `killed` below stays integral and `killed_biomass`
+    // cannot disagree with the reported count.
     //
     // **The carry arm is the ONE thing a denial raid drops** ([`EngagementStop`],
     // `docs/plan_denial_raid.md` §1): a hunting party stops engaging once its pack is full, a denial
     // party never stops. The `carried` line below is untouched by the choice, so a raid still banks
     // whatever it can haul and the rest becomes [`AnimalTake::wasted`].
     let killed = match stop {
-        EngagementStop::WhenPackFull => affordable
-            .min(carryable.max(1.0))
-            .min(brought_down.max(0.0)),
-        EngagementStop::Never => affordable.min(brought_down.max(0.0)),
+        EngagementStop::WhenPackFull => carryable.min(brought_down.max(0.0)),
+        EngagementStop::Never => brought_down.max(0.0),
     };
     let killed_biomass = killed * body_mass;
     let carried = killed_biomass.min(collection);
     AnimalTake {
-        // `killed` is bounded by `ceiling / body_mass` and both are finite, so the cast is safe.
+        // `killed` is the animals a fight put on the ground (or a keeper walked out), both of which
+        // are finite whole counts bounded by the source's own room, so the cast is safe.
         killed: killed as u32,
         carried,
         wasted: (killed_biomass - carried).max(0.0),
@@ -7406,14 +7589,16 @@ pub fn hunt_take_bound(
     // What the HERD could have spared. `<= affordable` (a band, or a raid whose bank has caught up
     // with the surplus) leaves the first arm reading `Floor` exactly as it did.
     let sparable = whole_animals(escapement_room.max(0.0), body_mass);
-    // The same `max(1.0)` the quantiser applies: a party that cannot carry a whole animal still takes
-    // one, so carry does not *bind* below one body — it produces waste instead.
+    // **The same [`animals_the_pack_seats`] the quantiser applies** — read through the one helper
+    // rather than restated, so the reported bound and the paid take cannot disagree about how many
+    // animals a load holds. A party that cannot carry a whole animal still takes one, so carry never
+    // *binds* below one body — it produces waste instead.
     //
     // **A denial raid can never be carry-bound**, because the quantiser's carry arm is exactly what
     // [`EngagementStop::Never`] drops: the pack still decides what comes home, but it stops no kill,
     // so reporting `Carry` here would name a bound the take did not hit.
     let carryable = match stop {
-        EngagementStop::WhenPackFull => whole_animals(collection.max(0.0), body_mass).max(1.0),
+        EngagementStop::WhenPackFull => animals_the_pack_seats(collection.max(0.0), body_mass),
         EngagementStop::Never => f32::INFINITY,
     };
     let brought_down = brought_down.max(0.0);
@@ -7548,10 +7733,13 @@ fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
 ///
 /// # A source with no engagement stage reports no engagement crew
 ///
-/// `0` for a **pen** and for the plant web, whose `engage_rate` is [`f32::INFINITY`]
-/// ([`FaunaConfig::engage_rate_for`], [`SourceYieldForecast::managed`]) — a penned animal is not
-/// stalked and a plant is not either — so the `max()` collapses to the haul term and neither web
-/// regresses. Same for a degenerate `body`/rate.
+/// `0` for the **plant web**, whose `engage_rate` is [`f32::INFINITY`] — a plant is not stalked — so
+/// the `max()` collapses to the haul term and that web does not regress. Same for a degenerate
+/// `body`/rate.
+///
+/// **A PEN DOES REPORT ONE**, and it is the keepers rather than the hunters: its `engage_rate` is the
+/// handling rate ([`herd_engage_rate`]) and its `stay` is [`NO_RETREAT_STAGE_STAY`], so this term
+/// answers *"how many keepers to walk the room out"* — a real bound on the tend branch's take.
 ///
 /// # `stay == 0` reports no crew, and that is the ANSWER rather than a fudge
 ///
@@ -8094,11 +8282,13 @@ const CREW_TAKE_RISE_TOLERANCE: f32 = 0.001;
 ///
 /// # It is the LAST RISE, not the first flat
 ///
-/// The engagement is a staircase — `floor(w × engage_rate)` is flat across whole runs of crew sizes
-/// and steps at integer boundaries — so a scan that stopped at the first crew whose take equalled
-/// its predecessor's would report the bottom of a tread as the top of the stairs. On the shipped
-/// Wild Boar (`engage_rate 0.33`) crews one through six all bring the same single animal to bay and
-/// the seventh brings two.
+/// The engagement no longer contributes treads of its own — [`animals_engaged`] is a plain
+/// `w × engage_rate`, and the staircase it used to cut (`floor(w × rate).max(1)`, flat across crews
+/// one to six on the shipped Wild Boar) is exactly the defect that removal fixed. **The reading
+/// stays the last rise**, because the terms that are *not* linear in the crew still make flats: the
+/// escapement room does not grow with the crew at all, and gear coverage re-resolved per crew size
+/// can leave two adjacent sizes taking the same. A scan stopping at the first repeat would report
+/// the bottom of one of those as the top of the curve.
 ///
 /// # A curve still rising at its last row plateaus AT that row
 ///
@@ -8152,8 +8342,9 @@ pub fn species_requires_denial(hunt_yield: HuntYield) -> bool {
 /// Pre-commit yield forecast for hunting `herd` with `per_worker_biomass_capacity` biomass/hunter
 /// (`labor_config.json` `hunt.per_worker_biomass_capacity`). Mirrors `systems::hunt_take` exactly:
 /// same resolved ecology/capacity ([`herd_ecology`] / [`herd_capacity`]), same per-policy ceilings,
-/// same biomass clamp, same biomass→provisions conversion. A **corralled** herd forecasts its corral
-/// yield with one worker (see `SourceYieldForecast::tended`). The band Hunt labor has no carry limit
+/// same biomass clamp, same biomass→provisions conversion. A **corralled** herd forecasts the take
+/// its tend branch resolves — the keepers' handling against the room, with no engagement, retreat or
+/// fight ([`animals_handled`]). The band Hunt labor has no carry limit
 /// (it passes `carry_room_biomass = f32::INFINITY` to `hunt_take`), so the forecast models no carry
 /// clamp either — a hunting *expedition*'s carry cap is out of scope.
 pub(crate) fn hunt_forecast(
@@ -8207,12 +8398,28 @@ pub(crate) fn hunt_forecast(
         // The quantum that makes this preview pulse exactly as the take does (slice 8).
         body_mass_yield: hunt_yield.apply(herd.body_mass, output_multiplier),
         // The engagement throughput the take is bounded by, so preview and take agree on how many
-        // animals the party can even reach.
+        // animals the party can even reach — the keepers' handling rate on a pen, which
+        // [`herd_engage_rate`] folds the pen gain into.
         engage_rate: herd_engage_rate(herd, fauna),
         // ...and the fight that decides how many of those actually go down (§4).
         // ...carrying **this herd's** accumulated wounds, so a single-turn preview says "this is the
         // turn it finally goes down" on the turn it does (`herd_quarry_fight`, §4.2).
-        fight: Some((party.clone(), herd_quarry_fight(herd, fauna))),
+        //
+        // # ⛔ A PEN HAS NO FIGHT, BECAUSE THE TAKE IT PRICES RESOLVES NONE
+        //
+        // A corralled herd never reaches `systems::hunt_take`: the Hunt arm's tend branch `continue`s
+        // before it and walks the animal out itself ([`animals_handled`]) — no engagement, no
+        // retreat, no fight. Quoting one here ran three stages the payout does not, gated on the
+        // quarry's `defense` and the crew's *hunting* kit, so a bare-handed band with a penned heavy
+        // animal was quoted **nothing** and then paid a take: the forecast-vs-actual split
+        // `.claude/rules/core_sim/yield-forecast.md` forbids. The fork is [`Herd::is_corralled`] and
+        // nothing else — a wild herd still fights for every animal — and it is the same branch
+        // [`hunt_crew_take_curve`] makes one level down ([`pen_crew_take_curve`]).
+        fight: if herd.is_corralled() {
+            NO_FIGHT_STAGE
+        } else {
+            Some((party.clone(), herd_quarry_fight(herd, fauna)))
+        },
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
         // the raw field) and the stock the take will find, so the forecast and the take read one
@@ -9513,39 +9720,31 @@ mod tests {
                 expected,
                 "({ceiling}, {room}, {collection}, {stayed}, {brought_down}) must name {expected:?}"
             );
-            let tight = quantise_animal_take(
-                ceiling,
-                collection,
-                BODY,
-                brought_down,
-                EngagementStop::WhenPackFull,
-            );
+            // **The take as a CALLER runs it** — the room spent on what the party goes after
+            // ([`animals_handled`], the pen's spelling of `resolve_hunt_engagement`'s clamp), then
+            // the quantiser. The quantiser no longer re-applies the ceiling, so a fixture that
+            // handed it one would be pricing a pipeline the sim does not run.
+            let take_at = |ceiling: f32, collection: f32, brought_down: f32| {
+                quantise_animal_take(
+                    collection,
+                    BODY,
+                    animals_handled(brought_down, ceiling, BODY),
+                    EngagementStop::WhenPackFull,
+                )
+            };
+            let tight = take_at(ceiling, collection, brought_down);
             // **Liveness / the relation**: relaxing the named term raises the take. Without this the
             // table above would only be asserting against itself.
             let relaxed = match expected {
                 // Both ceiling-side bounds relax the same way — they differ in *whose* ceiling it is,
                 // not in which term the quantiser read.
-                HuntTakeBound::Floor | HuntTakeBound::Throughput => quantise_animal_take(
-                    ceiling * 2.0,
-                    collection,
-                    BODY,
-                    brought_down,
-                    EngagementStop::WhenPackFull,
-                ),
-                HuntTakeBound::Carry => quantise_animal_take(
-                    ceiling,
-                    collection * 2.0,
-                    BODY,
-                    brought_down,
-                    EngagementStop::WhenPackFull,
-                ),
-                HuntTakeBound::Fight | HuntTakeBound::Engagement => quantise_animal_take(
-                    ceiling,
-                    collection,
-                    BODY,
-                    brought_down * 2.0,
-                    EngagementStop::WhenPackFull,
-                ),
+                HuntTakeBound::Floor | HuntTakeBound::Throughput => {
+                    take_at(ceiling * 2.0, collection, brought_down)
+                }
+                HuntTakeBound::Carry => take_at(ceiling, collection * 2.0, brought_down),
+                HuntTakeBound::Fight | HuntTakeBound::Engagement => {
+                    take_at(ceiling, collection, brought_down * 2.0)
+                }
             };
             assert!(
                 relaxed.killed > tight.killed,
@@ -9557,19 +9756,23 @@ mod tests {
     }
 
     /// **A turn that takes nothing reports the FLOOR** — the herd could not spare a whole body, which
-    /// is the wait turn the whole-animal quantiser exists to produce. It is the bound a player needs
+    /// is the wait turn the whole-animal quantum exists to produce. It is the bound a player needs
     /// to see, because the alternative reading ("we could not reach them") is a different problem
     /// with a different remedy.
+    ///
+    /// **The wait now happens where the room is spent** ([`animals_handled`]), not inside the
+    /// quantiser: an unbounded reach against half a body engages nothing, so nothing is brought
+    /// down and nothing is quantised.
     #[test]
     fn a_wait_turn_reports_the_floor_that_caused_it() {
         const BODY: f32 = 800.0;
-        let take = quantise_animal_take(
-            BODY / 2.0,
-            f32::INFINITY,
-            BODY,
-            f32::INFINITY,
-            EngagementStop::WhenPackFull,
+        let collected = animals_handled(f32::INFINITY, BODY / 2.0, BODY);
+        assert_eq!(
+            collected, 0.0,
+            "the room spent before the take is where a wait turn is decided"
         );
+        let take =
+            quantise_animal_take(f32::INFINITY, BODY, collected, EngagementStop::WhenPackFull);
         assert_eq!(take.killed, 0, "half a body cannot be taken");
         assert_eq!(
             hunt_take_bound(
@@ -9704,7 +9907,7 @@ mod tests {
     // ---- The engagement bound ------------------------------------------------------------------
 
     /// A quarry a whole hunter can only partly corner in a turn — `workers × rate < 1` for any small
-    /// party, which is the case the `max(1.0)` floor exists for.
+    /// party, which is the case the retired `max(1.0)` floor used to answer `1` for.
     const HARD_TO_CORNER_ENGAGE_RATE: f32 = 0.25;
     /// A quarry a hunter reaches two of per turn — the linear-scaling fixture.
     const EASY_ENGAGE_RATE: f32 = 2.0;
@@ -9715,12 +9918,19 @@ mod tests {
         crew / 2
     }
 
-    /// **A fractional engagement reaches one animal, not zero**
-    /// (`docs/plan_hunt_through_combat.md` §10). A small band cannot corner the quarry *efficiently*;
-    /// it can still walk up to it, and the gate on whether it survives the meeting is the fight, not
-    /// a headcount threshold in front of it.
+    /// **A FRACTIONAL ENGAGEMENT STAYS FRACTIONAL — and every extra hunter buys more of it.**
+    ///
+    /// The reach was `floor(w × rate).max(1)`, which answered **exactly one animal** for every crew
+    /// from 1 to 3 here (and 1 to 6 on the shipped Wild Boar), so extra hunters bought a party
+    /// nothing at all. What carries the part body between turns is the fight's own accumulator
+    /// ([`crate::combat::DamageLedger`]), not a floor at this stage.
+    ///
+    /// **Nothing collapses to zero**, which is what the retired floor was defending: a party that
+    /// exists reaches a positive fraction, and the gate on whether it comes home with anything stays
+    /// the fight's (`docs/plan_hunt_through_combat.md` §10).
     #[test]
-    fn a_party_too_small_to_corner_one_animal_still_engages_one() {
+    fn a_fractional_engagement_is_a_rate_and_rises_with_every_hunter() {
+        let mut previous = 0.0;
         for workers in 1..=3u32 {
             let engaged = animals_engaged(workers, HARD_TO_CORNER_ENGAGE_RATE);
             assert!(
@@ -9728,17 +9938,23 @@ mod tests {
                 "fixture must actually be fractional for {workers} hunters"
             );
             assert_eq!(
-                engaged, 1.0,
-                "{workers} hunters must reach one animal, never zero"
+                engaged,
+                workers as f32 * HARD_TO_CORNER_ENGAGE_RATE,
+                "{workers} hunters reach their own rate, unrounded"
             );
+            assert!(
+                engaged > previous,
+                "{workers} hunters must reach strictly more than {} did",
+                workers - 1
+            );
+            previous = engaged;
         }
-        // The floor is the *fraction's* floor, not a blanket one: a party whose reach clears whole
-        // animals is not pinned at 1.
-        assert_eq!(animals_engaged(8, HARD_TO_CORNER_ENGAGE_RATE), 2.0);
+        // …and a crew whose reach clears whole animals is not rounded down to them either.
+        assert_eq!(animals_engaged(9, HARD_TO_CORNER_ENGAGE_RATE), 2.25);
     }
 
-    /// **No workers engage NOTHING** — a different statement from the fractional floor above, and
-    /// pinned separately: the `max(1.0)` must not manufacture a hunter out of an unstaffed row.
+    /// **No workers engage NOTHING** — a different statement from the fractional reach above, and
+    /// pinned separately: it is the one arm of the helper that is not a plain multiply.
     #[test]
     fn a_party_of_no_workers_engages_nothing() {
         for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE, f32::INFINITY] {
@@ -9754,8 +9970,7 @@ mod tests {
     /// That is what makes *"put hands on the build instead"* a real cost with nothing else in the
     /// arithmetic: the retired `build_dip` factor said the same thing about a *shared* crew, and the
     /// defect it guarded (a build riding a hunting party for free) cannot recur when the two crews
-    /// are separate numbers. Asserted where the count is `>= 2`, so the `max(1.0)` floor cannot mask
-    /// the difference.
+    /// are separate numbers.
     #[test]
     fn engagement_scales_with_the_hunting_crew() {
         const CREW: u32 = 8;
@@ -9802,27 +10017,26 @@ mod tests {
 
         let engaged = animals_engaged(HUNTERS, ONE_ANIMAL_PER_HUNTER);
         let bounded = quantise_animal_take(
-            AMPLE_CEILING,
             collection,
             BODY_MASS,
-            engaged,
+            animals_handled(engaged, AMPLE_CEILING, BODY_MASS),
             EngagementStop::WhenPackFull,
         );
-        // `f32::INFINITY` is what a pen passes — no engagement stage — so this is the take as it was
-        // before the bound existed.
+        // An unbounded reach — what the pen used to hand in, before either its own collection stage
+        // or this one existed — so this is the take with nothing but the pack in its way.
         let carry_bound = quantise_animal_take(
-            AMPLE_CEILING,
             collection,
             BODY_MASS,
-            f32::INFINITY,
+            animals_handled(f32::INFINITY, AMPLE_CEILING, BODY_MASS),
             EngagementStop::WhenPackFull,
         );
 
         assert_eq!(bounded.killed, HUNTERS, "the party kills what it can reach");
         assert_eq!(
             carry_bound.killed,
-            (collection / BODY_MASS) as u32,
-            "unbounded, the party kills what it can carry"
+            (collection / BODY_MASS).ceil() as u32,
+            "unbounded, the party kills what it can carry — INCLUDING the part-load animal at the \
+             top of the pack, whose remainder it wastes (`animals_the_pack_seats`)"
         );
         assert!(
             bounded.killed < carry_bound.killed,

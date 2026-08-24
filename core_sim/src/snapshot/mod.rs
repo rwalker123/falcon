@@ -988,6 +988,8 @@ mod tests {
             parties: &HashMap::new(),
             penned_parties: &HashMap::new(),
             fallback_party: &fallback,
+            // The fog fixtures queue nothing, so no source names a builders kit.
+            build_kits: &crate::snapshot::subsistence::BuildKitIds::default(),
         })
     }
 
@@ -2209,6 +2211,8 @@ mod tests {
             // no composition is published — "unknown ground names no plants", never a fabricated
             // basket.
             &FloraQuoteCache::default(),
+            // Nothing is queued in this fixture, so no patch names a builders kit.
+            &crate::snapshot::subsistence::BuildKitIds::default(),
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
@@ -2556,6 +2560,7 @@ mod tests {
                 &HashMap::new(),
                 &tile_capacities,
                 &FloraQuoteCache::default(),
+                &crate::snapshot::subsistence::BuildKitIds::default(),
             );
             let row = &rows[0];
             assert_eq!(

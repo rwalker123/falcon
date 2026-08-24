@@ -24,7 +24,7 @@ paths:
 | `ui/hud/DrawerComposeController.gd` | `RefCounted` controller (HUD decomposition Phase 2c-2b, `docs/plan_hud_decomposition.md`) owning the selection drawer's **COMPOSE half** — the other half of the selection card, after `SelectionCardController` took the identity/list one. It holds the **compose-sheet lifecycle** (`_ensure_compose_sheet` / `open_forage_compose` / `open_herd_compose` / `refresh_compose_sheet` / `is_compose_sheet_open` / `close_compose_sheet` / `_compose_anchor_rect`, and the `ComposeSheet` NODE itself), the two **drawer-action builders** (`build_forage_drawer_actions` / `build_herd_drawer_actions` + the standing-summary / compose-open-button / extend-pen factories and their in-place diffing twins), the two big **compose builders** (`_build_forage_assign_controls` / `_build_herd_assign_controls`), and the **compose-only** forecast/gate/picker layer beneath them (`_forecast_worker_cap` / `_forecast_yield_row` / `_is_overdraw` / `_hunt_take_rate` / `_hunt_delivered_and_waste` / `_hunt_avg_window_turns` / `_hunt_policy_takes` / `_payoff_take` / `_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode` / `_forage_policy_takes` / `_forage_policy_gates` / `_hunt_policy_gates` / `_sow_site_refusal_reason` / `_tame_stalled_hint` / the `_flora_entry_*` sub-layer / `_build_crop_picker` / `_build_band_picker`) — ~1,400 lines, 54 functions. It also owns the drawer-actions diff caches `_forage_drawer_shape` / `_herd_drawer_shape` (zero external readers), so a per-snapshot restate still patches nodes rather than tearing them down. The drawer RENDER DISPATCH (`_render_land_drawer` / `_render_occupant_drawer` / `_render_subject_drawer` / the terrain-lines producer + `_tile_detail_lines_cache` / `_fit_subject_drawer`) and the `%AllocationPanel` expedition/band-move branches later left `HudLayer` too, into `ui/hud/SubjectDrawerController.gd` (Phase 2c-3), and call IN here through `refresh_compose_sheet` / `build_forage_drawer_actions` / `build_herd_drawer_actions`. Hud holds it as `_drawercompose`, constructed in `_ready` after `_selectioncard`. **THE INJECTION SURFACE IS EXACTLY THREE CALLABLES** — `_resolve_assign_band` / `_herd_label_for_id` / `_emit_assign_labor`, each retained on HudLayer because it has callers on the other side too (and `_emit_assign_labor` additionally owns the `assign_labor_requested` emit, the optimistic pending write and `_after_pending_change()`, which is why `assign_labor` stays INDIRECT). Each is reached through a **typed adapter** rather than called raw — `Callable.call` returns `Variant`, which would push an untyped value into every consumer. Everything else is a collaborator: the SAME `_compose` / `_band_labor` / `_selection` model instances (BY REFERENCE), `_topbar` for `faction_knowledge` ONLY (the rung gates), `_selectioncard` for `tile_contents_unseen` ONLY, the two drawer-action containers it fills (`%HerdAssignControls` / `%ForageAssignControls`), `tile_panel` READ-ONLY (the rect the sheet floats beside), and the HUD CanvasLayer as the **host** it `add_child`s the `ComposeSheet` into (a `RefCounted` cannot parent — the `TurnOrbController` fork-panel pattern). **Three absorptions shrank that boundary from six injections to three:** `_expedition_party_cap` → `SourceForecast.expedition_party_cap` (expedition forecast math, beside its sibling `expedition_useful_cap`), `_format_food_module_label` + its `FOOD_MODULE_LABELS` table → `HudFormat.food_module_label` (vocabulary, not compose logic), and — the highest-leverage one — the grid-wrap flag `_grid_wrap_horizontal` **onto `HudBandLaborState` as `wrap_horizontal()`**, beside the `grid_width()` it is meaningless without, so the moving set calls `SourceForecast.hex_distance_wrapped(…, _band_labor.grid_width(), _band_labor.wrap_horizontal())` DIRECTLY and the `_hex_distance_wrapped` injection disappeared (that pass-through survives on HudLayer for its other callers). `_band_display_name` went to `HudFormat.band_display_name` for the same reason. **It emits TWO signals, both RELAYED by HudLayer** (the controller never emits a HudLayer signal): `send_hunt_expedition_requested` → `HudLayer.send_hunt_expedition_requested` and `extend_pen_requested` → `HudLayer.extend_pen_requested` (the latter travels because `_build_extend_pen_control`'s only caller and its diffing twin are both inside). **`is_compose_sheet_open` / `close_compose_sheet` MUST stay callable on the HUD node** — `Main._unhandled_input`'s Esc precedence and ~11 ui_preview sites probe them BY NAME, and a `has_method` probe fails SILENTLY — so HudLayer keeps them as thin delegators. Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`FactionReadouts`/`SelectionCardController` convention. Behaviour identical to the old inlined drawer-compose code |
 | `ui/hud/ComposeSheet.gd` | The selection card's **write state** — the floating **compose sheet** (`docs/plan_tile_panel_layout.md` §10-§15). Composing is MODAL BY NATURE (open, decide, commit, done), so the two ~270px compose blocks (`%ForageAssignControls` / `%HerdAssignControls`) left the drawer for a sheet that borrows space only while in use; the drawer keeps the detail rows, a one-line standing summary and an `Assign … ▸` button. **That button wears `primary` while ITS sheet is open and `ghost` at rest — never `armed`**: `armed` is the destructive/warned treatment (DANGER border), and "its sheet is open" is a LIVE state, which this HUD spells in SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse). **Its card is an `AutoSizingPanel`, NOT a `DockScrollFit` card** — it floats against the VIEWPORT, which is the opposite of what the drawer above needs, and picking wrong misbehaves silently rather than failing (`.claude/rules/client/panel-framework.md`). **Its width is FITTED to its content like its height** — `CARD_WIDTH` is the nominal, not a cap; see "THE CARD IS AS WIDE AS ITS WIDEST ROW" below, and "THE HEIGHT CHROME IS THE HEADER **ROW**" beside it for the same measurement error on the other axis. **`_panel` is held as a member for the assertion, not for the layout** — the `PanelContainer` that draws the card is a real `Container` in a plain `Control`, so its minimum is the one honest measure of what the fit owes. **The node IS the full-screen dismiss catcher with the card as its CHILD**, reusing `NarrativeForkPanel`'s nesting exactly (siblings make the ordering ambiguous and the catcher eats the card's own clicks), pinned to the viewport EXPLICITLY via `_sync_to_viewport` — a hidden Control's anchors never settle, and the full-rect preset would also overwrite the size. **NO SCRIM, and that is the one deliberate departure from the fork panel:** a fork is a story beat demanding attention, an assignment is composed *against* the map (work-range ring, herd position, hunt reach are all live context), so the catcher dismisses without dimming. **And that is also why the catcher dismisses on a real CLICK only, never a wheel tick** (`DISMISS_BUTTONS`, an ALLOWLIST of left/right/middle so a future Godot wheel/extra index stays non-dismissing by default): the catcher is `MOUSE_FILTER_STOP` across the whole viewport, so an idle scroll over the un-scrimmed map lands on it, and dismissing there would throw away the composition mid-read. `NarrativeForkPanel` is deliberately left as-is — a modal scrimmed story beat has no such gesture — so the two diverge here on purpose; do NOT factor out a shared predicate for one differing call site. (**Not** a map-zoom passthrough: the catcher stops the wheel either way, so the map cannot zoom while a sheet is open, and a wheel over the card is absorbed by its own `ScrollContainer`.) Guarded by ui_preview's paired wheel-leaves-OPEN / left-click-CLOSES assertions. The sheet floats BESIDE the selection card (`_place_card`, falling back to the viewport margin) so the list + summary it is editing stay readable. It knows nothing about foraging or hunting: `open(eyebrow, title, subject_key, anchor)` returns the content VBox and the caller fills it. `subject_key` is what lets a per-snapshot refresh tell "the same source, restated" from "a different source, gone" |
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the RAW wire patch carries its keys BARE while the `tile_info` cross-ref `patch_`-prefixes every one of them, and this adapter is the ONE place that mapping is written down. **The prefixing is UNIFORM now (#442)** — `is_cultivated`/`cultivation_progress` were the last unprefixed strays on the cross-ref and are stamped `patch_`-prefixed like their siblings, so there is no longer a mixed convention to remember; reading a `tile_info` key without the prefix silently answers nothing (`hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form)), and **`next_rung_ready`** — the READY test all three surfaces mark from — plus **`knowledge_gate_unmet`** (with its `RUNG_KNOWLEDGE_TRACKS` map: is THIS rung blocked on knowledge specifically? — the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked on its own so the compose sheet can suppress that reason **structurally instead of by matching its words**; one caller, for the reason the "A KNOWLEDGE gate renders NO improvement control" section gives). **`leg_in_progress` is `rung_in_progress`'s sibling** — the same `{policy, glyph, progress}` RE-POINTED at the first published leg still owing work, for a queue entry that names a DESTINATION and climbs every rung on the way (`band-city-panel.md` → "THE PERCENTAGE IS THE LEG IN FLIGHT'S"). It takes the OTHER answer as a parameter rather than resolving the verb a second time (`SourceForecast.build_is_stalled`'s discipline), so the caller keeps the declared rung the entry's PRICE is quoted at; the Work board and the map badge both call it and a source with no legs falls straight through. **`wild_fodder_reason` broadens the file's remit** from "may this source climb its next rung" to "…and will the work it is doing actually pay out" — the wild forage patch's fodder credit, which the sim refuses to a faction without Foddering; see "The FODDER account can be real and unbankable at once". **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`FactionReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `FactionReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
-| `ui/hud/RungLadder.gd` | **All-`static`, stateless** shared LADDER-TRACK layer (`docs/plan_standing_upkeep.md` §2.8) — the one answer to *"what does this source's branch hold, where does it stand on it, and how far may the player send it?"*. `RungGates` answers *may this source climb its NEXT rung*, which is the right question for a MARK; a queue entry names a **destination** now and lays every rung between where the source stands and there, so the picker has to state the WHOLE branch and `next_rung_ready` structurally cannot. `track(kind, source, prefix, improvement, knowledge)` walks `SourceForecast.rung_branch_for_kind` bottom rung first and puts every rung in exactly one of six states — `banked` (already paid for, and it contributes NO figure: a previous improvement is a RECEIPT, NOT A DISCOUNT) · `standing` · `path` · `target` · `locked` · `open` — beside its own owing and its own chained date; `has_track` is the *is there anything to offer* test a caller asks before floating a card, and `build_track(rows, on_pick)` renders it, a **`Button` where the rung may be picked and a `Label` where it may not** (the improvement control's own shape-is-the-statement rule — a greyed button on a locked rung offers an act the sim refuses). ⛔ **IT RE-DERIVES NEITHER THE WORK NOR THE TURNS**: a leg's owing and its chained date are `SourceForecast.build_legs`' rows, read where the queued entry publishes them, and a rung NO entry covers has no leg — its owing is the per-rung `workCost − workDone` pair the wire publishes for exactly that pre-commit question (the same two numbers `forage::plant_build_legs` subtracts), and it states **no date at all**, a chain being computed against a build queue this client cannot see. **STATELESS IS THE INVARIANT** — faction knowledge is a `knowledge` PARAMETER and the press handler a `Callable`, `RungGates`'s own treatment. Its two OUTRIGHT bars (`HudFloraVocab.GATE_REASON_SPECIES_NEVER_TAMED` / `_PENNED` / `GATE_REASON_CROP_CANNOT_CLIMB_FORMAT`) are the one place a rung `RungGates` WITHHOLDS is rendered instead: a mark promises the verb is available, a track says what the branch holds, and a rung silently missing from it reads as a shorter ladder. A rung barred from BELOW takes the blocking rung's own reason (`GATE_REASON_PATH_BLOCKED_FORMAT`), because a climb lays every leg and offering a destination whose path is refused is a job that queues and then blocks |
+| `ui/hud/RungLadder.gd` | **All-`static`, stateless** shared LADDER-TRACK layer (`docs/plan_standing_upkeep.md` §2.8) — the one answer to *"what does this source's branch hold, where does it stand on it, and how far may the player send it?"*. `RungGates` answers *may this source climb its NEXT rung*, which is the right question for a MARK; a queue entry names a **destination** now and lays every rung between where the source stands and there, so the picker has to state the WHOLE branch and `next_rung_ready` structurally cannot. `track(kind, source, prefix, improvement, knowledge)` walks `SourceForecast.rung_branch_for_kind` bottom rung first and puts every rung in exactly one of six states — `banked` (already paid for, and it contributes NO figure: a previous improvement is a RECEIPT, NOT A DISCOUNT) · `standing` · `path` · `target` · `locked` · `open` — beside its own owing and its own chained date; `has_track` is the *is there anything to offer* test a caller asks before floating a card, and `build_track(rows, on_pick)` renders it, a **`Button` where the rung may be picked and a `Label` where it may not** (the improvement control's own shape-is-the-statement rule — a greyed button on a locked rung offers an act the sim refuses). ⛔ **IT RE-DERIVES NEITHER THE WORK NOR THE TURNS**: a leg's owing and its chained date are `SourceForecast.build_legs`' rows, read where the queued entry publishes them, and a rung NO entry covers has no leg — its owing is the per-rung `workCost − workDone` pair the wire publishes for exactly that pre-commit question (the same two numbers `forage::plant_build_legs` subtracts), and it states **no date at all**, a chain being computed against a build queue this client cannot see. **STATELESS IS THE INVARIANT** — faction knowledge is a `knowledge` PARAMETER and the press handler a `Callable`, `RungGates`'s own treatment. Its two OUTRIGHT bars (`HudFloraVocab.GATE_REASON_SPECIES_NEVER_TAMED` / `_PENNED` / `GATE_REASON_CROP_CANNOT_CLIMB_FORMAT`) are the one place a rung `RungGates` WITHHOLDS is rendered instead: a mark promises the verb is available, a track says what the branch holds, and a rung silently missing from it reads as a shorter ladder. A rung barred from BELOW takes the blocking rung's own reason (`GATE_REASON_PATH_BLOCKED_FORMAT`), because a climb lays every leg and offering a destination whose path is refused is a job that queues and then blocks. **It owns the card's SECOND PAGE too** (§4.15) — `rung_commits_a_crop` (the plant/animal fork: `tame` and `corral` name no species and stay one click), `crop_choices` (one row per legally sowable plant, each stating what ITS OWN Sow would cost and what THIS rung would then pay it, with `Sim picks` last naming the plant it would resolve to) and `build_crop_step`. ⛔ **EVERY FIGURE ON A CROP ROW IS QUOTED AS PUBLISHED and none is derived from another**: the per-crop price is `FloraShareInfo.sowWorkCost` (carried onto the basket entry by `SourceForecast.flora_basket_entries` with its own presence key) while the patch's own Field-row price is `fieldWorkCost`, and a committed patch's published `share` is its REWEIGHTED one where the price is struck on the tile's basket — so the client re-derives neither the price from the share nor either price from the other. **An ABSENT `sowWorkCost` renders NO ROW**, that being the wire's "this plant cannot climb to a Field here" (the tile-specific legality the species-global `can_sow` ceiling cannot express, and the same predicate `default_species_for_rung` filters on) — which is also what keeps `Sim picks` naming the plant the sim would really settle on. The Field row states its price and **no reason**: the per-crop figures are the cause, made visible |
 | `ui/hud/HarvestFloorChart.gd` | The compose sheet's **floor instrument** (`docs/plan_harvest_floor.md` §7.3) — a custom-drawn `Control` (the `FoodOutlookChart` / `ArrivalStrip` idiom) putting the standing stock, the draggable floor line, the projection and the food peak on ONE y-axis of `B/K`, with the `learn_multiplier` gradient rail down the right edge. **IT DRAWS; IT DOES NOT MODEL** — every number comes from `SourceForecast.floor_chart_model`, the projection walks the sim's own `regrowthSamples`, the peak is the argmax of those samples rather than `FLOOR_FOOD_PEAK` restated beside them, and negative samples are carried through as decline. It emits ONE signal, `floor_changed(floor, committed)`, and the second argument is the whole contract: a committed change rebuilds the compose controls (which frees this node), a live one must not, or the drag in flight dies with it — see "THE CHART" below. Keyboard-accessible (`FOCUS_ALL`; arrows / Shift-arrows / Home / End), because the floor is the primary control of the panel. Palette through `HudStyle` only — plus `DetailFormat.ecology_tier_color` for the standing-stock band and the **phase zones** behind it (`_draw_phase_zones`, the furthest-back layer: the source's own `collapseFraction` / `stressedFraction` as horizontal Collapsing/Stressed/Thriving bands, so the floor is dragged against the ecology rather than against a remembered number) |
 | `ui/hud/ForecastQuery.gd` | **The client's half of the command socket's SECOND direction** (`sim_runtime/proto/command.proto` -> "THE QUERY CHANNEL") — a `RefCounted` seam owning the request-id sequence, the SUBJECT/KEY split (`subject_of` = kind + band + herd, `key_of` = that plus the kit, party and floor), the `{state, answer, error}` a sheet renders off (`view`), the stale-answer window (`STALE_AFTER_MSEC`), the settled test the crew one-shots gate on (`answer_settled`) and the `answered(subject)` signal every consumer redraws from. **It owns NO socket**: `Main` injects the sender and pumps `CommandBridge.poll_query_replies` in through `deliver` / `expire_stale`, so the HUD asks questions without reaching the network and every state is drivable from a harness with no server. **Its own object because THREE sheets across TWO controllers compose a raid** and each needs the same four things — an id, a rule for which reply is still wanted, a rule for what to show while waiting, and a re-render when the answer lands; two copies would drift the moment one learned to keep its last answer and the other did not. `Hud` holds the ONE instance and fans `answered` out to `_drawercompose` / `_bandpanel` / `_drawer`. **`reset()` is a WORLD-BOUNDARY cache clear and `HudLayer.reset_world_state` is its only production caller** — a subject is kind + band + herd, and a new world hands out both handles again (band ids restart low, herd ids are species + index), so a held answer matches the new world's composed key exactly and renders the previous world's numbers as `STATE_READY`; the shape and the reset contract are `.claude/rules/core_sim/world-handoff.md`. **The no-retry rule is scoped to the SERVER's token class** (`TRANSPORT_RETRY_AFTER_MSEC`): a `query_error` names something wrong with the QUESTION, which the sheet composed itself, so it is never re-asked — but `QUERY_ERROR_TRANSPORT` names a dead socket, which heals, so it is re-askable once the backoff has elapsed (not on the next render, which `ask` reaches once per render and would spin the socket; not never, which strands a sheet on `No forecast available (transport)` for the session after a server restart). The failure keeps rendering through the retry, so a server coming back is ONE transition rather than a flicker. See "THE RAID'S NUMBERS ARE ASKED FOR" below |
 | `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `default_kit_for` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit — **READ off the band's own `kitTiers` row, never re-derived** (`band_kit_tiers` / `effective_tiers` / `_resolved_tier` / `unequipped_tier` / `equipped_tier` / `kit_item_ids` / `condition_of` / `tier_hint`) — the BAND-WIDE ROLE cards' own tier and gear line (`ROLE_AXES` / `is_band_wide_role` / `role_axis` / `role_gear` / `role_hint`), the OFFER test that decides which kits a quarry may be worked with (`attack_reaches` / `attack_against` / `effective_attack_against` / `kit_uses` / `kit_supplies_any` / `kit_offer` / `kit_is_offered` / `hunt_gate_closes` / `gate_closed_source` — see "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"), the resolve-then-reprice seam and the CARRY AXIS it prices on (`carry_axis_for` / `priced_source` / `repriced_source` — the axis is the SOURCE's, a penned herd overriding its job's; see "A PENNED herd is priced — and described — on the KEEPER'S carry"), and the picker ROW itself (`build_kit_row`). **The honesty trio `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` is RETIRED with the per-herd estimate tables**: a forecast is a query answered for the composed kit, so there is no other kit's numbers to disown. **`attack_reaches` takes the ROW the attack is read from** — the roster entry for the fresh offer test, the band's `kitTiers` row for the worn gate — so a kit's size window and its attack can never come from two different rows. **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — **and on the WORKFORCE zone's two band-wide role CARDS** — and a row that has to read identically in six places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the four job defaults), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / `DetailFormat` (for `role_hint` alone, from inside a function body) / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
@@ -102,12 +102,50 @@ these frames pinned to the arithmetic they were built to prove rather than to a 
 `build_forecast`, and the deal's two terms are the same call against each. **Any surviving `×
 fraction` on a ceiling is wrong, and it looks plausible.**
 
-**A RUNG-3 MANAGED SOURCE HAS NO FLOOR AXIS** (`SourceForecast.source_is_managed`). A Field and a
-built Pen are yours — you control their reproduction — so `SourceYieldForecast::managed` pays one
-`managed_production` at every floor. The wire still carries their raw `biomass`/`carryingCapacity`/
-rates (facts about the herd or the crop), so composing an escapement ceiling on one is **silently
-wrong**; the ceiling is the rung's own payoff field (`field_yield` / `corral_yield`). Rung 2 — a
-Tended Patch, a pastoral herd — is still a wild stand being drawn down and takes the composition.
+**A MANAGED SOURCE HAS NO FLOOR AXIS** (`SourceForecast.source_is_managed`). A built Pen is yours —
+you control its reproduction — so `SourceYieldForecast::managed` pays one `managed_production` at
+every floor. The wire still carries its raw `biomass`/`carryingCapacity`/rates (facts about the
+herd), so composing an escapement ceiling on one is **silently wrong**; the ceiling is the rung's own
+payoff field (`corral_yield`). A pastoral herd is still a wild stand being drawn down and takes the
+composition.
+
+> #### ⛔ THE PLANT WEB HAS NO MANAGED RUNG, AND A FIELD IS DRAWN DOWN LIKE ANY OTHER STAND
+>
+> `FORECAST_MANAGED_FLAG_KEYS` carried `SOURCE_KIND_FORAGE: "is_field"` until 2026-08-22 and the sim
+> had retired the thing it named: `forage.rs`'s **RETIRED: the whole rung-3 MANAGED HARVEST** says in
+> as many words that *"A Field is now foraged through the ordinary `forage_take` path exactly as a
+> tended patch and a wild stand are — floor-live, worker-capped, drawn down"*, and what rung 3 buys is
+> `rung_capacity_gain` and `rung_regrowth_gain`. **Every plant rung answers `source_is_managed` false
+> now**, so a Field composes its ceilings, its hold and next rooms, its material vector, its chart and
+> both crew targets exactly as a wild stand does.
+>
+> **WHAT THE STALE ENTRY COST, reported from play**: a completed 100%-tobacco Field read `TENDERS 0`
+> and `max 0 workers useful here — more would be idle` beside a tile card and a Work board both
+> stating two committed tenders. The chain is four links and every one is client-side — the managed
+> branch's material ceiling comes from `FORECAST_PAYOFF_MATERIAL_KEYS`, which has **no plant entry by
+> design** (a plant's materials are per PLANT, which is the crop picker's business), so the ceiling was
+> structurally `[]`; `off_axis_useful_workers` then divided a `0` room by a live 1.12 tobacco/worker
+> and answered `0`; and `hold_crew` / `reach_crew` — §7.2's rescue for exactly that shape — returned
+> `0` because the source was "managed". The docstring even predicted it: *"a zero ceiling over a live
+> rate is `0` … which §7.2's crew floors then answer for"*, one function from where those floors were
+> hard-zeroed.
+>
+> ⛔ **THE DANGEROUS HALF IS THE STAGED COUNT.** The cap clamps `ComposeState.clamp_forage_count`, so
+> the sheet staged **0** while two tenders were committed — and confirming it sends `assign_labor`
+> with `0`, **silently dropping both**, from a panel that never showed the player a `2`. The guard is
+> `ui_preview`'s `forage_cash_crop_field`, whose claim is that the STAGED count reaches the committed
+> crew on a source paying into any account (`SourceForecast.pays_any_account` is the scope), paired
+> with a dead-season patch that must still cap at `MAX_USEFUL_BARREN`.
+>
+> **A RUNTIME FLOOR ON THE COMMITTED CREW WAS TRIED HERE AND REVERTED**, and the reason is recorded
+> at `DrawerComposeController._forecast_worker_cap`: unticking a species chip narrows the stand the
+> cap divides, so the useful crew genuinely falls, and a floored cap cannot follow the very edit the
+> player just made (`forage_take_chip_priced` catches it). The cap being RIGHT is what closes the
+> defect; the assertion is what keeps it right.
+>
+> **`field_yield` is untouched and is still read.** It is the MSY skim on the Field rung's own curve
+> (`forage::rung_payoff`) — what the rung PAYS — which is exactly what `FORECAST_PAYOFF_KEYS` asks it
+> for. What it is not is a per-turn production collected off a stock nobody draws down.
 
 **IT IS THE STANDING RUNG THAT DECIDES THIS, NEVER THE COMPOSED ONE**, and the predicate therefore
 takes NO improvement argument. A crew mid-`Sow` or mid-`Corral` is still drawing the WILD stand down
@@ -450,9 +488,17 @@ and the *hold* target both size themselves with). Two units adapters sit beside 
 composition of the `engageRate × dip` pair: `engagement_per_worker` (animals a worker reaches) and
 `engagement_carry` (that same reach in BIOMASS, which is what a crew target divides by).
 
+> ⛔ **THE REACH IS A RATE AND IS NOT ROUNDED.** `animals_engaged` was
+> `floor(workers × engageRate).max(1)` until the hunt-take pipeline was rebuilt: the floor discarded
+> real reach every turn (four hunters earn 1.32 and were credited 1) and the `max(1)` inflated a lone
+> hunter threefold, and together they flattened six crew sizes onto one number — reported from play as
+> four hunters taking exactly what one took. **The client mirror must not re-introduce either**; there
+> is no whole-animal invariant to protect here, the pipeline dealing in fractional animals throughout
+> and quantising at the KILL, never at the reach or the haul.
+
 ```text
-reach(workers)  = floor(workers × engageRate × dip) × <account>PerAnimal
-engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
+reach(workers)  = workers × engageRate × <account>PerAnimal
+engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / engageRate)
 ```
 
 - **`engageRate <= 0` MEANS UNBOUNDED, never "reaches nothing"** (`NO_ENGAGEMENT_STAGE`). It is the
@@ -622,11 +668,16 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 > binds, and quoting the kill would put a figure in the sentence that its own parenthetical band
 > contradicts.
 >
-> **`— add hands to take more` was removed and the other remedies were NOT.** It named no count and sat
-> two lines under `max N workers useful here`, which contradicts it. The ones that survive name a real
-> action: *"more hands would take from the stock, not the surplus"* is a consequence to weigh, and
-> *"lower it, or let the herd grow"* offers two. **A remedy earns its place by being actionable**, not
-> by being a remedy.
+> **`— add hands to take more` was removed and the ROOM remedy was NOT.** It named no count and sat two
+> lines under `max N workers useful here`, which contradicts it, where *"lower it, or let the herd
+> grow"* offers two real actions. **A remedy earns its place by being actionable**, not by being a
+> remedy.
+>
+> **The SUSTAINABLE limit's trailing clause went the same way, one round later.** It read *"— more
+> hands would take from the stock, not the surplus"*, which is a CONSEQUENCE rather than an action:
+> the rate is already beside the player's own crew, so the sentence only restates what the number
+> says. Reported from play as too wordy. `HUNT_LIMIT_SUSTAINABLE_FORMAT` is the bare rate now — **a
+> limit line names the limit; it does not argue.**
 >
 > **The Work board's row `+` gate stays on the closed form** — it prices a worked row with no reply in
 > hand. Both cap twins divide through the one `max_useful_workers` and the curve rides the forecast
@@ -1338,8 +1389,9 @@ Four things follow, and each is load-bearing:
   resolution admits exactly what it exists to stop.** Driven, PNG-less, in `chapters/improvements.gd`
   — a rounding pair and a visible pair asserted together, since suppressing every arrow satisfies the
   negative alone, plus a precondition that the rounding pair really is two different floats.
-- **A managed rung-3 source has no burst** — the sim never draws a Field or built Pen down, so its
-  `hold_ceiling` IS its ceiling and one reading renders.
+- **A CORRALLED HERD has no burst** — its `hold_ceiling` IS its ceiling, so one reading renders. **A
+  FIELD does burst**, the plant web's managed harvest being retired: it is drawn down like any other
+  stand now.
 - **The unit is hoisted into the header.** Three `/TURN`s were the widest thing on the row and it
   could not afford them once each account stated two numbers. Hoisted, not deleted: a preset's tooltip
   states `up to +0.60/turn` for the ROOM, so something has to mark which kind of number this is. The
@@ -1415,8 +1467,11 @@ practically-false answer the verdict line exists to remove. It is folded in **in
 `max_useful_workers`**, not at the call sites, which is what keeps the two cap twins
 (`source_worker_cap_state`, `DrawerComposeController._forecast_worker_cap`) unable to gate
 differently — the failure this file already records once, when a floor reached only the compose side.
-A rung-3 managed source is excluded (`hold_crew` answers 0): the sim never draws a Field or a built
-Pen down, so its cap stays `production / perWorkerYield`. Frames + assertions: `floor_chart_full` (no
+**A CORRALLED HERD is excluded (`hold_crew` answers 0), and a FIELD no longer is** — see "A Field is a
+stand like any other" above. `FORECAST_MANAGED_FLAG_KEYS` keys on `SOURCE_KIND_HERD` alone, the plant
+web's rung-3 managed harvest having been retired: a Field is floor-live and drawn down through
+ordinary `forage_take`, and `hold_crew` returning 0 on one was the defect that read `max 0 workers
+useful here` on every cash-crop Field. Frames + assertions: `floor_chart_full` (no
 room, cap 1, the stepper renders that 1) and `herd_hunt_pelts_only`, where the wolf read `5 hold it
 after` under `max 4 workers useful here` and the press of the target is now asserted to land the
 stepper on 5.
@@ -1470,7 +1525,7 @@ quotient asked of the FODDER pair and of the per-material vector row by row, and
 - **The MAX across accounts, never the min or the first.** The cap says *beyond this crew nobody adds
   anything*, so it is the largest crew any single account can still use. On a wild source every
   account is one biomass flow through a fixed per-biomass vector, so the quotients agree and the `max`
-  is free; on a rung-3 managed source the payoffs are independent and it is doing real work.
+  is free; on a CORRALLED HERD the payoffs are independent and it is doing real work.
 - **The material vector is asked ROW BY ROW and unioned BY ID**, the standing rule for that account —
   a summed materials/turn figure is the retired trade axis under a new name.
 - **The two projection-derived crew floors resolve ABOVE the branch**, so a no-food source keeps §7.6's
@@ -2633,14 +2688,13 @@ ENTRY"). Three client consequences, and the first is a defect the sheets shipped
   no new wire field was needed to know which web a sheet is composing for.
 - **`kit_offer` WITHHOLDS A BUILDERS KIT WHOSE TOOL SERVES THE OTHER WEB**, with its reason, and that
   is the same rule as the snare against a Red Deer asked one job over: it takes a `build_branch`
-  parameter rather than a quarry, because the builders stand on no source. **What it feeds is a
-  RESOLUTION, not a picker.** It reached a control while the Builders role card mounted one, which
-  greyed the inapplicable kit and stated why; that card now states its kit on a read-only line
-  (`band-city-panel.md` → "THE BUILDERS CARD MOUNTS NO PICKER EITHER"), so the rule's one live reader
-  is `KitRoster.resolve_selection`'s selectable list — which is what keeps the card and the build
-  queue's header off a kit the entry's web cannot use. `build_kit_row` no longer takes the parameter
-  at all, no caller having one to pass. `none` is still never withheld, carrying nothing to be
-  inapplicable with.
+  parameter rather than a quarry, because the builders stand on no source. **ITS PICKER IS THE QUEUE
+  ROW'S** (`docs/plan_standing_upkeep.md` §4.7a ②): the per-entry override lives in that row's
+  settings strip, and `_queue_kit_listing` hands the entry's own branch down, so a hoe in front of a
+  `Tame` is greyed WITH ITS REASON rather than hidden. The other live reader is
+  `KitRoster.resolve_selection`'s selectable list, which is what keeps the BUILD QUEUE head off a kit
+  the entry's web cannot use. `none` is still never withheld, carrying nothing to be inapplicable
+  with.
 
 > #### THE ROW PUBLISHES THE **RESOLVED** KIT, AND ONE CASE IS THEREFORE UNRESOLVABLE HERE
 >
@@ -2950,6 +3004,19 @@ retires, so no rung of that picker can be disabled.
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
 
+> #### ⛔ AND THE `builders` ROW TAKES NO `kit` TOKEN AT ALL (§4.7a ②)
+>
+> The builders' kit is a property of the **queue ENTRY**, derived from that entry's own food web, and
+> one stored id per band is the single thing that derivation cannot express — which the sim honoured
+> as a permanent override, so one click pinned a band raising a plant Cultivate to the animal web's
+> tool with no way back. `handle_assign_labor` **refuses a `kit` token on this role by name** now, and
+> `BandPanelController._commanded_role_kit_id` answers `NO_KIT_ID` on that branch so the stepper emits
+> `assign_labor … builders <n>` with no tail. The override's home is the queue row's settings strip
+> (`build_kit`, `band-city-panel.md` → "THE QUEUE'S OWN CONTROLS").
+>
+> **The refusal is in the HANDLER, not the parser**, so `command_guard` — a parser-level gate — cannot
+> see it; the `builders` role is swept BARE there for that reason.
+>
 > #### ⛔ THERE IS NO CHECKBOX ANY MORE — THE SHEET JUDGES A RUNG, THE WORK TAB DECLARES IT (§4.7a ①)
 >
 > Every state above is a `Label` now (the OFFERED one a `RichTextLabel`, see below). The passages in
@@ -2997,6 +3064,14 @@ retires, so no rung of that picker can be disabled.
 >     Four cases: the faction page, a different band, the right band already, and an unresolvable one.
 > - **What it still does NOT do is focus the source's ROW** on that board — that needs a public focus
 >   seam the board does not have.
+> - **THE COMPOSE SHEET IS NO LONGER THE ONLY CALLER.** The event dock's `Work tab` link — on a row
+>   where the sim cut, dropped or narrowed one of that band's labor rows — reaches the same
+>   `show_work_tab`, and so the same `jump_to_band_entity`, through `HudLayer.show_band_work_tab`
+>   (`event-dock.md` → "A cut row offers the way to what it cut"). **It arrives by the OTHER band
+>   handle**: the dock holds the wire's durable `band_id` and the roster is the only place that joins
+>   it to an `entity`, so `show_band_work_tab` does the join and hands this method the entity it
+>   requires. The four sub-rules above are unchanged and are not restated at that call site — one
+>   contract, two entry points.
 > - **AVAILABLE is the one state built as a `RichTextLabel`**, and the reason is layout, not style:
 >   `build_inline_link` returns a `Button`, which is atomic — a `[Label][link][Label]` sentence cannot
 >   break inside either half and overflows the ~245px card. An inline `[url]` flows. Every other state
@@ -3018,6 +3093,13 @@ retires, so no rung of that picker can be disabled.
 >   click on ground you are about to staff anyway. So the unworked sheet says
 >   `🌱 Send gatherers here first, then Cultivate this patch from the Work tab.` **The two sentences are
 >   a PAIR and are asserted as one** — a builder that always prints one passes any single check.
+> - **…AND THE DECLARE PATH GREW A CROP STEP, so the `⌃` is now `⌃ → rung → crop` on the plant web**
+>   (§4.15). The chain the sentences above point at is three acts rather than two: the mark opens the
+>   destination track, picking a plant rung opens a CROP step in the same Window, and the CROP is the
+>   declaration. **Nothing came back to this sheet** — the crop the player names there rides
+>   `assign_labor`'s own `species` token, which is the queue row's picker's path and the same builder
+>   this sheet's commit already used. Spec in `band-city-panel.md` → "…AND A PLANT RUNG DOES NOT
+>   COMMIT UNTIL A CROP IS NAMED".
 
 **ONLY ONE improvement is ever offered — the source's next rung.** `RungGates.next_rung_offered` is
 that answer and shares its ordering with `next_rung_ready` through the private `_next_rung`: highest
@@ -4165,6 +4247,37 @@ which is what makes a spent one inert rather than something to clean up.
   reference tile's own 0.6 meter makes it a patch mid-Cultivate wherever it is used;
   `BaseFx.unbuilt(tile)` zeroes both meters, re-prices the absolutes and drops the keeping with the
   rung (a patch on no rung owes nothing, and the demand is a term of the build's pace now).
+
+### THE FENCE RING'S METER IS A WORK PAIR, AND IT IS NOT ON THE RUNG LADDER
+
+A pen-extension ring (`BuildJob::ExtendPen`) has its own meter on the herd dict, and it sits outside
+everything the section above describes: `pen_extend_progress` is the work banked toward the ring in
+flight and `pen_extend_cost` is the `animal:pen` rung's own `work_cost`, which `accrue_pen_extension`
+stamps beside it. **Both are WORK UNITS.** `pen_extend_progress` was a normalized `0..1` fraction
+until `docs/plan_unit_costed_work.md` §4.8, and its readers were not moved with it — 69 banked work
+units scaled by `PROGRESS_PERCENT_SCALE` rendered as **`Fencing 6900%`**, reported from play.
+
+- **`SourceForecast.pen_extend_fraction(herd)` IS THE ONLY PLACE THAT DIVISION IS WRITTEN**, with
+  `pen_extend_work_done` / `pen_extend_cost` beside it for the absolutes. Two surfaces quote a ring —
+  the herd drawer's WARN-amber `Fencing N%` pill (built by `_build_extend_pen_control`, patched in
+  place by `_update_extend_pen_control`, both through `_apply_fencing_badge`) and the build queue's
+  percentage for a ring entry — and they were two open-coded copies of the same wrong multiplication.
+- **A ZERO DENOMINATOR IS AN UNPRICED RING, NOT A FULL ONE.** `begin_pen_extension` leaves both fields
+  at zero and the accrual seam is what stamps the cost, so `0 / 0` is *no ring*: the helper answers an
+  empty meter rather than dividing. The drawer's own gate is on the NUMERATOR
+  (`pen_extend_work_done(herd) > 0`), which is what keeps a declared-but-unaccrued ring out of the
+  badge entirely instead of rendering it as `0%`.
+- **NO `FORECAST_BUILD_*_KEYS` ROW, AND `build_verb` ANSWERS NOTHING FOR IT.** A ring widens the pen
+  rung its herd already stands on, so the herd reads `Corralled 100%` for the ring's whole life and
+  the rung ladder has no meter in flight to report. `extend_pen` is therefore not an
+  `IMPROVEMENT_*` — it is `BUILD_JOB_EXTEND_PEN`, the token
+  `snapshot::population::resolved_build_job` publishes in the wire's `improvement` slot for a ring
+  entry, and the one thing that tells a ring from a rung with what is already on the wire.
+- **THE BADGE STAYS A PERCENTAGE AND THE PAIR RIDES ITS HOVER.** `Fencing 42 / 70 work (60%)` bursts a
+  compact pill in a drawer column, so the hover carries it — through
+  `DetailFormat.build_meter_value`, the house form every other build meter uses, rather than a second
+  spelling. Frame: `herd_pen_extending` (42 of 70 work banked → `Fencing 60%`), asserted on the NUMBER
+  and on both render paths, since a presence check passes throughout the defect's life.
 
 ### CLOSED — the build's PRICE and its turn estimate are on the wire now
 
@@ -6693,7 +6806,7 @@ rate[m] = Σ_S (share × amount[m]) ÷ Σ_S share     <- the SAME denominator on
 
 #### …AND WHAT IS STILL NOT KNOWN IS SAID OUT LOUD
 
-ONE silence survives, and it rides the model as `YIELD_MODEL_NOTES` — an `Array[String]` of asides
+TWO silences, and they ride the model as `YIELD_MODEL_NOTES` — an `Array[String]` of asides
 `_fill_yields_host` renders under the rows — for `YIELD_MODEL_LOCKED_REASON`'s reason: whoever
 evaluates this model at a floor and a crew gets the rows and the reason they read that way together.
 
@@ -6704,8 +6817,29 @@ this case** — a cash crop pays no food and says so, the selection is fully quo
 own render-where-it-pays rule then decides whether a FOOD row exists at all. Presence travels on the
 entry's `has_*` key for exactly that reason, and it is checked on all THREE accounts.
 
-**`_wordless_take_model` is what that silence renders through** — an empty row set carrying only the
-aside, so the sheet says why rather than going blank. **A narrowing to cash crops alone no longer
+> #### ⛔ AND A SELECTION OF PLANTS THAT DO NOT GROW HERE SAYS NOTHING
+>
+> `selection_rates` returns its unquotable dict from **two** arms — a plant that IS in the basket and
+> that the wire priced no rate for, and a selection that matches nothing in the basket at all (or only
+> plants it carries no share of) — and this sheet printed the note above for both. A crew whose ticked
+> plants had simply stopped growing on this ground was told the SERVER had not priced them, which is
+> not what happened.
+>
+> **THE DISTINCTION STAYS AND THE SECOND SENTENCE DOES NOT.** `SELECTION_REASON` carries which arm
+> answered (`SELECTION_REASON_UNPRICED` / `_ABSENT`) and `_take_notes` reads it rather than
+> re-deriving it, so the surviving sentence cannot be printed about the state it is false for — which
+> is the whole of the repair. The second state prints nothing at all: the sim prunes a stale
+> `take_species` on commit, so where the game reaches this state it knows what happened, and where it
+> knows it should behave correctly rather than narrate. `TAKE_ABSENT_NOTE` is deleted.
+>
+> **Asserted on `forage_take_unquoted` / `forage_take_absent` as a pair, one half now a silence** — an
+> unquotable sheet renders the same shape either way, so the claims are that the first state keeps its
+> sentence, the second does not borrow it, and the composer really is reporting the ABSENT arm there;
+> over the third state neither may swallow: a cash crop paying `0.0` is FULLY QUOTED.
+
+**`_wordless_take_model` is what that silence renders through** — an empty row set carrying only
+whatever aside the notes hold, and `{}` where they hold none, so a state with nothing to say renders
+nothing rather than a blank aside. **A narrowing to cash crops alone no longer
 reaches it**: cotton's fibre is a composed row like any other now, and what still lands there is a
 selection that genuinely pays into nothing.
 

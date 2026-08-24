@@ -256,8 +256,9 @@ fn crew_take_curve(app: &mut App) -> Vec<(u32, f32)> {
 const REACH_TOLERANCE: f32 = 0.001;
 
 /// **WHERE THE CURVE STOPS RISING, walked the way `SourceForecast.crew_take_plateau` walks it** —
-/// the LAST rise, never the first flat, because the engagement is a staircase and a scan that
-/// stopped at the first repeated value would report the bottom of a tread as the top of the stairs.
+/// the LAST rise, never the first flat. The reach is a plain `w × engage_rate` now, so it no longer
+/// contributes treads of its own; the room and the fight's own float noise still can, and the last
+/// rise is the reading that survives either.
 fn plateau_of(curve: &[(u32, f32)]) -> u32 {
     let mut plateau = NO_USEFUL_CREW;
     let mut best = 0.0f32;
@@ -270,28 +271,22 @@ fn plateau_of(curve: &[(u32, f32)]) -> u32 {
     plateau
 }
 
-/// **WHICH ARM BINDS THIS CREW'S TAKE** — `(brought_down_rate, stayed)` for a crew of `workers`,
-/// resolved through the sim's own three stages. The fight binds when the rate lands **below** what
-/// stayed to be fought; the engagement binds when the party kills everything it kept.
-///
-/// **Which arm binds is a property of the CREW, not of the species**, which is why the regime
-/// preconditions below scan the whole asked range rather than probing one crew: on the aurochs the
-/// fight binds crews 1–8 and 12–17 and the engagement binds the treads in between, and a probe that
-/// happened to land on a tread would report the wrong regime about a fixture that is fine.
-fn take_and_reach(app: &App, workers: u32, wear: &BandEquipment) -> (f32, f32) {
-    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+/// **THE PARTY THIS BAND FIELDS AGAINST THE FIXTURE HERD** — kit coverage, wear ledger, intrinsic
+/// profile and combat tuning composed exactly as `advance_labor_allocation` composes them, so a test
+/// that quotes a forecast is quoting the party the turn will resolve.
+fn party_of(app: &App, workers: u32, wear: &BandEquipment) -> core_sim::HuntingParty {
     let combat = app.world.resource::<CombatConfigHandle>().get();
     let intrinsic = app.world.resource::<CreaturesConfigHandle>().get().person();
     let equipment = EquipmentConfig::builtin();
     let kit = equipment.default_kit(core_sim::KitJob::Hunt);
-    let herd = app
+    let body_mass = app
         .world
         .resource::<HerdRegistry>()
         .find(HERD_ID)
         .expect("the fixture herd is in the registry")
-        .clone();
+        .body_mass;
     let coverage = equipment.coverage(&kit, workers as f32, wear);
-    let party = PartyResolution {
+    PartyResolution {
         equipment: &equipment,
         coverage: &coverage,
         wear,
@@ -299,7 +294,28 @@ fn take_and_reach(app: &App, workers: u32, wear: &BandEquipment) -> (f32, f32) {
         tuning: combat.tuning(),
         hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
     }
-    .party_against(core_sim::Quarry::Mass(herd.body_mass));
+    .party_against(core_sim::Quarry::Mass(body_mass))
+}
+
+/// **WHICH ARM BINDS THIS CREW'S TAKE** — `(brought_down_rate, stayed)` for a crew of `workers`,
+/// resolved through the sim's own three stages. The fight binds when the rate lands **below** what
+/// stayed to be fought; the engagement binds when the party kills everything it kept.
+///
+/// **Which arm binds is a property of the CREW, not of the species**, which is why the regime
+/// preconditions below scan the whole asked range rather than probing one crew. The reach and the
+/// fight are both linear in the crew now, so on an unbounded herd one of them would bind
+/// everywhere — what still moves the answer across the range is the **room**, which does not grow
+/// with the crew at all, and a probe at one crew size would report the wrong regime about a fixture
+/// that is fine.
+fn take_and_reach(app: &App, workers: u32, wear: &BandEquipment) -> (f32, f32) {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry")
+        .clone();
+    let party = party_of(app, workers, wear);
     let engagement = core_sim::resolve_hunt_engagement(
         &herd,
         &fauna,
@@ -363,8 +379,8 @@ fn the_published_cap_is_the_curves_plateau_on_a_fight_bound_quarry() {
 }
 
 /// **…AND ON A QUARRY THE ENGAGEMENT BINDS**, which is the other regime and a different plateau: the
-/// aurochs curve stops where the fight's linear rise meets the reach, the boar curve where the
-/// staircase takes its last step.
+/// aurochs curve stops where the fight's linear rise meets the room, the boar curve where the
+/// reach's does.
 #[test]
 fn the_published_cap_is_the_curves_plateau_on_an_engagement_bound_quarry() {
     let mut app = world_hunting(BOAR, stocked());
@@ -383,6 +399,35 @@ fn the_published_cap_is_the_curves_plateau_on_an_engagement_bound_quarry() {
         "one producer, two transports — on the engagement arm as much as on the fight one: \
          {curve:?}"
     );
+}
+
+/// **THE PUBLISHED ROWS RISE WITH EVERY HUNTER, up to the crew the herd's room stops them at.**
+///
+/// The reach was `floor(workers × engage_rate).max(1)`, so the shipped Wild Boar's `0.33` published
+/// **the same row for crews one through six** — a stepper the player could drag five positions
+/// across for no take at all, matching the play report of four hunters feeding a band exactly as
+/// well as one. Asserted on the rows that cross the **socket**, because those are what the compose
+/// sheet draws; the flat tail above the plateau is the escapement room, which is a fact about the
+/// herd rather than a rounding.
+#[test]
+fn the_published_curve_rises_with_every_hunter_up_to_its_plateau() {
+    let mut app = world_hunting(BOAR, stocked());
+    let curve = crew_take_curve(&mut app);
+    let plateau = plateau_of(&curve);
+    assert!(
+        plateau > 1,
+        "PRECONDITION: the boar curve must climb past its first row ({curve:?}), or there is no \
+         rise to check"
+    );
+    let mut previous = 0.0f32;
+    for (workers, likely) in curve.iter().take_while(|(w, _)| *w <= plateau) {
+        assert!(
+            *likely > previous,
+            "the published row for {workers} hunters must be strictly above the row below it \
+             ({likely} vs {previous}) — a flat run here is the retired reach floor: {curve:?}"
+        );
+        previous = *likely;
+    }
 }
 
 /// **THE TWO FIXTURES REALLY ARE IN DIFFERENT REGIMES**, stated as its own claim rather than left to
@@ -863,4 +908,458 @@ fn a_thin_pen_publishes_a_rate_and_a_crew() {
         published_useful_workers(&app) > NO_USEFUL_CREW,
         "a pen paying a real rate must publish a useful-crew cap: {curve:?}"
     );
+}
+
+// =============================================================================================
+// ...AND A PENNED ROW IS QUOTED WHAT IT COLLECTS
+// =============================================================================================
+//
+// The crew cap above is one of two numbers a hunt row publishes about a pen; the other is the
+// **yield** — `actualYield`, the assign-time seed the compose sheet prints as *"Expected yield"*.
+// It came out of `fauna::hunt_forecast`, which built `fight: Some(..)` for every herd and so ran an
+// engagement, a retreat and a fight that the tend branch does not: it `continue`s before
+// `systems::hunt_take` and collects through `fauna::animals_handled`.
+//
+// A bare-handed band with a penned **Wild Aurochs** (`defense 6`) was therefore quoted `0` and then
+// paid a real take on the turn — the forecast-vs-actual split
+// `.claude/rules/core_sim/yield-forecast.md` forbids, on the one surface the player commits from.
+// The fork is `Herd::is_corralled()` and nothing else: a wild herd still fights for every animal.
+
+/// **The keeper crews the quote sweep walks.** Sized so both surviving stages bind somewhere in the
+/// sweep — one keeper cannot carry a 120-kg body home (the carry arm), twenty are stopped by the two
+/// bodies the floor leaves sparable (the room arm) — and both are asserted below rather than assumed.
+const KEEPER_CREWS: [u32; 4] = [1, 2, 4, 20];
+
+/// **How close two provisions readings count as the same take** — the `Scalar` grid the larder
+/// quantises onto with room for the different multiplication orders on either side of the
+/// comparison. Orders of magnitude below one provision, so it cannot absorb a whole animal.
+const YIELD_EPSILON: f32 = 1e-4;
+
+/// **A source paying nothing at all** — what a bare-handed row quoted for a pen, and what the wild
+/// row beside it honestly still quotes.
+const NOTHING: f32 = 0.0;
+
+/// **The pen collection tier this crew works at** — the husbandry gear's, coverage-weighted, which
+/// is the rate `advance_labor_allocation` caps the tend branch's collection by and therefore the
+/// rate the seed has to be priced at (`server::seed_source_yield`).
+fn pen_carry_per_worker(app: &App, workers: u32, wear: &BandEquipment) -> f32 {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let equipment = EquipmentConfig::builtin();
+    let kit = equipment.default_kit(core_sim::KitJob::Hunt);
+    equipment
+        .coverage(&kit, workers as f32, wear)
+        .weighted_rate(|kit| {
+            equipment.pen_per_worker_biomass_capacity(
+                labor.hunt.per_worker_biomass_capacity,
+                kit,
+                wear,
+            )
+        })
+}
+
+/// The range twin of [`pen_carry_per_worker`] — the **sled's** tier, which a wild row is capped by.
+fn hunt_carry_per_worker(app: &App, workers: u32, wear: &BandEquipment) -> f32 {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let equipment = EquipmentConfig::builtin();
+    let kit = equipment.default_kit(core_sim::KitJob::Hunt);
+    equipment
+        .coverage(&kit, workers as f32, wear)
+        .weighted_rate(|kit| {
+            equipment.hunt_per_worker_biomass_capacity(
+                labor.hunt.per_worker_biomass_capacity,
+                kit,
+                wear,
+            )
+        })
+}
+
+/// **Put `keepers` on the row** — the fixture staffs [`CREW_ON_THE_ROW`], and the sweep needs the
+/// crew to be the variable.
+fn staff_the_row(app: &mut App, band: Entity, keepers: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band carries its allocation")
+        .assignments[0]
+        .workers = keepers;
+}
+
+/// **The fixture band's entity, resolved by its durable [`BAND`] id** — worldgen seeds bands of its
+/// own, so *"the first `ResidentBand`"* finds one of those and every seed written onto it lands on a
+/// row nobody reads.
+fn the_band(app: &mut App) -> Entity {
+    let mut query = app.world.query::<(Entity, &BandId)>();
+    query
+        .iter(&app.world)
+        .find(|(_, id)| id.0 == BAND)
+        .map(|(entity, _)| entity)
+        .expect("the fixture band is in the world")
+}
+
+/// **Seed the row from its pre-commit forecast, exactly as `server::seed_source_yield` does** — the
+/// same carry tier (pen or sled, on the same `is_corralled()` predicate), the same party, the same
+/// output multiplier, through the same `hunt_source_yield_preview` entry point. A hand-rolled quote
+/// here would prove only that this file agrees with itself.
+fn seed_the_row(app: &mut App, band: Entity, keepers: u32, wear: &BandEquipment, floor: f32) {
+    let party = party_of(app, keepers, wear);
+    let corralled = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry")
+        .is_corralled();
+    let per_worker = if corralled {
+        pen_carry_per_worker(app, keepers, wear)
+    } else {
+        hunt_carry_per_worker(app, keepers, wear)
+    };
+    let seeded = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let combat = app.world.resource::<CombatConfigHandle>().get();
+        let wellbeing = app
+            .world
+            .resource::<core_sim::WellbeingConfigHandle>()
+            .get();
+        let cohort = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the fixture band carries its cohort");
+        let output_mult = core_sim::output_multiplier(cohort, &wellbeing).to_f32();
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry
+            .find(HERD_ID)
+            .expect("the fixture herd is in the registry");
+        core_sim::hunt_source_yield_preview(
+            herd,
+            &fauna,
+            per_worker,
+            &party,
+            output_mult,
+            keepers,
+            floor,
+            labor.yield_average_horizon_turns,
+            labor.arrivals_horizon_turns,
+            combat.forecast_range_sigmas,
+        )
+    };
+    let target = LaborTarget::Hunt {
+        fauna_id: HERD_ID.to_string(),
+        floor,
+    };
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band carries its allocation")
+        .set_source_yield(&target, seeded);
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// **`actualYield`, read back out of the ENCODED buffer** — the artifact a client parses, exactly as
+/// [`published_useful_workers`] reads the crew cap beside it.
+fn published_actual_yield(app: &App) -> f32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == "hunt")
+        .expect("the fixture band's hunt row is on the wire")
+        .actualYield()
+}
+
+/// **THE PAYOUT, off the same published row.** One Population stage on the fixture, then the wire is
+/// re-read: a resolved row reports the take the turn actually banked.
+///
+/// **No Logistics stage runs, and the fixture is what makes that honest**: every herd here stands on
+/// its own carrying capacity, so the regrowth a quote is priced across (`fauna::next_turns_quarry`)
+/// moves nothing. [`the_quote_prices_the_state_the_turn_will_find`] asserts exactly that rather than
+/// leaving it as a reader's assumption.
+fn resolve_and_republish(app: &mut App) -> f32 {
+    use bevy::ecs::system::RunSystemOnce;
+    app.world
+        .run_system_once(core_sim::advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+    published_actual_yield(app)
+}
+
+/// **THE FIXTURE STANDS ON ITS OWN CEILING**, so the Logistics regrowth between a quote and the take
+/// it prices is exactly zero — which is what lets every test in this section resolve the Population
+/// stage alone and still compare two readings of *one* turn.
+#[test]
+fn the_quote_prices_the_state_the_turn_will_find() {
+    let app = world_keeping_a_pen(AUROCHS, bare());
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry")
+        .clone();
+    let next = core_sim::next_turns_quarry(&herd, &fauna);
+    assert_eq!(
+        (next.biomass, next.growth_this_turn()),
+        (herd.biomass, 0.0),
+        "the fixture herd must sit at its own carrying capacity, or a quote and the take beside it \
+         describe two different turns"
+    );
+}
+
+/// **A BARE-HANDED BAND WITH A PENNED HEAVY ANIMAL IS QUOTED WHAT IT COLLECTS** — the reported
+/// shape, asserted as `quote == payout` on the published row rather than merely as *"not zero"*.
+///
+/// Two preconditions carry it, and both are derived from the fixture rather than asserted of the
+/// seam under test:
+///
+/// 1. this band genuinely **cannot fight** this quarry — bare hands against `defense 6` bring down
+///    nothing at any crew size, which is what made the old quote `0`;
+/// 2. the pen nonetheless **pays** something, or *"the quote equals the payout"* would be satisfied
+///    by two zeroes and the test would pass against the defect.
+#[test]
+fn a_bare_handed_pen_is_quoted_the_take_the_turn_pays() {
+    let mut app = world_keeping_a_pen(AUROCHS, bare());
+    let band = the_band(&mut app);
+
+    let fightless: Vec<u32> = (1..=POOL)
+        .filter(|workers| take_and_reach(&app, *workers, &bare()).0 <= NOTHING)
+        .collect();
+    assert_eq!(
+        fightless.len(),
+        POOL as usize,
+        "PRECONDITION: bare hands against the aurochs' defense must bring down nothing at EVERY \
+         crew size, or the quote this test is about was never gated by the fight. Crews that land \
+         nothing: {fightless:?}"
+    );
+
+    seed_the_row(&mut app, band, CREW_ON_THE_ROW, &bare(), FLOOR);
+    let quoted = published_actual_yield(&app);
+    let paid = resolve_and_republish(&mut app);
+
+    assert!(
+        paid > NOTHING,
+        "PRECONDITION: the pen must actually pay this bare-handed crew something, or the equality \
+         below is two zeroes agreeing"
+    );
+    assert!(
+        (quoted - paid).abs() <= YIELD_EPSILON,
+        "a penned row must be quoted the take its keepers collect: quoted {quoted}, paid {paid}"
+    );
+}
+
+/// **THE QUOTE IS THE PAYOUT ACROSS THE KEEPER RANGE — on both bounds that survive a pen.**
+///
+/// A slaughter has no engagement, no retreat and no fight, so exactly two stages are left to bind:
+/// the **room** above the assignment's floor, and what the keepers can **carry** home. The sweep
+/// asserts it saw both, so it cannot degenerate into testing one arm four times.
+#[test]
+fn a_pens_quote_is_its_payout_at_every_keeper_count() {
+    let mut saw_room_bound = false;
+    let mut saw_carry_bound = false;
+    for keepers in KEEPER_CREWS {
+        let mut app = world_keeping_a_pen(AUROCHS, bare());
+        let band = the_band(&mut app);
+        staff_the_row(&mut app, band, keepers);
+
+        // **Which arm binds, composed from the tend branch's own terms** — the whole bodies the
+        // floor leaves sparable against the whole bodies the crew's load seats.
+        let (room_animals, carry_animals) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let herd = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .expect("the fixture herd is in the registry")
+                .clone();
+            let room = core_sim::animals_affordable(
+                core_sim::herd_take_room(&herd, FLOOR, &fauna),
+                herd.body_mass,
+            );
+            let carry = (keepers as f32 * pen_carry_per_worker(&app, keepers, &bare())
+                / herd.body_mass)
+                .max(ONE_WHOLE_ANIMAL);
+            (room, carry)
+        };
+        if carry_animals < room_animals {
+            saw_carry_bound = true;
+        } else {
+            saw_room_bound = true;
+        }
+
+        seed_the_row(&mut app, band, keepers, &bare(), FLOOR);
+        let quoted = published_actual_yield(&app);
+        let paid = resolve_and_republish(&mut app);
+        assert!(
+            paid > NOTHING,
+            "{keepers} keepers must collect something, or this row asserts nothing"
+        );
+        assert!(
+            (quoted - paid).abs() <= YIELD_EPSILON,
+            "{keepers} keepers: quoted {quoted}, paid {paid} (room {room_animals} animals, carry \
+             {carry_animals})"
+        );
+    }
+    assert!(
+        saw_room_bound && saw_carry_bound,
+        "the sweep must exercise both surviving bounds: room-bound={saw_room_bound} \
+         carry-bound={saw_carry_bound}"
+    );
+}
+
+/// **A WILD HERD IS UNCHANGED — the fight still gates it.**
+///
+/// The pen fork must not have loosened the range: the same bare-handed band on the same herd, not
+/// penned, must still be quoted **exactly nothing**, and must still pay exactly nothing, because it
+/// cannot hurt an aurochs. Asserted as `0.0` on the published row rather than as an epsilon: a
+/// fightless party's take is an identity, not a small number.
+///
+/// The **liveness** half rides beside it: the same herd penned pays a real take with the same bare
+/// hands, so the zeroes above are the fight and not the fixture.
+#[test]
+fn a_wild_row_is_still_gated_by_the_fight() {
+    let mut app = world_hunting(AUROCHS, bare());
+    let band = the_band(&mut app);
+    assert!(
+        !app.world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .expect("the fixture herd is in the registry")
+            .is_corralled(),
+        "PRECONDITION: this fixture's herd must be WILD, or it is the pen test again"
+    );
+
+    seed_the_row(&mut app, band, CREW_ON_THE_ROW, &bare(), FLOOR);
+    let quoted = published_actual_yield(&app);
+    let paid = resolve_and_republish(&mut app);
+    assert_eq!(
+        (quoted, paid),
+        (NOTHING, NOTHING),
+        "a bare-handed party cannot bring down an aurochs, and both the quote and the take must \
+         still say so: quoted {quoted}, paid {paid}"
+    );
+
+    // **Liveness** — the identical band and herd, fenced, collects perfectly well.
+    let mut penned = world_keeping_a_pen(AUROCHS, bare());
+    let penned_band = the_band(&mut penned);
+    seed_the_row(&mut penned, penned_band, CREW_ON_THE_ROW, &bare(), FLOOR);
+    assert!(
+        published_actual_yield(&penned) > NOTHING,
+        "liveness: the same bare hands must be quoted a real take once the herd is penned, or the \
+         zeroes above are the fixture rather than the fight"
+    );
+}
+
+/// **AND AN EQUIPPED WILD ROW STILL PAYS WHAT IT IS QUOTED** — the range's own `forecast == actual`,
+/// restated on the fixture this file already carries, so the pen fork cannot have been bought with a
+/// wild regression.
+///
+/// **On the BOAR, because the aurochs pays a kitted crew nothing in one turn** — `durability 150`
+/// against a party this size banks wounds for several turns and then lands a body
+/// (`docs/plan_hunt_through_combat.md` §4.2), which is correct and is a distribution this one-turn
+/// harness cannot show. The engagement-bound quarry kills what it reaches, so its row has a payout to
+/// be equal to.
+///
+/// **And with the RETREAT held at its identity**, because a wild row's quote is the take's
+/// *expectation* over a seed a forecast cannot draw (`docs/plan_hunt_through_combat.md` §6.4): at the
+/// shipped `wariness 0.25` a crew that keeps `0.99` animals in expectation and `1` in the draw is a
+/// whole boar apart, and asserting an equality there would be asserting the wrong invariant. Held to
+/// zero the distribution is degenerate and the quote is the take, bit-for-bit — the same
+/// neutralisation `hunt_forecast_range.rs` documents at length.
+#[test]
+fn an_equipped_wild_row_is_quoted_the_take_it_pays() {
+    let mut app = world_hunting(BOAR, stocked());
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
+    let band = the_band(&mut app);
+    seed_the_row(&mut app, band, CREW_ON_THE_ROW, &stocked(), FLOOR);
+    let quoted = published_actual_yield(&app);
+    let paid = resolve_and_republish(&mut app);
+    assert!(
+        paid > NOTHING,
+        "liveness: a kitted party must take something from this herd ({quoted} quoted)"
+    );
+    assert!(
+        (quoted - paid).abs() <= YIELD_EPSILON,
+        "a wild row must still be quoted the take it pays: quoted {quoted}, paid {paid}"
+    );
+}
+
+/// **THE STEADY HEADLINE AND THE ARRIVAL SCHEDULE ARE THE SAME PEN** — the two forward projections
+/// beside `actualYield` on the row, and the two that were still running a stalking party's fight
+/// over a fenced herd after the quote stopped.
+///
+/// `fauna::project_realized_hunt` fills `realizedYield` (*"this source steadily pays…"*) and
+/// `fauna::project_arrivals_hunt` fills `arrivalSchedule` (*"…and the next lands in N turns"*). Both
+/// simulate the take forward, so both must simulate the take the tend branch runs: a pen collects
+/// through `fauna::animals_handled` at the keepers' handling rate, with no engagement, no retreat and
+/// no fight. Left stalking, they read **zero for ever** on exactly the fixture below — so the panel
+/// said *no steady income, no delivery in the next twenty turns* about a pen paying every turn.
+///
+/// The precondition is the one the quote test uses, for the same reason: these bare hands genuinely
+/// cannot fight this quarry.
+#[test]
+fn a_bare_handed_pen_projects_a_steady_income_and_a_delivery() {
+    let mut app = world_keeping_a_pen(AUROCHS, bare());
+    let band = the_band(&mut app);
+    assert!(
+        take_and_reach(&app, CREW_ON_THE_ROW, &bare()).0 <= NOTHING,
+        "PRECONDITION: these bare hands must bring down nothing in a stalking fight, or neither \
+         projection was ever gated by one"
+    );
+
+    seed_the_row(&mut app, band, CREW_ON_THE_ROW, &bare(), FLOOR);
+    let (realized, arrivals) = published_projections(&app);
+
+    assert!(
+        realized > NOTHING,
+        "a pen its keepers collect from every turn must publish a steady income, not {realized}"
+    );
+    assert!(
+        arrivals.iter().any(|slot| *slot > NOTHING),
+        "…and at least one turn in the horizon must deliver food: {arrivals:?}"
+    );
+}
+
+/// **`realizedYield` and `arrivalSchedule`, off the ENCODED buffer** — the pair
+/// [`published_actual_yield`] leaves behind.
+fn published_projections(app: &App) -> (f32, Vec<f32>) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == "hunt")
+        .expect("the fixture band's hunt row is on the wire");
+    (
+        row.realizedYield(),
+        row.arrivalSchedule()
+            .map(|slots| slots.iter().collect())
+            .unwrap_or_default(),
+    )
 }

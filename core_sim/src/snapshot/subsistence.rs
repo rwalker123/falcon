@@ -48,6 +48,10 @@ const NO_NEGLECT_REMAINING: u32 = 0;
 /// [`f32::INFINITY`] sim-side. FlatBuffers floats carry an infinity fine; a *client* dividing by one
 /// does not, so the seam converts once, here, and the schema documents `<= 0` as *unbounded* — the
 /// same reading `fauna::hunt_engage_workers` gives it.
+///
+/// **On a pen, *unbounded* is the wrong reading and the field is simply unpublished** — the tend
+/// branch bounds its collection by [`crate::fauna::animals_handled`] at its own call site. See the
+/// `engage_rate` site below and issue #572.
 const NO_ENGAGEMENT_STAGE: f32 = 0.0;
 
 /// **The dispersion the wire's `stayFraction` is published at** — the neutral `1.0`, which leaves the
@@ -92,6 +96,99 @@ fn published_build_legs(
                 .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
         })
         .collect()
+}
+
+/// **THE KIT EACH QUEUED SOURCE'S BUILD IS BEING RAISED WITH**, keyed the two ways a source is named
+/// (`docs/plan_standing_upkeep.md` §4.7a ②) — the wire's `buildKitId` on both source tables.
+///
+/// # IT IS READ LIVE, NOT STAMPED BY THE TURN
+///
+/// `build_queue_position` beside it on the same row is scratch the labor pass writes, so it lags a
+/// command by a whole turn; the server re-captures and broadcasts after **every** dispatched command
+/// (`recapture_and_broadcast`), so a kit picked on a queue row has to be visible in that frame. This
+/// walks the bands' live queues instead.
+///
+/// # AND IT RIDES THE SAME WINNING BAND AS THE POSITION
+///
+/// Several bands may work one source, and the position on the row is the one that band published.
+/// A kit taken from a *different* band's queue beside that position would be two answers pretending
+/// to be one — so the winner here is **the band whose live entry sits where the row says**, and a
+/// band that does not match only fills a source no matching band claimed.
+#[derive(Default)]
+pub(crate) struct BuildKitIds {
+    patches: HashMap<UVec2, String>,
+    herds: HashMap<String, String>,
+}
+
+impl BuildKitIds {
+    /// The kit id this patch's entry resolves to, `""` when no band has it queued.
+    fn patch(&self, tile: UVec2) -> String {
+        self.patches.get(&tile).cloned().unwrap_or_default()
+    }
+
+    /// The animal twin, keyed by herd id.
+    fn herd(&self, id: &str) -> String {
+        self.herds.get(id).cloned().unwrap_or_default()
+    }
+}
+
+/// **The one place a band's live queue becomes the wire's `buildKitId`** — see [`BuildKitIds`].
+pub(crate) fn resolve_build_kit_ids<'a>(
+    allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
+    forage: &ForageRegistry,
+    herds: &HerdRegistry,
+    equipment: &crate::equipment_config::EquipmentConfig,
+) -> BuildKitIds {
+    let mut resolved = BuildKitIds::default();
+    // A band matching the row's own published position is the winner; anything else is only a
+    // fallback for a source no matching band claimed, so it must never displace one.
+    let mut claimed_patches: std::collections::HashSet<UVec2> = std::collections::HashSet::new();
+    let mut claimed_herds: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for allocation in allocations {
+        for (position, entry) in allocation.build_queue.iter().enumerate() {
+            let branch = match entry.source {
+                crate::components::BuildSource::Patch(_) => {
+                    crate::intensification::RungBranch::Plant
+                }
+                crate::components::BuildSource::Herd(_) => {
+                    crate::intensification::RungBranch::Animal
+                }
+            };
+            // **The one resolution seam**, so the row cannot state a kit the pool is not using.
+            let kit = equipment
+                .builders_kit_for(entry.kit.as_ref(), Some(branch))
+                .id()
+                .to_string();
+            let position = position as i32;
+            match &entry.source {
+                crate::components::BuildSource::Patch(tile) => {
+                    let wins = forage
+                        .patch(*tile)
+                        .is_some_and(|patch| patch.build_queue_position == position);
+                    if wins || !claimed_patches.contains(tile) {
+                        resolved.patches.insert(*tile, kit);
+                    }
+                    if wins {
+                        claimed_patches.insert(*tile);
+                    }
+                }
+                crate::components::BuildSource::Herd(id) => {
+                    let wins = herds
+                        .herds
+                        .iter()
+                        .find(|herd| &herd.id == id)
+                        .is_some_and(|herd| herd.build_queue_position == position);
+                    if wins || !claimed_herds.contains(id) {
+                        resolved.herds.insert(id.clone(), kit);
+                    }
+                    if wins {
+                        claimed_herds.insert(id.clone());
+                    }
+                }
+            }
+        }
+    }
+    resolved
 }
 
 pub(crate) fn snapshot_sedentarization(
@@ -271,6 +368,9 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// resolved unbounded, which is the same fallback every other unresolved field on the row gives.
     /// Answers for a penned herd too: with no species there is no row to quote either axis from.
     pub(crate) fallback_party: &'a QuotedParty,
+    /// **The live builders kit per queued source** — the animal half of the same map the patch rows
+    /// read, resolved off the bands' queues at capture. See [`BuildKitIds`].
+    pub(crate) build_kits: &'a BuildKitIds,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -316,6 +416,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         parties,
         penned_parties,
         fallback_party,
+        build_kits,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -570,8 +671,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // siblings; the whole-animal `floor()` stays the sim's answer in `SourceYield.actual`.
                 //
                 // **A PEN publishes `NO_ENGAGEMENT_STAGE`** — `engage_rate_for` answers `INFINITY` for
-                // an unresolvable species and a penned animal is not stalked either, so the wire's
-                // finite "unbounded" reading covers both and no reader has to carry an infinity.
+                // an unresolvable species, and the wire's finite reading of it spares a reader an
+                // infinity to divide by.
+                //
+                // ⛔ **For a pen that `0` is no longer the truth.** A penned animal is not *stalked*,
+                // but its tend branch does have a real collection bound — `fauna::animals_handled`,
+                // the keepers' handling rate against the room — applied at the pen's own call site.
+                // A reader following the schema's `<= 0 ⇒ unbounded` rule therefore quotes a penned
+                // collection above what the sim pays. The published value stays `0` here: a real rate
+                // on this field flips the gate clients use to route pens away from the hunt paths.
+                // Issue #572 tracks closing it.
                 engage_rate: herd
                     .filter(|herd| !herd.is_corralled())
                     .map(|herd| fauna.engage_rate_for(&herd.species))
@@ -591,6 +700,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // this capture, so it reflects the current turn); `pen_extend_progress` is
                 // authoritative `Herd` state (the in-flight ExtendPen ring meter) — here it just
                 // crosses to the client wire alongside it.
+                //
+                // `pen_extend_cost` is that meter's DENOMINATOR, in the same work units, and is read
+                // from the SAME `herd` in the same expression so the pair can never come from two
+                // reads. Both are `0.0` with no ring in flight (and on the turn one is begun, before
+                // `accrue_pen_extension` stamps the cost), which is why the client's percentage has
+                // to guard the zero denominator rather than assume one.
                 pen_radius: herd.map(|herd| herd.pen_radius).unwrap_or(0),
                 pen_footprint_tiles: herd
                     .and_then(|herd| {
@@ -608,6 +723,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(0),
                 pen_pasture_fraction: herd.map(|herd| herd.pen_pasture_fraction).unwrap_or(0.0),
                 pen_extend_progress: herd.map(|herd| herd.pen_extend_progress).unwrap_or(0.0),
+                pen_extend_cost: herd.map(|herd| herd.pen_extend_cost).unwrap_or(0.0),
                 // Husbandry ceiling (Grazing 2d-δ) — the client hides the corral/extend affordance on a
                 // non-`pen` herd and the domestication track on a `wild` one.
                 husbandry_ceiling: herd
@@ -913,6 +1029,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // that, and lost it silently on the one crew a compose sheet is *for*: a proposed
                 // one, of a size the sim never resolved.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
+                // **What this herd's build is being raised with** — the animal twin of the patch
+                // row's, resolved live off the winning band's queue entry.
+                build_kit_id: build_kits.herd(&entry.id),
             }
         })
         .collect()
@@ -965,6 +1084,9 @@ pub(crate) fn snapshot_forage_patches(
     sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
     tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
+    // **The live builders kit per queued source** — read off the bands' queues at capture rather
+    // than off the patch, so a kit picked this turn shows in the recapture. See [`BuildKitIds`].
+    build_kits: &BuildKitIds,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
         .patches
@@ -998,16 +1120,30 @@ pub(crate) fn snapshot_forage_patches(
             let ecology = patch_ecology(patch, forage);
             // **THE LADDER'S price for each plant rung, resolved once and used by both halves of the
             // pair.** The fraction and the work pair must divide by the same number or the wire
-            // states one meter twice, from two denominators. `RUNG_COST_UNSCALED` on both: the only
-            // per-source cost multiplier on the ladder is a species' taming cost, and a plant has no
-            // species.
+            // states one meter twice, from two denominators.
+            //
+            // **`RUNG_COST_UNSCALED` on the tended rung, THIS PATCH'S OWN PRICE on the Field.**
+            // Clearing wild ground is clearing wild ground, so Cultivate is flat; a Sow is priced by
+            // how much of the tile the crop still has to replace
+            // (`forage::patch_field_cost_multiplier`, `docs/plan_standing_upkeep.md` §4.15). The
+            // **published** figure has to be the scaled one, because this is the price the compose
+            // sheet and the `⌃` mark quote a Sow at — and a quote that disagreed with the charge is
+            // exactly the defect class §4.3's rule exists to catch. Before the leg starts it is the
+            // live measure, which is the same number that leg will be stamped with (see
+            // `forage::field_replaced_share`).
             let cultivation_work_cost = ladder
                 .rung(RungKey::PlantTended)
                 .build_cost(RUNG_COST_UNSCALED)
                 .unwrap_or(NO_RUNG_WIDTH);
             let field_work_cost = ladder
                 .rung(RungKey::PlantField)
-                .build_cost(RUNG_COST_UNSCALED)
+                .build_cost(crate::forage::patch_field_cost_multiplier(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                    ladder,
+                ))
                 .unwrap_or(NO_RUNG_WIDTH);
             let forecast = forage_forecast(
                 patch,
@@ -1217,6 +1353,9 @@ pub(crate) fn snapshot_forage_patches(
                     patch,
                     forage,
                 ),
+                // **What this patch's build is being raised with** — the RESOLVED kit of the winning
+                // band's queue entry, read live so a pick shows in this frame rather than next turn.
+                build_kit_id: build_kits.patch(patch.tile),
                 // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
                 // fog-safe twin of `carrying_capacity` above and the denominator every upkeep figure
                 // on this row is quoted per. **The reading already resolved once above**, never a

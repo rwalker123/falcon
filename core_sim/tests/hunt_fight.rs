@@ -335,11 +335,12 @@ fn the_kill_rate_responds_to_party_weapon_and_quarry() {
     );
 }
 
-/// **A fractional engagement reaches ONE animal, not zero** (§10) — contact is not the gate. Three
-/// hunters do walk up to a mammoth (`engage_rate 0.05` would floor to `0`); they then fail at the
-/// *fight*, with casualties, which is a different and legible failure.
+/// **A fractional engagement reaches a PART of an animal, never zero** (§10) — contact is not the
+/// gate. Three hunters do get near a mammoth (`engage_rate 0.05`, so `0.15` of one a turn — a plain
+/// multiply cannot answer zero for a party that exists); they then fail at the *fight*, with
+/// casualties, which is a different and legible failure.
 #[test]
-fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
+fn a_fractional_engagement_reaches_part_of_an_animal_and_fails_at_the_fight() {
     const TINY_PARTY: u32 = 3;
     let fauna = deterministic_fauna();
     let engage = fauna
@@ -350,11 +351,13 @@ fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
         (TINY_PARTY as f32 * engage) < 1.0,
         "the fixture must actually be in the fractional regime ({TINY_PARTY} × {engage})"
     );
+    let reach = animals_engaged(TINY_PARTY, engage);
     assert_eq!(
-        animals_engaged(TINY_PARTY, engage),
-        1.0,
-        "a party that exists reaches one animal"
+        reach,
+        TINY_PARTY as f32 * engage,
+        "a party that exists reaches its own rate, un-floored"
     );
+    assert!(reach > 0.0, "and it is never nothing");
 
     let (killed, casualties, fought) =
         hunt_once(MAMMOTH, TINY_PARTY, &HuntingParty::builtin_equipped());
@@ -692,9 +695,11 @@ fn wounds_decay_out_of_contact_but_not_instantly() {
 // §10 — the pen is untouched, and replay is order-independent
 // ---------------------------------------------------------------------------------------------
 
-/// **A penned animal is not stalked, not fought and not wary** (§10). The pen's corral-tend branch
-/// passes `f32::INFINITY` as its engagement, and the fight must hand it straight back untouched —
-/// including for a species that would otherwise be the deadliest fight on the map.
+/// **A penned animal is not stalked, not fought and not wary** (§10). No pen path reaches
+/// [`resolve_hunt_fight`] at all any more — the tend branch, the forecast and both projections fork
+/// on `is_corralled()` — so this pins the resolver's own no-fight arm, on a species that would
+/// otherwise be the deadliest fight on the map, and then walks the pen's real collection stage
+/// beside it.
 #[test]
 fn a_pen_has_no_fight_at_all() {
     let fauna = deterministic_fauna();
@@ -711,8 +716,10 @@ fn a_pen_has_no_fight_at_all() {
     assert_eq!(penned.casualties.wounded, 0.0);
     assert!(!penned.fought);
 
-    // ...and the quantiser therefore pays the pen exactly what it paid before the fight existed:
-    // production against the keeper's collection, with no third bound.
+    // ...and the pen therefore pays exactly what it paid before the fight existed: production
+    // against the keeper's collection, with no fight in between. **The production bound is spent in
+    // the pen's own collection stage** (`animals_handled`, `systems::labor`'s tend branch) rather
+    // than inside the quantiser, which bounds a take and no longer rounds one.
     /// One body's worth and a little over, so the pen can spare exactly one animal.
     const PRODUCTION: f32 = 900.0;
     /// Less than one body — the keeper cannot haul the whole beast, which is where `max(1, carryable)`
@@ -722,11 +729,15 @@ fn a_pen_has_no_fight_at_all() {
         .species_by_display(MAMMOTH)
         .expect("shipped species")
         .body_mass;
+    let collected = core_sim::animals_handled(penned.brought_down, PRODUCTION, body);
+    assert_eq!(
+        collected, 1.0,
+        "the pen's collection stage spends the room: one whole animal of the 900 it produced"
+    );
     let take = quantise_animal_take(
-        PRODUCTION,
         COLLECTION,
         body,
-        penned.brought_down,
+        collected,
         core_sim::EngagementStop::WhenPackFull,
     );
     assert_eq!(take.killed, 1, "the keeper butchers what the pen produced");

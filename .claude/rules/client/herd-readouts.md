@@ -80,8 +80,11 @@ paths:
     `Biomass` is the fallback for a species the wire published no `body_mass` for, and the label switches
     WITH the unit rather than staying put — `Herd 821` invites reading 821 as a head count, wrong by the
     body mass. `SourceForecast.animal_count` is the one conversion, and **a positive biomass never counts
-    zero**: a herd holding a fifth of a body counts one, as the sim's own kill step does
-    (`min(affordable, max(1, carryable))`). **The ecology phase RIDES this row** rather than standing as
+    zero**: a herd holding a fifth of a body counts one, as the sim's own carry bound does
+    (`animals_the_pack_seats`, a `ceil` with a one-body floor). **Both terms this line used to name are
+    gone**: `quantise_animal_take`'s `affordable` arm and its *"cannot spare a whole animal"* early
+    return moved to the engagement, where the room is now spent, and `max(1, carryable)` became that
+    `ceil`. **The ecology phase RIDES this row** rather than standing as
     an `Ecology:` row of its own, exactly as it does on the tile card's `Foraging` / `Grazing` rows and
     for the same reason (`HudFloraVocab.STOCK_PHASE_CLAUSE_FORMAT`); `_value_hex` keys the stock row
     names to `ecology_value_hex`, which matches the phase word wherever in the value it sits, so folding

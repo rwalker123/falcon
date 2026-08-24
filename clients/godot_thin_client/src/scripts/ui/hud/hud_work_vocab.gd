@@ -1291,6 +1291,50 @@ const BUILD_QUEUE_HEAD_MARKER := "▸"
 
 const BUILD_QUEUE_MARKER_WIDTH := 10.0
 
+# ---- DRAG-TO-REORDER — the marker column IS the handle (`docs/plan_standing_upkeep.md` §4.7b ③) ---
+#
+# **THE ROW HAS NO WIDTH FOR A COLUMN OF ITS OWN, and that is measured rather than felt.** At the tall
+# LEFT dock the row's content line is ~356px, of which the marker, the date, the `✕` and the
+# separations take everything but the job face — and the face is ALREADY ellipsised at its widest
+# shipped value (`🐄 Corral Thunder Mammoths` needs 189 of the ~126 it gets). A handle column would
+# come straight out of that face, which is the one column with an unclipped-name guarantee on it.
+#
+# So the handle is the marker slot, which is reserved on every row already (so the faces line up) and
+# holds nothing at all on a non-head row. It keeps `▸` on the HEAD — that marker is load-bearing, it
+# says which entry the builders pool is funding — and draws a faint grab glyph everywhere else.
+#
+# **A PENDING ROW IS NOT DRAGGABLE**, and its slot stays empty: the wire has not placed it, so there
+# is no position for `build_order` to move it to and nothing below it to move it above.
+
+## The grab glyph a confirmed non-head row wears in the marker column.
+const BUILD_QUEUE_DRAG_HANDLE := "⠿"
+
+## …at the same width as the head marker (the column is one column) and in the quiet ink, because a
+## handle is an affordance rather than a statement: the `▸` is the only mark in this column that says
+## something about the queue.
+const BUILD_QUEUE_DRAG_HANDLE_FONT_SIZE := WORK_ROW_FONT_SIZE
+
+const BUILD_QUEUE_DRAG_TOOLTIP := "Drag to reorder. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+
+## The drag preview's face: the job it is carrying, so a list of near-identical rows still says which
+## one is in flight.
+const BUILD_QUEUE_DRAG_PREVIEW_ALPHA := 0.75
+
+## **THE DROP INDICATOR IS DRAWN INSIDE THE TARGET ROW'S OWN 28px.** The block sets `separation` to 0
+## so the rows are flush, and an indicator drawn BETWEEN two rows would need a new term in
+## `build_queue_block_height` — on the reservation side as well as the render side, in a zone that
+## clips. An edge line on the row's own stylebox costs the block nothing at all.
+const BUILD_QUEUE_DROP_EDGE_WIDTH := 2
+
+## Which edge of the hovered row the entry would land on — the row's own handle for the indicator, so
+## a harness can assert the drop TARGET without reading a colour off a picture.
+const BUILD_QUEUE_DROP_MARK_META := "build_queue_drop_mark"
+
+## The drag payload's own type tag. A `Variant` drop target has to be able to refuse everything that
+## is not one of these rows, and a bare Dictionary from some other control would otherwise satisfy a
+## key check.
+const BUILD_QUEUE_DRAG_TYPE := "build_queue_entry"
+
 ## The date column. Fixed and CLIPPING: the widest values this column takes — the `∞`-carrying
 ## sentinels and the `<verb> N% · turn N` completion form — would squeeze the job face to nothing on a
 ## left dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
@@ -1339,14 +1383,23 @@ const BUILD_QUEUE_ANIMAL_FACE_FORMAT := "%s %s"
 ## the faction page's standing rule for a capped list, applied to the band's own.
 const BUILD_QUEUE_OVERFLOW_FORMAT := "+%d more"
 
-const BUILD_QUEUE_OVERFLOW_TOOLTIP := "More entries are queued than this zone can show. Reorder from the command line with `build_order`."
+## **IT NO LONGER SENDS THE PLAYER TO THE COMMAND LINE** (`docs/plan_standing_upkeep.md` §4.7b ③):
+## the rows carry a drag handle now, so the sentence that named `build_order` is false. What is still
+## true is that the entries this row stands for are OUT OF REACH of that gesture — they have no row to
+## drag — which is the fact worth stating where the truncation is.
+const BUILD_QUEUE_OVERFLOW_TOOLTIP := "More entries are queued than this zone can show. Drag the rows above to reorder the queue; the entries behind them keep their order."
 
 ## The withdrawal. Same `✕` and same steady DANGER ink the parties zone's recall control wears — a
 ## destructive control reads as one — and, like that one, it asks nothing first: `unqueue` withdraws a
 ## DECLARATION, the banked meter survives it, and re-declaring is one tick of the compose control.
 const BUILD_QUEUE_UNQUEUE_GLYPH := "✕"
 
-const BUILD_QUEUE_UNQUEUE_WIDTH := 22.0
+## **32 BECAUSE `HudWidgets.compact` LEAVES THE GHOST BUTTON ITS HORIZONTAL PADDING.** The trim
+## squeezes the type size and the VERTICAL padding — that is what keeps the control inside a 28px row
+## — and the button's own left/right margins survive it, so a 22px reservation was 10px under what the
+## `✕` actually draws and the row's expanding face paid the difference. It is the withdrawal's column
+## rather than the glyph's: what has to fit is the styled BUTTON.
+const BUILD_QUEUE_UNQUEUE_WIDTH := 32.0
 
 const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already banked is kept, and the source keeps its crew."
 
@@ -1364,20 +1417,81 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 ## WORK BOARD's own inspector pattern (`_build_work_inspector`), one open at a time, clicked to
 ## toggle.
 ##
-## **AND IT IS WHAT MAKES THE KIT PICKER POSSIBLE.** §4.7a ② gives every queue entry its own builders
+## **AND IT IS WHAT MADE THE KIT PICKER POSSIBLE.** §4.7a ② gives every queue entry its own builders
 ## kit — the override the sim resolves per entry and the Builders card could not express — and that
 ## control lands in THIS strip beside the crop. On the row it would have been a sixth column.
 ##
-## **PLANT ENTRIES ONLY.** `tame` and `corral` commit no species, so an animal entry has nothing to
-## configure YET: it does not expand, and its row does not offer to. One predicate
-## (`_queue_crop_choices`) answers both the row's clickability and the strip's existence, so a row
-## cannot invite a click that opens nothing.
+## **THE CROP IS THE PLANT WEB'S ALONE; THE KIT IS EVERY ENTRY'S.** `tame` and `corral` commit no
+## species, so an animal entry offers no crop at all — and it still expands, because it is still
+## raised with a tool. `_queue_settings_content` is the ONE predicate answering both the row's
+## clickability and the strip's existence, so a row cannot invite a click that opens nothing, and what
+## differs between the webs is the strip's CONTENT rather than whether there is one.
 const BUILD_QUEUE_CROP_WIDTH := 168.0
 
-## The open strip's height — ONE row of controls, and the number BOTH the strip draws at and
+## **ONE CONTROL LINE INSIDE THE STRIP** — the compact picker's own drawn height, which
+## `_build_queue_settings_line` also declares as its minimum so the drawn line and the reserved one
+## are one number. It is the term the WRAP multiplies, and the reason the strip's height below is a
+## SUM rather than a literal: a second line costs another control and no more chrome.
+const BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT := 22.0
+
+## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `HudStyle.ROLE_CARD_PADDING` above and below
+## (6 + 6), from the single `work_inspector_stylebox` the strip wears however many lines open inside
+## it. Reserving it per LINE is what made a wrapped strip cost 68 where it draws 56.
+const BUILD_QUEUE_SETTINGS_CHROME := 12.0
+
+## The open strip's height at ONE LINE of controls, and the number BOTH the strip draws at and
 ## `build_queue_block_height` reserves. The zone `clip_contents`, so a strip that drew taller than it
-## was paid for would take the difference off the bottom of the board with nothing to show for it.
-const BUILD_QUEUE_SETTINGS_HEIGHT := 30.0
+## was paid for would take the difference off the bottom of the board with nothing to show for it —
+## and a strip that drew SHORTER costs the board a row it could have drawn, for dead space.
+##
+## **34 = the control plus the chrome, and the 30 it replaces was a live 4px UNDER-RESERVE**
+## (`docs/plan_standing_upkeep.md` §4.7b ②): a reservation that counted only the control was short by
+## the chrome around it every time a strip opened.
+const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
+    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+
+## **THE KEY COLUMN BOTH SETTINGS KEYS DECLARE — `CROP` and `KIT` alike.** One constant, because the
+## whole point of a stacked layout is that the two keys line up: two independently-measured widths
+## would put the pickers on two different left edges the moment the strip wraps, and a reader would
+## see that as a misdrawn panel rather than as two rows.
+const BUILD_QUEUE_SETTINGS_KEY_WIDTH := 30.0
+
+## The kit control's declared width, the crop's own (`BUILD_QUEUE_CROP_WIDTH`) — the two pickers are
+## the same kind of control naming the same kind of thing, and a pair of unequal columns beside two
+## equal keys reads as an accident.
+const BUILD_QUEUE_KIT_WIDTH := 168.0
+
+## The kit half's key, in the CROP key's register.
+const BUILD_QUEUE_SETTINGS_KIT_KEY := "KIT"
+
+## **WHY THE JOB HAS A TOOL AT ALL, AND HOW FAR THIS PICK REACHES**
+## (`docs/plan_standing_upkeep.md` §4.7a ②). Both sentences are load-bearing: the derivation is the
+## thing the player is overriding, and *this job alone* is the promise the retired `builders`-row
+## picker could not keep — one click there pinned a web's tool onto every later build with no way back.
+const BUILD_QUEUE_KIT_TOOLTIP := "Which tools this build is raised with. Left alone, the job derives its own from the food web it is on — hoes for a crop, hurdles for stock. A pick here changes THIS job alone."
+
+## **DOES THE SETTINGS STRIP FIT ITS TWO CONTROLS ON ONE LINE?** — the flow, computed rather than
+## discovered (`docs/plan_standing_upkeep.md` §4.7b ②). Ray, on the layout: *"make it flow, so on
+## horizontal layouts it would be 1 line and vertical 2, most likely because of space available."*
+##
+## ⛔ **IT IS A WIDTH PREDICATE AND NOT A CONTAINER BEHAVIOUR, and the zone's clipping is why.** The
+## strip's height is RESERVED before it is drawn — `build_queue_settings_height` is the one arithmetic
+## both `_work_board_capacity`'s chrome term and the strip's own `custom_minimum_size` read — so a
+## Godot flow container that wrapped at LAYOUT time would leave the reservation unable to know how
+## many lines were drawn, and the difference would come silently off the bottom of the board. Both
+## sides read this one answer instead.
+##
+## **NEITHER PICKER EVER SHRINKS.** The whole objection to fitting the pair into a narrow dock by
+## trimming them was that a truncated crop name reads as a word; so the widths are fixed and the LINE
+## COUNT is what gives.
+##
+## `line_width` is the width the strip actually gets — `BandPanelController._queue_settings_line_width`
+## derives it once from the zone box less the strip's own chrome and feeds the same answer to the
+## reservation and the builder.
+static func queue_settings_one_line(line_width: float) -> bool:
+    return line_width >= BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) \
+        + BUILD_QUEUE_CROP_WIDTH + float(WORK_ROW_SEPARATION) \
+        + BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) + BUILD_QUEUE_KIT_WIDTH
 
 ## The strip's key label — the word the retired compose-sheet picker's own header carried, so a player
 ## who learned it there reads it here.
@@ -1392,7 +1506,11 @@ const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Lea
 
 ## The expandable row's own hover, appended to the face/date pair — a row that opens has to say so,
 ## the board row's `WORK_ROW_OPEN_HINT` being the pattern.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click to set this job's crop."
+##
+## **IT NAMES THE KIT FIRST BECAUSE EVERY ENTRY HAS ONE** (`docs/plan_standing_upkeep.md` §4.7a ②).
+## The crop is the plant web's alone — a `Tame` commits no species — so a hint promising only the crop
+## was false on every animal row the moment the kit made those rows expandable.
+const BUILD_QUEUE_ROW_OPEN_HINT := "Click to set this job's tools and crop."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
@@ -1469,6 +1587,12 @@ const BUILD_QUEUE_DATE_META := "build_queue_date"
 
 const BUILD_QUEUE_UNQUEUE_META := "build_queue_unqueue"
 
+## The settings strip's two controls, each valued its own selected id — so an assertion can name the
+## picker it wants rather than taking whichever `OptionButton` the strip happens to build first.
+const BUILD_QUEUE_CROP_PICKER_META := "build_queue_crop_picker"
+
+const BUILD_QUEUE_KIT_PICKER_META := "build_queue_kit_picker"
+
 ## The open SETTINGS strip, valued the entry KEY it belongs to — so an assertion can say *this* row's
 ## strip is the one that opened rather than *a* strip exists somewhere in the block.
 const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
@@ -1494,14 +1618,15 @@ const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 ## what a caller states is the CONTENT and `build_queue_settings_height` remains the one arithmetic
 ## both the reservation and the render read.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_legs: int = 0, settings_crop: bool = false) -> float:
+        settings_legs: int = 0, settings_crop: bool = false, settings_kit: bool = false,
+        settings_one_line: bool = true) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
     if entries > rows_max:
         rows += 1
     return ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
-        + build_queue_settings_height(settings_legs, settings_crop)
+        + build_queue_settings_height(settings_legs, settings_crop, settings_kit, settings_one_line)
 
 ## **WHAT AN OPEN SETTINGS STRIP DRAWS AT — one expression, and `0.0` when there is nothing to open.**
 ## The crop picker costs its control row; each LEG of the entry's climb costs a line.
@@ -1512,8 +1637,28 @@ static func build_queue_block_height(entries: int, rows_max: int,
 ## one unit and its legs are what the row opens into.
 ## **THE LEG LIST'S OWN KEY COSTS A LINE, and forgetting it is how a strip draws taller than it was
 ## paid for** — which this zone answers by clipping the bottom of the BOARD, silently.
-static func build_queue_settings_height(legs: int, has_crop: bool) -> float:
-    var height := BUILD_QUEUE_SETTINGS_HEIGHT if has_crop else 0.0
+## **AND THE CONTROL ROWS COST ONE LINE OR TWO — never a measured height**
+## (`docs/plan_standing_upkeep.md` §4.7b ②). The pair flows: where the strip is wide enough for both
+## keys and both pickers (`queue_settings_one_line`) they sit side by side, and where it is not they
+## stack. **A LONE CONTROL IS ALWAYS ONE LINE whatever the width** — an ANIMAL entry has a kit and no
+## crop, so it has nothing to wrap against, and letting the predicate answer for it would reserve a
+## second line for a strip that draws one.
+##
+## ⛔ **THE SECOND LINE COSTS A CONTROL, NOT A WHOLE STRIP.** There is ONE stylebox around the pair
+## however they stack, so the wrapped height is `chrome + 2 × control` = 56 and never
+## `2 × BUILD_QUEUE_SETTINGS_HEIGHT` = 68 — which reserved 12px the strip never draws, rendered as
+## dead space inside it and cost the work board a row wherever that 12px straddled a boundary.
+static func build_queue_settings_height(legs: int, has_crop: bool, has_kit: bool = false,
+        one_line: bool = true) -> float:
+    var controls := 0
+    if has_crop:
+        controls += 1
+    if has_kit:
+        controls += 1
+    var height := 0.0
+    if controls > 0:
+        height = BUILD_QUEUE_SETTINGS_HEIGHT if (controls <= 1 or one_line) \
+            else BUILD_QUEUE_SETTINGS_HEIGHT + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     return height
@@ -1611,9 +1756,58 @@ const RUNG_TRACK_COST_FORMAT := "%s work · %s"
 
 const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
 
+# ---- THE CROP STEP — the second page of the same card (`docs/plan_standing_upkeep.md` §2.8) --------
+#
+# **A PLANT RUNG DOES NOT COMMIT UNTIL A CROP IS NAMED.** The `⌃` used to declare in one click and
+# send no species token, so every Sow took the sim's default — the HIGHEST-SHARE legal plant, which
+# considers neither what it pays nor the player's take selection — and that is how fertile ground got
+# committed to a zero-food cash crop. Picking the rung now opens this step and the CROP is the
+# declaration.
+#
+# ⛔ **THE ROWS STATE WHAT EACH CROP PAYS, and that is the actual repair.** Forcing the choice only
+# relocates the trap if the list is names and shares: the player picks the dominant plant again,
+# because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to
+# *this field feeds nobody* states the zero unless a row does.
+## ⛔ **CULTIVATE GROWS NOTHING, AND THE TITLE MAY NOT SAY IT DOES.** The tended rung **weeds**: the
+## favored species' share rises toward `tended_weeding_gain` and the volunteers standing beside it
+## are still wild, so nothing is planted and the choice is which plant this band gets good at —
+## `tended_conversion_gain` multiplies that one species' whole yield vector and nothing else's. Only
+## the FIELD rung plants, forcing the favored share to 1.0 and every other to 0, which is where
+## *grow* becomes the true word. Reported from play as a nit on exactly that distinction, and it is
+## the model rather than the wording: a player told they are choosing what to GROW on a Cultivate has
+## been told the rung does something it does not do.
+const RUNG_CROP_TITLE_TEND := "WHAT TO TEND"
+
+const RUNG_CROP_TITLE_GROW := "WHAT TO GROW"
+
+## **`Sim picks` STAYS AN OPTION AND STOPS BEING THE DEFAULT.** `""` is a real instruction on the wire
+## — *take the tile's dominant legal plant* — and choosing it deliberately is fine. It is rendered
+## LAST rather than first (a leading default is the thing a hurried player takes) and its aside names
+## the plant it would actually resolve to, so it is no quieter about the consequence than any other
+## row.
+const RUNG_CROP_SIM_PICKS_LABEL := "Sim picks"
+
+## …and what that pick would land on, stated in the row's own aside slot.
+const RUNG_CROP_SIM_PICKS_NOTE_FORMAT := "→ %s"
+
+## Back to the rung list. The card is a Window and dismisses on a click outside, but a step the player
+## cannot leave without losing the rung they picked is a step they will avoid using.
+const RUNG_CROP_BACK_LABEL := "‹ Back"
+
+## A patch whose basket carries no plant this rung may legally take. The rung is still offered — the
+## sim accepts a Sow with no species token and settles it itself — so this states the fact rather than
+## refusing the climb.
+const RUNG_CROP_NONE_NOTE := "No plant here can climb this rung — the sim will settle it."
+
 ## The card's stable handles. Every claim the track owes is a string composed at render time, so a
 ## harness that found a row by its text would only confirm the string it had already assumed.
 const RUNG_TRACK_META := "rung_track"
+## The crop step's own row handle, valued the SPECIES key the press would send (`""` for `Sim picks`,
+## which is a real instruction and not an absent one). Spelled apart from `RUNG_TRACK_ROW_META` so a
+## harness asking *which rung* can never be answered by a crop row that happens to be on screen.
+const RUNG_CROP_ROW_META := "rung_crop_row"
+## …and the step itself, so *is the card showing rungs or crops* is one read.
+const RUNG_CROP_STEP_META := "rung_crop_step"
 ## Valued the rung's own improvement VERB, which is also what a press emits — so an assertion reads
 ## the destination the row would send rather than the words it happens to print.
 const RUNG_TRACK_ROW_META := "rung_track_row"

@@ -171,6 +171,39 @@ const DEFAULT_CULTIVATION_FIELD_CONVERSION_GAIN: f32 = 2.0;
 /// exactly the rung's declared `2.0`, and a Field exactly `4.0`. A **playtest dial**.
 const DEFAULT_CULTIVATION_CAPACITY_PER_TENDER: f32 = 195.0;
 
+/// **THE CROP SHARE A SOW IS PRICED AGAINST** — the share of the ground the chosen crop already holds
+/// at the moment the `plant:field` leg starts, at which the rung costs exactly its declared
+/// `work_cost` (`docs/plan_standing_upkeep.md` §4.15). Sowing ground the crop already dominates is
+/// tidying; sowing ground it barely stands on is replacing the tile, and this is the share those two
+/// are measured either side of.
+///
+/// **0.5625 is the reference basket's own weeded share**, exactly as
+/// [`DEFAULT_CULTIVATION_CAPACITY_PER_TENDER`] is the reference tile's own `K`: `wild_emmer` holds
+/// `0.375` of `AlluvialPlain`'s realized basket (`tests/field_reference_basket.rs`), a Cultivate weeds
+/// it to `0.375 × 1.5 = 0.5625`, and a Field leg always begins from the weeded mix — so the shipped
+/// `plant:field` price is **provably pacing-neutral there**. An anchor rather than a bare penalty is
+/// what keeps the ladder's declared cost meaning what it says: a penalty would make 75 work units the
+/// cheapest case and inflate the whole plant branch.
+const DEFAULT_CULTIVATION_FIELD_REFERENCE_CROP_SHARE: f32 = 0.5625;
+
+/// **THE CHEAPEST A SOW CAN BE**, as a multiple of the rung's declared `work_cost` — `0.25`, i.e. 18.75
+/// work units against the shipped 75, about six turns at this rung's reference crew of three.
+///
+/// **It exists because ground that is already wholly the crop would otherwise be FREE to sow**, and it
+/// is not: you still lay the rows, you still put the seed in, and you still collect the Field's
+/// capacity and regrowth gains for having done it. A floor of zero would hand the rung's whole payoff
+/// away for nothing on exactly the tiles a player has already worked hardest. A **playtest dial** —
+/// `docs/plan_standing_upkeep.md` §4.14 owns the number.
+const DEFAULT_CULTIVATION_FIELD_SHARE_COST_FLOOR: f32 = 0.25;
+
+/// **THE DEAREST A SOW CAN BE**, as a multiple of the rung's declared `work_cost` — `2.0`, i.e. 150 work
+/// units against the shipped 75, about fifty turns at the reference crew of three.
+///
+/// It binds below a crop share of roughly an eighth on the shipped reference: replacing a tile that is
+/// almost none of your crop is twice the job, and never more. Without it a marginal crop's price is
+/// bounded only by the reference share, which is a tuning dial and not a promise. A **playtest dial**.
+const DEFAULT_CULTIVATION_FIELD_SHARE_COST_CEILING: f32 = 2.0;
+
 /// Cultivation tuning (Intensification Phase 1a) — **the levers that are NOT the build meter's**.
 /// The plant rung-2 build dials (how fast a patch is prepared, how fast it goes feral, and the
 /// investment dip it pays while preparing) moved to the shared ladder,
@@ -270,6 +303,28 @@ pub struct CultivationConfig {
     /// Validated finite and `> 0`: a `0` is a division by zero and a negative one an inverted load —
     /// both silent nonsense. See [`DEFAULT_CULTIVATION_CAPACITY_PER_TENDER`].
     pub capacity_per_tender: f32,
+    /// **THE CROP SHARE A SOW IS PRICED AGAINST** — the reference the `plant:field` rung's own
+    /// `work_cost` is the price *at* (`forage::field_cost_multiplier_at_share`). A Sow that replaces
+    /// more of the basket than this costs proportionally more, one that replaces less costs
+    /// proportionally less, and the ratio is clamped by the two dials below.
+    ///
+    /// **It scales the BUILD and nothing else.** `plant:field`'s standing upkeep is
+    /// `scaled_by: source_load`, which reads the tile's `K` — holding a field is about how big the
+    /// place is, never about what used to grow on it — and `plant:tended`'s build cost does not move
+    /// at all: clearing wild ground is clearing wild ground.
+    ///
+    /// Validated finite and in `0.0..1.0` **exclusive of 1.0**: the reference is a *replacement*
+    /// denominator (`1 − share`), so a reference share of a whole basket divides by zero.
+    /// See [`DEFAULT_CULTIVATION_FIELD_REFERENCE_CROP_SHARE`].
+    pub field_reference_crop_share: f32,
+    /// **THE CHEAPEST A SOW CAN BE**, as a multiple of the rung's declared `work_cost`. Validated
+    /// finite and `> 0` — see [`DEFAULT_CULTIVATION_FIELD_SHARE_COST_FLOOR`] for why a free Sow is
+    /// the case this forbids.
+    pub field_share_cost_floor: f32,
+    /// **THE DEAREST A SOW CAN BE**, as a multiple of the rung's declared `work_cost`. Validated
+    /// finite and `>= field_share_cost_floor`, so the clamp is a range rather than an inversion.
+    /// See [`DEFAULT_CULTIVATION_FIELD_SHARE_COST_CEILING`].
+    pub field_share_cost_ceiling: f32,
 }
 
 impl Default for CultivationConfig {
@@ -282,6 +337,9 @@ impl Default for CultivationConfig {
             tended_conversion_gain: DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN,
             field_conversion_gain: DEFAULT_CULTIVATION_FIELD_CONVERSION_GAIN,
             capacity_per_tender: DEFAULT_CULTIVATION_CAPACITY_PER_TENDER,
+            field_reference_crop_share: DEFAULT_CULTIVATION_FIELD_REFERENCE_CROP_SHARE,
+            field_share_cost_floor: DEFAULT_CULTIVATION_FIELD_SHARE_COST_FLOOR,
+            field_share_cost_ceiling: DEFAULT_CULTIVATION_FIELD_SHARE_COST_CEILING,
         }
     }
 }
@@ -767,8 +825,70 @@ fn validate_plant_ladder_payoffs(forage: &ForageLaborConfig) -> Result<(), Labor
             value: cultivation.capacity_per_tender.to_string(),
         });
     }
+    // **THE SOW'S SHARE ANCHOR** — the reference is a *replacement* denominator (`1 − share`), so a
+    // reference share of the whole basket divides by zero and a share outside `0..1` is not a share at
+    // all. Rejected rather than clamped for `capacity_per_tender`'s reason: it is silent nonsense, not
+    // aggressive tuning.
+    if !cultivation.field_reference_crop_share.is_finite()
+        || cultivation.field_reference_crop_share < NO_SHARE_OF_THE_BASKET
+        || cultivation.field_reference_crop_share >= THE_WHOLE_BASKET
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.field_reference_crop_share",
+            constraint: format!(
+                "be finite and in {NO_SHARE_OF_THE_BASKET}..{THE_WHOLE_BASKET} (exclusive of the \
+                 whole basket) — a Sow is priced against how much of the tile it has to REPLACE, so \
+                 a reference of the whole basket is a division by zero and a share outside the range \
+                 is not a share"
+            ),
+            value: cultivation.field_reference_crop_share.to_string(),
+        });
+    }
+    // **A FREE SOW IS THE CASE THE FLOOR FORBIDS.** Ground already wholly the crop replaces nothing,
+    // so an unclamped ratio is exactly zero there — and you still lay the rows, still put the seed in,
+    // and still collect the Field's capacity and regrowth gains for it.
+    if !cultivation.field_share_cost_floor.is_finite()
+        || cultivation.field_share_cost_floor <= NO_SOW_COST
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.field_share_cost_floor",
+            constraint: format!(
+                "be finite and greater than {NO_SOW_COST} — ground already wholly the crop replaces \
+                 nothing, so a floor of zero makes sowing it FREE while it still collects the \
+                 Field's capacity and regrowth gains"
+            ),
+            value: cultivation.field_share_cost_floor.to_string(),
+        });
+    }
+    if !cultivation.field_share_cost_ceiling.is_finite()
+        || cultivation.field_share_cost_ceiling < cultivation.field_share_cost_floor
+    {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.cultivation.field_share_cost_ceiling",
+            constraint: format!(
+                "be finite and at least the floor's own {} — the two bound one clamp, and a ceiling \
+                 below its floor inverts it",
+                cultivation.field_share_cost_floor
+            ),
+            value: cultivation.field_share_cost_ceiling.to_string(),
+        });
+    }
     Ok(())
 }
+
+/// **NO SHARE OF THE BASKET AT ALL** — the inclusive floor of
+/// [`CultivationConfig::field_reference_crop_share`], named rather than a bare `0.0` because the
+/// rejection is about a *share*, not about a quantity being small.
+const NO_SHARE_OF_THE_BASKET: f32 = 0.0;
+
+/// **THE WHOLE BASKET** — the *excluded* ceiling of
+/// [`CultivationConfig::field_reference_crop_share`], and the mirror of `forage::WHOLE_BASKET`. It is
+/// excluded because the reference is used as `1 − share`.
+const THE_WHOLE_BASKET: f32 = 1.0;
+
+/// **A SOW THAT COSTS NOTHING** — the excluded bound of
+/// [`CultivationConfig::field_share_cost_floor`].
+const NO_SOW_COST: f32 = 0.0;
 
 /// **A tender who minds nothing** — the excluded bound of
 /// [`CultivationConfig::capacity_per_tender`], named rather than a bare `0.0` because the rejection

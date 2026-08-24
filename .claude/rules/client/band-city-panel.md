@@ -2087,13 +2087,14 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   (hurdles, animal) and `tillage` (hoes, plant) — and which one a build gets is DERIVED from **that
   queue ENTRY's** own branch (`labor-ui.md` → "A BUILD IS PRICED AT THE **BUILDERS'** KIT"). A card is
   per BAND, so it could only answer a per-ENTRY question with one standing answer; and the only way
-  to *send* that answer, a `kit` token on the `builders` row, is an override the sim honours **over
-  the derivation from then on**. Measured in play: one click put `kit hurdling` on every later
+  to *send* that answer was a `kit` token on the `builders` row, which the sim honoured as an override
+  **over the derivation from then on**. Measured in play: one click put `kit hurdling` on every later
   builders command and pinned a band raising a plant Cultivate to the animal web's tool with no way
   back — `none` being bare-handed rather than a way to un-pin. **The control was the defect, not its
   rendering**, so `KIT_PICKER_ROLES` no longer names the role and `build_kit_row` is never called for
-  it. **The per-entry override lands on the QUEUE ROW** (§7's ② — one job, one kit, `(default)`
-  marked as hunting's is), which is where an entry can answer for itself.
+  it. **THAT TOKEN IS NOW REFUSED BY THE SIM** — `handle_assign_labor` rejects a `kit` on this role by
+  name — and the per-entry override lands on the QUEUE ROW (§4.7b, below: one job, one kit,
+  `(default)` marked as hunting's is), which is where an entry can answer for itself.
 - **…BUT THE CARD STILL STATES WHAT THE POOL IS CARRYING, on a read-only gear line.** Removing the
   selection is not removing the information: `KitRoster.role_gear_line` renders
   `Tillage kit · 8.5 work off a build, per builder · Hoes 38` — the kit's name, then the picker's old
@@ -2333,9 +2334,7 @@ BUILD QUEUE                          3 builders · Tillage kit
 - **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
   identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
   surfaces and there is no second command builder.
-- **DRAG-TO-REORDER IS STILL OPEN.** `build_order` on the command line covers it meanwhile, which is
-  what the overflow row's tooltip says. §4.7 landed the tab's structure; the reorder gesture and the
-  per-entry KIT picker are the slice's remaining half.
+- **THE ROW IS DRAGGED TO REORDER, AND ITS SETTINGS HOLD THE PER-ENTRY KIT** — §4.7b, below.
 
 ### THE DATE IS A COMPLETION TURN, NOT A CHAINED COUNTDOWN (§4.7)
 
@@ -2434,6 +2433,42 @@ the claim is that the two surfaces AGREE. Sabotage-verified by returning the des
 exactly **six** fail (both readouts × the two-leg sow, the first turn and the animal twin) while the
 single-leg control stays green, printing the played `Sowing 0% · turn 64` and `▦0%`.
 
+### …AND A FENCE RING'S PERCENTAGE IS ITS OWN METER, BECAUSE IT CLIMBS NOTHING
+
+Reported from play. `🐄 Corral Wild Fowl   turn 151 (0%)`, and the percentage never moved for the
+ring's whole life. A pen-extension ring is the one queue entry the leg re-pointing above cannot reach:
+`BuildJob::ExtendPen`'s destination is the pen rung it **widens**, so there is no leg to climb, only
+more of the one the source is already on. The herd reads `Corralled 100%`, `build_verb` answers no rung
+in flight, `RungGates.rung_in_progress` is empty, and the ladder credit the column quotes is therefore
+**structurally zero for every ring, always** — a plausible-looking row with a number that can only be
+zero.
+
+| what | reads |
+|---|---|
+| the row's TITLE | `Corral <herd>` — a ring derives the verb of the rung it widens, and is UNCHANGED |
+| the date | the sim's own ring countdown (`published_ring_turns`) — always correct, and UNCHANGED |
+| the percentage | the RING's meter: `SourceForecast.pen_extend_fraction`, in work units |
+
+- **THE RING IS IDENTIFIED FROM WHAT IS ALREADY ON THE WIRE** — `SourceForecast.BUILD_JOB_EXTEND_PEN`,
+  the `extend_pen` token `snapshot::population::resolved_build_job` publishes in the row's
+  `improvement` slot because a built pen carries no meter for a rung verb to name. No wire field was
+  added for it, and none is needed.
+- **THE MODEL CARRIES THE QUOTIENT, NOT THE ROW** (`build_ring_progress`), resolved in
+  `_work_source_models` where the live herd dict is already in hand — beside the six other build fields
+  and for their reason. `PEN_EXTEND_EMPTY_METER` on every entry that is not a ring: the field is
+  meaningful only under the branch `improvement` selects.
+- **IT IS THE SAME DIVISION THE HERD DRAWER'S BADGE QUOTES.** The queue row and the `Fencing N%` pill
+  read one ring through one helper, so they cannot state it two ways — see `labor-ui.md` → "The fence
+  ring's meter is a work pair" for the units and the zero-denominator rule.
+
+Asserted in `band_panel_preview` as `band_panel_queue_ring` on three claims, the first being the
+precondition without which the other two pass for free: that the pen rung is FULL with no rung in
+flight (so the ladder genuinely has nothing to credit), that the face still derives the widened rung's
+verb, and the date column by EQUALITY — which pins the untouched countdown and the ring's own
+percentage in one string. The fixture's pair (30 of 40 work → 75%) deliberately differs from the herd
+drawer's (42 of 70 → 60%), so a row quoting the wrong ring fails on the number rather than coinciding
+with it.
+
 ### A ROW EXPANDS INTO THE JOB'S SETTINGS, AND THE ROW ITSELF TAKES NO SIXTH COLUMN (§4.7a ③)
 
 The crop moved off the compose sheet — *"the CROP TO TEND shouldn't be a selection here as the user can't
@@ -2462,6 +2497,155 @@ marker · mark · face · date · `✕` until the date column learned a verb —
   positive half passed alone. A missing animal row now `_fail`s outright rather than skipping, and the
   needle matches `HudFormat.policy_face` (the compose sheet's *"Tame this herd"* label appears nowhere on
   a queue row, whose face reads `◎ Tame Red Deer`).
+
+### THE QUEUE'S OWN CONTROLS — the kit, the drag, the withdrawal (§4.7b)
+
+`docs/plan_standing_upkeep.md` §4.7b. The block could be READ but barely operated: the kit override
+had no home at all, the order was `build_order` on the command line, and withdrawing a confirmed entry
+did not leave the block until the turn resolved. All three land on the row that already exists.
+
+#### ② THE KIT PICKER, IN THE SETTINGS STRIP, FLOWING
+
+- **EVERY QUEUED ENTRY HAS A KIT, so every queue row expands now** — the hunt/tame rows that carried
+  `legs == 0, crop == false` included. That is not a widening of the *never invite a click that opens
+  nothing* rule; it is that rule reaching its second setting. `_queue_settings_content` returns
+  `{legs, crop, kit}` and the crop stays the plant web's alone.
+- **THE WRAP IS COMPUTED, NEVER DISCOVERED.** `HudWorkVocab.queue_settings_one_line(line_width)` is a
+  WIDTH PREDICATE both sides read: the strip's `custom_minimum_size` and `_work_board_capacity`'s
+  chrome term go through the one `build_queue_settings_height(legs, has_crop, has_kit, one_line)`. A
+  Godot flow container that wrapped at LAYOUT time could not tell the reservation how many lines it
+  drew, and this zone takes the difference off the bottom of the board in silence. **Neither picker
+  ever shrinks** — the widths are fixed (`BUILD_QUEUE_CROP_WIDTH` / `BUILD_QUEUE_KIT_WIDTH`, both 168)
+  and the LINE COUNT is what gives. `BUILD_QUEUE_SETTINGS_KEY_WIDTH` is shared by `CROP` and `KIT` so
+  the two keys share a left edge when they stack.
+- **A LONE CONTROL IS ALWAYS ONE LINE**, whatever the width: an ANIMAL entry has a kit and no crop, so
+  it has nothing to wrap against and the predicate must not answer for it.
+- ⛔ **NO SHIPPED DOCK REACHES THE ONE-LINE SIDE TODAY, and the numbers are the point.** The work zone
+  is one board column wide at every dock the panel ships with — **342px of strip on the tall LEFT dock,
+  368 on the 1920 BOTTOM one, against the 408 the pair needs.** One line arrives when the board earns a
+  SECOND column, which `_affordable_work_columns` needs ~760px of card span for and a 1920 wide shell
+  does not have once both flanks are paid for. So the flow is asserted where it is DECIDED
+  (`band_panel_preview._assert_queue_settings_predicate`, both sides of the threshold plus the height
+  that follows it) and REPORTED at each dock — which is what makes *"which layouts get one line"* a
+  number rather than a look.
+- **IT IS A FIXED-HEIGHT PICKER, NOT `KitRoster.build_kit_row`.** That helper returns a two-child
+  block whose second child — the `tier_hint` line — is present only when the selected kit has
+  something to say, so the row it draws is 22px or ~36px depending on the PICK, and this strip reserves
+  its height before it draws it. The LIST is still the roster's own: `KitRoster.kit_entries` was
+  extracted out of `build_kit_row` so both hosts share the roster order, the `(default)` mark and the
+  greying of a kit that serves the other web, and only the chrome differs.
+- **THE `(default)` MARK IS THE DERIVATION, PER ENTRY** — `KitRoster.build_kit_for_branch` off the
+  entry's own web (`build_branch_for_kind`), which is the answer the sim resolves when the entry
+  reaches the head. **The selection shown is the wire's `build_kit_id`**, the RESOLVED kit, falling
+  back to the derivation for an entry the wire has not placed.
+- **PICKING THE DERIVED DEFAULT EMITS NO `kit` TOKEN, and that is what CLEARS the override.**
+  `Main._kit_token`'s standing rule — omit the token when the selection equals the default — is
+  exactly right here, so there is no `default` literal to invent; `none` is bare-handed and is a real
+  selection. **No optimistic overlay**: `buildKitId` is captured LIVE, so the recapture the command
+  triggers already carries the pick.
+
+#### ③ THE MARKER COLUMN IS THE DRAG HANDLE — no new width
+
+The row's width is spoken for: marker 10 + face + date 168 + `✕` 32 + separations, and the face is
+**already ellipsised** at its widest shipped value (`🐄 Corral Thunder Mammoths` needs 189 of ~126). A
+handle column of its own would come straight out of the one column carrying an unclipped-name
+guarantee. The marker slot is reserved on every row already (that is what lines the faces up) and
+holds nothing on a non-head row.
+
+- **The head keeps `▸`** — that marker is load-bearing, it names the entry the pool is funding — and is
+  still a handle, demotion being the most likely reorder there is. Every other confirmed row draws
+  `BUILD_QUEUE_DRAG_HANDLE` in the quiet ink. **A PENDING row is not draggable**: the wire has not
+  placed it, so there is no position to name and nothing to move it above.
+- **`Control.set_drag_forwarding`, so no per-row script exists.** The grab is forwarded off the marker
+  and the drop off the ROW (a 10px column is not a drop target a player should have to aim at twice).
+  The handle takes `MOUSE_FILTER_PASS`, so a plain click still reaches the row's click-to-open —
+  Godot only asks for drag data past a movement threshold.
+- **THE DROP INDICATOR COSTS NO HEIGHT.** The block's `separation` is 0, so an indicator drawn
+  *between* two rows would need a new term in `build_queue_block_height` on the reservation side as
+  well as the render side. `HudStyle.work_row_drop_stylebox` lights one edge of the target row's OWN
+  stylebox instead, swapped on nodes the controller holds (`_queue_row_nodes`) rather than by
+  re-rendering the block the gesture is standing on.
+- ⛔ **A SNAPSHOT MID-GESTURE KILLS THE DRAG, so the Work zone does not rebuild while one is in
+  flight.** `Main._apply_snapshot` → `update_band_alerts` → `refresh_snapshot()` → `render_band()`
+  rebuilds all three zones and `populations` / `herds` move on essentially every turn; freeing the row
+  the pointer holds ends the gesture on the first pixel of movement, the mechanism
+  `DrawerComposeController` already documents for the floor drag. `_queue_drag_in_flight()` is read at
+  BOTH doors — `_repage_work_zone` (which is also what a window resize comes through) and
+  `render_band` — and `_on_queue_drag_end` re-renders once.
+  - **The cancel is why `QueueDragWatcher` exists.** Godot announces the end of a drag —
+    dropped OR cancelled — as `NOTIFICATION_DRAG_END` to every `Control` and by no other means, and
+    this controller is a `RefCounted`. A suppression lifted only by a successful drop freezes the block
+    for good.
+- **THE QUEUE IS THE RANK.** The drop sends `build_order <faction> <band> <source…> <position>`,
+  0-based — §4.9's priority property stored in the queue itself, so this client keeps no rank beside
+  it. `build_order` is the one of the three verbs that names a BAND; a kit and a withdrawal are
+  properties of an entry every band holding that source shares.
+- **The new order is OPTIMISTIC**, on the same turn-keyed overlay ④ uses: `buildQueuePosition` is
+  turn-written, so without it the list snaps back on the command's own recapture. The overlay states
+  the WHOLE ordering rather than a delta, and `_queue_sort_rank` pushes an entry it does not name
+  behind every entry it does — which is what keeps the sort a TOTAL order under Godot's unstable
+  `sort_custom`.
+
+#### ④ THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED
+
+⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
+**every** command, and that capture still carries the stale turn-written `buildQueuePosition` — so a
+"hide it until the next snapshot" rule flickers the row straight back a frame later.
+`reconcile_pending` already keys additions on *a snapshot with a NEWER turn*, and the withdrawal set
+lives in the same per-band record (beside `assign` / `move` / `order`) so it takes that rule and
+`_prune_pending_entity` with no second lifecycle.
+
+- **IT CLEARS THE IMPROVEMENT; IT DOES NOT DROP THE PENDING RECORD.** `unqueue` withdraws a
+  DECLARATION and leaves the take crew standing — and the same record may hold a pending CREW edit,
+  which dropping it would discard. `effective_worker_map` blanks the effective improvement for the
+  withdrawn key instead, which is what puts the source's work row back to its `⌃` offer face on the
+  same frame, off the one map every readout shares.
+- **The payload carries `pending_entity` and `kind`, neither of them a command token.** `Hud` records
+  the withdrawal BEFORE emitting (this layer's standing rollback precondition — `Main` handles the
+  signal synchronously) and `Main._on_hud_unqueue` hands the payload back to `drop_pending_unqueue`
+  when the send does not go, exactly as `_on_hud_assign_labor` does.
+
+#### ⛔ ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — and it was a live defect
+
+Open a queue row's settings **and** a work row's inspector on a one-column BOTTOM dock — one click
+each, both shipped — and `Zone_work` drew **460 into a 396px box (over by 64)**, with the board already
+at its `maxi(1, …)` floor and nothing left to give back. **No frame caught it because every
+strip-open frame had no inspector and every inspector-open frame had no strip** — two disjoint frame
+families, the defect living in the gap, which is the same shape §4.7 found in the inspector's own
+height.
+
+`_queue_open_key` and `_work_open_key` are MUTUALLY EXCLUSIVE now: opening either closes the other. It
+is the rule both lists already followed internally, read one level up, and it costs nothing. With it
+the same dock reads **396 of 396 — zero spare, and no overflow**. `band_panel_queue_settings_exclusive`
+is the frame, asserting the exclusion BOTH ways (a builder that never opens the strip would pass one
+half) beside `_assert_zone_content_fits`; sabotage-verified by disabling the exclusion, which prints
+the 460 above.
+
+#### TWO CONSTANTS THAT READ LOWER THAN THEY DRAW, corrected here
+
+- **`BUILD_QUEUE_UNQUEUE_WIDTH` 22 → 32.** `HudWidgets.compact` squeezes the type size and the
+  VERTICAL padding — that is what keeps a control inside a 28px row — and leaves the ghost button its
+  horizontal margins, so the reservation was 10px under what the `✕` draws and the row's expanding
+  face paid the difference.
+- **`BUILD_QUEUE_SETTINGS_HEIGHT` 30 → 34** — a 22px compact picker plus the strip's own 12px of
+  `HudStyle.ROLE_CARD_PADDING` (it wears `work_inspector_stylebox`, which is the role card's). A live
+  4px under-reserve every time a strip opened, and correcting it is what makes the flow arithmetic
+  honest: a term wrong by four is wrong by eight the moment the strip wraps.
+
+**Frames:** `band_panel_queue_settings_stacked` (the tall LEFT dock, both pickers, keys aligned) ·
+`band_panel_queue_settings_wide` (the 1920 BOTTOM dock, which stacks too — the measurement that says so
+is printed) · `band_panel_queue_settings_exclusive` · `band_panel_queue_drag` (a drag in flight, with
+the indicator on the target row and the block asserted NOT to have rebuilt under it) ·
+`band_panel_queue_withdrawn` (the row gone, and STILL gone across a re-push of the same fixture on the
+same turn — the command's own recapture).
+
+**`build_kit` and `build_order` are driven in `command_guard`**, both source forms each, because a
+well-formed line that means the wrong thing is exactly what that gate exists for. `build_kit` is the
+first SOURCE-addressed verb it drives — it names no band, every band holding the source holding the
+same entry — so `BandHandle` grew a `SourceAddressed` outcome keyed on the parsed VARIANT rather than
+on the harness's own label, which is what stops a band-addressed command being opted out of the handle
+check by being relabelled. The `builders` role is swept BARE there now: the sim refuses a `kit` token
+on it, and that refusal is in the handler rather than the parser, so a parser-level gate cannot see it.
 
 ### THE HEAD'S KIT DERIVES FROM A **PENDING** ENTRY TOO (§4.7)
 
@@ -3124,6 +3308,114 @@ ONE row on the card quotes a price) · `band_panel_rung_track_climbing` (a two-l
 `plant:field`, opened from the RUNNING slot — the path, the target, and both wire figures by
 EQUALITY) · `band_panel_queue_legs` (the queue row opened into its climb). The four are judged as a
 SET: a card that marked every rung `open` passes any one of the state claims alone.
+
+### …AND A PLANT RUNG DOES NOT COMMIT UNTIL A CROP IS NAMED (§4.15)
+
+Ray, from play: *"User selects the crop to keep … maybe we default to nothing and force them."* The
+`⌃` declared in ONE click and sent **no species token**, so every Sow took the sim's own default — the
+**highest-share legal plant**, which considers neither what that plant pays nor the player's take
+selection. That is how a fertile tile got committed to a zero-food cash crop.
+
+So picking a plant rung on the track opens a **second page of the same card**, and the CROP is the
+declaration:
+
+```
+WHAT TO GROW                      ← on a SOW; a Cultivate reads WHAT TO TEND
+  🌾 Wild Grain 70%
+     38 work · 3.40 food
+  🚬 Tobacco 20%
+     150 work · 0.00 food · 1.12 tobacco
+  Sim picks
+     → 🌾 Wild Grain 70%
+  ‹ Back
+```
+
+- ⛔ **THE TITLE IS PER RUNG, BECAUSE A CULTIVATE GROWS NOTHING.** The tended rung WEEDS — the favored
+  share rises toward `tended_weeding_gain`, the volunteers beside it are still wild, and
+  `tended_conversion_gain` multiplies that one species' yield vector — so the choice there is which
+  plant the band gets good at, not what it plants. Only the FIELD rung plants, forcing the favored
+  share to 1.0 and every other to 0. `RUNG_CROP_TITLE_TEND` / `RUNG_CROP_TITLE_GROW`, chosen in
+  `build_crop_step` from the improvement it is committing. Reported from play as a nit, and it is the
+  MODEL rather than the wording: `WHAT TO GROW` over a Cultivate tells a player the rung does
+  something it does not do.
+- ⛔ **THE ROWS STATE WHAT EACH CROP PAYS, AND THAT IS THE ACTUAL REPAIR.** Forcing the choice only
+  RELOCATES the trap if the list is names and shares: the player picks the dominant plant again,
+  because it looks like the obvious answer. Nothing on the path from *this ground is fertile* to *this
+  field feeds nobody* states the zero unless a row does — so the FOOD clause is the one clause in
+  `HudFloraVocab` exempt from the render-only-when-non-zero rule and prints `0.00 food` outright.
+- ⛔ **AND EACH ROW STATES ITS OWN SOW PRICE, WHICH IS THE OTHER HALF OF THE DECISION.** The work
+  figure was one number per PATCH — `fieldWorkCost`, struck against the patch's commitment or the
+  rung's auto-pick — so every crop in the list was quoted the DEFAULT crop's price while the payoffs
+  beside them moved, and the true one appeared only once the leg started and re-quoted. A picker
+  exists to weigh work against payoff; with the work half wrong for every crop but one it did the
+  opposite. `FloraShareInfo.sowWorkCost` rides each composition entry and is quoted as published.
+  It LEADS the row, a price being read before what it buys.
+- **A CROP THE WIRE PRICES NO SOW FOR RENDERS NO ROW.** Absence is the sim's "this plant cannot climb
+  to a Field on this ground" — the tile-specific legality `can_sow` (a SPECIES ceiling) structurally
+  cannot express — so a row would offer a job that cannot be ordered, and a `0` would read as a free
+  Sow. It is the same predicate `default_species_for_rung` filters on, so the rows that survive are
+  exactly the plants `Sim picks` chooses between.
+- ⛔ **NOTHING HERE IS DERIVED FROM ANYTHING ELSE HERE.** A committed patch's published `share` is its
+  REWEIGHTED one while `sowWorkCost` is struck on the tile's own basket, which is what the sim charges
+  against; and the per-crop price and the patch's own `fieldWorkCost` agree by construction for the
+  crop a patch is committed to (asserted sim-side on the encoded envelope) rather than by one being
+  computed from the other. Quote each as published.
+- **THE FIGURES ARE THE RUNG'S OWN, per plant** — `sow_payoff` / `cultivate_payoff` and their fodder
+  and material twins off the composition entry, which is what THIS rung would pay once it stands. The
+  per-biomass rates beside them describe the wild stand being gathered today and answer a different
+  question; the two rungs differ in KIND rather than by a factor, so the rung is passed in.
+- **ONE CLAUSE PER MATERIAL, never a summed materials figure** — the retired trade axis under a new
+  name, which the crop picker is the last surface that could reintroduce.
+- **`Sim picks` STAYS AND STOPS BEING THE DEFAULT.** `""` is a real instruction on the wire and
+  choosing it deliberately is fine. It renders **LAST** (a leading default is what a hurried player
+  takes) and its aside names the plant it would resolve to, so it is no quieter about the consequence
+  than the rows above it.
+- **ANIMAL RUNGS STAY ONE CLICK.** `tame` and `corral` commit no species, so a second step there would
+  be a click that answers nothing — `RungLadder.rung_commits_a_crop` is the fork. So does a plant rung
+  on a basket carrying no plant it may legally take: the sim accepts a Sow with no token and settles
+  it itself, and a step with nothing in it is worse than none.
+- **THE CROP GOES FIRST AND THE RUNG SECOND**, which is the commands' own order: the crop rides
+  `assign_labor`'s `species` token on the band's existing forage row (`_emit_work_assign`, the queue
+  row's picker's path — **no second builder and no wire change**), and the declaration follows so its
+  optimistic overlay is the one the rebuilt board reads.
+- **IT COSTS THE ZONE NOTHING**, being the same `PopupPanel`; both rendered states run
+  `_assert_zone_content_fits` with the card up.
+- **THE QUEUE ROW'S OWN CROP PICKER IS UNTOUCHED.** This adds the choice at DECLARATION; changing it
+  before the job starts is still the settings strip's.
+
+### …AND THE FIELD ROW STATES ITS PRICE AND NO REASON (§4.15)
+
+`plant:field`'s build cost is scaled by the chosen crop's share of the tile — sowing a crop that
+already holds most of the ground is mostly tidying, sowing one that holds a tenth means replacing the
+tile — so two Sows are quoted at wildly different work. The declaration path's own Field row states
+that price:
+
+```
+▦ Field                            150 work
+```
+
+- ⛔ **THE PRICE IS THE WIRE'S `fieldWorkCost` AND IS NEVER RE-DERIVED.** It is what will be charged
+  for THIS patch's Sow — the crop it is committed to, or the rung's auto-pick where it has none.
+- **THE CAUSE IS NOW SHOWN RATHER THAN NARRATED.** A crop-and-share sentence sat beneath the price for
+  one release, naming the plant the figure was struck against; the crop step one press away states
+  every legal crop's OWN price, so the sentence explained a variation the player can now simply read.
+  Ray, on it: *"too wordy. If it is known, we don't need any of that text."* `RUNG_TRACK_SOW_PRICE_
+  NOTE_FORMAT`, `RungLadder`'s `ROW_NOTE_KEY`, `_price_note` and `_priced_crop_entry` are all retired,
+  and no rung on the track carries an aside but a LOCKED one's gate reason.
+- **THE TWO FIGURES AGREE BY CONSTRUCTION FOR THE COMMITTED CROP, and the client asserts rather than
+  derives.** The per-crop `sowWorkCost` for the crop a patch is actually committed to IS that patch's
+  `fieldWorkCost` — one sim-side expression, checked on the encoded envelope — so neither surface may
+  compute the other's number.
+- **Only the Sow rung has a per-crop price at all.** Cultivate's cost is unscaled and both animal
+  rungs' multiplier is the species', which the row already names — so the crop step quotes work on the
+  Sow rung and nothing on the others.
+
+**Frames, judged as a SET:** `band_panel_rung_price_cheap` (uncommitted ground, the patch priced at
+its auto-pick's `38 work`) · `band_panel_rung_crop` (the step that rung opens — `38 work · 3.40 food`
+against `150 work · 0.00 food · 1.12 tobacco`, and the third plant the wire prices no Sow for absent
+entirely) · `band_panel_rung_price_dear` (the SAME basket COMMITTED to the minority crop, the patch
+now at `150 work`). A Field row quoting a constant passes either price frame alone, and a picker
+quoting one price per patch passes every claim a one-crop basket can state.
 
 ## DENIAL is a third MISSION on the parties footer, not a floor on the hunt form
 

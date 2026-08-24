@@ -94,6 +94,32 @@ signal improvement_requested(payload: Dictionary)
 ## declaration again instead of clearing it and left the rung stuck with no undo.
 signal unqueue_requested(payload: Dictionary)
 
+## The KIT one queued build is raised with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
+## formatting `build_kit <faction> <x> <y> [kit <id>]` / `build_kit <faction> <herd_id> [kit <id>]`
+## (`docs/plan_standing_upkeep.md` §4.7a ②). RELAYED from `BandPanelController`'s queue-row settings
+## strip, its only emitter.
+##
+## **ITS OWN SIGNAL BECAUSE THE BUILDERS' KIT IS PER QUEUE ENTRY, not per band.** `assign_labor`
+## REFUSES a `kit` token on the `builders` role now: one stored id per band is the one thing the
+## sim's per-entry derivation cannot express, and honouring it as an override pinned a band raising a
+## plant Cultivate to the animal web's tool with no way back.
+##
+## **AN ABSENT `kit` TOKEN CLEARS THE OVERRIDE** back to that derivation, which is why the payload
+## carries `default_kit_id`: `Main._kit_token` omits the token when the selection equals the default,
+## so picking the `(default)` entry is how a player hands the choice back. `none` is bare-handed and
+## is a real selection.
+signal build_kit_requested(payload: Dictionary)
+
+## The band's build queue was DRAGGED into a new order — { faction, band_id, x, y, herd_id, position },
+## Main formatting `build_order <faction> <band> <x> <y> <position>` /
+## `build_order <faction> <band> <herd_id> <position>` (`docs/plan_standing_upkeep.md` §4.7b ③).
+## RELAYED from `BandPanelController`, its only emitter.
+##
+## **THE QUEUE IS THE PRIORITY PROPERTY'S OWN STORAGE** (§4.9), so the position is an index into that
+## one list and this client keeps no rank of its own beside it. `pending_entity` rides the payload for
+## the optimistic ordering's rollback and no `format_*` builder reads it.
+signal build_order_requested(payload: Dictionary)
+
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
 ## `spread` or `priority`. Main formats `upkeep_mode <faction> <band_id> <mode>`.
@@ -519,8 +545,17 @@ func _ready() -> void:
     # The BUILD QUEUE block's row `✕` (`docs/plan_standing_upkeep.md` §4.6b) joins the compose
     # sheet's uncheck on the ONE `unqueue_requested` edge — the payloads are identical, so
     # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
-    _bandpanel.unqueue_requested.connect(
-        func(payload: Dictionary) -> void: unqueue_requested.emit(payload))
+    # **THE WITHDRAWAL'S OPTIMISTIC HALF RIDES THIS RELAY**, which is why it is a method rather than a
+    # lambda — see `_on_queue_row_unqueue_requested`.
+    _bandpanel.unqueue_requested.connect(_on_queue_row_unqueue_requested)
+    # The queue row's KIT picker and its drag, each straight through: neither needs an optimistic
+    # write on this layer. `buildKitId` is captured LIVE, so the recapture the command triggers
+    # already carries the pick; the drag's own overlay is written by the controller before it emits,
+    # beside the ordering it is about.
+    _bandpanel.build_kit_requested.connect(
+        func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
+    _bandpanel.build_order_requested.connect(
+        func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
@@ -1097,6 +1132,58 @@ func _after_pending_change() -> void:
     _bandpanel.rerender()
     emit_signal("labor_pending_changed", _band_labor.pending_labor())
 
+## **A WITHDRAWAL FROM THE BUILD QUEUE, AND ITS OPTIMISTIC HALF** (`docs/plan_standing_upkeep.md`
+## §4.7b ④). The `unqueue` goes on the wire; the withdrawal is ALSO written to the pending overlay so
+## the row leaves the BUILD QUEUE block on the frame the `✕` is pressed rather than a turn later.
+##
+## **THE ASYMMETRY THIS CLOSES WAS VISIBLE IN PLAY.** A declaration made this turn shows immediately
+## (a pending row at the tail); unticking a CONFIRMED entry did not leave the block at all, because
+## the queue's positions are turn-written wire state and the overlay carried additions only.
+##
+## ⛔ **IT KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
+## EVERY command, and that snapshot still carries the stale `buildQueuePosition` — so a "hide it until
+## the next snapshot" rule flickers the row straight back. `record_pending_unqueue` files it in the
+## same per-band record `reconcile_pending` already drops on a snapshot with a NEWER turn.
+##
+## **THE RECORD PRECEDES THE EMIT**, this layer's standing rollback precondition: `Main` handles the
+## signal synchronously and hands the payload back to `drop_pending_unqueue` when the send fails, so a
+## record written afterwards would survive its own failed command.
+func _on_queue_row_unqueue_requested(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity >= 0:
+        _band_labor.record_pending_unqueue(entity, String(payload.get("kind", "")),
+            int(payload.get("x", -1)), int(payload.get("y", -1)),
+            String(payload.get("herd_id", "")))
+        _after_pending_change()
+        # …and an OPEN compose sheet on that source stops reading DECLARED on the same frame, the
+        # mirror of the declaration relay's own refresh: `_after_pending_change` re-renders the drawer
+        # and the panel but never the floating sheet.
+        _drawercompose.refresh_compose_sheet()
+    unqueue_requested.emit(payload)
+
+## **THE WITHDRAWAL'S ROLLBACK**, for an `unqueue` that never left the client — `drop_pending_assign`'s
+## rule and its reasons, one key at a time so the band's other un-acknowledged edits survive.
+## `has_method`-probed by name from `Main`, so it stays a thin delegator.
+func drop_pending_unqueue(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity < 0:
+        return
+    if _band_labor.drop_pending_unqueue(entity, _band_labor.pending_key(
+            String(payload.get("kind", "")), int(payload.get("x", -1)),
+            int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
+        _after_pending_change()
+        _drawercompose.refresh_compose_sheet()
+
+## **THE DRAG'S ROLLBACK**, for a `build_order` that never went. The ordering overlay is ONE slot per
+## band rather than a keyed set, so the payload's `pending_entity` is the whole identity — the move
+## overlay's own shape.
+func drop_pending_order(payload: Dictionary) -> void:
+    var entity := int(payload.get("pending_entity", -1))
+    if entity < 0:
+        return
+    if _band_labor.drop_pending_order(entity):
+        _after_pending_change()
+
 ## **THE OPTIMISTIC WRITE'S UNDO, FOR A COMMAND THAT NEVER WENT.** `_emit_assign_labor` records the
 ## pending entry BEFORE the send, which is right; nothing rolled it back when the send failed, so a
 ## dropped `assign_labor` left the role card showing workers the server had never heard of until the
@@ -1599,6 +1686,28 @@ func cycle_panel_band(delta: int) -> void:
 ## Jump to the panel band on the map (the panel header's "jump to my band" affordance).
 func focus_panel_band() -> void:
     _bandpanel.focus_band()
+
+## The `entity` an unresolvable band resolves to, named beside its only reader rather than written as
+## a bare `-1`: it is the whole of `show_band_work_tab`'s unknown-band case, and it has to sit below
+## `BandPanelController.show_work_tab`'s own `>= 0` guard for that case to behave.
+const NO_BAND_ENTITY := -1
+
+## **THE EVENT DOCK ASKS FOR A BAND'S WORK TAB** — the `Work tab` link on a row where the sim cut,
+## dropped or narrowed one of that band's labor rows. `Main` relays `band_work_tab_requested` here;
+## the strip never reaches the panel itself, exactly as the compose sheet never reaches the dock.
+##
+## **THIS IS WHERE THE TWO BAND HANDLES MEET, AND IT IS THE ONLY PLACE THEY CAN.** The dock holds the
+## sim's durable `band_id` (an event's `band=` token is all it ever gets); `show_work_tab` takes the
+## client-local `entity` every overlay reader keys on. The roster is what joins them, and the roster
+## is here — so the id is resolved once, in this method, and neither end learns the other's handle.
+##
+## **AN UNRESOLVABLE ID STILL GETS THE TAB**, which is `show_work_tab`'s own rule and not a second
+## one: a band the roster has never heard of resolves to `NO_BAND_ENTITY`, the jump is skipped and
+## the tab switch — the half that is always right — still happens. A pressed link doing nothing at all
+## is the failure that rule exists to prevent.
+func show_band_work_tab(band_id: int) -> void:
+    var band := _band_labor.player_band_by_band_id(band_id)
+    _bandpanel.show_work_tab(int(band.get("entity", NO_BAND_ENTITY)))
 
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:

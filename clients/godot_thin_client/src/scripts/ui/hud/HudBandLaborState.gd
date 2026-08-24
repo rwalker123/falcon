@@ -474,6 +474,93 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 	_pending_labor[entity] = entry
 	changed.emit(&"pending")
 
+# ---- THE WITHDRAWALS AND THE ORDER — the queue's own two optimistic facts --------------------------
+#
+# **BOTH RIDE THE EXISTING PER-BAND RECORD, beside `assign` and `move`** (`docs/plan_standing_upkeep.md`
+# §4.7b ③, ④), so `reconcile_pending` and `_prune_pending_entity` cover them with no second lifecycle
+# to keep in step.
+#
+# ⛔ **THEY ARE KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts
+# after EVERY command (`recapture_and_broadcast`), and that snapshot still carries the stale
+# turn-written `buildQueuePosition` — so a "hide it until the next snapshot" rule flickers the row
+# straight back a frame later. `reconcile_pending` already keys additions on *a snapshot with a NEWER
+# turn*; these take the identical rule for free by living in the same record.
+
+## The keys this band has WITHDRAWN this turn — `pending_key`'s own shape, so it cannot drift from
+## what the queue models are keyed by.
+func pending_unqueues_for(entity: int) -> Dictionary:
+	var e: Variant = _pending_labor.get(entity, {})
+	if not (e is Dictionary):
+		return {}
+	var u: Variant = (e as Dictionary).get("unqueue", {})
+	return u if u is Dictionary else {}
+
+## …and the ORDER the player dragged this band's confirmed queue into, `[]` when they have dragged
+## nothing. `buildQueuePosition` is turn-written, so without this the list snaps back to the wire's
+## order the moment the command's own recapture lands.
+func pending_order_for(entity: int) -> Array:
+	var e: Variant = _pending_labor.get(entity, {})
+	if not (e is Dictionary):
+		return []
+	var o: Variant = (e as Dictionary).get("order", [])
+	return o if o is Array else []
+
+## **WITHDRAW A DECLARATION OPTIMISTICALLY.** The row leaves the BUILD QUEUE block on the frame the
+## `✕` is pressed rather than a turn later, which is the asymmetry the declaration's own optimistic
+## row created.
+##
+## ⛔ **IT CLEARS THE IMPROVEMENT; IT DOES NOT DROP THE PENDING RECORD.** `unqueue` withdraws a
+## DECLARATION and leaves the take crew standing — and the same record may be holding a pending CREW
+## edit on that very source, which dropping it would discard. `effective_worker_map` blanks the
+## effective improvement for a withdrawn key instead, so the work row's `⌃` returns to its offer face
+## on the same frame without anything else about the row moving.
+func record_pending_unqueue(entity: int, kind: String, x: int, y: int, herd_id: String) -> void:
+	if entity < 0:
+		return
+	var entry: Dictionary = _pending_labor.get(entity, {})
+	entry["turn"] = _current_turn
+	var withdrawn: Dictionary = entry.get("unqueue", {})
+	withdrawn[pending_key(kind, x, y, herd_id)] = true
+	entry["unqueue"] = withdrawn
+	_pending_labor[entity] = entry
+	changed.emit(&"pending")
+
+## The withdrawal's rollback, for a `unqueue` that never left the client — `drop_pending_assign`'s
+## rule, one key at a time, so a band's other un-acknowledged edits survive a failed send.
+func drop_pending_unqueue(entity: int, key: String) -> bool:
+	var entry: Variant = _pending_labor.get(entity, null)
+	if not (entry is Dictionary):
+		return false
+	var withdrawn: Variant = (entry as Dictionary).get("unqueue", {})
+	if not (withdrawn is Dictionary) or not (withdrawn as Dictionary).has(key):
+		return false
+	(withdrawn as Dictionary).erase(key)
+	_prune_pending_entity(entity, entry as Dictionary)
+	changed.emit(&"pending")
+	return true
+
+## **THE ORDER A DRAG LEFT THE QUEUE IN** — the band's confirmed entry keys, in the order the block
+## should now draw them. One slot per band like the move overlay: a second drag states the whole
+## ordering again rather than a delta, so there is nothing to compose and nothing to get out of step.
+func record_pending_order(entity: int, keys: Array) -> void:
+	if entity < 0:
+		return
+	var entry: Dictionary = _pending_labor.get(entity, {})
+	entry["turn"] = _current_turn
+	entry["order"] = keys.duplicate()
+	_pending_labor[entity] = entry
+	changed.emit(&"pending")
+
+## …and its rollback, for a `build_order` that never went.
+func drop_pending_order(entity: int) -> bool:
+	var entry: Variant = _pending_labor.get(entity, null)
+	if not (entry is Dictionary) or not (entry as Dictionary).has("order"):
+		return false
+	(entry as Dictionary).erase("order")
+	_prune_pending_entity(entity, entry as Dictionary)
+	changed.emit(&"pending")
+	return true
+
 func record_pending_move(entity: int, x: int, y: int) -> void:
 	if entity < 0:
 		return
@@ -529,7 +616,15 @@ func _prune_pending_entity(entity: int, entry: Dictionary) -> void:
 	var assigns: Variant = entry.get("assign", {})
 	if (assigns is Dictionary) and (assigns as Dictionary).is_empty():
 		entry.erase("assign")
-	if entry.has("assign") or entry.has("move"):
+	# The withdrawal set is the assign map's twin and prunes on the same rule: an empty one is a husk,
+	# and a record still holding ANY of the band's four un-acknowledged edits must survive untouched.
+	var withdrawn: Variant = entry.get("unqueue", {})
+	if (withdrawn is Dictionary) and (withdrawn as Dictionary).is_empty():
+		entry.erase("unqueue")
+	var order: Variant = entry.get("order", [])
+	if (order is Array) and (order as Array).is_empty():
+		entry.erase("order")
+	if entry.has("assign") or entry.has("move") or entry.has("unqueue") or entry.has("order"):
 		_pending_labor[entity] = entry
 		return
 	_pending_labor.erase(entity)
@@ -686,6 +781,14 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if settled != null:
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY] = \
 				int(settled)
+	# **A WITHDRAWAL BLANKS THE IMPROVEMENT AND TOUCHES NOTHING ELSE** (`docs/plan_standing_upkeep.md`
+	# §4.7b ④). `unqueue` withdraws a DECLARATION: the crew stays, the floor stays, the banked meter
+	# stays — so the one thing that must stop being true on the frame the `✕` is pressed is that this
+	# source is building something. Blanking it here rather than at the queue block is what puts the
+	# work row's `⌃` back to its offer face on the same frame, off the one map every readout shares.
+	for withdrawn_key in pending_unqueues_for(int(band.get("entity", -1))):
+		if merged.has(withdrawn_key):
+			(merged[withdrawn_key] as Dictionary)["improvement"] = SourceForecast.IMPROVEMENT_NONE
 	return merged
 
 ## **WHAT THE PLAYER IS DOING ON ONE SOURCE, FOLDED ACROSS EVERY BAND** — `{workers, improvement}`.
@@ -994,6 +1097,21 @@ func current_player_bands() -> Array:
 func player_band_by_entity(entity: int) -> Dictionary:
 	for b in current_player_bands():
 		if b is Dictionary and int((b as Dictionary).get("entity", -1)) == entity:
+			return b
+	return {}
+
+## **THE SAME BAND, REACHED FROM THE OTHER HANDLE** — its durable `BandId`, which is what the SIM
+## names a band by. `player_band_by_entity` above answers the client-local handle every overlay reader
+## keys on; this one exists for the single direction that cannot use it, an event's `band=` detail
+## token arriving from the wire (`EventDockPanel.band_work_tab_requested`).
+##
+## **THE ROSTER IS THE ONLY PLACE THE TWO HANDLES MEET**, which is why the join is here and not at
+## either end of that hop: the dock holds no entities and `BandPanelController` takes no `band_id`.
+## `{}` when the roster does not know the id — a band that starved out, or a row still held from
+## before a resync.
+func player_band_by_band_id(band_id: int) -> Dictionary:
+	for b in current_player_bands():
+		if b is Dictionary and int((b as Dictionary).get("band_id", -1)) == band_id:
 			return b
 	return {}
 

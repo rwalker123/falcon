@@ -212,6 +212,8 @@ func _ready() -> void:
 	await _drive_send_hunt_expedition_from_herd_drawer()
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
+	await _drive_build_kit()
+	await _drive_build_order()
 	await _drive_send_trade_expedition()
 
 	_assert_every_command_emitted()
@@ -374,9 +376,15 @@ func _drive_assign_labor_kits() -> void:
 	# role added there without being added here fails `_assert_every_role_is_emittable` below rather
 	# than failing in play.
 	for role in ASSIGN_LABOR_ROLES:
+		# ⛔ **THE `builders` ROW TAKES NO `kit` TOKEN ANY MORE** (`docs/plan_standing_upkeep.md`
+		# §4.7a ②). The builders' kit is a property of the queue ENTRY, and `handle_assign_labor`
+		# REFUSES a `kit` token on this role by name — it parses and is then rejected, which is a
+		# state this parser-level guard cannot see. So the role is swept BARE, and the per-entry
+		# override is driven by `_drive_build_kit` below, which is where it now lives.
+		var kit := KitRoster.NO_KIT_ID if role == HudConst.LABOR_KIND_BUILDERS \
+			else BandFx.KIT_ID_NONE
 		_hud._emit_assign_labor(band, String(role), PARTY_WORKERS, -1, -1, "",
-			SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
-			BandFx.KIT_ID_NONE)
+			SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE, kit)
 		await _settle()
 	# **AND THE BARE FORM OF THE ONE THAT BROKE.** `_kit_token` omits an empty selection, so this is
 	# `assign_labor <f> <b> builders 3` with nothing after the count — the exact line the Builders
@@ -386,6 +394,57 @@ func _drive_assign_labor_kits() -> void:
 		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
 		KitRoster.NO_KIT_ID)
 	await _settle()
+
+## **`build_kit` — THE PER-ENTRY BUILDERS KIT** (`docs/plan_standing_upkeep.md` §4.7a ②), driven on
+## BOTH source forms, because a tile and a herd are two different grammars of one verb and a builder
+## that gets the pair backwards passes either alone.
+##
+## **IT IS THE VERB THAT REPLACED A `kit` TOKEN ON THE `builders` ROW**, and it is band-addressed only
+## in the sense that the SOURCE is: the line names no band at all, because every band holding that
+## source holds the same entry. That is exactly the kind of thing this guard exists to pin — the
+## grammar is the one place a client can be well-formed and mean something else.
+##
+## **A NON-DEFAULT KIT, DELIBERATELY.** Picking the DERIVED entry emits no `kit` token (that is how
+## the override is cleared), and `_record` treats an expectation equal to the default as a fixture
+## error — rightly, since the assertion could never fail there. The clearing case is asserted where it
+## can be: `band_panel_preview` reads it off `Main.format_build_kit` on the live picker.
+func _drive_build_kit() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var derived := KitRoster.build_kit_for_branch(_hud._band_labor.kits(),
+		KitRoster.BUILD_BRANCH_PLANT)
+	_hud._bandpanel._emit_build_kit(band, {
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+	}, BandFx.KIT_ID_NONE, derived)
+	await _settle()
+	_hud._bandpanel._emit_build_kit(band, {
+		"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
+	}, BandFx.KIT_ID_NONE, KitRoster.build_kit_for_branch(_hud._band_labor.kits(),
+		KitRoster.BUILD_BRANCH_ANIMAL))
+	await _settle()
+
+## **`build_order` — THE QUEUE'S REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), both source
+## forms again.
+##
+## **THIS ONE DOES NAME A BAND, where `build_kit` and `unqueue` do not** — a queue belongs to a band —
+## so it is squarely what this guard's handle assertion is for: the fixture's `entity` and `band_id`
+## are deliberately different numbers, and a client sending entity bits down the reorder would produce
+## a line that parses and moves someone else's queue.
+func _drive_build_order() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._bandpanel._emit_build_order(band, {
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "key": "forage:%d,%d" % [TARGET_X, TARGET_Y],
+		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+	}, BUILD_ORDER_POSITION, [])
+	await _settle()
+	_hud._bandpanel._emit_build_order(band, {
+		"kind": SourceForecast.LABOR_KIND_HUNT, "key": "hunt:%s" % NEAR_HERD_ID,
+		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
+	}, SourceForecast.BUILD_QUEUE_HEAD, [])
+	await _settle()
+
+## The position the plant drive moves its entry to. **Not the head**, because 0 is what an
+## uninitialised int and a dropped field both look like.
+const BUILD_ORDER_POSITION := 2
 
 ## `send_trade_expedition` (arc #527, issue #517) — the parties compose sheet's FIFTH mission, and the
 ## one drive whose subject is an AMOUNT rather than a handle.
@@ -511,6 +570,10 @@ func _connect_recorders() -> void:
 		_record("recall_expedition", p, MAIN_SCRIPT.format_recall_expedition(p)))
 	_hud.split_band_requested.connect(func(p: Dictionary) -> void:
 		_record("split_band", p, MAIN_SCRIPT.format_split_band(p)))
+	_hud.build_kit_requested.connect(func(p: Dictionary) -> void:
+		_record("build_kit", p, MAIN_SCRIPT.format_build_kit(p)))
+	_hud.build_order_requested.connect(func(p: Dictionary) -> void:
+		_record("build_order", p, MAIN_SCRIPT.format_build_order(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
@@ -529,6 +592,9 @@ const KIT_BEARING_KINDS := {
 	"assign_labor": true,
 	"send_hunt_expedition": true,
 	"send_denial_raid": true,
+	# The per-entry builders kit. It rides the SAME `_kit_token` rule as the other three, which is the
+	# whole reason *"pick the default"* clears the override rather than needing a literal of its own.
+	"build_kit": true,
 }
 
 ## Record one emitted command. A builder that DECLINES (empty dict) is itself a failure here: every
@@ -661,6 +727,10 @@ const EXPECTED_KINDS := {
 	"split_band": 1,
 	# TWO — the Band panel's parties compose and the herd drawer's, which build their payloads
 	# independently and so can drift apart.
+	# TWO each — the tile form and the herd form, which are two grammars of one verb and the pair a
+	# builder can get backwards (`docs/plan_standing_upkeep.md` §4.7a ②, §4.7b ③).
+	"build_kit": 2,
+	"build_order": 2,
 	"send_hunt_expedition": 2,
 	# ONE — the parties compose sheet is the denial raid's only launch site.
 	"send_denial_raid": 1,

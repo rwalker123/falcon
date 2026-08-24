@@ -277,6 +277,33 @@ const FLORA_CROP_RATIO_CLAUSE_FORMAT := " · %.1f×"
 # (`SourceForecast.picker_products` → `0.96 food · 0.40 fodder`).
 const FLORA_CROP_HAY_CLAUSE_FORMAT := " · %.2f hay"
 
+# The separator every clause on a crop row leads with, named because a row that begins WITH one has
+# to trim it and two spellings of the same three characters is how the trim comes to miss.
+const FLORA_CROP_CLAUSE_LEAD := " · "
+
+# > #### ⛔ THE ONE CLAUSE ON A CROP ROW THAT RENDERS **AT ZERO**
+#
+# Every other clause here obeys the render-only-when-non-zero rule, and this one must not: the crop
+# picker exists because nothing on the path from *this ground is fertile* to *this field feeds nobody*
+# stated the zero. A cash crop's `sowPayoff` is exactly `0` (a sown Field is 100% its crop), so an
+# omitted clause there is the silence that let a fertile tile be committed to tobacco.
+#
+# It is TWO decimals like its non-food neighbours rather than the ratio's one, because it is an
+# absolute per-turn rate and is read against them.
+const FLORA_CROP_FOOD_CLAUSE_FORMAT := FLORA_CROP_CLAUSE_LEAD + "%.2f food"
+
+# > #### THE ONE CLAUSE ON A CROP ROW THAT IS A **COST**
+#
+# Every clause above states what a rung would PAY; this states what committing to this crop would
+# cost in WORK, and it LEADS the row for that reason — a price is read before the payoffs it is
+# weighed against. It takes the same ` · ` lead as its neighbours because the row trims one leading
+# separator and only one, whichever clause happens to come first.
+#
+# The figure is `DetailFormat.format_work_units`' — whole numbers bare, fractions to one place, the
+# spelling every other work quantity in this client already uses — so the crop rows and the rung
+# track's own `38 work` cannot round one price two ways.
+const FLORA_CROP_WORK_CLAUSE_FORMAT := FLORA_CROP_CLAUSE_LEAD + "%s work"
+
 # ---- WHAT A CASH CROP PAYS: ONE CLAUSE PER MATERIAL (arc #527) ----------------------------------
 # **A VECTOR, NOT A SCALAR, IS THE WHOLE DIFFERENCE.** The retired `· %.2f trade` clause answered
 # *"how much trade"* — a number a market could total and a player could not act on. This answers
@@ -537,9 +564,16 @@ const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground woul
 # `Sum(share x rate) / Sum(share)` over the ticked species and the forecast moves the moment a chip
 # does — the same `NOW -> AFTER` treatment the worker stepper already gets.
 #
-# **WHAT IS STILL NOT KNOWN IS SAID OUT LOUD, in two different sentences.**
+# **WHAT IS STILL NOT KNOWN IS SAID OUT LOUD — in ONE sentence, about ONE of the two states.**
 #
-# The first is a narrowing the wire priced NO per-species rate for. The composition is a weighted
+# `selection_rates` answers its unquotable dict from two arms and only this one has anything to say:
+# the other is a selection naming plants this tile no longer grows, where the game KNOWS what
+# happened and the sheet simply quotes nothing. A sentence explaining a state the game already
+# handles correctly is prose the player has to read to learn nothing. The composer's two-state
+# distinction STAYS — it is what stops this sentence being printed about the other state, which is
+# the lie it was split out to end.
+#
+# This one is a narrowing the wire priced NO per-species rate for. The composition is a weighted
 # mean, so one missing term is not a term that can be left out of it, and there is nothing else this
 # client holds that a rate could be recovered from — so it quotes nothing at all rather than the
 # whole basket's numbers under a narrowed heading, which is the quote-vs-payout defect this arc has

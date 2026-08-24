@@ -21,10 +21,12 @@
 //! Nothing here relies on the claim "terrain never changes". The cached identity **is** the
 //! function's input set, split by scope:
 //!
-//! - **World-level** (`map_seed`, `grid_size`, and the flora / labor config `Arc`s by pointer
-//!   identity) — checked once per capture in [`FloraQuoteCache::sweep`], which clears everything on
-//!   a mismatch. `Arc::ptr_eq` is exact for a config hot reload, because `*ConfigHandle::replace`
-//!   swaps the `Arc` rather than mutating through it.
+//! - **World-level** (`map_seed`, `grid_size`, and the flora / labor / ladder config `Arc`s by
+//!   pointer identity — the ladder because each crop's published Sow price is the `plant:field`
+//!   rung's own `work_cost` times what that crop's share earns) — checked once per capture in
+//!   [`FloraQuoteCache::sweep`], which clears everything on a mismatch. `Arc::ptr_eq` is exact for a
+//!   config hot reload, because `*ConfigHandle::replace` swaps the `Arc` rather than mutating
+//!   through it.
 //! - **Per-tile** (`terrain`, `resource_terrain`) — checked on every lookup, so a tile whose ground
 //!   is rewritten mid-game re-derives on the next capture whether or not anyone remembered this file
 //!   existed.
@@ -51,9 +53,9 @@ use crate::components::Tile;
 use crate::flora_config::{FloraConfig, FloraShare};
 use crate::forage::{
     commit_fodder_payoff, commit_material_payoff, commit_payoff, commit_yield_ratio,
-    tile_flora_composition, tile_forage_capacity, wild_payoff,
+    crop_field_cost_multiplier, tile_flora_composition, tile_forage_capacity, wild_payoff,
 };
-use crate::intensification::RungKey;
+use crate::intensification::{LadderConfig, RungKey};
 use crate::labor_config::{ForageLaborConfig, LaborConfig};
 
 use super::FORECAST_OUTPUT_MULTIPLIER;
@@ -107,6 +109,7 @@ pub struct FloraQuoteCache {
 struct QuoteIdentity {
     flora: Arc<FloraConfig>,
     labor: Arc<LaborConfig>,
+    ladder: Arc<LadderConfig>,
     map_seed: u64,
     grid_size: UVec2,
 }
@@ -116,6 +119,7 @@ impl QuoteIdentity {
         &self,
         flora: &Arc<FloraConfig>,
         labor: &Arc<LaborConfig>,
+        ladder: &Arc<LadderConfig>,
         seed: u64,
         grid: UVec2,
     ) -> bool {
@@ -123,6 +127,7 @@ impl QuoteIdentity {
             && self.grid_size == grid
             && Arc::ptr_eq(&self.flora, flora)
             && Arc::ptr_eq(&self.labor, labor)
+            && Arc::ptr_eq(&self.ladder, ladder)
     }
 }
 
@@ -136,18 +141,20 @@ impl FloraQuoteCache {
         &'a mut self,
         flora: &'a Arc<FloraConfig>,
         labor: &'a Arc<LaborConfig>,
+        ladder: &'a Arc<LadderConfig>,
         map_seed: u64,
         grid_size: UVec2,
     ) -> FloraQuoteSweep<'a> {
         let held = self
             .identity
             .as_ref()
-            .is_some_and(|identity| identity.matches(flora, labor, map_seed, grid_size));
+            .is_some_and(|identity| identity.matches(flora, labor, ladder, map_seed, grid_size));
         if !held {
             self.entries.clear();
             self.identity = Some(QuoteIdentity {
                 flora: Arc::clone(flora),
                 labor: Arc::clone(labor),
+                ladder: Arc::clone(ladder),
                 map_seed,
                 grid_size,
             });
@@ -156,6 +163,7 @@ impl FloraQuoteCache {
             entries: &mut self.entries,
             flora,
             forage: &labor.forage,
+            ladder,
             map_seed,
         }
     }
@@ -198,6 +206,10 @@ pub(crate) struct FloraQuoteSweep<'a> {
     entries: &'a mut HashMap<UVec2, CachedQuotes>,
     flora: &'a FloraConfig,
     forage: &'a ForageLaborConfig,
+    /// The rung price list — the `plant:field` `work_cost` each crop's published Sow price is a
+    /// multiple of. Part of the memo's identity for the same reason the other two config handles
+    /// are.
+    ladder: &'a LadderConfig,
     map_seed: u64,
 }
 
@@ -213,11 +225,12 @@ impl FloraQuoteSweep<'_> {
             entries,
             flora,
             forage,
+            ladder,
             map_seed,
         } = self;
         let resource_terrain = tile.resource_terrain();
         let derive = || {
-            let (composition, shares) = derive_tile_quotes(flora, forage, tile, *map_seed);
+            let (composition, shares) = derive_tile_quotes(flora, forage, ladder, tile, *map_seed);
             CachedQuotes {
                 terrain: tile.terrain,
                 resource_terrain,
@@ -250,6 +263,7 @@ impl FloraQuoteSweep<'_> {
 fn derive_tile_quotes(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
     tile: &Tile,
     map_seed: u64,
 ) -> (Vec<FloraShare>, Vec<FloraShareInfo>) {
@@ -369,11 +383,40 @@ fn derive_tile_quotes(
                 // would read as a cash crop that pays badly.
                 sow_material_payoff: material_payoff(RungKey::PlantField),
                 cultivate_material_payoff: material_payoff(RungKey::PlantTended),
+                // **WHAT SOWING THIS CROP WOULD COST** (`docs/plan_standing_upkeep.md` §4.15) — the
+                // cost half of the picker's decision, and the only figure on this row that is not a
+                // payoff. A Sow is priced by how much of the tile the chosen crop still has to
+                // replace, and the patch's own `fieldWorkCost` prices exactly ONE crop (its
+                // commitment, or the rung's auto-pick), so every row of a crop list quoted that same
+                // number while the payoffs beside it moved.
+                //
+                // Through `forage::crop_field_cost_multiplier` — the same expression
+                // `patch_field_cost_multiplier` goes through — priced by the ladder's own
+                // `build_cost`, exactly as the published `fieldWorkCost` is. So the figure this row
+                // states for the crop a patch is committed to **is** that patch's `fieldWorkCost`,
+                // rather than a second derivation that happens to agree.
+                //
+                // [`NO_SOW_WORK_COST`] where the plant cannot climb to a Field on this ground.
+                sow_work_cost: crop_field_cost_multiplier(
+                    &composition,
+                    &share.species,
+                    flora,
+                    forage,
+                )
+                .and_then(|multiplier| ladder.rung(RungKey::PlantField).build_cost(multiplier))
+                .unwrap_or(NO_SOW_WORK_COST),
             }
         })
         .collect();
     (composition, quotes)
 }
+
+/// **What a crop that cannot be sown here quotes as its Sow price** — `0`, the wire's "no figure",
+/// which a client renders as *no row* rather than as a free Sow. Named because a bare `0.0` at the
+/// call site reads as a measurement, and a measured Sow price can never be one: the multiplier is
+/// clamped at `field_share_cost_floor` precisely because laying the rows and putting the seed in
+/// costs work even on ground already wholly the crop.
+const NO_SOW_WORK_COST: f32 = 0.0;
 
 #[cfg(test)]
 mod tests {
@@ -389,8 +432,12 @@ mod tests {
         }
     }
 
-    fn configs() -> (Arc<FloraConfig>, Arc<LaborConfig>) {
-        (FloraConfig::builtin(), LaborConfig::builtin())
+    fn configs() -> (Arc<FloraConfig>, Arc<LaborConfig>, Arc<LadderConfig>) {
+        (
+            FloraConfig::builtin(),
+            LaborConfig::builtin(),
+            LadderConfig::builtin(),
+        )
     }
 
     /// The memo answers what the derivation answers — the property everything else here rests on.
@@ -398,24 +445,24 @@ mod tests {
     /// retune of the payoff tables moves both sides at once and the guard keeps its meaning.
     #[test]
     fn a_cached_tile_quotes_exactly_what_a_fresh_derivation_does() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let mut cache = FloraQuoteCache::default();
         let tiles: Vec<Tile> = (0..8)
             .map(|x| tile_at(UVec2::new(x, 3), TerrainType::MixedWoodland))
             .collect();
 
-        let mut sweep = cache.sweep(&flora, &labor, 99, UVec2::new(16, 16));
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 99, UVec2::new(16, 16));
         for tile in &tiles {
             let cached = sweep.quotes(tile).to_vec();
-            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, tile, 99);
+            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, &ladder, tile, 99);
             assert_eq!(cached, fresh, "tile {:?}", tile.position);
         }
 
         // And again on the second turn, off the memo rather than the derivation.
-        let mut sweep = cache.sweep(&flora, &labor, 99, UVec2::new(16, 16));
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 99, UVec2::new(16, 16));
         for tile in &tiles {
             let cached = sweep.quotes(tile).to_vec();
-            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, tile, 99);
+            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, &ladder, tile, 99);
             assert_eq!(
                 cached, fresh,
                 "tile {:?} on the second sweep",
@@ -434,10 +481,10 @@ mod tests {
     /// first half everywhere.
     #[test]
     fn every_quoted_plant_carries_its_rosters_own_role() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let grid = UVec2::new(64, 64);
         let mut cache = FloraQuoteCache::default();
-        let mut sweep = cache.sweep(&flora, &labor, 11, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 11, grid);
 
         let mut roles_seen: Vec<&str> = Vec::new();
         for (index, terrain) in [
@@ -477,10 +524,10 @@ mod tests {
     /// the key is the *tile*.
     #[test]
     fn the_memo_is_per_tile_not_per_biome() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let mut cache = FloraQuoteCache::default();
         let grid = UVec2::new(64, 64);
-        let mut sweep = cache.sweep(&flora, &labor, 7, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 7, grid);
         let baskets: Vec<Vec<FloraShareInfo>> = (0..24)
             .map(|x| {
                 sweep
@@ -499,23 +546,23 @@ mod tests {
     /// silently.
     #[test]
     fn rewriting_a_tiles_ground_re_derives_that_entry() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let mut cache = FloraQuoteCache::default();
         let grid = UVec2::new(16, 16);
         let position = UVec2::new(2, 2);
 
-        let mut sweep = cache.sweep(&flora, &labor, 5, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 5, grid);
         let forest = sweep
             .quotes(&tile_at(position, TerrainType::MixedWoodland))
             .to_vec();
 
         let rewritten = tile_at(position, TerrainType::HotDesertErg);
-        let mut sweep = cache.sweep(&flora, &labor, 5, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 5, grid);
         let desert = sweep.quotes(&rewritten).to_vec();
 
         assert_eq!(
             desert,
-            derive_tile_quotes(&flora, &labor.forage, &rewritten, 5).1
+            derive_tile_quotes(&flora, &labor.forage, &ladder, &rewritten, 5).1
         );
         assert_ne!(
             forest, desert,
@@ -528,43 +575,54 @@ mod tests {
     /// false *hold* would publish the old tuning forever.
     #[test]
     fn a_config_reload_clears_the_whole_memo() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let mut cache = FloraQuoteCache::default();
         let grid = UVec2::new(16, 16);
-        let mut sweep = cache.sweep(&flora, &labor, 5, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 5, grid);
         for x in 0..4 {
             sweep.quotes(&tile_at(UVec2::new(x, 0), TerrainType::MixedWoodland));
         }
         assert_eq!(cache.len(), 4);
 
         let reloaded = FloraConfig::builtin();
-        cache.sweep(&reloaded, &labor, 5, grid);
+        cache.sweep(&reloaded, &labor, &ladder, 5, grid);
         assert_eq!(cache.len(), 0, "a swapped flora config left entries behind");
 
-        let mut sweep = cache.sweep(&reloaded, &labor, 5, grid);
+        let mut sweep = cache.sweep(&reloaded, &labor, &ladder, 5, grid);
         sweep.quotes(&tile_at(UVec2::new(0, 0), TerrainType::MixedWoodland));
         assert_eq!(cache.len(), 1);
-        cache.sweep(&reloaded, &LaborConfig::builtin(), 5, grid);
+        cache.sweep(&reloaded, &LaborConfig::builtin(), &ladder, 5, grid);
         assert_eq!(cache.len(), 0, "a swapped labor config left entries behind");
+
+        // …and the ladder, which prices the per-crop Sow figure every quoted plant carries.
+        let mut sweep = cache.sweep(&reloaded, &labor, &ladder, 5, grid);
+        sweep.quotes(&tile_at(UVec2::new(0, 0), TerrainType::MixedWoodland));
+        assert_eq!(cache.len(), 1);
+        cache.sweep(&reloaded, &labor, &LadderConfig::builtin(), 5, grid);
+        assert_eq!(
+            cache.len(),
+            0,
+            "a swapped ladder config left entries behind"
+        );
     }
 
     /// A re-seeded or re-sized map drops every entry — the seed is an input to per-tile realization,
     /// and the size bounds which coords can ever be read again.
     #[test]
     fn a_reseeded_or_resized_map_clears_the_whole_memo() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let mut cache = FloraQuoteCache::default();
         let grid = UVec2::new(16, 16);
         let seed_tile = tile_at(UVec2::new(1, 1), TerrainType::MixedWoodland);
 
-        let mut sweep = cache.sweep(&flora, &labor, 5, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 5, grid);
         sweep.quotes(&seed_tile);
-        cache.sweep(&flora, &labor, 6, grid);
+        cache.sweep(&flora, &labor, &ladder, 6, grid);
         assert_eq!(cache.len(), 0, "a new map seed left entries behind");
 
-        let mut sweep = cache.sweep(&flora, &labor, 6, grid);
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 6, grid);
         sweep.quotes(&seed_tile);
-        cache.sweep(&flora, &labor, 6, UVec2::new(32, 32));
+        cache.sweep(&flora, &labor, &ladder, 6, UVec2::new(32, 32));
         assert_eq!(cache.len(), 0, "a resized map left entries behind");
     }
 
@@ -582,7 +640,7 @@ mod tests {
     /// it has to be non-empty on the same tile.
     #[test]
     fn every_quoted_plant_carries_its_own_per_rung_material_payoff() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let forage = &labor.forage;
         // **Swept over several tiles, not pinned to one.** Per-tile realization (§10) draws a
         // different subset per coordinate, so whether any one tile happens to carry both a
@@ -597,7 +655,8 @@ mod tests {
         let mut saw_a_material = false;
         let mut saw_a_bare_staple = false;
         for tile in &tiles {
-            let (composition, quotes) = derive_tile_quotes(&flora, forage, tile, SWEEP_SEED);
+            let (composition, quotes) =
+                derive_tile_quotes(&flora, forage, &ladder, tile, SWEEP_SEED);
             let capacity = capacity_of(tile);
             for quote in &quotes {
                 for (rung, published) in [
@@ -673,11 +732,11 @@ mod tests {
     /// that reappeared would still compare `==` and would still pass every other guard in this file.
     #[test]
     fn reading_a_tiles_basket_shares_it_rather_than_copying_it() {
-        let (flora, labor) = configs();
+        let (flora, labor, ladder) = configs();
         let mut cache = FloraQuoteCache::default();
         let tile = tile_at(UVec2::new(2, 3), TerrainType::MixedWoodland);
 
-        let mut sweep = cache.sweep(&flora, &labor, 5, UVec2::new(16, 16));
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 5, UVec2::new(16, 16));
         sweep.quotes(&tile);
 
         let first = cache.composition(tile.position);

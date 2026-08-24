@@ -1235,14 +1235,30 @@ func _forage_take_source(tile_info: Dictionary, take: Dictionary) -> Dictionary:
         take.get(TAKE_SELECTION_RATES, {}) as Dictionary)
 
 ## The asides a narrowed take owes — `[]` for the whole basket AND for a fully priced narrowing, which
-## is what keeps every other sheet on this controller unchanged. **ONE silence survives**: a plant the
-## wire priced no per-species rate for, which makes the whole weighted mean unquotable.
+## is what keeps every other sheet on this controller unchanged.
+##
+## **ONE OF THE TWO UNQUOTABLE STATES SAYS NOTHING, AND THAT IS THE INTENT.** `selection_rates`
+## returns its unquotable dict for two — the wire priced no per-species rate for a plant that IS in
+## the basket, and the ticked plants are not in this tile's basket at all. Only the first is a fact
+## the player can neither see nor fix, so only it gets a sentence; the second is a state the sim now
+## prunes on commit, and where the game knows what happened it should behave correctly rather than
+## narrate it. An empty `notes` there renders `_wordless_take_model`'s `{}`, i.e. nothing at all.
+##
+## ⛔ **THE TWO-STATE DISTINCTION IS STILL WHAT THIS BRANCH READS**, and dropping it would put the
+## surviving sentence back on the state it is false about — a crew told the SERVER had not priced
+## plants that had simply stopped growing there. `_selective_take_state` carries the same dict the
+## quoted/unquoted verdict was taken from, so the sentence and the verdict cannot disagree about
+## which state this is.
 func _take_notes(take: Dictionary) -> Array[String]:
     var notes: Array[String] = []
     if not bool(take.get(TAKE_SELECTION_NARROWED, false)):
         return notes
     if not bool(take.get(TAKE_SELECTION_QUOTED, false)):
-        notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
+        var rates: Dictionary = take.get(TAKE_SELECTION_RATES, {}) as Dictionary
+        var reason := String(rates.get(SourceForecast.SELECTION_REASON,
+            SourceForecast.SELECTION_REASON_ABSENT))
+        if reason == SourceForecast.SELECTION_REASON_UNPRICED:
+            notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
     return notes
 
 ## A model with NO numbers in it — the shape every "there is nothing this sheet may state" path
@@ -1479,6 +1495,26 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
 ## against. It briefly had the sheet's own proposed BUILDERS subtracted from it, and the note took a
 ## `build_crew` argument so it could name that nearer lever; the build is a band-level role now
 ## (`docs/plan_standing_upkeep.md` §2.5), so there is one stepper and one remedy.
+## > #### ⛔ THERE IS NO STANDING-CREW FLOOR HERE, AND ONE WAS TRIED AND REVERTED
+## >
+## > `clamp_forage_count` / `clamp_hunt_count` clamp the STAGED count into this cap and the commit
+## > sends the staged count, so a cap below the committed crew stages fewer workers than are assigned
+## > and confirming the sheet **silently drops the difference** — reported from play 2026-08-22 on a
+## > completed 100%-tobacco Field reading `max 0 workers useful here` with two tenders on it. **What
+## > closes that is the CAP being right**, and it is (`SourceForecast.FORECAST_MANAGED_FLAG_KEYS`
+## > carries the autopsy); a floor on the committed crew was written here, failed, and must not come
+## > back.
+## >
+## > **It makes a LEGITIMATE cap-fall impossible.** Unticking a species chip narrows the stand the
+## > cap divides, so the useful crew genuinely falls — and a cap floored on the committed crew cannot
+## > follow it, which is the panel refusing to price the very edit the player just made. Caught by
+## > `forage_take_chip_priced`'s *"the useful-worker count fell with it, on the same edit"*.
+## >
+## > The distinction the floor cannot draw is *the sheet opened wrong* against *the player narrowed
+## > it*, and both arrive at this function as one render. So the guard is an ASSERTION rather than a
+## > clamp — `forage_cash_crop_field` pins that the staged count reaches the committed crew on a
+## > source paying into any account — and a real cap regression fails there rather than being papered
+## > over here.
 func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     # **NO KEEPER FLOOR UNDER THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2). This used to be
     # raised to a managed herd's `herdersNeeded`, because one crew both hunted the animals and held
@@ -2052,11 +2088,16 @@ func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
 ## WARN-amber "Fencing N%" badge — the pen twin of the corral-build "Building N%" meter. The server
 ## rejects an extend at max radius / unowned / Herding-unknown with a feed message; the client does
 ## not pre-gate on those (max radius is not on the wire).
+##
+## **THE RING'S METER IS IN WORK UNITS**, banked against `pen_extend_cost` on the same herd dict, so
+## the badge's percentage comes from `SourceForecast.pen_extend_fraction` and never from the raw
+## field. The gate below is still on the NUMERATOR, which is what keeps a declared-but-unaccrued ring
+## (both fields at zero — `begin_pen_extension` sets the flag, `accrue_pen_extension` stamps the cost)
+## out of the badge entirely rather than rendering it as `0%`.
 func _build_extend_pen_control(herd: Dictionary, target: VBoxContainer) -> void:
-    var extend_progress := float(herd.get("pen_extend_progress", 0.0))
-    if extend_progress > 0.0:
+    if SourceForecast.pen_extend_work_done(herd) > 0.0:
         var badge := Label.new()
-        badge.text = HudComposeVocab.PEN_FENCING_LABEL % int(round(extend_progress * HudConst.PROGRESS_PERCENT_SCALE))
+        _apply_fencing_badge(badge, herd)
         badge.add_theme_color_override("font_color", HudStyle.WARN)
         target.add_child(badge)
         return
@@ -4169,7 +4210,7 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
     if not (available or corralled):
         _clear_herd_drawer()
         return
-    var extending := corralled and float(herd.get("pen_extend_progress", 0.0)) > 0.0
+    var extending := corralled and SourceForecast.pen_extend_work_done(herd) > 0.0
     var herd_id := String(herd.get("id", ""))
     var noun := _herd_crew_noun(herd)
     var summary_model: Dictionary = {}
@@ -4243,7 +4284,21 @@ func _herd_actions_shape(herd_id: String, corralled: bool, extending: bool, avai
 func _update_extend_pen_control(node: Node, herd: Dictionary) -> void:
     var badge := node as Label
     if badge != null:
-        badge.text = HudComposeVocab.PEN_FENCING_LABEL % int(round(float(herd.get("pen_extend_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))
+        _apply_fencing_badge(badge, herd)
+
+## **THE BADGE'S WORDS, WRITTEN ONCE FOR THE BUILD PATH AND THE PATCH PATH.** The two are a known
+## drift pair — the builder above and `_update_extend_pen_control` both state the same ring — so the
+## quotient and the hover live here rather than being spelled at each site.
+##
+## **THE FACE IS A PERCENTAGE AND THE HOVER IS THE PAIR.** `SourceForecast.pen_extend_fraction` is the
+## one division of `pen_extend_progress / pen_extend_cost` (both WORK UNITS); the hover states the
+## absolutes through `DetailFormat.build_meter_value`, which is the house form of a build meter, so a
+## ring reads like every other job the player is paying for.
+func _apply_fencing_badge(badge: Label, herd: Dictionary) -> void:
+    var fraction := SourceForecast.pen_extend_fraction(herd)
+    badge.text = HudComposeVocab.PEN_FENCING_LABEL % HudFormat.progress_percent(fraction)
+    badge.tooltip_text = DetailFormat.build_meter_value(HudComposeVocab.PEN_FENCING_VERB,
+        fraction, SourceForecast.pen_extend_work_done(herd), SourceForecast.pen_extend_cost(herd))
 
 ## Patch the `Assign … ▸` button in place: its noun (herders vs hunters can flip as a herd is tamed)
 ## and its primary/ghost lit-while-composing state, without freeing the button (whose `pressed`

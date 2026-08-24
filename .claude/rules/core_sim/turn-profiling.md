@@ -185,7 +185,8 @@ and cannot be fingerprinted per entry the way the quotes are — and at ~62 ns/p
 nothing to win by trying.
 
 **The invalidation is the complete input set, not a claim that terrain never changes** — world-level
-inputs (`map_seed`, `grid_size`, the two config `Arc`s by pointer identity) are checked once per
+inputs (`map_seed`, `grid_size`, the flora / labor / ladder config `Arc`s by pointer identity) are
+checked once per
 capture and clear everything; `terrain` / `resource_terrain` are checked on every lookup. So the
 memo re-derives whether or not a later arc remembers it exists, which is also why it is not sim
 state and needs no restore path.

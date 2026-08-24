@@ -312,20 +312,23 @@ fn spawn_keepers_of(
                         kit: Some(kit.clone()),
                     },
                     // **The build is staffed by the band's own POOL**, at the crew the caller
-                    // named (`docs/plan_standing_upkeep.md` §2.5) — and **the kit rides this row**,
-                    // since that is where a build's gear offset is read from now. The published
-                    // turns estimate and the gear stamp are both quoted at the pool, so the two
-                    // have to agree for a closed-form check to mean anything.
+                    // named (`docs/plan_standing_upkeep.md` §2.5). **The row carries no kit** — a
+                    // build's gear is read off the queue ENTRY below (§4.7a ②). The published turns
+                    // estimate and the gear stamp are both quoted at the pool, so the two have to
+                    // agree for a closed-form check to mean anything.
                     LaborAssignment {
                         target: LaborTarget::Builders,
                         workers: builders,
-                        kit: Some(builders_kit),
+                        kit: None,
                     },
                 ],
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
+                        // **The kit rides the ENTRY**, which is where a build's gear offset is read
+                        // from since §4.7a ②.
+                        kit: Some(builders_kit),
                     })
                     .into_iter()
                     .collect(),
@@ -389,21 +392,28 @@ fn an_animal_build_is_geared_by_the_hurdles_and_by_nothing_else() {
     );
 }
 
-/// Re-kit a band's `builders` row after the fact — `None` clears it, which is *derive per entry*.
+/// Re-kit a band's queued build after the fact — `None` clears the override, which is *derive from
+/// this entry's own web* (`docs/plan_standing_upkeep.md` §4.7a ②).
+///
+/// **It rides the queue ENTRY, not the `builders` row**, which carries no kit at all: one stored id
+/// per band cannot be right for both food webs, so `assign_labor` refuses a token there.
 fn set_builders_kit(app: &mut App, band: bevy::prelude::Entity, kit_id: Option<&str>) {
     let kit = kit_id.map(|id| {
         EquipmentConfig::builtin()
             .kit(id)
             .unwrap_or_else(|| panic!("the shipped roster carries '{id}'"))
     });
-    app.world
+    let mut allocation = app
+        .world
         .get_mut::<LaborAllocation>(band)
-        .expect("the fixture band keeps its allocation")
-        .assignments
-        .iter_mut()
-        .find(|assignment| assignment.target == LaborTarget::Builders)
-        .expect("the fixture band carries a builders row")
-        .kit = kit;
+        .expect("the fixture band keeps its allocation");
+    assert!(
+        !allocation.build_queue.is_empty(),
+        "the fixture band carries a queue entry to re-kit"
+    );
+    for entry in allocation.build_queue.iter_mut() {
+        entry.kit = kit.clone();
+    }
 }
 
 /// **A POOL CARRYING NOTHING THAT HELPS** — `intensification::NO_BUILD_GEAR` in the client's own
@@ -1263,6 +1273,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
+                    kit: None,
                 }],
                 ..Default::default()
             },

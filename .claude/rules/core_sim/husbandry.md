@@ -235,6 +235,51 @@ invariant.
   escape every check the wild path applies. `fauna::herd_engage_rate` is the one seam: the species'
   own `engage_rate`, times `husbandry.pen_engage_gain` for a corralled herd, because a keeper genuinely
   handles far more animals per turn than a hunter — a **number**, not the absence of one.
+
+  > #### ⛔ THE PEN BOUNDS ITS COLLECTION AT ITS OWN CALL SITE — `fauna::animals_handled`
+  >
+  > ```text
+  > hunt:  engaged   = reach.min(animals_affordable(ceiling))     // resolve_hunt_engagement, before the fight
+  > pen:   collected = floor(handling).min(animals_affordable(production))   // animals_handled, before the take
+  > ```
+  >
+  > **A hunt bounds what it goes after; a pen bounds what it collects.** Both spend the escapement room
+  > *before* the take, which is what makes restraint free on both — and what the pen did not do. The
+  > tend branch handed `herd_engage_rate × workers` — the keepers' raw handling rate — straight to
+  > `quantise_animal_take` as `brought_down`, so **the pen was the one take path with no bound of its
+  > own**, and the only thing between a large keeper crew and a stripped pen was a post-hoc `affordable`
+  > clamp inside the quantiser that was dead on every other path.
+  >
+  > **The asymmetry is what hid it.** A quantiser that also clamped by the room made the missing stage
+  > unobservable from the pen's own code, and the clamp's *"the source cannot spare a whole animal —
+  > wait for it to regrow"* early return read as a mechanic rather than as the pen's missing bound
+  > wearing a mechanic's clothes. The room, and that wait, now live where the pen spends them; the
+  > quantiser holds no ceiling at all (`fauna.md` → "THE ESCAPEMENT ROOM IS SPENT AT STEP 1").
+  >
+  > **The collection is FLOORED, because a keeper does not walk out half a beast.** A fight hands back
+  > whole bodies and a pen must too, or `AnimalTake::killed` (a truncating `u32`) and its
+  > `killed_biomass` describe two different events — a handling rate of `3.6` reported **3 killed**
+  > while the flock lost **3.6 bodies**. The remainder is not lost, it is **left standing**: the herd's
+  > own biomass is the accumulator, exactly as every other whole-animal wait carries. A curve is the one
+  > reading that does not floor (`pen_crew_take_curve`, `EngagementQuantum::Rate`) — a cadence must not
+  > be reported as a never.
+  >
+  > **AND EVERY FORECAST OF A PEN RUNS THAT STAGE AND NO OTHER.** `hunt_forecast` builds
+  > `fight: NO_FIGHT_STAGE` for a corralled herd, and the quote
+  > (`forecast_production_and_take_at`), the steady headline (`project_realized_hunt`) and the arrival
+  > schedule (`project_arrivals_hunt`) each fork on `is_corralled()` and price the three terms above —
+  > the quantised two by calling `animals_handled` itself, so there is no second expression of the
+  > pen's take to drift from the tend branch's. Quoting a stalking fight over a fence read the
+  > quarry's `defense` against the crew's *hunting* kit: a bare-handed band with a penned Wild Aurochs
+  > was promised nothing and then paid a take. The reasoning lives in `yield-forecast.md` → "A PEN
+  > FORECASTS NO FIGHT, BECAUSE ITS PAYOUT RESOLVES NONE".
+  >
+  > **The shipped roster rarely reaches the handling arm**, which is why the pen's numbers did not move:
+  > `pen_engage_gain` is authored at `20` precisely so the keepers' *carry* binds first on every
+  > pennable species (the constraint on a keeper is carrying the meat home, not catching the animal).
+  > The arm exists to be reachable — `fauna_husbandry::a_fractional_pen_handling_rate_collects_whole_animals`
+  > authors a fractional rate to reach it, because the shipped one cannot.
+
 - **EVERYTHING PENNING BUYS STEPS AT THE FENCE**, and that is the deliberate difference from the
   plant web. The pen's regrowth gain, its density multiplier on `K`, its escape fraction and its
   handling gain all read `is_corralled()` — a **stored fact set at completion** — so `animal:pen`
@@ -706,6 +751,27 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > **A ring another band's entry was funding stops for that band too**, and the dead entry left behind
 > is retired the next turn by the already-built sweep (`!pen_extending` is a ring's *"already
 > built"*) — see "A DEAD ENTRY PARKS THE POOL FOR EVER" in `intensification.md`.
+
+> #### THE RING METER IS IN WORK UNITS, AND THE WIRE CARRIES ITS DENOMINATOR
+>
+> `pen_extend_progress` is an **absolute work count**, not a `0..1` fraction: it was normalized until
+> `docs/plan_standing_upkeep.md` §4.8 priced improvements in work, and it completes at
+> `pen_extend_cost` — the `animal:pen` rung's own `work_cost`, which `accrue_pen_extension` **stamps
+> on the first worked turn** (`begin_pen_extension` leaves it at `RUNG_UNSTARTED`, and both reset
+> together when the ring lands).
+>
+> **So the pair ships, never the meter alone.** `penExtendProgress` and `penExtendCost` cross to the
+> client from the same herd in the same expression in `snapshot/subsistence.rs`, and a "Fencing N%"
+> badge is their quotient with the zero denominator guarded — `0 / 0` is *"no ring"*, not *"0%"*.
+> The one field on its own is an unscaled work count that a percentage readout renders as nonsense
+> (a 69-unit ring read as *"Fencing 6900%"*), which is what a schema comment still describing a
+> normalized fraction cost. It is the same meter/pile pair `tameWorkDone`/`tameWorkCost` and
+> `corralWorkDone`/`corralWorkCost` already publish, with one difference: those costs are **resolved
+> at capture** so a compose sheet can price an uncommitted build, while this one is the herd's
+> **stamped** cost. Guarded by
+> `build_queue::a_ring_publishes_the_cost_its_progress_completes_at`, which asserts on the encoded
+> snapshot — an arm reading `Herd::pen_extend_cost` in process would pass even with the capture
+> never writing the field.
 - **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; `CorralCommand`
   proto field 38 with its `workers` field `reserved`, `CommandEventKind::Corral`) **queues the
   `Corral`** on the band(s) already hunting the herd standing on that tile — the command form of the

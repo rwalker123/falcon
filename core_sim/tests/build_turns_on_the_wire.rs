@@ -435,6 +435,7 @@ fn spawn_the_holding_band(
                 .map(|declared| core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(declared),
+                    kit: None,
                 })
                 .into_iter()
                 .collect(),
@@ -663,21 +664,19 @@ fn a_plant_build_is_geared_by_the_hoe_and_by_nothing_else() {
             let kit = core_sim::EquipmentConfig::builtin()
                 .kit(kit_id)
                 .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'"));
-            // **The FIXTURE band, found by its builders row** — the start profile's own band is in
-            // this world too, and re-kitting that one would leave the measurement untouched.
+            // **The FIXTURE band, found by its QUEUE ENTRY** — the start profile's own band is in
+            // this world too, and re-kitting that one would leave the measurement untouched. The
+            // kit rides the entry rather than the `builders` row, which carries none at all since
+            // `docs/plan_standing_upkeep.md` §4.7a ②.
             let mut query = app.world.query::<&mut LaborAllocation>();
             let mut found = false;
             for mut allocation in query.iter_mut(&mut app.world) {
-                if let Some(row) = allocation
-                    .assignments
-                    .iter_mut()
-                    .find(|assignment| assignment.target == LaborTarget::Builders)
-                {
-                    row.kit = Some(kit.clone());
+                for entry in allocation.build_queue.iter_mut() {
+                    entry.kit = Some(kit.clone());
                     found = true;
                 }
             }
-            assert!(found, "the fixture band carries a builders row");
+            assert!(found, "the fixture band carries a queue entry");
         }
         core_sim::run_turn(&mut app);
         recapture_snapshot_in_place(&mut app.world);
@@ -687,7 +686,7 @@ fn a_plant_build_is_geared_by_the_hoe_and_by_nothing_else() {
     let derived = published(None);
     assert!(
         derived > core_sim::NO_BUILD_GEAR,
-        "**LIVENESS**: an unnamed builders row derives the plant web's own kit, so a Cultivate is \
+        "**LIVENESS**: an entry naming no kit derives the plant web's own, so a Cultivate is \
          geared — got {derived}"
     );
     assert_eq!(
@@ -1392,8 +1391,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
                 }) {
                     allocation.build_queue.push(core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(source),
-                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
-                    });
+                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate), kit: None,});
                     found = true;
                 }
             }
