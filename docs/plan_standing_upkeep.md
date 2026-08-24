@@ -1052,6 +1052,54 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    nowhere, and a shed **names the row it took**. The rank sits **on top** of the shipped ordering,
    which survives as the tie-break — most sources sit at the default, so a rule that only fires on an
    explicit pick is what keeps the default behaviour exactly where it is.
+
+   **9c — AND THE RANK NEEDS A SURFACE THAT REACHES EVERY ENTRY. LANDED.** The block draws at most
+   `BUILD_QUEUE_ROWS_MAX` (3) rows plus `+N more`, and **the queue itself has no cap** — the sim
+   holds no length limit anywhere — so a fourth job was queued and funded with no row, and nothing
+   past the third could be seen, reordered or withdrawn from the UI at all. 9a gave the order to the
+   right band and gave it controls; this is what lets those controls reach the whole list.
+
+   **THE 3-ROW BLOCK IS UNTOUCHED, AND THAT IS THE DESIGN.** Ray's call: it is a SUMMARY — what the
+   pool is funding, and what is next — so the cap did not rise, the reservation did not move, and
+   what it draws is bit-identical. The full list is a **MODE** over the same zone, which is what lets
+   it spend **nothing permanent** in a zone reading 396 of 396: `_queue_expanded` is one bool, and
+   every pixel the mode uses is one the collapsed zone was already spending on the board.
+
+   > **TWO DOORS IN, ONE DOOR OUT.** The `BUILD QUEUE` header toggles both ways; `+N more` is a
+   > second door IN only, the expanded view having no overflow row left to press. **The pools header
+   > stays** — §4.7 moved keeping onto this tab precisely because a pool on one tab and its
+   > consequences on another went unnoticed in playtest, and one zone down is the same mistake. **The
+   > board GOES rather than shrinking**, with the chips, the pager and the work inspector that serve
+   > it; a stub board is neither usable nor free.
+   >
+   > **THE ONE PIECE OF REAL ENGINEERING WAS EDGE AUTO-SCROLL**, because a 1920 BOTTOM dock affords
+   > about nine rows of a list with no cap: the arrows do not care, but a drag that cannot reach past
+   > the viewport is a control that silently stops working on exactly the queues this slice exists
+   > for. Three mechanisms, each of which fails **silently and alone**: the pump is **per-frame**
+   > (a pointer parked at the edge emits no motion events), the direction reads the **physical**
+   > pointer (`Viewport.get_mouse_position()`, the same quantity `_drive_drag` warps), and the hover
+   > is **re-resolved after every step** (Godot picks the drag-over control on MOTION, so scrolling
+   > under a stationary pointer leaves the drop naming the row that used to be there). 6 rows/s ×
+   > 28px = 168 px/s, one row of hot band, one row per tick maximum, with a float accumulator
+   > because `scroll_vertical` is an int and 2.8px a frame truncates to nothing.
+   >
+   > **AND THE CLOCK IS WALL TIME, NOT A FRAME DELTA** — every render harness pins
+   > `Engine.time_scale = 0.0`, so a delta-driven pump advances by exactly zero under the only thing
+   > that can test it (measured: 0px over 45 frames). A general trap for any future rate in this
+   > client, recorded in `band-city-panel.md`.
+   >
+   > **WHAT THE ONE-EXPANSION-AT-A-TIME RULE MEANS HERE**, since the mode breaks its premise: with no
+   > board drawn there is no host for a work inspector, so at most one expansion is drawn
+   > **structurally** rather than by enforcement. The enforcement stays because collapsing returns to
+   > the mixed layout, and entering the mode clears `_work_open_key` — without which a stale
+   > inspector springs back on collapse beside an open settings strip, which is the 460-into-396
+   > defect §4.7b closed.
+   >
+   > **The rationale is in `.claude/rules/client/band-city-panel.md` → "THE EXPANSION" and
+   > `harness-band-panel.md` → "The EXPANSION's frames".** Both docks fit exactly and no lever of
+   > Ray's was needed: the list declares **625px of a 759px box** on the tall LEFT dock and **260 of
+   > 394** on the 1920 BOTTOM one, where the scrollbar costs the job face 8px against a face already
+   > ellipsised.
 10. **Symmetric partial credit — AND the one-position ladder it needs.** **The model is §2.8; this is
    only its place in the order.** A rung's benefit and its cost both scale with how far up the ladder
    the source has been worked, and the two independent meters per source collapse into one cumulative
