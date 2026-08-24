@@ -6531,7 +6531,8 @@ func render_faction() -> void:
     # page can never disagree about which band needs the player.
     var attention := _attention.build_band_attention(
         _band_labor.player_bands(), _band_labor.player_expeditions())
-    # FOUR zones here against a band's three, declared BEFORE the builders run — see `render_band`.
+    # THREE zones here, the same count a band declares, and declared BEFORE the builders run — see
+    # `render_band`.
     _panel.set_zone_layout(FACTION_ZONE_LAYOUT)
     _panel.set_zones({
         # The band zone's TIER is read off the box the panel is offering it, which the

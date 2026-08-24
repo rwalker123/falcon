@@ -331,10 +331,11 @@ const ZONE_BAND := &"band"
 const ZONE_WORK := &"work"
 const ZONE_PARTIES := &"parties"
 ## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
-## the live layout**, because prefs load before any subject has declared one — a player who left on
-## the faction page's `knowledge` tab must not have that selection thrown away by the bootstrap
-## layout, which is a band's. A key the live layout lacks is handled by `_effective_tab`, which falls
-## back to the first zone that has content.
+## the live layout**, because prefs load before any subject has declared one — the only layout
+## standing at that moment is the bootstrap `DEFAULT_ZONE_LAYOUT`, and a player who left on the
+## faction page's `parties` tab must have that selection survive a check against a layout no subject
+## has authored yet. A key the live layout lacks is handled by `_effective_tab`, which falls back to
+## the first zone that has content.
 const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES]
 ## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
 ## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.

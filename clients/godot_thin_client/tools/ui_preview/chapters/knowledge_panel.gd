@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 50
+const EXPECTED_CHECKPOINTS := 51
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The rung derivation, shared with `map_preview` / `band_panel_preview` / `snapshot_alias_guard`.
@@ -82,6 +82,9 @@ const MATERIAL_LEATHER := "leather"
 ## re-arm it.
 const TURN_FIRST := 40
 const TURN_SECOND := 41
+## A THIRD turn, for the knowledge-only delta: the diff has to roll on a frame that carries no
+## populations section at all, and that needs a turn the diff has not already been rolled on.
+const TURN_THIRD := 42
 
 func run(harness) -> void:
 	h = harness
@@ -359,6 +362,22 @@ func _assert_new_this_turn() -> void:
 	h._assert_hud("knowledge — …and the diff itself still holds it, so that is not vacuous (%s)"
 			% str(controller.learned_this_turn().keys()),
 		controller.learned_this_turn().has("herding"))
+	# **AND THE DIFF ROLLS ON A KNOWLEDGE-ONLY DELTA, not just on the populations seam.** `Main`
+	# dispatches each section independently and only when it CHANGED, so a turn that finishes a track
+	# and moves nobody never reaches `update_band_alerts` — which was the ONE seam `refresh_snapshot`
+	# was called from, so the pip moved while the diff (and an open panel's columns) stayed a turn
+	# behind. Pushed with NO `update_band_alerts` at all, which is what makes this a claim about the
+	# section rather than about the frame. The `update_overlay` beside it is not a convenience: it is
+	# what carries the turn, and `Main` dispatches it ahead of every gated section, so the diff has
+	# this turn to roll against by the time the knowledge lands.
+	h._hud.update_overlay(TURN_THIRD, {})
+	h._hud.update_intensification([_wire_tracks({
+		"cultivation": PROGRESS_KNOWN, "herding": PROGRESS_KNOWN, "penning": PROGRESS_KNOWN})])
+	await h._settle()
+	var rolled := controller.learned_this_turn()
+	h._assert_hud("knowledge — a knowledge-only delta rolls the DIFF too, not just the pip (%s)"
+			% str(rolled.keys()),
+		rolled.size() == 1 and rolled.has("penning"))
 
 # ---- the frames -------------------------------------------------------------
 

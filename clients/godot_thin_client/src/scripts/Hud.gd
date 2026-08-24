@@ -775,6 +775,14 @@ func update_intensification(intensification_variant: Variant) -> void:
     # delta whose `populations` are byte-identical — so a turn that finishes a track and moves nobody
     # would leave the count a turn stale on the one surface that exists to announce it. Populations
     # move on nearly every turn, and "nearly" is what makes this latent rather than absent.
+    #
+    # The REFRESH goes with it, for the same reason and one more: the pip alone leaves the screen's
+    # turn diff un-rolled, so "New this turn" would mark the PREVIOUS turn's track, and an OPEN panel
+    # would render last turn's columns beside a pip showing this turn's count. `Main` dispatches
+    # `update_overlay` (which sets the live turn) BEFORE this section, so the diff rolls against the
+    # right turn; `refresh_snapshot` is turn-keyed and idempotent within a turn, so the snapshot
+    # seam's own call stays and costs nothing.
+    _knowledge.refresh_snapshot()
     _push_knowledge_pip()
 
 func update_discoveries(discovered_variant: Variant) -> void:
@@ -939,9 +947,11 @@ func update_crafting_catalogues(materials: Variant, characteristic_bands: Varian
     # field rather than a copy — re-deriving either would be a second answer to a question the
     # crafting panel already asks.
     _knowledge.set_catalogues(recipes, craft_knowledge)
-    # The craft half of the pip, re-pushed for `update_intensification`'s reason: a world whose recipe
-    # book or craft tracks moved without its populations moving is a delta this section arrives alone
-    # on.
+    # The craft half of the refresh + pip, re-run for `update_intensification`'s reason: a world whose
+    # recipe book or craft tracks moved without its populations moving is a delta this section arrives
+    # alone on, and the pip without the refresh would announce a track the columns have not caught up
+    # to. Idempotent within a turn.
+    _knowledge.refresh_snapshot()
     _push_knowledge_pip()
 
 ## Open Materials & Crafting on `band`. Reached BY NAME from the preview harnesses, which stand the
@@ -951,10 +961,6 @@ func open_crafting_panel(band: Dictionary) -> void:
 
 func close_crafting_panel() -> void:
     _crafting.close()
-    # The knowledge screen holds a per-TURN diff of what was learned, and a new world restarts the
-    # turn counter and re-teaches every track — so a baseline carried across would report the new
-    # world's first discoveries as already known.
-    _knowledge.reset_world_state()
 
 ## The panel's controller, for the harnesses' assertions.
 func crafting_panel() -> CraftingPanelController:
@@ -1532,6 +1538,12 @@ func reset_world_state() -> void:
     # low range — so a panel left open would silently re-resolve onto a different band's bench and
     # rail. Closing is the honest answer: nothing about the previous world's crafting survives.
     _crafting.close()
+    # The knowledge screen holds a per-TURN diff of what was learned, keyed to the OLD world's turn
+    # counter, alongside its selection and filter. A new world's turn 0 differs from that stale
+    # `_diff_turn`, so the diff branch would run on the first observation and report every track the
+    # new world starts KNOWING as "New this turn" — exactly what the `UNSEEN_TURN` sentinel exists to
+    # prevent. See `KnowledgePanelController.reset_world_state`.
+    _knowledge.reset_world_state()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()

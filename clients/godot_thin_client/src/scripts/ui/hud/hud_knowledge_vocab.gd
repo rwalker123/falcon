@@ -290,11 +290,6 @@ const PANEL_TITLE := "What your people know"
 ## is geometric, so it renders reliably where an emoji would not.
 const LAUNCH_GLYPH := "▲"
 const LAUNCH_TOOLTIP := "What your people know"
-## The launcher's PIP — the unspent count, and the one number on the Band/City header that is a nudge
-## rather than a reading. It says *you have earned something you are not using*, which is the whole
-## reason the screen has a launcher instead of living behind a tab.
-const LAUNCH_PIP_TOOLTIP_FORMAT := "%d discoveries earned and unused"
-const LAUNCH_PIP_TOOLTIP_ONE := "1 discovery earned and unused"
 const CLOSE_GLYPH := "✕"
 const CLOSE_TOOLTIP := "Close"
 
@@ -331,7 +326,6 @@ const NODE_SELECTED_BAR_THICKNESS := 2
 const NODE_CLAUSE_INDENT := 16
 const DOMAIN_SEPARATION := 6
 const COLUMN_SEPARATION := 20
-const SECTION_SEPARATION := 14
 const DETAIL_SECTION_SEPARATION := 12
 
 ## The ladder RAIL down a ladder column's left edge: the vertical hairline, and the gap between it

@@ -810,13 +810,6 @@ static func _work_detail_lines(labor: HudBandLaborState, band: Dictionary) -> Ar
             SourceForecast.format_signed(float(assignment.get("actual_yield", 0.0)))]])
     return lines
 
-## The faction's craft knowledge — one row per track being learned, in the intensification ladder's
-## own order, off the SAME `FactionReadouts.faction_tracks` row the top-bar strip and every rung gate
-## read. A finished track reads the word rather than a full meter.
-##
-## **A track the faction has not begun is HIDDEN**, the top-bar strip's own rule: the snapshot row is
-## sparse and an unstarted rung is noise. Every track unstarted ⇒ no block at all, rather than a
-## heading over nothing.
 # ---- leaves -----------------------------------------------------------------
 
 ## One `key ……… value` readout row: a dim key, an expanding spacer, then the value in its own tint.

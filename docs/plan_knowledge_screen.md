@@ -57,7 +57,16 @@ reinstall. Define it as **nothing is using this right now**:
 
 - **Ladder knowledge** — no source the faction works currently stands on the rung it unlocks
   (`forage::patch_rung` / `fauna::herd_rung` against the rung's `unlock_knowledge`).
-- **Craft knowledge** — no recipe requiring that craft appears in the faction's kit ledger.
+- **Craft knowledge** — the faction holds, or is making, nothing made of that craft: no recipe of it
+  whose output the bands carry (`count` / `amount`, never `remaining`), and none on a bench.
+
+> **AS BUILT (Slice B): the craft test is what the faction HOLDS, not what the ledger LISTS.** The
+> line above read *"no recipe requiring that craft appears in the faction's kit ledger"* and has been
+> corrected, because a plan that names the rejected test is a plan the next slice implements. The
+> crafting panel publishes **ONE ROW PER RECIPE, ALWAYS** — that is its stated contract — so a
+> recipe's mere presence is true of every craft on every turn and would answer *in use* for all of
+> them forever. The bench arm is the other half: without it, a faction building its first loom reads
+> unspent for the whole time the loom is being built.
 
 This needs **zero new state** and is arguably the better signal: it re-surfaces if the player
 abandons the thing. The label follows the meaning — *"Known · nothing is using it"*, not
@@ -104,7 +113,15 @@ in a Rust doc comment on `intensification_ladder.json`. It has to be authored as
 - Register a second action beside `ACTION_CRAFTING` in `BandCityPanel` — same
   `{id, glyph, tooltip, enabled}` descriptor, same `action_invoked` signal, same three mounts
   (bar / subject row / collapsed rail).
-- The **pip** on the button carries the unspent count and clears when the screen is opened.
+- The **pip** on the button carries the unspent count. It is derived fresh every push and **does not
+  clear when the screen is opened**.
+
+> **AS BUILT (Slice B): OPENING THE SCREEN DOES NOT CLEAR THE PIP, and this line said it did.** What
+> clears an unspent count is USING the knowledge; a pip that went quiet on a *look* would tell the
+> player they had dealt with something they had not. `unspent_count` is derived rather than latched,
+> so it goes away exactly when a source starts standing on the discovery — the honest trigger, and
+> the one the state's own definition already gives. **Slice C is implemented from §4 and §5**, which
+> is why the correction lands here rather than only in the rule file.
 - **Delete the Know tab**: the faction page drops to three zones. `FactionRollup.build_knowledge_zone`
   and its callers go with it; its Settling and Discoveries blocks are rehomed per §2.
 
