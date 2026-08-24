@@ -1700,6 +1700,25 @@ of it, and "the node is missing" is not the same failure as "the node says in us
 **Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
 `knowledge_panel_detail` · `knowledge_panel_filtered`.
 
+**A clean run is 353 frames / 1405 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+recorded figure before this arc was 352 / 1302, and this arc added FOUR frames and sixty-one claims,
+which does not add up to the measurement — so the surplus is drift that had accumulated un-recorded,
+exactly as it had the three times before. Measure; do not sum.
+
+**NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
+
+| the forbidden implementation | fails, and only |
+|---|---|
+| the `progress <= 0.0` skip restored | the two greyed-track claims, plus the `all` pill (8 → 7) |
+| the per-verb done FLAG instead of the rung comparison | the two at-or-ABOVE claims (`a FIELD stands above Tended`, `a pen stands above pastoral`) |
+| a recipe of this craft merely EXISTING counts as in use | the three craft negatives |
+| `close` as a bare progress threshold | the `close` pill (2 → 5) and `a KNOWN track is never close (3 leaked)` |
+| `new this turn` no longer implying KNOWN | the coherence claim alone |
+| the pip pushed from `update_band_alerts` alone | the knowledge-only-delta claim alone — **the live defect, in its own words** |
+| the pip count living only on the button | the mount-rebuild claim and the inside-the-button claim |
+| patch ownership ignored | the RIVAL's-patch claim alone |
+| every herd on the wire counted as the faction's | the unworked-pen claim alone |
+
 ### TWO FRAMES MOVED FOR A REASON THAT WAS NOT THIS ARC, and proving that took a revert run
 
 `band_morale_expanded` / `band_growth_expanded` came back different from a baseline captured earlier

@@ -53,6 +53,9 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
+**A clean run is 126 frames / 404 `assert OK` / 685 `: PASS`, exit 0 — RE-MEASURED.** One frame was
+removed (`band_panel_faction_knowledge`) and none added.
+
 
 ## `tools/band_panel_preview.gd` / `.tscn`
 
