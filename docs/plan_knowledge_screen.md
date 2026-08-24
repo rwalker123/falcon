@@ -57,7 +57,16 @@ reinstall. Define it as **nothing is using this right now**:
 
 - **Ladder knowledge** — no source the faction works currently stands on the rung it unlocks
   (`forage::patch_rung` / `fauna::herd_rung` against the rung's `unlock_knowledge`).
-- **Craft knowledge** — no recipe requiring that craft appears in the faction's kit ledger.
+- **Craft knowledge** — the faction holds, or is making, nothing made of that craft: no recipe of it
+  whose output the bands carry (`count` / `amount`, never `remaining`), and none on a bench.
+
+> **AS BUILT (Slice B): the craft test is what the faction HOLDS, not what the ledger LISTS.** The
+> line above read *"no recipe requiring that craft appears in the faction's kit ledger"* and has been
+> corrected, because a plan that names the rejected test is a plan the next slice implements. The
+> crafting panel publishes **ONE ROW PER RECIPE, ALWAYS** — that is its stated contract — so a
+> recipe's mere presence is true of every craft on every turn and would answer *in use* for all of
+> them forever. The bench arm is the other half: without it, a faction building its first loom reads
+> unspent for the whole time the loom is being built.
 
 This needs **zero new state** and is arguably the better signal: it re-surfaces if the player
 abandons the thing. The label follows the meaning — *"Known · nothing is using it"*, not
@@ -104,7 +113,15 @@ in a Rust doc comment on `intensification_ladder.json`. It has to be authored as
 - Register a second action beside `ACTION_CRAFTING` in `BandCityPanel` — same
   `{id, glyph, tooltip, enabled}` descriptor, same `action_invoked` signal, same three mounts
   (bar / subject row / collapsed rail).
-- The **pip** on the button carries the unspent count and clears when the screen is opened.
+- The **pip** on the button carries the unspent count. It is derived fresh every push and **does not
+  clear when the screen is opened**.
+
+> **AS BUILT (Slice B): OPENING THE SCREEN DOES NOT CLEAR THE PIP, and this line said it did.** What
+> clears an unspent count is USING the knowledge; a pip that went quiet on a *look* would tell the
+> player they had dealt with something they had not. `unspent_count` is derived rather than latched,
+> so it goes away exactly when a source starts standing on the discovery — the honest trigger, and
+> the one the state's own definition already gives. **Slice C is implemented from §4 and §5**, which
+> is why the correction lands here rather than only in the rule file.
 - **Delete the Know tab**: the faction page drops to three zones. `FactionRollup.build_knowledge_zone`
   and its callers go with it; its Settling and Discoveries blocks are rehomed per §2.
 
@@ -145,7 +162,7 @@ channel**. Moving it as-is relocates the problem. Split it:
 
 | New module | Kind | Holds |
 |---|---|---|
-| `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_to_climb` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
+| `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_for_improvement` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
 | `OverlayLegend` | all-`static`, stateless | Renders a legend from a descriptor + `MapView.current_overlay_legend()`. **Generic**: a `ramp` channel gets that channel's own legend rows; a `facts` channel gets the count lines its provider returns. No channel is named here. |
 | `OverlayPicker` | the widget | The list + the legend mount + the selection, pushed to `MapView.set_overlay_channel`. Knows no channel by name. |
 
@@ -187,7 +204,12 @@ raster/derivation it needs, never an `if key ==` in `MapView`.
 
 ---
 
-## 7. The `ready_to_climb` channel
+## 7. The `ready_for_improvement` channel
+
+**"Climb a rung" is the intensification arc's INTERNAL vocabulary** — `RungGates`, `SourceForecast`
+and this plan keep it. It does not survive contact with a player: a hex asked to "climb a rung" is a
+metaphor the game never taught. The player-facing word is **improve**, which is why the channel
+shipped as `ready_for_improvement` and not as the `ready_to_climb` the slice was designed under.
 
 The map already draws `⌃` on any source that can climb a rung
 (`SecondaryMarkerRenderer`, driven off `RungGates` + the faction's knowledge row). What is missing is
@@ -226,19 +248,25 @@ Each slice is its own PR and lands on its own.
 | **A** | The overlay migration — registry / legend / picker split, the minimap mount, the Inspector cleanup (§6) | nothing |
 | **B** | The knowledge screen + the action-bar launcher; delete the Know tab (§3, §4) | nothing |
 | **C** | The two attention producers + the `panel_requested` branch; retire the System note (§5) | B |
-| **D** | The `ready_to_climb` channel (§7) | A |
+| **D** | The `ready_for_improvement` channel (§7) | A |
 
 **A is independent of the whole knowledge arc** and is the cleanest thing to do first — it is a
 self-contained cleanup with a visible win, and it leaves the registry D needs.
 
 ---
 
-## 10. Known blocker
+## 10. Setting a fresh worktree up
 
-`main` currently fails to parse: `Identifier "HudPalette" not declared in the current scope`, which
-takes down `GameLaunch.gd` and every preview harness (`scripts/preview.sh` hangs until the
-watchdog reaps it at 180 s). Fix or confirm fixed before starting — every slice here needs the PNG
-harnesses.
+Both steps are one-time per checkout, and skipping either makes every scene fail to parse with
+`Identifier "X" not declared in the current scope` — which reads exactly like a broken tree.
+
+1. **`cargo xtask godot-build`** — a fresh worktree has no native extension, so every scene dies on a
+   missing `libshadow_scale_godot` dylib.
+2. **`godot --headless --path clients/godot_thin_client --import`** — a fresh worktree has no
+   `.godot/` cache, so the global class registry is empty and no `class_name` resolves.
+
+`workbench_preview` fails on `main` — *"content column is 15.0px wider than the surface allows
+(375.0 > 360.0)"* — and is unrelated to this arc. The other five render harnesses pass.
 
 ---
 

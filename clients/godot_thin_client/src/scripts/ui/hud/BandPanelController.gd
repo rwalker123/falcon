@@ -111,6 +111,9 @@ signal roster_occupant_selected(kind: String, id: Variant)
 # The header's `⚒` was pressed — open Materials & Crafting on this band. Relayed to HudLayer, which
 # hands it to `CraftingPanelController`; the two controllers never talk to each other directly.
 signal crafting_requested(band: Dictionary)
+## The header's `▲` was pressed — open the knowledge screen. **It carries no subject**, unlike the
+## `⚒` beside it: knowledge is per-FACTION, so there is nothing for this relay to resolve.
+signal knowledge_requested
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -338,11 +341,15 @@ const BAND_ZONE_LAYOUT: Array[Dictionary] = [
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH},
 ]
 
-## **KNOWLEDGE SITS BETWEEN WORK AND PARTIES**, which is the same order the page's own argument puts
-## it in: a track is what the faction's hands may ATTEMPT, so it reads immediately after where those
-## hands are and before who has left. It was a block at the bottom of the WORK zone until this pass,
-## and it moved out because that zone had to carry it, Settling and Discoveries — see
-## `FactionRollup.build_knowledge_zone`.
+## **THE FACTION PAGE DECLARES THREE ZONES, THE SAME COUNT A BAND DOES.** It declared a fourth,
+## `knowledge`, until the knowledge screen took the craft tracks off this panel entirely
+## (`docs/plan_knowledge_screen.md` §4). What that zone held besides the tracks — SETTLING and
+## DISCOVERIES — is neither earned by practice nor unlocks a verb, so neither followed them out; both
+## are blocks of the `band` zone now, whose question ("who is this faction") is theirs.
+##
+## The shell threshold is a SUM over this list, so dropping a zone lowers the width at which the page
+## tabs — from 1569 to the 1190 a band's three cost. That is the derivation working: a page with less
+## to lay out needs less room to lay it out abreast.
 const FACTION_ZONE_LAYOUT: Array[Dictionary] = [
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_BAND,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_FACTION,
@@ -350,9 +357,6 @@ const FACTION_ZONE_LAYOUT: Array[Dictionary] = [
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_WORK,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_WORK,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_WIDTH_EXPAND},
-    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_KNOWLEDGE,
-        BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_KNOWLEDGE,
-        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_KNOWLEDGE_WIDTH},
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_PARTIES,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PARTIES,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH},
@@ -496,30 +500,35 @@ func set_attention(attention: AttentionController) -> void:
 func _player_knowledge() -> Dictionary:
     return _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) if _topbar != null else {}
 
-## The player faction's sedentarization entry (`{score, stage}`), for the Knowledge zone's SETTLING
-## block. `{}` when the snapshot has not carried one — the block renders nothing rather than a zero.
+## The player faction's sedentarization entry (`{score, stage}`), for the band zone's SETTLING block.
+## `{}` when the snapshot has not carried one — the block renders nothing rather than a zero.
 func _faction_settling() -> Dictionary:
     return _topbar.faction_sedentarization() if _topbar != null else {}
 
-## The player faction's discovered Wondrous Sites, for the Knowledge zone's DISCOVERIES block. The
-## raw site array the top bar's own strip is built from, so the two cannot disagree about what has
-## been found.
+## The player faction's discovered Wondrous Sites, for the band zone's DISCOVERIES block. The raw site
+## array `FactionReadouts` filters to the player faction, so the two surfaces reading it cannot
+## disagree about what has been found.
 func _faction_discoveries() -> Array:
     return _topbar.faction_discovered_sites() if _topbar != null else []
 
-## Can the KNOWLEDGE zone's box hold all three of its blocks? Read off the panel's own answer for THAT
-## zone rather than off the dock edge — a short window and a collapsed-to-nothing box hit the same
-## wall as a horizontal dock, and an edge test misses both. **An unknown box answers `true`**: the
-## no-dock fallback and the frame before the first layout pass are not evidence of a small box, and
-## the drastic branch (silently dropping a block) must be positively justified — the same asymmetry
-## `_party_compose_floats` takes.
-func _faction_knowledge_is_full() -> bool:
+## Can the FACTION page's band-zone box hold every one of its blocks? Read off the panel's own answer
+## for THAT zone rather than off the dock edge — a short window and a collapsed-to-nothing box hit the
+## same wall as a horizontal dock, and an edge test misses both. **An unknown box answers `true`**:
+## the no-dock fallback and the frame before the first layout pass are not evidence of a small box,
+## and the drastic branch (silently dropping a block) must be positively justified — the same
+## asymmetry `_party_compose_floats` takes.
+##
+## **IT MOVED HERE WITH THE TWO BLOCKS IT GATES.** It asked the same question of the retired KNOWLEDGE
+## zone; Settling and Discoveries came to the band zone when the Know tab was deleted, and the tier
+## came with them because the reason for it is unchanged — Discoveries is the only list on the page
+## with no ceiling of its own.
+func _faction_band_zone_is_full() -> bool:
     if _panel == null:
         return true
-    var box: Vector2 = _panel.zone_size(BandCityPanel.ZONE_KNOWLEDGE)
+    var box: Vector2 = _panel.zone_size(BandCityPanel.ZONE_BAND)
     if box.y <= 0.0:
         return true
-    return box.y >= HudWorkVocab.FACTION_KNOWLEDGE_FULL_MIN_HEIGHT
+    return box.y >= HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT
 
 # ---- Typed adapters over the two injected HudLayer helpers -------------------------------------
 
@@ -555,6 +564,16 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## rather than holding the node.
 func has_panel() -> bool:
     return _panel != null
+
+## Push a registered ACTION's pip count through to the panel. A thin delegator because **the panel
+## handle is private to this controller** — `HudLayer` holds no node — and because the pip's producer
+## (`KnowledgePanelController.unspent_count`) is nothing this controller knows about. It is the
+## `set_tab_badge` shape one seam out: the caller owns the NUMBER, the panel owns the DRAWING, and
+## this owns the handle between them.
+func set_action_pip(id: StringName, count: int) -> void:
+    if _panel == null:
+        return
+    _panel.set_action_pip(id, count)
 
 ## **SHOW THE ACTING BAND'S WORK TAB** — the far end of the compose sheet's `Work tab` link
 ## (`docs/plan_standing_upkeep.md` §4.7a ①), relayed here by `HudLayer` because a compose sheet must
@@ -6827,20 +6846,19 @@ func render_faction() -> void:
     # page can never disagree about which band needs the player.
     var attention := _attention.build_band_attention(
         _band_labor.player_bands(), _band_labor.player_expeditions())
-    # FOUR zones here against a band's three, declared BEFORE the builders run — see `render_band`.
+    # THREE zones here, the same count a band declares, and declared BEFORE the builders run — see
+    # `render_band`.
     _panel.set_zone_layout(FACTION_ZONE_LAYOUT)
     _panel.set_zones({
+        # The band zone's TIER is read off the box the panel is offering it, which the
+        # `set_zone_layout` above has just settled — a horizontal dock's ~300px cannot hold every one
+        # of its blocks at the page's row size, so DISCOVERIES yields there.
         BandCityPanel.ZONE_BAND:
-            HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures)),
+            HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures,
+                _faction_settling(), _faction_discoveries(), _faction_band_zone_is_full())),
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,
                 attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),
-        # The knowledge zone's TIER is read off the box the panel is offering it, which the
-        # `set_zone_layout` above has just settled — a horizontal dock's ~300px cannot hold all three
-        # of its blocks at the page's row size, so DISCOVERIES yields there.
-        BandCityPanel.ZONE_KNOWLEDGE:
-            HudWidgets.wrap_zone(FactionRollup.build_knowledge_zone(_player_knowledge(),
-                _faction_settling(), _faction_discoveries(), _faction_knowledge_is_full())),
         # **THE PARTIES ROW'S JUMP GOES TO THE HOME BAND, which is what the row is NAMED for.** A
         # party's own tile means nothing without the map and there is nothing to DO to a party from
         # here — acting on it means cycling to the band it left, so that is where its link lands. The
@@ -7136,6 +7154,10 @@ func set_panel(panel: BandCityPanel) -> void:
     # has a band behind it.
     if panel != null and not panel.crafting_requested.is_connected(_on_crafting_requested):
         panel.crafting_requested.connect(_on_crafting_requested)
+    # The header's `▲` needs no such resolution and gets no handler of its own: what your people know
+    # is a FACTION fact, so the signal is relayed straight through with nothing attached to it.
+    if panel != null and not panel.knowledge_requested.is_connected(_on_knowledge_requested):
+        panel.knowledge_requested.connect(_on_knowledge_requested)
     # A faction drill-down row is a link to a BAND, and making that band the panel's subject is this
     # controller's job — the disclosure controller must not know the band panel exists.
     if _disclosures != null:
@@ -7149,6 +7171,13 @@ func _on_crafting_requested() -> void:
     if band.is_empty():
         return
     emit_signal("crafting_requested", band)
+
+## The header's `▲`. **It resolves NOTHING, which is the whole difference from the `⚒` above.** A
+## discovery unlocks a verb across the whole map and no band owns it, so there is no subject to look
+## up and no empty-subject case to guard — the relay exists only so `HudLayer` connects one controller
+## to another the way it does everywhere else.
+func _on_knowledge_requested() -> void:
+    emit_signal("knowledge_requested")
 
 ## Is the panel showing the FACTION page? Asked by the drawer, which otherwise re-asserts the selected
 ## band as the panel's subject on every render and would steal the page out from under a caret click.

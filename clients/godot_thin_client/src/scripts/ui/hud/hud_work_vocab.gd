@@ -188,16 +188,12 @@ const ZONE_TAB_PARTIES := "Parties"
 ## who is OUT.
 const ZONE_TAB_FACTION := "Faction"
 
-## Abbreviated deliberately: the narrow shell fits four tabs across a 354px strip, and `Knowledge`
-## is the longest word of the set. Pending playtest.
-const ZONE_TAB_KNOWLEDGE := "Know"
 
-const FACTION_HEADER_KNOWLEDGE := "Knowledge"
-
-## The KNOWLEDGE zone's other two blocks (issue #450, the four-zone body). **Settling is the
-## sedentarization score under the player-facing word the manual uses**, and it lands here rather than
-## beside the stores for the same reason the craft tracks do: it is not a stock and not a population —
-## it is what the faction has BECOME, and what it unlocks is what its hands may attempt.
+## The FACTION page's other two band-zone blocks. **Settling is the sedentarization score under the
+## player-facing word the manual uses.** Both lived in the retired KNOWLEDGE zone and neither is
+## knowledge — neither is earned by practice and neither unlocks a verb, which is why they did not
+## follow the craft tracks out to the knowledge screen (`docs/plan_knowledge_screen.md` §2). What they
+## state is what the faction has BECOME and what it has FOUND, which is the band zone's own question.
 const FACTION_HEADER_SETTLING := "Settling"
 
 const FACTION_HEADER_DISCOVERIES := "Discoveries"
@@ -210,7 +206,7 @@ const FACTION_HEADER_DISCOVERIES := "Discoveries"
 ## prompts: the soft threshold asks whether to "establish a seasonal base", the hard one whether to
 ## "invest in storehouses and settle".
 ##
-## **PROVISIONAL, pending playtest** — the same footing `ZONE_TAB_KNOWLEDGE`'s abbreviation is on.
+## **PROVISIONAL, pending playtest.**
 const FACTION_SETTLING_STAGE_LABELS := {
     "none": "Nomadic",
     "soft": "Seasonal base",
@@ -240,20 +236,27 @@ const FACTION_STAT_ROW_FONT_SIZE := 16
 ## because this page has the room the strip does not.
 const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 
-## **THE KNOWLEDGE ZONE'S HEIGHT TIER.** All three of its blocks measured **336px** at the page's row
-## size against the ~300px a horizontal dock offers, and the zone CLIPS — so a box below this drops
-## DISCOVERIES and keeps Settling + the craft tracks (`FactionRollup.build_knowledge_zone`).
+## **THE FACTION PAGE'S BAND-ZONE HEIGHT TIER.** Its blocks — the PEOPLE bar, the vitals rows,
+## SETTLING and DISCOVERIES — do not all fit the ~300px a horizontal dock's zone offers, and the zone
+## CLIPS, so a box below this drops DISCOVERIES and keeps the rest (`FactionRollup.build_band_zone`).
 ##
-## **IT IS A REAL "CAN THIS BOX HOLD THE FULL BLOCK?" TEST, not a round number between two docks.**
-## The full block measures **452px** at its worst case (five craft tracks, the sites list at its cap
-## plus its `+N more`), so a box that only just clears this threshold still holds it with 28px to
-## spare. The two boxes the panel actually offers are nowhere near either side — ~300 and ~1055 — so
-## the margin is what protects a box that is not one of those two, and it is what shrinks as the
-## block grows.
+## **IT IS A REAL "CAN THIS BOX HOLD THE FULL BLOCK?" TEST, not a round number between two docks**,
+## and it was MEASURED when Settling and Discoveries were rehomed here from the retired KNOWLEDGE zone
+## (`docs/plan_knowledge_screen.md` §4) rather than carried over: the full block reads **461px** at its
+## worst case (`band_panel_faction`, the PEOPLE bar + four vitals rows + Settling + the sites list at
+## its cap plus its `+N more`), and the two boxes the panel actually offers are **396** on a wide
+## horizontal dock and **941** on a tall side one. So this sits above the block and below the tall box,
+## with 19px of margin over the first — and that margin, not the gap between the two docks, is what
+## protects a box that is neither and what shrinks as the block grows.
+##
+## **IT WAS GUESSED AT 400 FIRST AND THAT WAS WRONG IN BOTH DIRECTIONS**: it sat BELOW the 461 the
+## block needs, so a box between the two would have taken the full branch and clipped — and it cleared
+## the wide dock's own 396 by only 4px, which is not a threshold, it is a coincidence.
+##
 ## **Re-measure before adding a row to this zone**; `band_panel_preview._report_zone_content_extent`
-## prints the full block's extent on `band_panel_faction_knowledge` and the tiered one on
+## prints the full block's extent on `band_panel_faction` and the tiered one on
 ## `band_panel_faction_wide`, and this threshold must stay above the first.
-const FACTION_KNOWLEDGE_FULL_MIN_HEIGHT := 480.0
+const FACTION_BAND_FULL_MIN_HEIGHT := 480.0
 
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.
@@ -344,10 +347,6 @@ const FACTION_LIST_MORE_FORMAT := "+%d more"
 ## A faction with no party out. The band page's parties zone says this with a disabled footer button;
 ## this page has no footer, so it says it in words.
 const FACTION_PARTIES_EMPTY := "No parties out"
-
-## A knowledge track the faction has finished. `HudFormat.meter_bar` would draw a full bar, which
-## reads as "still climbing, nearly there" — the top-bar strip's own reasoning for its `✔ known`.
-const FACTION_KNOWLEDGE_KNOWN := "known"
 
 ## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
 ## with `build_composition_bar` / `build_composition_key`; these two stay because the parties zone's

@@ -417,6 +417,12 @@ var _dockrow: DockRowController = null
 # controller's; `_bandpanel.crafting_requested` is the launch edge, so the two controllers never talk
 # to each other directly.
 var _crafting: CraftingPanelController = null
+# The KNOWLEDGE SCREEN cluster (`docs/plan_knowledge_screen.md` §3): its own free-floating panel,
+# launched from the Band/City panel HEADER beside the ⚒, showing what the faction knows, what it is
+# learning and what it has earned and is not using. It emits NO command signals at all — knowledge is
+# earned by practice, so the screen is a reading rather than a planner — which is why nothing is
+# relayed off it; `_bandpanel.knowledge_requested` is the launch edge.
+var _knowledge: KnowledgePanelController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -584,6 +590,13 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: clear_bench_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
+    # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
+    # that cluster being where the player-faction filter over the intensification vector lives.
+    _knowledge = KnowledgePanelController.new()
+    _knowledge.setup(self, _band_labor, _topbar, floating_room)
+    # **THE LAUNCHER CARRIES NO SUBJECT**, unlike the ⚒'s: what your people know is a FACTION fact and
+    # no band owns it, so there is nothing for the relay to resolve.
+    _bandpanel.knowledge_requested.connect(func() -> void: _knowledge.toggle())
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -757,6 +770,20 @@ func update_intensification(intensification_variant: Variant) -> void:
     # than a derived mark model, and the derivation stays in `RungGates` where all three surfaces
     # reach it. Mirrors the `labor_pending_changed` → `Main` → `set_labor_pending` path exactly.
     emit_signal("faction_knowledge_changed", _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID))
+    # **AND RE-PUSH THE LAUNCHER'S PIP, because `Main` dispatches each section INDEPENDENTLY and only
+    # when it CHANGED.** The pip is otherwise pushed from `update_band_alerts`, which is skipped on a
+    # delta whose `populations` are byte-identical — so a turn that finishes a track and moves nobody
+    # would leave the count a turn stale on the one surface that exists to announce it. Populations
+    # move on nearly every turn, and "nearly" is what makes this latent rather than absent.
+    #
+    # The REFRESH goes with it, for the same reason and one more: the pip alone leaves the screen's
+    # turn diff un-rolled, so "New this turn" would mark the PREVIOUS turn's track, and an OPEN panel
+    # would render last turn's columns beside a pip showing this turn's count. `Main` dispatches
+    # `update_overlay` (which sets the live turn) BEFORE this section, so the diff rolls against the
+    # right turn; `refresh_snapshot` is turn-keyed and idempotent within a turn, so the snapshot
+    # seam's own call stays and costs nothing.
+    _knowledge.refresh_snapshot()
+    _push_knowledge_pip()
 
 func update_discoveries(discovered_variant: Variant) -> void:
     _topbar.update_discoveries(discovered_variant)
@@ -915,6 +942,17 @@ func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_for
 func update_crafting_catalogues(materials: Variant, characteristic_bands: Variant,
         recipes: Variant, craft_knowledge: Variant) -> void:
     _crafting.set_catalogues(materials, characteristic_bands, recipes, craft_knowledge)
+    # The knowledge screen reads TWO of the four: the recipe book, for its "is anything made of this
+    # craft" join, and the craft tracks, which are its whole CRAFT column. Two readers of one wire
+    # field rather than a copy — re-deriving either would be a second answer to a question the
+    # crafting panel already asks.
+    _knowledge.set_catalogues(recipes, craft_knowledge)
+    # The craft half of the refresh + pip, re-run for `update_intensification`'s reason: a world whose
+    # recipe book or craft tracks moved without its populations moving is a delta this section arrives
+    # alone on, and the pip without the refresh would announce a track the columns have not caught up
+    # to. Idempotent within a turn.
+    _knowledge.refresh_snapshot()
+    _push_knowledge_pip()
 
 ## Open Materials & Crafting on `band`. Reached BY NAME from the preview harnesses, which stand the
 ## panel up without a Band/City panel to launch it from.
@@ -927,6 +965,31 @@ func close_crafting_panel() -> void:
 ## The panel's controller, for the harnesses' assertions.
 func crafting_panel() -> CraftingPanelController:
     return _crafting
+
+## Open / close the knowledge screen. Reached BY NAME from the preview harnesses, which stand the
+## panel up without a Band/City panel to launch it from — the `open_crafting_panel` idiom.
+func open_knowledge_panel() -> void:
+    _knowledge.open()
+
+func close_knowledge_panel() -> void:
+    _knowledge.close()
+
+## The knowledge screen's controller, for the harnesses' assertions — and for the pip below, which is
+## the one thing about that screen the rest of the HUD reads.
+func knowledge_panel() -> KnowledgePanelController:
+    return _knowledge
+
+## Push the launcher's PIP — how many discoveries the faction has earned and nothing is using.
+##
+## **IT IS DERIVED FRESH EVERY TURN, NEVER LATCHED, AND OPENING THE SCREEN DOES NOT CLEAR IT.** What
+## clears an unspent count is USING the knowledge; a pip that went quiet on a look would tell the
+## player they had dealt with something they had not. `KnowledgePanelController.unspent_count` answers
+## with the panel closed and never built, which is the point — the pip is what says there is something
+## on a screen you have not opened.
+func _push_knowledge_pip() -> void:
+    if _knowledge == null or _bandpanel == null or not _bandpanel.has_panel():
+        return
+    _bandpanel.set_action_pip(BandCityPanel.ACTION_KNOWLEDGE, _knowledge.unspent_count())
 
 ## **THE FORECAST QUERY SEAM, for `Main` to wire the transport into.** `Main` owns the command client,
 ## so it injects the sender and pumps `CommandBridge.poll_query_replies` in once a frame; nothing in
@@ -1357,6 +1420,8 @@ func set_overlay_inset(id: StringName, edge: int, size: float) -> void:
 func _refit_floating_cards() -> void:
     if _crafting != null:
         _crafting.refit_room()
+    if _knowledge != null:
+        _knowledge.refit_room()
 
 ## Write the two rects every other surface measures itself against: `LayoutRoot`, which the docked
 ## reservations inset and the HUD lays out inside, and `FloatingRoom`, which is that rect pulled
@@ -1473,6 +1538,12 @@ func reset_world_state() -> void:
     # low range — so a panel left open would silently re-resolve onto a different band's bench and
     # rail. Closing is the honest answer: nothing about the previous world's crafting survives.
     _crafting.close()
+    # The knowledge screen holds a per-TURN diff of what was learned, keyed to the OLD world's turn
+    # counter, alongside its selection and filter. A new world's turn 0 differs from that stale
+    # `_diff_turn`, so the diff branch would run on the first observation and report every track the
+    # new world starts KNOWING as "New this turn" — exactly what the `UNSEEN_TURN` sentinel exists to
+    # prevent. See `KnowledgePanelController.reset_world_state`.
+    _knowledge.reset_world_state()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
@@ -1824,6 +1895,11 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # ledger's life all move every turn. Refreshed from the same seam as the dock, so the two can
     # never be a turn apart about the same band.
     _crafting.refresh_snapshot()
+    # The knowledge screen is live too, and its refresh runs whether or not the panel is OPEN: the
+    # launcher's pip is on the Band/City header and has to be right on a turn nobody opened the
+    # screen. Pushed after the refresh, so the count is this turn's.
+    _knowledge.refresh_snapshot()
+    _push_knowledge_pip()
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
     # a herd/tile selection reads _band_labor.player_band(), which only just refreshed here).

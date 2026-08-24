@@ -69,13 +69,15 @@ const SUMMARY_ROW_SEPARATION := 6
 
 const SUMMARY_FLAG_WIDTH := 14.0
 
-## The knowledge meter's cell count on this page. It reads `FactionReadouts`' own rather than declaring
-## a second one: the top bar and this page draw the SAME track at the same resolution, and two
-## constants is how they come to disagree about what half-learned looks like.
+## The SETTLING meter's cell count. It reads `FactionReadouts`' own rather than declaring a second
+## one: this page and the knowledge screen draw their meters at the same resolution, and two
+## constants is how two surfaces come to disagree about what half-way looks like.
+##
+## **ITS NAME OUTLIVED ITS FIRST READER, DELIBERATELY.** The knowledge tracks this const was added for
+## left this page for the knowledge screen (`KnowledgePanel`), and the Settling row that borrowed the
+## width is the reader that remains — but the const still belongs to `FactionReadouts`, which is where
+## both surfaces' resolution is declared.
 const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
-
-## The knowledge row's `<bar> <percent>%` value.
-const KNOWLEDGE_VALUE_FORMAT := "%s %d%%"
 
 # ---- zone builders ----------------------------------------------------------
 
@@ -85,18 +87,38 @@ const KNOWLEDGE_VALUE_FORMAT := "%s %d%%"
 ## bar does not state — so a player cycling off a band onto this page is reading the same shapes at a
 ## different scale.
 ##
-## **THERE IS NO HEIGHT TIER HERE, and that is a measurement rather than an oversight.** A band's zone
-## yields by tier because its chart and its role cards are the two biggest blocks in the client's most
-## height-capped box; this page's four blocks measure ~260px of the ~300px a horizontal dock offers,
-## so there is nothing to give up. **Re-measure before adding a fifth block** — `band_panel_preview`'s
-## `_report_zone_content_extent` prints the number, and the band zone has been at the edge twice.
-static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController) -> VBoxContainer:
+## **SETTLING AND DISCOVERIES CAME HERE WHEN THE KNOWLEDGE TAB WAS DELETED, AND THEY ARE NOT
+## KNOWLEDGE.** Neither is earned by practice and neither unlocks a verb — which is exactly why they
+## did not follow the craft tracks out to the knowledge screen. What they ARE is what the faction has
+## BECOME and what it has FOUND, and "who the faction is" is this zone's question, so they belong
+## here on the merits rather than merely being left over. Discoveries lands beside the count it
+## elaborates.
+##
+## **`full` IS A HEIGHT TIER, AND DISCOVERIES IS WHAT YIELDS**, carried over from the zone they came
+## from because the measurement that justified it is unchanged: Discoveries is the only list here with
+## no ceiling of its own (Settling is one row), and it is permanent geographic knowledge rather than a
+## call to act. What survives a short box is what the player might DO something about.
+##
+## **RE-MEASURE BEFORE ADDING ANOTHER BLOCK** — `band_panel_preview`'s `_report_zone_content_extent`
+## prints this zone's extent, and it has been at the edge of the ~300px a horizontal dock offers twice.
+## The tier's threshold is `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, and it must stay above the
+## full block's measured height.
+static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
+        sedentarization: Dictionary, sites: Array, full: bool) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
     col.add_child(_build_vitals_label(bands, disclosures))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
+    var settling := _build_settling_block(sedentarization)
+    if settling != null:
+        col.add_child(settling)
+    if not full:
+        return col
+    var discoveries := _build_discoveries_block(sites)
+    if discoveries != null:
+        col.add_child(discoveries)
     return col
 
 ## THE FACTION'S VITALS — the band page's own five rows, one scale up, through the band page's own
@@ -374,55 +396,15 @@ static func _trend_glyph(delta: float) -> String:
 ## reports a click — the `_work_open_key` idiom, since the open row is per-render state and this layer
 ## holds none.
 ##
-## **THE KNOWLEDGE TRACKS LEFT THIS ZONE for a zone of their own** — see `build_knowledge_zone`.
+## **THE KNOWLEDGE TRACKS LEFT THIS ZONE, AND THEN LEFT THIS PANEL.** They were this zone's last
+## block, then a KNOWLEDGE zone of their own; both placements were wrong for the same reason, which
+## is that a track is not a fact about a band or a roster of hands. They are a free-floating screen
+## now (`KnowledgePanel`), reached from the header's action bar.
 static func build_work_zone(labor: HudBandLaborState, attention: Array,
         open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_child(_build_workforce_block(labor))
     col.add_child(_build_bands_block(labor, attention, open_owner, on_toggle, on_jump))
-    return col
-
-## Zone `knowledge` — WHAT THE FACTION HAS LEARNED, BECOME AND FOUND: its craft tracks, how far it has
-## SETTLED, and the Wondrous Sites it has discovered.
-##
-## **IT IS A ZONE RATHER THAN A BLOCK BECAUSE THREE THINGS ANSWER ONE QUESTION.** The tracks were the
-## work zone's last block, and the placement argument for them there still stands as far as it went —
-## a track is not a stock and not a population, it is what the faction's hands may ATTEMPT, and every
-## rung it gates is a row on a work board. What broke it is the other two: Settling and Discoveries
-## are the same KIND of fact (what the faction is and what it knows, neither of which any band owns),
-## and a work zone carrying all three would have been the roster of hands plus a second page stapled
-## under it, in a box that clips. The four-zone body is what the panel grew to hold them —
-## `BandCityPanel.set_zone_layout`.
-##
-## **THE THREE BLOCKS ARE EACH OMITTED WHEN THEY HAVE NOTHING TO SAY**, the top-bar strip's own rule
-## in all three cases: an unstarted track is noise, an unsettled faction has no meter worth a row, and
-## a faction that has found nothing gets no heading over an empty list. A page that renders every
-## heading regardless states three facts a new game does not have yet.
-##
-## **`full` IS A HEIGHT TIER, AND DISCOVERIES IS WHAT YIELDS.** At the page's row size the three blocks
-## measure 336px against the ~300px a HORIZONTAL dock's zone offers, and this zone CLIPS — so the
-## height-capped shell drops one, the `_build_food_outlook_block` idiom. Discoveries is the one to
-## drop on two counts: it is the only list here with no ceiling of its own (Settling is one row and
-## the craft ladder is five), and it is permanent geographic knowledge rather than a call to act —
-## the top bar's own `◈ Discoveries N` still carries the count. What survives is what the player might
-## DO something about: how settled they are, and what their hands may attempt.
-##
-## The caller decides the tier from the box the panel is offering this zone — see
-## `BandPanelController.render_faction` and `HudWorkVocab.FACTION_KNOWLEDGE_FULL_MIN_HEIGHT`.
-static func build_knowledge_zone(knowledge: Dictionary, sedentarization: Dictionary,
-        sites: Array, full: bool) -> VBoxContainer:
-    var col := HudWidgets.make_zone_column()
-    var settling := _build_settling_block(sedentarization)
-    if settling != null:
-        col.add_child(settling)
-    var tracks := _build_knowledge_block(knowledge)
-    if tracks != null:
-        col.add_child(tracks)
-    if not full:
-        return col
-    var discoveries := _build_discoveries_block(sites)
-    if discoveries != null:
-        col.add_child(discoveries)
     return col
 
 ## Group an attention array by the entity each entry is ABOUT. Entries with no owner (the
@@ -827,40 +809,6 @@ static func _work_detail_lines(labor: HudBandLaborState, band: Dictionary) -> Ar
             int(assignment.get("workers", 0)),
             SourceForecast.format_signed(float(assignment.get("actual_yield", 0.0)))]])
     return lines
-
-## The faction's craft knowledge — one row per track being learned, in the intensification ladder's
-## own order, off the SAME `FactionReadouts.faction_tracks` row the top-bar strip and every rung gate
-## read. A finished track reads the word rather than a full meter.
-##
-## **A track the faction has not begun is HIDDEN**, the top-bar strip's own rule: the snapshot row is
-## sparse and an unstarted rung is noise. Every track unstarted ⇒ no block at all, rather than a
-## heading over nothing.
-static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
-    var rows: Array = []
-    for track in FactionReadouts.KNOWLEDGE_TRACK_LABELS:
-        var progress := float(knowledge.get(track, 0.0))
-        if progress <= 0.0:
-            continue
-        rows.append([String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[track]), progress])
-    if rows.is_empty():
-        return null
-    var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_KNOWLEDGE, ""))
-    for row in rows:
-        var progress: float = row[1]
-        var known := progress >= HudConst.KNOWLEDGE_COMPLETE
-        # **THE SCALE CONVERSION IS THE POINT OF THIS LINE.** A track's progress is `0..1` and
-        # `HudFormat.meter_bar` grades a `0..100` score, so a bare `progress` fills zero cells at every
-        # value under 0.5 — which is how every meter on this page shipped EMPTY, indistinguishable
-        # from an unstarted track beside a live percent. `FactionReadouts._knowledge_meter_text` scales
-        # the same way for the same reason; the two draw one track at one resolution.
-        var value := HudWorkVocab.FACTION_KNOWLEDGE_KNOWN if known \
-            else KNOWLEDGE_VALUE_FORMAT % [
-                HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
-                HudFormat.progress_percent(progress)]
-        block.add_child(_stat_row(String(row[0]), value,
-            HudStyle.SIGNAL if known else HudStyle.INK_DIM))
-    return block
 
 # ---- leaves -----------------------------------------------------------------
 

@@ -185,12 +185,6 @@ const BAND_ZONE_MAX_COLUMNS := 2
 ## ONE column, which is the very thing the wide shell exists to prevent. The ceiling that keeps two
 ## columns there is 371; 354 clears it by 17px. Raise this only with that measurement re-run.
 const ZONE_PARTY_WIDTH := PANEL_WIDTH - PANEL_CHROME_H
-## The faction page's KNOWLEDGE column takes the SAME floor as the parties column, and for the same
-## rule rather than by imitation: no wide-shell zone may be narrower than the one the NARROW shell
-## hands a side dock, because a layout with a whole screen to spend must never give the same rows less
-## room than a 380px strip does. Written as `ZONE_PARTY_WIDTH` so the floor has one home — if that
-## measurement ever moves, both flanks move with it.
-const ZONE_KNOWLEDGE_WIDTH := ZONE_PARTY_WIDTH
 ## The NARROWEST the WORK zone may be for the wide shell to be worth choosing: one readable board
 ## column. MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` (380) — the width below which `_work_board_capacity`
 ## clamps to a single column, and a single column crammed into less than that clips its row labels.
@@ -335,14 +329,14 @@ const HEADER_HEIGHT_FALLBACK := 44.0
 ## the SUBJECT owns the words — see `set_zone_layout`.
 const ZONE_BAND := &"band"
 const ZONE_WORK := &"work"
-const ZONE_KNOWLEDGE := &"knowledge"
 const ZONE_PARTIES := &"parties"
 ## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
-## the live layout**, because prefs load before any subject has declared one — a player who left on
-## the faction page's `knowledge` tab must not have that selection thrown away by the bootstrap
-## layout, which is a band's. A key the live layout lacks is handled by `_effective_tab`, which falls
-## back to the first zone that has content.
-const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_KNOWLEDGE, ZONE_PARTIES]
+## the live layout**, because prefs load before any subject has declared one — the only layout
+## standing at that moment is the bootstrap `DEFAULT_ZONE_LAYOUT`, and a player who left on the
+## faction page's `parties` tab must have that selection survive a check against a layout no subject
+## has authored yet. A key the live layout lacks is handled by `_effective_tab`, which falls back to
+## the first zone that has content.
+const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES]
 ## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
 ## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.
 const ZONE_SPEC_KEY := "key"
@@ -428,6 +422,27 @@ const ACTION_SPEC_ENABLED := "enabled"
 ## The Materials & Crafting launcher's registry id — the panel registers its own ⚒ through the same
 ## seam every other action uses, so there is no privileged action.
 const ACTION_CRAFTING := &"crafting"
+## The KNOWLEDGE SCREEN's launcher (`docs/plan_knowledge_screen.md` §4), registered beside the ⚒
+## through that same seam. **The second entry is what proves the registry is one**: it took a
+## descriptor and a relay and no geometry at all, on any of the three mounts.
+const ACTION_KNOWLEDGE := &"knowledge"
+
+## A registered action's PIP — the small count badge over its top-right corner. It is not part of
+## `register_action`'s descriptor because it moves on a different clock: a descriptor is DECLARED at
+## wiring time and must never become a function of snapshot state (that is what keeps the bar's
+## geometry off the render's hot path), while a pip is restated every turn. So it is pushed
+## separately, and it is drawn INSIDE the button's rect — an overlay child rather than a sibling —
+## for the same reason: a badge that took layout width would make the bar's minimum a function of a
+## count, i.e. exactly the coupling the descriptor rule exists to prevent.
+const ACTION_PIP_FONT_SIZE := 8
+const ACTION_PIP_PADDING_H := 3
+const ACTION_PIP_PADDING_V := 0
+const ACTION_PIP_CORNER_RADIUS := 999
+## How far the pill's top-right corner sits inside the button's, so it reads as ON the glyph rather
+## than as a control beside it.
+const ACTION_PIP_INSET := 1.0
+## The pip node's name, so `set_action_pip` finds and replaces its own without a member per action.
+const ACTION_PIP_NAME := "ActionPip"
 
 # ---- chrome glyphs (geometric — render reliably, unlike emoji magnifiers) ---
 const COLLAPSE_GLYPH := "▾"   # ▾  minimize
@@ -438,6 +453,10 @@ const CYCLE_NEXT_GLYPH := "▶" # ▶
 ## read back from the leaf that owns them so the header and the panel it opens cannot drift apart.
 const CRAFTING_GLYPH := HudCraftingVocab.LAUNCH_GLYPH
 const CRAFTING_TOOLTIP := HudCraftingVocab.LAUNCH_TOOLTIP
+## The knowledge screen's launcher, read back from the leaf that owns them for the same reason the
+## ⚒'s are: the header and the panel it opens cannot then drift apart.
+const KNOWLEDGE_GLYPH := HudKnowledgeVocab.LAUNCH_GLYPH
+const KNOWLEDGE_TOOLTIP := HudKnowledgeVocab.LAUNCH_TOOLTIP
 const DEFAULT_STAGE_GLYPH := "⛺" # ⛺  nomadic fallback
 ## The subject cluster's affordance, cleared while the subject is not jumpable (`set_subject_jumpable`).
 const SUBJECT_JUMP_TOOLTIP := "Jump to this band on the map"
@@ -489,6 +508,15 @@ signal subject_activated
 ## named edge so the crafting controller connects to a signal that says what happened rather than
 ## filtering an id.
 signal crafting_requested
+## The panel's registered `▲` was pressed — open the knowledge screen
+## (`.claude/rules/client/knowledge-panel.md`).
+##
+## **IT CARRIES NO SUBJECT, and unlike the ⚒'s that is not merely convenient — it is what the screen
+## IS.** Knowledge is per-FACTION: a discovery unlocks a verb across the whole map, and no band owns
+## it. So this signal has nothing to carry, where `crafting_requested` at least has a band to relay.
+## A RELAY of `action_invoked(ACTION_KNOWLEDGE)`, kept as its own named edge so its controller
+## connects to a signal that says what happened rather than filtering an id.
+signal knowledge_requested
 ## A registered action was pressed, named by the id it was registered under. THE registry's one
 ## outbound edge: a caller that registers an action listens here and filters on its own id, and never
 ## has to know which of the two mounts the press came off.
@@ -561,6 +589,12 @@ var _rail_action_row: BoxContainer
 var _actions: Array[Dictionary] = []
 ## id:StringName -> Button, so `refresh_actions` can re-evaluate a predicate without a rebuild.
 var _action_buttons: Dictionary = {}
+## id:StringName -> int, the pip count each action is currently wearing. **Retained rather than
+## written straight onto the button**, because the buttons are rebuilt wholesale whenever the panel
+## re-homes its actions (a dock change, a collapse) and a count that lived only on the node would be
+## lost every time the player moved the panel — a pip that vanished on a dock flip and came back on
+## the next turn tick. `0` is "no pip", not a pip reading zero.
+var _action_pips: Dictionary = {}
 ## Which mount the buttons are built into right now, so an ordinary layout pass does not rebuild them
 ## and a dock change to the OTHER orientation does. `ACTION_MOUNT_NONE` until the first build.
 var _action_mount: int = ACTION_MOUNT_NONE
@@ -1056,6 +1090,9 @@ func _build() -> void:
 	# the crafting controller do it) keeps the button's presence a property of the panel — the ⚒ is
 	# subject-independent chrome that must exist on a band page and on the faction page alike.
 	register_action(ACTION_CRAFTING, CRAFTING_GLYPH, CRAFTING_TOOLTIP)
+	# The knowledge screen's `▲`, on the same footing and for the same reason: what your people know is
+	# a FACTION fact, so it must be reachable from a band page and the faction page alike.
+	register_action(ACTION_KNOWLEDGE, KNOWLEDGE_GLYPH, KNOWLEDGE_TOOLTIP)
 	action_invoked.connect(_on_action_invoked)
 
 func _build_header_full() -> HBoxContainer:
@@ -1366,6 +1403,28 @@ func refresh_actions() -> void:
 		var button: Button = button_variant
 		button.disabled = not _action_is_enabled(spec)
 
+## Push an action's PIP — the count badge over its glyph. `0` (or negative) clears it.
+##
+## **IT IS NOT PART OF THE DESCRIPTOR, and that separation is load-bearing.** `register_action`'s
+## contract is that a descriptor is DECLARED at wiring time and never a function of snapshot state,
+## which is what keeps the bar's geometry off the render's hot path; a pip is restated every turn. So
+## it comes in through its own seam, is stored on `_action_pips` (which survives a mount rebuild), and
+## is drawn as an OVERLAY child inside the button's own rect — it can therefore never change the
+## button's minimum size, and so never move the header.
+##
+## Silent on an id that is not registered: a caller pushing a count for an action it has not
+## registered yet is a wiring order, not an error, and the count is applied when it is.
+func set_action_pip(id: StringName, count: int) -> void:
+	_action_pips[id] = maxi(count, 0)
+	var button_variant: Variant = _action_buttons.get(id)
+	if button_variant is Button:
+		_apply_action_pip(button_variant as Button, maxi(count, 0))
+
+## The count an action is currently wearing — `0` when it wears none. For the harness, which must be
+## able to ask what the pip SAYS without reading a Label out of a Button's children.
+func action_pip(id: StringName) -> int:
+	return int(_action_pips.get(id, 0))
+
 ## Is `id` REGISTERED? A question about the list, never about which mount is drawing it. For callers
 ## that register conditionally, and for the harness.
 func has_action(id: StringName) -> bool:
@@ -1445,6 +1504,9 @@ func _rebuild_action_mount() -> void:
 		button.pressed.connect(func(): action_invoked.emit(id))
 		host.add_child(button)
 		_action_buttons[id] = button
+		# The pip is RE-APPLIED here rather than carried on the node, because this rebuild throws every
+		# button away — see `_action_pips`.
+		_apply_action_pip(button, int(_action_pips.get(id, 0)))
 	_refresh_action_mount_visibility()
 
 ## The row a mount id names. Beside `_action_mount_for_state`, so the choice and the hosts it chooses
@@ -1493,6 +1555,8 @@ func _action_bar_height() -> float:
 func _on_action_invoked(id: StringName) -> void:
 	if id == ACTION_CRAFTING:
 		crafting_requested.emit()
+	elif id == ACTION_KNOWLEDGE:
+		knowledge_requested.emit()
 
 # ---- layout ----------------------------------------------------------------
 
@@ -2599,6 +2663,49 @@ func _edge_name(edge: int) -> String:
 			return "top"
 		_:
 			return "bottom"
+
+## Put `count` on `button` as an overlay pill, or take the pill off at `0`. Replaced rather than
+## edited — one node, found by name, so a re-push cannot leave two.
+##
+## **`MOUSE_FILTER_IGNORE` AND ANCHORED, NEVER A LAYOUT CHILD.** A Button is not a Container, so a
+## child of one is positioned by its anchors and contributes nothing to the parent's minimum size —
+## which is exactly the property wanted here: the pip must be unable to widen the action bar. It also
+## must not eat the press, or the one thing a player does when they see a pip would stop working.
+func _apply_action_pip(button: Button, count: int) -> void:
+	var existing := button.get_node_or_null(NodePath(ACTION_PIP_NAME))
+	if existing != null:
+		button.remove_child(existing)
+		existing.queue_free()
+	if count <= 0:
+		return
+	var pill := PanelContainer.new()
+	pill.name = ACTION_PIP_NAME
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	pill.grow_vertical = Control.GROW_DIRECTION_END
+	pill.offset_left = -ACTION_PIP_INSET
+	pill.offset_right = -ACTION_PIP_INSET
+	pill.offset_top = ACTION_PIP_INSET
+	pill.offset_bottom = ACTION_PIP_INSET
+	var sb := StyleBoxFlat.new()
+	# WARN, the tint every "this wants you" readout in this HUD wears — the pip is a nudge, not a
+	# reading, and it is the same colour the knowledge screen's own unspent clause takes.
+	sb.bg_color = HudStyle.WARN
+	sb.set_corner_radius_all(ACTION_PIP_CORNER_RADIUS)
+	sb.content_margin_left = ACTION_PIP_PADDING_H
+	sb.content_margin_right = ACTION_PIP_PADDING_H
+	sb.content_margin_top = ACTION_PIP_PADDING_V
+	sb.content_margin_bottom = ACTION_PIP_PADDING_V
+	pill.add_theme_stylebox_override("panel", sb)
+	var label := Label.new()
+	label.text = str(count)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", ACTION_PIP_FONT_SIZE)
+	# GROUND on WARN — the tab badge's `hot` pair, so a pip and a hot tab read as one family.
+	label.add_theme_color_override("font_color", HudStyle.GROUND)
+	pill.add_child(label)
+	button.add_child(pill)
 
 func _make_icon_button(glyph: String, tooltip: String) -> Button:
 	var btn := Button.new()
