@@ -1998,24 +1998,39 @@ func _ready_for_improvement_state() -> void:
 		% _map.active_overlay_key,
 		_map.active_overlay_key == ReadyForImprovement.CHANNEL_KEY)
 
-	# **IT IS PAINTED IN THE OPPORTUNITY INK — THE SAME ONE THE PER-SOURCE `⌃` BADGE WEARS.** An
-	# aggregate that states an offer in a colour the mark on the very same hex does not use teaches two
-	# vocabularies for one thing.
+	# **IT IS PAINTED IN `HudStyle.HEALTHY`, AND THE MAP LAYS IT ON AS A DIM WASH.** Three different
+	# values, so each term is spelled as what it actually is: the channel's DECLARED hue, the hue the
+	# legend BUTTON states (undimmed — a swatch states the channel's colour, not one tile's tint), and
+	# the wash `_tile_color` really paints on a lit hex, which at `TILE_READY` is
+	# `GRID_COLOR.lerp(HEALTHY, TILE_READY)` rather than `HEALTHY` itself. **The expected wash is
+	# COMPOSED from those two named constants**, never written as a literal colour: the third term
+	# exists to make the painted map the oracle, and a literal would only agree with itself.
+	#
+	# **THE FOURTH TERM IS WHAT PINS THE DIMNESS, and composing the wash is exactly why it is needed.**
+	# `expected_wash` moves WITH `TILE_READY`, so raising the constant back to a full fill leaves the
+	# third term agreeing with itself — sabotage-verified, the whole run passes at `TILE_READY = 1.0`.
+	# What a full fill actually costs is the wash: the map would paint `HEALTHY` itself and blow the
+	# lit hexes out against the grid, which is the defect the dimming was for. So the map is also
+	# asked NOT to paint the undimmed hue anywhere, and the constant's VALUE becomes load-bearing
+	# rather than self-referential.
 	#
 	# **THE ROSTER-WIDE FACE GUARD CANNOT MAKE THIS CLAIM, and neither can a restatement of it here.**
 	# That guard asks whether a face states a colour the map really paints — and this channel rides the
 	# GENERIC `GRID_COLOR.lerp(OVERLAY_COLORS.get(key, FALLBACK), value)` path, so with its
 	# `OVERLAY_COLORS` row deleted the map paints the meaningless fallback blue and the button states
 	# that same blue, honestly. Sabotage-verified: the row can be removed and the whole run still
-	# passes, face guard included. What a dropped row actually costs is the AGREEMENT with the badge,
-	# so that is what is asserted — `HudStyle.SIGNAL` by name, reached through the map, through the
-	# button, and through `_tile_color` as the oracle, so a table that lies to the button and a button
-	# that lies about the table both fail.
+	# passes, face guard included. It is out of reach for a second reason as well —
+	# `_overlay_picker_state`'s fixture carries no patches and no herds, so this key is not even in
+	# that roster. What a dropped row actually costs is the HEALTHY GREEN, so that is what is asserted
+	# here by name, reached through the map, through the button, and through `_tile_color` as the
+	# oracle, so a table that lies to the button and a button that lies about the table both fail.
 	var face: Color = picker.legend_face_color()
-	_assert_map("ready for improvement — map, button and painted tile all wear HudStyle.SIGNAL, the ⌃ badge's own ink (%s)"
-		% face,
-		_map.overlay_color_for(ReadyForImprovement.CHANNEL_KEY) == HudStyle.SIGNAL
-			and face == HudStyle.SIGNAL and _map_paints_color(HudStyle.SIGNAL))
+	var expected_wash := MapView.GRID_COLOR.lerp(HudStyle.HEALTHY, ReadyForImprovement.TILE_READY)
+	_assert_map("ready for improvement — the channel declares HudStyle.HEALTHY, the legend button states it undimmed (%s), and the map paints a DIM wash of it (%s) rather than the full hue"
+		% [face, expected_wash],
+		_map.overlay_color_for(ReadyForImprovement.CHANNEL_KEY) == HudStyle.HEALTHY
+			and face == HudStyle.HEALTHY and _map_paints_color(expected_wash)
+			and not _map_paints_color(HudStyle.HEALTHY))
 
 	await _save("map_ready_for_improvement")
 	await _save_overlay_legend("map_ready_for_improvement_legend")

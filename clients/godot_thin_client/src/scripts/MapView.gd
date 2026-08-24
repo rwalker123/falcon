@@ -123,14 +123,16 @@ static var THREAT_OVERLAY_COLOR: Color = Color()       # DERIVED: HudStyle.THREA
 # `ReadyForImprovement`) — there is no wire raster, and there could not be, the answer being about what the
 # PLAYER's faction knows.
 #
-# **IT IS `HudStyle.SIGNAL` — THE OPPORTUNITY INK, THE SAME ONE THE `⌃` BADGE WEARS** — and derived
-# rather than authored for exactly that reason: an opportunity is one language across this client, and
-# the map's aggregate must not state it in a hue the badge on the very same hex does not. It is
-# deliberately NOT a colour of its own: `SIGNAL` is a parchment cream in the shipped palette and a
-# cyan in others, and a hand-picked hue here would agree with the badge in one theme and fight it in
-# three. Amber would be wrong twice over — it is the trouble channel on this map, and teaching a
+# **IT IS `HudStyle.HEALTHY` — THE THEMED "well-supplied / good" GREEN.** The aggregate is a reading
+# about LAND — these hexes hold ground and herds that could carry more — and that is the same good
+# news every other healthy mark on this client states in green. **The per-source `⌃` badge keeps
+# `SIGNAL`**, and the two being different marks is deliberate rather than a drift: a badge pinned to
+# one source and a dim wash over a whole map are not one vocabulary said twice, and painting the map
+# in the badge's ink made a near-white cream blow the lit hexes out against the grid. It is still
+# DERIVED rather than authored: a hand-picked hue would agree with the palette in one theme and fight
+# it in three. Amber would be wrong twice over — it is the trouble channel on this map, and teaching a
 # player to read good news in it is how a warning stops being read.
-static var READY_FOR_IMPROVEMENT_OVERLAY_COLOR: Color = Color()  # DERIVED: HudStyle.SIGNAL
+static var READY_FOR_IMPROVEMENT_OVERLAY_COLOR: Color = Color()  # DERIVED: HudStyle.HEALTHY
 
 ## **CHANNELS THIS RENDERER SYNTHESIZES ON DEMAND — `{key: builder method}`.** A channel in this table
 ## is NOT built during the snapshot ingest; it is built the first time each frame that something asks
@@ -578,7 +580,7 @@ static func apply_palette(p: Dictionary) -> void:
 	# --- derived ---
 	THREAT_OVERLAY_COLOR = HudStyle.THREAT_ACCENT
 	HUNT_DANGER_OVERLAY_COLOR = HudStyle.HUNT_DANGER_ACCENT
-	READY_FOR_IMPROVEMENT_OVERLAY_COLOR = HudStyle.SIGNAL
+	READY_FOR_IMPROVEMENT_OVERLAY_COLOR = HudStyle.HEALTHY
 	HERD_DISTRESS_COLOR = HudStyle.DANGER
 	SUPPLY_LINK_COLOR = Color(HudStyle.SIGNAL, SUPPLY_LINK_OPACITY)
 	OVERLAY_COLORS = {
@@ -602,12 +604,12 @@ static func apply_palette(p: Dictionary) -> void:
 		# herd glows (hunt-danger orange, threat red, so the two read apart).
 		HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
 		THREAT_OVERLAY_KEY: THREAT_OVERLAY_COLOR,
-		# The aggregate ⌃ rides the generic lerp too — a hex with an offer glows, every other stays
-		# grid-coloured. Without a row it would paint `OVERLAY_FALLBACK_COLOR`, a blue meaning nothing,
-		# and — because the fallback is what the legend button would then state as well — the picker's
-		# roster-wide face guard would pass on it, the two agreeing honestly about a colour that says
-		# nothing. What the row buys is the AGREEMENT WITH THE BADGE, and that is what `map_preview`
-		# asserts by name.
+		# The aggregate ⌃ rides the generic lerp too — a hex with an offer wears a dim wash of this hue
+		# (`ReadyForImprovement.TILE_READY`), every other stays grid-coloured. Without a row it would
+		# paint `OVERLAY_FALLBACK_COLOR`, a blue meaning nothing, and — because the fallback is what the
+		# legend button would then state as well — the picker's roster-wide face guard would pass on it,
+		# the two agreeing honestly about a colour that says nothing. What the row buys is the HEALTHY
+		# GREEN, and that is what `map_preview` asserts by name.
 		ReadyForImprovement.CHANNEL_KEY: READY_FOR_IMPROVEMENT_OVERLAY_COLOR,
 	}
 

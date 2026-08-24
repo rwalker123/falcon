@@ -43,11 +43,15 @@ const CHANNEL_KEY := "ready_for_improvement"
 const CHANNEL_LABEL := "Ready for Improvement"
 const CHANNEL_DESCRIPTION := "Land and herds your people could improve right now."
 
-## A tile carrying at least one ready source paints at FULL strength, every other tile at none. It is
-## a binary raster on purpose: "there is an opportunity on this hex" is the whole claim, and shading
-## it by how many would say a hex with three offers is a better place to stand than one with a Sow.
-## The generic `GRID_COLOR.lerp(overlay_color, value)` path then paints it, the `hunt_danger` shape.
-const TILE_READY := 1.0
+## A tile carrying at least one ready source wears a DIM WASH of the channel colour, every other tile
+## none. **A full fill was the first cut and it was unreadable** — the lit hexes blew out against the
+## dark grid, and a map of them was a glare rather than a reading; a wash states the same thing and
+## lets the map underneath stay visible. The value is a FIXED wash level, NOT a per-hex strength: the
+## raster is binary on purpose, because "there is an opportunity on this hex" is the whole claim, and
+## shading it by how many offers a hex holds would say a hex with three is a better place to stand
+## than one with a Sow. The generic `GRID_COLOR.lerp(overlay_color, value)` path then paints it, the
+## `hunt_danger` shape.
+const TILE_READY := 0.55
 
 ## `raw` counts the ready sources on the hex — a hex can hold a patch and several herds at once, and
 ## the raw plane is what a tile readout would quote. It is NOT what the ramp reads; see above.

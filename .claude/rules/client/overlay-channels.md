@@ -25,7 +25,7 @@ Raster overlays streamed from `core_sim`:
 | `hunt_danger` | Danger orange (generic lerp) | **NOT a wire raster** — projected client-side, `attack × ferocity` per herd (see below) |
 | `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
 | `elevation` | Elevation ramp | `MapSection.elevationOverlay` — **and the DEFAULT channel** (below) |
-| `ready_for_improvement` | `HudStyle.SIGNAL`, the opportunity ink (generic lerp) | **NOT a wire raster** — the aggregate `⌃`, synthesized client-side from the patches, the herds and the faction's knowledge row (see below) |
+| `ready_for_improvement` | `HudStyle.HEALTHY`, a DIM wash of the good-news green (generic lerp) | **NOT a wire raster** — the aggregate `⌃`, synthesized client-side from the patches, the herds and the faction's knowledge row (see below) |
 
 Legend rendering: min/avg/max values + channel description.
 
@@ -464,13 +464,17 @@ docstring says so), so a herd another faction has tamed reads as climbable — h
 compose sheet. A filter added *here* would give this channel a private definition of "our source"; the
 fix belongs in the shared gate, for all four surfaces.
 
-**ITS `OVERLAY_COLORS` ROW IS `HudStyle.SIGNAL`, DERIVED** — the OPPORTUNITY ink, the same one the
-`⌃` badge's border and glyph wear. An opportunity is one language across this client and the aggregate
-must not state it in a hue the badge on the same hex does not, which is also why it is not a colour of
-its own: `SIGNAL` is a parchment cream in the shipped palette and a cyan in others, so a hand-picked
-value would agree with the badge in one theme and fight it in three. Amber would be wrong twice: it is
-the trouble channel here, and teaching a player to read good news in it is how a warning stops being
-read.
+**ITS `OVERLAY_COLORS` ROW IS `HudStyle.HEALTHY`, DERIVED** — the themed "well-supplied / good"
+green. The aggregate is a reading about LAND, and land that could carry more is the same good news
+every other healthy mark on this client states in green. **The per-source `⌃` badge keeps `SIGNAL`**,
+and the two being different marks is deliberate: a badge pinned to one source and a dim wash over a
+whole map are not one vocabulary said twice. The channel wore `SIGNAL` for one release on the
+agreement-with-the-badge argument, and the shipped palette's `SIGNAL` is a near-white parchment cream
+— painted over a map it blew the lit hexes out against the dark grid, which is what retired that
+argument. It is still DERIVED rather than authored, and for the reason that survives the swap: a
+hand-picked value would agree with the palette in one theme and fight it in three. Amber would be
+wrong twice: it is the trouble channel here, and teaching a player to read good news in it is how a
+warning stops being read.
 
 > **THE ROSTER-WIDE FACE GUARD DOES NOT COVER THIS ROW, and it cannot — measured by sabotage.** That
 > guard (above, "THE GUARD WAS THE ACTUAL DEFECT") asks whether a face states a colour the map really
@@ -478,17 +482,24 @@ read.
 > path, so with its row DELETED the map paints the fallback blue and the button states that same blue
 > — honestly — and the guard passes, exactly as it does for `visibility`. It catches a channel with a
 > paint path of its OWN; that is how it caught `forage`. What a dropped row costs a GENERIC channel is
-> not a lie but the AGREEMENT with the badge, so `map_preview` asserts that instead and by name: map
-> colour, legend-button face and a painted tile all equal `HudStyle.SIGNAL`.
+> not a lie but the HEALTHY GREEN, so `map_preview` asserts that instead and by name — and as FOUR
+> terms, because the declared hue, the hue the legend button states and the tint a lit hex wears are
+> three different values: the channel declares `HudStyle.HEALTHY`, the button states it UNDIMMED, the
+> map paints `GRID_COLOR.lerp(HEALTHY, TILE_READY)` on some tile, and the map paints the undimmed hue
+> on NONE. That last term is what pins the dimness — the expected wash is composed from `TILE_READY`,
+> so it moves with the constant and the third term alone passes at a full fill (sabotage-verified).
 >
 > The guard is also out of reach here for a second reason worth knowing before writing one like it:
 > `_overlay_picker_state`'s fixture publishes no patches and no herds, so `has_ready_for_improvement_data`
 > is false in that world and this channel is not in that roster at all.
 
-The raster is BINARY — a hex with an offer paints
-at full strength, every other stays grid-coloured — because "there is an opportunity here" is the whole
-claim and shading by count would say a hex with three offers is a better place to stand than one with a
-Sow. The `raw` plane carries the count for anything that wants to quote it.
+The raster is BINARY — a hex with an offer wears a DIM WASH of the channel colour
+(`ReadyForImprovement.TILE_READY`), every other stays grid-coloured — because "there is an opportunity
+here" is the whole claim and shading by count would say a hex with three offers is a better place to
+stand than one with a Sow. The wash level is a fixed value rather than a per-hex strength, and it is a
+wash rather than a full fill because a full fill blew the lit hexes out against the grid and a map of
+them was a glare instead of a reading. The `raw` plane carries the count for anything that wants to
+quote it.
 
 Verify with `map_preview` state **"ready for improvement"** (`map_ready_for_improvement` — the CONTRAST, not the
 glow: three patches and two herds lit while four controls stay dark — a worked patch whose crew
