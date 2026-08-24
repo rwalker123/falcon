@@ -86,9 +86,13 @@ const CHANNELS: Array[Dictionary] = [
 		# wants is the SHAPE — how many, on which web, and whether any of it is ground nobody stands
 		# on — and those are lines, not rows.
 		"facts": &"ready_for_improvement_facts",
-		# Gated on the RASTER, not on the count: a world with sources offers the channel even when
-		# nothing is ready (the legend says so), and `set_overlay_channel` would silently refuse the
-		# key on a world that has none.
+		# Gated on the WORLD, not on the count and NOT on the raster. A world with sources offers the
+		# channel even when nothing is ready (the legend says so), so the predicate asks the grid and
+		# the two source lookups — never `overlay_channels`. **A predicate that consulted the raster
+		# would never offer the row at all**: the channel is built lazily (see the placement note
+		# below), so for most of a frame's life no raster exists, and gating on one means the row can
+		# only appear once something has already built the thing the row exists to let the player ask
+		# for.
 		"available": &"has_ready_for_improvement_data",
 		# **AND THE PLACEMENT IS LOAD-BEARING BECAUSE THE CHANNEL IS BUILT LAZILY.** `MapView` does not
 		# synthesize this raster during the ingest (`DEFERRED_OVERLAY_BUILDERS` — a `RungGates` pass per

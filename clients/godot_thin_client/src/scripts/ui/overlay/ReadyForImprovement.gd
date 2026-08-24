@@ -7,7 +7,7 @@ class_name ReadyForImprovement
 ## Read that way the channel lit every land tile on the map the moment Cultivation was learned — every
 ## wild patch answers *"a rung is available"*, so "can be improved" stopped being a scarce property and
 ## the map washed out into a sheet that named nothing. A hex lights only if a source on it satisfies
-## ALL FOUR of:
+## ALL THREE of:
 ##
 ## 1. **It is IMPROVED, or a player band is WORKING it** — the union, and both halves matter; see
 ##    `_is_candidate`. This is the cheap test and it runs first.
@@ -45,10 +45,11 @@ class_name ReadyForImprovement
 ## **EVERYTHING IS `static` AND STATELESS**, the `RungGates` / `SourceForecast` shape. The model
 ## `derive` answers is held by `MapView` (which caches it beside the raster), never here.
 ##
-## **IT ASKS `RungGates`, IT DOES NOT RE-DERIVE THE LADDER.** Conditions 3 and 4 are the badge's own
-## two questions in the badge's own order — *is a rung already under way?*, then *is one on offer?* —
-## so where this channel and the per-source mark are asking the same thing they cannot disagree. Every
-## ladder term (which rungs a species admits, which knowledge gates them, whether the ground will take
+## **IT ASKS `RungGates`, IT DOES NOT RE-DERIVE THE LADDER.** Condition 3 is the WHOLE ladder question
+## and it is one call — `next_rung_ready`, the same call that draws the `⌃` on a marker's badge — so
+## where this channel and the per-source mark are asking the same thing they cannot disagree. There is
+## no separate *is a rung already under way?* test here, deliberately: that branch belongs to the badge
+## alone, for the reason `_is_candidate`'s docstring gives. Every ladder term (which rungs a species admits, which knowledge gates them, whether the ground will take
 ## seed) stays in `RungGates`, where the compose sheet and the WORK board read it too. Conditions 1
 ## and 2 are NOT ladder terms and are deliberately not pushed down there: `RungGates` answers what a
 ## source *could* climb, which is the right answer for a compose sheet opened on wild ground. This
@@ -67,9 +68,10 @@ class_name ReadyForImprovement
 ## reading it in the shared gate, for all four surfaces at once.
 
 ## The channel key, and the label/description the picker states for it. **Both halves of the wiring
-## read these constants** — `MapView._install_ready_for_improvement_overlay` stamps them onto the synthesized
-## channel and `OverlayChannels.CHANNELS` names them in its row — so the picker's list and the map's
-## own channel table cannot drift into two names for one thing.
+## read these constants** — `MapView._build_ready_for_improvement_channel` (reached by name through
+## `MapView.DEFERRED_OVERLAY_BUILDERS`) stamps them onto the synthesized channel and
+## `OverlayChannels.CHANNELS` names them in its row — so the picker's list and the map's own channel
+## table cannot drift into two names for one thing.
 const CHANNEL_KEY := "ready_for_improvement"
 const CHANNEL_LABEL := "Ready for Improvement"
 const CHANNEL_DESCRIPTION := "Land and herds your people could improve right now."
@@ -88,13 +90,18 @@ const TILE_READY := 0.55
 ## the raw plane is what a tile readout would quote. It is NOT what the ramp reads; see above.
 const TILE_NONE := 0.0
 
-## The WIRE keys conditions 1 and 2 are read out of — named here rather than spelled at the read site,
-## the way this file already names its model keys. All three sit on the source dict the decoder
-## publishes (`native/src/dict/subsistence.rs`), unprefixed: this channel walks `forage_patch_lookup`
-## and `herds` directly, never the `patch_`-prefixed `tile_info` cross-ref.
+## The WIRE keys condition 2 is read out of — named here rather than spelled at the read site, the way
+## this file already names its model keys. Both sit on the source dict the decoder publishes
+## (`native/src/dict/subsistence.rs`), unprefixed: this channel walks `forage_patch_lookup` and `herds`
+## directly, never the `patch_`-prefixed `tile_info` cross-ref. They are the plant web's alone — a herd
+## row carries no owner at all.
 ##
-## `SOURCE_CURRENT_RUNG_KEY` is on BOTH webs; the owner pair is on the plant web only.
-const SOURCE_CURRENT_RUNG_KEY := "current_rung"
+## **CONDITION 1'S KEY IS NOT HERE, AND MUST NOT BE.** The standing rung is
+## `SourceForecast.FORECAST_CURRENT_RUNG_KEY`, which is that string's ONE home for the whole client;
+## `_is_candidate` reads it straight off `SourceForecast` rather than through a local copy. A second
+## spelling of it would fail SILENTLY the day the wire key moved: `SourceForecast` would follow, this
+## file would not, `_is_candidate` would read `""` for every source, the improved half of the candidate
+## union would go dark, and the map would still paint a plausible picture off the worked half alone.
 const SOURCE_HAS_OWNER_KEY := "has_owner"
 const SOURCE_OWNER_KEY := "owner"
 
@@ -307,7 +314,7 @@ static func _is_candidate(kind: String, source: Dictionary, is_worked: bool) -> 
 	if is_worked:
 		return true
 	return SourceForecast.rung_above_branch_floor(
-		String(source.get(SOURCE_CURRENT_RUNG_KEY, "")))
+		String(source.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, "")))
 
 
 ## **IS THIS SOMEBODY ELSE'S?** — the only ownership question worth asking, and it is spelled as a

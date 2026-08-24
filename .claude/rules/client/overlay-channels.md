@@ -36,10 +36,10 @@ picker, split by KIND so that adding a channel is a data edit and never a code o
 
 | Module | Kind | Holds |
 |---|---|---|
-| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Three rows today: the empty key (`PLACEMENT_FIRST`), `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) and `ready_for_improvement` (no placement — `MapView` appends its key to `overlay_channel_order` itself, so the wire pass claims it) |
+| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Three rows today: the empty key (`PLACEMENT_FIRST`), `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) and `ready_for_improvement` (`PLACEMENT_LAST`, gated on `MapView.has_ready_for_improvement_data`) — **and that placement is load-bearing precisely because the channel is built LAZILY**: the key is absent from `overlay_channel_order` for most of a frame's life, so the wire pass cannot place it and this row is what puts it in the list at all |
 | `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Two `legend_kind`s — `KIND_RAMP` (the channel's own legend rows) and `KIND_FACTS` (the lines a descriptor's provider answers) — and **no channel is named in the file** |
 | `ui/overlay/OverlayPicker.gd` | the widget | The TWO buttons docked on `MinimapPanel`'s top border and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
-| `ui/overlay/ReadyForImprovement.gd` | all-`static`, stateless | ONE channel's DERIVATION — the `ready_for_improvement` raster, its per-web counts and its unworked tiles, asked of `RungGates` (below). The registry names it; nothing else does |
+| `ui/overlay/ReadyForImprovement.gd` | all-`static`, stateless | ONE channel's DERIVATION — the `ready_for_improvement` raster, its per-web counts and the tiles it lit (`MODEL_READY`), asked of `RungGates` (below). The registry names it; nothing else does |
 
 **A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
 `placeholder` flag per channel and `MapView._ingest_overlay_channels` holds them, so `roster()`
@@ -488,7 +488,7 @@ wants to see them all turns the channel on. A channel is a thing the player asks
 makes it the right shape for news that does not expire.
 
 **IT IS ALWAYS OFFERED ON A WORLD THAT HAS SOURCES, INCLUDING WHEN NOTHING IS READY** — the legend
-then reads *"No source can climb a rung yet."* Gating it on the COUNT would make the channel appear
+then reads *"Nothing can be improved right now."* — `ReadyForImprovement.FACTS_NONE`, and note that it says **improve**: "rung" and "climb" are this arc's internal vocabulary and never reach the player. Gating it on the COUNT would make the channel appear
 the turn the first discovery lands, which is the map lighting up for an unlock under another name,
 and a roster row that comes and goes is a row a player cannot learn. `has_ready_for_improvement_data` is
 therefore a question about the WORLD — a grid, and a source of either web — never about the count, and
@@ -524,16 +524,24 @@ happens there and then only when it is the channel being PAINTED. The staleness 
 (`FactionReadouts.faction_tracks` returns it uncopied), so storing the reference would compare a row
 against itself and never fire.
 
-**`ReadyForImprovement` ASKS `RungGates`; IT DECIDES NOTHING ABOUT THE LADDER.** `_offers_a_rung` is the
-BADGE's own two questions in the badge's own order — `rung_in_progress` first, `next_rung_ready`
-second — so the aggregate and the mark on the hex under it cannot disagree. Asking only the ready
-test would light a patch mid-Cultivate: its next rung is admitted and ungated, and `next_rung_ready`
-excludes only the verb a crew DECLARED. A rung being climbed is not a rung on offer.
+**`ReadyForImprovement` ASKS `RungGates`; IT DECIDES NOTHING ABOUT THE LADDER.** The ladder question is
+ONE call — `next_rung_ready`, the same one that draws the `⌃` on a marker's badge — so the aggregate
+and the mark on the hex under it cannot disagree. Knowing how, the ground taking seed and the species'
+own ceiling all live inside that answer, and none of them is re-derived here.
+
+> **A PARAGRAPH HERE USED TO DESCRIBE A SECOND CALL, and it survived the change that removed it.** It
+> said `_offers_a_rung` asked `rung_in_progress` first and `next_rung_ready` second, and that asking
+> only the ready test would wrongly light a patch mid-Cultivate. That function is gone, the channel
+> makes one call, and the harness now asserts a mid-Field patch nobody declared **lights** — see "THERE
+> IS NO 'ALREADY BEING BUILT' TEST" above, which is the live rule. It is recorded rather than deleted
+> because a rule file that contradicts itself is worse than one that is merely out of date: an agent
+> loading this file to fix a *"a mid-build tile is lit"* report would have followed the stale half and
+> re-broken the fixture that pins the fix.
 
 **THE `improvement` AXIS COSTS A WALK OVER BANDS, NOT OVER SOURCES.** `ReadyForImprovement.worked_sources`
 answers `{secondary key: declared improvement}` off `units` and their assignment rows (tens of
-iterations), and its KEY SET is also the "is anybody on this" test the unworked list needs — two jobs,
-one walk. The declaration is not redundant with the meters: a Sow ordered this turn stands at 0% on
+iterations), and its KEY SET is also the WORKED half of the candidate union (`_is_candidate`) — two
+jobs, one walk. The declaration is not redundant with the meters: a Sow ordered this turn stands at 0% on
 every rung, so without it the source reads as untouched on the very turn the player committed it.
 **It is a SECOND reading of `BandOverlayRenderer`'s same set**, deliberately — that one is fused into
 a draw (effective columns, crew and builder accumulation, ring and badge all fall out of one loop),
@@ -543,8 +551,8 @@ disagreement would actually come from.
 
 **THE FACTS ARE ANSWERED ON DEMAND, NOT STAMPED INTO THE MODEL.** *Nearest* is measured from the
 SELECTED band (falling back to the player's first, and dropping the coordinate entirely when there is
-no band at all), and a selection change is not a snapshot — so `ready_for_improvement_facts` scans the cached
-unworked list (tens) rather than re-deriving. It measures through `MapView._hex_distance` and
+no band at all), and a selection change is not a snapshot — so `ready_for_improvement_facts` scans the
+cached LIT list (`MODEL_READY`, tens) rather than re-deriving. It measures through `MapView._hex_distance` and
 `_wrapped_col_delta`, the map's own metric and its own seam rule, so "nearest" here is the nearest the
 map draws.
 
@@ -593,10 +601,11 @@ them was a glare instead of a reading. The `raw` plane carries the count for any
 quote it.
 
 Verify with `map_preview` state **"ready for improvement"** (`map_ready_for_improvement` — the CONTRAST, not the
-glow: three patches and two herds lit while SIX controls stay dark — a worked patch whose crew
-DECLARED its rung, an unworked patch HALF-BUILT with nothing declared, the wild-ceiling wolf, a tended
-patch whose plants may climb no further, an untouched WILD patch inside the band's work range, and an
-improved patch another faction owns; `map_ready_for_improvement_legend` is its facts card) plus the
+glow: SEVEN sources lit — four patches and three herds — while FIVE controls stay dark: a worked patch
+whose crew DECLARED its rung, a wild half-cultivated patch nobody works, the wild-ceiling wolf, a
+worked patch whose plants may climb no further, and a worked patch another faction owns. Read the
+counts off `map_preview`'s `READY_EXPECTED_*` constants rather than from here — this sentence has been
+wrong twice; `map_ready_for_improvement_legend` is its facts card) plus the
 assertion block beside it, which drives the late knowledge push, the counts split by web, the tiles a
 picture cannot separate, and the nearest answer moving with the selection off the cached model.
 

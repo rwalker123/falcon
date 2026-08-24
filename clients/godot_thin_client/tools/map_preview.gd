@@ -550,6 +550,10 @@ const READY_HALF_BUILT_PROGRESS := 0.55
 # a dark control while the channel carried that fourth test; dropping the test is what lights it.
 const READY_MID_FIELD := Vector2i(10, 10)
 const READY_MID_FIELD_PROGRESS := 0.6
+# The ladder position an UNTOUCHED patch stands at — `forage::RUNG_UNSTARTED`, restated here because
+# `_stamp_patch_owner` compares each build meter against it. Anything strictly above it is work
+# somebody has sunk into the patch, which is precisely when the sim records an owner.
+const READY_LADDER_UNSTARTED := 0.0
 # The SECOND player band. It works exactly one source — `READY_FIRST_RUNG`, beside it — so it supplies
 # both the anchor for the nearest-moves-with-the-selection claim and the tile that claim names. With
 # one band the anchor and its fallback are the same tile and a broken selection read passes.
@@ -1900,8 +1904,11 @@ func _overlay_picker_state() -> void:
 ## **THE FRAME IS THE CONTRAST, NOT THE GLOW.** A cyan map is a plausible picture of a correct channel
 ## and of a channel that lights every source it can see; what the frame has to show is that the two
 ## mid-Cultivate patches, the wild-ceiling wolf, the can-climb-nothing patch, the untouched WILD patch
-## and the foreign one stay DARK while three patches and two herds glow. Everything a picture cannot separate — which web each lit hex is on,
-## whether the counts split right, which coordinate the legend named and why — is asserted below.
+## and the foreign one stay DARK while `READY_EXPECTED_PATCHES` patches and `READY_EXPECTED_HERDS`
+## herds glow. The counts are named rather than restated here because a fixture gains sources over
+## time and a number written into prose does not follow them. Everything a picture cannot separate —
+## which web each lit hex is on, whether the counts split right, which coordinate the legend named and
+## why — is asserted below.
 func _ready_for_improvement_state() -> void:
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
@@ -1997,6 +2004,14 @@ func _ready_for_improvement_state() -> void:
 	#
 	# WORKED but not improved — the FIRST rung, on both webs. The reported defect: a faction that had
 	# just learned Herding, hunting two tamable herds, saw an empty map.
+	#
+	# **AND THIS LINE IS THE OWNERSHIP TEST'S ONLY GUARD.** `READY_FIRST_RUNG` is wild, worked by band
+	# 2, and carries no meter above the floor — so `_stamp_patch_owner` gives it NO owner at all,
+	# which is exactly what the wire publishes for untouched ground. That is what makes the difference
+	# between `ReadyForImprovement._not_another_faction_s` as a REFUSAL (shipped: no owner is fine) and
+	# as a REQUIREMENT (`has_owner` and `owner == player`) visible here: the requirement form refuses
+	# every first-rung opportunity on the plant web, and this tile is the first one it darkens. While
+	# the fixture hard-coded `has_owner: true` on every row, that rewrite left this state green.
 	_assert_map("ready for improvement — WILD ground band 2 works at %s lights: a first improvement is an improvement"
 		% READY_FIRST_RUNG, lit.has(READY_FIRST_RUNG))
 	_assert_map("ready for improvement — …and so does the WILD herd band 1 hunts at %s, one Herding away from Tame"
@@ -2212,19 +2227,20 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 ## rung"), which is what `RungGates.any_crop_allows` reads. `progress` puts work on the CULTIVATE
 ## METER without stamping the rung done — the state `RungGates.rung_in_progress` answers off.
 ##
-## **`current_rung` IS DERIVED HERE, NEVER PASSED IN**, and that is what keeps the fixture honest: a
-## caller free to set the standing rung and `is_cultivated` independently could stage a patch the wire
-## cannot produce and prove something about it. `owner` defaults to the player because that is what
-## every source in this state is; the one foreign patch says so explicitly.
+## **`current_rung` AND OWNERSHIP ARE BOTH DERIVED HERE, NEVER PASSED IN**, and that is what keeps the
+## fixture honest: a caller free to set the standing rung and `is_cultivated` independently could stage
+## a patch the wire cannot produce and prove something about it. `owner` is the faction to record IF
+## this patch turns out to have one — `_stamp_patch_owner` decides whether it does — and defaults to
+## the player because that is what every owned source in this state is; the one foreign patch says so
+## explicitly.
 func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool,
 		progress: float = 0.0, owner: int = MapView.PLAYER_FACTION_ID,
 		field_progress: float = 0.0) -> Dictionary:
-	return {
+	return _stamp_patch_owner({
 		"x": tile.x, "y": tile.y,
 		"ecology_phase": "thriving",
 		"is_cultivated": tended, "is_field": false,
 		"current_rung": RUNG_FX.patch_rung_key(tended, false),
-		"has_owner": true, "owner": owner,
 		"cultivation_progress": progress,
 		# **A PART-FILLED METER IS NOT A BUILT RUNG**, so `is_field` stays false and the standing rung
 		# stays whatever the patch has actually finished — the same split the wire makes, and the whole
@@ -2233,7 +2249,56 @@ func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bo
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": can_cultivate, "can_sow": can_sow}],
-	}
+	}, owner)
+
+## **OWNERSHIP, STRUCK OFF THE ROW'S OWN METERS** — the sim's derivation restated, exactly as
+## `fixtures_rung.gd` restates the standing rung, and for the same reason.
+##
+## `forage::ForagePatch::owner` is `Some` only while the patch stands above `RUNG_UNSTARTED`, and
+## `reconcile_owner` clears it the moment the ladder position falls back to nothing: a patch is owned
+## because somebody has sunk work into it, and for no other reason. So a patch is the player's iff one
+## of its improvement meters is above the floor — a built rung (`is_cultivated` / `is_field`) or a
+## part-filled one (`cultivation_progress` / `field_progress`) — and a WILD, untouched patch states
+## `has_owner: false` with no `owner` key at all.
+##
+## ⛔ **A FIXTURE THAT HARD-CODES `has_owner` STAGES A SOURCE THE SERVER CANNOT PUBLISH**, and every
+## row here did until the review that found it: untouched wild ground claiming a faction. What that
+## cost was the ownership test's only guard. `ReadyForImprovement._not_another_faction_s` is written as
+## a REFUSAL on purpose — no owner is fine, our owner is fine, only a stated FOREIGN owner refuses —
+## and with every row claiming an owner, rewriting it into a REQUIREMENT (`has_owner` and `owner ==
+## player`) left this whole state green, while on a live map it would have darkened every first-rung
+## opportunity on the plant web. `READY_FIRST_RUNG` is now unowned, as the wire has it, so that rewrite
+## fails by name.
+##
+## The meters are reached through `SourceForecast`'s own key tables, so a row cannot be judged owned
+## off a field the client has stopped publishing.
+func _stamp_patch_owner(patch: Dictionary, owner: int) -> Dictionary:
+	var owned := _patch_rung_built(patch, SourceForecast.IMPROVEMENT_CULTIVATE) \
+		or _patch_rung_built(patch, SourceForecast.IMPROVEMENT_SOW) \
+		or _patch_rung_started(patch, SourceForecast.IMPROVEMENT_CULTIVATE) \
+		or _patch_rung_started(patch, SourceForecast.IMPROVEMENT_SOW)
+	patch[ReadyForImprovement.SOURCE_HAS_OWNER_KEY] = owned
+	if owned:
+		patch[ReadyForImprovement.SOURCE_OWNER_KEY] = owner
+	else:
+		# **NO `owner` KEY AT ALL**, not a sentinel: that is what the decoder publishes when `has_owner`
+		# is false, and a reader that consults `owner` without checking `has_owner` first must find
+		# nothing there. Erased rather than skipped, so a row RE-stamped after a mutation cannot keep
+		# an owner its meters no longer justify.
+		patch.erase(ReadyForImprovement.SOURCE_OWNER_KEY)
+	return patch
+
+## Has this patch FINISHED the rung `improvement` builds — the wire's done-flag for it.
+func _patch_rung_built(patch: Dictionary, improvement: String) -> bool:
+	return bool(patch.get(
+		String(SourceForecast.FORECAST_DONE_FLAG_KEYS[improvement]), false))
+
+## …and has it put any work at all into that rung's meter. Strictly above the floor, because a meter
+## resting AT `READY_LADDER_UNSTARTED` is untouched ground, not a part-built rung.
+func _patch_rung_started(patch: Dictionary, improvement: String) -> bool:
+	return float(patch.get(
+		String(SourceForecast.FORECAST_BUILD_METER_KEYS[improvement]),
+		READY_LADDER_UNSTARTED)) > READY_LADDER_UNSTARTED
 
 ## The SCALING probe's world: a full-size grid with a patch on every tile and one band, which is the
 ## ceiling on how many sources the derivation can ever be handed. Deliberately not a plausible map —
@@ -2242,8 +2307,9 @@ func _snapshot_ready_probe() -> Dictionary:
 	var patches: Array = []
 	# TENDED and the player's — a probe measuring the ceiling has to make every source QUALIFY, or the
 	# number it prints is the cost of rejecting them early rather than the cost of the full walk.
-	# `_ready_patch` defaults the owner to the player, and `tended` is what puts each patch above its
-	# branch's floor.
+	# `tended` does both jobs: it puts each patch above its branch's floor AND, being a built rung, it
+	# is what gives the patch an owner at all (`_stamp_patch_owner`), which `_ready_patch` records as
+	# the player by default.
 	for row in range(READY_PROBE_GRID_H):
 		for col in range(READY_PROBE_GRID_W):
 			patches.append(_ready_patch(Vector2i(col, row), true, true, true))
@@ -3155,11 +3221,11 @@ func _snapshot_work_ready() -> Dictionary:
 		"x": FORAGE_A_X, "y": FORAGE_A_Y,
 		"ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false,
-		# The STANDING rung and the owner, both struck from this row's own state rather than written
-		# out — see `fixtures_rung.gd`. The `ready_for_improvement` channel reads them (a source has to
-		# be improved AND the player's before it can be offered a further rung); the ⌃ badge does not.
+		# The STANDING rung, struck from this row's own state rather than written out — see
+		# `fixtures_rung.gd`. The owner is struck from it too, by the loop below. The
+		# `ready_for_improvement` channel reads both (a source has to be improved-or-worked, and not
+		# another faction's, before it can be offered a further rung); the ⌃ badge does not.
 		"current_rung": RUNG_FX.patch_rung_key(true, false),
-		"has_owner": true, "owner": MapView.PLAYER_FACTION_ID,
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": true, "can_sow": true}],
@@ -3174,12 +3240,17 @@ func _snapshot_work_ready() -> Dictionary:
 		# **STILL `plant:wild` AT 42%**, and that is the wire's own reading: a patch stands on the rung
 		# it has finished, not on the one it is climbing away from.
 		"current_rung": RUNG_FX.patch_rung_key(false, false),
-		"has_owner": true, "owner": MapView.PLAYER_FACTION_ID,
 		"cultivation_progress": 0.42,
 		"sow_site_refusal": "too_dry",
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
 			"share": 1.0, "can_cultivate": true, "can_sow": false}],
 	}]
+	# **OWNERSHIP IS DERIVED, NOT DECLARED** (`_stamp_patch_owner`). Both rows above carry cultivation
+	# work — one finished, one at 42% — so both come out the player's, which is what this state's
+	# badges want; the point of routing them through the derivation anyway is that a row whose meters
+	# are edited can never keep an owner they no longer justify.
+	for patch_variant in snap["forage_patches"]:
+		_stamp_patch_owner(patch_variant, MapView.PLAYER_FACTION_ID)
 	for entry_variant in snap["populations"][0]["labor_assignments"]:
 		var entry: Dictionary = entry_variant
 		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
