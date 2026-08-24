@@ -145,7 +145,7 @@ channel**. Moving it as-is relocates the problem. Split it:
 
 | New module | Kind | Holds |
 |---|---|---|
-| `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_to_climb` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
+| `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_for_improvement` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
 | `OverlayLegend` | all-`static`, stateless | Renders a legend from a descriptor + `MapView.current_overlay_legend()`. **Generic**: a `ramp` channel gets that channel's own legend rows; a `facts` channel gets the count lines its provider returns. No channel is named here. |
 | `OverlayPicker` | the widget | The list + the legend mount + the selection, pushed to `MapView.set_overlay_channel`. Knows no channel by name. |
 
@@ -187,7 +187,12 @@ raster/derivation it needs, never an `if key ==` in `MapView`.
 
 ---
 
-## 7. The `ready_to_climb` channel
+## 7. The `ready_for_improvement` channel
+
+**"Climb a rung" is the intensification arc's INTERNAL vocabulary** — `RungGates`, `SourceForecast`
+and this plan keep it. It does not survive contact with a player: a hex asked to "climb a rung" is a
+metaphor the game never taught. The player-facing word is **improve**, which is why the channel
+shipped as `ready_for_improvement` and not as the `ready_to_climb` the slice was designed under.
 
 The map already draws `⌃` on any source that can climb a rung
 (`SecondaryMarkerRenderer`, driven off `RungGates` + the faction's knowledge row). What is missing is
@@ -226,19 +231,25 @@ Each slice is its own PR and lands on its own.
 | **A** | The overlay migration — registry / legend / picker split, the minimap mount, the Inspector cleanup (§6) | nothing |
 | **B** | The knowledge screen + the action-bar launcher; delete the Know tab (§3, §4) | nothing |
 | **C** | The two attention producers + the `panel_requested` branch; retire the System note (§5) | B |
-| **D** | The `ready_to_climb` channel (§7) | A |
+| **D** | The `ready_for_improvement` channel (§7) | A |
 
 **A is independent of the whole knowledge arc** and is the cleanest thing to do first — it is a
 self-contained cleanup with a visible win, and it leaves the registry D needs.
 
 ---
 
-## 10. Known blocker
+## 10. Setting a fresh worktree up
 
-`main` currently fails to parse: `Identifier "HudPalette" not declared in the current scope`, which
-takes down `GameLaunch.gd` and every preview harness (`scripts/preview.sh` hangs until the
-watchdog reaps it at 180 s). Fix or confirm fixed before starting — every slice here needs the PNG
-harnesses.
+Both steps are one-time per checkout, and skipping either makes every scene fail to parse with
+`Identifier "X" not declared in the current scope` — which reads exactly like a broken tree.
+
+1. **`cargo xtask godot-build`** — a fresh worktree has no native extension, so every scene dies on a
+   missing `libshadow_scale_godot` dylib.
+2. **`godot --headless --path clients/godot_thin_client --import`** — a fresh worktree has no
+   `.godot/` cache, so the global class registry is empty and no `class_name` resolves.
+
+`workbench_preview` fails on `main` — *"content column is 15.0px wider than the surface allows
+(375.0 > 360.0)"* — and is unrelated to this arc. The other five render harnesses pass.
 
 ---
 
