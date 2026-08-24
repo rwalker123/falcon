@@ -1,7 +1,26 @@
 class_name ReadyForImprovement
 
-## THE AGGREGATE `⌃` — the map-wide answer to *"which of my sources could climb a rung right now"*,
-## as an ordinary overlay raster plus the count lines its legend states.
+## THE AGGREGATE `⌃` — the map-wide answer to *"which of my faction's IMPROVED sources could go one
+## step further"*, as an ordinary overlay raster plus the count lines its legend states.
+##
+## ⛔ **IT IS NOT "which of my sources could climb a rung right now", AND THE DIFFERENCE IS THE WHOLE
+## POINT.** Read that way the channel lit every land tile on the map the moment Cultivation was
+## learned — every wild patch answers *"a rung is available"*, so "can be improved" stopped being a
+## scarce property and the map washed out into a green sheet that named nothing. A hex lights only if
+## a source on it satisfies ALL FOUR of:
+##
+## 1. **It has been improved** — its `current_rung` stands ABOVE its branch's bottom rung. Wild land
+##    and wild herds never light, however much the faction knows.
+## 2. **The faction holds it** — for a PATCH, `has_owner` and `owner == MapView.PLAYER_FACTION_ID`.
+## 3. **A rung above it is genuinely available** — `RungGates.next_rung_ready`.
+## 4. **Nothing is being built there** — `RungGates.rung_in_progress` answers empty.
+##
+## **CONDITION 1 IS ONE WIRE FIELD FOR EVERY BRANCH.** `current_rung` is branch-qualified
+## (`plant:tended`, `animal:pastoral`), so `SourceForecast.rung_above_branch_floor` answers it without
+## being told which food web it is looking at — where the alternative is reading `is_cultivated` +
+## `is_field` on one web and `domestication` + `corralled` on the other, and hand-writing a third
+## reader the day a route ladder (trail → road) ships. A new branch costs this channel nothing at all:
+## one entry in `SourceForecast.RUNG_BRANCHES`, and no code here.
 ##
 ## `docs/plan_knowledge_screen.md` §7. The map has marked the per-source case since issue #412: a
 ## worked patch or herd that can climb wears a `⌃` on its own badge. What that cannot show is the
@@ -19,21 +38,26 @@ class_name ReadyForImprovement
 ## **EVERYTHING IS `static` AND STATELESS**, the `RungGates` / `SourceForecast` shape. The model
 ## `derive` answers is held by `MapView` (which caches it beside the raster), never here.
 ##
-## **IT ASKS `RungGates`, IT DOES NOT RE-DERIVE THE LADDER.** `_offers_a_rung` is the badge's own two
-## questions in the badge's own order — *is a rung already under way?*, then *is one on offer?* — so
-## the aggregate and the per-source mark cannot disagree about a single source. Every ladder term
-## (which rungs a species admits, which knowledge gates them, whether the ground will take seed) stays
-## in `RungGates`, where the compose sheet and the WORK board read it too.
+## **IT ASKS `RungGates`, IT DOES NOT RE-DERIVE THE LADDER.** Conditions 3 and 4 are the badge's own
+## two questions in the badge's own order — *is a rung already under way?*, then *is one on offer?* —
+## so where this channel and the per-source mark are asking the same thing they cannot disagree. Every
+## ladder term (which rungs a species admits, which knowledge gates them, whether the ground will take
+## seed) stays in `RungGates`, where the compose sheet and the WORK board read it too. Conditions 1
+## and 2 are NOT ladder terms and are deliberately not pushed down there: `RungGates` answers what a
+## source *could* climb, which is the right answer for a compose sheet opened on wild ground. This
+## channel is the one surface asking the narrower question, so the narrowing lives here — which is
+## also why a lit hex here is a STRICT SUBSET of the hexes wearing a `⌃`.
 ##
 ## **THE VIEW IS DUCK-TYPED (`Object`), not typed `MapView`.** `MapView` calls this, so a typed
 ## parameter would close a `class_name` cycle — the same reason `OverlayChannels` reads the view
 ## loosely. It is only ever handed a live `MapView`.
 ##
-## **THE OWNERSHIP GAP IS INHERITED, DELIBERATELY.** `RungGates.hunt_gates` carries no ownership
-## check (its own docstring says so), so a herd another faction has tamed reads as climbable here
-## exactly as it does on the compose sheet. Adding a filter *here* would give this channel a private
-## definition of "our source" and put it out of step with every other surface; the fix belongs in the
-## shared gate, for all four.
+## **THE HERD WEB HAS NO OWNER ON THE WIRE, so condition 2 is a PATCH-ONLY test.** A `HerdTelemetryState`
+## carries no owning faction at all — a real, pre-existing gap, the one `RungGates.hunt_gates`'
+## docstring already records — so a herd another faction has tamed reads as ours here, exactly as it
+## does on the compose sheet. Condition 1 is therefore the whole faction test on that web. Nothing
+## here invents an ownership signal: closing the gap means putting an owner on the herd row and then
+## reading it in the shared gate, for all four surfaces at once.
 
 ## The channel key, and the label/description the picker states for it. **Both halves of the wiring
 ## read these constants** — `MapView._install_ready_for_improvement_overlay` stamps them onto the synthesized
@@ -56,6 +80,16 @@ const TILE_READY := 0.55
 ## `raw` counts the ready sources on the hex — a hex can hold a patch and several herds at once, and
 ## the raw plane is what a tile readout would quote. It is NOT what the ramp reads; see above.
 const TILE_NONE := 0.0
+
+## The WIRE keys conditions 1 and 2 are read out of — named here rather than spelled at the read site,
+## the way this file already names its model keys. All three sit on the source dict the decoder
+## publishes (`native/src/dict/subsistence.rs`), unprefixed: this channel walks `forage_patch_lookup`
+## and `herds` directly, never the `patch_`-prefixed `tile_info` cross-ref.
+##
+## `SOURCE_CURRENT_RUNG_KEY` is on BOTH webs; the owner pair is on the plant web only.
+const SOURCE_CURRENT_RUNG_KEY := "current_rung"
+const SOURCE_HAS_OWNER_KEY := "has_owner"
+const SOURCE_OWNER_KEY := "owner"
 
 ## The model's keys. `unworked` is an `Array[Vector2i]` of the tiles carrying a ready source no player
 ## band is on — the only part of the model that is a LIST rather than a count, because the legend
@@ -239,9 +273,15 @@ static func facts(view: Object, model: Dictionary) -> PackedStringArray:
 	return lines
 
 
-## DOES THIS SOURCE OFFER A RUNG — the badge's two questions, in the badge's order.
+## DOES THIS SOURCE OFFER A RUNG — the four conditions of the class docstring, in order: **ours and
+## already improved** first, then the badge's own two questions in the badge's own order.
 ##
-## **A RUNG UNDER WAY IS NOT AN OFFER**, which is the whole reason the first question is asked at all:
+## **THE TWO NEW CONDITIONS GO IN FRONT, and they are about the SOURCE rather than about the ladder.**
+## `RungGates` answers what a source *could* climb; it has no opinion on whether the source has ever
+## been touched or whose it is, and it should not — the compose sheet asks it about a wild patch on
+## purpose. This channel is the one surface asking a narrower question, so the narrowing lives here.
+##
+## **A RUNG UNDER WAY IS NOT AN OFFER**, which is the whole reason `rung_in_progress` is asked at all:
 ## `next_rung_ready` excludes the verb a crew DECLARED, but a patch whose Cultivate meter is at 42%
 ## still admits its next rung and would count as an opportunity on a map of them. `rung_in_progress`
 ## is what says "this one is already being climbed" — and it keys on the METER, so it also catches the
@@ -250,9 +290,37 @@ static func _offers_a_rung(kind: String, source: Dictionary, improvement: String
 		knowledge: Dictionary) -> bool:
 	if source.is_empty():
 		return false
+	if not _is_improved(source):
+		return false
+	if not _is_ours(kind, source):
+		return false
 	if not RungGates.rung_in_progress(kind, source, improvement).is_empty():
 		return false
 	return not RungGates.next_rung_ready(kind, source, improvement, knowledge).is_empty()
+
+
+## CONDITION 1 — **has anybody actually built anything here.** One read of one branch-qualified wire
+## field, so this function is identical on the plant web, the animal web and the branch that does not
+## exist yet; `SourceForecast.rung_above_branch_floor` owns the floor test and answers `false` for a
+## rung key it does not know, which is the safe direction for a stale client.
+static func _is_improved(source: Dictionary) -> bool:
+	return SourceForecast.rung_above_branch_floor(
+		String(source.get(SOURCE_CURRENT_RUNG_KEY, "")))
+
+
+## CONDITION 2 — **is it the player's.** A PATCH states its owner, so an improved patch another
+## faction holds stays dark.
+##
+## **A HERD STATES NO OWNER AT ALL** — the wire carries none (see the class docstring), so there is
+## nothing to test and the honest answer is to let condition 1 stand as the whole faction test on that
+## web. This is NOT a default-allow chosen for convenience: inventing an ownership signal from
+## `domestication` or a nearby band would give this channel a private definition of "our source".
+static func _is_ours(kind: String, source: Dictionary) -> bool:
+	if kind != SourceForecast.LABOR_KIND_FORAGE:
+		return true
+	if not bool(source.get(SOURCE_HAS_OWNER_KEY, false)):
+		return false
+	return int(source.get(SOURCE_OWNER_KEY, -1)) == MapView.PLAYER_FACTION_ID
 
 
 ## Record a band's claim on a source. **A DECLARED VERB OUTRANKS AN EMPTY ONE**: two bands can work

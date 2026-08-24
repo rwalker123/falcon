@@ -782,6 +782,17 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub pen_extend_cost: f32,
+    /// **WHAT RUNG THIS HERD IS STANDING ON NOW** — the animal twin of
+    /// [`ForagePatchState::current_rung`], which carries the rationale: `<branch>:<id>`, the
+    /// [`Self::build_destination_rung`] spelling, saying where the source **is** rather than where a
+    /// queued climb is headed.
+    ///
+    /// Struck at capture by `core_sim`'s `fauna::herd_rung_key` — the single home of the *"penned →
+    /// pen, tamed → pastoral, else wild"* test this row otherwise makes a client re-derive from
+    /// [`Self::domestication`] against a threshold plus [`Self::corralled`]. **Never empty**; an
+    /// untouched herd reads `animal:wild`. Appended (append-only).
+    #[serde(default)]
+    pub current_rung: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -875,6 +886,12 @@ impl Default for HerdTelemetryState {
             // a different statement from the roster's own bare kit.
             build_kit_id: String::new(),
             pen_extend_cost: 0.0,
+            // **A herd nothing has described names no rung** — the same "not described" reading
+            // `build_destination_rung` above takes, and NOT a wire state: the capture strikes this
+            // from `fauna::herd_rung_key` on every row, so an empty string only ever reaches a
+            // hand-built fixture. Naming `animal:wild` here would put a second spelling of the
+            // ladder in this crate, which is the duplication the field exists to remove.
+            current_rung: String::new(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1457,6 +1474,21 @@ pub struct ForagePatchState {
     /// a position from another's would be two answers pretending to be one. Appended (append-only).
     #[serde(default)]
     pub build_kit_id: String,
+    /// **WHAT RUNG THIS PATCH IS STANDING ON NOW** — `<branch>:<id>`, the same spelling
+    /// [`Self::build_destination_rung`] uses. That field says where a *queued climb is headed* and is
+    /// empty when nothing is queued; this one says **where the source is**, which every source has.
+    ///
+    /// It ships so a consumer can answer *"has this been improved, and what is above it"* without
+    /// knowing either web's private booleans ([`Self::is_cultivated`] + [`Self::is_field`] here, a
+    /// float and a flag on the herd row), and so a third branch costs it nothing. Struck at capture
+    /// by `core_sim`'s `forage::patch_rung_key`, the single home of the *"sown → field, cultivated →
+    /// tended, else wild"* test, so it cannot disagree with the rung the sim resolves.
+    ///
+    /// **Never empty** — the bottom rung is a rung, and an untouched patch reads `plant:wild`. The
+    /// `.fbs` comment on `currentRung` carries the rest, including the client's fog obligation.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub current_rung: String,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from

@@ -1584,6 +1584,26 @@ dates are chained against a queue the client cannot see.
   herd and patch rows alike, and `SourceForecast` / `RungLadder.track` / `BandPanelController`'s
   rung track read them. `.claude/rules/client/labor-ui.md` owns that half.
 
+##### …and the rung the source is standing on ships beside it
+
+`ForagePatchState.currentRung` / `HerdTelemetryState.currentRung` — the **standing** rung in the same
+`<branch>:<id>` spelling the destination uses. The destination says where a queued climb is *headed*
+and is `""` when nothing is queued; this says where the source *is*, and every source has one (the
+bottom rung is `plant:wild` / `animal:wild`, never `""`).
+
+- **It exists so a consumer stops needing each web's private booleans.** "Has this been improved, and
+  what is above it" reads `isCultivated` + `isField` on a patch and `domestication`-over-a-threshold
+  + `corralled` on a herd, so every consumer hand-writes one reader per web and a third source type
+  costs a third. One branch-qualified token is the same read on both, and on the branch that does not
+  exist yet.
+- **ONE DERIVATION, the one the sim itself resolves through** — `forage::patch_rung_key` /
+  `fauna::herd_rung_key`, the single home of each web's *"sown → field, cultivated → tended, else
+  wild"* test, struck at capture off the source's own meters. It cannot disagree with the rung the
+  sim stands the source on, because it is not a second reading of it.
+- **The fog rule is the client's**, as it already is for `isCultivated` / `isField`: this token
+  carries the same ladder position those bools do, so whatever redacts them on a merely-remembered
+  hex redacts this with them.
+
 #### A DECLARATION MAY NAME A RUNG ABOVE THE ONE IN FLIGHT
 
 `forage::patch_build_verb` reads the standing **and** the entry: a live declaration naming the rung

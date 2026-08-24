@@ -389,9 +389,45 @@ inversion is real; the fixture stages it deterministically for the harness.
 
 **`ready_for_improvement` — THE AGGREGATE `⌃`, and the first `KIND_FACTS` channel**
 (`docs/plan_knowledge_screen.md` §7, Slice D). The map has marked the per-source case since issue
-#412: a *worked* source that can climb a rung wears a `⌃` on its own badge. This is every such source
-at once, on a channel — and the legend is COUNT LINES rather than a ramp, because there is no "more
+#412: a *worked* source that can climb a rung wears a `⌃` on its own badge. This is the map-wide view
+of the same opportunity — and the legend is COUNT LINES rather than a ramp, because there is no "more
 ready": *"5 sources · 3 patches, 2 herds"* and *"3 unworked · nearest (9, 5)"*.
+
+**WHAT LIGHTS IS FOUR CONDITIONS, AND A LIT HEX IS A STRICT SUBSET OF THE HEXES WEARING A `⌃`.**
+`ReadyForImprovement._offers_a_rung` asks, in this order:
+
+1. **The source has actually been improved** — its `current_rung` stands ABOVE its branch's bottom
+   rung (`SourceForecast.rung_above_branch_floor`). Wild land and wild herds never light.
+2. **The faction holds it** — for a PATCH, `has_owner` and `owner == MapView.PLAYER_FACTION_ID`.
+3. **A rung above it is available** — `RungGates.next_rung_ready`.
+4. **Nothing is being built there** — `RungGates.rung_in_progress` answers empty.
+
+> **CONDITION 1 EXISTS BECAUSE "CAN BE IMPROVED" IS NOT A SCARCE PROPERTY.** Every wild patch admits
+> Cultivate, so the turn Cultivation was learned the channel lit **every land tile the faction could
+> see** — a green sheet that named nothing, on the one channel whose whole job is to point at
+> somewhere to go. The question the player is actually asking is *"which of the things I have already
+> built could go one step further"*, and that is what the channel answers now. Conditions 3 and 4 are
+> unchanged and still asked of `RungGates`; conditions 1 and 2 are **not ladder terms** and are
+> deliberately not pushed down into it — `RungGates` answering *"a wild patch could be cultivated"* is
+> correct for the compose sheet opened on wild ground. This channel is the one surface asking the
+> narrower question, so the narrowing lives here.
+
+**CONDITION 1 IS ONE WIRE FIELD FOR EVERY BRANCH.** `ForagePatchState.currentRung` /
+`HerdTelemetryState.currentRung` spell the rung a source STANDS on as `<branch>:<id>` —
+`plant:tended`, `animal:pastoral` — so the branch travels inside the key and
+`SourceForecast.rung_above_branch_floor` answers without being told which food web it is looking at.
+The alternative it replaces is each web's private booleans (`is_cultivated` + `is_field` here,
+`domestication` against a threshold + `corralled` there), which costs every consumer a hand-written
+reader per web and would cost a route ladder (trail → road) a third. **A new branch costs this
+channel nothing at all: one entry in `SourceForecast.RUNG_BRANCHES`, and no code in the channel.** An
+unknown rung key — a branch a stale client has not been taught, or the `""` a hand-built fixture
+carries — answers `false`, which shows the player nothing rather than lighting a whole branch
+including its untouched floor.
+
+`rung_above_branch_floor` is a **second** reading beside `SourceForecast._standing_rung_index` /
+`improvement_is_done`, which read the stamped achievement flags and carry repair semantics (a Field
+eroded to 99% is still stamped done). The two are separate questions and the older one has callers
+whose semantics `current_rung` does not share.
 
 **THE UNLOCK NEVER LIGHTS THE MAP, and that is the whole reason this is a channel.** Nothing anywhere
 gets a timed highlight when a track completes; the attention row states a count and the player who
@@ -459,10 +495,12 @@ unworked list (tens) rather than re-deriving. It measures through `MapView._hex_
 `_wrapped_col_delta`, the map's own metric and its own seam rule, so "nearest" here is the nearest the
 map draws.
 
-**IT INHERITS `RungGates`' OWNERSHIP GAP, AND MUST.** `hunt_gates` carries no ownership check (its own
-docstring says so), so a herd another faction has tamed reads as climbable — here exactly as on the
-compose sheet. A filter added *here* would give this channel a private definition of "our source"; the
-fix belongs in the shared gate, for all four surfaces.
+**THE HERD WEB HAS NO OWNER ON THE WIRE, so condition 2 is a PATCH-ONLY test.** `HerdTelemetryState`
+carries no owning faction at all — the pre-existing gap `RungGates.hunt_gates`' own docstring records
+— so a herd another faction has tamed reads as ours here, exactly as on the compose sheet, and
+condition 1 is the whole faction test on that web. Nothing in the channel invents an ownership signal
+from `domestication` or a nearby band: closing the gap means putting an owner on the herd row and
+reading it in the shared gate, for all four surfaces at once.
 
 **ITS `OVERLAY_COLORS` ROW IS `HudStyle.HEALTHY`, DERIVED** — the themed "well-supplied / good"
 green. The aggregate is a reading about LAND, and land that could carry more is the same good news
@@ -502,9 +540,10 @@ them was a glare instead of a reading. The `raw` plane carries the count for any
 quote it.
 
 Verify with `map_preview` state **"ready for improvement"** (`map_ready_for_improvement` — the CONTRAST, not the
-glow: three patches and two herds lit while four controls stay dark — a worked patch whose crew
-DECLARED its rung, an unworked patch HALF-BUILT with nothing declared, the wild-ceiling wolf, and a
-patch whose plants may climb nothing; `map_ready_for_improvement_legend` is its facts card) plus the
+glow: three patches and two herds lit while SIX controls stay dark — a worked patch whose crew
+DECLARED its rung, an unworked patch HALF-BUILT with nothing declared, the wild-ceiling wolf, a tended
+patch whose plants may climb no further, an untouched WILD patch inside the band's work range, and an
+improved patch another faction owns; `map_ready_for_improvement_legend` is its facts card) plus the
 assertion block beside it, which drives the late knowledge push, the counts split by web, the tiles a
 picture cannot separate, and the nearest answer moving with the selection off the cached model.
 

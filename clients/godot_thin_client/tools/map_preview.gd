@@ -506,37 +506,68 @@ const PICKER_BIOME_ROWS_MIN := 12
 # --- THE `ready_for_improvement` CHANNEL (docs/plan_knowledge_screen.md §7) ------------------------------
 # The AGGREGATE ⌃: every source that could climb a rung right now, painted at once. Its fixture
 # extends the ⌃-mark fixture (`_snapshot_work_ready`) rather than replacing it, so the per-source
-# badges and the channel are asked about the SAME sources — a channel that disagreed with the badge on
-# the hex under it would be the two-surface split `RungGates` exists to stop.
+# badges and the channel are asked about the SAME sources. **The two do not answer identically any
+# more, and must not**: a lit hex here is a strict SUBSET of the hexes wearing a ⌃, because this
+# channel also asks whether the source has been IMPROVED at all and whether it is the player's.
 #
 # What the extension adds is the half the badge cannot have: sources NOBODY IS WORKING. The badge is
 # drawn on a worked source's own marker, so a map of unworked opportunities is exactly what the
 # aggregate is for, and the legend's nearest-unworked line has nothing to name without them.
 const READY_UNWORKED_NEAR := Vector2i(9, 5)    # tended + sowable, unworked → offers Sow
-const READY_UNWORKED_FAR := Vector2i(2, 10)    # wild + cultivable, unworked → offers Cultivate
+const READY_UNWORKED_FAR := Vector2i(2, 10)    # tended + sowable, unworked → offers Sow
 const READY_UNWORKED_HERD := Vector2i(4, 3)    # a tamed pen-ceiling herd nobody hunts → offers Corral
 const READY_UNWORKED_HERD_ID := "game_aurochs_11"
-# A patch with a composition that may climb NOTHING (`can_cultivate` and `can_sow` both false). The
-# selectivity control on the unworked side: without it "every unworked patch is ready" and "the ready
-# test works" produce the same counts.
+# **THE HEADLINE CONTROL: WILD LAND, IN REACH, AND KNOWABLE — AND IT STAYS DARK.** It sits INSIDE band
+# 1's `work_range` and its plants admit Cultivate, so every question `RungGates` asks of it answers
+# yes; the only thing holding it dark is that nothing has ever been built on it (`plant:wild` is its
+# branch's FLOOR). That is the whole change: before it, a faction that had merely LEARNED Cultivation
+# lit every land tile it could see, and "can be improved" stopped being a scarce property.
+const READY_WILD := Vector2i(7, 5)
+# **IMPROVED, UPGRADEABLE, AND NOT OURS.** Identical to `READY_UNWORKED_NEAR` in every ladder respect —
+# tended, sowable, unworked — and owned by another faction, so ownership is the ONLY term separating a
+# lit tile from a dark one. Without it, dropping the owner test changes no count anywhere.
+const READY_FOREIGN := Vector2i(14, 2)
+const READY_FOREIGN_FACTION := 1
+# A TENDED patch whose composition may climb NOTHING further (`can_cultivate` and `can_sow` both
+# false). The selectivity control on the unworked side: without it "every unworked patch is ready" and
+# "the ready test works" produce the same counts. It is tended rather than wild so it is held dark by
+# the LADDER question alone — a wild one would now be refused by the improved test in front of it and
+# would stop testing anything.
 const READY_BARREN_LADDER := Vector2i(12, 9)
-# **A HALF-CULTIVATED PATCH NOBODY IS WORKING, and it is here because the assertion it isolates was
-# passing for the wrong reason.** The state's other mid-build patch (9, 8) is WORKED and its
-# assignment DECLARES `cultivate`, so `next_rung_ready` excludes that rung on its own — the claim
-# that it stays dark held with the channel's `rung_in_progress` check deleted, which is exactly the
-# "asks a subtree, not a control" failure `test-harnesses.md` describes. This patch declares nothing:
-# its meter alone says a rung is being climbed, so only the in-progress question can answer it, and
-# with that question removed it lights.
+# **A HALF-CULTIVATED PATCH NOBODY IS WORKING**, kept as the state's second mid-build control. The
+# other one, at (9, 8), is WORKED and its assignment DECLARES `cultivate`, so `next_rung_ready`
+# excludes that rung on its own; this one declares nothing, so its METER alone is what says a rung is
+# being climbed and only `rung_in_progress` can answer it.
+#
+# **BOTH ARE ALSO HELD DARK BY THE IMPROVED TEST NOW, so neither isolates `rung_in_progress` on its
+# own any more**: a patch mid-Cultivate still STANDS on `plant:wild` — the rung it is climbing away
+# from — which is what the wire publishes and what condition 1 refuses. They are kept because they
+# still pin that the aggregate reads the same `improvement` axis the badge does, and because the pair
+# is what a rung-order regression would fail on; the claim that deleting the in-progress question
+# lights `READY_HALF_BUILT` no longer holds.
 const READY_HALF_BUILT := Vector2i(5, 2)
 const READY_HALF_BUILT_PROGRESS := 0.55
+# **THE ONE CONTROL THAT STILL ISOLATES `rung_in_progress`, and it exists because the other two
+# stopped.** Both patches above stand on `plant:wild`, so condition 1 refuses them before the
+# in-progress question is ever asked — which left that question with no live guard at all, an
+# assertion nobody has watched fail being the same bug again.
+#
+# This patch is TENDED (so it clears the improved test), owned, and its plants may be sown (so
+# `next_rung_ready` genuinely offers Sow) — every other condition answers YES. It is dark for exactly
+# one reason: its FIELD meter is part-filled with nothing declared, so a rung is already being
+# climbed. Delete the in-progress question and this tile, alone in the state, lights.
+const READY_MID_FIELD := Vector2i(10, 10)
+const READY_MID_FIELD_PROGRESS := 0.6
 # The SECOND player band, parked beside the far patch and carrying no work at all. It exists for one
 # claim — that "nearest" is measured from the SELECTED band — which a single-band fixture cannot make:
 # with one band the anchor and its fallback are the same tile and a broken selection read passes.
 const READY_SECOND_BAND_ENTITY := 9002
 const READY_SECOND_BAND_TILE := Vector2i(2, 9)
 # What the fixture's ladder actually offers, spelled out so a count assertion says WHICH source it
-# expected rather than only a number. Three patches: the tended one the band works (Sow), and the two
-# unworked ones. Two herds: the worked deer (Corral) and the unworked aurochs (Corral).
+# expected rather than only a number. Three patches, all TENDED and all the player's: the one the band
+# works at (7, 6) (Sow), and the two unworked ones. Two herds: the worked deer (Corral) and the
+# unworked aurochs (Corral). The wild patch, the foreign patch, the two mid-build patches and the
+# barren-ladder one are the five that must stay dark.
 const READY_EXPECTED_PATCHES := 3
 const READY_EXPECTED_HERDS := 2
 const READY_EXPECTED_UNWORKED := 3
@@ -1874,9 +1905,9 @@ func _overlay_picker_state() -> void:
 ## `facts` legend.
 ##
 ## **THE FRAME IS THE CONTRAST, NOT THE GLOW.** A cyan map is a plausible picture of a correct channel
-## and of a channel that lights every source it can see; what the frame has to show is that the
-## mid-Cultivate patch, the wild-ceiling wolf and the can-climb-nothing patch stay DARK while three
-## patches and two herds glow. Everything a picture cannot separate — which web each lit hex is on,
+## and of a channel that lights every source it can see; what the frame has to show is that the two
+## mid-Cultivate patches, the wild-ceiling wolf, the can-climb-nothing patch, the untouched WILD patch
+## and the foreign one stay DARK while three patches and two herds glow. Everything a picture cannot separate — which web each lit hex is on,
 ## whether the counts split right, which coordinate the legend named and why — is asserted below.
 func _ready_for_improvement_state() -> void:
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
@@ -1952,19 +1983,36 @@ func _ready_for_improvement_state() -> void:
 	# the declared verb by itself, so this one passes with or without the channel's own in-progress
 	# question, and it is here for the other reason: it pins that the aggregate reads the same
 	# `improvement` axis the badge does.
-	_assert_map("ready for improvement — the WORKED patch whose crew declared Cultivate at (9, 8) stays dark",
+	_assert_map("ready for improvement — the WORKED patch whose crew declared Cultivate at (9, 8) stays dark (it also still stands on plant:wild)",
 		not lit.has(Vector2i(9, 8)))
-	# **THE METER HALF, and this is the one that isolates `rung_in_progress`.** Nobody works this patch
-	# and no assignment declares anything, so `next_rung_ready` sees an admitted, ungated Cultivate and
-	# answers it — the channel stays dark only because it asks whether a rung is already being climbed
-	# FIRST, the badge's own order. Sabotage-verified: deleting that question lights this tile and
-	# nothing else in the state notices.
+	# **THE METER HALF.** Nobody works this patch and no assignment declares anything, so
+	# `next_rung_ready` sees an admitted, ungated Cultivate and answers it; `rung_in_progress` reads the
+	# METER and refuses it. It no longer isolates that question on its own — a patch mid-Cultivate
+	# stands on `plant:wild`, so the improved test in front refuses it too — but it still pins the
+	# meter-vs-declaration pair, which is what a rung-order regression fails on.
 	_assert_map("ready for improvement — …and so does the UNWORKED patch at %s, half-built with nothing declared"
 		% READY_HALF_BUILT, not lit.has(READY_HALF_BUILT))
+	# **AND THE ONE THAT STILL ISOLATES THE IN-PROGRESS QUESTION.** Tended, ours, and genuinely
+	# sowable — conditions 1, 2 and 3 all answer yes — so the only thing holding it dark is its
+	# part-filled FIELD meter. Sabotage-verified: deleting `rung_in_progress` lights this tile and no
+	# other in the state.
+	_assert_map("ready for improvement — a TENDED patch mid-Field at %s stays dark; a rung being climbed is not one on offer"
+		% READY_MID_FIELD, not lit.has(READY_MID_FIELD))
 	_assert_map("ready for improvement — the wild-ceiling wolf pack at (11, 4) stays dark however much we know",
 		not lit.has(Vector2i(11, 4)))
-	_assert_map("ready for improvement — a patch whose plants may climb nothing stays dark (%s)"
+	_assert_map("ready for improvement — a TENDED patch whose plants may climb no further stays dark (%s)"
 		% READY_BARREN_LADDER, not lit.has(READY_BARREN_LADDER))
+	# **THE HEADLINE CLAIM OF THE WHOLE CHANNEL.** This patch is in reach, its plants admit Cultivate,
+	# and the faction has learned Cultivation — every question `RungGates` asks of it answers yes. It
+	# stays dark for one reason: nothing has ever been built on it, so it stands on its branch's FLOOR.
+	# Before this test the channel lit every land tile on the map the turn Cultivation was learned.
+	_assert_map("ready for improvement — WILD land at %s never lights, however much the faction knows (in band 1's work range, cultivable, unworked)"
+		% READY_WILD, not lit.has(READY_WILD))
+	# **AND THE OTHER HALF OF "MINE".** Ladder-identical to the lit `READY_UNWORKED_NEAR` — tended,
+	# sowable, unworked — so ownership is the ONLY term between them, and dropping the owner test
+	# fails here and nowhere else.
+	_assert_map("ready for improvement — an IMPROVED, upgradeable patch at %s owned by faction %d stays dark"
+		% [READY_FOREIGN, READY_FOREIGN_FACTION], not lit.has(READY_FOREIGN))
 	_assert_map("ready for improvement — every unworked ready source IS lit (%s)" % str(lit),
 		lit.has(READY_UNWORKED_NEAR) and lit.has(READY_UNWORKED_FAR) and lit.has(READY_UNWORKED_HERD))
 
@@ -2095,16 +2143,27 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 	var snap := _snapshot_work_ready()
 	var patches: Array = snap["forage_patches"]
 	patches.append(_ready_patch(READY_UNWORKED_NEAR, true, true, true))
-	patches.append(_ready_patch(READY_UNWORKED_FAR, false, true, false))
+	# TENDED as well: the far patch is the second band's nearest, and "nearest" is only a claim about
+	# the selection if the tile it names actually lights.
+	patches.append(_ready_patch(READY_UNWORKED_FAR, true, true, true))
 	# Neither rung is legal for anything growing here, so no amount of knowledge opens one.
-	patches.append(_ready_patch(READY_BARREN_LADDER, false, false, false))
+	patches.append(_ready_patch(READY_BARREN_LADDER, true, false, false))
 	patches.append(_ready_patch(READY_HALF_BUILT, false, true, false, READY_HALF_BUILT_PROGRESS))
+	patches.append(_ready_patch(READY_MID_FIELD, true, true, true, 0.0,
+		MapView.PLAYER_FACTION_ID, READY_MID_FIELD_PROGRESS))
+	# THE WILD CONTROL — in band 1's work range, cultivable, and nothing has ever been built on it.
+	patches.append(_ready_patch(READY_WILD, false, true, false))
+	# THE FOREIGN CONTROL — `READY_UNWORKED_NEAR`'s ladder exactly, another faction's ground.
+	patches.append(_ready_patch(READY_FOREIGN, true, true, true, 0.0, READY_FOREIGN_FACTION))
 	var herds: Array = snap["herds"]
 	herds.append({
 		"id": READY_UNWORKED_HERD_ID, "label": "Aurochs (%s)" % READY_UNWORKED_HERD_ID,
 		"x": READY_UNWORKED_HERD.x, "y": READY_UNWORKED_HERD.y,
 		"biomass": 420.0, "huntable": true,
 		"domestication": 1.0, "husbandry_ceiling": "pen",
+		# Tamed and unpenned → `animal:pastoral`, struck off the two meters beside it rather than
+		# written out, so this row cannot claim a rung its own state contradicts.
+		"current_rung": _herd_rung_key(1.0, false),
 	})
 	# The second band carries NO assignments: it must not claim a source, only supply an anchor.
 	var second := _band([], 2, 0)
@@ -2119,23 +2178,59 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 ## rather than Cultivate; the two legality flags are SPECIES-global ("can this plant ever climb this
 ## rung"), which is what `RungGates.any_crop_allows` reads. `progress` puts work on the CULTIVATE
 ## METER without stamping the rung done — the state `RungGates.rung_in_progress` answers off.
+##
+## **`current_rung` IS DERIVED HERE, NEVER PASSED IN**, and that is what keeps the fixture honest: a
+## caller free to set the standing rung and `is_cultivated` independently could stage a patch the wire
+## cannot produce and prove something about it. `owner` defaults to the player because that is what
+## every source in this state is; the one foreign patch says so explicitly.
 func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool,
-		progress: float = 0.0) -> Dictionary:
+		progress: float = 0.0, owner: int = MapView.PLAYER_FACTION_ID,
+		field_progress: float = 0.0) -> Dictionary:
 	return {
 		"x": tile.x, "y": tile.y,
 		"ecology_phase": "thriving",
 		"is_cultivated": tended, "is_field": false,
+		"current_rung": _patch_rung_key(tended, false),
+		"has_owner": true, "owner": owner,
 		"cultivation_progress": progress,
+		# **A PART-FILLED METER IS NOT A BUILT RUNG**, so `is_field` stays false and the standing rung
+		# stays whatever the patch has actually finished — the same split the wire makes, and the whole
+		# reason a mid-Field patch can clear the improved test and still be refused as under way.
+		"field_progress": field_progress,
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": can_cultivate, "can_sow": can_sow}],
 	}
+
+## **THE WIRE'S OWN DERIVATION, RESTATED ONCE FOR THE WHOLE HARNESS** — `forage::patch_rung_key`'s
+## *"sown → field, cultivated → tended, else wild"*. Every fixture patch that states a
+## `current_rung` states it through here, so no row in this file can carry a standing rung that
+## disagrees with its own `is_cultivated` / `is_field` pair. Spelled with
+## `SourceForecast.RUNG_KEY_*` rather than string literals, so the client's one vocabulary is the
+## harness's too.
+func _patch_rung_key(tended: bool, field: bool) -> String:
+	if field:
+		return SourceForecast.RUNG_KEY_FIELD
+	return SourceForecast.RUNG_KEY_TENDED if tended else SourceForecast.RUNG_KEY_WILD_PLANT
+
+## The animal twin — `fauna::herd_rung_key`'s *"penned → pen, tamed → pastoral, else wild"*, off the
+## same `domestication` / `corralled` pair the fixture rows already carry.
+func _herd_rung_key(domestication: float, corralled: bool) -> String:
+	if corralled:
+		return SourceForecast.RUNG_KEY_PEN
+	if domestication >= SourceForecast.DOMESTICATION_COMPLETE:
+		return SourceForecast.RUNG_KEY_PASTORAL
+	return SourceForecast.RUNG_KEY_WILD_ANIMAL
 
 ## The SCALING probe's world: a full-size grid with a patch on every tile and one band, which is the
 ## ceiling on how many sources the derivation can ever be handed. Deliberately not a plausible map —
 ## a real earthlike is part ocean — because a ceiling is the number worth knowing.
 func _snapshot_ready_probe() -> Dictionary:
 	var patches: Array = []
+	# TENDED and the player's — a probe measuring the ceiling has to make every source QUALIFY, or the
+	# number it prints is the cost of rejecting them early rather than the cost of the full walk.
+	# `_ready_patch` defaults the owner to the player, and `tended` is what puts each patch above its
+	# branch's floor.
 	for row in range(READY_PROBE_GRID_H):
 		for col in range(READY_PROBE_GRID_W):
 			patches.append(_ready_patch(Vector2i(col, row), true, true, true))
@@ -3043,6 +3138,11 @@ func _snapshot_work_ready() -> Dictionary:
 		"x": FORAGE_A_X, "y": FORAGE_A_Y,
 		"ecology_phase": "thriving",
 		"is_cultivated": true, "is_field": false,
+		# The STANDING rung and the owner, both struck from this row's own state rather than written
+		# out — see `_patch_rung_key`. The `ready_for_improvement` channel reads them (a source has to
+		# be improved AND the player's before it can be offered a further rung); the ⌃ badge does not.
+		"current_rung": _patch_rung_key(true, false),
+		"has_owner": true, "owner": MapView.PLAYER_FACTION_ID,
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": true, "can_sow": true}],
@@ -3054,6 +3154,10 @@ func _snapshot_work_ready() -> Dictionary:
 		"x": 9, "y": 8,
 		"ecology_phase": "thriving",
 		"is_cultivated": false, "is_field": false,
+		# **STILL `plant:wild` AT 42%**, and that is the wire's own reading: a patch stands on the rung
+		# it has finished, not on the one it is climbing away from.
+		"current_rung": _patch_rung_key(false, false),
+		"has_owner": true, "owner": MapView.PLAYER_FACTION_ID,
 		"cultivation_progress": 0.42,
 		"sow_site_refusal": "too_dry",
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
@@ -3079,6 +3183,10 @@ func _snapshot_work_ready() -> Dictionary:
 		if String(herd.get("id", "")) == "game_deer_07":
 			herd["domestication"] = 1.0
 			herd["husbandry_ceiling"] = "pen"
+			# Tamed, unpenned → `animal:pastoral`. Struck off the meters set on the two lines above, so
+			# the rung and the state it is derived from move together.
+			herd["current_rung"] = _herd_rung_key(
+				float(herd.get("domestication", 0.0)), bool(herd.get("corralled", false)))
 		# **AND THE WOLF'S CEILING IS STATED, because the ABSENT one is not the one this frame
 		# claims.** `SourceForecast.husbandry_ceiling` normalizes an absent field to `"pen"` — the
 		# FULL ladder, so an untagged herd behaves as it did before the field existed — which made the
@@ -3088,6 +3196,11 @@ func _snapshot_work_ready() -> Dictionary:
 		# `_pelt_only_wolf_herd`, so only the two frames that push knowledge move.
 		elif String(herd.get("id", "")) == "game_wolf_03":
 			herd["husbandry_ceiling"] = "wild"
+			# Untamed → `animal:wild`, the branch FLOOR. The wolf is now held dark by two independent
+			# terms (its ceiling admits no rung, and nothing has been built on it); it stays because the
+			# ceiling is the one a knowledge push could otherwise open.
+			herd["current_rung"] = _herd_rung_key(
+				float(herd.get("domestication", 0.0)), bool(herd.get("corralled", false)))
 	return snap
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so

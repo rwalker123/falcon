@@ -979,6 +979,11 @@ const RUNG_KEY_IMPROVEMENTS := {
 # of climb order would mark the wrong rung as *banked*.
 const RUNG_BRANCH_PLANT := [RUNG_KEY_WILD_PLANT, RUNG_KEY_TENDED, RUNG_KEY_FIELD]
 const RUNG_BRANCH_ANIMAL := [RUNG_KEY_WILD_ANIMAL, RUNG_KEY_PASTORAL, RUNG_KEY_PEN]
+# …and EVERY BRANCH THIS CLIENT KNOWS, in one list. It is what makes a question about a rung KEY
+# answerable without first being told which web the source is on — the wire spells a rung
+# `<branch>:<id>`, so the branch travels inside the key. A future third web (a route climbing
+# trail → road) is ONE ENTRY here and no per-source code anywhere.
+const RUNG_BRANCHES := [RUNG_BRANCH_PLANT, RUNG_BRANCH_ANIMAL]
 const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **WHAT IT COSTS TO HOLD THIS SOURCE AT THE RUNG IT STANDS ON**, in work units per turn — the RATE
 # half of the ladder beside the build's PILE (`docs/plan_standing_upkeep.md` §2). All four ship on
@@ -4528,6 +4533,35 @@ static func build_leg_in_flight(src: Dictionary, prefix: String) -> Dictionary:
 ## for a herd. One picker, so the two webs' tracks cannot be walked in two different orders.
 static func rung_branch_for_kind(source_kind: String) -> Array:
     return RUNG_BRANCH_ANIMAL if source_kind == SOURCE_KIND_HERD else RUNG_BRANCH_PLANT
+
+## **HAS THIS SOURCE ACTUALLY BEEN IMPROVED** — is the rung it STANDS on (the wire's `current_rung`)
+## above the BOTTOM rung of whichever branch that key belongs to? Wild land and a wild herd answer
+## `false`; every rung a band ever built answers `true`.
+##
+## **IT TAKES A KEY, NOT A SOURCE, AND THAT IS THE WHOLE POINT.** The branch travels inside the key,
+## so this is ONE read for the plant web, the animal web and the branch that does not exist yet —
+## where the alternative is every consumer hand-writing `is_cultivated`/`is_field` on one web and
+## `domestication`/`corralled` on the other, and growing a third reader the day a route ladder ships.
+##
+## ⛔ **AN UNKNOWN KEY ANSWERS `false`, DELIBERATELY** — `""` included, which is what a hand-built
+## fixture carries. A key naming a branch this client has not been taught means a STALE CLIENT, and
+## the two ways of being wrong are not symmetric: `false` shows the player nothing, which is visible
+## and safe, while `true` would call every source on that branch improved — its untouched FLOOR
+## included — which is exactly the defect this test exists to remove.
+##
+## **IT IS NOT `_standing_rung_index`, AND MUST NOT BE FOLDED INTO IT.** That one reads the STAMPED
+## achievement flags and carries repair semantics (a Field eroded to 99% is still stamped done); this
+## one reads the position the sim publishes. Two questions, two readings.
+static func rung_above_branch_floor(rung_key: String) -> bool:
+    var key := rung_key.strip_edges()
+    if key == "":
+        return false
+    for branch_variant in RUNG_BRANCHES:
+        var branch: Array = branch_variant
+        var idx := branch.find(key)
+        if idx >= 0:
+            return idx > 0
+    return false
 
 ## Is this source at the HEAD of the queue that funds it — the one entry the whole builders pool is
 ## on? The distinction a chained date cannot carry: a waiting entry's countdown is mostly other

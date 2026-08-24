@@ -201,10 +201,18 @@ answering gestures altogether.
 The patch block in `_tile_info_at` copies the `forage_patches` row across key by key from an explicit
 list, `patch_`-prefixing each one, and every forage compose sheet reads its source out of that
 `tile_info` and nowhere else. **A key the decoder emits but this block omits is silently absent on the
-plant web** — no error, no zero to notice — and it has shipped that way three times
-(`perWorkerBiomass`/`regrowthSamples`, then `materialPerBiomass`/`perWorkerMaterial`). Adding a
+plant web** — no error, no zero to notice — and it has shipped that way four times
+(`perWorkerBiomass`/`regrowthSamples`, then `materialPerBiomass`/`perWorkerMaterial`, then
+`buildKitId`, which crossed onto no `tile_info` for a release while `SourceForecast.build_kit_id`
+read it there and there only, so every forage build quoted no kit at all). Adding a
 `ForagePatchState` field is therefore **two edits here**: the copy line, and an entry in
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows.
+
+**`patch_current_rung` is the worked example of the fog half.** The wire's `currentRung` states the
+rung a patch STANDS on (`plant:tended`, `plant:field`) — which is exactly the ladder position
+`patch_is_cultivated` / `patch_is_field` are redacted to hide, and the same reading
+`patch_carrying_capacity` was added to that list to withhold. A cross-ref line without the redaction
+entry re-opens that leak in one token, on a hex the player cannot currently see.
 
 `tools/patch_crossref_guard.gd` enforces both as a partition over this block's own output, so an
 omission fails at the wiring rather than in a panel. **Why the copy exists at all, and why no preview

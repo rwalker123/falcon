@@ -383,12 +383,22 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# now, so it is redacted with the countdown it explains rather than with the ground readings: a
 	# remembered tile knows no more about a live refusal than it knows the date behind it.
 	"patch_build_blocked_reason",
+	# …and WHAT THAT BUILD IS BEING RAISED WITH. A resolved builders kit is a fact about a band's
+	# declared job, redacted with the queue position and the cause it rides beside.
+	"patch_build_kit_id",
 	# WHERE THE QUEUED ENTRY IS TAKING THIS PATCH, and what is left of the climb
 	# (`docs/plan_standing_upkeep.md` §2.8). Both are facts about a band's DECLARED job — the
 	# destination it named and the legs still owed from where the patch stands — so they are redacted
 	# with the queue position and the countdown they belong to. A remembered tile knows where the
 	# ground has been taken no better than it knows how far along the job is.
 	"patch_build_destination_rung", "patch_build_legs",
+	# …and WHERE THE PATCH ITSELF STANDS on that ladder. It is redacted for the same reason
+	# `patch_carrying_capacity` above is: `plant:tended` / `plant:field` state exactly the rung
+	# `patch_is_cultivated` and `patch_is_field` are struck out two entries up to hide, so leaving it
+	# out would hand a merely-remembered hex the redaction's own answer in one token. It travels with
+	# the destination rather than with the ground readings because it IS the ladder, not the terrain
+	# under it — `patch_tile_capacity` is what a remembered hex has instead.
+	"patch_current_rung",
 	# …and WHAT THE GROUND WILL CARRY at that destination. It rides the destination it belongs to, and
 	# it must: the figure is `tile K x the rung's field_capacity_gain`, so publishing it on a remembered
 	# hex hands over the same interpolated ladder position `patch_carrying_capacity` is redacted to
@@ -2974,6 +2984,13 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `site`, …). It crosses BESIDE the `-4` it explains: a countdown sentinel with no cause beside
 		# it is the state the field exists to end, and the client cannot re-derive the gate.
 		info["patch_build_blocked_reason"] = String(patch.get("build_blocked_reason", ""))
+		# **WHAT THIS PATCH'S BUILD IS BEING RAISED WITH** — the builders kit the winning band's queue
+		# entry RESOLVES to, `""` when nobody has it queued. It rides the queue position and the cause
+		# above because it is the same entry's property. **This line was MISSING while the decoder
+		# emitted the key**, which is the plant web's second-wiring bug for the fourth time: the
+		# compose sheet reads `build_kit_id` out of `tile_info` and there only, so every forage build
+		# read as carrying no kit at all.
+		info["patch_build_kit_id"] = String(patch.get("build_kit_id", ""))
 		# **WHERE THE ENTRY IS TAKING THIS PATCH, AND WHAT IS LEFT OF THE CLIMB** (§2.8). A queue entry
 		# names a DESTINATION rung rather than a single rung, so a `sow` declared on untended ground is
 		# a two-leg climb that holds the head of the queue through its Cultivate leg. The legs travel
@@ -2981,6 +2998,14 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# each `turns_remaining` is chained behind the legs above it, so nothing on this path may
 		# narrow, re-order or re-derive them.
 		info["patch_build_destination_rung"] = String(patch.get("build_destination_rung", ""))
+		# **WHERE THE PATCH STANDS RIGHT NOW**, in the destination's own `<branch>:<id>` spelling —
+		# the one field a consumer asks instead of reading this web's private `is_cultivated` /
+		# `is_field` pair, so a third food web costs it nothing. Read it BESIDE the destination: that
+		# one is a fact about a band's declared job and is `""` when nobody queued this patch, while
+		# every patch stands on a rung. The `""` default is the honest answer for a fixture the wire
+		# never touched; `SourceForecast.rung_above_branch_floor` reads an unnamed rung as "not
+		# improved" rather than guessing which rung was meant.
+		info["patch_current_rung"] = String(patch.get("current_rung", ""))
 		# **WHAT THIS PATCH WILL CARRY AT THAT DESTINATION** — the ceiling the rung buys, which is what
 		# says why the take falls while the build runs: the escapement floor is a fraction of `K` and the
 		# rung raises `K`, so the floor climbs underneath the player every turn. Its default is

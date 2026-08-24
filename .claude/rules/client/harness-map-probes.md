@@ -649,28 +649,61 @@ because the fixture had none, and the mark correctly degraded to the bare tile o
 
 `docs/plan_knowledge_screen.md` §7. The `ready_for_improvement` channel painted over the ⌃-mark fixture, plus
 `map_ready_for_improvement_legend`, its `facts` card. It **extends `_snapshot_work_ready` rather than
-replacing it**, so the badges and the channel are asked about the SAME sources — a channel disagreeing
-with the badge on the hex under it is exactly the two-surface split `RungGates` exists to stop.
+replacing it**, so the badges and the channel are asked about the SAME sources. The two do not answer
+identically: a lit hex is a strict SUBSET of the hexes wearing a ⌃, because the channel also asks
+whether the source has been IMPROVED at all and whether it is the player's
+(`.claude/rules/client/overlay-channels.md` → `ready_for_improvement`).
 
 What the extension adds is the half the badge cannot have: **sources nobody is working**. A badge is
 drawn on a worked source's own marker, so a map of unworked opportunities is what the aggregate is
 FOR, and the legend's nearest-unworked line has nothing to name without them. It adds two unworked
-patches, one unworked tamed herd, two patches that must stay DARK, and a **second player band** parked
-beside the far patch.
+patches, one unworked tamed herd, four patches that must stay DARK, and a **second player band**
+parked beside the far patch.
+
+**EVERY LIT SOURCE IS TENDED-OR-BETTER AND THE PLAYER'S**, because that is what the channel now
+requires: `_ready_patch` derives each row's `current_rung` from its own `tended` / field arguments —
+the wire's `forage::patch_rung_key` restated once, in `_patch_rung_key` — and defaults the owner to
+`MapView.PLAYER_FACTION_ID`. **Nothing may pass a `current_rung` in.** A fixture free to set the
+standing rung independently of `is_cultivated` could stage a patch the wire cannot produce and prove
+something about it; the herd rows go through `_herd_rung_key` for the same reason, off the
+`domestication` / `corralled` pair they already carry.
 
 **A LIT MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERY SOURCE IT CAN SEE**, which is why
-the frame stages FOUR controls that must stay DARK and why the assertions ask for TILES rather than a
+the frame stages SIX controls that must stay DARK and why the assertions ask for TILES rather than a
 count. On a fixture this size a count can be right for the wrong reason; `_lit_ready_tiles` reads the
 tiles back off the **raster the map paints**, not off the model's own counters, so the claim cannot be
 the assertion agreeing with itself.
 
-> **TWO OF THE FOUR ARE MID-BUILD, AND THE SECOND ONE IS THERE BECAUSE THE FIRST PROVED NOTHING.** The
+> **`READY_WILD` IS THE HEADLINE CONTROL.** An untouched patch at `(7, 5)` — inside band 1's
+> `work_range`, its plants admitting Cultivate, with the faction holding Cultivation — so every
+> question `RungGates` asks of it answers yes and the only thing holding it dark is that it stands on
+> its branch's FLOOR. Before the improved test, a faction that had merely *learned* Cultivation lit
+> every land tile it could see. Sabotage-verified: `rung_above_branch_floor` returning `true`
+> unconditionally fails it by name, along with the counts.
+>
+> **`READY_FOREIGN` IS THE OTHER HALF OF "MINE".** Ladder-identical to the lit `READY_UNWORKED_NEAR`
+> — tended, sowable, unworked — and owned by faction 1, so ownership is the ONLY term between a lit
+> tile and a dark one and dropping the owner test fails here and nowhere else (sabotage-verified).
+> There is no herd twin, and cannot be: the wire carries no owner on a herd row.
+
+> **THE MID-BUILD CONTROLS ARE THREE, AND WHICH ONE GUARDS `rung_in_progress` HAS MOVED TWICE.** The
 > worked patch at `(9, 8)` has an assignment DECLARING `cultivate`, and `next_rung_ready` excludes a
-> declared verb by itself — so "it stays dark" held with the channel's own `rung_in_progress` question
-> deleted. Sabotage caught it: the break produced a clean run. `READY_HALF_BUILT` is the isolating
-> case — unworked, nothing declared, a Cultivate meter at 55% — where only the in-progress question
-> can answer, and deleting it lights that tile and fails by name. Keep both: the declared one still
-> pins that the aggregate reads the same `improvement` axis the badge does.
+> declared verb by itself — so "it stays dark" held with the in-progress question deleted, and
+> sabotage caught it. `READY_HALF_BUILT` was added as the isolating case (unworked, nothing declared,
+> a Cultivate meter at 55%). **Then the improved test in front of both took that job away**: a patch
+> mid-Cultivate still STANDS on `plant:wild`, the rung it is climbing away from, so condition 1
+> refuses it before condition 4 is asked — which left the in-progress question with no live guard at
+> all.
+>
+> **`READY_MID_FIELD` is what guards it now**, and it is the shape the other two cannot be: TENDED, so
+> it clears the improved test; owned; sowable and ungated, so `next_rung_ready` genuinely offers Sow.
+> Conditions 1, 2 and 3 all answer yes and only its part-filled FIELD meter holds it dark.
+> Sabotage-verified — deleting `rung_in_progress` lights that tile and no other in the state.
+>
+> Keep all three: the first two still pin the meter-vs-declaration pair and that the aggregate reads
+> the same `improvement` axis the badge does. **The lesson is the one this file keeps re-learning** —
+> a control isolates a condition only until something is added in FRONT of that condition, and
+> nothing but re-running the sabotage will say which.
 
 **THE WOLF'S `husbandry_ceiling` IS STATED, NOT INHERITED.** `SourceForecast.husbandry_ceiling`
 normalizes an ABSENT field to `"pen"` — the FULL ladder, so an untagged herd behaves as it did before
@@ -696,8 +729,11 @@ The block beside it drives four things no picture can carry:
 
 **`_assert_ready_for_improvement_scale` IS A REPORT, NOT A THRESHOLD.** §7 says to measure the all-sources
 pass before assuming it is cheap, so the probe builds a **full-size 256×192 world with a patch on
-every tile** — the ceiling on what the derivation can ever be handed, since the sim seeds a patch on
-every food-module tile that carries capacity and caps none of them — and prints the microseconds. A
+every tile — every one of them tended and player-owned, so every source QUALIFIES**; a probe whose
+patches were refused by the improved test would measure the cost of rejecting them early rather than
+the cost of the full walk, and the ceiling would stop being a ceiling. That world is the ceiling on
+what the derivation can ever be handed, since the sim seeds a patch on every food-module tile that
+carries capacity and caps none of them, and the probe prints the microseconds it took. A
 timing ASSERTION on a shared machine fails for reasons that have nothing to do with the code under
 test, and a harness that cries wolf stops being read; what is asserted instead is the thing a number
 cannot drift on, that the probe really walked a full-size world. It is the last thing the state does,
