@@ -603,9 +603,11 @@ static func apply_palette(p: Dictionary) -> void:
 		HUNT_DANGER_OVERLAY_KEY: HUNT_DANGER_OVERLAY_COLOR,
 		THREAT_OVERLAY_KEY: THREAT_OVERLAY_COLOR,
 		# The aggregate ⌃ rides the generic lerp too — a hex with an offer glows, every other stays
-		# grid-coloured. Without a row of its own the picker's legend button would wear
-		# `OVERLAY_FALLBACK_COLOR`, a blue that appears nowhere on the map it claims to describe; the
-		# roster-wide face assertion in `map_preview` is what refuses that.
+		# grid-coloured. Without a row it would paint `OVERLAY_FALLBACK_COLOR`, a blue meaning nothing,
+		# and — because the fallback is what the legend button would then state as well — the picker's
+		# roster-wide face guard would pass on it, the two agreeing honestly about a colour that says
+		# nothing. What the row buys is the AGREEMENT WITH THE BADGE, and that is what `map_preview`
+		# asserts by name.
 		ReadyToClimb.CHANNEL_KEY: READY_TO_CLIMB_OVERLAY_COLOR,
 	}
 

@@ -520,6 +520,15 @@ const READY_UNWORKED_HERD_ID := "game_aurochs_11"
 # selectivity control on the unworked side: without it "every unworked patch is ready" and "the ready
 # test works" produce the same counts.
 const READY_BARREN_LADDER := Vector2i(12, 9)
+# **A HALF-CULTIVATED PATCH NOBODY IS WORKING, and it is here because the assertion it isolates was
+# passing for the wrong reason.** The state's other mid-build patch (9, 8) is WORKED and its
+# assignment DECLARES `cultivate`, so `next_rung_ready` excludes that rung on its own — the claim
+# that it stays dark held with the channel's `rung_in_progress` check deleted, which is exactly the
+# "asks a subtree, not a control" failure `test-harnesses.md` describes. This patch declares nothing:
+# its meter alone says a rung is being climbed, so only the in-progress question can answer it, and
+# with that question removed it lights.
+const READY_HALF_BUILT := Vector2i(5, 2)
+const READY_HALF_BUILT_PROGRESS := 0.55
 # The SECOND player band, parked beside the far patch and carrying no work at all. It exists for one
 # claim — that "nearest" is measured from the SELECTED band — which a single-band fixture cannot make:
 # with one band the anchor and its fallback are the same tile and a broken selection read passes.
@@ -1935,14 +1944,23 @@ func _ready_to_climb_state() -> void:
 		int(model.get(ReadyToClimb.MODEL_PATCHES, -1)) == READY_EXPECTED_PATCHES
 			and int(model.get(ReadyToClimb.MODEL_HERDS, -1)) == READY_EXPECTED_HERDS)
 
-	# **A RUNG UNDER WAY IS NOT AN OFFER, and the mid-Cultivate patch is the whole reason the channel
-	# asks `rung_in_progress` before `next_rung_ready`.** Its next rung is admitted and ungated, so a
-	# pass that asked only the ready test would light it — and light it in the same cyan as the patch
-	# beside it that really is waiting for hands. Asked as a TILE rather than a count, because a count
-	# that is right for the wrong reason is exactly what a fixture of this size can produce.
+	# **A RUNG UNDER WAY IS NOT AN OFFER**, and it takes TWO patches to say so, because the two halves
+	# of "under way" are answered by different things. Asked as TILES rather than as a count, since a
+	# count that is right for the wrong reason is exactly what a fixture of this size can produce.
 	var lit: Array[Vector2i] = _lit_ready_tiles()
-	_assert_map("ready to climb — the patch mid-Cultivate at (9, 8) stays dark; a rung being climbed is not on offer",
+	# The DECLARED half — a worked patch whose assignment names `cultivate`. `next_rung_ready` excludes
+	# the declared verb by itself, so this one passes with or without the channel's own in-progress
+	# question, and it is here for the other reason: it pins that the aggregate reads the same
+	# `improvement` axis the badge does.
+	_assert_map("ready to climb — the WORKED patch whose crew declared Cultivate at (9, 8) stays dark",
 		not lit.has(Vector2i(9, 8)))
+	# **THE METER HALF, and this is the one that isolates `rung_in_progress`.** Nobody works this patch
+	# and no assignment declares anything, so `next_rung_ready` sees an admitted, ungated Cultivate and
+	# answers it — the channel stays dark only because it asks whether a rung is already being climbed
+	# FIRST, the badge's own order. Sabotage-verified: deleting that question lights this tile and
+	# nothing else in the state notices.
+	_assert_map("ready to climb — …and so does the UNWORKED patch at %s, half-built with nothing declared"
+		% READY_HALF_BUILT, not lit.has(READY_HALF_BUILT))
 	_assert_map("ready to climb — the wild-ceiling wolf pack at (11, 4) stays dark however much we know",
 		not lit.has(Vector2i(11, 4)))
 	_assert_map("ready to climb — a patch whose plants may climb nothing stays dark (%s)"
@@ -1979,6 +1997,26 @@ func _ready_to_climb_state() -> void:
 	_assert_map("ready to climb — choosing the row paints it (active_overlay_key = '%s')"
 		% _map.active_overlay_key,
 		_map.active_overlay_key == ReadyToClimb.CHANNEL_KEY)
+
+	# **IT IS PAINTED IN THE OPPORTUNITY INK — THE SAME ONE THE PER-SOURCE `⌃` BADGE WEARS.** An
+	# aggregate that states an offer in a colour the mark on the very same hex does not use teaches two
+	# vocabularies for one thing.
+	#
+	# **THE ROSTER-WIDE FACE GUARD CANNOT MAKE THIS CLAIM, and neither can a restatement of it here.**
+	# That guard asks whether a face states a colour the map really paints — and this channel rides the
+	# GENERIC `GRID_COLOR.lerp(OVERLAY_COLORS.get(key, FALLBACK), value)` path, so with its
+	# `OVERLAY_COLORS` row deleted the map paints the meaningless fallback blue and the button states
+	# that same blue, honestly. Sabotage-verified: the row can be removed and the whole run still
+	# passes, face guard included. What a dropped row actually costs is the AGREEMENT with the badge,
+	# so that is what is asserted — `HudStyle.SIGNAL` by name, reached through the map, through the
+	# button, and through `_tile_color` as the oracle, so a table that lies to the button and a button
+	# that lies about the table both fail.
+	var face: Color = picker.legend_face_color()
+	_assert_map("ready to climb — map, button and painted tile all wear HudStyle.SIGNAL, the ⌃ badge's own ink (%s)"
+		% face,
+		_map.overlay_color_for(ReadyToClimb.CHANNEL_KEY) == HudStyle.SIGNAL
+			and face == HudStyle.SIGNAL and _map_paints_color(HudStyle.SIGNAL))
+
 	await _save("map_ready_to_climb")
 	await _save_overlay_legend("map_ready_to_climb_legend")
 
@@ -2045,6 +2083,7 @@ func _snapshot_ready_to_climb() -> Dictionary:
 	patches.append(_ready_patch(READY_UNWORKED_FAR, false, true, false))
 	# Neither rung is legal for anything growing here, so no amount of knowledge opens one.
 	patches.append(_ready_patch(READY_BARREN_LADDER, false, false, false))
+	patches.append(_ready_patch(READY_HALF_BUILT, false, true, false, READY_HALF_BUILT_PROGRESS))
 	var herds: Array = snap["herds"]
 	herds.append({
 		"id": READY_UNWORKED_HERD_ID, "label": "Aurochs (%s)" % READY_UNWORKED_HERD_ID,
@@ -2063,12 +2102,15 @@ func _snapshot_ready_to_climb() -> Dictionary:
 
 ## One forage patch for the fixture. `tended` fills the cultivated rung so a sowable patch offers Sow
 ## rather than Cultivate; the two legality flags are SPECIES-global ("can this plant ever climb this
-## rung"), which is what `RungGates.any_crop_allows` reads.
-func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool) -> Dictionary:
+## rung"), which is what `RungGates.any_crop_allows` reads. `progress` puts work on the CULTIVATE
+## METER without stamping the rung done — the state `RungGates.rung_in_progress` answers off.
+func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool,
+		progress: float = 0.0) -> Dictionary:
 	return {
 		"x": tile.x, "y": tile.y,
 		"ecology_phase": "thriving",
 		"is_cultivated": tended, "is_field": false,
+		"cultivation_progress": progress,
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": can_cultivate, "can_sow": can_sow}],

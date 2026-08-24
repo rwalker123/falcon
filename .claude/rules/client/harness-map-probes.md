@@ -655,15 +655,29 @@ with the badge on the hex under it is exactly the two-surface split `RungGates` 
 What the extension adds is the half the badge cannot have: **sources nobody is working**. A badge is
 drawn on a worked source's own marker, so a map of unworked opportunities is what the aggregate is
 FOR, and the legend's nearest-unworked line has nothing to name without them. It adds two unworked
-patches, one unworked tamed herd, a patch whose plants may climb NOTHING, and a **second player band**
-parked beside the far patch.
+patches, one unworked tamed herd, two patches that must stay DARK, and a **second player band** parked
+beside the far patch.
 
-**A CYAN MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERY SOURCE IT CAN SEE**, which is why
-the frame stages three controls that must stay DARK — the patch mid-Cultivate, the wild-ceiling wolf,
-and the patch with no legal rung — and why the assertions ask for TILES rather than a count. On a
-fixture this size a count can be right for the wrong reason; `_lit_ready_tiles` reads the tiles back
-off the **raster the map paints**, not off the model's own counters, so the claim cannot be the
-assertion agreeing with itself.
+**A LIT MAP IS A PLAUSIBLE PICTURE OF A CHANNEL THAT LIGHTS EVERY SOURCE IT CAN SEE**, which is why
+the frame stages FOUR controls that must stay DARK and why the assertions ask for TILES rather than a
+count. On a fixture this size a count can be right for the wrong reason; `_lit_ready_tiles` reads the
+tiles back off the **raster the map paints**, not off the model's own counters, so the claim cannot be
+the assertion agreeing with itself.
+
+> **TWO OF THE FOUR ARE MID-BUILD, AND THE SECOND ONE IS THERE BECAUSE THE FIRST PROVED NOTHING.** The
+> worked patch at `(9, 8)` has an assignment DECLARING `cultivate`, and `next_rung_ready` excludes a
+> declared verb by itself — so "it stays dark" held with the channel's own `rung_in_progress` question
+> deleted. Sabotage caught it: the break produced a clean run. `READY_HALF_BUILT` is the isolating
+> case — unworked, nothing declared, a Cultivate meter at 55% — where only the in-progress question
+> can answer, and deleting it lights that tile and fails by name. Keep both: the declared one still
+> pins that the aggregate reads the same `improvement` axis the badge does.
+
+**THE WOLF'S `husbandry_ceiling` IS STATED, NOT INHERITED.** `SourceForecast.husbandry_ceiling`
+normalizes an ABSENT field to `"pen"` — the FULL ladder, so an untagged herd behaves as it did before
+the field existed — which made `_pelt_only_wolf_herd` offer `Tame` and wear a `⌃` of its own, in
+`map_worked_ready` as well as here. `_snapshot_work_ready` now says `"wild"` outright. Stated there
+rather than on `_pelt_only_wolf_herd` so only the two frames that push knowledge move; the frames that
+push none had no chevron on anything either way.
 
 The block beside it drives four things no picture can carry:
 

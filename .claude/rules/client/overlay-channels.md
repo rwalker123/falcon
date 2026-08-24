@@ -470,16 +470,30 @@ must not state it in a hue the badge on the same hex does not, which is also why
 its own: `SIGNAL` is a parchment cream in the shipped palette and a cyan in others, so a hand-picked
 value would agree with the badge in one theme and fight it in three. Amber would be wrong twice: it is
 the trouble channel here, and teaching a player to read good news in it is how a warning stops being
-read. Without a row the
-picker's legend button would wear `OVERLAY_FALLBACK_COLOR`, which the roster-wide face assertion
-refuses (above, "THE GUARD WAS THE ACTUAL DEFECT"). The raster is BINARY — a hex with an offer paints
+read.
+
+> **THE ROSTER-WIDE FACE GUARD DOES NOT COVER THIS ROW, and it cannot — measured by sabotage.** That
+> guard (above, "THE GUARD WAS THE ACTUAL DEFECT") asks whether a face states a colour the map really
+> paints. This channel rides the GENERIC `GRID_COLOR.lerp(OVERLAY_COLORS.get(key, FALLBACK), value)`
+> path, so with its row DELETED the map paints the fallback blue and the button states that same blue
+> — honestly — and the guard passes, exactly as it does for `visibility`. It catches a channel with a
+> paint path of its OWN; that is how it caught `forage`. What a dropped row costs a GENERIC channel is
+> not a lie but the AGREEMENT with the badge, so `map_preview` asserts that instead and by name: map
+> colour, legend-button face and a painted tile all equal `HudStyle.SIGNAL`.
+>
+> The guard is also out of reach here for a second reason worth knowing before writing one like it:
+> `_overlay_picker_state`'s fixture publishes no patches and no herds, so `has_ready_to_climb_data`
+> is false in that world and this channel is not in that roster at all.
+
+The raster is BINARY — a hex with an offer paints
 at full strength, every other stays grid-coloured — because "there is an opportunity here" is the whole
 claim and shading by count would say a hex with three offers is a better place to stand than one with a
 Sow. The `raw` plane carries the count for anything that wants to quote it.
 
 Verify with `map_preview` state **"ready to climb"** (`map_ready_to_climb` — the CONTRAST, not the
-glow: three patches and two herds lit while the mid-Cultivate patch, the wild-ceiling wolf and a patch
-whose plants may climb nothing stay dark; `map_ready_to_climb_legend` is its facts card) plus the
+glow: three patches and two herds lit while four controls stay dark — a worked patch whose crew
+DECLARED its rung, an unworked patch HALF-BUILT with nothing declared, the wild-ceiling wolf, and a
+patch whose plants may climb nothing; `map_ready_to_climb_legend` is its facts card) plus the
 assertion block beside it, which drives the late knowledge push, the counts split by web, the tiles a
 picture cannot separate, and the nearest answer moving with the selection off the cached model.
 
