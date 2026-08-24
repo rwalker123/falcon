@@ -1845,6 +1845,20 @@
         "work": 77.519997,
         "workers": 95
       },
+      "build_queue": [
+        {
+          "fauna_id": "populations[0].build_queue[0].fauna_id",
+          "kind": "populations[0].build_queue[0].kind",
+          "target_x": 128,
+          "target_y": 117
+        },
+        {
+          "fauna_id": "populations[0].build_queue[1].fauna_id",
+          "kind": "populations[0].build_queue[1].kind",
+          "target_x": 145,
+          "target_y": 156
+        }
+      ],
       "children": 97,
       "craft_offers": [
         {
@@ -2422,6 +2436,20 @@
         "work": 5.62,
         "workers": 4
       },
+      "build_queue": [
+        {
+          "fauna_id": "populations[1].build_queue[0].fauna_id",
+          "kind": "populations[1].build_queue[0].kind",
+          "target_x": 151,
+          "target_y": 162
+        },
+        {
+          "fauna_id": "populations[1].build_queue[1].fauna_id",
+          "kind": "populations[1].build_queue[1].kind",
+          "target_x": 62,
+          "target_y": 51
+        }
+      ],
       "children": 148,
       "craft_offers": [
         {

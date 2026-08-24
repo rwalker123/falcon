@@ -939,6 +939,119 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > **The build queue of §4.6b IS this property's storage**, not a second ordering beside it. If the
    > queue ships with a rank of its own, they will drift — so whichever lands first owns the rank and
    > the other reads it.
+
+   > **HALF OF THIS HAS LANDED — the QUEUE's half, in PR #570 (§4.7b ③).** Drag-to-reorder ships on
+   > the build queue block, the drop sends `build_order <faction> <band> <source…> <position>`, and
+   > by the note above **that queue IS the storage**: the client keeps no rank beside it. So the
+   > property exists, on the one list whose order is already an input.
+   >
+   > **What remains is the WORKED ROWS**, and it is stated here rather than left implicit: the player
+   > orders their worked jobs, and a band that runs short **sheds from the bottom of that order,
+   > saying which row it took**. The shape is the one this item already names — an **explicit rank on
+   > top, with the shipped ordering surviving as the tie-break beneath it**. §2.9's eleven coded steps
+   > **are** that tie-break; they are not replaced, and nothing in them becomes positional (see §2.9's
+   > own closing paragraph, which is the reason list position must never be the shedding order).
+
+   **9a — THE QUEUE'S ORDER BELONGS TO A BAND, AND ON THE WIRE IT DOES NOT. This is 9's foundation
+   and it comes first**, because 9b cannot be built on a queue whose ordering belongs to the wrong
+   band. Found in PR #570's own review and fixed nowhere until this slice.
+
+   **The defect.** `buildQueuePosition` is published **per SOURCE** — one `int` on `ForagePatchState`
+   and one on the herd state — and it "rides the same winner as `buildTurnsRemaining`"
+   (`BuildEstimateClaims::publish_running`, `core_sim/src/systems/labor.rs`): among the bands working
+   a source, the one with the **soonest estimate** writes the field. Two bands holding one source is
+   ordinary, so the number a source publishes is routinely **another band's place in another band's
+   line**.
+
+   What that does to the gesture: band B's queue is `[X, Y, Z]`; band C also holds Y and has the
+   sooner estimate, so Y publishes `position = 0`. B's block ties X and Y at `0`, breaks the tie on
+   the key string, and draws **`[Y, X, Z]`**. Dragging Z above X computes `insert = 1` from that wrong
+   list and sends `build_order B Z 1`, and `move_build_entry` yields **`[X, Z, Y]`** — Z lands
+   *behind* X. The optimistic overlay then paints the requested order until the turn resolves, so the
+   list **silently jumps** a turn later.
+
+   > **IT IS NOT FIXABLE ON THE CLIENT, and no tie-break papers over it.** There is no band-keyed
+   > queue anywhere on the wire, and the chained date rides the same winner — so the client holds no
+   > second signal to recover the true order from. Established in #570's review; it is not to be
+   > re-derived, and a cleverer tie-break would only pick a different wrong order.
+
+   **The fix is a per-band queue on the wire, and it is the BAND-SIDE ORDERED LIST.**
+   `PopulationCohortState` gains `buildQueue` — the band's own entries, in the band's own order, each
+   naming only its source. **The rank is the vector INDEX**: there is no second integer to disagree
+   with anything, which is what this item's own note demands of whichever ordering lands first.
+   > **Why not per-source `[{band, position}]` rows**, the other shape considered: it answers a
+   > band-shaped question in source-shaped storage, so building one band's queue means scanning every
+   > source, and its explicit `position` ints carry an invariant — dense, per band, spread across N
+   > sources — that no codec can enforce. The band-side list has neither problem, and it mirrors what
+   > the sim already holds (`LaborAllocation::build_queue`), so it is **captured live** rather than
+   > turn-written.
+   >
+   > **AND THE LIVE CAPTURE RETIRES THE OPTIMISTIC ORDERING.** `build_order` mutates the allocation
+   > at command time and the server re-captures after every command, so the new order arrives on the
+   > command's own recapture — exactly the reasoning `buildKitId` already ships on. The client's
+   > pending-order overlay was a **second ordering beside the wire's**, which is the drift this item
+   > exists to forbid, so it goes with the defect.
+   >
+   > **WHAT IT DELIBERATELY DOES NOT FIX: the per-entry READOUTS still ride the winner.** The date,
+   > the legs, the gear and the blocked cause are source-addressed fields and keep the
+   > sooner-estimate rule they were designed with, so a shared entry in B's queue can still quote a
+   > countdown chained down C's. That is a stated rule (`snapshot.fbs`, "IT RIDES THE SAME WINNER"),
+   > not this defect, and the ordering fix is strictly an improvement over it: the list is B's, the
+   > date is the best answer anyone has. Per-band estimates are a bigger change than the gesture
+   > warrants and would want their own slice.
+
+   **AND THE CONTROL THAT SPENDS THE RANK WAS DEAD, which the playtest found before it found
+   anything else.** Drag-to-reorder shipped in §4.7b ③ and **did not work at all** in the real
+   client: the handle tooltipped and wore the move cursor, and the gesture degraded to a click that
+   opened the row's settings strip.
+
+   > **THE CAUSE WAS THE ROW'S OWN PRESS HANDLER, and the fix is a general rule.** Click-to-open
+   > fired on the **press**; `_toggle_queue_settings` ends in `_repage_work_zone`, which frees every
+   > node in the zone — including the marker Label the Viewport had just latched `mouse_focus` onto.
+   > `_gui_remove_control` nulled the focus before the pointer had travelled far enough for Godot to
+   > ask for drag data, so no drag was ever attempted. It fires on the **release** now, inside the
+   > row's own rect, which is `BaseButton`'s rule for the same reason. **Any press handler that
+   > rebuilds its own subtree kills every drag beneath it** — that is the class, not the instance.
+   >
+   > ⛔ **NO TEST COULD HAVE CAUGHT IT, AND THE RULE FILE HAD WRITTEN DOWN WHY.** The harness drove
+   > `_queue_drag_data` / `_queue_can_drop` / `_queue_drop` **directly** and never pressed a mouse
+   > button, under an explicit note that *"Godot exposes no public getter for the callables
+   > `set_drag_forwarding` installs"*. That is true and beside the point: a harness can push real
+   > `InputEventMouseButton` / `InputEventMouseMotion` through the Viewport and let the engine's own
+   > drag machinery run. Rationalising the gap is what let a completely dead gesture ship green, and
+   > the reproduction — three assertions, one of them *"the reorder also opened the row's settings
+   > strip"* — is Ray's report in the harness's own words.
+
+   **THE ARROWS ARE THE PRIMARY CONTROL NOW, and the drag survives beside them.** Ray, on the
+   playtest: *"There should also be little up/down buttons I think to order, that is more obvious
+   than dragging anyways."* A 10px handle that appears only on hover is a poor way to state the one
+   list whose order is an input.
+
+   > **THE PLACEMENT WAS DECIDED FROM THE WIDTH ARITHMETIC, on a prototype rather than in code** —
+   > Ray's precondition: *"if you are going to do that, I need to see a UX prototype before changing
+   > the UX."* The row's ~356px is fully spoken for (marker 10 · face ~126, already ellipsised · date
+   > 168 · `✕` 32 · four separations), so an arrow pair has to come out of a column that exists. Four
+   > placements were drawn and priced: widening the marker slot (−6px off a face that already
+   > truncates, and 16 × 13 targets), taking the `✕`'s column (free, full-height targets), the
+   > settings strip (free in width, **+22px of height** in a box reading 396 of 396), and a
+   > hover-only control (free, and invisible — the very failing being fixed).
+   >
+   > **THE `✕`'s COLUMN WON**: `▲`/`▼` at 15 × 24 in the 32px it held, so the face, the row and both
+   > zone budgets are **bit-identical** — 126px face, 354 of 356 wide, strip 56 of 56 in two lines.
+   > What it spends is the one-click withdrawal, which moves right-aligned onto the strip's last
+   > line; Ray took that trade explicitly, reordering being the frequent act and withdrawing the rare
+   > one. `queue_settings_one_line` — the one width predicate the reservation and the builder share —
+   > counts the `✕` now, so its threshold moves 408 → 444 and the two cannot disagree on a dock wide
+   > enough to put crop and kit on one line.
+   >
+   > **NEITHER CONTROL NEEDS AN OPTIMISTIC OVERLAY**, which is 9a paying for itself: `buildQueue` is
+   > captured live, so an arrow press and a drop both land on the command's own recapture.
+
+   **9b — THE WORKED ROWS TAKE THE EXPLICIT RANK, and the shedding order reads it.** Still open. The
+   player orders their worked rows; §2.9's walk consults that rank where it consults list position
+   nowhere, and a shed **names the row it took**. The rank sits **on top** of the shipped ordering,
+   which survives as the tie-break — most sources sit at the default, so a rule that only fires on an
+   explicit pick is what keeps the default behaviour exactly where it is.
 10. **Symmetric partial credit — AND the one-position ladder it needs.** **The model is §2.8; this is
    only its place in the order.** A rung's benefit and its cost both scale with how far up the ladder
    the source has been worked, and the two independent meters per source collapse into one cumulative

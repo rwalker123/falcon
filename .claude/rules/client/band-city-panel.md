@@ -2279,9 +2279,12 @@ a real and common state. `_commanded_role_kit_id` is untouched — the stepper s
 own pick or nothing, never the derived id.
 
 **WORST CASE THE CARD NOW READS `No kit`, WHICH IS A GAP RATHER THAN A LIE.** A band whose queue head
-the client cannot resolve — `head_build_branch` needs the source in `forage_patch_lookup()` /
-`world_herds()` and the entry at position 0 — still derives nothing, and the card says so instead of
-naming a web.
+the client cannot resolve — `head_build_branch` needs an entry at index 0 of the band's own
+`buildQueue` — still derives nothing, and the card says so instead of naming a web.
+> **It stopped needing a source lookup at all** (§4.9 item 9a). It used to walk the band's rows,
+> resolve each one's dict out of `forage_patch_lookup()` / `world_herds()` and ask the SOURCE whether
+> it was at position 0 — which asked the *winning* band. The head entry now names its own web in its
+> `kind`, so the branch comes off the entry and the lookups are gone with the wrong-band read.
 
 **Asserted PNG-LESS, by EQUALITY, over THREE states** (`_assert_builders_card_kit_faces`): a plant
 head, an animal head and the EMPTY queue, because a resolver stuck on one web satisfies any one of
@@ -2307,13 +2310,17 @@ BUILD QUEUE                          3 builders · Tillage kit
 - **NO QUEUE MEANS NO BLOCK AT ALL** — zero nodes, zero height, zero chrome. That is the common
   early-game state and it must cost nothing; an empty header or a hint there would be permanent
   furniture explaining an absence.
-- **IT NEEDS NO BAND ID ON THE WIRE, and that is why the model keys were enough.** The sim keeps a
-  queue entry only while its source holds a labor assignment (`LaborAllocation::prune_build_queue` →
-  `holds_build_source`), and `_work_source_models` admits any source with a take crew — so every entry
-  of THIS band's queue has a model. A source queued by ANOTHER band is not in this band's
-  `effective_worker_map` at all, which is the per-band filter for free. The two keys added are
-  `build_queue_position` and `build_turns` (`SourceForecast.build_queue_position` /
-  `build_turns_remaining` off the same `rung_source` dict the rung marks already read).
+- ⛔ **IT DID NEED A BAND-SIDE QUEUE ON THE WIRE, AND THIS BLOCK SHIPPED A SLICE WITHOUT ONE.** The
+  membership argument held **for the common case** — the sim keeps an entry only while its source
+  holds a labor assignment (`LaborAllocation::prune_build_queue` → `holds_build_source`),
+  `_work_source_models` admits any source with a take crew, and a source queued by ANOTHER band is
+  not in this band's `effective_worker_map` at all. (It is not airtight: a row and a crew are not the
+  same thing — "AN ENTRY CAN OUTLIVE ITS ROW'S CREW" below.) **What it did not buy was the ORDER.** `buildQueuePosition` is
+  source-addressed and rides the winning band, so a source **both** bands hold publishes the other
+  band's rank, and the block sorted on it. The block reads
+  `HudBandLaborState.build_queue_keys(band)` — the band's own `buildQueue`, order and all — and
+  joins each key to its model; `build_turns` and the rest still come off the source. See "THE ORDER
+  IS THE BAND'S OWN" below for the defect and the shape that answers it.
 - **THE HEAD MARKER'S SLOT IS RESERVED ON EVERY ROW.** A conditionally-omitted Label shifts every row
   behind the head sideways, which reads as a list that has lost its alignment rather than as a head.
 - **THE ROW IS THE BOARD'S OWN UNIT** — exactly `WORK_ROW_HEIGHT` and `HudStyle.work_row_stylebox` —
@@ -2551,13 +2558,49 @@ did not leave the block until the turn resolved. All three land on the row that 
   selection. **No optimistic overlay**: `buildKitId` is captured LIVE, so the recapture the command
   triggers already carries the pick.
 
-#### ③ THE MARKER COLUMN IS THE DRAG HANDLE — no new width
+#### ③ THE REORDER IS TWO ARROWS PLUS A DRAG — and neither costs the row a pixel
 
-The row's width is spoken for: marker 10 + face + date 168 + `✕` 32 + separations, and the face is
-**already ellipsised** at its widest shipped value (`🐄 Corral Thunder Mammoths` needs 189 of ~126). A
-handle column of its own would come straight out of the one column carrying an unclipped-name
-guarantee. The marker slot is reserved on every row already (that is what lines the faces up) and
-holds nothing on a non-head row.
+The row's width is spoken for: marker 10 + face + date 168 + a 32px trailing column + four
+separations, and the face is **already ellipsised** at its widest shipped value
+(`🐄 Corral Thunder Mammoths` needs 189 of the 126 it gets, measured by
+`band_panel_preview._report_queue_row_columns`). Any new column comes straight out of the one column
+carrying an unclipped-name guarantee, so the whole design question was *which existing slot gives*.
+Two of them did, and the arithmetic is what made the placement decidable rather than a preference.
+
+**THE ARROWS ARE THE PRIMARY REORDER, AND THEY TOOK THE `✕`'s COLUMN.** Ray, from play, once the drag
+worked at all: a grab handle that only reveals itself under a press is not a control a player finds.
+Four placements were prototyped; the one that ships is the only one costing **zero pixels** while
+still giving full-height targets — `▲` then `▼` side by side inside
+`BUILD_QUEUE_REORDER_WIDTH`, which is `BUILD_QUEUE_UNQUEUE_WIDTH` **stated as arithmetic** rather
+than re-typed as a second 32. The split is `(32 − 2) / 2 = 15` each with
+`BUILD_QUEUE_REORDER_SEPARATION` between them, and both fill the row's content line (24px inside a
+28px row) — a *stacked* pair would have made two ~12px targets, which is the placement this one beat.
+Verified as a measurement: `band_panel_preview._assert_queue_reorder_arrows` prints the column at
+**32 of 32** and the zone-width guard still reads **354 of 356**, unchanged from before the arrows.
+
+- ⛔ **15px IS UNDER THE GHOST BUTTON'S OWN CHROME, so the arrows trim their SIDES.**
+  `HudStyle`'s `BUTTON_PADDING_H` is 11 each — that is why a 9px `✕` needed a 32px column — and two of
+  those inside 15 leaves the glyph nothing. `HudWidgets.compact` grew a fourth parameter,
+  `padding_h`, defaulting to `KEEP_BUTTON_PADDING_H` (negative, because zero is a real trim a caller
+  may want); the arrows are its **one** caller. Everything else keeps `HudStyle`'s side margins, the
+  standing rule being that a zone row is short on height and not on width.
+- **SAME COMMAND, NOTHING NEW ON THE WIRE.** `▲` sends `build_order … <rank − 1>` and `▼`
+  `<rank + 1>`, through the same `_emit_build_order` and the same `build_order_requested` payload the
+  drag uses. `build_order`'s semantics are *remove, then insert at* — so one step swaps an entry with
+  its neighbour and needs no index of its own (`BUILD_QUEUE_REORDER_STEP`).
+- **DISABLED AT THE ENDS, NEVER ABSENT.** `▲` is dead on the head, `▼` on the **last confirmed
+  entry** — the wire queue's length, not the drawn page's, since an entry at the bottom of a truncated
+  page still has somewhere to fall to. A control that vanished at either end would shift the column
+  under the row beside it.
+- **A PENDING ROW GETS NEITHER, and keeps the column reserved.** Same rule the drag handle already
+  followed: the wire has not placed it, so there is no rank for `build_order` to name.
+- ⛔ **AND NO OPTIMISTIC OVERLAY, for the reason spelled out at the end of this section.** The arrows
+  inherit the drag's rule because they inherit the drag's command.
+
+**THE DRAG SURVIVES BESIDE THEM** — Ray: *"the drag and drop can stay if it is easy to just use the
+code already shipped."* It works now and it costs the row nothing, so the handle stays exactly where
+it was. The marker slot is reserved on every row already (that is what lines the faces up) and holds
+nothing on a non-head row.
 
 - **The head keeps `▸`** — that marker is load-bearing, it names the entry the pool is funding — and is
   still a handle, demotion being the most likely reorder there is. Every other confirmed row draws
@@ -2567,6 +2610,17 @@ holds nothing on a non-head row.
   and the drop off the ROW (a 10px column is not a drop target a player should have to aim at twice).
   The handle takes `MOUSE_FILTER_PASS`, so a plain click still reaches the row's click-to-open —
   Godot only asks for drag data past a movement threshold.
+- ⛔ **AND THE ROW'S CLICK-TO-OPEN FIRES ON THE RELEASE, BECAUSE THE PRESS IS WHERE A DRAG BEGINS.**
+  This shipped on the press and the reorder was therefore **dead in the real client**: the press
+  reached the row through the `PASS` handle, `_toggle_queue_settings` → `_repage_work_zone` freed every
+  node in the zone, `_gui_remove_control` nulled the Viewport's `mouse_focus` — which was the marker —
+  and by the time the pointer crossed the drag threshold there was nothing left to ask for drag data.
+  The gesture degraded to *a click that opens the settings strip*, which is exactly how it played. The
+  release is also the event a completed drag CONSUMES (the Viewport performs the drop on the button-up
+  and never forwards it to `gui_input`), so a reorder cannot also open the row it moved; and it must
+  land INSIDE the row, because `mouse_focus` latches on the press and a release three rows away would
+  otherwise still toggle this one. **Any press handler that rebuilds its own subtree kills every drag
+  that could start under it** — the general form of the rule.
 - **THE DROP INDICATOR COSTS NO HEIGHT.** The block's `separation` is 0, so an indicator drawn
   *between* two rows would need a new term in `build_queue_block_height` on the reservation side as
   well as the render side. `HudStyle.work_row_drop_stylebox` lights one edge of the target row's OWN
@@ -2587,27 +2641,79 @@ holds nothing on a non-head row.
   0-based — §4.9's priority property stored in the queue itself, so this client keeps no rank beside
   it. `build_order` is the one of the three verbs that names a BAND; a kit and a withdrawal are
   properties of an entry every band holding that source shares.
-- **The new order is OPTIMISTIC**, on the same turn-keyed overlay ④ uses: `buildQueuePosition` is
-  turn-written, so without it the list snaps back on the command's own recapture. The overlay states
-  the WHOLE ordering rather than a delta, and `_queue_sort_rank` pushes an entry it does not name
-  behind every entry it does — which is what keeps the sort a TOTAL order under Godot's unstable
-  `sort_custom`.
+- ⛔ **AND THE POSITION IS AN INDEX INTO THE BAND'S WIRE QUEUE — NOT INTO THE ROWS THE BLOCK DREW.**
+  Both the arrows and the drag count in `_queue_rank_keys` (`HudBandLaborState.build_queue_keys`),
+  and `_build_queue_models` stamps each drawn row's rank from the same walk. The two lists are not
+  the same length: see "AN ENTRY CAN OUTLIVE ITS ROW'S CREW" below for the reachable, persistent
+  state in which the wire carries an entry the block cannot draw. Counting in the drawn list instead
+  makes every position below a hidden entry short by the number hidden, which the sim resolves
+  against its own full queue — a `▼` that silently does nothing, or a row that jumps above something
+  the player cannot see.
+- ⛔ **THERE IS NO OPTIMISTIC ORDERING, AND THERE MUST NOT BE ONE** (§4.9 item 9a). This slice shipped
+  one — `_queue_sort_rank` over a turn-keyed `order` overlay — because `buildQueuePosition` is
+  turn-written and the list snapped back on the command's own recapture. The band-side `buildQueue`
+  is captured **live** off `LaborAllocation::build_queue`, and `build_order` mutates that allocation
+  at command time, so the new order arrives on that same recapture and there is nothing to paper
+  over. A client-side ordering beside it would be the **second rank** §4.9 forbids, and the wire
+  field's own doc comment says so. `_queue_sort_rank`, `pending_order_for` / `record_pending_order` /
+  `drop_pending_order` and `Main`'s rollback branch are all **deleted**; the send and its failure path
+  stay, with nothing to roll back.
 
-#### ④ THE WITHDRAWAL LEAVES THE BLOCK ON THE FRAME THE `✕` IS PRESSED
+#### ④ THE WITHDRAWAL MOVED INTO THE SETTINGS STRIP, and still leaves the block on the frame it is pressed
+
+**THE `✕` IS THE SLOT THAT GAVE, because it had somewhere to go.** The arrows above needed 32px and
+the row had none spare; every queued entry expands into a settings strip (§4.7a ② — every entry has a
+KIT), so the withdrawal moved into that strip, **right-aligned on its LAST control line**. Ray, on the
+trade: *"two-click withdrawal is acceptable."* It is the right way round — a reorder is the commoner
+act and is one click; a withdrawal is rarer and is now two.
+
+⛔ **IT MUST NOT ADD A LINE, AND THE PREDICATE IS WHAT PAYS FOR THAT.** The strip already stacks to
+two lines on every shipped dock and the exclusion rule below leaves that zone reading **396 of 396**,
+so a third line would come off the bottom of a clipping board in silence.
+`HudWorkVocab.queue_settings_one_line_width()` — the one expression both the reservation and the
+builder read, now exported so nothing re-spells it — grew the button's own width and one separation:
+
+| | pickers + keys | `✕` + gap | one line needs | tall LEFT dock has | 1920 BOTTOM has |
+|---|---|---|---|---|---|
+| before | 408 | — | **408** | 342 | 368 |
+| after | 408 | 4 + 32 | **444** | 342 | 368 |
+
+Both shipped docks were already two lines and both still are, so
+`build_queue_settings_height` comes out at the same **56px drawn against 56 reserved** it did before
+(`_assert_queue_settings_flow` prints the pair). What the term buys is the case that has not arrived:
+the moment a board earns a second column and the strip is wide enough for both pickers, the button is
+paid for on that line instead of being squeezed off the right edge.
+
+- **`build_queue_settings_height` grew ONE branch with it** — a strip with legs and no pickers at all
+  now charges a control line, because the `✕` needs one to ride. Nothing the sim publishes reaches it
+  (every queued entry has a kit), and the builder takes the same branch, so a strip cannot draw a
+  button on a line it was not paid for.
+- **THE BUTTON ITSELF IS UNCHANGED** — same glyph, same DANGER ink, same `BUILD_QUEUE_UNQUEUE_META`
+  valued the entry's rank, same `_emit_unqueue` and the same optimistic withdrawal below. **Only its
+  host moved**, which is why every harness that found it by that meta finds it in the strip.
 
 ⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
-**every** command, and that capture still carries the stale turn-written `buildQueuePosition` — so a
-"hide it until the next snapshot" rule flickers the row straight back a frame later.
-`reconcile_pending` already keys additions on *a snapshot with a NEWER turn*, and the withdrawal set
-lives in the same per-band record (beside `assign` / `move` / `order`) so it takes that rule and
+**every** command, so a "hide it until the next snapshot" rule flickers the row straight back a frame
+later. `reconcile_pending` already keys additions on *a snapshot with a NEWER turn*, and the
+withdrawal set lives in the same per-band record (beside `assign` / `move`) so it takes that rule and
 `_prune_pending_entity` with no second lifecycle.
+
+> **THE REASON NARROWED WHEN THE QUEUE WENT PER-BAND** (§4.9 item 9a). It was *"that capture still
+> carries the stale turn-written `buildQueuePosition`"*, and for the block's membership that is no
+> longer true: `buildQueue` is live, so `unqueue` drops the entry on the command's own recapture. What
+> survives is the **press→reply round trip** — the frames between the `✕` and the server's answer,
+> which no wire field can cover — and the rollback for a send that never went. The overlay's OTHER
+> job is untouched and was never about the queue: blanking the effective improvement is what returns
+> the *work row* to its `⌃` offer face on the same frame.
 
 - **IT CLEARS THE IMPROVEMENT; IT DOES NOT DROP THE PENDING RECORD.** `unqueue` withdraws a
   DECLARATION and leaves the take crew standing — and the same record may hold a pending CREW edit,
   which dropping it would discard. `effective_worker_map` blanks the effective improvement for the
   withdrawn key instead, which is what puts the source's work row back to its `⌃` offer face on the
   same frame, off the one map every readout shares.
-- **The payload carries `pending_entity` and `kind`, neither of them a command token.** `Hud` records
+- **The payload carries `pending_entity` and `kind`, neither of them a command token.** (The
+  WITHDRAWAL's payload — `build_order_requested`'s lost both with its overlay and is now
+  `{faction, band_id, x, y, herd_id, position}`, every key a command token.) `Hud` records
   the withdrawal BEFORE emitting (this layer's standing rollback precondition — `Main` handles the
   signal synchronously) and `Main._on_hud_unqueue` hands the payload back to `drop_pending_unqueue`
   when the send does not go, exactly as `_on_hud_assign_labor` does.
@@ -2633,7 +2739,9 @@ the 460 above.
 - **`BUILD_QUEUE_UNQUEUE_WIDTH` 22 → 32.** `HudWidgets.compact` squeezes the type size and the
   VERTICAL padding — that is what keeps a control inside a 28px row — and leaves the ghost button its
   horizontal margins, so the reservation was 10px under what the `✕` draws and the row's expanding
-  face paid the difference.
+  face paid the difference. **That 32 is now the reorder pair's column** (`BUILD_QUEUE_REORDER_WIDTH`
+  is defined from it), and the same left-alone side padding is why the arrows are the one caller that
+  trims theirs.
 - **`BUILD_QUEUE_SETTINGS_HEIGHT` 30 → 34** — a 22px compact picker plus the strip's own 12px of
   `HudStyle.ROLE_CARD_PADDING` (it wears `work_inspector_stylebox`, which is the role card's). A live
   4px under-reserve every time a strip opened, and correcting it is what makes the flow arithmetic
@@ -2644,7 +2752,17 @@ the 460 above.
 is printed) · `band_panel_queue_settings_exclusive` · `band_panel_queue_drag` (a drag in flight, with
 the indicator on the target row and the block asserted NOT to have rebuilt under it) ·
 `band_panel_queue_withdrawn` (the row gone, and STILL gone across a re-push of the same fixture on the
-same turn — the command's own recapture).
+same turn — the command's own recapture; the `✕` is pressed there through the STRIP, with a real
+`push_input` click).
+
+⛔ **THE ARROWS AND THE STRIP'S `✕` ARE DRIVEN WITH REAL INPUT, NEVER `pressed.emit()`**
+(`_assert_queue_reorder_arrows`, `_assert_queue_arrow_click`, `_render_queue_withdrawal_state`). An
+emitted signal cannot see a button that is covered, zero-size, disabled or filtered out of the hit
+test, and these are three brand-new controls in a row with two pixels of slack and a strip whose
+height is reserved rather than measured — the exact shape in which the drag gesture shipped completely
+dead and completely green. `_drive_click` pushes the player's own events through the viewport and lets
+Godot decide whether anything was pressed; sabotage-verified by disabling the `✕`, which the emitted
+form would have pressed anyway.
 
 **`build_kit` and `build_order` are driven in `command_guard`**, both source forms each, because a
 well-formed line that means the wrong thing is exactly what that gate exists for. `build_kit` is the
@@ -2653,6 +2771,92 @@ same entry — so `BandHandle` grew a `SourceAddressed` outcome keyed on the par
 on the harness's own label, which is what stops a band-addressed command being opted out of the handle
 check by being relabelled. The `builders` role is swept BARE there now: the sim refuses a `kit` token
 on it, and that refusal is in the handler rather than the parser, so a parser-level gate cannot see it.
+
+### THE ORDER IS THE BAND'S OWN — and three surfaces were asking the wrong band (§4.9 item 9a)
+
+`docs/plan_standing_upkeep.md` §4.9 item 9a carries the model. **`buildQueuePosition` is published per
+SOURCE and rides the WINNING band** — among the bands working one source, the one with the soonest
+estimate writes it (`BuildEstimateClaims::publish_running`). Two bands holding one source is ordinary,
+so that int routinely states **another band's place in another band's line**, and every band-scoped
+question asked of it got another band's answer.
+
+**The gesture is where it showed.** Band B's queue is `[X, Y, Z]`; band C also holds Y with the sooner
+estimate, so Y publishes `0`. The block tied X and Y at `0`, broke the tie on the key string and drew
+**`[Y, X, Z]`**. Dragging Z above X computed `insert = 1` from that list and sent `build_order B Z 1`,
+which `move_build_entry` resolved to **`[X, Z, Y]`** — Z behind X, the opposite of the gesture. The
+optimistic overlay then painted the requested order until the turn resolved and the list **silently
+jumped**.
+
+⛔ **IT WAS NOT FIXABLE HERE, AND A TIE-BREAK IS NOT A FIX.** No band-keyed queue existed on the wire
+and the chained date rides the same winner, so this layer held no second signal to recover the true
+order from; a cleverer tie-break only picks a different wrong order. The answer is
+`PopulationCohortState.buildQueue` — **the band's own entries, in the band's own order, rank = the
+vector index**, captured live. This layer reads it and keeps no rank beside it.
+
+**THE THREE CONSUMERS, and what each was really asking**
+
+| was | asked | now |
+|---|---|---|
+| `_build_queue_models` / `_confirmed_queue_entries` | the block's membership **and order** | `HudBandLaborState.build_queue_keys(band)`, joined to the models by key |
+| `HudBandLaborState.head_build_branch` | which web the Builders card's kit derives from | `build_queue_head(band)` — the head entry's own `kind` |
+| `DrawerComposeController` (`◷ Queued` vs a running meter) | *are the builders on THIS one* | `HudBandLaborState.is_band_build_head(band, kind, source)` |
+
+`SourceForecast.build_is_queue_head` is **deleted** — it could not answer for a particular band, which
+is what all three needed. `BUILD_QUEUE_ROW_META` carries the row's rank **in this band's queue** — its
+index into `build_queue_keys(band)`, `NOT_IN_ANY_BUILD_QUEUE` when pending — rather than the
+source-addressed wire position, because all five of its readers were band-scoped too. It is **not**
+the block's index into the rows it drew; the section below is why.
+
+### AN ENTRY CAN OUTLIVE ITS ROW'S CREW, SO THE DRAWN LIST IS SHORTER THAN THE WIRE'S
+
+The membership argument above — *an entry requires a row, and the board admits any source with a take
+crew* — quietly equates a **row** with a **crew**, and the sim does not. The gap is reachable and it
+persists:
+
+| step | seam |
+|---|---|
+| unstaffing a source the band already held KEEPS its row, at zero workers | `LaborAllocation::set_assignment` → `keep_holding` |
+| …and `assign_labor` declines to drop that row while the source is QUEUED | `handle_assign_labor` → `if applied == 0 && !source_holds_something && !queued` |
+| the membership test asks only whether a row EXISTS, never how many hands are on it | `holds_build_source`, so `prune_build_queue` keeps the entry |
+| …and the turn pass spares it for the same reason, so the state survives every turn | `queued.is_none()` guards the lapse in `advance_labor_allocation` |
+| the client then drops that row, the board admitting on the take crew | `_work_source_models` → `if workers <= 0 and not pending` |
+
+So a wire queue of `[A, B, C]` legitimately draws as `[B, C]`. **Membership is the drawn list's;
+every ARITHMETIC is the wire's** — `_build_queue_models` walks the wire with its own index and lets a
+skipped entry spend its rank, the `▼` end-stop is the wire queue's LENGTH (so `B`'s `▲` is enabled,
+and only `C`'s `▼` is disabled), and `_queue_drop` removes and re-inserts in the wire's key list,
+using the drawn row only to NAME the drop target. The `▸` is the wire's head too: an entry with no row
+is still the one the builders pool is standing on, so neither drawn row wears it.
+
+**The zero-crew row is deliberately NOT re-admitted to fix this.** Admitting it would put it back on
+the WORK BOARD as well, which `docs/plan_standing_upkeep.md` §2.5 reverted on purpose — a separate
+design question. `band_panel_queue_hidden_entry` is the frame.
+
+> **THE COMPOSE-SHEET ONE RE-OPENED A REPORTED PLAY DEFECT BY A SECOND DOOR.** The DECLARED-vs-RUNNING
+> fork exists because rendering a mere declaration as a running build was a one-way trap —
+> `Cultivating 0 / 50 work (0%)` with no way back off it. A band whose entry stands third in its own
+> line hit exactly that face whenever another band had the source at ITS head.
+
+**WHAT STILL READS `buildQueuePosition`, and why each is legitimately SOURCE-addressed.** The
+`MapView` → `tile_info` passthrough behind the tile card and the map's queue badge, and
+`_rung_is_an_unordered_repair`'s *"is anything queued on this source at all"* — the meter belongs to
+the **source**, so if any band is raising the rung it is being raised and a second declaration would
+queue the same climb twice. Both name no band. **Anything band-scoped must not read it**, which is the
+whole of the rule.
+
+> **THE ESTIMATE STILL RIDES THE WINNER, DELIBERATELY.** `build_turns`, the legs, the gear and the
+> blocked cause are source-addressed fields and keep the sooner-estimate rule they were designed with
+> (`snapshot.fbs`, "IT RIDES THE SAME WINNER"), so a shared entry in B's queue can quote a countdown
+> chained down C's. §4.9 records that as out of item 9a's scope rather than as an oversight: the list
+> is B's and the date is the best answer anyone has, where before **neither** was.
+
+⛔ **NO FRAME REACHED EITHER OF THE LAST TWO STATES, and both breaks passed the whole suite once.**
+`price_plant_build` stamps `patch_build_queue_position = 0` on every priced tile, so every fixture band
+happened to BE the winner; and the sheet's head test is reached only with builders standing **and** a
+zero meter, which no state combined. `band_panel_queue_shared_source` and
+`compose_queued_behind_another_band` are the frames that close the gap — the same shape
+`docs/plan_standing_upkeep.md` §4.10 records four times over, and the reason each fix here was
+falsified rather than assumed.
 
 ### THE HEAD'S KIT DERIVES FROM A **PENDING** ENTRY TOO (§4.7)
 
@@ -2675,7 +2879,21 @@ Reported from play as *"it is very confusing if it doesn't show up the moment I 
 
 The optimistic overlay already carries the declaration (`record_pending_assign` takes the
 `improvement`, and `effective_worker_map` merges it), so `_build_queue_models` admits a **second**
-set: a model that is `pending`, carries a live `building_glyph`, and has NO wire position.
+set: a model that is `pending`, carries a live `building_glyph`, and is **not in the band's wire
+queue**.
+
+> ⛔ **THAT LAST TEST IS WHAT "PENDING" MEANS NOW, AND IT IS NARROWER THAN IT WAS** (§4.9 item 9a). It
+> read *"the wire gave this no position"*, which was the same question while the position was
+> turn-written. The band-side `buildQueue` is captured LIVE, and a declaration enqueues at command
+> time — so an entry is placed, with a real rank, on the command's **own recapture**, and the old test
+> would have drawn it **twice**: once confirmed and once at the tail. Pending is therefore exactly the
+> **press→reply round trip** and nothing longer.
+>
+> **A ROW THAT LEAVES THE TAIL A ROUND TRIP EARLIER IS THE INTENDED TRADE, not a regression.** It
+> gains its rank, its drag handle and — at index 0 — the `▸`, all of which are now true of it, and its
+> date column goes blank rather than `○` because `buildTurnsRemaining` is still turn-written and
+> `BUILD_TURNS_NO_ESTIMATE` renders as no line at all. That is the honest face: *the sim has not
+> answered about this entry yet*, where `○` says *the sim has not placed it*, and it has.
 
 - **PENDING ROWS SORT TO THE TAIL, after every confirmed entry.** The sim APPENDS, so the end of the
   list is the only honest place for an entry with no position; interleaving would state a fact the sim
@@ -2691,7 +2909,7 @@ set: a model that is `pending`, carries a live `building_glyph`, and has NO wire
 - **IT GETS NO HEAD MARKER, even when the queue is otherwise empty.** The `▸` is the entry the
   builders pool is standing on, which the sim decides; a `▸` on an unplaced entry promises funding
   nobody has committed. `_build_queue_row_is_pending` is the ONE derivation of "the wire has not
-  placed this" — a real position is 0-based, so *below the head* is exactly *no position* — and the
+  placed this" — read off `BUILD_QUEUE_ROW_PENDING_KEY`, stamped once onto the model — and the
   block's filter, the marker's suppression and the date all read it.
 - **THE `✕` STILL WORKS ON IT, and needs nothing of its own.** `unqueue` names a SOURCE, so
   withdrawing a declaration made a second ago is the same command as withdrawing one placed ten turns

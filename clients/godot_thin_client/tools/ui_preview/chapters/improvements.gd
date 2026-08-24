@@ -1597,6 +1597,7 @@ func run(harness) -> void:
 	await _a_rung_that_slipped_is_building_again()
 	await _a_reopened_sheet_shows_the_LIVE_crew()
 	await _a_declared_build_with_no_builders_says_so()
+	await _the_sheet_asks_whose_head_the_pool_is_on()
 	await _an_unstarted_rung_is_priced_at_its_own_rate()
 	await _both_live_meters_get_their_own_row()
 	# **PLACED BEFORE THE DEAD-BOX BLOCK, which re-stages the band, the compose source, the selection
@@ -1754,6 +1755,86 @@ func _fully_committed_forage_band(tile: Dictionary, take: int, builders: int) ->
 		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
 	}, BandFx.builders_role_row(builders)]
 	return band
+
+## **THE POOL IS ON *A* HEAD, AND THE SHEET HAS TO ASK WHOSE** (`docs/plan_standing_upkeep.md` §4.9
+## item 9a). Two bands routinely work one source, and `patch_build_queue_position` is published per
+## SOURCE and rides the WINNING band — the soonest estimate among them — so `0` means *somebody* has
+## this at the head of their line, not *we* do. The sheet's `are the builders on THIS one` test read
+## that number, so a band whose own queue had the patch standing SECOND rendered it as work in
+## flight: the one-way `Cultivating 0 / 50 work (0%)` face
+## `_a_declared_build_with_no_builders_says_so` records as a reported play defect, reached again
+## through the wrong door.
+##
+## **THE PAIR IS THE CLAIM, and only the BAND'S OWN QUEUE moves between the halves.** Same tile, same
+## meter at zero, same staffed `builders` pool, and the same `patch_build_queue_position = 0` the
+## other band publishes — so a sheet still reading the source's number renders the two identically
+## and the negative fails. `_a_declared_build_with_no_builders_says_so` above cannot reach this: its
+## band has NO builders, so the head test short-circuits before it is ever asked.
+func _the_sheet_asks_whose_head_the_pool_is_on() -> void:
+	var tile := BaseFx.food_tile_fixture()
+	# A meter at zero is the precondition — the DECLARED fork is the only one the head test gates, and
+	# any banked work takes the RUNNING branch before it is reached.
+	tile["patch_cultivation_progress"] = POOL_UNSTARTED_METER
+	BaseFx.price_plant_build(tile, SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	# **THE WINNING BAND'S ANSWER, STATED EXPLICITLY** even though `price_plant_build` already stamps
+	# it: it is the whole disagreement this state is built on, and a fixture that left it implicit
+	# would lose the claim the first time that helper changed its default.
+	tile["patch_build_queue_position"] = SourceForecast.BUILD_QUEUE_HEAD
+	var tile_at := Vector2i(int(tile["x"]), int(tile["y"]))
+
+	# ---- (a) THE NEGATIVE: this band's own head is somewhere else -------------------------------
+	var waiting := _fully_committed_forage_band(tile, POOL_TAKE_CREW, POOL_HEAD_BUILDERS)
+	waiting["build_queue"] = [_forage_queue_entry(HEAD_ELSEWHERE_TILE),
+		_forage_queue_entry(tile_at)]
+	h._hud._band_labor._player_band = waiting
+	h._hud._band_labor._player_bands = [waiting]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("compose_queued_behind_another_band")
+	var waiting_box = ForageFx.find_improvement_control(
+		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._assert_hud("a rung the pool has NOT reached in this band's line reads as DECLARED, though another band has it at ITS head",
+		waiting_box != null
+			and String(waiting_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+				== HudWidgets.IMPROVEMENT_STATE_DECLARED)
+	h._assert_hud("…and says `%s` in words, with builders standing and the source's own position reading 0"
+			% HudComposeVocab.BUILD_QUEUED_CLAUSE,
+		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CULTIVATE).contains(HudComposeVocab.BUILD_QUEUED_CLAUSE))
+
+	# ---- (b) THE POSITIVE: the SAME everything, with this band's own head on this tile -----------
+	# Without it "reads as DECLARED" is satisfied by a sheet that had stopped rendering RUNNING at all.
+	var funding := _fully_committed_forage_band(tile, POOL_TAKE_CREW, POOL_HEAD_BUILDERS)
+	funding["build_queue"] = [_forage_queue_entry(tile_at)]
+	h._hud._band_labor._player_band = funding
+	h._hud._band_labor._player_bands = [funding]
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	var funding_box = ForageFx.find_improvement_control(
+		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._assert_hud("…while the same rung at the head of THIS band's own queue reads as work in flight",
+		funding_box != null
+			and String(funding_box.get_meta(HudWidgets.IMPROVEMENT_STATE_META, ""))
+				== HudWidgets.IMPROVEMENT_STATE_RUNNING)
+
+## The other source this band is raising FIRST — a tile it does not otherwise appear on, so the only
+## thing it contributes is *the head is not the tile under the sheet*.
+const HEAD_ELSEWHERE_TILE := Vector2i(61, 12)
+
+## Builders enough for the head test to be ASKED. `_a_declared_build_with_no_builders_says_so` runs at
+## `BUILD_CREW_NONE`, which short-circuits it — that state is about the empty pool and this one is
+## about which entry a standing pool is on.
+const POOL_HEAD_BUILDERS := 2
+
+## One row of a band's own `PopulationCohortState.buildQueue` — the wire's four keys, and no position,
+## THE RANK BEING THE INDEX (§4.9 item 9a).
+static func _forage_queue_entry(tile: Vector2i) -> Dictionary:
+	return {"kind": SourceForecast.LABOR_KIND_FORAGE,
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": ""}
 
 ## **THE REPAIR — a completed rung whose meter has eroded, BUILDING again with nothing declared**
 ## (`docs/plan_standing_upkeep.md` §2.4). It is the state the derivation exists for, and the one no

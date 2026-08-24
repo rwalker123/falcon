@@ -780,6 +780,21 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > explanation: the player cannot tell forty turns of work from eight turns of work behind four
 > > other jobs.
 > >
+> > **⛔ AND IT IS NOT THE RANK — `PopulationCohortState.buildQueue` IS**
+> > (`docs/plan_standing_upkeep.md` §4.9 item 9a). Riding the winner is exactly what disqualifies it:
+> > two bands on one source is ordinary, so the int a source publishes is routinely another band's
+> > place in another band's line, and a band's queue block ordered on it draws a list that is not that
+> > band's — after which the drag gesture computes its insert index off the wrong order and inverts
+> > itself. The band-side `buildQueue` is the band's own entries in the band's own order, **position
+> > being the vector index**, so there is no second integer for the two to drift apart on. It names
+> > only each entry's **source**; the job, the kit, the destination and the estimate stay
+> > source-addressed and keep the winner rule above, and they agree across every holder by
+> > construction (one `cultivate` enqueues the same declaration on every band working the source,
+> > `build_kit` sets every holder's entry). It is **captured live** off `LaborAllocation::build_queue`
+> > rather than turn-written — `buildKitId`'s discipline — so `build_order` / `unqueue` / a
+> > declaration land on the command's own recapture and the client keeps **no optimistic ordering
+> > overlay**, an overlay being the second ordering this rule exists to forbid.
+> >
 > > **`EstimateStanding::Blocked` sits between `Rots` and `Silent`**, which continues the one stated
 > > rule — *more net supply is better news* — rather than starting a second: a band rotting a meter is
 > > at least supplying something to it, a blocked queue supplies nothing at all, and silence is the

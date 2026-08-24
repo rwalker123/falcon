@@ -116,8 +116,10 @@ signal build_kit_requested(payload: Dictionary)
 ## RELAYED from `BandPanelController`, its only emitter.
 ##
 ## **THE QUEUE IS THE PRIORITY PROPERTY'S OWN STORAGE** (§4.9), so the position is an index into that
-## one list and this client keeps no rank of its own beside it. `pending_entity` rides the payload for
-## the optimistic ordering's rollback and no `format_*` builder reads it.
+## one list and this client keeps no rank of its own beside it — literally none, since §4.9 item 9a:
+## `PopulationCohortState.buildQueue` is captured LIVE, the reordered list arrives on this command's
+## own recapture, and the payload therefore carries no `pending_entity` because there is no optimistic
+## ordering left to roll back.
 signal build_order_requested(payload: Dictionary)
 
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
@@ -1127,10 +1129,13 @@ func _after_pending_change() -> void:
 ## (a pending row at the tail); unticking a CONFIRMED entry did not leave the block at all, because
 ## the queue's positions are turn-written wire state and the overlay carried additions only.
 ##
-## ⛔ **IT KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
-## EVERY command, and that snapshot still carries the stale `buildQueuePosition` — so a "hide it until
-## the next snapshot" rule flickers the row straight back. `record_pending_unqueue` files it in the
-## same per-band record `reconcile_pending` already drops on a snapshot with a NEWER turn.
+## ⛔ **IT KEYS ON THE TURN, NOT ON THE NEXT SNAPSHOT — and the reason moved** (§4.9 item 9a). It was
+## the stale `buildQueuePosition`: the recapture this command triggers still carried the entry at its
+## old position, so a "hide it until the next snapshot" rule flickered the row straight back. That is
+## no longer true — `PopulationCohortState.buildQueue` is captured LIVE off the allocation `unqueue`
+## mutates — and what the overlay covers now is the ROUND TRIP between the press and the reply.
+## `record_pending_unqueue` files it in the same per-band record `reconcile_pending` already drops on
+## a snapshot with a NEWER turn, which carries it across that window and no further.
 ##
 ## **THE RECORD PRECEDES THE EMIT**, this layer's standing rollback precondition: `Main` handles the
 ## signal synchronously and hands the payload back to `drop_pending_unqueue` when the send fails, so a
@@ -1160,16 +1165,6 @@ func drop_pending_unqueue(payload: Dictionary) -> void:
             int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
         _after_pending_change()
         _drawercompose.refresh_compose_sheet()
-
-## **THE DRAG'S ROLLBACK**, for a `build_order` that never went. The ordering overlay is ONE slot per
-## band rather than a keyed set, so the payload's `pending_entity` is the whole identity — the move
-## overlay's own shape.
-func drop_pending_order(payload: Dictionary) -> void:
-    var entity := int(payload.get("pending_entity", -1))
-    if entity < 0:
-        return
-    if _band_labor.drop_pending_order(entity):
-        _after_pending_change()
 
 ## **THE OPTIMISTIC WRITE'S UNDO, FOR A COMMAND THAT NEVER WENT.** `_emit_assign_labor` records the
 ## pending entry BEFORE the send, which is right; nothing rolled it back when the send failed, so a

@@ -317,14 +317,24 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
 ## plain Button ~40px tall — taller than `HudWorkVocab.WORK_ROW_HEIGHT`, `HudWorkVocab.ZONE_HEAD_HEIGHT`, `HudWorkVocab.WORK_CHIPS_HEIGHT`
 ## and `HudWorkVocab.WORK_PAGER_HEIGHT` put together. Every one of those consts is a height the board's capacity
 ## maths SUBTRACTS, so a control that renders taller pushes the page off the bottom of the zone.
-static func compact(control: Control, font_size: int, padding_v: int) -> void:
+static func compact(control: Control, font_size: int, padding_v: int,
+        padding_h: int = KEEP_BUTTON_PADDING_H) -> void:
     control.add_theme_font_size_override("font_size", font_size)
-    trim_button_padding(control, padding_v)
+    trim_button_padding(control, padding_v, padding_h)
+
+## `padding_h`'s "leave the sides exactly as `HudStyle` authored them", which is what every caller
+## but one wants: a zone row is short on HEIGHT, not on width. Negative rather than a magic zero,
+## because zero is a real trim a caller may ask for.
+const KEEP_BUTTON_PADDING_H := -1
 
 ## The chrome half of `compact`, on its own for a control that must keep its TYPE SIZE and trim only
-## the box around it. Leaves a button's SIDE padding exactly as `HudStyle` authored it — a zone row is
-## short on height and not on width. Does nothing to a non-Button (a Label has no stylebox to squeeze).
-static func trim_button_padding(control: Control, padding_v: int) -> void:
+## the box around it. Does nothing to a non-Button (a Label has no stylebox to squeeze).
+##
+## **THE SIDES ARE OPT-IN** (`KEEP_BUTTON_PADDING_H`) and the build queue's reorder arrows are the one
+## caller that opts in: `HudStyle`'s 11px side margins are why a 9px `✕` needed a 32px column, and a
+## PAIR of arrows sharing that same 32 has no room for four of them.
+static func trim_button_padding(control: Control, padding_v: int,
+        padding_h: int = KEEP_BUTTON_PADDING_H) -> void:
     if not (control is Button):
         return
     for state in ["normal", "hover", "pressed", "disabled", "focus"]:
@@ -334,6 +344,9 @@ static func trim_button_padding(control: Control, padding_v: int) -> void:
         var squeezed: StyleBox = box.duplicate()
         squeezed.content_margin_top = padding_v
         squeezed.content_margin_bottom = padding_v
+        if padding_h != KEEP_BUTTON_PADDING_H:
+            squeezed.content_margin_left = padding_h
+            squeezed.content_margin_right = padding_h
         control.add_theme_stylebox_override(state, squeezed)
 
 ## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
