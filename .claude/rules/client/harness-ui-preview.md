@@ -1648,6 +1648,76 @@ line's own instruction being earned again.
 > **So `$?` now covers a chapter dying mid-run.** It still does not cover a claim that is *present and
 > wrong* — that is what the sabotage discipline is for.
 
+## `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
+
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and fifty `PASS`, and **most
+of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
+it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
+pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and
+the frames are for the LAYOUT alone. The behaviour is `knowledge-panel.md`'s; what belongs here is the
+shape of the drive.
+
+| what only IT can say | how |
+|---|---|
+| a faction that knows NOTHING renders every ladder track, all `not begun` | asked of an EMPTY tracks dict, which is what the wire really sends on turn one |
+| a domain with no nodes draws NO column | the craft fan is the only one that can be empty, the two ladder columns' nodes being DECLARED |
+| the tracks that unlock nothing are exactly `UNLOCKLESS_TRACKS` | the derived set against the declared one — the ONLY thing that tells a deliberate omission from a forgotten `RUNG_KNOWLEDGE_TRACKS` entry, which reads identically |
+| at-or-ABOVE, not the done FLAGS | a patch carrying `is_field` and NO `is_cultivated` must read Cultivation as in use — the reading a per-verb-flag test gets backwards |
+| the two webs' pools do not cross | a plant patch must not satisfy an animal knowledge |
+| a craft is in use four ways and NOT by a recipe existing | the negative runs FIRST with the whole recipe book present and nothing held, since "a recipe of this craft exists" is true of every craft on every turn |
+| the cross-craft negative | holding an awl must not make Tanning in use — without it every craft goes in use the moment the band holds anything |
+| a rival's patch, and a herd nobody works | asked of the CONTROLLER, where the two resolutions live, and staged the way the shipped scans read them (a different faction on the patch; the herd off the band's assignment list) |
+| the five filter counts, by EQUALITY | over a model whose five filters all answer DIFFERENTLY — a fixture where two coincide cannot tell those two apart |
+| a KNOWN track is never `close` | behind the precondition that there ARE known tracks for one to have leaked from |
+| the FIRST observation reports nothing new, the next TURN does, a second snapshot in the same turn keeps it | three claims, and the middle one is what stops the first passing on a diff that never fires |
+| "new this turn" implies KNOWN | an empty tracks row pushed with the diff still holding the key — the shape that rendered `New this turn 1` over a faction that knew nothing — with the diff's SURVIVAL asserted beside it, or the claim passes because the set was cleared |
+| the pip's count, and that it survives a dock change | on a REAL `BandCityPanel`; the retention is invisible in any frame |
+| a knowledge-only delta moves the pip | pushed with NOTHING else, which is what makes it a claim about the SECTION rather than about the frame |
+| the pip clears when a tended patch appears | the honest trigger — opening the screen deliberately does not clear it |
+
+**THE FIXTURES DERIVE THEIR STANDING RUNG** (`fixtures_rung.gd`), this tree's rule.
+⛔ **AND A HERD FIXTURE IS KEYED `id`, NOT `herd_id`** — `HudBandLaborState.find_world_herd` matches on
+`id`, so the other spelling is invisible to the assignment walk and every animal claim reads "nothing
+is using it" for a reason that has nothing to do with the code under test. It cost a run.
+
+⛔ **THE SECTIONS ARE PUSHED IN `Main`'s OWN ORDER** — knowledge, catalogues, patches, then
+populations. This chapter's first cut pushed `update_band_alerts` first, so the pip was computed
+against the previous block's tracks and read `2` where the controller read `1`: a fixture in any other
+order is staging a snapshot no server sends. **That mismatch is also what found the live defect** —
+the pip was pushed from `update_band_alerts` alone.
+
+**The row and the filter pill are DRIVEN with real pointer input**, never `pressed.emit()`: a node row
+is a `PanelContainer` with a `gui_input` handler and has no signal of its own to fake, and the harness
+contract's reason applies either way — an emitted signal passes on a control that is covered,
+zero-size or filtered out of the hit test, which is exactly the shape that row shipped in first (a
+`Button` whose face was never laid out).
+
+**Its FAILURE MESSAGES name what was FOUND, and the first cut named what was WANTED** — it printed
+`not wanted`, so a failure read `in use (got true)` and said nothing about the verdict. An ABSENT node
+is reported distinguishably too: a roster that dropped a track answers `false` to every question asked
+of it, and "the node is missing" is not the same failure as "the node says in use".
+
+**Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
+`knowledge_panel_detail` · `knowledge_panel_filtered`.
+
+### TWO FRAMES MOVED FOR A REASON THAT WAS NOT THIS ARC, and proving that took a revert run
+
+`band_morale_expanded` / `band_growth_expanded` came back different from a baseline captured earlier
+the same session — the disclosure popover OPEN where the baseline showed it closed, which is what those
+frames' own names and comments say they stage. **Neither carries an assertion**, so nothing in the run
+said so either way.
+
+It is not this arc: with the whole client reverted to the pre-change commit **in the same environment**
+the two frames still differed from the baseline and matched the changed tree, byte for byte. What sits
+between the two is a **`godot --import` pass**, run to register the new `class_name`s — the documented
+"a harness renders the IMPORT CACHE, not the art on disk" hazard, reaching a popover rather than a
+sprite. The new rendering is the correct one.
+
+**The method is the part worth keeping**: swap the changed files to the earlier ref with `git show`,
+re-run, compare, swap back, and confirm `git status` is clean. An unexplained frame move is not
+evidence of anything until it has been attributed, and "my change is the only thing that moved" is an
+assumption a single run can falsify.
+
 > **`compose_band_switch_forage` FLAKED ONCE DURING THIS PASS AND PASSED CLEAN ON RE-RUN** — five
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer
 > race (`labor-ui.md` → "THE SHEET DISMISSES ON PRESS **AND** RELEASE"). A run that fails only that

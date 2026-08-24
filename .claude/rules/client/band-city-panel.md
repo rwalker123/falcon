@@ -980,6 +980,47 @@ signal that names the act rather than filtering ids it did not register. Registe
 (rather than from the crafting controller) is what keeps the button's presence a property of the
 panel: it is subject-independent chrome and must exist on a band page and the faction page alike.
 
+**AND THE KNOWLEDGE SCREEN'S `▲` IS THE SECOND ONE, which is the claim above made good.**
+`ACTION_KNOWLEDGE` + `knowledge_requested`, on the same footing and for the same reason — what your
+people know is a FACTION fact, so it must be reachable from a band page and the faction page alike
+(`knowledge-panel.md`). Adding it took a descriptor and a relay and **no geometry at all**: the bar
+absorbed it on every one of the three mounts, the vertical dock's card floor did not move, and the
+horizontal dock's strip did not move by a pixel. Its relay resolves NOTHING, unlike the `⚒`'s — a
+discovery unlocks a verb across the whole map and no band owns it, so there is no subject to look up.
+
+> **THE HARNESS'S REGISTRY ASSERTIONS MUST NOT HARD-CODE THE SHIPPED COUNT.** Four of them did — "the
+> ⚒ is registered", "a second action puts a second glyph on the bar", "retiring every action", and the
+> bar-height message — and all four broke the day the second launcher landed, one of them by
+> unregistering the `⚒` alone and then measuring a bar that was still carrying the `▲`.
+> `_assert_action_registry` reads `_panel._actions.size()` once and states every claim against it, so a
+> third launcher costs that block no edit.
+
+### A PIP IS NOT PART OF THE DESCRIPTOR, and the separation is load-bearing
+
+`set_action_pip(id, count)` / `action_pip(id)`. A registered action can wear a small count badge over
+its glyph — today the knowledge screen's unspent count, which is the one number on this header that is
+a NUDGE rather than a reading.
+
+**It comes in through its own seam because it moves on a different clock.** `register_action`'s whole
+contract is that a descriptor is DECLARED at wiring time and never a function of snapshot state — that
+is what keeps the bar's geometry off the render's hot path — while a pip is restated every turn. Three
+consequences, each of which was a defect first:
+
+- **The count is retained on `_action_pips`, not on the button.** `_rebuild_action_mount` throws every
+  button away whenever the panel re-homes its actions (a dock change, a collapse), so a count living
+  only on the node vanishes on a dock flip and comes back on the next turn tick — invisible in any
+  frame, which is why `band_panel_preview` asserts it across a `set_dock`.
+- **The pill is an ANCHORED, mouse-transparent CHILD of the button, inside its own rect.** A Button is
+  not a Container, so such a child contributes nothing to the parent's minimum size — exactly the
+  property wanted: a badge that took layout width would make the bar's minimum a function of a
+  snapshot count, i.e. the coupling the descriptor rule exists to prevent. `MOUSE_FILTER_IGNORE`, or
+  the one thing a player does on seeing a pip would stop working.
+- **`0` is "no pip", never a pip reading zero**, and `set_action_pip` is silent on an unregistered id:
+  a caller pushing a count before it has registered its action is a wiring order, not an error.
+
+It wears `WARN` on `GROUND` — the tab badge's own `hot` pair, so a pip and a hot tab read as one
+family.
+
 **An EMPTY bar costs nothing.** With no registrations the outer `MarginContainer` is hidden, and a
 hidden child contributes neither its own height nor the column's separation — measured, the body sits
 **flush** under the subject row (gap 0.0px, against 44.0 with the bar up). The bar is a seam, not a

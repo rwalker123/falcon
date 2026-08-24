@@ -21,6 +21,39 @@ paths:
 
 The Band/City dockable-panel PNG harness, and the arcs whose frames ride it.
 
+## The faction page lost its fourth zone (the knowledge screen, slice B)
+
+`docs/plan_knowledge_screen.md` §4 deleted the Know tab, so `band_panel_faction_knowledge` is **gone**
+and the page declares THREE zones. What moved here, and why each is not a loss of coverage:
+
+- **`_assert_faction_knowledge_zone` → `_assert_faction_band_zone_blocks`**, asked of the `band` zone,
+  because Settling and Discoveries were rehomed there. The craft-track claims went with the tracks to
+  `ui_preview`'s `knowledge_panel` chapter. **It is still asked on the `band` TAB and that is a
+  constraint of the shell**: the narrow shell parents ONLY the active tab's zone, so a zone read from
+  another tab has never been laid out and every one of its rows measures zero — the keyless-row scan
+  would report every row keyless.
+- **`_assert_faction_knowledge_tier` → `_assert_faction_band_zone_tier`**, the same pair on the same
+  reasoning: the wide dock must DROP Discoveries and KEEP Settling, and the second half is what stops
+  it passing on a zone that rendered nothing.
+- **`_assert_faction_zone_layout` asserts THREE hosts by EQUALITY**, which is also what asserts the
+  absence of a `Zone_knowledge` host — a deleted tab leaving a live column behind it.
+- **`FACTION_SHELL_MIN_WIDTH` is two gaps between three columns**, and the equality claim beside the
+  bracket is now the only thing pinning that count: the three-zone derivation coincides with a band's,
+  so the bracket alone would pass on either.
+- **`FACTION_TAB_LABELS` drops `Know`, and that absence is half of what the const asserts** — a strip
+  still offering a fourth tab would be offering one with nothing behind it.
+
+**ALL 126 FRAMES MOVED, and every one was diff-boxed rather than re-baselined.** 122 are a single
+button- or action-row-sized box: the `▲` the second launcher puts on whichever mount the dock calls
+for. The other four are the faction page itself — the band zone gaining two blocks, the body dropping a
+column, the tab strip losing a tab — and `band_panel_collapsed`, where the RAIL grew a glyph and the
+strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
+
+**`FACTION_BAND_FULL_MIN_HEIGHT` was set from `_report_zone_content_extent`, not guessed** — see
+`knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
+extent is what a re-measure reads; this page has now been at the edge of its box three times.
+
+
 ## `tools/band_panel_preview.gd` / `.tscn`
 
 Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` +
