@@ -226,7 +226,7 @@ else.
 
 Why any of it is deferred (a `RungGates` pass per SOURCE, measured at ~331 ms for a full-size world's
 worth) belongs to the channel that needed it: `.claude/rules/client/overlay-channels.md` →
-`ready_to_climb`. **Do not restate it here**; one home per fact.
+`ready_for_improvement`. **Do not restate it here**; one home per fact.
 
 ## Fog of war
 

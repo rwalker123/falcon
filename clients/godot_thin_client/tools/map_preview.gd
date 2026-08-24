@@ -503,7 +503,7 @@ const PICKER_BIOME_IDS := [0, 1, 6, 8, 9, 10, 11, 12, 14, 15, 17, 20, 22, 24, 26
 # biome that happens not to land on a tile but fails a merge that dropped the table.
 const PICKER_BIOME_ROWS_MIN := 12
 
-# --- THE `ready_to_climb` CHANNEL (docs/plan_knowledge_screen.md §7) ------------------------------
+# --- THE `ready_for_improvement` CHANNEL (docs/plan_knowledge_screen.md §7) ------------------------------
 # The AGGREGATE ⌃: every source that could climb a rung right now, painted at once. Its fixture
 # extends the ⌃-mark fixture (`_snapshot_work_ready`) rather than replacing it, so the per-source
 # badges and the channel are asked about the SAME sources — a channel that disagreed with the badge on
@@ -1509,7 +1509,7 @@ func _ready() -> void:
 	_assert_zoom_ladder()
 
 	await _overlay_picker_state()
-	await _ready_to_climb_state()
+	await _ready_for_improvement_state()
 
 	_finish()
 
@@ -1870,7 +1870,7 @@ func _overlay_picker_state() -> void:
 	await _assert_picker_buttons_swap(picker)
 
 
-## State "ready to climb" — THE AGGREGATE ⌃ (`docs/plan_knowledge_screen.md` §7), the channel and its
+## State "ready for improvement" — THE AGGREGATE ⌃ (`docs/plan_knowledge_screen.md` §7), the channel and its
 ## `facts` legend.
 ##
 ## **THE FRAME IS THE CONTRAST, NOT THE GLOW.** A cyan map is a plausible picture of a correct channel
@@ -1878,7 +1878,7 @@ func _overlay_picker_state() -> void:
 ## mid-Cultivate patch, the wild-ceiling wolf and the can-climb-nothing patch stay DARK while three
 ## patches and two herds glow. Everything a picture cannot separate — which web each lit hex is on,
 ## whether the counts split right, which coordinate the legend named and why — is asserted below.
-func _ready_to_climb_state() -> void:
+func _ready_for_improvement_state() -> void:
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
 	_map.set_fow_enabled(false)
@@ -1894,13 +1894,13 @@ func _ready_to_climb_state() -> void:
 	# ingest would state the PREVIOUS turn's knowledge for the whole turn a discovery arrives on. This
 	# state drives that order deliberately: the snapshot goes in with the knowledge row still EMPTY.
 	_map.set_faction_knowledge({})
-	_map.display_snapshot(_snapshot_ready_to_climb())
+	_map.display_snapshot(_snapshot_ready_for_improvement())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
 	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
 	if picker == null:
-		_fail("ready to climb — the minimap panel built no picker")
+		_fail("ready for improvement — the minimap panel built no picker")
 		return
 
 	# **THE INGEST BUILT NOTHING, WHICH IS THE WHOLE POINT OF THE MEASUREMENT.** A `RungGates` pass per
@@ -1910,19 +1910,19 @@ func _ready_to_climb_state() -> void:
 	# channel is one `overlay_channels` has no raster for, which is the same thing
 	# `set_overlay_channel` tests. **Paired with the roster claim below**, because "the map holds no
 	# raster for it" is also true of a channel that was never wired at all.
-	_assert_map("ready to climb — the snapshot ingest builds NO raster for it (deferred until something asks)",
-		not _map.overlay_channels.has(ReadyToClimb.CHANNEL_KEY))
+	_assert_map("ready for improvement — the snapshot ingest builds NO raster for it (deferred until something asks)",
+		not _map.overlay_channels.has(ReadyForImprovement.CHANNEL_KEY))
 
 	# **THE EMPTY CASE IS A REAL STATE, NOT A DEGENERATE ONE.** A faction that has learned nothing can
 	# climb nothing, and the channel still exists to say so — it is offered off the WORLD's sources,
 	# never off the count, so it does not appear and disappear as the ladder is learned.
-	_assert_map("ready to climb — a world with sources offers the channel even before any knowledge (roster: %s)"
+	_assert_map("ready for improvement — a world with sources offers the channel even before any knowledge (roster: %s)"
 		% ", ".join(_roster_keys(picker)),
-		Array(_roster_keys(picker)).has(ReadyToClimb.CHANNEL_KEY))
-	_assert_map("ready to climb — …and it states the empty answer rather than a count (%s)"
-		% ", ".join(_map.ready_to_climb_facts()),
-		Array(_map.ready_to_climb_facts()) == [ReadyToClimb.FACTS_NONE])
-	_assert_map("ready to climb — …with nothing lit on the map (%d tiles)" % _lit_ready_tiles().size(),
+		Array(_roster_keys(picker)).has(ReadyForImprovement.CHANNEL_KEY))
+	_assert_map("ready for improvement — …and it states the empty answer rather than a count (%s)"
+		% ", ".join(_map.ready_for_improvement_facts()),
+		Array(_map.ready_for_improvement_facts()) == [ReadyForImprovement.FACTS_NONE])
+	_assert_map("ready for improvement — …with nothing lit on the map (%d tiles)" % _lit_ready_tiles().size(),
 		_lit_ready_tiles().is_empty())
 
 	# **AND NOW THE PUSH THAT ARRIVES LATE.** No new snapshot: only the knowledge row moves, exactly as
@@ -1930,19 +1930,19 @@ func _ready_to_climb_state() -> void:
 	# it would stay empty.
 	_map.set_faction_knowledge(READY_FULL_KNOWLEDGE)
 	await _settle()
-	var facts: PackedStringArray = _map.ready_to_climb_facts()
-	_assert_map("ready to climb — the knowledge push that lands AFTER the snapshot re-derives the channel (%s)"
+	var facts: PackedStringArray = _map.ready_for_improvement_facts()
+	_assert_map("ready for improvement — the knowledge push that lands AFTER the snapshot re-derives the channel (%s)"
 		% ", ".join(facts),
-		facts.size() == 2 and String(facts[0]) != ReadyToClimb.FACTS_NONE)
+		facts.size() == 2 and String(facts[0]) != ReadyForImprovement.FACTS_NONE)
 
 	# THE COUNTS, split by web. A single total cannot say whether the two walks both ran: one web
 	# answering for both produces a perfectly plausible number.
-	var model: Dictionary = _map._ready_to_climb
-	_assert_map("ready to climb — %d patches and %d herds offer a rung (expected %d / %d)"
-		% [int(model.get(ReadyToClimb.MODEL_PATCHES, -1)), int(model.get(ReadyToClimb.MODEL_HERDS, -1)),
+	var model: Dictionary = _map._ready_for_improvement
+	_assert_map("ready for improvement — %d patches and %d herds offer a rung (expected %d / %d)"
+		% [int(model.get(ReadyForImprovement.MODEL_PATCHES, -1)), int(model.get(ReadyForImprovement.MODEL_HERDS, -1)),
 			READY_EXPECTED_PATCHES, READY_EXPECTED_HERDS],
-		int(model.get(ReadyToClimb.MODEL_PATCHES, -1)) == READY_EXPECTED_PATCHES
-			and int(model.get(ReadyToClimb.MODEL_HERDS, -1)) == READY_EXPECTED_HERDS)
+		int(model.get(ReadyForImprovement.MODEL_PATCHES, -1)) == READY_EXPECTED_PATCHES
+			and int(model.get(ReadyForImprovement.MODEL_HERDS, -1)) == READY_EXPECTED_HERDS)
 
 	# **A RUNG UNDER WAY IS NOT AN OFFER**, and it takes TWO patches to say so, because the two halves
 	# of "under way" are answered by different things. Asked as TILES rather than as a count, since a
@@ -1952,27 +1952,27 @@ func _ready_to_climb_state() -> void:
 	# the declared verb by itself, so this one passes with or without the channel's own in-progress
 	# question, and it is here for the other reason: it pins that the aggregate reads the same
 	# `improvement` axis the badge does.
-	_assert_map("ready to climb — the WORKED patch whose crew declared Cultivate at (9, 8) stays dark",
+	_assert_map("ready for improvement — the WORKED patch whose crew declared Cultivate at (9, 8) stays dark",
 		not lit.has(Vector2i(9, 8)))
 	# **THE METER HALF, and this is the one that isolates `rung_in_progress`.** Nobody works this patch
 	# and no assignment declares anything, so `next_rung_ready` sees an admitted, ungated Cultivate and
 	# answers it — the channel stays dark only because it asks whether a rung is already being climbed
 	# FIRST, the badge's own order. Sabotage-verified: deleting that question lights this tile and
 	# nothing else in the state notices.
-	_assert_map("ready to climb — …and so does the UNWORKED patch at %s, half-built with nothing declared"
+	_assert_map("ready for improvement — …and so does the UNWORKED patch at %s, half-built with nothing declared"
 		% READY_HALF_BUILT, not lit.has(READY_HALF_BUILT))
-	_assert_map("ready to climb — the wild-ceiling wolf pack at (11, 4) stays dark however much we know",
+	_assert_map("ready for improvement — the wild-ceiling wolf pack at (11, 4) stays dark however much we know",
 		not lit.has(Vector2i(11, 4)))
-	_assert_map("ready to climb — a patch whose plants may climb nothing stays dark (%s)"
+	_assert_map("ready for improvement — a patch whose plants may climb nothing stays dark (%s)"
 		% READY_BARREN_LADDER, not lit.has(READY_BARREN_LADDER))
-	_assert_map("ready to climb — every unworked ready source IS lit (%s)" % str(lit),
+	_assert_map("ready for improvement — every unworked ready source IS lit (%s)" % str(lit),
 		lit.has(READY_UNWORKED_NEAR) and lit.has(READY_UNWORKED_FAR) and lit.has(READY_UNWORKED_HERD))
 
 	# THE UNWORKED LINE, and the anchor it is measured from.
-	_assert_map("ready to climb — %d of them are unworked, nearest to the selected band (%s)"
-		% [int(model.get(ReadyToClimb.MODEL_UNWORKED, []).size()), ", ".join(facts)],
-		int(model.get(ReadyToClimb.MODEL_UNWORKED, []).size()) == READY_EXPECTED_UNWORKED
-			and String(facts[1]) == ReadyToClimb.FACTS_UNWORKED_FORMAT
+	_assert_map("ready for improvement — %d of them are unworked, nearest to the selected band (%s)"
+		% [int(model.get(ReadyForImprovement.MODEL_UNWORKED, []).size()), ", ".join(facts)],
+		int(model.get(ReadyForImprovement.MODEL_UNWORKED, []).size()) == READY_EXPECTED_UNWORKED
+			and String(facts[1]) == ReadyForImprovement.FACTS_UNWORKED_FORMAT
 				% [READY_EXPECTED_UNWORKED, READY_UNWORKED_NEAR.x, READY_UNWORKED_NEAR.y])
 
 	# **SELECT THE OTHER BAND AND NOTHING ELSE.** No snapshot, no re-derive of the sources — the model
@@ -1981,10 +1981,10 @@ func _ready_to_climb_state() -> void:
 	# player is standing, and a fixture with one band cannot tell a real read of the selection from a
 	# hardcoded first-band one.
 	_map.selected_unit_id = READY_SECOND_BAND_ENTITY
-	var moved: PackedStringArray = _map.ready_to_climb_facts()
-	_assert_map("ready to climb — selecting the far band moves 'nearest' with it, off the CACHED model (%s)"
+	var moved: PackedStringArray = _map.ready_for_improvement_facts()
+	_assert_map("ready for improvement — selecting the far band moves 'nearest' with it, off the CACHED model (%s)"
 		% ", ".join(moved),
-		String(moved[1]) == ReadyToClimb.FACTS_UNWORKED_FORMAT
+		String(moved[1]) == ReadyForImprovement.FACTS_UNWORKED_FORMAT
 			% [READY_EXPECTED_UNWORKED, READY_UNWORKED_FAR.x, READY_UNWORKED_FAR.y])
 	_map.selected_unit_id = BAND_ENTITY
 	await _settle()
@@ -1992,11 +1992,11 @@ func _ready_to_climb_state() -> void:
 	# The channel is PICKABLE — the `province` property. `set_overlay_channel` silently refuses a key
 	# it holds no raster for, so this is asked of the map's own `active_overlay_key` rather than of the
 	# picker's lit row, which would agree with itself either way.
-	picker.select_channel(ReadyToClimb.CHANNEL_KEY)
+	picker.select_channel(ReadyForImprovement.CHANNEL_KEY)
 	await _settle()
-	_assert_map("ready to climb — choosing the row paints it (active_overlay_key = '%s')"
+	_assert_map("ready for improvement — choosing the row paints it (active_overlay_key = '%s')"
 		% _map.active_overlay_key,
-		_map.active_overlay_key == ReadyToClimb.CHANNEL_KEY)
+		_map.active_overlay_key == ReadyForImprovement.CHANNEL_KEY)
 
 	# **IT IS PAINTED IN THE OPPORTUNITY INK — THE SAME ONE THE PER-SOURCE `⌃` BADGE WEARS.** An
 	# aggregate that states an offer in a colour the mark on the very same hex does not use teaches two
@@ -2012,13 +2012,13 @@ func _ready_to_climb_state() -> void:
 	# button, and through `_tile_color` as the oracle, so a table that lies to the button and a button
 	# that lies about the table both fail.
 	var face: Color = picker.legend_face_color()
-	_assert_map("ready to climb — map, button and painted tile all wear HudStyle.SIGNAL, the ⌃ badge's own ink (%s)"
+	_assert_map("ready for improvement — map, button and painted tile all wear HudStyle.SIGNAL, the ⌃ badge's own ink (%s)"
 		% face,
-		_map.overlay_color_for(ReadyToClimb.CHANNEL_KEY) == HudStyle.SIGNAL
+		_map.overlay_color_for(ReadyForImprovement.CHANNEL_KEY) == HudStyle.SIGNAL
 			and face == HudStyle.SIGNAL and _map_paints_color(HudStyle.SIGNAL))
 
-	await _save("map_ready_to_climb")
-	await _save_overlay_legend("map_ready_to_climb_legend")
+	await _save("map_ready_for_improvement")
+	await _save_overlay_legend("map_ready_for_improvement_legend")
 
 	# **A WORLD WITH NO SOURCES OFFERS NO CHANNEL.** Paired with the roster claim at the top of this
 	# state: "does not contain the key" is also true of a roster the merge dropped, so the empty key
@@ -2026,19 +2026,19 @@ func _ready_to_climb_state() -> void:
 	picker.close_popover()
 	_map.display_snapshot(_base_snapshot(_band([], 2, 0), []))
 	await _settle()
-	_assert_map("ready to climb — a world with no patches and no herds keeps the empty key and is not offered the channel (%s)"
+	_assert_map("ready for improvement — a world with no patches and no herds keeps the empty key and is not offered the channel (%s)"
 		% ", ".join(_roster_keys(picker)),
 		Array(_roster_keys(picker)) == [OverlayChannels.NO_OVERLAY_KEY])
 	_map.set_faction_knowledge({})
 
-	_assert_ready_to_climb_scale()
+	_assert_ready_for_improvement_scale()
 
-## The tiles the `ready_to_climb` raster is lit on, read back off the CHANNEL rather than off the
+## The tiles the `ready_for_improvement` raster is lit on, read back off the CHANNEL rather than off the
 ## model's counts — the raster is what the map actually paints, and a count that agreed with a plane
 ## it was not built from would be the assertion agreeing with itself.
 func _lit_ready_tiles() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
-	var plane: Variant = _map.overlay_channels.get(ReadyToClimb.CHANNEL_KEY, null)
+	var plane: Variant = _map.overlay_channels.get(ReadyForImprovement.CHANNEL_KEY, null)
 	if not (plane is PackedFloat32Array):
 		return out
 	var values: PackedFloat32Array = plane
@@ -2060,23 +2060,23 @@ func _roster_keys(picker: OverlayPicker) -> PackedStringArray:
 ## nothing to do with the code under test, and a harness that cries wolf stops being read. What is
 ## asserted is the thing a number cannot drift on — that the probe really did evaluate a full-size
 ## world, so the microseconds printed beside it are about that world and not about an empty one.
-func _assert_ready_to_climb_scale() -> void:
+func _assert_ready_for_improvement_scale() -> void:
 	_map.set_faction_knowledge(READY_FULL_KNOWLEDGE)
 	_map.display_snapshot(_snapshot_ready_probe())
 	var sources: int = _map.forage_patch_lookup.size() + _map.herds.size()
 	var started: int = Time.get_ticks_usec()
-	var model: Dictionary = ReadyToClimb.derive(_map)
+	var model: Dictionary = ReadyForImprovement.derive(_map)
 	var elapsed: int = Time.get_ticks_usec() - started
-	print("map_preview: ready_to_climb scale — %d sources on a %d×%d world in %d µs (%d ready)"
+	print("map_preview: ready_for_improvement scale — %d sources on a %d×%d world in %d µs (%d ready)"
 		% [sources, READY_PROBE_GRID_W, READY_PROBE_GRID_H, elapsed,
-			int(model[ReadyToClimb.MODEL_PATCHES]) + int(model[ReadyToClimb.MODEL_HERDS])])
-	_assert_map("ready to climb — the scale probe really walked a full-size world (%d sources)" % sources,
+			int(model[ReadyForImprovement.MODEL_PATCHES]) + int(model[ReadyForImprovement.MODEL_HERDS])])
+	_assert_map("ready for improvement — the scale probe really walked a full-size world (%d sources)" % sources,
 		sources >= READY_PROBE_GRID_W * READY_PROBE_GRID_H)
 	_map.set_faction_knowledge({})
 
-## The `ready_to_climb` fixture: `_snapshot_work_ready`'s three worked sources, plus the unworked ones
+## The `ready_for_improvement` fixture: `_snapshot_work_ready`'s three worked sources, plus the unworked ones
 ## the aggregate exists to surface and the two controls that must stay dark.
-func _snapshot_ready_to_climb() -> Dictionary:
+func _snapshot_ready_for_improvement() -> Dictionary:
 	var snap := _snapshot_work_ready()
 	var patches: Array = snap["forage_patches"]
 	patches.append(_ready_patch(READY_UNWORKED_NEAR, true, true, true))

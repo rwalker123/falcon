@@ -645,10 +645,10 @@ ready" — the correct degradation, but an unreadable frame. `map_band_work`'s f
 on each worked tile, and that is load-bearing: the first cut of the ring rendered nothing at all
 because the fixture had none, and the mark correctly degraded to the bare tile outline.
 
-### `map_ready_to_climb` — the AGGREGATE ⌃, and why the frame is a contrast rather than a glow
+### `map_ready_for_improvement` — the AGGREGATE ⌃, and why the frame is a contrast rather than a glow
 
-`docs/plan_knowledge_screen.md` §7. The `ready_to_climb` channel painted over the ⌃-mark fixture, plus
-`map_ready_to_climb_legend`, its `facts` card. It **extends `_snapshot_work_ready` rather than
+`docs/plan_knowledge_screen.md` §7. The `ready_for_improvement` channel painted over the ⌃-mark fixture, plus
+`map_ready_for_improvement_legend`, its `facts` card. It **extends `_snapshot_work_ready` rather than
 replacing it**, so the badges and the channel are asked about the SAME sources — a channel disagreeing
 with the badge on the hex under it is exactly the two-surface split `RungGates` exists to stop.
 
@@ -694,7 +694,7 @@ The block beside it drives four things no picture can carry:
 - **A WORLD WITH NO SOURCES OFFERS NO CHANNEL**, paired with the empty key surviving, for the reason
   the `terrain_tags` claim beside it is paired: `""` prints identically to nothing at all.
 
-**`_assert_ready_to_climb_scale` IS A REPORT, NOT A THRESHOLD.** §7 says to measure the all-sources
+**`_assert_ready_for_improvement_scale` IS A REPORT, NOT A THRESHOLD.** §7 says to measure the all-sources
 pass before assuming it is cheap, so the probe builds a **full-size 256×192 world with a patch on
 every tile** — the ceiling on what the derivation can ever be handed, since the sim seeds a patch on
 every food-module tile that carries capacity and caps none of them — and prints the microseconds. A

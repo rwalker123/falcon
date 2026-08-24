@@ -78,18 +78,18 @@ const CHANNELS: Array[Dictionary] = [
 		#
 		# **AND IT IS THE FIRST `KIND_FACTS` ROW EVER WRITTEN.** The kind and `facts_for` were built in
 		# Slice A for exactly this channel; nothing had exercised them until this row.
-		"key": ReadyToClimb.CHANNEL_KEY,
-		"label": ReadyToClimb.CHANNEL_LABEL,
-		"description": ReadyToClimb.CHANNEL_DESCRIPTION,
+		"key": ReadyForImprovement.CHANNEL_KEY,
+		"label": ReadyForImprovement.CHANNEL_LABEL,
+		"description": ReadyForImprovement.CHANNEL_DESCRIPTION,
 		"legend_kind": KIND_FACTS,
 		# A ramp legend would be a lie about a binary plane: there is no "more ready". What the player
 		# wants is the SHAPE — how many, on which web, and whether any of it is ground nobody stands
 		# on — and those are lines, not rows.
-		"facts": &"ready_to_climb_facts",
+		"facts": &"ready_for_improvement_facts",
 		# Gated on the RASTER, not on the count: a world with sources offers the channel even when
 		# nothing is ready (the legend says so), and `set_overlay_channel` would silently refuse the
 		# key on a world that has none.
-		"available": &"has_ready_to_climb_data",
+		"available": &"has_ready_for_improvement_data",
 		# **AND THE PLACEMENT IS LOAD-BEARING BECAUSE THE CHANNEL IS BUILT LAZILY.** `MapView` does not
 		# synthesize this raster during the ingest (`DEFERRED_OVERLAY_BUILDERS` — a `RungGates` pass per
 		# source is not turn-boundary work for a channel nobody has picked), so for most of a frame's

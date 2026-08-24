@@ -1,4 +1,4 @@
-class_name ReadyToClimb
+class_name ReadyForImprovement
 
 ## THE AGGREGATE `⌃` — the map-wide answer to *"which of my sources could climb a rung right now"*,
 ## as an ordinary overlay raster plus the count lines its legend states.
@@ -9,6 +9,12 @@ class_name ReadyToClimb
 ## ground nobody is standing on. This channel is that view, and it is a CHANNEL rather than an event
 ## precisely because nothing here is ever lit for the player: a discovery does not highlight the map,
 ## it changes what this channel paints the next time the player asks for it.
+##
+## **THE PLAYER NEVER READS THE WORD "RUNG" OR "CLIMB", AND THIS FILE DOES.** The ladder's own
+## vocabulary is what `RungGates`, `SourceForecast` and the whole intensification arc are written in,
+## so the code keeps it; what a channel row and a legend say is *improve*, because a player asked to
+## "climb a rung" on a hex is being handed a metaphor the game never taught them. The split is
+## deliberate — the three `CHANNEL_*` constants below are the entire player-facing surface.
 ##
 ## **EVERYTHING IS `static` AND STATELESS**, the `RungGates` / `SourceForecast` shape. The model
 ## `derive` answers is held by `MapView` (which caches it beside the raster), never here.
@@ -30,12 +36,12 @@ class_name ReadyToClimb
 ## shared gate, for all four.
 
 ## The channel key, and the label/description the picker states for it. **Both halves of the wiring
-## read these constants** — `MapView._install_ready_to_climb_overlay` stamps them onto the synthesized
+## read these constants** — `MapView._install_ready_for_improvement_overlay` stamps them onto the synthesized
 ## channel and `OverlayChannels.CHANNELS` names them in its row — so the picker's list and the map's
 ## own channel table cannot drift into two names for one thing.
-const CHANNEL_KEY := "ready_to_climb"
-const CHANNEL_LABEL := "Ready to Climb"
-const CHANNEL_DESCRIPTION := "Sources your people could improve a rung on right now."
+const CHANNEL_KEY := "ready_for_improvement"
+const CHANNEL_LABEL := "Ready for Improvement"
+const CHANNEL_DESCRIPTION := "Land and herds your people could improve right now."
 
 ## A tile carrying at least one ready source paints at FULL strength, every other tile at none. It is
 ## a binary raster on purpose: "there is an opportunity on this hex" is the whole claim, and shading
@@ -56,7 +62,7 @@ const MODEL_PATCHES := "patches"
 const MODEL_HERDS := "herds"
 const MODEL_UNWORKED := "unworked"
 
-const FACTS_NONE := "No source can climb a rung yet."
+const FACTS_NONE := "Nothing can be improved yet."
 const FACTS_TOTAL_FORMAT := "%s · %s, %s"
 const FACTS_ALL_WORKED := "Every one is already worked."
 const FACTS_UNWORKED_FORMAT := "%d unworked · nearest (%d, %d)"

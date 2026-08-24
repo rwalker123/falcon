@@ -25,7 +25,7 @@ Raster overlays streamed from `core_sim`:
 | `hunt_danger` | Danger orange (generic lerp) | **NOT a wire raster** — projected client-side, `attack × ferocity` per herd (see below) |
 | `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
 | `elevation` | Elevation ramp | `MapSection.elevationOverlay` — **and the DEFAULT channel** (below) |
-| `ready_to_climb` | `HudStyle.SIGNAL`, the opportunity ink (generic lerp) | **NOT a wire raster** — the aggregate `⌃`, synthesized client-side from the patches, the herds and the faction's knowledge row (see below) |
+| `ready_for_improvement` | `HudStyle.SIGNAL`, the opportunity ink (generic lerp) | **NOT a wire raster** — the aggregate `⌃`, synthesized client-side from the patches, the herds and the faction's knowledge row (see below) |
 
 Legend rendering: min/avg/max values + channel description.
 
@@ -36,10 +36,10 @@ picker, split by KIND so that adding a channel is a data edit and never a code o
 
 | Module | Kind | Holds |
 |---|---|---|
-| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Three rows today: the empty key (`PLACEMENT_FIRST`), `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) and `ready_to_climb` (no placement — `MapView` appends its key to `overlay_channel_order` itself, so the wire pass claims it) |
+| `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Three rows today: the empty key (`PLACEMENT_FIRST`), `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) and `ready_for_improvement` (no placement — `MapView` appends its key to `overlay_channel_order` itself, so the wire pass claims it) |
 | `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Two `legend_kind`s — `KIND_RAMP` (the channel's own legend rows) and `KIND_FACTS` (the lines a descriptor's provider answers) — and **no channel is named in the file** |
 | `ui/overlay/OverlayPicker.gd` | the widget | The TWO buttons docked on `MinimapPanel`'s top border and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
-| `ui/overlay/ReadyToClimb.gd` | all-`static`, stateless | ONE channel's DERIVATION — the `ready_to_climb` raster, its per-web counts and its unworked tiles, asked of `RungGates` (below). The registry names it; nothing else does |
+| `ui/overlay/ReadyForImprovement.gd` | all-`static`, stateless | ONE channel's DERIVATION — the `ready_for_improvement` raster, its per-web counts and its unworked tiles, asked of `RungGates` (below). The registry names it; nothing else does |
 
 **A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
 `placeholder` flag per channel and `MapView._ingest_overlay_channels` holds them, so `roster()`
@@ -387,7 +387,7 @@ richest on pasture, and the shelf column glows on forage where it is barren on p
 the gathering-sites sub-count). The forage `capacity_by_biome` table ships in the sim, so the live
 inversion is real; the fixture stages it deterministically for the harness.
 
-**`ready_to_climb` — THE AGGREGATE `⌃`, and the first `KIND_FACTS` channel**
+**`ready_for_improvement` — THE AGGREGATE `⌃`, and the first `KIND_FACTS` channel**
 (`docs/plan_knowledge_screen.md` §7, Slice D). The map has marked the per-source case since issue
 #412: a *worked* source that can climb a rung wears a `⌃` on its own badge. This is every such source
 at once, on a channel — and the legend is COUNT LINES rather than a ramp, because there is no "more
@@ -401,7 +401,7 @@ makes it the right shape for news that does not expire.
 **IT IS ALWAYS OFFERED ON A WORLD THAT HAS SOURCES, INCLUDING WHEN NOTHING IS READY** — the legend
 then reads *"No source can climb a rung yet."* Gating it on the COUNT would make the channel appear
 the turn the first discovery lands, which is the map lighting up for an unlock under another name,
-and a roster row that comes and goes is a row a player cannot learn. `has_ready_to_climb_data` is
+and a roster row that comes and goes is a row a player cannot learn. `has_ready_for_improvement_data` is
 therefore a question about the WORLD — a grid, and a source of either web — never about the count, and
 never about the raster, which for most of a frame's life does not exist (below).
 
@@ -422,7 +422,7 @@ never about the raster, which for most of a frame's life does not exist (below).
 > painted channel on every `overlay_channels_ingested`, so the channel the player is HOLDING is
 > rebuilt once per turn and every other one costs nothing at all.
 >
-> `ready_to_climb_facts()` realizes too, because a legend can be opened on a channel the map is not
+> `ready_for_improvement_facts()` realizes too, because a legend can be opened on a channel the map is not
 > painting. Past that the facts are answered off the cached model.
 
 **AND THE KNOWLEDGE PUSH ARRIVES AFTER THE INGEST, so `set_faction_knowledge` stales it.**
@@ -431,17 +431,17 @@ never about the raster, which for most of a frame's life does not exist (below).
 ingest would state the PREVIOUS turn's knowledge for the whole turn a discovery arrives on, which is
 the one turn it is wrong on and the one turn a player looks. Marking it stale is free; the REBUILD
 happens there and then only when it is the channel being PAINTED. The staleness test compares against
-`_ready_to_climb_knowledge`, a **COPY** — `faction_knowledge` is the HUD's own dict held by reference
+`_ready_for_improvement_knowledge`, a **COPY** — `faction_knowledge` is the HUD's own dict held by reference
 (`FactionReadouts.faction_tracks` returns it uncopied), so storing the reference would compare a row
 against itself and never fire.
 
-**`ReadyToClimb` ASKS `RungGates`; IT DECIDES NOTHING ABOUT THE LADDER.** `_offers_a_rung` is the
+**`ReadyForImprovement` ASKS `RungGates`; IT DECIDES NOTHING ABOUT THE LADDER.** `_offers_a_rung` is the
 BADGE's own two questions in the badge's own order — `rung_in_progress` first, `next_rung_ready`
 second — so the aggregate and the mark on the hex under it cannot disagree. Asking only the ready
 test would light a patch mid-Cultivate: its next rung is admitted and ungated, and `next_rung_ready`
 excludes only the verb a crew DECLARED. A rung being climbed is not a rung on offer.
 
-**THE `improvement` AXIS COSTS A WALK OVER BANDS, NOT OVER SOURCES.** `ReadyToClimb.worked_sources`
+**THE `improvement` AXIS COSTS A WALK OVER BANDS, NOT OVER SOURCES.** `ReadyForImprovement.worked_sources`
 answers `{secondary key: declared improvement}` off `units` and their assignment rows (tens of
 iterations), and its KEY SET is also the "is anybody on this" test the unworked list needs — two jobs,
 one walk. The declaration is not redundant with the meters: a Sow ordered this turn stands at 0% on
@@ -454,7 +454,7 @@ disagreement would actually come from.
 
 **THE FACTS ARE ANSWERED ON DEMAND, NOT STAMPED INTO THE MODEL.** *Nearest* is measured from the
 SELECTED band (falling back to the player's first, and dropping the coordinate entirely when there is
-no band at all), and a selection change is not a snapshot — so `ready_to_climb_facts` scans the cached
+no band at all), and a selection change is not a snapshot — so `ready_for_improvement_facts` scans the cached
 unworked list (tens) rather than re-deriving. It measures through `MapView._hex_distance` and
 `_wrapped_col_delta`, the map's own metric and its own seam rule, so "nearest" here is the nearest the
 map draws.
@@ -482,7 +482,7 @@ read.
 > colour, legend-button face and a painted tile all equal `HudStyle.SIGNAL`.
 >
 > The guard is also out of reach here for a second reason worth knowing before writing one like it:
-> `_overlay_picker_state`'s fixture publishes no patches and no herds, so `has_ready_to_climb_data`
+> `_overlay_picker_state`'s fixture publishes no patches and no herds, so `has_ready_for_improvement_data`
 > is false in that world and this channel is not in that roster at all.
 
 The raster is BINARY — a hex with an offer paints
@@ -490,10 +490,10 @@ at full strength, every other stays grid-coloured — because "there is an oppor
 claim and shading by count would say a hex with three offers is a better place to stand than one with a
 Sow. The `raw` plane carries the count for anything that wants to quote it.
 
-Verify with `map_preview` state **"ready to climb"** (`map_ready_to_climb` — the CONTRAST, not the
+Verify with `map_preview` state **"ready for improvement"** (`map_ready_for_improvement` — the CONTRAST, not the
 glow: three patches and two herds lit while four controls stay dark — a worked patch whose crew
 DECLARED its rung, an unworked patch HALF-BUILT with nothing declared, the wild-ceiling wolf, and a
-patch whose plants may climb nothing; `map_ready_to_climb_legend` is its facts card) plus the
+patch whose plants may climb nothing; `map_ready_for_improvement_legend` is its facts card) plus the
 assertion block beside it, which drives the late knowledge push, the counts split by web, the tiles a
 picture cannot separate, and the nearest answer moving with the selection off the cached model.
 
