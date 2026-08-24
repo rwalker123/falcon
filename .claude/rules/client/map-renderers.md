@@ -211,6 +211,23 @@ omission fails at the wiring rather than in a panel. **Why the copy exists at al
 frame can see it break, are one home over in `.claude/rules/client/labor-ui.md`** → "THE PATCH'S
 FORECAST FIELDS REACH THE SHEET THROUGH `tile_info`"; do not restate them here.
 
+## `set_overlay_channel`'s FIRST line builds a DEFERRED channel — it is not a channel branch
+
+`DEFERRED_OVERLAY_BUILDERS` is a `{key: builder method}` table and `_realize_deferred_overlay` is the
+one thing that reads it. A channel in it is **not** synthesized during the snapshot ingest the way
+`province` is; it is built the first time each frame that anything asks for it, and the per-turn
+refresh falls out of the overlay picker re-asserting the painted channel on `overlay_channels_ingested`.
+
+Two things to hold to if you touch that function. **The realize call has to stay ahead of the
+`overlay_channels.has(key)` test**, which would otherwise refuse a channel this renderer has simply
+not built yet. And it **names no channel on purpose** — `docs/plan_knowledge_screen.md` §6b forbids a
+second `if key ==` in the render path, so a new deferred channel is a row in that table and nothing
+else.
+
+Why any of it is deferred (a `RungGates` pass per SOURCE, measured at ~331 ms for a full-size world's
+worth) belongs to the channel that needed it: `.claude/rules/client/overlay-channels.md` →
+`ready_to_climb`. **Do not restate it here**; one home per fact.
+
 ## Fog of war
 
 `_fow_enabled`, `set_fow_enabled` and every downstream fog gate live in `MapView`, but the

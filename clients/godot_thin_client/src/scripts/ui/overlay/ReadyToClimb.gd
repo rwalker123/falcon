@@ -72,13 +72,17 @@ const NOUN_HERD := ["herd", "herds"]
 ## THE ONE PASS OVER EVERY SOURCE THE FACTION CAN SEE — the raster, the per-web counts, and the
 ## unworked tiles, from one walk of the patches and one of the herds.
 ##
-## **CALLED ONCE PER SNAPSHOT, NEVER PER FRAME, AND THAT IS A MEASURED CONSTRAINT** rather than a
-## style preference. A live world seeds a `ForagePatch` on EVERY food-module tile that carries any
-## human-edible capacity (`core_sim/src/forage.rs` → `spawn_initial_forage`), and the capture caps
-## none of them — on the shipped 256×192 earthlike that is thousands of rows on the wire and thousands
-## of `RungGates` evaluations here. `MapView` therefore derives this where it derives `province`, in
-## the snapshot ingest, and the map's draw loop reads the finished raster like any other channel's.
-## The numbers are in the PR that added this file.
+## **IT IS EXPENSIVE, AND THAT IS MEASURED RATHER THAN FEARED.** A live world seeds a `ForagePatch` on
+## EVERY food-module tile that carries any human-edible capacity (`core_sim/src/forage.rs` →
+## `spawn_initial_forage`) and the capture caps none of them, so this scales with the number of
+## SOURCES rather than with anything the map draws. `map_preview`'s scale probe walks the ceiling — a
+## full-size 256×192 world with a patch on every tile — at **~6.8 µs a source, ~331 ms for 49,152**.
+##
+## So `MapView` does NOT call this during the snapshot ingest, unlike its `province` twin: the channel
+## is BUILT ON DEMAND (`MapView.DEFERRED_OVERLAY_BUILDERS`), which means a player who has not selected
+## it pays nothing at all, and one who has pays once per turn — through the picker's re-assert, not
+## through a new mechanism. Nothing here needs to know that; it is recorded so the next reader knows
+## the cost is real and where it is handled.
 static func derive(view: Object) -> Dictionary:
 	var width := int(view.grid_width)
 	var height := int(view.grid_height)
