@@ -138,6 +138,65 @@ const CARD_BAR_MIN_WIDTH := 387.0
 ## What the card adds around that bar: the `PanelContainer`'s stylebox margins and the column's own.
 const CARD_CHROME_WIDTH := 20.0
 const MIN_STRIP_WIDTH := CARD_BAR_MIN_WIDTH + CARD_CHROME_WIDTH
+## The expander COLUMN beside the rows — the button's 80 and one `ROW_ITEM_SEPARATION`. It is the
+## other half of `CARD_BAR_MIN_WIDTH`'s own derivation, named here because a row's budget is that
+## floor less this, and the two must not be able to disagree about which 89 is meant.
+const EXPANDER_COLUMN_WIDTH := 89.0
+## What a single ROW is budgeted inside the narrowest strip — the bar's own 298, written as the
+## subtraction it came from rather than restated as a literal.
+const ROW_BUDGET_WIDTH := MIN_STRIP_WIDTH - CARD_CHROME_WIDTH - EXPANDER_COLUMN_WIDTH
+## Everything on a row that is NOT the detail phrase: the glyph column, the turn stamp, the row
+## padding, the separations, and the floor `clip_text` leaves the main label.
+##
+## **MEASURED ON THE WIDEST ROW, NOT ON A TYPICAL ONE, because `GLYPH_COLUMN_WIDTH` is a FLOOR rather
+## than a clip** — an emoji kind glyph draws past it, which is 9px between a `died` row (70) and a
+## `hunt` row (79). Re-measured on every harness run: `event_dock.gd`'s `_report_event_row_columns`
+## prints the widest row's minimum beside this budget, so a row that grows a control states the fact
+## rather than quietly eating the detail's share of the strip.
+const ROW_FURNITURE_WIDTH := 80.0
+## Kept back from the cap. The furniture above is a MEASUREMENT of font metrics that move with the
+## platform, while the floor is what the card must honour whatever they measure — so the cap lands a
+## hair inside the budget rather than exactly on it.
+const DETAIL_CAP_SLACK := 8.0
+## The least a growing label may weigh. Only an EMPTY label reaches it, and it exists so the row's
+## ratio total is never zero — `BoxContainer` divides by it.
+const STRETCH_WEIGHT_FLOOR := 1.0
+## **THE MOST A ROW'S DETAIL PHRASE MAY DEMAND — a floor on the row's MINIMUM, not the width the
+## phrase is drawn at.** Slack in the row flows back into the label (`_make_detail_label` sets
+## `SIZE_EXPAND_FILL`), so on a wide bar the phrase reads in full and this constant is invisible; it
+## binds only when the strip cannot pay for it.
+##
+## A row's MAIN label clips (`clip_text` + `OVERRUN_TRIM_ELLIPSIS`); the DETAIL beside it did not, and
+## an unclipped `Label` reports its whole unwrapped string as its minimum width — so one long phrase
+## set the row's minimum. Measured on the reported case (`engaged=0.340 fled=0.068 carried_biomass=0
+## wasted_biomass=0 hunters_killed=0.007 hunters_wounded=0.020 outcome=Fight species=Wild Aurochs`):
+## **1015px**, against a row budgeted 298. That minimum climbs through `_log_scroll`
+## (`SCROLL_MODE_DISABLED` propagates a child's minimum WIDTH), the `PanelContainer` is clamped up past
+## `_root` — a plain `Control`, which does not clip — and the overhang is drawn over whatever sits
+## beside the strip, which on a top dock is the right dock's cards. Both surfaces, the collapsed bar
+## and the expanded log, since both build their rows through `_make_event_row`.
+##
+## **THE FIGURE IS DERIVED FROM `MIN_STRIP_WIDTH`, the narrowest strip the dock can ever be handed.** A
+## row's whole minimum has to stay inside it, or the floor that exists to keep the card within its
+## strip is quoting a width the card does not honour:
+##
+##     ROW_BUDGET_WIDTH      407 (the floor) − 20 (card chrome) − 89 (expander column) = 298
+##     ROW_FURNITURE_WIDTH   80 — measured on the widest row; everything that is not the detail
+##     DETAIL_CAP_SLACK      8
+##     DETAIL_MAX_WIDTH      298 − 80 − 8 = 210
+##
+## ⛔ **A CAP WITHOUT THE GROWTH HALF IS A HARD 210px COLUMN, AND THAT WAS THE FIRST BUILD.** Without
+## `SIZE_EXPAND_FILL` an `HBoxContainer` hands a non-expanding child exactly its minimum, so a long
+## phrase was ellipsised at EVERY strip width — the reported hunt row read `Engaged 0.34 · Fled 0.068 ·
+## Ca…` on an otherwise near-empty 1280px bar, against a main label (`The <species> hunt`) that needs
+## about 145 of it. Bounding the row's minimum and choosing the drawn width are two different
+## decisions, and only the first belongs to this constant.
+##
+## **A detail that fits never reaches it at all** — `_make_detail_label` returns those untouched, so
+## nearly every row in the game is the plain `Label` it always was, demanding exactly what it always
+## demanded. **Content loss, when the strip does force a trim, is acceptable HERE and only here**:
+## `_row_tooltip` carries the whole detail, so the trimmed text is one hover away.
+const DETAIL_MAX_WIDTH := ROW_BUDGET_WIDTH - ROW_FURNITURE_WIDTH - DETAIL_CAP_SLACK
 ## The strip may never cover more than this share of the window. It no longer RESERVES anything, so
 ## this is not about leaving the map room to lay out in — it is about how much live map the overlay
 ## is allowed to hide. The map is the game; a notification bar that buries it has stopped being a
@@ -315,7 +374,7 @@ var _log: VBoxContainer
 var _log_head: HFlowContainer
 var _log_scroll: ScrollContainer
 var _log_body: VBoxContainer
-var _log_foot: HBoxContainer
+var _log_foot: HFlowContainer
 var _earlier_button: Button
 var _retention_label: Label
 var _channel_chips: Dictionary = {}    # channel:String -> Button
@@ -973,9 +1032,17 @@ func _build_log() -> VBoxContainer:
 	_log_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_log_scroll.add_child(_log_body)
 
-	_log_foot = HBoxContainer.new()
+	# **AN `HFlowContainer`, THE HEAD'S OWN TREATMENT, AND FOR THE HEAD'S OWN REASON.** As an
+	# `HBoxContainer` the foot's minimum width was the button PLUS the retention sentence — measured
+	# at 399 with the log open, which is 12px past what `MIN_STRIP_WIDTH` leaves the card, so the
+	# card was clamped up and drawn outside its own strip whenever the log was expanded. A flow
+	# container's minimum is its WIDEST CHILD rather than their sum (285 here), and a squeeze wraps
+	# the sentence under the button instead of widening the card. Nothing is lost and nothing moves
+	# at any ordinary width.
+	_log_foot = HFlowContainer.new()
 	_log_foot.name = "EventLogFoot"
-	_log_foot.add_theme_constant_override("separation", LOG_HEAD_SEPARATION)
+	_log_foot.add_theme_constant_override("h_separation", LOG_HEAD_SEPARATION)
+	_log_foot.add_theme_constant_override("v_separation", LOG_HEAD_SEPARATION)
 	log_column.add_child(_log_foot)
 
 	_earlier_button = Button.new()
@@ -999,6 +1066,77 @@ func _make_label(text: String, font_size: int, color: Color) -> Label:
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", color)
 	return label
+
+## The row's DETAIL phrase. **BOUNDED BELOW, FREE TO GROW ABOVE.**
+##
+## `custom_minimum_size.x` is `min(natural, DETAIL_MAX_WIDTH)` — a FLOOR ON WHAT THE ROW DEMANDS, not
+## the width the phrase is drawn at. `SIZE_EXPAND_FILL` is the other half: real slack in the row flows
+## back into this label, so a long phrase is trimmed only when the strip genuinely cannot pay for it,
+## and on a wide bar it reads in full. Cap without expand was a hard 210px column that ellipsised the
+## reported hunt row on an otherwise empty 1280px bar.
+##
+## **THE NATURAL WIDTH IS READ BEFORE THE LABEL IS CLIPPED, and the order is the whole of it.** A
+## `Label` that is already `clip_text` reports Godot's one-pixel floor, so measuring after the fact
+## would floor every detail — short ones included — at that pixel. A non-wrapping `Label` measures
+## honestly while detached (the autopsy about detached `Label`s shaping at width 0 is about AUTOWRAP
+## ones, which re-shape against their allotted width); `_report_event_row_columns` prints the reading
+## each run so the claim stays a measurement.
+##
+## **RIGHT-ALIGNED, WHICH IS WHAT KEEPS EVERY ORDINARY ROW WHERE IT WAS.** Unexpanded, the label's box
+## was exactly its text and the main label's `SIZE_EXPAND_FILL` pushed it against the row's trailing
+## end. Expanded, the BOX grows leftward while its right edge stays put — so right alignment draws the
+## glyphs at the identical x they occupied before, and a short detail is pixel-identical.
+func _make_detail_label(text: String) -> Label:
+	var label := _make_label(text, DETAIL_FONT_SIZE, HudStyle.INK_FAINT)
+	var natural: float = label.get_minimum_size().x
+	# ⛔ **A DETAIL THAT FITS IS RETURNED UNTOUCHED, and that is a pixel claim rather than tidiness.**
+	# It cannot push the row's minimum past the share this constant reserves and it can never need
+	# trimming — its own minimum is its whole text — so every flag below would be inert. They are not
+	# free, though: `clip_text` alone changes the `Label`'s draw path enough to re-antialias glyphs
+	# that have not moved, which is what stood between eighteen dock frames and byte-identical. Nearly
+	# every row in the game takes this branch and is the plain `Label` it has always been.
+	if natural <= DETAIL_MAX_WIDTH:
+		return label
+	label.custom_minimum_size.x = DETAIL_MAX_WIDTH
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Weighed HERE, while the natural width is still known: once `clip_text` is on, the label's
+	# minimum reads back as the cap and its unmet need would compute as zero.
+	label.size_flags_stretch_ratio = _stretch_weight(natural)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	return label
+
+## Does this detail label take slack off the row's main label? True only for the trimmed ones — the
+## test the main label's own weighting is gated on, asked of the flag rather than re-derived from the
+## text so the two cannot disagree about which branch above was taken.
+func _detail_grows(label: Label) -> bool:
+	return label.size_flags_horizontal == Control.SIZE_EXPAND_FILL
+
+## How a row's two growing labels are weighted against each other: **BY THE FULL WIDTH EACH WANTS**,
+## its natural unwrapped width.
+##
+## ⛔ **NOT BY WHAT EACH STILL LACKS, AND THE DIFFERENCE IS `BoxContainer`'S ACTUAL ARITHMETIC.** An
+## expander's final size is `available x (its ratio / total ratio)` — the share IS the size, not a
+## bonus added to its minimum — and a child whose share comes out BELOW its own minimum is dropped
+## from the stretch pool and handed exactly that minimum. Weighted by "unmet need" the detail label
+## carries a large minimum (`DETAIL_MAX_WIDTH`) beside a small ratio, so its share fell under 210 and
+## it was dropped every time: measured on the shipped default frame, a row with 828px of slack to
+## give drew `Wounded 1 · Warriors 3 · Grey Wolf` as `… · Grey …` while the label beside it took 813.
+## Which is the hard-column defect over again, arrived at from the other side.
+##
+## **WEIGHTED BY WHAT EACH WANTS, THE TWO SHARE ONE FRACTION.** Each label is allotted
+## `available x natural / (sum of naturals)`, so when the row can pay for both — which is nearly every
+## row on nearly every strip — each clears its own natural width and BOTH draw in full, exactly as
+## they did before the detail could be trimmed at all. When the row cannot, both give up the same
+## fraction rather than one being trimmed to nothing, and a detail squeezed under its cap falls back
+## on `DETAIL_MAX_WIDTH` — the bound this whole derivation exists to keep.
+##
+## **A CONSTANT RATIO CANNOT DO THIS, which is why it is computed per row.** The weighting is a
+## property of what the row holds; a fixed number is right for one shape of row and wrong for the
+## other, and the dock ships both.
+func _stretch_weight(natural: float) -> float:
+	return maxf(natural, STRETCH_WEIGHT_FLOOR)
 
 func _make_control_label(text: String) -> Label:
 	var label := _make_label(text.to_upper(), TURN_FONT_SIZE, HudStyle.INK_FAINT)
@@ -1109,6 +1247,9 @@ func _make_event_row(event: Dictionary, pinned: bool) -> Control:
 
 	var label := _make_label(_row_label(event), ROW_FONT_SIZE, _label_color(event))
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# BEFORE the clip, for the reason `_make_detail_label` states: a `clip_text` label reports the
+	# one-pixel floor, so the width it WANTS is only readable while it is still unclipped.
+	var label_natural: float = label.get_minimum_size().x
 	label.clip_text = true
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	line.add_child(label)
@@ -1118,7 +1259,13 @@ func _make_event_row(event: Dictionary, pinned: bool) -> Control:
 	# `_detail_status_key`, and a stored phrase would start matching prose.
 	var detail := detail_phrase(String(event["detail"]))
 	if detail != "":
-		line.add_child(_make_label(detail, DETAIL_FONT_SIZE, HudStyle.INK_FAINT))
+		var detail_label := _make_detail_label(detail)
+		line.add_child(detail_label)
+		# The main label's own weight, on the same scale — and set ONLY when the detail beside it is
+		# one that grows. Against a detail that fits, the main label is the row's lone expander and
+		# takes all the slack whatever its ratio, so leaving the default 1.0 keeps that row identical.
+		if _detail_grows(detail_label):
+			label.size_flags_stretch_ratio = _stretch_weight(label_natural)
 
 	# **AND WHERE TO GO AND LOOK AT IT.** Last in the row, so the line still reads left to right as
 	# glyph → turn → what happened → the terms → the way there. Built for both surfaces at once: the

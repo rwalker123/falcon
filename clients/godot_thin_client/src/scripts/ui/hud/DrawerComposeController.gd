@@ -89,7 +89,9 @@ var _selection: HudSelectionState = null
 var _topbar: FactionReadouts = null
 # Read for `tile_contents_unseen` ONLY — a redacted hex offers no forage compose.
 var _selectioncard: SelectionCardController = null
-# The HUD CanvasLayer, so the RefCounted controller has a node to parent the compose sheet into.
+# The HUD CanvasLayer, so this RefCounted controller has a node to reach the tree through. The
+# compose sheet is NOT parented onto it directly — it goes into `HudLayer.compose_host()`, the
+# dedicated compose CanvasLayer above the event dock's (see `_ensure_compose_sheet`).
 var _host: Node = null
 
 # --- Scene nodes (handed in by HudLayer) ---
@@ -3730,15 +3732,25 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
 # `SourceForecast.source_yield_readout` the Band panel's Current-actions rows use, and every gate, forecast and
 # ceiling in the sheet comes from the same call it came from when the block lived in the drawer.
 
-## Build the compose sheet once. Like the fork panel it is a child of the HUD CanvasLayer itself,
-## NOT of `layout_root`: it floats over the whole window and must not inset with the reserved docks.
+## Build the compose sheet once. Like the fork panel it is NOT a child of `layout_root`: it floats
+## over the whole window and must not inset with the reserved docks.
+##
+## **AND ITS PARENT IS THE COMPOSE LAYER, NOT THE HUD** (`HudLayer.compose_host()`). Parented onto
+## the HUD it drew under a top-docked event bar — and, because that bar stops the pointer, the ✕ and
+## the sheet's own rows under it could not be clicked at all. The compose layer sits one above the
+## dock's; see `HudLayer.COMPOSE_LAYER_INDEX` for the ladder.
+##
+## **THE SHEET KEEPS ITS FULL-WINDOW DISMISS CATCHER, deliberately.** Now that the sheet is on top, a
+## click on the bar behind it lands on the catcher and DISMISSES the sheet rather than reaching the
+## bar. That is the wanted behaviour for a modal write surface: one click puts the sheet away, and
+## the bar is still there for the second.
 func _ensure_compose_sheet() -> void:
     if _compose_sheet != null:
         return
     _compose_sheet = ComposeSheet.new()
     _compose_sheet.name = "ComposeSheet"
     _compose_sheet.closed.connect(_on_compose_sheet_closed)
-    _host.add_child(_compose_sheet)
+    _host.compose_host().add_child(_compose_sheet)
 
 ## Is a compose sheet open? `Main._unhandled_input` asks this FIRST on Esc — the sheet is the
 ## innermost surface, so it claims the key ahead of targeting-cancel and the pause menu (§15).

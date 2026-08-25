@@ -134,6 +134,50 @@ Three properties it is easy to get wrong:
   its geometry already runs through, and `Main` relays it; the initial value is seeded by hand in
   `_connect_event_dock`, the dock's own `_ready` having emitted before the parent could connect.
 
+### …AND THE OTHER ANSWER IS TO DRAW ABOVE THE OVERLAY — `HudLayer.compose_host()`
+
+Insetting is the right answer for a card that is READ. It is the wrong one for a surface that is
+WRITTEN INTO, and the two cases split on the pointer rather than on the pixels: the event bar is
+`MOUSE_FILTER_STOP` by design (it eats its own clicks so the map beneath does not get them), so a
+modal sheet drawn under it is not merely obscured — every control under the bar's rect is
+**unreachable**, including the `✕` that would put the sheet away. Reported from play with screenshots
+on the forage/hunt compose sheet.
+
+**So a modal write surface takes a CanvasLayer above the overlay's**, and the ladder is stated in
+`HudLayer.COMPOSE_LAYER_INDEX` as the relation rather than as its value —
+`EventDockPanel.LAYER_INDEX + 1`, one above the bar, with `BandCityPanel.LAYER_INDEX` (103) below it
+and `Main`'s `PauseLayer` (200) still over everything. `compose_host()` is the node, created in
+`HudLayer._ready` (the same in-code idiom `EventDockPanel._ready` and `OverlayPicker` use), and
+`DrawerComposeController._ensure_compose_sheet` and `BandPanelController._mount_compose_float` are
+its two clients — the same sheet reached from the drawer and from the Band panel, so both entry
+points had the same defect and both take the same host.
+
+**WHICH CASE TAKES WHICH:**
+
+| the surface | the answer |
+|---|---|
+| a free-floating card you READ — the crafting ledger, the knowledge screen | `set_overlay_inset` → `FloatingRoom`, i.e. **dodge** the bar |
+| a MODAL surface you WRITE INTO — a compose sheet, its Band-panel float | a CanvasLayer **above** the overlay's; no `room_bounds`, no inset |
+
+**A modal surface gains no `room_bounds`, deliberately.** It covers the bar rather than dodging it,
+and giving it both would be two mechanisms answering one question.
+
+**AND THE SHEET KEEPS ITS FULL-WINDOW DISMISS CATCHER, WHICH MAKES A CLICK ON THE BAR A DISMISSAL.**
+`ComposeSheet` IS its catcher (`MOUSE_FILTER_STOP`, card nested inside it), so once it is on top a
+press anywhere outside the card — the event bar included — closes the sheet and does not reach the
+bar. That is the intended behaviour for a modal write surface, not a regression to carve the bar's
+band out of: one click puts the sheet away and the bar is still there for the second.
+`BandComposeFloat` has no catcher at all and keeps none, its own header carrying the reason (the
+quarry picker needs the sheet to survive a map click), so a bar click reaches the bar there.
+
+**A sibling CanvasLayer carries an identity transform**, so nothing about either surface's geometry
+moved: `ComposeSheet._sync_to_viewport` and `BandComposeFloat._room` both read
+`get_viewport().get_visible_rect()` and write a parent-local `position`, and both resolve to the same
+global rect they did as children of the HUD. `event_dock.gd`'s `compose_sheet_over_event_dock` asserts
+that rather than assuming it, beside the layer indices and a rendered frame — stacking order is a
+property of the indices and no pixel comparison can state it, while an index claim alone passes on a
+sheet that never opened.
+
 ### THE TWO REGISTRIES ARE COMPLEMENTS — `Main.push_hud_strip`
 
 A reserver the HUD does **not** yield to is not a reserver that has gone away; it is a surface that

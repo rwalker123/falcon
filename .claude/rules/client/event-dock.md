@@ -577,6 +577,106 @@ over a dock column is not.**
 asserts the strip's ends against the **viewport and the insets**, never against `MIN_STRIP_WIDTH`. An
 assertion phrased in the floor's own terms would have stayed green through the whole defect.
 
+### …and a FLOOR IS ONLY HONOURED IF NO ROW OUTGROWS IT
+
+The floor above says what the narrowest strip is; it says nothing about whether the CARD fits inside
+one, and for a long time a row could demand more than the whole budget. Reported from play, with the
+overhang drawn across the Telling card: `Engaged 0.34 · Fled 0.068 · Carried biomass 0 · Wasted
+biomass 0 · Hunters killed 0.007 · Hunters wounded 0.02 · Fight · Wild Aurochs`.
+
+**IT WAS NOT THE STRIP BEING COMPUTED TOO WIDE.** `Main._update_event_dock_insets` already adds
+`Hud.right_column_width()` to the right inset, so the strip's computed right edge lands just left of
+the right dock, and every assertion about that edge was green. What overflowed was CONTENT, along a
+chain in which every link is doing what it was built to do:
+
+1. `_make_event_row`'s MAIN label clips (`clip_text` + `OVERRUN_TRIM_ELLIPSIS`); the DETAIL label
+   beside it did not, and an unclipped `Label` reports its whole unwrapped string as its minimum
+   width — **1015px** for the phrase above, measured.
+2. That becomes the ROW's minimum, and so `EventRows`'.
+3. In the expanded log it also climbs through `_log_scroll`, whose `horizontal_scroll_mode` is
+   `SCROLL_MODE_DISABLED` — a `ScrollContainer` propagates a child's minimum on the axis it does not
+   scroll.
+4. The `PanelContainer` is a `Control`, so it is clamped UP to that minimum, and `_root` — a plain
+   `Control` with no `clip_contents` — lets it hang out over whatever is drawn beside the strip.
+
+**THE BOUND IS DERIVED FROM `MIN_STRIP_WIDTH`, because that is the width the card has to honour.**
+`EventDockPanel.DETAIL_MAX_WIDTH` = `ROW_BUDGET_WIDTH` (407 − 20 chrome − 89 expander = **298**) less
+`ROW_FURNITURE_WIDTH` (**80**, measured) less `DETAIL_CAP_SLACK` (8) = **210**. Measured after: the
+widest row demands 289 of its 298 and the card 398 of the 407 floor.
+
+- **`ROW_FURNITURE_WIDTH` IS MEASURED ON THE WIDEST ROW, NOT A TYPICAL ONE.** `GLYPH_COLUMN_WIDTH` is
+  a `custom_minimum_size` floor rather than a clip, so an emoji kind glyph draws past it — 9px between
+  a `died` row (70) and a `hunt` row (79). A figure taken off whichever row a fixture happened to
+  render last is 9px optimistic, which is most of the slack.
+
+### ⛔ …AND THE BOUND IS A FLOOR ON THE ROW'S MINIMUM, NOT THE WIDTH THE PHRASE IS DRAWN AT
+
+A `custom_minimum_size` alone is a hard COLUMN: an `HBoxContainer` hands a non-expanding child
+exactly its minimum, so the first build of this fix ellipsised a long phrase at **every** strip
+width. The reported hunt row read `Engaged 0.34 · Fled 0.068 · Ca…` on an otherwise near-empty
+1280px bar — beside a main label (`The <species> hunt`, from `expeditions.rs hunt_report_event`)
+that wants about 145 of it. Bounding what a row DEMANDS and choosing what it DRAWS are two
+decisions, and only the first belongs to the constant.
+
+So the label also carries `SIZE_EXPAND_FILL` and `HORIZONTAL_ALIGNMENT_RIGHT`. Slack in the row
+flows back into it, and the right alignment is what keeps the glyphs where they were: unexpanded the
+box was exactly its text and the main label's own expansion pushed it against the row's trailing
+end; expanded, the box grows LEFTWARD while its right edge stays put.
+
+**A DETAIL THAT FITS IS RETURNED UNTOUCHED, and that is a pixel claim rather than tidiness.** Its own
+minimum is its whole text, so it can neither push the row past its share nor ever need trimming, and
+every flag would be inert — but not free: **`clip_text` alone changes the `Label`'s draw path enough
+to re-antialias glyphs that have not moved.** Measured, that was the difference between eighteen dock
+frames and byte-identical.
+
+#### The two labels are weighted by what each WANTS, never by what each LACKS
+
+⛔ **`BoxContainer`'s arithmetic is the whole reason.** An expander's final size is
+`available × (its ratio / total ratio)` — **the share IS the size, not a bonus added to its
+minimum** — and a child whose share comes out below its own minimum is dropped from the stretch pool
+and handed exactly that minimum.
+
+Weighted by "unmet need" (`natural − cap`) the detail carries a large minimum beside a small ratio,
+so its share fell under 210 and it was dropped **every time**: measured on the shipped default frame,
+a row with 828px of slack to give drew `Wounded 1 · Warriors 3 · Grey Wolf` as `… · Grey …` while the
+label beside it took 813. That is the hard-column defect again, reached from the other side, and it
+is invisible to every claim phrased as "wider than the cap".
+
+Weighted by each label's **natural width**, both are allotted
+`available × natural / Σ naturals` — so when the row can pay for both, which is nearly every row on
+nearly every strip, each clears its own natural and BOTH draw in full. When it cannot, both give up
+the same FRACTION rather than one being trimmed to nothing, and a detail squeezed under its bound
+falls back on `DETAIL_MAX_WIDTH`. The reported row wants 1238px of the 1171 a row gets at the widest
+the strip is ever drawn, so it is ~67px short at any width and the two share that shortfall.
+
+**A CONSTANT RATIO CANNOT EXPRESS THIS**, which is why it is computed per row: the weighting is a
+property of what the row holds, and the dock ships both shapes (a short label beside a long phrase,
+and a long label beside a short one) — they want opposite constants.
+
+**Both naturals are read BEFORE their labels are clipped**, since a `clip_text` label reports the
+one-pixel floor. `STRETCH_WEIGHT_FLOOR` covers the empty label, so a row's ratio total is never zero.
+
+**THE LOG'S FOOT WAS THE SECOND, INDEPENDENT SOURCE, and it was found by measuring rather than by
+looking.** `_log_foot` was an `HBoxContainer`, so its minimum was the `Earlier turns` button PLUS the
+retention sentence — **399** with the log open, 12px past what the floor leaves the card, on a
+sentence whose digits grow with the retention setting. It is an `HFlowContainer` now, the HEAD's own
+treatment: a flow container's minimum is its WIDEST CHILD rather than their sum (**277**), and a
+squeeze wraps the sentence under the button instead of widening the card. Nothing is lost and nothing
+moves at any ordinary width.
+
+**The other candidates were measured and left alone**: `_log_head` is already an `HFlowContainer`
+(75), the per-turn group heads are one short `Turn N` at the smallest type size in the dock, and
+`_make_message_row`'s longest string (`All events — turns 91–91`) is well inside a row's budget. The
+`Work tab` link keeps its deliberate non-`clip_text` — it is a fixed-width control, not a text column,
+and its header's reasoning is untouched.
+
+`event_dock_long_detail` / `event_dock_long_detail_log` are the frames. Both assert the DRAWN card
+inside `_root` **and** the card's combined MINIMUM inside `MIN_STRIP_WIDTH` — the rects say what this
+window did, the minimum says what the card would demand of the narrowest strip it can ever be handed,
+and only the second survives a change of viewport. A SHORT detail on the same frame is asserted to
+draw its whole phrase, without which the cap could have been a fixed column trimming every row in the
+game with every claim still green.
+
 ## The strip yields to the map, and the reservation never depends on content
 
 Two separate rules, both learned elsewhere in this HUD:
