@@ -81,6 +81,12 @@ const ROWS: usize = 2;
 /// default a string leaf is replaced on), so the only way a non-default variant reaches the decoder
 /// is for it to be written here. Covering all three end to end is what makes a mis-mapped arm move
 /// the golden.
+/// **THE TWO NON-DEFAULT RANKS, ONE PER COHORT'S BENCH** — see the call site for why these two and
+/// not a cycle through all three: a cohort has exactly one bench, and the default arm of a decoder's
+/// mapping is its catch-all and therefore unreachable by a wrong mapping.
+const BENCHED_SOURCE_PRIORITIES: [SourcePriorityState; 2] =
+    [SourcePriorityState::High, SourcePriorityState::Low];
+
 const EVERY_SOURCE_PRIORITY: [SourcePriorityState; 3] = [
     SourcePriorityState::Normal,
     SourcePriorityState::High,
@@ -1479,6 +1485,15 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         cohort.entity = 100 + i as u64;
         cohort.current_x = i as u32 % GRID_W;
         cohort.current_y = i as u32 % GRID_H;
+        // **THE BENCH'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
+        // labor rows' `EVERY_SOURCE_PRIORITY` closes (see that const). A cohort carries exactly ONE
+        // bench, so with two cohorts the fixture can reach two of the three arms, and these are the
+        // two it must reach: a decoder maps this enum with a `_ =>` catch-all on the DEFAULT (the
+        // shipped `LaborAssignment` mapping is `_ => "normal"`), so a wrong `Normal` arm is
+        // unreachable by construction while a wrong `High` or `Low` decodes silently as `normal`.
+        // The `Normal` arm is covered end-to-end at the codec level by
+        // `core_sim/tests/crafting_wire.rs`, which asserts it off the encoded envelope.
+        cohort.bench.priority = BENCHED_SOURCE_PRIORITIES[i % BENCHED_SOURCE_PRIORITIES.len()];
     }
     for (i, herd) in s.herds.iter_mut().enumerate() {
         herd.x = i as u32 % GRID_W;

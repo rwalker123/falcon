@@ -1463,6 +1463,24 @@ fn settle_pen_feed(
     settled.into_iter().collect()
 }
 
+/// **EVERY PIECE OF A BAND [`advance_labor_allocation`] TOUCHES**, named because the tuple crossed
+/// clippy's complexity bar when the bench joined it.
+///
+/// **The bench is here because the shedding order ranks it beside the rows.** It spends the same pool
+/// `assign_labor` does but is not a [`LaborTarget`], so `normalize` has to be *handed* it rather than
+/// finding it in `assignments`.
+///
+/// The three `Option`s are for one reason: a hand-rolled fixture (and a band spawned before a
+/// component existed) may carry none of them, and an absent component reads as *nothing there* —
+/// no id to link a feed line to, no gear, no bench holding anybody.
+type LaborBandParts = (
+    &'static mut PopulationCohort,
+    &'static mut LaborAllocation,
+    Option<&'static mut BandEquipment>,
+    Option<&'static BandId>,
+    Option<&'static mut BandBench>,
+);
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
@@ -1483,12 +1501,7 @@ pub fn advance_labor_allocation(
     // this pass writes about a *row* carries, so the event dock can offer that band's Work tab
     // ([`band_detail_token`]) — so a band without one still works, gathers and lapses exactly as
     // before and simply publishes rows the dock cannot link.
-    mut cohorts: Query<(
-        &mut PopulationCohort,
-        &mut LaborAllocation,
-        Option<&mut BandEquipment>,
-        Option<&BandId>,
-    )>,
+    mut cohorts: Query<LaborBandParts>,
 ) {
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
     //
@@ -1601,7 +1614,7 @@ pub fn advance_labor_allocation(
     let mut patch_build_claims: BuildEstimateClaims<UVec2> = BuildEstimateClaims::default();
     let mut herd_build_claims: BuildEstimateClaims<String> = BuildEstimateClaims::default();
 
-    for (mut cohort, mut allocation, mut band_equipment, band_id) in cohorts.iter_mut() {
+    for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench) in cohorts.iter_mut() {
         // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
         // line below that reports a row the band did not ask to lose. Copied out of the query up
         // front because the announcements are written from several arms of the loop.
@@ -1695,7 +1708,7 @@ pub fn advance_labor_allocation(
         // destroyed outright can cost a 25-turn build commitment (the queue entry goes with it on
         // the prune below); a row merely cut is the crew the player set moving on its own. Neither
         // may happen quietly.
-        for shed in allocation.normalize(available, shed_facts) {
+        for shed in allocation.normalize(bench.as_deref_mut(), available, shed_facts) {
             announce_shed_crew(&mut event_log, tick.0, faction, band_id, &shed);
         }
         if allocation.assignments.is_empty() {
@@ -4954,7 +4967,14 @@ fn announce_shed_crew(
 ) {
     // A band-wide role (Scout/Warrior) has no source to name and no verb channel of its own; it is
     // reported on the label alone, through the role's own kind where one exists.
-    let (kind, source_label, source_detail) = match &shed.target {
+    //
+    // **The bench is not a `LaborTarget` and is reported as itself** — one band, one bench, so it
+    // needs no id — through the crafting verb's own kind.
+    let Some(target) = shed.subject.row() else {
+        announce_shed_bench(event_log, tick, faction, band, shed);
+        return;
+    };
+    let (kind, source_label, source_detail) = match target {
         LaborTarget::Forage { tile, .. } => (
             CommandEventKind::Forage,
             format!("foragers at ({}, {})", tile.x, tile.y),
@@ -5014,6 +5034,62 @@ fn announce_shed_crew(
         Some(band_detail_token(
             format!(
                 "status={status} reason=too_few_workers {source_detail} workers={workers} lost={}",
+                shed.lost,
+            ),
+            band,
+        )),
+    ));
+}
+
+/// **SAY THE BENCH LOST HANDS** — the crafting arm of [`announce_shed_crew`], split out because its
+/// two readings are not the row's two readings.
+///
+/// # ⛔ `status=stalled` IS A THIRD TOKEN, AND NEITHER EXISTING ONE WOULD HAVE BEEN TRUE
+///
+/// The client ranks a shed line on this token, so it has to be the fact:
+///
+/// - **`trimmed`** means *the crew is smaller than you set and the source is still worked*. A bench
+///   at zero is not being worked at all, so on the last hand that is false.
+/// - **`lapsed`** means *the row is GONE and its investment with it* — and it is ranked ALERT for
+///   exactly that reason. The bench keeps its recipe, its progress, its finished count **and the
+///   materials it had already drawn**; re-staffing resumes rather than restarts. Nothing is
+///   destroyed, so `lapsed` would be false *and* would shout.
+///
+/// A bench that still has hands on it **is** a trim, in the token's own terms, and reuses it — the
+/// third token exists only for the state neither describes.
+///
+/// **`stalled` ranks with `trimmed` (NOTABLE), not with `lapsed` (ALERT)**: it is recoverable by one
+/// command and costs the player nothing they cannot get back. A client that has not learned the token
+/// yet renders it at the quietest rung, which is the wrong direction — so the token is reported to
+/// the client half rather than assumed.
+fn announce_shed_bench(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<BandId>,
+    shed: &ShedCrew,
+) {
+    let (label, status, workers) = if shed.row_survived() {
+        (
+            format!("crafters cut to {} — too few workers", shed.remaining),
+            "trimmed",
+            shed.remaining,
+        )
+    } else {
+        (
+            "the bench stalled — too few workers".to_string(),
+            "stalled",
+            shed.lost,
+        )
+    };
+    event_log.push(CommandEventEntry::new(
+        tick,
+        CommandEventKind::Craft,
+        faction,
+        label,
+        Some(band_detail_token(
+            format!(
+                "status={status} reason=too_few_workers kind=bench workers={workers} lost={}",
                 shed.lost,
             ),
             band,

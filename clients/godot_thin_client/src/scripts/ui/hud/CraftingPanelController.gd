@@ -33,6 +33,13 @@ signal bench_crew_requested(payload: Dictionary)
 ## Take the job off the bench — `clear_bench <faction> <band>`. The crew returns to the idle pool and
 ## the pile already drawn is spent, which is what the button's tooltip names before it is pressed.
 signal clear_bench_requested(payload: Dictionary)
+## Rank the bench against the band's other work — `bench_priority <faction> <band> high|normal|low`
+## (`docs/plan_standing_upkeep.md` §4.9 item 9b). **A SIBLING VERB, not a `work_priority` token**:
+## that grammar reads a lone trailing token as a herd id, so `work_priority … bench low` would be
+## ambiguous with a herd named `bench`. It names the band and nothing else, one bench at a time meaning
+## there is no job argument to disambiguate — and it is legal on an IDLE bench, a rank being a standing
+## statement about the bench rather than about the job on it.
+signal bench_priority_requested(payload: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -175,6 +182,7 @@ func _ensure_panel() -> void:
 	_panel.make_requested.connect(_on_make_requested)
 	_panel.crew_changed.connect(_on_crew_changed)
 	_panel.clear_bench_requested.connect(_on_clear_bench_requested)
+	_panel.bench_priority_requested.connect(_on_bench_priority_requested)
 
 func _on_band_selected(entity: int) -> void:
 	_open_entity = entity
@@ -223,6 +231,19 @@ func _on_clear_bench_requested() -> void:
 	clear_bench_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+	})
+
+## **THE RANK NAMES THE BAND AND THE LEVEL, and nothing else** — one bench at a time, so the verb has
+## no job argument. The level arrives already normalized through `HudWorkVocab.work_priority_of`, so
+## this seam re-spells nothing; it goes out through the same relay the other three verbs do.
+func _on_bench_priority_requested(level: String) -> void:
+	var band := _open_band()
+	if band.is_empty():
+		return
+	bench_priority_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"level": level,
 	})
 
 # ---- lookups ----------------------------------------------------------------

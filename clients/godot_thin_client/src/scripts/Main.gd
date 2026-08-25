@@ -307,6 +307,8 @@ func _ready() -> void:
             hud.connect("bench_crew_requested", Callable(self, "_on_hud_bench_crew"))
         if hud.has_signal("clear_bench_requested") and not hud.is_connected("clear_bench_requested", Callable(self, "_on_hud_clear_bench")):
             hud.connect("clear_bench_requested", Callable(self, "_on_hud_clear_bench"))
+        if hud.has_signal("bench_priority_requested") and not hud.is_connected("bench_priority_requested", Callable(self, "_on_hud_bench_priority")):
+            hud.connect("bench_priority_requested", Callable(self, "_on_hud_bench_priority"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
@@ -1540,6 +1542,33 @@ static func format_bench_crew(payload: Dictionary) -> Dictionary:
         "message": "Put %d crafter%s on the bench." % [workers, "" if workers == 1 else "s"],
     }
 
+## **`bench_priority <faction_id> <band_id> high|normal|low` — THE PLAYER'S OWN RANK ON THE BENCH**
+## (`docs/plan_standing_upkeep.md` §4.9 item 9b), emitted by the crafting panel's bench picker.
+##
+## **IT IS A SIBLING VERB OF `work_priority`, NOT A TOKEN OF IT.** `work_priority`'s grammar reads a
+## lone trailing token as a herd id, so `work_priority <f> <b> bench low` would be ambiguous with a
+## herd named `bench`. The two share the three VALUE tokens and nothing else — which is what lets one
+## picker serve both, echoing back the word the decoder handed it.
+##
+## **IT NAMES THE BAND AND NOTHING ELSE**, one bench at a time meaning there is no job argument to
+## disambiguate — the same shape `clear_bench` takes, and for the same reason. It is legal on an IDLE
+## bench: a rank is a standing statement about the bench rather than about the job on it.
+static func format_bench_priority(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var level := String(payload.get("level", "")).strip_edges().to_lower()
+    if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    # The FEED reads the level the way the picker's own face spells it, so the echo and the button the
+    # player pressed carry one word between them — `format_work_priority`'s rule, one verb over.
+    var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
+    return {
+        "line": "bench_priority %d %d %s" % [faction, band_id, level],
+        "message": "The bench is now %s priority for this band." % face.to_lower(),
+    }
+
 ## **RETIRED — `abandon_improvement` and its builder** (`docs/plan_standing_upkeep.md` §2.4). It
 ## existed to clear an assignment's STORED improvement, back when that field was the commitment; the
 ## build verb is DERIVED from the meter now, so there is no stored authority left to clear and a
@@ -1711,6 +1740,11 @@ func _on_hud_bench_crew(payload: Dictionary) -> void:
 ## pressed.
 func _on_hud_clear_bench(payload: Dictionary) -> void:
     _send_formatted_command(format_clear_bench(payload))
+
+## Rank the bench against the band's other work. **No optimistic write, so nothing to roll back** —
+## the mark is captured live off the bench and lands on this command's own recapture.
+func _on_hud_bench_priority(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_priority(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

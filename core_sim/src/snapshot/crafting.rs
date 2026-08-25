@@ -29,10 +29,11 @@ use sim_runtime::{
     BenchState, CharacteristicBandState, CharacteristicReadingState, CraftKnowledgeState,
     CraftOfferState, DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
     MaterialShortfallState, RecipeDefState, RecipeInputState, RecipeOutputState,
+    SourcePriorityState,
 };
 
 use crate::{
-    components::{BandBench, BandEquipment, LocalStore},
+    components::{BandBench, BandEquipment, LocalStore, SourcePriority},
     crafting::{craft_discovery_id, title_from_id},
     equipment_config::{EquipmentConfig, EquipmentStat, WearQuantum},
     intensification::knows,
@@ -285,6 +286,17 @@ fn material_batches(store: &LocalStore, materials: &MaterialsConfig) -> Vec<Mate
 /// draw, and the client does not render it as blocking.
 const NOTHING_SHORT_STOPS_A_DRAWN_PILE: &[MaterialShortfallState] = &[];
 
+/// **THE BENCH'S RANK, IN THE WIRE'S SPELLING** — the same mapping a labor row's takes
+/// (`snapshot::population`), mapped rather than cast because the wire puts the **default** at `0`
+/// while the shedding order runs `Low` → `Normal` → `High`.
+fn published_bench_priority(priority: SourcePriority) -> SourcePriorityState {
+    match priority {
+        SourcePriority::Normal => SourcePriorityState::Normal,
+        SourcePriority::High => SourcePriorityState::High,
+        SourcePriority::Low => SourcePriorityState::Low,
+    }
+}
+
 /// **What is on the bench, and why it is not moving.**
 ///
 /// An idle bench publishes an all-default row rather than nothing, because *"idle"* and *"blocked"*
@@ -302,8 +314,16 @@ fn bench_state(
     let Some(bench) = bench else {
         return BenchState::default();
     };
+    // **THE RANK IS A PROPERTY OF THE BENCH, NOT OF THE JOB ON IT**, so an idle bench publishes the
+    // mark it carries rather than the default. `bench_priority` is settable with nothing on the
+    // bench — that is the moment a player is most likely to state it — and a row that dropped the
+    // mark here would make the control look like it had done nothing.
+    let published_priority = published_bench_priority(bench.priority);
     let Some(recipe_id) = bench.recipe_id.as_deref() else {
-        return BenchState::default();
+        return BenchState {
+            priority: published_priority,
+            ..BenchState::default()
+        };
     };
     let Some(plan) = inputs.plans.iter().find(|plan| plan.id == recipe_id) else {
         // A recipe the book no longer carries — reachable only through a config edit under a running
@@ -314,6 +334,7 @@ fn bench_state(
             workers: bench.workers,
             blocked_reason: format!("Recipe '{recipe_id}' is not in the book"),
             blocked_severity: SEVERITY_DANGER.to_string(),
+            priority: published_priority,
             ..BenchState::default()
         };
     };
@@ -350,6 +371,8 @@ fn bench_state(
         }
     }
     BenchState {
+        // Appended last, and read live off the bench — see [`published_bench_priority`].
+        priority: published_priority,
         recipe_id: recipe_id.to_string(),
         display_name: plan.recipe.display_name.clone(),
         workers: bench.workers,

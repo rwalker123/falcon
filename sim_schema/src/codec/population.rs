@@ -497,6 +497,15 @@ fn create_populations<'a>(
                         ratePerTurn: cohort.bench.rate_per_turn,
                         drawnInputs: Some(drawn_inputs),
                         blockedSeverity: Some(blocked_severity),
+                        // **THE PLAYER'S OWN RANK ON THE BENCH** — the same mapping the labor row's
+                        // takes, and mapped rather than cast for the same reason: the wire puts the
+                        // DEFAULT at `0` while the shedding order runs Low → Normal → High.
+                        // Appended last.
+                        priority: match cohort.bench.priority {
+                            SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                            SourcePriorityState::High => fb::SourcePriority::High,
+                            SourcePriorityState::Low => fb::SourcePriority::Low,
+                        },
                     },
                 )
             };

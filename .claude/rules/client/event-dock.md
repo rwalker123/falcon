@@ -174,12 +174,13 @@ the style entry** rather than in a table beside it: two tables would be two memb
 added to one and forgotten in the other renders a row wearing the loss accent at its kind's own rung
 — which looks perfectly right in any frame and is invisible at the player's floor.
 
-| token | rung | why |
-|---|---|---|
-| `status=feral` | Alert | a rung has reverted; the investment is gone |
-| `status=lapsed` | Alert | the labor row was destroyed outright and its queued build went with it |
-| `status=trimmed` | Notable | the source is still worked, by fewer hands than the player set |
-| `status=pruned` | Notable | the crew still stands there; what it TAKES was narrowed |
+| token | rung | mark | why |
+|---|---|---|---|
+| `status=feral` | Alert | `⚠` | a rung has reverted; the investment is gone |
+| `status=lapsed` | Alert | `⚠` | the labor row was destroyed outright and its queued build went with it |
+| `status=trimmed` | Notable | `▾` | the source is still worked, by fewer hands than the player set |
+| `status=pruned` | Notable | `▾` | the crew still stands there; what it TAKES was narrowed |
+| `status=stalled` | Notable | `▾` | the crafting bench lost its LAST hand; the job stops and keeps everything |
 
 **Notable is the ladder's own answer for a crew that was merely cut.** Routine is *"bracket
 transitions, and receipts for things the player asked for"*, and a cut crew is the opposite of a
@@ -193,10 +194,71 @@ HEAD-COUNT"), and a shed crew is a consequence of one.
 announce_shed_crew` announced a band going 6 → 3 to nobody on default settings, which reads from the
 player's side as the number they had just set moving on its own.
 
+### `stalled` is a THIRD Notable token, because neither existing one was true
+
+The crafting bench joined the shedding order, and a short band that takes its **last** hand stops the
+job — the recipe, the progress, the finished count and the **materials already drawn** all stay, and
+re-staffing resumes where it left off. `systems::labor::announce_shed_bench` needed a token neither
+existing one could carry:
+
+- **`trimmed` says *the crew is smaller and the source is still worked*.** A bench at zero is not
+  worked, so on the last hand that is false.
+- **`lapsed` says *the row is GONE and its investment with it*, and is ranked ALERT for exactly that
+  reason.** Nothing here is destroyed, so it would be false **and** would shout — about a state one
+  command undoes.
+
+So `stalled` ranks with `trimmed`: **Notable, `▾`, `WARN`**. That is the invariant above doing its
+job rather than a second decision — the rung was chosen on the ladder's own words and the mark
+followed from it.
+
+**A bench that still has hands on it IS a `trimmed`**, in that token's own terms, and reuses it with
+`kind=bench`. The third token exists only for the state neither describes, and the harness stages
+both bench lines so the new one cannot quietly become every bench row.
+
+⛔ **IT NEEDED A `DETAIL_STATUS_STYLE` ROW AT ALL BECAUSE `craft` IS NOT IN `RUNG_BY_KIND`** — so it
+takes `DEFAULT_RUNG` (`RUNG_ROUTINE`), under the dock's own `DEFAULT_DETAIL_LEVEL`. Without the row a
+craft crew disappearing announces itself to nobody, which is precisely the defect the `trimmed` /
+`pruned` split was added to close one web over. **It also takes a `DETAIL_STATUS_WORK_LINK` row**: the
+sim changed a labor row unasked, the bench is staffed from the Work tab like any other crew, and
+`announce_shed_bench` writes the `band=` the jump needs.
+
+### ⛔ THE GLYPH TRACKS THE RUNG, or the split is filter-only and unreadable
+
+All four tokens wore `⚠` for a release. The rungs above were **right the whole time** and did real
+work in filtering — and were **invisible on the line**, because two rows at two different rungs drew
+the same mark in the same amber. Reported from play as *"losing hunts and scouts is an alert but
+foragers are notable"*, which is not the rule at all: the rule is **trimmed-vs-lapsed**, and it only
+LOOKS like a kind split because a scout usually stands one or two hands and lapses on the first shed,
+where a forage row trims several times first. A player who cannot see the rule infers an arbitrary one.
+
+So the mark is the **rung's**, not the status's, and both consts are named for their rungs
+(`HudEventVocab.STATUS_SHED_GLYPH` / `STATUS_REDUCED_GLYPH`):
+
+- **`⚠` is exclusive to the ALERT pair** — and to `RUNG_ALERT`'s own ladder style and the ALERT-rung
+  `hunt_danger` accent, which are the only other `⚠` in this file. It means *something is wrong*
+  everywhere else in this HUD; a mark that also rides a routine crew cut means nothing anywhere.
+- **`▾` is the NOTABLE pair's** — one mark for both, because they are **one class**: a trim cuts the
+  hands, a prune narrows what the hands still there take, two mechanisms and one sentence to the
+  player (*you asked for more than you are getting*). A per-status pictogram would put the glyph back
+  to tracking the MECHANISM, which is the thing this rule exists to stop.
+
+**THE COLOUR DOES NOT MOVE, AND THAT IS HALF THE DECISION.** Both pairs stay `HudStyle.WARN`. The
+glyph carries the rung; the amber carries *this is not good news* — a trim is still unwelcome and
+still the player's to reverse, so demoting it would have traded an over-loud row for an invisible one,
+which is the defect this dock was built to close (see "The two Notable tokens were silent" above).
+
+**NOTHING ELSE MOVED**: no rung, no `RUNG_ORDER`, no `DETAIL_FLOOR`, no `DETAIL_STATUS_WORK_LINK`, no
+filtering. It is a render fix for a ladder that was already correct.
+
+**A status added later at `RUNG_NOTABLE` wearing `⚠` is the defect again**, and
+`chapters/event_dock.gd` asserts the iff over the whole table rather than over the four tokens it
+stages — a row-level claim would pass on exactly that addition.
+
 ### A cut row offers the way to what it cut
 
-A row whose `status=` token is in `DETAIL_STATUS_WORK_LINK` (`trimmed`, `lapsed`, `pruned` — a labor
-row the sim changed unasked; **not** `feral`, which changes a source and leaves the work board alone)
+A row whose `status=` token is in `DETAIL_STATUS_WORK_LINK` (`trimmed`, `lapsed`, `pruned`,
+`stalled` — a labor row the sim changed unasked; **not** `feral`, which changes a source and leaves
+the work board alone)
 draws a `Work tab` link and emits `band_work_tab_requested(band_id)`. It is the dock's **first and
 only per-row signal**; every other one it publishes is about the strip.
 

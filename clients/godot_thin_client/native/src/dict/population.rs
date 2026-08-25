@@ -1077,6 +1077,31 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "drawn_inputs",
         &drawn_inputs_to_array(cohort.bench().and_then(|b| b.drawnInputs())),
     );
+    // **WHAT THE BAND GIVES UP FIRST WHEN IT CANNOT COVER EVERYTHING IT HOLDS** — the mark
+    // `bench_priority <faction> <band> high|normal|low` sets, the SAME `SourcePriority` a worked row
+    // carries on `labor_assignments[].priority` and inserted the same way: the LOWERCASE WORD, never
+    // the wire ordinal.
+    //
+    // ⛔ **THE ORDINALS ARE NOT THE SHEDDING ORDER.** `Normal` is `0` so the default costs no bytes;
+    // the band sheds Low, then Normal, then High. The number never leaves this function, so GDScript
+    // is handed a word it cannot sort on and paint that untruth with.
+    //
+    // **`bench_priority` IS A SIBLING VERB, NOT A `work_priority` TOKEN**: `work_priority`'s grammar
+    // reads a lone trailing token as a herd id, so `work_priority … bench low` would be ambiguous
+    // with a herd named `bench`. The three VALUE tokens ARE shared with `work_priority`, so one
+    // picker echoes back what it was shown.
+    //
+    // Always inserted — `"normal"` on an unmarked bench, on an IDLE bench (empty `recipe_id`) and on
+    // a band with no bench at all — so the entry shape is stable and the control renders on an idle
+    // bench, which is exactly when a player says *"the axes go first"*.
+    let _ = bench_dict.insert(
+        "priority",
+        match cohort.bench().map(|b| b.priority()) {
+            Some(fb::SourcePriority::High) => "high",
+            Some(fb::SourcePriority::Low) => "low",
+            _ => "normal",
+        },
+    );
     let _ = dict.insert("bench", &bench_dict);
 
     // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than

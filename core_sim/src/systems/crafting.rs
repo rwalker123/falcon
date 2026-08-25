@@ -280,7 +280,16 @@ pub fn advance_crafting(
         let tiers = bench_tiers(material, &materials, &equipment, &wear);
         let faction = cohort.faction;
 
-        if bench.drawn.is_none() {
+        // ⛔ **AN UNSTAFFED BENCH DRAWS NOTHING.** The draw runs *before* the workers term is used,
+        // so a bench at zero crew would keep withdrawing materials for a pass it can never work — a
+        // famine quietly draining the material store into an idle bench. The crew can now reach zero
+        // without the job ending (`LaborAllocation::normalize` stalls a bench rather than clearing
+        // it), so this is a state the sim reaches and not a defensive check.
+        //
+        // **It gates the DRAW, not the pile.** A bench that had already drawn keeps what it cut —
+        // the materials are the player's and the job is still theirs — and simply banks no progress,
+        // which falls out of `rate_per_turn(0, …)` on its own.
+        if bench.drawn.is_none() && bench.workers > AN_IDLE_BENCH {
             bench.drawn = draw_pass(&mut cohort.stores, recipe, &tiers, &materials);
         }
         // Nothing drawn ⇒ nothing to work on. Not a branch on "can this be crafted": the pile is
@@ -344,6 +353,10 @@ pub fn advance_crafting(
         bench.drawn = draw_pass(&mut cohort.stores, recipe, &tiers, &materials);
     }
 }
+
+/// **NOBODY AT THE BENCH** — the crew below which it may not draw. Named rather than a bare `0`
+/// because the test is *"is anyone working this job"* and not a comparison with a magnitude.
+const AN_IDLE_BENCH: u32 = 0;
 
 /// **The grade, fixed here and never again.** The `characteristic_bands` rung `min(drawn reading,
 /// tool ceiling)` falls in — excellent flax with no loom still makes a `good` basket, because the

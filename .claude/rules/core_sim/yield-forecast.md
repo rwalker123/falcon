@@ -912,7 +912,8 @@ is positional.
 | 2 | a **warrior**, if nothing threatens the band | |
 | 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
 | 4 | a **builder**, while more than one remains and something is queued | |
-| 5 | **thin the least-productive worked source that has two or more hands** — "least productive" is the three-level test below, passing over a source still accruing knowledge while another candidate exists | *Output falls, nothing ends* |
+| 5 | **thin the least-productive worked source that has two or more hands — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge | *Output falls, nothing ends* |
+| 5b | **the crafting bench's LAST hand** — the job stalls, keeping its recipe, its progress and the pile it drew | |
 | 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
 | 8 | a **keeper below the demand** — improvements begin to rot | |
@@ -946,7 +947,7 @@ hand is shed:
 |---|---|
 | `threatened` | the **same trigger** `advance_predator_raids` fires on — a carnivore with `aggression > 0` inside `predators.raid_radius`. That pass runs straight after this one off the same herd positions, so a band the pack reaches this turn keeps its guard. A band whose tile will not resolve reads **threatened**: the guard is the reading that costs people when it is wrong |
 | `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make |
-| `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one |
+| `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one. **Step 5 alone reads it, and reads it as a LEVEL** (below) |
 | `improved` | `patch_at_risk_cost` / `herd_at_risk_cost` above `RUNG_UNSTARTED` — work on the ladder, finished or in flight |
 
 `banking` and the keeping gear are therefore resolved **twice** per band: once here against the
@@ -954,16 +955,58 @@ pre-shed allocation, and once below against what survived, which is the reading 
 band whose builders row was emptied funds no head at all, and the split must not fund one it no
 longer has the hands to bank.
 
-**"Least productive" is THREE levels, and the top one is the player's own.**
+**"Least productive" is FOUR levels at step 5 and THREE everywhere else, and the top one is the
+player's own.**
 
 1. **The row's `SourcePriority`** — `Low`, then `Normal`, then `High` (the variant order *is* this
    order, and the derived `Ord` is what reads it). See "The player's rank on a worked row" below.
-2. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
+2. **Is this row still accruing knowledge** — a learner ranks **last**, so it is passed over while
+   any other candidate exists. **Step 5 only**: the four steps that *empty* a row
+   (`least_productive_row`) hand a constant here and are bit-identical to the three-level order they
+   have always had. See the callout below.
+3. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
    the same retained `SourceYield`). A row paying nothing ranks below one that pays something, so it
    is shed first.
-3. **Then `last_yields[i].realized ÷ crew`** — the row's own published headline yield, the number the
+4. **Then `last_yields[i].realized ÷ crew`** — the row's own published headline yield, the number the
    band panel and the map annotation state, divided by the hands on it. Ties go to the earliest row,
    so the choice is stable.
+
+> #### ⛔ THE LESSON SKIP IS A LEVEL, NOT A FILTER — AND AS A FILTER IT SILENCED A `Low` MARK
+>
+> Step 5 used to *exclude* a learning row from its candidate set and fall back to the unfiltered call
+> only when **every** thinnable row was learning:
+>
+> ```rust
+> least_productive_row(|i, a| thinnable(a) && !facts.source(i).accruing_knowledge)
+>     .or_else(|| least_productive_row(|_, a| thinnable(a)))
+> ```
+>
+> So a learner was struck out **before** `SourcePriority` was ever read. Reported from play: a band
+> with three Forage rows (one `High`, two unmarked) and a **`Low`-marked five-hand hunt that was
+> still learning** thinned both unmarked Forage rows `2 → 1` and left the marked row untouched. The
+> `High` mark worked; the `Low` mark did nothing at all.
+>
+> **It is not a regression the rank introduced** — the hunt also carried the lowest yield per worker
+> on the board (`0.054` a head against `0.15`–`0.165`), so the filter had always been able to protect
+> the least productive row. What changed is that the player has now *said something* about that row,
+> which is what makes the old behaviour read as broken.
+>
+> **The fix is 9b's own stated shape**: an explicit rank on top, the shipped ordering surviving as
+> the tie-break beneath it. The knowledge skip is part of the shipped ordering, so it belongs below
+> the mark — `least_productive_row_passing_over_lessons`, which is step 5's entry point and nobody
+> else's.
+>
+> **At equal priority it is bit-identical to the filter**, which is the claim that made this a
+> refactor rather than a retune: among candidates of one rank the minimum is the
+> `(pays, yield, earliest)`-minimum of the **non-learners**, exactly what the filtered call returned;
+> with no non-learners it is that minimum over all of them, exactly what the fallback returned.
+> **The `or_else` is therefore gone rather than kept.** A filter that excludes every candidate
+> returns `None`; a level that is constant across every candidate returns what the next level would.
+> The only `None` left is *"`admits` named nothing"*, which the fallback could not fix either.
+>
+> **A level that leaked into steps 6, 9, 10 or the terminal would be a worse defect than the one it
+> fixed** — by then the question is *which row ends*, and a lesson is not a reason to end a different
+> one. `the_lesson_level_does_not_reach_the_steps_that_empty_a_row` pins it.
 
 It is the retained telemetry rather than a fresh derivation: this pass runs before the take, so it is
 the only yield reading that exists, and a second source here would order the shedding on a number the
@@ -988,7 +1031,10 @@ player has never been shown.
 >
 > **The rank above them is the same kind of thing and carries the same ban.** It is a lexicographic
 > level, never a weight: multiplying or summing a stated preference with a food rate invents an
-> exchange rate between two things even less comparable than two accounts.
+> exchange rate between two things even less comparable than two accounts. So is the lesson level
+> between them — *"is there a lesson here to lose"* is a `bool` for the same reason *"does this row
+> pay"* is, and pricing a part-earned discovery against a food rate would be the same invention
+> again.
 >
 > The three accounts are asked in their own published terms, because that is what `SourceYield`
 > carries: `realized` for food (the forward projection, so a big-game hunt on a wait turn still reads
@@ -1048,7 +1094,12 @@ and says nothing about priority.
   and reads like a bug.
 - `LastHand` still takes the band's last worker off its last row whatever it is marked.
 - With every row at the default the level is **constant**, so the comparison collapses to exactly the
-  two it had before. That is what makes an explicit rank a rule that fires only on a deliberate pick.
+  order it had before. That is what makes an explicit rank a rule that fires only on a deliberate pick.
+- **And nothing above it may exclude a row before it is read.** Step 5's knowledge skip used to be an
+  eligibility filter wrapping the comparator, which struck a learning row out before the mark was
+  seen and made a `Low` mark on such a row do nothing at all — see the callout on the levels above.
+  A term that decides *which rows are candidates* sits above the rank by construction, so anything
+  that is really part of the shipped **ordering** has to be a level beneath it instead.
 
 **It is intent, so it is inside `LaborAllocation`'s hand-written `PartialEq`** (it rides
 `assignments`), unlike `last_yields` and `last_pen_feed_upkeep`, which are derived telemetry and are
@@ -1067,17 +1118,97 @@ into the other.
 **by name** (`upkeep_mode`'s rule) — a mistyped rank must not silently land on the default, which is
 the one value that would look like it worked.
 
-### `normalize` and the commands measure different pools
+### `normalize` and the commands now measure the same pool
 
-`normalize` bounds on `available_workers(cohort.working)` — the **raw** pool. Every command clamps
-against `BandWorkforce::assignable()`, which is `pool − benched`. So the shedding pass tolerates an
-allocation that spends the bench's hands twice.
+**The invariant the walk drives is `Σ assignments.workers + bench.workers ≤ available_workers(cohort.working)`** —
+the band's whole working-age head-count on the right, with nothing netted out of it, and both of the
+places its people go on the left. Equivalently: the walk runs until `BandWorkforce::idle()` is zero.
 
-Nothing reaches that state today: `set_bench` clamps on `benchable()` (`pool − assigned`), so
-`assigned + benched ≤ pool` holds from the command side and `normalize`'s looser bound is never the
-binding one. It is recorded because the two passes nonetheless disagree about what a band's spendable
-pool *is*, and `BandWorkforce::assignable`'s own doc comment claims the type is the single authority
-over that number.
+It used to be `assigned_total() > available` with the bench nowhere in the expression, which was two
+defects in one line. The bench was **invisible to the shed** (see the section below), and because
+`available` was already the raw pool while every command clamps against `assignable()` (`pool −
+benched`), an allocation that spent the bench's hands twice was *tolerated* rather than corrected.
+The two passes disagreed about what a band's spendable pool is, against `BandWorkforce`'s own claim
+to be the single authority over that number. One term closes both.
+
+### The crafting bench is a candidate in the walk
+
+`BandBench` spends the same pool `assign_labor` does, but it is **not** a `LaborTarget` and not a row
+in `assignments` — *"make IS the assignment"*, and a bench is not an in-range source, so giving it a
+target would put a fictitious row on every yield readout in the game. `normalize` walks
+`assignments`, so the bench was invisible to it: **a starving band stripped every worked row, every
+standing role and its last builder while the crafters kept hammering.**
+
+`normalize` therefore takes `Option<&mut BandBench>`, and `ShedCrew` reports a `ShedSubject`
+(`Row(LaborTarget)` | `Bench`) rather than a bare target. An absent bench contributes nothing and is
+never a candidate, so a band without one walks exactly the order it always did.
+
+**It is ranked in step 5, and it is NOT given a step of its own above or below the rows.** A step
+boundary sits **above** the player's rank by construction, so a bench in its own step would be
+protected from — or sacrificed to — a marked row purely by step order. That is the defect the lesson
+level was repaired for, one arc earlier, in a different costume. Its four levels
+(`ShedRank::of_bench`):
+
+| level | the bench's reading | why |
+|---|---|---|
+| priority | its own mark (`BandBench::priority`) | set by `bench_priority`; the outermost level, as for a row |
+| lesson | `NO_LESSON_AT_STAKE` | **a decision, argued below** |
+| `pays_any_account` | `false` | a craft pays into no food, fodder or material account. It *consumes* materials and produces items, and items are not one of the three accounts the shed can read |
+| `yield_per_worker` | `0` | there is no per-worker take to read |
+
+So an **unmarked bench is thinned before any paying row**. That is the right default in a famine and
+is exactly what the mark exists to override. A tie on all four levels goes to the **row**, a stated
+order rather than one depending on which candidate was examined first — the same reason ties between
+rows go to the earliest row.
+
+> #### ⛔ THE BENCH IS NOT A LEARNER, AND THAT IS ARGUED RATHER THAN DEFAULTED
+>
+> A craft *does* charge a lesson per finished item (`credit_craft_lesson`), so thinning the bench
+> genuinely costs knowledge — which looks like the source rows' `accruing_knowledge` case. It is not.
+>
+> The lesson level exists because **a source's lesson is invisible to the yield figure the choice is
+> otherwise made on**. The bench has no yield figure at all: it already ranks bottom on both account
+> levels, so its "invisible value" is fully expressed. Marking it a learner would lift it **above
+> every non-learning row, including the food rows** — a famine band would strip its own larder to
+> protect a craft that happened to be teaching something. The term would not add the missing
+> information; it would invert the one thing the bench's other two levels get right.
+
+**Step 5b takes the bench's LAST hand and the job stalls.** Numbered `5b` rather than renumbering six
+steps and forty-odd references to them — the repo's own `4.7a` / `9b` convention for a late
+insertion, and `ShedStep`'s **order** is the authority anyway. It sits above step 6 because a stalled
+craft **ends nothing**, where emptying a source drops the row and takes its queued build with it.
+
+**A `High` bench therefore stalls before a `Low` source is emptied, and that is intended.** It is the
+same rule already pinned for rows, where an unimproved `High` row is emptied at step 6 before an
+improved `Normal` one is a candidate at step 9. **The steps encode consequence; the mark orders
+candidates within a step.**
+
+> #### ⛔ THE SHED MUST NEVER CALL `clear_job`
+>
+> `BandBench::clear_job` is `*self = Self::default()`, which **forfeits the drawn pile** — the
+> materials are dropped, not returned to the store. The shed uses `shed_one_worker`, which takes one
+> hand and leaves the recipe, the progress, the finished count, the last grade and the drawn pile
+> standing, so re-staffing **resumes** rather than restarts. That is also the crafting system's own
+> shipped answer to a pass it cannot advance: *"the player chose this job, and silently emptying
+> their bench is a worse answer than a job that makes no progress."*
+
+**`status=stalled` is a third token on the shed feed line, and neither existing one would have been
+true.** `trimmed` means *the crew is smaller than you set and the source is still worked*, which a
+bench at zero is not; `lapsed` means *the row is GONE and its investment with it*, and is ranked ALERT
+for that reason — the bench keeps everything, so `lapsed` would be false *and* would shout. A bench
+that still has hands on it **is** a trim in the token's own terms and reuses it. `stalled` ranks with
+`trimmed` (NOTABLE), not with `lapsed`: it is recoverable by one command and costs nothing that
+cannot be got back.
+
+**A zero-crew bench draws nothing** (`systems::crafting`, gated on `AN_IDLE_BENCH`). `advance_crafting`
+runs its draw *before* the workers term is used anywhere, so an idle bench would keep withdrawing a
+pass's inputs every turn — a famine quietly draining the material store into a bench nobody is at.
+The gate is on the **draw**, not the pile: a bench that had already cut its materials keeps them and
+simply banks no progress, which falls out of `rate_per_turn(0, …)` on its own. This state did not
+exist before the shed could take a crew to zero without ending the job.
+
+`core_sim/tests/bench_shed.rs` drives the whole of it through a real turn; the unit half is in
+`components.rs`'s own tests, and the draw gate is pinned in `core_sim/tests/crafting.rs`.
 
 ### The pool `normalize` reads is not the pool the player composed against
 

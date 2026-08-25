@@ -1210,7 +1210,10 @@ const WORK_ROW_PRIORITY_PREFIXES := {
 ## the consumers it governs would have to grow every time another scarcity handler learns to read it.
 const WORK_PRIORITY_HINT := "When something runs short, the band spends it on high priority first."
 
-## The inspector strip's fourth inline link, between `Change policy` and `Unassign`.
+## The inspector strip's fourth inline link, between `Change policy` and `Unassign` — and the face the
+## CRAFTING panel's bench link wears too, read back as `HudWorkVocab.WORK_INSPECT_PRIORITY`. One word
+## for one control kind: the two links open the same `build_work_priority_picker`, and a second
+## spelling in `hud_crafting_vocab.gd` would be free to drift from this one.
 const WORK_INSPECT_PRIORITY := "Priority"
 
 ## The stable handle on ONE picker button, valued the LEVEL it would send — `POLICY_RUNG_META`'s twin

@@ -842,7 +842,7 @@ fn assignment_sum_clamps_to_working_age() {
     // Normalize down when working-age shrinks below the assigned total.
     alloc.set_assignment(LaborTarget::Warrior, 2, 4, None);
     assert_eq!(alloc.assigned_total(), 4);
-    let shed = alloc.normalize(3, ShedFacts::default());
+    let shed = alloc.normalize(None, 3, ShedFacts::default());
     assert!(
         alloc.assigned_total() <= 3,
         "normalize should trim Σ workers to the new working-age ceiling"
@@ -853,8 +853,8 @@ fn assignment_sum_clamps_to_working_age() {
         "trimming 4 → 3 shrinks one row, and a shrink is reported like any other shed"
     );
     assert_eq!(
-        shed[0].target,
-        LaborTarget::Scout,
+        shed[0].subject,
+        core_sim::ShedSubject::Row(LaborTarget::Scout),
         "the scout is step 1 of the shedding order; the warrior standing beside it is step 2"
     );
     assert!(

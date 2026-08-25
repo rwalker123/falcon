@@ -281,6 +281,19 @@ pub enum CommandPayload {
         band_id: u64,
         workers: u32,
     },
+    /// **MARK ONE BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `high` | `normal` | `low`,
+    /// the same [`CommandPayload::WorkPriority`] sets on a worked row.
+    ///
+    /// **The bench's own verb, not a `work_priority` token.** Every other bench command is addressed
+    /// `<faction> <band>` with no source, and `work_priority`'s grammar reads a bare single token as
+    /// a **herd id** — so `work_priority <f> <b> bench low` would be ambiguous with a herd named
+    /// `bench`. A sibling verb has no ambiguity to resolve and matches the family it joins.
+    BenchPriority {
+        faction_id: u32,
+        band_id: u64,
+        /// The level token: `"high"`, `"normal"` or `"low"`.
+        level: String,
+    },
     /// The Telling: answer a pending narrative fork with one of its authored choices.
     AnswerFork {
         faction_id: u32,
@@ -1260,6 +1273,15 @@ impl CommandEnvelope {
                 band_id: *band_id,
                 workers: *workers,
             }),
+            CommandPayload::BenchPriority {
+                faction_id,
+                band_id,
+                level,
+            } => pb::command_envelope::Command::BenchPriority(pb::BenchPriorityCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                level: level.clone(),
+            }),
             CommandPayload::Corral {
                 faction_id,
                 target_x,
@@ -1720,6 +1742,11 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
                 workers: cmd.workers,
+            },
+            pb::command_envelope::Command::BenchPriority(cmd) => CommandPayload::BenchPriority {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                level: cmd.level,
             },
             pb::command_envelope::Command::ExtendPen(cmd) => CommandPayload::ExtendPen {
                 faction_id: cmd.faction_id,

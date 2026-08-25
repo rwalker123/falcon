@@ -2025,10 +2025,44 @@ impl LaborAssignment {
 /// **still in the allocation** — handing back a copy of a live row would put a second, instantly
 /// stale reading of its crew in the caller's hands, and the caller's one job is to name the crew
 /// this pass left.
+/// **WHAT A SHED TOOK HANDS OFF** — a labor row, or the band's crafting bench.
+///
+/// **The bench is deliberately NOT a [`LaborTarget`]** (*"make IS the assignment"*): giving it one
+/// would put a fictitious row on every yield readout in the game. But it spends the same pool the
+/// rows do, so the shedding order has to be able to name it — hence a second vocabulary here, at the
+/// one seam that reports what the walk took, rather than a variant inside the labor targets.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShedSubject {
+    /// A source or a band-wide standing role.
+    Row(LaborTarget),
+    /// The band's crafting bench. It carries no id because a band has exactly one.
+    Bench,
+}
+
+impl ShedSubject {
+    /// Whether two subjects name the same thing — the dedup [`LaborAllocation::normalize`] does so
+    /// three hands off one crew read as one loss rather than three.
+    pub fn same_subject(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ShedSubject::Row(left), ShedSubject::Row(right)) => left.same_source(right),
+            (ShedSubject::Bench, ShedSubject::Bench) => true,
+            _ => false,
+        }
+    }
+
+    /// The labor target this subject names, or `None` for the bench.
+    pub fn row(&self) -> Option<&LaborTarget> {
+        match self {
+            ShedSubject::Row(target) => Some(target),
+            ShedSubject::Bench => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShedCrew {
-    /// The source or role the hands came off.
-    pub target: LaborTarget,
+    /// The source, role or bench the hands came off.
+    pub subject: ShedSubject,
     /// How many workers this pass took — the whole crew, on a row it dropped outright.
     pub lost: u32,
     /// What is still staffed there, [`NO_CREW_ON_THIS_ACTIVITY`] when the row did not survive.
@@ -2036,8 +2070,13 @@ pub struct ShedCrew {
 }
 
 impl ShedCrew {
-    /// **Did the row survive with a crew on it?** — the one test that decides which of the two feed
-    /// lines this shed gets, named so neither caller re-spells the comparison.
+    /// **Did the crew survive with a hand on it?** — the one test that decides which feed line this
+    /// shed gets, named so neither caller re-spells the comparison.
+    ///
+    /// **Its two readings differ by subject, and the caller must not collapse them.** A row at zero
+    /// is **gone**, its queue entry with it; a bench at zero is **stalled** — the recipe, the
+    /// progress and the drawn pile all stand, and re-staffing resumes. Nothing is destroyed, so the
+    /// two states cannot share a status token.
     pub fn row_survived(&self) -> bool {
         self.remaining > NO_CREW_ON_THIS_ACTIVITY
     }
@@ -2051,6 +2090,19 @@ const NO_SPARE_KEEPERS: u32 = 0;
 /// **THE SMALLEST CREW A ROW CAN BE THINNED FROM.** Step 5 never empties a row, so a row of one has
 /// nothing it can give: taking that hand is step 6 or lower, where *something ends*.
 const SMALLEST_THINNABLE_CREW: u32 = 2;
+
+/// **THE HAND ONE PASS OF THE SHEDDING WALK TAKES.** The walk re-runs after every hand, because the
+/// picture changes with each one, so every step takes exactly this many — named at the one site that
+/// spells it as a subtraction rather than as a loop bound.
+const ONE_WORKER: u32 = 1;
+
+/// **NO LESSON IS AT STAKE ON THIS ROW** — the reading every step but the fifth hands
+/// [`LaborAllocation::least_productive_row_ordered_by`], which makes that level constant and the
+/// comparison exactly the four-level one those steps have always had.
+///
+/// Named rather than a bare `false` at the call site because the literal there would read as *"this
+/// row is not learning"* — a claim about the row — when what it says is *"this step does not ask"*.
+const NO_LESSON_AT_STAKE: bool = false;
 
 /// **THE BUILD POOL AT WHICH THE NEXT HAND TAKEN IS THE LAST ONE.** While a build is queued, step 4
 /// sheds a builder only *above* this; taking the last is step 11, at the bottom of the order,
@@ -2078,9 +2130,15 @@ const PAYS_NOTHING: f32 = 0.0;
 pub struct SourceShedFacts {
     /// **This source is still teaching the faction something** — the rung it stands on names a
     /// knowledge the faction has not completed, and the row's floor leaves a lesson to be earned
-    /// (`intensification::learn_multiplier`). Step 5 passes over such a row while another candidate
-    /// exists: the progress a thinned crew gives up there is invisible to the yield figure the
-    /// choice is otherwise made on.
+    /// (`intensification::learn_multiplier`). The progress a thinned crew gives up there is
+    /// invisible to the yield figure the choice is otherwise made on, so step 5 passes such a row
+    /// over.
+    ///
+    /// **It is a LEVEL of step 5's ordering, not a filter on its candidates**
+    /// ([`LaborAllocation::least_productive_row_passing_over_lessons`]) — a learner ranks last among
+    /// equals, and when every candidate is learning the level is constant and one of them still
+    /// gives. It sits **beneath** the player's own [`SourcePriority`], so a row marked `Low` gives
+    /// even while it is learning; above the rank it silenced the mark outright.
     pub accruing_knowledge: bool,
     /// **This source carries work on its ladder** — an improvement finished or in flight, i.e.
     /// `forage::patch_at_risk_cost` / `fauna::herd_at_risk_cost` above
@@ -2135,6 +2193,83 @@ impl ShedFacts {
     }
 }
 
+/// **WHAT THE WALK PICKED** — a row of `assignments` by index, or the band's bench.
+///
+/// Separate from [`ShedSubject`] on purpose: this is an *index into a vector the walk is about to
+/// mutate*, which must not escape [`LaborAllocation::normalize`], while `ShedSubject` is what the
+/// caller is told afterwards and outlives the row it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShedPick {
+    Row(usize),
+    Bench,
+}
+
+/// **THE KEY EVERY *LEAST PRODUCTIVE* STEP ORDERS ON**, in one place so a row and the bench cannot be
+/// ranked by two different rules.
+///
+/// Lexicographic, top to bottom. Each level is a `bool` or an enum rather than a term in a sum: see
+/// the ban on combined scores on [`LaborAllocation::least_productive_row`].
+struct ShedRank {
+    /// The player's own mark. **Outermost, always** — see [`SourcePriority`].
+    priority: SourcePriority,
+    /// Is there a lesson here to lose? A learner ranks **last** among equals, so it is passed over.
+    /// [`NO_LESSON_AT_STAKE`] for every step but the fifth, and for the bench (see
+    /// [`Self::of_bench`]).
+    learning: bool,
+    /// Does this candidate pay into any account at all — food, fodder or materials?
+    pays_any_account: bool,
+    /// What one hand here is bringing home.
+    yield_per_worker: f32,
+}
+
+impl ShedRank {
+    /// **THE BENCH'S RANK, and every level of it is a statement of fact rather than a judgement.**
+    ///
+    /// - `pays_any_account` is **false**: a craft pays into no food, fodder or material account. It
+    ///   *consumes* materials and produces items, and items are not one of the three accounts the
+    ///   shed can read. So an unmarked bench is thinned before any paying row — which is the right
+    ///   default in a famine, and exactly what the mark exists to override.
+    /// - `yield_per_worker` is **zero**, for the same reason: there is no per-worker take to read.
+    /// - `learning` is [`NO_LESSON_AT_STAKE`], and that one is a decision. A craft *does* charge a
+    ///   lesson per finished item, so thinning the bench does cost knowledge — but the lesson level
+    ///   exists because a **source's** lesson is invisible to the yield figure the choice is
+    ///   otherwise made on, and the bench has no yield figure at all: it already ranks bottom on both
+    ///   account levels. Marking it a learner would lift it **above every non-learning row**,
+    ///   including the food rows, so a famine band would strip its own larder to protect a craft that
+    ///   happened to be teaching something. The lesson term would not add the missing information —
+    ///   it would invert the one thing the bench's other two levels get right.
+    fn of_bench(bench: &BandBench) -> Self {
+        Self {
+            priority: bench.priority,
+            learning: NO_LESSON_AT_STAKE,
+            pays_any_account: A_CRAFT_PAYS_NO_ACCOUNT,
+            yield_per_worker: NOTHING_PER_WORKER,
+        }
+    }
+
+    /// **Is this candidate the one that should give?** — strictly below `other` on the lexicographic
+    /// order, so equal ranks never displace one another and the choice cannot depend on which
+    /// candidate was examined first.
+    fn is_below(&self, other: &Self) -> bool {
+        self.cmp_key(other) == std::cmp::Ordering::Less
+    }
+
+    fn cmp_key(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority
+            .cmp(&other.priority)
+            // **A LESSON RANKS LAST**, so `false < true` is the passing-over: a candidate with
+            // nothing left to teach gives before one that still does.
+            .then_with(|| self.learning.cmp(&other.learning))
+            .then_with(|| self.pays_any_account.cmp(&other.pays_any_account))
+            .then_with(|| self.yield_per_worker.total_cmp(&other.yield_per_worker))
+    }
+}
+
+/// **A CRAFT PAYS INTO NO ACCOUNT** — the bench's reading of the presence test, named because a bare
+/// `false` there would read as *"this bench happens to be paying nothing today"* when what it says is
+/// *"items are not one of the three accounts"*.
+const A_CRAFT_PAYS_NO_ACCOUNT: bool = false;
+
 /// **THE SHEDDING ORDER** — which row gives when a band cannot field what it is holding. One variant
 /// per step, declared in the order they are walked, so the whole list can be read top to bottom in
 /// one place (`docs/plan_standing_upkeep.md` §2.9).
@@ -2184,10 +2319,30 @@ pub enum ShedStep {
     /// band with three builders and an empty queue answered a lost hand by dropping its only food
     /// row. The queue decides *how many* builders are spare, never *whether* any are.
     SpareBuilder,
-    /// **5 — thin the least-productive worked source that has two or more hands**, least yield *per
-    /// worker*, passing over a source still accruing knowledge while another candidate exists. This
-    /// never empties a row.
+    /// **5 — thin the least-productive worked source that has two or more hands**, on the player's
+    /// rank, then the lesson, then least yield *per worker*. A source still accruing knowledge is
+    /// passed over — a **level** of that ordering rather than a filter on it, so a row the player
+    /// marked `Low` gives even while it is learning. This never empties a row.
+    ///
+    /// **THE CRAFTING BENCH IS A CANDIDATE HERE TOO**, on the same levels, whenever it holds
+    /// [`SMALLEST_THINNABLE_CREW`] or more. It is not a row and not a [`LaborTarget`], but it spends
+    /// the same pool — so it is ranked, never given a step of its own above or below the rows. A step
+    /// boundary sits **above** the player's rank by construction, and a bench in its own step would
+    /// mean a `Low`-marked bench outliving a `High`-marked source purely by step order.
     ThinLeastProductive,
+    /// **5b — the bench's LAST hand, leaving the job stalled.** Numbered `5b` rather than renumbering
+    /// six steps and forty-odd references to them: the repo's own `4.7a` / `9b` convention for a late
+    /// insertion, and this enum's **order** is the authority anyway.
+    ///
+    /// **Above step 6 because a stalled craft ends nothing.** The recipe, the progress, the drawn
+    /// pile and the finished count all stand and re-staffing resumes, where emptying a source drops
+    /// the row and takes its queued build with it.
+    ///
+    /// **Yes, a `High`-marked bench stalls before a `Low`-marked source is emptied**, and that is the
+    /// same rule already pinned for sources: an unimproved `High` row is emptied at step 6 before an
+    /// improved `Normal` one is a candidate at step 9. **The steps encode consequence; the mark
+    /// orders candidates within a step.**
+    StallBench,
     /// **6 — empty the least-productive source carrying no improvement and no queued build.** The row
     /// ends, and nothing invested ends with it.
     EmptyUnimproved,
@@ -3045,6 +3200,19 @@ pub struct BandBench {
     pub items_completed: u32,
     /// The grade of the last item this bench finished, for the readout. Cleared with the job.
     pub last_output_grade: Option<String>,
+    /// **WHERE THE PLAYER PUT THE BENCH WHEN THE BAND RUNS SHORT** — the same mark a worked row
+    /// carries ([`SourcePriority`]), because the bench competes for hands with those rows and a rank
+    /// that could not name it would leave the one thing a band gives up first unrankable.
+    ///
+    /// **Inside this type's `PartialEq`** (it is derived) and **persisted with the rest of the
+    /// bench** (`SimState`'s `BandRecord::bench`): a checkpoint that forgot the mark would silently
+    /// re-rank a band's work on rollback.
+    ///
+    /// Set by `bench_priority <faction> <band> high|normal|low` — the bench's own verb rather than a
+    /// `work_priority` token, because every other bench command (`set_bench`, `clear_bench`,
+    /// `bench_crew`) is addressed `<faction> <band>` with no source, and squeezing the bench into
+    /// `work_priority`'s source grammar would make the bare token `bench` ambiguous with a herd id.
+    pub priority: SourcePriority,
 }
 
 impl BandBench {
@@ -3061,8 +3229,28 @@ impl BandBench {
     }
 
     /// Take the job off the bench and hand the crew back.
+    ///
+    /// ⛔ **THIS FORFEITS THE DRAWN PILE**, which is why the shed must never call it: `*self =
+    /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
+    /// band that lost people would silently lose the materials it had already cut. The shed uses
+    /// [`Self::stall_crew`] instead.
     pub fn clear_job(&mut self) {
         *self = Self::default();
+    }
+
+    /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order
+    /// does to a bench, and the whole of it.
+    ///
+    /// The recipe, the progress, the drawn pile, the finished count and the last grade are all
+    /// untouched, so the crew coming back resumes rather than restarts. At zero the **job stalls**:
+    /// it is still the job the player chose, making no progress, which is the crafting system's own
+    /// shipped answer to a pass it cannot advance (*"silently emptying their bench is a worse answer
+    /// than a job that makes no progress"*).
+    ///
+    /// Returns the crew left. Saturating, so a call on an idle bench is a no-op rather than a wrap.
+    pub fn shed_one_worker(&mut self) -> u32 {
+        self.workers = self.workers.saturating_sub(ONE_WORKER);
+        self.workers
     }
 
     /// Whether anything is on the bench at all.
@@ -3920,54 +4108,97 @@ impl LaborAllocation {
     /// This pass used to take from the **tail**, while [`Self::set_assignment`] removes the row it
     /// edits and re-pushes it at the **end** — so the crew a player had just raised was always first
     /// to be cut. See [`ShedStep`]'s own callout for the case that closed it.
+    /// # ⛔ THE INVARIANT INCLUDES THE BENCH, AND `available` IS THE WHOLE POOL
+    ///
+    /// The quantity driven down is **`assignments' total + the bench's crew`**, against
+    /// `available_workers(cohort.working)` — every whole working-age person the band has, with
+    /// nothing netted out of it. Equivalently: this runs until [`BandWorkforce::idle`] is zero.
+    ///
+    /// It used to be `assigned_total() > available` with the bench nowhere in it, which was **two
+    /// defects in one line**. The bench was invisible to the shed, so a starving band stripped every
+    /// worked row, every role and its last builder while the crafters kept hammering; and because
+    /// `available` was already the raw pool, an allocation that spent the bench's hands twice was
+    /// tolerated rather than corrected (a looseness `yield-forecast.md` recorded rather than fixed).
+    /// One term closes both.
+    ///
+    /// `bench` is `Option` because a hand-rolled fixture (and a band spawned before the component
+    /// existed) may carry none; an absent bench contributes zero and is never a candidate, which is
+    /// the same fallback the rest of the band pass takes.
     #[must_use = "a shed crew must be announced — see the doc comment"]
-    pub fn normalize(&mut self, available: u32, facts: ShedFacts) -> Vec<ShedCrew> {
+    pub fn normalize(
+        &mut self,
+        mut bench: Option<&mut BandBench>,
+        available: u32,
+        facts: ShedFacts,
+    ) -> Vec<ShedCrew> {
         // Aligned up front: every "least productive" step reads `last_yields` by the row's index.
         self.align_yields();
         let mut facts = facts;
         let mut shed: Vec<ShedCrew> = Vec::new();
-        while self.assigned_total() > available {
-            let Some((index, step)) = self.row_that_gives(&facts) else {
+        // **Read fresh every pass**, because the walk itself moves it: a bench thinned to zero must
+        // stop counting against the pool, or the loop cannot terminate on the hand it just took.
+        while self.assigned_total()
+            + bench
+                .as_deref()
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers)
+            > available
+        {
+            let Some((pick, step)) = self.pick_that_gives(&facts, bench.as_deref()) else {
                 break;
             };
             // Step 3 spends a surplus down: each spare keeper taken is one the bill no longer has
             // spare, and the next pass of the walk has to see that.
             if step == ShedStep::SpareKeeper {
-                match self.assignments[index].target {
-                    LaborTarget::Agriculture => {
-                        facts.spare_agriculture_keepers -= 1;
-                    }
-                    _ => {
-                        facts.spare_husbandry_keepers -= 1;
+                if let ShedPick::Row(index) = pick {
+                    match self.assignments[index].target {
+                        LaborTarget::Agriculture => {
+                            facts.spare_agriculture_keepers -= 1;
+                        }
+                        _ => {
+                            facts.spare_husbandry_keepers -= 1;
+                        }
                     }
                 }
             }
-            let assignment = &mut self.assignments[index];
-            assignment.workers -= 1;
-            let remaining = assignment.workers;
-            let target = assignment.target.clone();
-            if remaining == NO_CREW_ON_THIS_ACTIVITY {
-                // Nothing of this row survives — drop it whole, so no source is left rendered as
-                // worked by a crew of nobody, and take its telemetry and its facts with it so both
-                // stay index-aligned.
-                self.assignments.remove(index);
-                self.last_yields.remove(index);
-                facts.forget_row(index);
-            }
-            // **ONE ROW, ONE `ShedCrew`, however many passes of the walk took hands off it** — the
-            // caller narrates one feed line per row, and three lines for three hands off the same
-            // crew would read as three separate losses.
+            let (subject, remaining) = match pick {
+                ShedPick::Row(index) => {
+                    let assignment = &mut self.assignments[index];
+                    assignment.workers -= ONE_WORKER;
+                    let remaining = assignment.workers;
+                    let target = assignment.target.clone();
+                    if remaining == NO_CREW_ON_THIS_ACTIVITY {
+                        // Nothing of this row survives — drop it whole, so no source is left rendered
+                        // as worked by a crew of nobody, and take its telemetry and its facts with it
+                        // so both stay index-aligned.
+                        self.assignments.remove(index);
+                        self.last_yields.remove(index);
+                        facts.forget_row(index);
+                    }
+                    (ShedSubject::Row(target), remaining)
+                }
+                // ⛔ **NEVER `clear_job`** — that forfeits the drawn pile. The job, its progress and
+                // the materials already cut all stand; at zero the bench simply stalls.
+                ShedPick::Bench => {
+                    let remaining = bench
+                        .as_deref_mut()
+                        .map_or(NO_CREW_ON_THIS_ACTIVITY, BandBench::shed_one_worker);
+                    (ShedSubject::Bench, remaining)
+                }
+            };
+            // **ONE SUBJECT, ONE `ShedCrew`, however many passes of the walk took hands off it** —
+            // the caller narrates one feed line per subject, and three lines for three hands off the
+            // same crew would read as three separate losses.
             match shed
                 .iter_mut()
-                .find(|entry| entry.target.same_source(&target))
+                .find(|entry| entry.subject.same_subject(&subject))
             {
                 Some(entry) => {
-                    entry.lost += 1;
+                    entry.lost += ONE_WORKER;
                     entry.remaining = remaining;
                 }
                 None => shed.push(ShedCrew {
-                    target,
-                    lost: 1,
+                    subject,
+                    lost: ONE_WORKER,
                     remaining,
                 }),
             }
@@ -3976,22 +4207,25 @@ impl LaborAllocation {
         shed
     }
 
-    /// **THE ROW THAT GIVES THIS HAND** — [`ShedStep`] walked top to bottom, returning the first
-    /// step that names a staffed row and that row's index. `None` only when nothing is staffed at
-    /// all.
+    /// **WHAT GIVES THIS HAND** — [`ShedStep`] walked top to bottom, returning the first step that
+    /// names a staffed candidate. `None` only when nothing is staffed at all.
     ///
     /// Read it beside [`ShedStep`]'s variant docs: every arm below is one line of that list, in that
     /// order, and the pairing is the whole point of naming the steps.
-    fn row_that_gives(&self, facts: &ShedFacts) -> Option<(usize, ShedStep)> {
+    fn pick_that_gives(
+        &self,
+        facts: &ShedFacts,
+        bench: Option<&BandBench>,
+    ) -> Option<(ShedPick, ShedStep)> {
         // ## Nothing is lost
         // 1. A scout.
         if let Some(index) = self.staffed_role_row(&LaborTarget::Scout) {
-            return Some((index, ShedStep::Scout));
+            return Some((ShedPick::Row(index), ShedStep::Scout));
         }
         // 2. A warrior, if nothing threatens the band.
         if !facts.threatened {
             if let Some(index) = self.staffed_role_row(&LaborTarget::Warrior) {
-                return Some((index, ShedStep::UnthreatenedWarrior));
+                return Some((ShedPick::Row(index), ShedStep::UnthreatenedWarrior));
             }
         }
         // 3. A keeper above the keeping demand — Agriculture first, then Husbandry.
@@ -4001,7 +4235,7 @@ impl LaborAllocation {
         ] {
             if spare > NO_SPARE_KEEPERS {
                 if let Some(index) = self.staffed_role_row(&role) {
-                    return Some((index, ShedStep::SpareKeeper));
+                    return Some((ShedPick::Row(index), ShedStep::SpareKeeper));
                 }
             }
         }
@@ -4014,24 +4248,56 @@ impl LaborAllocation {
         };
         if self.workers_on(&LaborTarget::Builders) > builders_the_queue_needs {
             if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
-                return Some((index, ShedStep::SpareBuilder));
+                return Some((ShedPick::Row(index), ShedStep::SpareBuilder));
             }
         }
 
         // ## Output falls, nothing ends
-        // 5. Thin the least-productive worked source that has two or more hands — skipping a source
-        //    still accruing knowledge **if another candidate exists**, which is what the `or_else`
-        //    fallback says: when every thinnable row is learning, one of them still gives.
+        // 5. Thin the least-productive worked source that has two or more hands — passing over a
+        //    source still accruing knowledge, which is a **level of the ordering** and not a filter
+        //    on the candidate set ([`Self::least_productive_row_passing_over_lessons`]). It sits
+        //    BENEATH the player's own rank, so a row marked `Low` gives even while it is learning;
+        //    as a filter above the comparator it struck such a row out before the mark was read, and
+        //    a `Low` mark on a learning row did nothing at all. When every thinnable row is
+        //    learning the level is constant and one of them still gives, which is what the retired
+        //    `or_else` fallback used to say.
+        //
+        //    **AND THE BENCH IS A CANDIDATE HERE**, on the same levels, whenever it holds two or more
+        //    hands. It is not a row, so it is compared against the best row rather than iterated with
+        //    them — the row call already returns the minimum among rows under this very ordering, so
+        //    comparing the two winners is the same answer a single global minimum would give.
         let thinnable = |assignment: &LaborAssignment| {
             assignment.target.is_source() && assignment.workers >= SMALLEST_THINNABLE_CREW
         };
-        if let Some(index) = self
-            .least_productive_row(|index, assignment| {
-                thinnable(assignment) && !facts.source(index).accruing_knowledge
-            })
-            .or_else(|| self.least_productive_row(|_, assignment| thinnable(assignment)))
-        {
-            return Some((index, ShedStep::ThinLeastProductive));
+        let thinnest_row = self.least_productive_row_passing_over_lessons(
+            |_, assignment| thinnable(assignment),
+            |index| facts.source(index).accruing_knowledge,
+        );
+        let thinnable_bench = bench.filter(|bench| bench.workers >= SMALLEST_THINNABLE_CREW);
+        match (thinnest_row, thinnable_bench) {
+            (Some(index), Some(bench)) => {
+                // **A TIE GOES TO THE ROW.** Nothing but an exact tie on all four levels can reach
+                // here, and a stated order beats one that depends on which candidate was examined
+                // first — the same reason ties between rows go to the earliest row.
+                let pick = if ShedRank::of_bench(bench).is_below(&self.rank_of_row(index, facts)) {
+                    ShedPick::Bench
+                } else {
+                    ShedPick::Row(index)
+                };
+                return Some((pick, ShedStep::ThinLeastProductive));
+            }
+            (Some(index), None) => {
+                return Some((ShedPick::Row(index), ShedStep::ThinLeastProductive))
+            }
+            (None, Some(_)) => return Some((ShedPick::Bench, ShedStep::ThinLeastProductive)),
+            (None, None) => {}
+        }
+
+        // 5b. The bench's LAST hand — the job stalls, and nothing ends. Above step 6 because a
+        //     stalled craft keeps its recipe, its progress and its drawn pile, where emptying a
+        //     source drops the row and takes its queued build with it.
+        if bench.is_some_and(|bench| bench.workers > NO_CREW_ON_THIS_ACTIVITY) {
+            return Some((ShedPick::Bench, ShedStep::StallBench));
         }
 
         // ## Something ends
@@ -4041,16 +4307,16 @@ impl LaborAllocation {
                 && !facts.source(index).improved
                 && !self.row_carries_a_queued_build(assignment)
         }) {
-            return Some((index, ShedStep::EmptyUnimproved));
+            return Some((ShedPick::Row(index), ShedStep::EmptyUnimproved));
         }
         // 7. A warrior, unconditionally.
         if let Some(index) = self.staffed_role_row(&LaborTarget::Warrior) {
-            return Some((index, ShedStep::Warrior));
+            return Some((ShedPick::Row(index), ShedStep::Warrior));
         }
         // 8. A keeper below the demand — improvements begin to rot. Agriculture first, as step 3.
         for role in [LaborTarget::Agriculture, LaborTarget::Husbandry] {
             if let Some(index) = self.staffed_role_row(&role) {
-                return Some((index, ShedStep::NeededKeeper));
+                return Some((ShedPick::Row(index), ShedStep::NeededKeeper));
             }
         }
         // 9. Empty the least-productive improved source with no queued build.
@@ -4059,23 +4325,23 @@ impl LaborAllocation {
                 && facts.source(index).improved
                 && !self.row_carries_a_queued_build(assignment)
         }) {
-            return Some((index, ShedStep::EmptyImproved));
+            return Some((ShedPick::Row(index), ShedStep::EmptyImproved));
         }
         // 10. Empty a source carrying a queued build — the row drops and the declaration goes with
         //     it on the next `prune_build_queue`.
         if let Some(index) = self.least_productive_row(|_, assignment| {
             self.staffed_source(assignment) && self.row_carries_a_queued_build(assignment)
         }) {
-            return Some((index, ShedStep::EmptyQueued));
+            return Some((ShedPick::Row(index), ShedStep::EmptyQueued));
         }
         // 11. The last builder — every queued build stalls.
         if let Some(index) = self.staffed_role_row(&LaborTarget::Builders) {
-            return Some((index, ShedStep::LastBuilder));
+            return Some((ShedPick::Row(index), ShedStep::LastBuilder));
         }
 
         // Terminal: a single worker on a single row. Take it; the row ends.
         self.least_productive_row(|_, assignment| assignment.workers > NO_CREW_ON_THIS_ACTIVITY)
-            .map(|index| (index, ShedStep::LastHand))
+            .map(|index| (ShedPick::Row(index), ShedStep::LastHand))
     }
 
     /// The band-wide role row for `role`, **only while somebody is standing on it** — a role row at
@@ -4205,23 +4471,91 @@ impl LaborAllocation {
         &self,
         admits: impl Fn(usize, &LaborAssignment) -> bool,
     ) -> Option<usize> {
+        self.least_productive_row_ordered_by(admits, |_| NO_LESSON_AT_STAKE)
+    }
+
+    /// [`Self::least_productive_row`] **with the lesson level switched on** — step 5's entry point,
+    /// and nobody else's.
+    ///
+    /// `learning` answers *"is this row still teaching the faction something"*
+    /// ([`SourceShedFacts::accruing_knowledge`]). A row that answers `true` ranks **last** among
+    /// equals, so it is passed over while any other candidate exists — and when every candidate
+    /// answers `true` the level is constant and the order simply falls through to the next one.
+    ///
+    /// # ⛔ IT USED TO BE A FILTER ABOVE THE COMPARATOR, AND THAT IS WHAT SILENCED A `Low` MARK
+    ///
+    /// Step 5 read
+    ///
+    /// ```text
+    /// least_productive_row(|i, a| thinnable(a) && !facts.source(i).accruing_knowledge)
+    ///     .or_else(|| least_productive_row(|_, a| thinnable(a)))
+    /// ```
+    ///
+    /// — so a learning row was struck from the candidate set **before** [`SourcePriority`] was read,
+    /// and the fallback fired only when *every* thinnable row was learning. Reported from play: a
+    /// band with three Forage rows and a `Low`-marked five-hand hunt that was still accruing
+    /// knowledge thinned both unmarked Forage rows and left the marked one untouched. The hunt also
+    /// carried the lowest yield per worker on the board, so the filter was protecting the least
+    /// productive row *and* silencing the one thing the player had said about it.
+    ///
+    /// **A rank on top, the shipped ordering as the tie-break beneath it** is `9b`'s own shape, and
+    /// the knowledge skip is part of the shipped ordering — so it belongs below the mark, not above
+    /// the comparator that reads it.
+    ///
+    /// **THE `or_else` FALLBACK IS GONE, AND IT IS NOT NEEDED.** A filter that excludes every
+    /// candidate returns `None`; a level that is constant across every candidate returns the same
+    /// row the next level would have. The only `None` left is *"`admits` named nothing"*, which is
+    /// what the fallback could not fix either.
+    ///
+    /// **At equal priority this is bit-identical to the filter.** Among candidates of one rank the
+    /// minimum is the `(pays, yield, earliest)`-minimum of the **non-learners**, which is exactly
+    /// what the filtered call returned; with no non-learners it is that minimum over all of them,
+    /// which is exactly what the fallback returned.
+    fn least_productive_row_passing_over_lessons(
+        &self,
+        admits: impl Fn(usize, &LaborAssignment) -> bool,
+        learning: impl Fn(usize) -> bool,
+    ) -> Option<usize> {
+        self.least_productive_row_ordered_by(admits, learning)
+    }
+
+    /// The one comparator both entry points above share — **priority → lesson → pays → yield →
+    /// earliest row**, `min_by` keeping the first minimum so ties go to the earliest row and the
+    /// choice cannot depend on how the vector happens to be ordered.
+    ///
+    /// `learning` is [`NO_LESSON_AT_STAKE`] for every step but the fifth, which makes that level
+    /// constant and the comparison bit-identical to the four-level one those steps have always had.
+    fn least_productive_row_ordered_by(
+        &self,
+        admits: impl Fn(usize, &LaborAssignment) -> bool,
+        learning: impl Fn(usize) -> bool,
+    ) -> Option<usize> {
         self.assignments
             .iter()
             .enumerate()
             .filter(|(index, assignment)| admits(*index, assignment))
             .min_by(|(left, _), (right, _)| {
-                self.priority_of(*left)
-                    .cmp(&self.priority_of(*right))
-                    .then_with(|| {
-                        self.pays_any_account(*left)
-                            .cmp(&self.pays_any_account(*right))
-                    })
-                    .then_with(|| {
-                        self.yield_per_worker(*left)
-                            .total_cmp(&self.yield_per_worker(*right))
-                    })
+                self.rank_of_row_learning(*left, learning(*left))
+                    .cmp_key(&self.rank_of_row_learning(*right, learning(*right)))
             })
             .map(|(index, _)| index)
+    }
+
+    /// **ONE ROW'S [`ShedRank`], with step 5's lesson term live** — the reading the bench is compared
+    /// against, so the two candidates are ranked by one rule rather than two.
+    fn rank_of_row(&self, index: usize, facts: &ShedFacts) -> ShedRank {
+        self.rank_of_row_learning(index, facts.source(index).accruing_knowledge)
+    }
+
+    /// [`Self::rank_of_row`] with the lesson term supplied, because the four steps that *empty* a row
+    /// hand [`NO_LESSON_AT_STAKE`] rather than a fact.
+    fn rank_of_row_learning(&self, index: usize, learning: bool) -> ShedRank {
+        ShedRank {
+            priority: self.priority_of(index),
+            learning,
+            pays_any_account: self.pays_any_account(index),
+            yield_per_worker: self.yield_per_worker(index),
+        }
     }
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
@@ -4834,6 +5168,37 @@ mod tests {
     /// than repeating a coordinate literal.
     const PATCH_A: bevy::math::UVec2 = bevy::math::UVec2::new(1, 1);
     const PATCH_B: bevy::math::UVec2 = bevy::math::UVec2::new(2, 2);
+    /// A third patch, so the reported case's **two** unmarked forage rows can both stand beside a
+    /// marked one.
+    const PATCH_C: bevy::math::UVec2 = bevy::math::UVec2::new(3, 3);
+
+    /// The quarry the reported case was on, named so an assertion says *which row* rather than
+    /// repeating a string.
+    const BOAR: &str = "Wild Boar";
+
+    /// A hunt row on `herd` staffed with `take` and carrying the player's `priority` — the animal
+    /// twin of [`ranked_forage`], and the shape the learning pass-over is decided on.
+    #[cfg(test)]
+    fn ranked_hunt(herd: &str, take: u32, priority: SourcePriority) -> LaborAssignment {
+        LaborAssignment {
+            target: LaborTarget::Hunt {
+                fauna_id: herd.to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            workers: take,
+            kit: None,
+            priority,
+        }
+    }
+
+    /// A row's facts with the lesson flag set — the one term step 5 orders on beyond the yield.
+    #[cfg(test)]
+    fn learning() -> SourceShedFacts {
+        SourceShedFacts {
+            accruing_knowledge: true,
+            ..Default::default()
+        }
+    }
 
     /// A band-wide standing role staffed with `workers` — the row shape steps 1–4, 7, 8 and 11 name.
     #[cfg(test)]
@@ -4866,11 +5231,29 @@ mod tests {
         }
     }
 
-    /// The targets `normalize` took hands off, in the order it first touched them — what a walk-down
-    /// assertion is actually about.
+    /// The **rows** `normalize` took hands off, in the order it first touched them — what a
+    /// walk-down assertion is actually about.
+    ///
+    /// **It panics on a bench**, deliberately: every caller here is asserting a row order, and a
+    /// bench silently dropped from the list would make a shed that hit the bench look like a shorter
+    /// row walk. [`shed_subjects`] is what a bench assertion uses.
     #[cfg(test)]
     fn shed_targets(shed: &[ShedCrew]) -> Vec<LaborTarget> {
-        shed.iter().map(|entry| entry.target.clone()).collect()
+        shed.iter()
+            .map(|entry| {
+                entry
+                    .subject
+                    .row()
+                    .cloned()
+                    .expect("this fixture's shed is rows only — use `shed_subjects` for a bench")
+            })
+            .collect()
+    }
+
+    /// Every subject `normalize` touched, bench included — the shape a bench assertion reads.
+    #[cfg(test)]
+    fn shed_subjects(shed: &[ShedCrew]) -> Vec<ShedSubject> {
+        shed.iter().map(|entry| entry.subject.clone()).collect()
     }
 
     /// **STEP 1 — A SCOUT GIVES FIRST.** Nothing is lost: the fog stops rolling back and every row
@@ -4885,11 +5268,11 @@ mod tests {
             ],
             ..Default::default()
         };
-        let shed = allocation.normalize(6, ShedFacts::default());
+        let shed = allocation.normalize(None, 6, ShedFacts::default());
         assert_eq!(
             shed,
             vec![ShedCrew {
-                target: LaborTarget::Scout,
+                subject: ShedSubject::Row(LaborTarget::Scout),
                 lost: 1,
                 remaining: 1,
             }],
@@ -4919,7 +5302,7 @@ mod tests {
 
         let mut unthreatened = allocation.clone();
         assert_eq!(
-            shed_targets(&unthreatened.normalize(6, spare.clone())),
+            shed_targets(&unthreatened.normalize(None, 6, spare.clone())),
             vec![LaborTarget::Warrior],
             "a guard against nothing is the cheapest hand in the allocation"
         );
@@ -4927,6 +5310,7 @@ mod tests {
         let mut threatened = allocation;
         assert_eq!(
             shed_targets(&threatened.normalize(
+                None,
                 6,
                 ShedFacts {
                     threatened: true,
@@ -4953,6 +5337,7 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
+            None,
             7,
             ShedFacts {
                 spare_agriculture_keepers: 1,
@@ -4995,7 +5380,7 @@ mod tests {
             ..allocation.clone()
         };
         assert_eq!(
-            shed_targets(&queued.normalize(4, ShedFacts::default())),
+            shed_targets(&queued.normalize(None, 4, ShedFacts::default())),
             vec![LaborTarget::Builders],
             "the queue slows before the gathering does"
         );
@@ -5007,7 +5392,7 @@ mod tests {
 
         let mut unqueued = allocation;
         assert_eq!(
-            shed_targets(&unqueued.normalize(3, ShedFacts::default())),
+            shed_targets(&unqueued.normalize(None, 3, ShedFacts::default())),
             vec![LaborTarget::Builders],
             "with nothing queued every builder is idle, so both hands come off that pool first"
         );
@@ -5040,6 +5425,7 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
+            None,
             3,
             ShedFacts {
                 sources: vec![
@@ -5081,7 +5467,7 @@ mod tests {
 
         let mut plain = allocation.clone();
         assert_eq!(
-            shed_targets(&plain.normalize(5, ShedFacts::default())),
+            shed_targets(&plain.normalize(None, 5, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "least yield PER WORKER is the key, not the biggest crew or the biggest total"
         );
@@ -5090,6 +5476,7 @@ mod tests {
         let mut learning = allocation;
         assert_eq!(
             shed_targets(&learning.normalize(
+                None,
                 5,
                 ShedFacts {
                     sources: vec![
@@ -5141,7 +5528,7 @@ mod tests {
         // level is constant, so this is the answer the two-level order gave before the rank existed.
         let mut unmarked = fixture();
         assert_eq!(
-            shed_targets(&unmarked.normalize(3, ShedFacts::default())),
+            shed_targets(&unmarked.normalize(None, 3, ShedFacts::default())),
             vec![staffed_forage(PATCH_B, 0).target],
             "with nothing marked the poorer row per head still gives, exactly as before"
         );
@@ -5151,7 +5538,7 @@ mod tests {
         let mut rich_row_marked_low = fixture();
         rich_row_marked_low.assignments[0].priority = SourcePriority::Low;
         assert_eq!(
-            shed_targets(&rich_row_marked_low.normalize(3, ShedFacts::default())),
+            shed_targets(&rich_row_marked_low.normalize(None, 3, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "the row the player marked Low gives, though it is the better ground per hand"
         );
@@ -5161,7 +5548,7 @@ mod tests {
         let mut poor_row_marked_high = fixture();
         poor_row_marked_high.assignments[1].priority = SourcePriority::High;
         assert_eq!(
-            shed_targets(&poor_row_marked_high.normalize(3, ShedFacts::default())),
+            shed_targets(&poor_row_marked_high.normalize(None, 3, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "a High mark holds the poor row and sends the hand off the rich one instead"
         );
@@ -5190,14 +5577,385 @@ mod tests {
         };
         let marked = vec![staffed_forage(PATCH_A, 0).target];
         assert_eq!(
-            shed_targets(&forward.normalize(3, ShedFacts::default())),
+            shed_targets(&forward.normalize(None, 3, ShedFacts::default())),
             marked,
             "the marked row gives when it sits first"
         );
         assert_eq!(
-            shed_targets(&reversed.normalize(3, ShedFacts::default())),
+            shed_targets(&reversed.normalize(None, 3, ShedFacts::default())),
             marked,
             "…and when it sits last — the mark is a property of the row, not of the vector"
+        );
+    }
+
+    /// A running bench holding `crafters`, carrying the player's `priority`.
+    #[cfg(test)]
+    fn staffed_bench(crafters: u32, priority: SourcePriority) -> BandBench {
+        BandBench {
+            recipe_id: Some("sled".to_string()),
+            workers: crafters,
+            priority,
+            ..Default::default()
+        }
+    }
+
+    /// **THE BENCH IS RANKED IN STEP 5, NOT GIVEN A STEP OF ITS OWN.**
+    ///
+    /// A step boundary sits **above** the player's rank by construction, so a bench in its own step
+    /// would be protected from — or sacrificed to — a marked row purely by step order, which is the
+    /// defect the lesson level was just repaired for in a different costume.
+    ///
+    /// Both candidates are thinnable and unmarked, so the rank level is constant and the accounts
+    /// decide: the row pays and the bench does not.
+    #[test]
+    fn an_unmarked_bench_is_thinned_before_a_paying_row() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2)],
+            last_yields: vec![realized(4.0)],
+            ..Default::default()
+        };
+        let mut bench = staffed_bench(3, SourcePriority::default());
+        let shed = allocation.normalize(Some(&mut bench), 4, ShedFacts::default());
+
+        assert_eq!(
+            shed_subjects(&shed),
+            vec![ShedSubject::Bench],
+            "a craft pays into no account and carries no per-worker yield, so it ranks bottom on \
+             both levels and gives first"
+        );
+        assert_eq!(bench.workers, 2, "…one hand, like every other step");
+        assert_eq!(
+            allocation.assignments[0].workers, 2,
+            "and the row that pays is untouched"
+        );
+    }
+
+    /// **AND THE MARK OVERRIDES IT, which is the whole reason the bench takes one.** A `High` bench
+    /// beside a `Low` row inverts the answer with nothing else changed.
+    ///
+    /// **It carries its own control, and that is not padding.** *"The marked bench keeps its crew"*
+    /// is also true of a bench that is not a candidate at all — so a bench given its own step
+    /// **below** step 5, the shape this design forbids, would satisfy it. The pair is the claim: the
+    /// same two candidates answer differently depending only on the marks.
+    #[test]
+    fn a_high_marked_bench_sends_the_hand_to_a_low_marked_row_instead() {
+        let fixture = |row: SourcePriority| LaborAllocation {
+            assignments: vec![ranked_forage(PATCH_A, 2, row)],
+            last_yields: vec![realized(4.0)],
+            ..Default::default()
+        };
+
+        // The control: both at the default, so the rank level is constant and the accounts decide.
+        let mut unmarked = fixture(SourcePriority::default());
+        let mut idle_rank_bench = staffed_bench(3, SourcePriority::default());
+        assert_eq!(
+            shed_subjects(&unmarked.normalize(Some(&mut idle_rank_bench), 4, ShedFacts::default())),
+            vec![ShedSubject::Bench],
+            "control: unmarked, the bench gives — so both ARE candidates in this one step"
+        );
+
+        let mut marked = fixture(SourcePriority::Low);
+        let mut bench = staffed_bench(3, SourcePriority::High);
+        let shed = marked.normalize(Some(&mut bench), 4, ShedFacts::default());
+        assert_eq!(
+            shed_subjects(&shed),
+            vec![ShedSubject::Row(staffed_forage(PATCH_A, 0).target)],
+            "the rank is the outermost level for the bench exactly as it is for a row"
+        );
+        assert_eq!(bench.workers, 3, "the marked bench keeps its crew");
+    }
+
+    /// **STEP 5b — THE BENCH'S LAST HAND, AND IT GOES BEFORE A SOURCE IS EMPTIED.**
+    ///
+    /// Neither candidate is thinnable (one hand each), so step 5 has nothing and the walk reaches
+    /// 5b. The bench is `High` and the row is `Low`, and the bench **still** stalls: the steps encode
+    /// consequence — a stalled craft ends nothing, an emptied row ends a holding — and the mark only
+    /// orders candidates *within* a step.
+    #[test]
+    fn the_bench_stalls_before_a_row_is_emptied_whatever_the_marks_say() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![ranked_forage(PATCH_A, 1, SourcePriority::Low)],
+            last_yields: vec![realized(4.0)],
+            ..Default::default()
+        };
+        let mut bench = staffed_bench(1, SourcePriority::High);
+        let shed = allocation.normalize(Some(&mut bench), 1, ShedFacts::default());
+
+        assert_eq!(
+            shed_subjects(&shed),
+            vec![ShedSubject::Bench],
+            "the bench's last hand is step 5b, above the step that empties a row"
+        );
+        assert_eq!(bench.workers, 0, "it stalled");
+        assert!(
+            bench.is_running(),
+            "…and the job is still on it — the shed must never `clear_job`, which forfeits the pile"
+        );
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "the Low-marked row still stands"
+        );
+    }
+
+    /// **THE LOOP COUNTS THE BENCH, WHICH IS THE INVARIANT THAT CHANGED.** The quantity driven down
+    /// is `assignments + bench` against the band's whole head-count — so an allocation that fits the
+    /// pool on its own but does not fit *beside the bench* is now corrected rather than tolerated.
+    #[test]
+    fn the_walk_drives_assignments_plus_bench_down_to_the_pool() {
+        const POOL: u32 = 4;
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 3)],
+            last_yields: vec![realized(9.0)],
+            ..Default::default()
+        };
+        let mut bench = staffed_bench(3, SourcePriority::default());
+        let shed = allocation.normalize(Some(&mut bench), POOL, ShedFacts::default());
+
+        assert_eq!(
+            allocation.assigned_total() + bench.workers,
+            POOL,
+            "the walk runs until the rows and the bench TOGETHER fit the band's people"
+        );
+        assert!(!shed.is_empty(), "…and it says what it took: {shed:?}");
+    }
+
+    /// **A BAND WITH NO BENCH IS EXACTLY THE BAND IT WAS.** The `None` arm contributes nothing to the
+    /// loop and is never a candidate, so every step below is bit-identical to the walk before the
+    /// bench existed.
+    #[test]
+    fn a_band_with_no_bench_walks_the_order_it_always_did() {
+        let fixture = || LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 2)],
+            last_yields: vec![realized(2.0), realized(8.0)],
+            ..Default::default()
+        };
+        let mut without = fixture();
+        let mut with_idle = fixture();
+        let mut idle_bench = BandBench::default();
+
+        assert_eq!(
+            shed_targets(&without.normalize(None, 3, ShedFacts::default())),
+            shed_targets(&with_idle.normalize(Some(&mut idle_bench), 3, ShedFacts::default())),
+            "an absent bench and an empty one are the same band"
+        );
+    }
+
+    /// **THE REPORTED CASE: A `Low` MARK ON A LEARNING ROW DID NOTHING** — the player's band, its
+    /// four rows and its numbers (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+    ///
+    /// Three Forage rows (one `High`, two unmarked) and a **`Low`-marked Wild Boar hunt with five
+    /// hands** that was still accruing knowledge. The band ran short, the two unmarked Forage rows
+    /// were thinned `2 → 1` each, and **the row the player had explicitly given up kept every hand**.
+    ///
+    /// The cause was not the comparator: step 5 wrapped it in an eligibility **filter**, so a
+    /// learning row was struck from the candidate set before the rank was ever read. The hunt also
+    /// carried the lowest yield per worker on the board (`0.054` a head against `0.15`–`0.165`), so
+    /// the filter was protecting the least productive row *and* silencing the one thing the player
+    /// had said about it.
+    #[test]
+    fn a_low_marked_learning_row_gives_before_the_unmarked_rows_beside_it() {
+        /// The reported per-row food, a head: `0.165`, `0.150`, `0.160` on the Forage rows against
+        /// `0.054` on the hunt's five hands.
+        const HIGH_PATCH: f32 = 0.33;
+        const LEANER_PATCH: f32 = 0.30;
+        const RICHER_PATCH: f32 = 0.32;
+        const THE_HUNT: f32 = 0.27;
+        /// The hunt's crew, and the hands it must give: `5 → 2` leaves it exactly at the smallest
+        /// thinnable crew, so every one of the three is still a step-5 choice rather than the walk
+        /// running out of room.
+        const HUNTERS: u32 = 5;
+        const HANDS_LOST: u32 = 3;
+
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                ranked_forage(PATCH_A, 2, SourcePriority::High),
+                staffed_forage(PATCH_B, 2),
+                staffed_forage(PATCH_C, 2),
+                ranked_hunt(BOAR, HUNTERS, SourcePriority::Low),
+            ],
+            last_yields: vec![
+                realized(HIGH_PATCH),
+                realized(LEANER_PATCH),
+                realized(RICHER_PATCH),
+                realized(THE_HUNT),
+            ],
+            ..Default::default()
+        };
+        let staffed = allocation.assigned_total();
+        let shed = allocation.normalize(
+            None,
+            staffed - HANDS_LOST,
+            ShedFacts {
+                // Only the hunt is learning — which is what made it ineligible, and what the rank
+                // must now outrank.
+                sources: vec![
+                    SourceShedFacts::default(),
+                    SourceShedFacts::default(),
+                    SourceShedFacts::default(),
+                    learning(),
+                ],
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            shed_targets(&shed),
+            vec![ranked_hunt(BOAR, 0, SourcePriority::Low).target],
+            "every hand comes off the row the player marked Low, and off nothing else"
+        );
+        assert_eq!(
+            shed.first()
+                .map(|entry| (entry.lost, entry.remaining))
+                .expect("the walk shed something"),
+            (HANDS_LOST, HUNTERS - HANDS_LOST),
+            "…all three of them, reported as one loss on one row"
+        );
+        for (index, patch) in [PATCH_A, PATCH_B, PATCH_C].into_iter().enumerate() {
+            assert_eq!(
+                allocation.assignments[index].workers, 2,
+                "the Forage row at {patch:?} keeps its crew — the reported defect was these being \
+                 thinned while the marked row stood"
+            );
+        }
+    }
+
+    /// **AT EQUAL PRIORITY THE LEARNER IS STILL PASSED OVER, EXACTLY AS THE FILTER DID.** The skip
+    /// moved from a filter above the comparator to a level inside it, and for an unmarked band that
+    /// is a pure refactor — which is the claim this pins rather than assumes.
+    ///
+    /// The learning row is also the **poorer** one per head, so the yield level would choose it and
+    /// only the lesson level can save it.
+    #[test]
+    fn at_equal_priority_a_learning_row_is_passed_over_for_one_that_is_not() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 2)],
+            // 2 ÷ 2 = 1.0 a head on A against 8 ÷ 2 = 4.0 on B: A is the natural giver.
+            last_yields: vec![realized(2.0), realized(8.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            None,
+            3,
+            ShedFacts {
+                sources: vec![learning(), SourceShedFacts::default()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![staffed_forage(PATCH_B, 0).target],
+            "the lesson outranks the yield, so the richer non-learning row gives instead"
+        );
+    }
+
+    /// **WHEN EVERY THINNABLE ROW IS LEARNING, ONE STILL GIVES** — the case the retired `or_else`
+    /// fallback existed for, and the reason a comparator LEVEL can replace a filter outright: a
+    /// level that is constant across the candidates simply falls through to the next one, where a
+    /// filter that excluded them all returned nothing at all.
+    ///
+    /// **TWO hands are shed, not one, and that is what makes the assertion an assertion.** Step 6
+    /// takes a single hand exactly as step 5 does, so on one hand the two paths are indistinguishable
+    /// — a row of two ends up a row of one either way. Over two hands they diverge: the level thins
+    /// **each** row once and leaves both standing, while a filter that excluded every candidate
+    /// skips step 5 entirely and step 6 takes the same row twice, dropping it.
+    #[test]
+    fn every_thinnable_row_learning_still_yields_a_hand() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 2), staffed_forage(PATCH_B, 2)],
+            last_yields: vec![realized(2.0), realized(8.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            None,
+            2,
+            ShedFacts {
+                sources: vec![learning(), learning()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![
+                staffed_forage(PATCH_A, 0).target,
+                staffed_forage(PATCH_B, 0).target
+            ],
+            "with the lesson level constant the order falls through to the yield: the poorer ground \
+             per head gives first, then the only row still thinnable"
+        );
+        assert!(
+            shed.iter().all(|entry| entry.remaining == 1),
+            "both were THINNED — step 6 would have taken the same row twice and dropped it: {shed:?}"
+        );
+        assert_eq!(
+            allocation.assignments.len(),
+            2,
+            "…so both rows are still standing"
+        );
+    }
+
+    /// **A `High` MARK DOES NOT DRAG A LEARNER INTO THE FIRING LINE** — the mark and the skip
+    /// pointing the same way rather than fighting.
+    ///
+    /// Both rows are `High`, so the rank level is constant and the lesson level decides. The learner
+    /// is **ten times the poorer** per head, so only the lesson can explain the richer row giving.
+    #[test]
+    fn a_high_marked_learner_is_still_passed_over() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                ranked_forage(PATCH_A, 2, SourcePriority::High),
+                ranked_forage(PATCH_B, 2, SourcePriority::High),
+            ],
+            last_yields: vec![realized(0.1), realized(1.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            None,
+            3,
+            ShedFacts {
+                sources: vec![learning(), SourceShedFacts::default()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![ranked_forage(PATCH_B, 0, SourcePriority::High).target],
+            "the learner is spared even marked High, and the richer row beside it gives"
+        );
+    }
+
+    /// ⛔ **THE LESSON LEVEL IS STEP 5's ALONE, AND MUST NOT LEAK INTO THE STEPS THAT EMPTY A ROW.**
+    ///
+    /// Steps 6, 9 and 10 have never carried a knowledge term: by the time the walk reaches them the
+    /// question is *which row ends*, and a lesson is not a reason to end a different one. Here two
+    /// one-hand rows are below the smallest thinnable crew, so step 5 has no candidate at all and
+    /// **step 6** chooses — on yield alone, learner or not.
+    #[test]
+    fn the_lesson_level_does_not_reach_the_steps_that_empty_a_row() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 1), staffed_forage(PATCH_B, 1)],
+            // A is the poorer per head AND the learner: if the lesson level leaked down here, B
+            // would give instead.
+            last_yields: vec![realized(1.0), realized(9.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            None,
+            1,
+            ShedFacts {
+                sources: vec![learning(), SourceShedFacts::default()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shed_targets(&shed),
+            vec![staffed_forage(PATCH_A, 0).target],
+            "step 6 empties the least productive row whether or not it is still teaching something"
+        );
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "…and it really was emptied, which is what makes this step 6 rather than step 5"
         );
     }
 
@@ -5220,6 +5978,7 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
+            None,
             1,
             ShedFacts {
                 sources: vec![
@@ -5255,7 +6014,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            shed_targets(&allocation.normalize(0, ShedFacts::default())),
+            shed_targets(&allocation.normalize(None, 0, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "the terminal step takes the last worker off the last row whatever it is marked"
         );
@@ -5333,7 +6092,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            shed_targets(&allocation.normalize(2, ShedFacts::default())),
+            shed_targets(&allocation.normalize(None, 2, ShedFacts::default())),
             vec![staffed_forage(PATCH_A, 0).target],
             "the rich crew thins rather than the poor row ending"
         );
@@ -5357,6 +6116,7 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
+            None,
             2,
             ShedFacts {
                 threatened: true,
@@ -5395,6 +6155,7 @@ mod tests {
             ..Default::default()
         };
         let shed = allocation.normalize(
+            None,
             1,
             ShedFacts {
                 sources: vec![
@@ -5447,7 +6208,7 @@ mod tests {
             threatened: true,
             ..Default::default()
         };
-        let shed = allocation.normalize(0, facts);
+        let shed = allocation.normalize(None, 0, facts);
         assert_eq!(
             shed_targets(&shed),
             vec![
@@ -5479,6 +6240,7 @@ mod tests {
         };
         assert_eq!(allocation.assigned_total(), 8);
         let shed = allocation.normalize(
+            None,
             3,
             ShedFacts {
                 spare_agriculture_keepers: 1,
@@ -5506,7 +6268,7 @@ mod tests {
             last_yields: vec![realized(4.0)],
             ..Default::default()
         };
-        let shed = allocation.normalize(0, ShedFacts::default());
+        let shed = allocation.normalize(None, 0, ShedFacts::default());
         assert_eq!(shed.len(), 1);
         assert!(!shed[0].row_survived(), "the row ends");
         assert!(allocation.assignments.is_empty());
@@ -5541,7 +6303,7 @@ mod tests {
         );
 
         // …and the band loses a worker that same turn.
-        let shed = allocation.normalize(BAND - 1, ShedFacts::default());
+        let shed = allocation.normalize(None, BAND - 1, ShedFacts::default());
         assert_eq!(
             allocation.workers_on(&staffed_forage(PATCH_B, 0).target),
             2,

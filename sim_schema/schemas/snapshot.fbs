@@ -4589,6 +4589,28 @@ table BenchState {
   //
   // THE CLIENT MUST NOT RE-DERIVE IT from the reason string - same rule as `reason` itself.
   blockedSeverity:string;
+  // --- THE PLAYER'S OWN RANK ON THE BENCH (appended last) ---------------------------------------
+  // WHAT THE BAND GIVES UP FIRST WHEN IT CANNOT COVER EVERYTHING IT HOLDS - the SAME `SourcePriority`
+  // a worked row carries on LaborAssignment.priority, deliberately reusing that enum rather than
+  // minting a second one: it is one property of one kind, and two vocabularies for it would drift.
+  // Set with `bench_priority <faction> <band> high|normal|low`.
+  //
+  // WHY THE BENCH HAS ONE. It spends the same workers the gathering rows do, so when the band runs
+  // short it competes with them - and a craft pays into no food, fodder or material account, so an
+  // UNMARKED bench is the FIRST thing thinned. That is the right default in a famine and this field
+  // is how the player overrides it. The bench is ranked in the SAME step as the worked sources, never
+  // a step of its own; its LAST hand goes before any source is emptied, so a `High` bench still
+  // stalls before a `Low` patch is given up - the steps say what is at stake, the mark says who goes
+  // first among equals.
+  //
+  // `Normal` on an unmarked bench AND on a band with no bench at all. It is published on an IDLE
+  // bench too (`recipeId` empty), because a rank is a standing statement about the bench rather than
+  // about the job on it and the command sets it either way - a client that hid the control while the
+  // bench was empty would be hiding the one moment the player most wants to state it.
+  //
+  // Captured LIVE off the bench, exactly as `LaborAssignment.priority` is, so an edit lands on the
+  // command's own recapture and no optimistic overlay is needed. Appended last (append-only).
+  priority:SourcePriority = Normal;
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.

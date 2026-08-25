@@ -1652,3 +1652,130 @@ line's own instruction being earned again.
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer
 > race (`labor-ui.md` → "THE SHEET DISMISSES ON PRESS **AND** RELEASE"). A run that fails only that
 > state's block is that race, not a regression; re-run before believing it.
+
+
+## `event_dock_crew_cut` also pins the two rungs' MARKS, sampled off the render
+
+The frame already staged all four `status=` rows plus a plain receipt in one fixture, which is what
+made the glyph claim possible without a new frame: **a trimmed line and a lapsed line are in one
+render**, and the whole defect was that they drew identically. A frame with only one of them is green
+with the fix and green with the defect restored.
+
+`_preview_dock_row_glyph` / `_preview_dock_row_glyph_color` find the row by the text of its LABEL
+column and answer its **glyph column's** text and ink — `_make_event_row` builds each row as an
+`HBoxContainer` whose first child is the glyph `Label`, so this reads what the player is looking at.
+The expectation is the vocab's named const; composing both sides through `HudEventVocab` would assert
+only that the table agrees with itself.
+
+**The set is five row-level claims plus two that a new status can actually break:**
+
+- the cut wears `STATUS_REDUCED_GLYPH`, the destroyed row wears `STATUS_SHED_GLYPH`, **the two are not
+  equal**, the narrowed take wears the cut's mark, and both keep `HudStyle.WARN`;
+- the **iff over the whole `DETAIL_STATUS_STYLE` table** — every token's glyph tracks its rung, in
+  both directions — because every claim above names a token the chapter already stages and a token
+  added later would pass all of them;
+- **and that the two consts differ**, which is the precondition without which the iff is vacuous.
+
+### Falsifications
+
+`ui_preview` before the change **1344 PASS / 0 FAIL**, after **1350 / 0**, exit 0 both.
+
+| Restored defect | Failures |
+|---|---|
+| `STATUS_REDUCED_GLYPH := "⚠"` (both marks the same const value) | **2** — `READ APART … ("⚠" vs "⚠")` and `the two marks BEING DIFFERENT` |
+| the `status=trimmed` ROW re-pointed at `STATUS_SHED_GLYPH` (the shipped defect, literally) | **4** — the cut's mark, `READ APART`, the narrowed take's mark, and the table iff naming the row: `["status=trimmed(⚠ wants ▾)"]` |
+
+**The first row is the honest finding.** With the two consts equal, the row-level equality claims and
+the table iff **all pass vacuously** — the const moved under them — and only the two inequality claims
+fail. That is exactly why the `BEING DIFFERENT` claim is in the set: it is not a restatement of the
+iff, it is the thing that keeps the iff from being satisfiable by a table that marks everything alike.
+
+
+### …and the SIXTH row: `status=stalled`, which is what that iff was for
+
+The crafting bench's third shed token was added to the same fixture rather than to a frame of its own,
+so all three rungs are in ONE render: five `▾` rows (both bench lines, the pruned take, the two
+trimmed crews) and one `⚠` on the lapsed row, which is also the only amber-labelled one.
+
+**The iff caught it the moment it was wrong, both ways** — under a `RUNG_ALERT` rung it named
+`["status=stalled(▾ wants ⚠)"]`, and under a `STATUS_SHED_GLYPH` mark `["status=stalled(⚠ wants ▾)"]`.
+That is the invariant behaving exactly as it was written for: a token added later passes every claim
+that names the tokens the chapter already stages, and only a rule over the whole table sees it.
+
+**Two staged bench rows, not one.** `announce_shed_bench` reuses `status=trimmed` with `kind=bench`
+where hands remain, so `SHED_BENCH_TRIMMED_*` is the negative that stops the new token quietly
+becoming *every* bench line. Confirmed rather than assumed: it reads Notable with the same `▾`.
+
+**The rung claim is really about `RUNG_BY_KIND`.** `craft` is absent from it, so the line takes
+`DEFAULT_RUNG` (`RUNG_ROUTINE`) — under the dock's own floor — and `…reaches the DEFAULT floor, which
+`craft` alone would not have` is the claim that a missing `DETAIL_STATUS_STYLE` row would break.
+
+> ⛔ **THE FRAME HAD TO OPEN THE LOG, AND THE BAR'S CAP IS WHY.** `RECENT_COUNT_MAX` is **4** and the
+> fixture now stages **six** status rows, so collapsed the two oldest are pushed off the bar — which
+> silently turned `trimmed` and the linked hunt row into rows nobody could sample, and showed up as
+> `a CUT crew is drawn with the reduction mark "▾" (got "")` plus two link claims. Expanded,
+> `_render_bar` draws a single title line and `_log_body` draws every visible event, so there is no
+> double-count and every floor claim is unaffected — they read `_visible_events()`, not the drawn bar.
+> **A fixture that grows past the bar's cap must open the log or it stops being one frame.**
+
+### Falsifications
+
+`ui_preview` before **1351 PASS / 0 FAIL**, after **1356 / 0**, exit 0 both. `band_panel_preview` is
+untouched at **805 / 0**.
+
+## The bench's RANK — one frame, twenty claims, three disjoint sabotages
+
+`docs/plan_standing_upkeep.md` §4.9 item 9b's crafting half. The behaviour is `crafting-panel.md`'s;
+what belongs here is the shape of the drive and the ONE measurement that moved the design.
+
+**`crafting_bench_priority` is appended LAST in `chapters/crafting_bench.gd`**, after the map-gesture
+block and before the chapter hands the HUD back, so no earlier frame moves. It is the whole new
+state in one picture: an IDLE bench (no job, hence no ✕), a HIGH mark leading its line two, the
+picker OPEN beneath it and its `High` rung lit against two unlit ones.
+
+**A MARKED BENCH AND AN UNMARKED ONE CANNOT SHARE A PNG** — the card renders one band's bench — so
+the unmarked half is a claim rather than a picture, made on the reference band in the same block and
+**PAIRED** with the marked one. Neither is worth anything alone: *prints a prefix* passes on a panel
+that always prints one, *prints nothing* on a panel that lost the mark entirely.
+
+**⛔ THE LINK COSTS THE WELL NO ROW, AND ONE ASSERTION IS WHY.** Built as a fourth line under the
+teach line, it added ~24px to every bench well — and `crafting_panel_band_dock_collapsed`'s ledger
+clears its 1072px room by **18px**, so the state whose `expect_overflow` is `false` began scrolling
+and the run failed there. The link rides the trailing edge of LINE TWO instead (the sub label expands
+into the slack), which is a placement measurement made by an existing assertion rather than by
+inspection.
+
+**Every press is REAL POINTER INPUT** through `InputProbe` — the link's and each rung's —
+`pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. The
+command is asserted on the LINE through `MAIN_SCRIPT.format_bench_priority`, the work board's own
+idiom, for **all three** levels: a commit hard-wired to `normal` satisfies any single-level claim.
+Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `clear_bench` satisfies
+a bare *something was emitted*.
+
+**The LIT test is the SAME one `band_panel_preview._assert_work_priority_picker_lit` makes** — the
+primary variant's own background — so the one control cannot be judged by two notions of "selected"
+on the two surfaces that mount it.
+
+### Falsifications
+
+`ui_preview` before **1356 PASS / 0 FAIL / 349 frames**, after **1376 / 0 / 350**, exit 0 both.
+`band_panel_preview` untouched at **805 / 0**, exit 0.
+
+| Restored defect | Failures |
+|---|---|
+| the commit emits `WORK_PRIORITY_NORMAL` whatever rung was pressed | **2** — the `high` and `low` line claims, each naming `got "bench_priority 0 4971 normal"`. The `normal` claim correctly stays green |
+| the link and the picker gated on `recipe_id != ""` (hidden on an idle bench) | **3** — `the bench well carries a \`Priority\` link to press`, `the picker renders on an IDLE bench`, `…opened on HIGH rather than on the default ()`. Both MARK claims stay green |
+| the line-two prefix never rendered | **3** — the HIGH mark, its ink, and the LOW mark's face-and-ink pair. `a NORMAL bench prints no rank prefix` correctly stays green |
+
+**None passed vacuously**, and each sabotage's green half is the pairing doing its job: the mark and
+the control are independent, so a defect in one must leave the other's claims standing.
+
+| Restored defect | Failures |
+|---|---|
+| `status=stalled` at `RUNG_ALERT` | **3** — `is Notable … (got alert)`; `NOT the Alert a lapsed row earns`; the iff naming `["status=stalled(▾ wants ⚠)"]` |
+| `status=stalled` wearing `STATUS_SHED_GLYPH` | **2** — `wears the reduction mark beside the cut … (got "⚠")`; the iff naming `["status=stalled(⚠ wants ▾)"]` |
+| its `DETAIL_STATUS_WORK_LINK` row removed | **2** — `exactly the 4 rows that NAME a band offer the jump (got 3 links)`; `asked [3, 5, 7], want [3, 5, 5, 7]` |
+
+None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
+one that reads the table.
+

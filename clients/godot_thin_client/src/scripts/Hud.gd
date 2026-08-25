@@ -160,6 +160,13 @@ signal bench_crew_requested(payload: Dictionary)
 ## { faction, band_id }. Main formats `clear_bench <faction> <band>`. RELAYED from
 ## `CraftingPanelController`.
 signal clear_bench_requested(payload: Dictionary)
+## Emitted when a rung of the bench's rank picker is pressed — the player's own answer to what the band
+## gives up first when it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item
+## 9b). Payload keys: { faction, band_id, level }, `level` one of `high` / `normal` / `low`. Main
+## formats `bench_priority <faction> <band> <level>` — a SIBLING verb of `work_priority`, not a token
+## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
+## `CraftingPanelController`.
+signal bench_priority_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -597,6 +604,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_crew_requested.emit(payload))
     _crafting.clear_bench_requested.connect(
         func(payload: Dictionary) -> void: clear_bench_requested.emit(payload))
+    _crafting.bench_priority_requested.connect(
+        func(payload: Dictionary) -> void: bench_priority_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its

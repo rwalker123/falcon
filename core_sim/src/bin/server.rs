@@ -697,6 +697,14 @@ enum Command {
         source: BuildSourceRef,
         level: String,
     },
+    /// **Mark one band's crafting bench with the player's own rank** — `high`, `normal` or `low`,
+    /// the same mark a worked row carries and read by the same shedding order. See
+    /// `handle_bench_priority`.
+    BenchPriority {
+        faction: FactionId,
+        band_id: u64,
+        level: String,
+    },
     /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
     /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
     UpkeepMode {
@@ -6018,6 +6026,89 @@ fn handle_clear_bench(app: &mut bevy::prelude::App, faction: FactionId, band_id:
 /// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
 /// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
 /// the crew is a crew-side edit and must not restart a build the player committed to.
+/// **MARK A BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `bench_priority <faction> <band>
+/// high|normal|low` (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+///
+/// The same [`core_sim::SourcePriority`] a worked row carries, read by the same shedding order. It
+/// touches nothing else on the bench: the recipe, the crew, the progress and the drawn pile are all
+/// separate statements the player made.
+///
+/// # IT APPLIES TO AN IDLE BENCH TOO
+///
+/// Unlike `bench_crew`, which needs a running job to re-crew, a rank is a standing preference about
+/// *the bench* — so it is settable before a recipe is put on it and survives the job being swapped,
+/// exactly as a source row's mark survives an edit to its crew. Refusing it on an idle bench would
+/// mean the player could only rank the bench in the window where they were least likely to want to.
+///
+/// # AN UNKNOWN LEVEL IS REFUSED BY NAME
+///
+/// `upkeep_mode`'s rule, and `work_priority`'s: a rank the player mistyped must fail loudly rather
+/// than silently landing on the default, which is the one value that would look like it worked.
+fn handle_bench_priority(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    level: String,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(priority) = SourcePriority::from_token(level.trim().to_ascii_lowercase().as_str())
+    else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "Unknown bench priority '{}' — expected {}, {} or {}.",
+                level.trim(),
+                SourcePriority::High.as_str(),
+                SourcePriority::Normal.as_str(),
+                SourcePriority::Low.as_str()
+            ),
+        );
+        return;
+    };
+    let Some(band) =
+        select_starting_band(app, faction, Some(band_id), "bench_priority", event_kind)
+    else {
+        return;
+    };
+    if app.world.get::<BandBench>(band.entity).is_none() {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("bench_priority: {} has no crafting bench.", band.label),
+        );
+        return;
+    }
+    band_bench_mut(app, band.entity).priority = priority;
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "bench_priority",
+        faction = %faction.0,
+        band = band_id,
+        level = priority.as_str(),
+        "command.bench_priority.applied"
+    );
+    let sentence = match priority {
+        SourcePriority::High => format!("{}: the bench is held before anything else", band.label),
+        SourcePriority::Normal => format!("{}: the bench takes its turn like the rest", band.label),
+        SourcePriority::Low => format!("{}: the bench is the first thing given up", band.label),
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        sentence,
+        Some(format!(
+            "status=applied action=bench_priority level={} band={band_id}",
+            priority.as_str()
+        )),
+    );
+}
+
 fn handle_bench_crew(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -7611,6 +7702,15 @@ fn command_from_payload(
             },
             level,
         }),
+        ProtoCommandPayload::BenchPriority {
+            faction_id,
+            band_id,
+            level,
+        } => Some(Command::BenchPriority {
+            faction: FactionId(faction_id),
+            band_id,
+            level,
+        }),
         ProtoCommandPayload::UpkeepMode {
             faction_id,
             band_id,
@@ -8553,6 +8653,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             workers,
         } => {
             handle_bench_crew(app, faction, band_id, workers);
+        }
+        Command::BenchPriority {
+            faction,
+            band_id,
+            level,
+        } => {
+            handle_bench_priority(app, faction, band_id, level);
         }
         Command::CancelOrder {
             faction,

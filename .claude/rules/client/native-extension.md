@@ -424,6 +424,28 @@ appending a **repeated** field fails the fixture build until it is seeded (`asse
 names the path), and appending to one of the state structs that has no `Default` fails the *compile*
 (those blanks are exhaustive literals on purpose).
 
+> #### ⛔ A FIXTURE COVERING AN ARM IS NOT THE GUARD COVERING IT — and the bench's rank is the worked example
+>
+> `BenchState.priority` reached the wire with `BENCHED_SOURCE_PRIORITIES` already seeding a `High`
+> bench and a `Low` one into the decode fixture, and the guard still passed with a deliberately broken
+> `High` mapping — because **no converter read the field**, so it never reached the decoded dictionary
+> and the golden had no line for it to move. *"The fixture covers the arm"* and *"the guard covers the
+> arm"* were two claims and only the first was true.
+>
+> Adding `priority` to `bench_dict` is what closed it, and the closure was DEMONSTRATED rather than
+> asserted: with the key in place and the golden re-recorded, emitting `"normal"` from every arm makes
+> `cargo xtask decode-guard` **FAIL**, naming both moved rows (`1827 "high" → "normal"`,
+> `2458 "low" → "normal"`); restoring it passes at 55 top-level keys. **A seeded fixture value proves
+> nothing until a golden line moves with it** — which is the enum form of the "decoded in
+> `native/src/lib.rs`" bug this file records six times, and the reason a new arm is worth breaking on
+> purpose once.
+>
+> **The `_ =>` catch-all is why only two of the three arms can be guarded here.** A cohort carries
+> exactly ONE bench, so two cohorts reach two of the three levels — and those are the two that matter:
+> a wrong `Normal` arm is unreachable by construction (the catch-all IS `Normal`), while a wrong `High`
+> or `Low` decodes silently as `normal`. The `Normal` arm is covered end to end at the codec level by
+> `core_sim/tests/crafting_wire.rs`.
+
 **Those two forcing functions reach CI; the golden diff does not.** CI has no Godot and the decoder
 returns a `VarDictionary`, so the diff is a **local** gate — but `xtask`'s own `cargo test` builds
 the fixture, which means the unseeded-repeated-field alarm and the fixture's determinism are checked

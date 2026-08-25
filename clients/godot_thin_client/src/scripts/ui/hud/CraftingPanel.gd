@@ -74,6 +74,13 @@ signal crew_changed(workers: int)
 ## The bench's ✕ was pressed — `clear_bench <faction> <band>`. The job comes off, the crew returns to
 ## the idle pool and the pile already drawn is spent, which is why the button's tooltip names it.
 signal clear_bench_requested
+## A rung of the bench's rank picker was pressed — `bench_priority <faction> <band> high|normal|low`
+## (`docs/plan_standing_upkeep.md` §4.9 item 9b). `level` is one of `HudWorkVocab`'s three tokens,
+## already normalized, so nothing between here and the socket re-spells it.
+##
+## **A SIBLING VERB, NOT A `work_priority` TOKEN**: `work_priority`'s grammar reads a lone trailing
+## token as a herd id, so `work_priority … bench low` would be ambiguous with a herd named `bench`.
+signal bench_priority_requested(level: String)
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 const PAYLOAD_BAND := "band"
@@ -120,6 +127,16 @@ var _pending_scroll: int = SCROLL_UNSET
 ## order — and so folding `Flint` on one band leaves it folded on the next, which is what a reader who
 ## has stopped looking at a group meant.
 var _folded: Dictionary = {}
+
+## **IS THE BENCH'S RANK PICKER SHOWING?** VIEW state with exactly the standing of `_folded` above and
+## of the scroll offset: it is not on the wire, it survives the per-snapshot rebuild, and `render` is
+## still the whole of this panel's data input.
+##
+## A plain `bool` rather than the work inspector's three-valued `_work_picker_open`, because this well
+## has no second expansion to be mutually exclusive WITH — that state exists over there to keep the
+## floor picker and the rank picker from both reserving height in one fixed-size zone, and this card
+## refits to its content instead.
+var _priority_open: bool = false
 
 func _ready() -> void:
 	super()
@@ -240,6 +257,10 @@ func dismiss() -> void:
 	# A card that is opened again is a fresh reading and opens at the top of the ledger, so nothing
 	# survives the dismissal — least of all an offset into a table that has been torn down.
 	_pending_scroll = SCROLL_UNSET
+	# …and the rank picker is an EXPANSION rather than a preference, so it closes with the card. It is
+	# deliberately unlike `_folded`, which survives a dismissal because a reader who has stopped looking
+	# at a ledger group means it.
+	_priority_open = false
 	if _scroll != null:
 		_scroll.scroll_vertical = 0
 	HudWidgets.clear_children(_header)
@@ -531,7 +552,46 @@ func _build_bench(payload: Dictionary) -> void:
 		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
 		blocked_severity = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_SEVERITY_KEY, ""))
 	words.add_child(title)
-	words.add_child(sub)
+	# **THE RANK LEADS LINE TWO, exactly as a worked row's does** (`docs/plan_standing_upkeep.md` §4.9
+	# item 9b) — `High priority · ` / `Low priority · ` in the tier's ink, and a Normal bench prints
+	# NOTHING, its line two staying byte-identical to what it printed before the mark existed.
+	#
+	# **A SEPARATE `Label`, not a splice into the sub line's string.** The sub line is composed by
+	# `_bench_sub_line` out of the job's own clauses, and a prefix spliced in would sit inside a string
+	# that producer measures and joins; its own node keeps the two apart, which is `BandPanelController`'s
+	# rule for the same mark one panel over. **The prefix carries its own separator**, so the row's
+	# separation is zero and line two's spacing is stated in one place rather than half in a string.
+	#
+	# It renders on an IDLE bench too — the rank is a standing statement about the BENCH rather than
+	# about the job on it, which is exactly when a player says *"the axes go first"*.
+	var priority := HudWorkVocab.work_priority_of(
+		bench.get(HudCraftingVocab.BENCH_PRIORITY_KEY, HudWorkVocab.WORK_PRIORITY_NORMAL))
+	var line_two := HBoxContainer.new()
+	# ZERO, and for `WORK_ROW_PRIORITY_SEPARATION`'s reason: the prefix carries its own ` · ` inside
+	# its text, so line two's spacing is stated in one place instead of half in a string and half in a
+	# container constant. The gap before the link is the EXPANDING sub line, not a separation.
+	line_two.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_PRIORITY_SEPARATION)
+	var prefix_text := HudWorkVocab.work_row_priority_prefix(priority)
+	if prefix_text != "":
+		var prefix := Label.new()
+		prefix.text = prefix_text
+		prefix.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
+		prefix.add_theme_color_override("font_color", HudWorkVocab.work_priority_ink(priority))
+		# Found by IDENTITY and valued the LEVEL — the face is a `HudWorkVocab` string this panel does
+		# not compose, so an assertion matching on its wording would be matching the other module's
+		# spelling.
+		prefix.set_meta(HudCraftingVocab.BENCH_PRIORITY_META, priority)
+		line_two.add_child(prefix)
+	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line_two.add_child(sub)
+	# **AND THE CONTROL RIDES THE SAME LINE, WHICH IS WHAT MAKES IT FREE.** A row of its own cost the
+	# well ~24px on EVERY bench, forever, and the collapsed-band-dock state had less headroom than
+	# that: `crafting_panel_band_dock_collapsed`'s ledger fitted its 1072px room with under one row to
+	# spare, and a fourth line in this well pushed it into an internal scroll it is asserted not to
+	# need. Line two always exists, so hanging the link off its trailing edge spends nothing — and the
+	# rank is line two's subject anyway, the mark leading the very same line.
+	line_two.add_child(_build_priority_link())
+	words.add_child(line_two)
 	# **HOW FAR ALONG AND WHY STOPPED ARE TWO FACTS, AND NEITHER MAY EAT THE OTHER.** The refusal is
 	# the OFFER vocabulary plus the crew's own, resolved sim-side and rendered VERBATIM — a bench with
 	# a full pile and nobody on it is stopped too. It gets its own line UNDER the progress line rather
@@ -578,6 +638,13 @@ func _build_bench(payload: Dictionary) -> void:
 		teach.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_TEACH_FONT_SIZE)
 		teach.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 		inner.add_child(teach)
+
+	if _priority_open:
+		# **REUSED, NEVER FORKED.** `build_work_priority_picker` takes the pick as a `Callable` and the
+		# lit rung as the level itself, so it needs nothing of the work board's — and one builder is what
+		# keeps the bench's rank and a worked row's rank from growing two faces for one property.
+		inner.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
+			_commit_priority(level), priority))
 
 	section.add_child(well)
 	_main.add_child(section)
@@ -670,6 +737,39 @@ func _clear_bench_tooltip(bench: Dictionary) -> String:
 	if clauses.is_empty():
 		return HudCraftingVocab.CLEAR_BENCH_TOOLTIP_NOTHING
 	return HudCraftingVocab.CLEAR_BENCH_TOOLTIP_FORMAT % HudCraftingVocab.CLEAR_BENCH_SEPARATOR.join(clauses)
+
+## **THE `Priority` LINK — the work inspector's own word, its own builder, one panel over.** It wears
+## `HudWorkVocab.WORK_INSPECT_PRIORITY` rather than a spelling of its own: the two links open the SAME
+## `build_work_priority_picker` over the same three levels, and a second word for one control kind is
+## free to drift. Reached by meta, since a face search would find a control in two panels.
+func _build_priority_link() -> Button:
+	var link := HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_PRIORITY, HudStyle.INK,
+		func() -> void: _toggle_priority_picker())
+	link.set_meta(HudCraftingVocab.BENCH_PRIORITY_LINK_META, true)
+	return link
+
+## Show or hide the rank picker, and re-render against the payload already held — the `_toggle_fold`
+## idiom, for its reason: this card is rebuilt on every snapshot anyway, so a hidden subtree waiting to
+## be shown would be a second representation of one bit.
+func _toggle_priority_picker() -> void:
+	_priority_open = not _priority_open
+	if not _payload.is_empty():
+		render(_payload)
+
+## **THE RANK COMMAND** — `bench_priority <faction> <band> high|normal|low`.
+##
+## ⛔ **NO OPTIMISTIC OVERLAY AND THEREFORE NO ROLLBACK HANDLE**, which is `work_priority`'s rule one
+## surface over: `BenchState.priority` is captured LIVE off the bench the command mutates and the
+## server re-captures after every command, so the new mark arrives on THIS command's own recapture. A
+## client-side pending copy would be a second statement of one value.
+##
+## The picker CLOSES on the pick, exactly as the work inspector's does: the well has said its piece,
+## and a picker left open over a value that has not landed yet invites a second press at one button.
+func _commit_priority(level: String) -> void:
+	_priority_open = false
+	bench_priority_requested.emit(HudWorkVocab.work_priority_of(level))
+	if not _payload.is_empty():
+		render(_payload)
 
 ## The `− n +` crew stepper. **It spends the same pool `assign_labor` does** — a crew at the bench is
 ## not gathering — so `+` greys out at the ceiling rather than sending a command the sim will clamp.

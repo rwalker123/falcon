@@ -616,6 +616,23 @@ message BenchCrewCommand {
   uint32 workers = 3;
 }
 
+// Mark one band's CRAFTING BENCH with the player's own rank - `high` | `normal` | `low`.
+//
+// The bench's own verb rather than a `work_priority` token, because every other bench command
+// (`set_bench`, `clear_bench`, `bench_crew`) is addressed `<faction> <band>` with no source, and
+// `work_priority`'s grammar reads a bare single token as a HERD ID - so `work_priority <f> <b> bench
+// low` would be ambiguous with a herd literally named `bench`.
+//
+// The rank it sets is read by exactly the same shedding order a worked row's is: the bench is a
+// candidate in the SAME step as the worked sources, ranked on the same levels, because a step of its
+// own would sit above the rank by construction and a `Low` bench would outlive a `High` source purely
+// by step order.
+message BenchPriorityCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string level = 3;     // "high" | "normal" | "low"
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE QUERY CHANNEL — the one message on this socket the server ANSWERS.
 //
@@ -1020,5 +1037,7 @@ message CommandEnvelope {
     BuildKitCommand build_kit = 60;
     // 60 is held by `build_kit`, so the worked row's rank takes 61 (append-only; never renumber).
     WorkPriorityCommand work_priority = 61;
+    // 61 is held by `work_priority`, so the bench's rank takes 62 (append-only; never renumber).
+    BenchPriorityCommand bench_priority = 62;
   }
 }

@@ -243,26 +243,89 @@ static var KIND_STYLE := {}
 ## token added to one and forgotten in the other is a row that wears the loss accent at the kind's own
 ## rung — i.e. looks perfectly right in a frame and is invisible at the player's floor.
 ##
-## **THE FOUR TOKENS SPLIT ACROSS TWO RUNGS, and the ladder's own words decide which:**
+## **THE FIVE TOKENS SPLIT ACROSS TWO RUNGS, and the ladder's own words decide which:**
 ##   • ALERT — `feral` and `lapsed`, both listed under Alert in §02. An investment is GONE: a rung has
 ##     reverted, or a labor row has been destroyed outright and taken its queued build with it.
-##   • NOTABLE — `trimmed` and `pruned`, where the source is still worked, by less than the player set.
+##   • NOTABLE — `trimmed`, `pruned` and `stalled`, where the player has less than they set and
+##     nothing is destroyed.
 ##     Routine is *"bracket transitions, and receipts for things the player asked for"*, and a crew
 ##     cut is the opposite of a receipt: the player asked for six and got three. Notable is *"the
 ##     world changed in a way worth knowing"*, which is exactly what a shrunken crew is. **Not
 ##     Alert** — this ladder's own calibration puts a DEATH at Notable (see `RUNG_BY_KIND`), and a
 ##     shed crew is a consequence of one.
 ##
+## ⛔ **`stalled` IS THE THIRD NOTABLE TOKEN, AND NEITHER OF THE OTHER TWO WOULD HAVE BEEN TRUE**
+## (`systems::labor::announce_shed_bench`). A short band thins the crafting BENCH, and on the last
+## hand the job stops: `trimmed` says *the crew is smaller and the source is still worked*, and a
+## bench at zero is not worked; `lapsed` says *the row is GONE and its investment with it*, and the
+## bench keeps its recipe, its progress, its finished count and the materials it had already drawn —
+## re-staffing resumes rather than restarts. So `lapsed` would be false AND would shout, on a state
+## one command undoes.
+##
+## **A BENCH THAT STILL HAS HANDS ON IT IS A `trimmed`**, in that token's own terms, and reuses it —
+## `kind=bench` rather than a fourth token. This one exists only for the state neither describes.
+##
+## **AND IT NEEDED A ROW HERE AT ALL BECAUSE `craft` IS NOT IN `RUNG_BY_KIND`**, so it takes
+## `DEFAULT_RUNG` (`RUNG_ROUTINE`) — under the dock's own default floor. Without this entry a craft
+## crew disappearing would announce itself to nobody, which is the exact defect the `trimmed` /
+## `pruned` split was added to close, one web over.
+##
+## **AND THE TWO RUNGS ARE DRAWN APART** — `STATUS_SHED_GLYPH` against `STATUS_REDUCED_GLYPH`, below.
+## For a release they were not, which left this split filter-only and unreadable on the line.
+##
 ## **WITHOUT THE SPLIT BOTH NEW TOKENS WERE SILENT.** `trimmed` and `pruned` ride their VERB's kind
 ## (`forage` / `hunt` / `cultivate` / `corral`), every one of which is `RUNG_ROUTINE`, and the dock's
 ## `DEFAULT_DETAIL_LEVEL` is `RUNG_NOTABLE` — so a band going 6 → 3 announced itself to nobody on
 ## default settings, which is the exact defect the sim-side announcement was added to close.
+##
+## ⛔ **THE GLYPH TRACKS THE RUNG, AND THAT IS A RULE RATHER THAN A COINCIDENCE.** All four tokens wore
+## `⚠` for a release, so the split above did real work in FILTERING and was invisible on the line — and
+## a player reading two identically-drawn rows at two different rungs concludes the ladder is
+## arbitrary. Reported from play as *"losing hunts and scouts is an alert but foragers are notable"*,
+## which is not the rule at all: the rule is trimmed-vs-lapsed, and it only LOOKS like a kind split
+## because a scout usually stands one or two hands and lapses on the first shed, where a forage row
+## trims several times first.
+##
+## So the mark is the RUNG's, not the status's:
+##   • `STATUS_SHED_GLYPH` (`⚠`) on the ALERT pair, and nowhere else in this table. It means *something
+##     is wrong* everywhere else in this HUD, and it means that here too: the row is gone.
+##   • `STATUS_REDUCED_GLYPH` (`▾`) on the NOTABLE set. A downward mark says *less than you set* —
+##     fewer hands on the row, a narrower take from it, or a bench standing idle — which is exactly
+##     what those three tokens report, and it is the difference the `⚠` was swallowing.
+##
+## **THE COLOUR DOES NOT MOVE.** Both pairs stay `HudStyle.WARN`: a trim is still unwelcome and still
+## the player's to reverse, so demoting the amber would trade an over-loud row for an invisible one.
+## The glyph is what carries the rung; the amber carries *this is not good news*.
+##
+## **NOTHING ELSE MOVES EITHER** — no rung, no `RUNG_ORDER`, no detail-level floor, no filtering. This
+## is a render fix for a ladder that was already correct and could not be seen.
+##
+## **A FUTURE STATUS ADDED AT `RUNG_NOTABLE` WEARING `⚠` IS VISIBLY WRONG**, and that is the whole
+## reason this is written down beside the table rather than left to be inferred from it — the two
+## consts are named for their RUNGS, so the wrong pairing does not even read as a sentence.
 ##
 ## **BUILT IN `apply_palette` BELOW, NOT HERE** — every entry carries a themed `HudStyle` colour,
 ## which is a `static var`, so a `const` table is a parse error. The `rung` beside the colour is NOT
 ## themed and does not change with the palette; it rides in the same entry because a row's rung and
 ## its accent are one membership.
 static var DETAIL_STATUS_STYLE := {}
+
+## **THE ALERT PAIR'S MARK** — `feral` and `lapsed`, an investment GONE. The same `⚠` the ladder's own
+## `RUNG_ALERT` style wears and the same one every hazard in this HUD wears, which is exactly why it
+## is worth keeping exclusive: a mark that also appears on a routine crew cut means nothing anywhere.
+const STATUS_SHED_GLYPH := "⚠"
+
+## **THE NOTABLE PAIR'S MARK** — `trimmed` and `pruned`, the source still worked and by less than the
+## player set. `▾` rather than a second hazard: it points DOWN, which is the whole content of both
+## tokens, and it reads as a quantity changing rather than as a fault.
+##
+## **IT IS ONE MARK FOR ALL THREE, BECAUSE THEY ARE ONE CLASS.** A trim cuts the hands, a prune
+## narrows what the hands still standing there take, and a stall leaves a bench with none — three
+## mechanisms, one sentence to the player (*you asked for more than you are getting*), one rung, and
+## therefore one mark. A per-status pictogram would put the glyph back to tracking the MECHANISM,
+## which is the thing this rule exists to stop, and `stalled` is the first token added since the rule
+## was written — it takes the mark its RUNG names and nothing else is decided about it.
+const STATUS_REDUCED_GLYPH := "▾"
 
 ## Install the current `HudStyle` palette into the three style tables above and the turn stamp's ink.
 ## Called by `HudPalette.apply()` after `HudStyle.apply_palette`; takes no palette of its own, because
@@ -278,10 +341,11 @@ static func apply_palette() -> void:
 		"hunt_danger": {"glyph": "⚠", "color": HudStyle.HUNT_DANGER_ACCENT},
 	}
 	DETAIL_STATUS_STYLE = {
-		"status=feral": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_ALERT},
-		"status=lapsed": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_ALERT},
-		"status=trimmed": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
-		"status=pruned": {"glyph": "⚠", "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
+		"status=feral": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_ALERT},
+		"status=lapsed": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_ALERT},
+		"status=trimmed": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
+		"status=pruned": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
+		"status=stalled": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 	}
 	TURN_STAMP_COLOR = HudStyle.INK_DIM
 
@@ -290,9 +354,15 @@ static func apply_palette() -> void:
 ## `WORK_TAB_LINK_TEXT` on such a row and emits `band_work_tab_requested`.
 ##
 ## **A SUBSET OF `DETAIL_STATUS_STYLE`, NOT A COPY OF IT.** `feral` is a SOURCE reverting — nothing on
-## the band's work board changed, so the Work tab answers nothing there. The three here are the ones
+## the band's work board changed, so the Work tab answers nothing there. The four here are the ones
 ## where a crew is smaller or gone than the player left it: `trimmed` cut it, `lapsed` destroyed the
-## row, and `pruned` narrowed what the crew still standing there takes.
+## row, `pruned` narrowed what the crew still standing there takes, and `stalled` took the last hand
+## off the crafting bench.
+##
+## **`stalled` EARNS ITS ROW ON THE SAME TEST THE OTHER THREE PASS**: the sim changed a labor row
+## without being asked, so the player is owed a way to go and look at what is left of it — and the
+## bench's crew is staffed from the Work tab like any other. `announce_shed_bench` writes `band=`, so
+## the link has the one token it needs.
 ##
 ## ⛔ **THE LINK ONLY APPEARS WHERE THE DETAIL CARRIES A `band=` TOKEN** (`DETAIL_BAND_KEY`), because
 ## a jump has to name a band and the client will not recover one by reading the label's prose.
@@ -307,6 +377,7 @@ const DETAIL_STATUS_WORK_LINK := {
 	"status=trimmed": true,
 	"status=lapsed": true,
 	"status=pruned": true,
+	"status=stalled": true,
 }
 
 ## The link's own words. Deliberately the same string as `HudComposeVocab.WORK_TAB_LINK_TEXT` and

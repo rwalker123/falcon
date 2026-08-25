@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 116
+const EXPECTED_CHECKPOINTS := 137
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -689,6 +689,7 @@ func _crafting_states() -> void:
 	await _estimate_arithmetic_states()
 	await _clear_bench_command_state()
 	await _map_gesture_state()
+	await _bench_priority_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -1961,6 +1962,241 @@ func _find_open_map_point(card: Rect2) -> Vector2:
 			x += OPEN_MAP_PROBE_STEP
 		y += OPEN_MAP_PROBE_STEP
 	return NO_OPEN_MAP_POINT
+
+# ---- the bench's RANK (`docs/plan_standing_upkeep.md` §4.9 item 9b) -----------------------------
+
+## **THE ONE FRAME COMBINES EVERY NEW THING AT ONCE** — an IDLE bench (no job, no ✕), carrying a HIGH
+## mark on its line two, with the rank picker OPEN beneath it and its `High` rung lit against two
+## unlit ones. A frame per state would put the defect in the gap between them, and this arc has paid
+## for that three times.
+##
+## **THE CARD RENDERS ONE BAND'S BENCH, so a marked bench and an unmarked one cannot share a PNG.**
+## The unmarked half is therefore a claim rather than a picture, made on the reference band in this
+## same block and paired with the marked one: *"prints a prefix"* alone passes on a panel that prints
+## one always, and *"prints nothing"* alone passes on a panel that lost the mark entirely.
+##
+## The picker itself is `HudWidgets.build_work_priority_picker`, the work inspector's own control, so
+## nothing here re-asserts its shape — what is under test is that this well MOUNTS it, on an idle
+## bench, and that the press reaches the socket as `bench_priority`.
+func _bench_priority_states() -> void:
+	# --- the UNMARKED half, PNG-less. The reference bench carries no `priority` key at all, which is
+	# what a `Normal` bench looks like on the wire, and its line two must be what it always was.
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the rank probe opens the panel", false)
+		return
+	h._assert_hud("crafting — a NORMAL bench prints no rank prefix (%s)"
+			% [_priority_prefix(panel).text if _priority_prefix(panel) != null else "none"],
+		_priority_prefix(panel) == null)
+	h._assert_hud("crafting — …and still offers the `%s` link" % HudWorkVocab.WORK_INSPECT_PRIORITY,
+		_priority_link(panel) != null)
+	h._assert_hud("crafting — the picker is closed until the link is pressed (%d rungs)"
+			% _priority_rungs(panel).size(),
+		_priority_rungs(panel).is_empty())
+
+	# --- the LINK, driven as real pointer input. `pressed.emit()` cannot see a covered, disabled,
+	# zero-size or IGNORE-filtered control, which is how a dead control ships green.
+	await _press_priority_link()
+	panel = h._hud.crafting_panel().panel()
+	var rungs := _priority_rungs(panel) if panel != null else []
+	h._assert_hud("crafting — pressing the link opens the three-rung picker (%d)" % rungs.size(),
+		rungs.size() == HudWorkVocab.WORK_PRIORITY_LEVELS.size())
+	h._assert_hud("crafting — …lit on the level the bench is actually at (%s)"
+			% _lit_priority_rung(panel),
+		_lit_priority_rung(panel) == HudWorkVocab.WORK_PRIORITY_NORMAL)
+	h._assert_hud("crafting — …under the hint that names no resource (%s)"
+			% HudWorkVocab.WORK_PRIORITY_HINT,
+		panel != null and _label_with_text(panel, HudWorkVocab.WORK_PRIORITY_HINT) != null)
+
+	# --- THE COMMAND. Each rung asserted on its OWN payload, off the REAL relay (panel → controller →
+	# `HudLayer`), because the panel's own signal says nothing about whether the seam carries it or
+	# what band it ends up naming. **Every level, not just one**: a commit hard-wired to `normal` — the
+	# shape a `_ =>` catch-all produces — satisfies any single-level claim.
+	for level in HudWorkVocab.WORK_PRIORITY_LEVELS:
+		await _assert_priority_rung_commits(String(level))
+
+	# --- THE FRAME. The bare band's IDLE bench, marked HIGH — *the axes go first*, which is exactly
+	# the moment a player states a rank with nothing on the bench — and the picker opened over it.
+	h._hud.update_band_alerts([_marked_idle_band(HudWorkVocab.WORK_PRIORITY_HIGH)])
+	h._hud.open_crafting_panel(_marked_idle_band(HudWorkVocab.WORK_PRIORITY_HIGH))
+	await h._settle()
+	await _press_priority_link()
+	panel = h._hud.crafting_panel().panel()
+	var prefix := _priority_prefix(panel) if panel != null else null
+	h._assert_hud("crafting — a HIGH bench leads its line two with the mark (%s)"
+			% [prefix.text if prefix != null else "no prefix at all"],
+		prefix != null
+			and prefix.text == HudWorkVocab.work_row_priority_prefix(HudWorkVocab.WORK_PRIORITY_HIGH))
+	h._assert_hud("crafting — …in the tier's own ink (%s)"
+			% [prefix.get_theme_color(FONT_COLOR_THEME_ITEM) if prefix != null else "none"],
+		prefix != null and prefix.get_theme_color(FONT_COLOR_THEME_ITEM)
+			== HudWorkVocab.work_priority_ink(HudWorkVocab.WORK_PRIORITY_HIGH))
+	# The ✕ is what says this bench is IDLE — it is absent exactly when there is no job — so the
+	# picker standing beside a well with no ✕ is the claim that the control renders on an empty bench.
+	h._assert_hud("crafting — the picker renders on an IDLE bench (no ✕ beside it: %s)"
+			% [_clear_button(panel) == null],
+		panel != null and _clear_button(panel) == null
+			and _priority_rungs(panel).size() == HudWorkVocab.WORK_PRIORITY_LEVELS.size())
+	h._assert_hud("crafting — …opened on HIGH rather than on the default (%s)"
+			% _lit_priority_rung(panel),
+		_lit_priority_rung(panel) == HudWorkVocab.WORK_PRIORITY_HIGH)
+	await h._save("crafting_bench_priority")
+
+	# The other tier's ink, PNG-less — one frame can carry one bench, and DANGER-for-Low is the half
+	# that says the ink is resolved from the level rather than pinned to the one colour above.
+	h._hud.update_band_alerts([_marked_idle_band(HudWorkVocab.WORK_PRIORITY_LOW)])
+	h._hud.open_crafting_panel(_marked_idle_band(HudWorkVocab.WORK_PRIORITY_LOW))
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	prefix = _priority_prefix(panel) if panel != null else null
+	h._assert_hud("crafting — a LOW bench leads with its own face in its own ink (%s)"
+			% [prefix.text if prefix != null else "no prefix at all"],
+		prefix != null
+			and prefix.text == HudWorkVocab.work_row_priority_prefix(HudWorkVocab.WORK_PRIORITY_LOW)
+			and prefix.get_theme_color(FONT_COLOR_THEME_ITEM)
+				== HudWorkVocab.work_priority_ink(HudWorkVocab.WORK_PRIORITY_LOW))
+
+## Press one rung and assert what left the HUD. The picker CLOSES on a pick, so the link is re-pressed
+## each time round — which is itself the claim that the control survives its own commit.
+##
+## **AND IT ASSERTS WHAT DID NOT GO OUT.** A mis-wired rung emitting `bench_crew` or `clear_bench`
+## would satisfy a bare *"something was emitted"* and would silently re-crew or destroy the pile.
+func _assert_priority_rung_commits(level: String) -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel != null and _priority_rungs(panel).is_empty():
+		await _press_priority_link()
+		panel = h._hud.crafting_panel().panel()
+	var rung := _priority_rung(panel, level) if panel != null else null
+	if rung == null:
+		h._assert_hud("crafting — the picker offers a `%s` rung" % level, false)
+		return
+	var ranked: Array = []
+	var others: Array = []
+	var on_rank := func(payload: Dictionary) -> void: ranked.append(payload)
+	var on_other := func(payload: Dictionary) -> void: others.append(payload)
+	h._hud.bench_priority_requested.connect(on_rank)
+	h._hud.bench_crew_requested.connect(on_other)
+	h._hud.clear_bench_requested.connect(on_other)
+	await _press_control(rung)
+	h._hud.bench_priority_requested.disconnect(on_rank)
+	h._hud.bench_crew_requested.disconnect(on_other)
+	h._hud.clear_bench_requested.disconnect(on_other)
+	if ranked.size() != 1:
+		h._assert_hud("crafting — a REAL press on `%s` emitted exactly one rank (%s)" % [level, ranked],
+			false)
+		return
+	# **ASSERTED ON THE COMMAND LINE, not on the payload dict** — the work board's own idiom — so the
+	# verb, the token order and the level word are judged as the SOCKET would see them. That is also
+	# what pins `bench_priority` as a sibling verb rather than a `work_priority` token.
+	var band := _crafting_band()
+	var line := String(MAIN_SCRIPT.format_bench_priority(ranked[0] as Dictionary).get("line", ""))
+	var want := "bench_priority %d %d %s" % [HudConst.PLAYER_FACTION_ID,
+		int(band.get("band_id", HudConst.NO_BAND_ID)), level]
+	h._assert_hud("crafting — a REAL press on `%s` sends `%s` (got \"%s\")" % [level, want, line],
+		line == want)
+	h._assert_hud("crafting — …and touches neither the crew nor the job (%s)" % [others],
+		others.is_empty())
+	h._assert_hud("crafting — …and the picker closes on the pick",
+		_priority_rungs(h._hud.crafting_panel().panel()).is_empty())
+
+## The `Priority` link, driven. Separate from `_press_control` so the FIND is asserted rather than
+## silently skipped — a link that stopped rendering would otherwise read as a picker that never opened.
+func _press_priority_link() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var link := _priority_link(panel) if panel != null else null
+	if link == null:
+		h._assert_hud("crafting — the bench well carries a `%s` link to press"
+			% HudWorkVocab.WORK_INSPECT_PRIORITY, false)
+		return
+	await _press_control(link)
+
+## **REAL POINTER INPUT THROUGH THE REAL DISPATCH** — hover, press, release, at the control's own rect
+## centre, the `selective_gather` chapter's idiom. The press rebuilds the bench well and frees the
+## control, so no caller may touch it afterwards; `_settle` is what lets the freed generation leave the
+## tree before anything is counted.
+func _press_control(control: Control) -> void:
+	var viewport: Viewport = h.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(),
+		control.get_global_rect().get_center())
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h._settle()
+
+## The `Priority` link, found by the meta the panel stamps on it. **A face match would be ambiguous
+## across panels** — the work inspector's link wears the same word — and it would be asserting the
+## string this chapter had already composed.
+func _priority_link(node: Node) -> Button:
+	if node is Button and node.has_meta(HudCraftingVocab.BENCH_PRIORITY_LINK_META):
+		return node as Button
+	for child in node.get_children():
+		var found := _priority_link(child)
+		if found != null:
+			return found
+	return null
+
+## The rank's line-two prefix, found by IDENTITY: its face is a `HudWorkVocab` string this panel does
+## not compose, so matching on the wording would test the other module's spelling. `null` on a Normal
+## bench, which is the unmarked half of every pairing here.
+func _priority_prefix(node: Node) -> Label:
+	if node is Label and node.has_meta(HudCraftingVocab.BENCH_PRIORITY_META):
+		return node as Label
+	for child in node.get_children():
+		var found := _priority_prefix(child)
+		if found != null:
+			return found
+	return null
+
+## Every rung of the open picker, by the meta the shared builder stamps — valued the LEVEL it would
+## send, never the face, so a claim reads the button by what it would DO. Empty while the picker is
+## closed, which is what the closed-by-default and closes-on-pick claims are made of.
+func _priority_rungs(node: Node) -> Array:
+	var found: Array = []
+	if node is Button and node.has_meta(HudWorkVocab.WORK_PRIORITY_RUNG_META):
+		found.append(node)
+	for child in node.get_children():
+		found.append_array(_priority_rungs(child))
+	return found
+
+func _priority_rung(node: Node, level: String) -> Button:
+	for rung in _priority_rungs(node):
+		if String((rung as Button).get_meta(HudWorkVocab.WORK_PRIORITY_RUNG_META)) == level:
+			return rung as Button
+	return null
+
+## Which rung is LIT — **the SAME test `band_panel_preview._assert_work_priority_picker_lit` makes of
+## this control on the work board**, the primary variant's own background, so the two surfaces cannot
+## be judged by two different notions of "selected". `""` when the picker is closed or when nothing is
+## lit, which is a real failure rather than a level.
+func _lit_priority_rung(node: Node) -> String:
+	if node == null:
+		return ""
+	for rung in _priority_rungs(node):
+		var button := rung as Button
+		var box := button.get_theme_stylebox(NORMAL_STYLEBOX_THEME_ITEM)
+		if box is StyleBoxFlat \
+				and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG):
+			return String(button.get_meta(HudWorkVocab.WORK_PRIORITY_RUNG_META))
+	return ""
+
+## The `StyleBox` slot a `Button` draws at rest. Read back rather than eyeballed: the lit rung is what
+## says which rank the bench is AT, and a frame cannot carry that claim.
+const NORMAL_STYLEBOX_THEME_ITEM := "normal"
+
+## The bare band's IDLE bench with a rank on it. **The rank rides an EMPTY bench deliberately** — it is
+## a standing statement about the bench rather than about the job on it, and the sim publishes it on an
+## idle bench for exactly that reason.
+func _marked_idle_band(level: String) -> Dictionary:
+	var band := _bare_band()
+	var bench: Dictionary = band["bench"]
+	bench[HudCraftingVocab.BENCH_PRIORITY_KEY] = level
+	band["bench"] = bench
+	return band
 
 ## The real map, instanced for the one state that needs an input TARGET rather than a picture.
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")

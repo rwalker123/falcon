@@ -125,6 +125,21 @@ passed. Measured: with the old all-defaults rows, breaking the codec's `High` ma
 here is a variant the guard does not cover. **A new enum on the wire needs the same treatment**, and
 adding it to the fixture is the only thing that gives its arms coverage.
 
+**`BenchState.priority` is the same enum in a place that can only reach TWO of its three arms.** A
+cohort carries exactly **one** bench, and the fixture has two cohorts, so `BENCHED_SOURCE_PRIORITIES`
+gives them `High` and `Low` — the two a wrong mapping can actually reach, because a decoder maps this
+enum with a `_ =>` catch-all on the default (the shipped labor mapping is `_ => "normal"`) and a wrong
+`Normal` arm is therefore unreachable by construction. The `Normal` arm is covered end to end at the
+**codec** level instead, by `core_sim/tests/crafting_wire.rs`, which asserts all three off the encoded
+envelope.
+
+> **AND THE FIXTURE ROWS BUY NOTHING UNTIL THE DECODER READS THE FIELD.** Measured: with the bench
+> rows in place, breaking the codec's bench `High` mapping left `decode-guard` **passing** and the
+> golden unmoved, because `dict/population.rs` has no `priority` key on the bench dict. That is not a
+> fault in the fixture — it is what this gate *is*, a guard over the client's decode path — but it
+> means "the fixture covers the arm" and "the guard covers the arm" are two claims, and the second
+> waits on the accessor. The `crafting_wire` test is what holds the line in the meantime.
+
 **The golden is STRUCTURAL, not byte-exact**: floats round to `FLOAT_DECIMALS` and an over-long
 packed array records `{type, len, head, tail, checksum}` rather than every sample, so an appended
 field does not rewrite thousands of lines. Re-record only deliberately, with `cargo xtask

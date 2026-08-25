@@ -112,8 +112,8 @@ pub use components::{
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, SourcePriority, SourceShedFacts,
-    SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
+    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
     DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_load::ConfigLoadError;

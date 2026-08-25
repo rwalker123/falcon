@@ -1379,6 +1379,29 @@ pub struct BenchState {
     /// Appended last (append-only).
     #[serde(default)]
     pub blocked_severity: String,
+    /// **WHERE THE PLAYER PUT THE BENCH WHEN THE BAND RUNS SHORT** — the **same**
+    /// [`SourcePriorityState`] a worked row carries on [`LaborAssignmentState::priority`], reusing
+    /// that vocabulary rather than minting a second one: it is one property of one kind, and two
+    /// spellings of it would drift. Set with `bench_priority <faction> <band> high|normal|low`.
+    ///
+    /// **Why the bench has one.** It spends the same workers the gathering rows do, so a short band
+    /// ranks it against them — and a craft pays into no food, fodder or material account, so an
+    /// **unmarked bench is the first thing thinned**. That is the right default in a famine, and this
+    /// is how the player overrides it. The bench is ranked in the *same step* as the worked sources,
+    /// never a step of its own; its **last** hand goes before any source is emptied, so a `High`
+    /// bench still stalls before a `Low` patch is given up — the steps say what is at stake, the mark
+    /// says who goes first among equals.
+    ///
+    /// [`SourcePriorityState::Normal`] on an unmarked bench **and** on a band with no bench at all.
+    /// It is published on an **idle** bench too (empty [`Self::recipe_id`]), because a rank is a
+    /// standing statement about the bench rather than about the job on it — and the command sets it
+    /// either way, so a client that hid the control while the bench was empty would hide the one
+    /// moment the player most wants to state it.
+    ///
+    /// Captured **live** off the bench, as [`LaborAssignmentState::priority`] is, so an edit lands on
+    /// the command's own recapture and no optimistic overlay is needed. Appended last (append-only).
+    #[serde(default)]
+    pub priority: SourcePriorityState,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of
