@@ -456,9 +456,10 @@ func _ready() -> void:
     # `knowledge` zones say all of it better. What survives is the INGEST — the per-faction snapshot
     # arrays, filtered to the player and retained, which that page reads back through
     # `faction_tracks` / `faction_sedentarization` / `faction_discovered_sites`.
-    # The one injection is `_note_sink`: the knowledge-unlock nudge is a System-channel note, and the
-    # panel it lands on is `Main`'s, not the HUD's.
-    _topbar = FactionReadouts.new(_note_sink)
+    # **IT TAKES NO INJECTION AT ALL NOW.** Its one collaborator was `_note_sink`, for the one-shot
+    # `"<Track> learned"` nudge onto the event dock's System channel; the turn orb's knowledge rows
+    # supersede that note (`docs/plan_knowledge_screen.md` §5), so the cluster is pure ingest again.
+    _topbar = FactionReadouts.new()
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -597,6 +598,11 @@ func _ready() -> void:
     # **THE LAUNCHER CARRIES NO SUBJECT**, unlike the ⚒'s: what your people know is a FACTION fact and
     # no band owns it, so there is nothing for the relay to resolve.
     _bandpanel.knowledge_requested.connect(func() -> void: _knowledge.toggle())
+    # **AND THE ORB'S KNOWLEDGE ROWS NEED THE SAME SCREEN TO OPEN** (§5): both are non-locating, so a
+    # press routes through `panel_requested` and `TurnOrbController` decides what that opens. Handed
+    # over HERE rather than in that controller's construction, which happens well above this line —
+    # the `_bandpanel.set_attention(_attention)` hand-over, for the same shape of reason.
+    _turnorb.set_knowledge_panel(_knowledge)
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -770,20 +776,17 @@ func update_intensification(intensification_variant: Variant) -> void:
     # than a derived mark model, and the derivation stays in `RungGates` where all three surfaces
     # reach it. Mirrors the `labor_pending_changed` → `Main` → `set_labor_pending` path exactly.
     emit_signal("faction_knowledge_changed", _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID))
-    # **AND RE-PUSH THE LAUNCHER'S PIP, because `Main` dispatches each section INDEPENDENTLY and only
-    # when it CHANGED.** The pip is otherwise pushed from `update_band_alerts`, which is skipped on a
-    # delta whose `populations` are byte-identical — so a turn that finishes a track and moves nobody
-    # would leave the count a turn stale on the one surface that exists to announce it. Populations
-    # move on nearly every turn, and "nearly" is what makes this latent rather than absent.
+    # **AND RE-RUN THE KNOWLEDGE READOUTS, because `Main` dispatches each section INDEPENDENTLY and
+    # only when it CHANGED.** They are otherwise driven from `update_band_alerts`, which is skipped on
+    # a delta whose `populations` are byte-identical — so a turn that finishes a track and moves nobody
+    # would leave the pip, the orb's knowledge rows and the screen's own turn diff a turn stale, on the
+    # very surfaces that exist to announce exactly that. Populations move on nearly every turn, and
+    # "nearly" is what makes this latent rather than absent.
     #
-    # The REFRESH goes with it, for the same reason and one more: the pip alone leaves the screen's
-    # turn diff un-rolled, so "New this turn" would mark the PREVIOUS turn's track, and an OPEN panel
-    # would render last turn's columns beside a pip showing this turn's count. `Main` dispatches
-    # `update_overlay` (which sets the live turn) BEFORE this section, so the diff rolls against the
-    # right turn; `refresh_snapshot` is turn-keyed and idempotent within a turn, so the snapshot
-    # seam's own call stays and costs nothing.
-    _knowledge.refresh_snapshot()
-    _push_knowledge_pip()
+    # `Main` dispatches `update_overlay` (which sets the live turn) BEFORE this section, so the diff
+    # rolls against the right turn; the roll is turn-keyed and idempotent within a turn, so the
+    # snapshot seam's own call stays and costs nothing.
+    _refresh_knowledge_readouts()
 
 func update_discoveries(discovered_variant: Variant) -> void:
     _topbar.update_discoveries(discovered_variant)
@@ -947,12 +950,11 @@ func update_crafting_catalogues(materials: Variant, characteristic_bands: Varian
     # field rather than a copy — re-deriving either would be a second answer to a question the
     # crafting panel already asks.
     _knowledge.set_catalogues(recipes, craft_knowledge)
-    # The craft half of the refresh + pip, re-run for `update_intensification`'s reason: a world whose
+    # The craft half of the readouts, re-run for `update_intensification`'s reason: a world whose
     # recipe book or craft tracks moved without its populations moving is a delta this section arrives
-    # alone on, and the pip without the refresh would announce a track the columns have not caught up
-    # to. Idempotent within a turn.
-    _knowledge.refresh_snapshot()
-    _push_knowledge_pip()
+    # alone on, so the pip, the orb's knowledge rows and the columns would otherwise disagree about
+    # what the faction knows. Idempotent within a turn.
+    _refresh_knowledge_readouts()
 
 ## Open Materials & Crafting on `band`. Reached BY NAME from the preview harnesses, which stand the
 ## panel up without a Band/City panel to launch it from.
@@ -979,17 +981,65 @@ func close_knowledge_panel() -> void:
 func knowledge_panel() -> KnowledgePanelController:
     return _knowledge
 
+## **ROLL THE KNOWLEDGE SCREEN'S TURN DIFF AND RE-PUSH BOTH READOUTS DERIVED FROM IT** — the
+## launcher's pip and the orb's knowledge row. Every caller takes this method; neither push it makes
+## has a caller of its own.
+##
+## **THIS IS THE ORDERING MECHANISM, AND IT IS THE WHOLE POINT OF THE METHOD.** The orb's row names the
+## track that finished THIS TURN, which is `refresh_snapshot`'s diff — and that diff rolls THIRTY
+## LINES BELOW `build_band_attention` in `update_band_alerts`. A knowledge producer built with the
+## band ones would therefore read the PREVIOUS turn's diff and name the wrong discovery, in a row that
+## renders perfectly plausibly. It happens to be right today only because `Main` dispatches
+## `update_intensification` ahead of `update_band_alerts` and that section rolls the diff too — a
+## coincidence of which sections a delta carries, not a guarantee. Putting the roll and the two pushes
+## in ONE method, adjacent, is what makes the ordering unbreakable by a reorder somewhere else.
+##
+## `refresh_snapshot` is turn-keyed and idempotent within a turn, so the three seams that call this
+## (the snapshot roster, the intensification section and the crafting catalogues) cost one roll
+## between them however many of them a given delta carries.
+func _refresh_knowledge_readouts() -> void:
+    if _knowledge == null:
+        return
+    _knowledge.refresh_snapshot()
+    # **ONE ROSTER BUILD FOR BOTH READOUTS.** The walk behind `nodes()` resolves the faction's
+    # patches, herds, kit and bench, and both readouts derive from it — so asking for it twice per
+    # snapshot is a second walk of the whole player world for one answer, on a seam that runs on
+    # every delta carrying populations, knowledge or catalogues. It shipped that way first, and the
+    # cost showed up as a FLAKE: `band_panel_preview`'s queue auto-scroll gesture is bounded by a
+    # frame budget, and the extra walk left it 53px short of the 56 it drives for.
+    var roster := _knowledge.nodes()
+    _push_knowledge_pip(roster)
+    _push_knowledge_attention(roster)
+
+## Push the orb's KNOWLEDGE row (`docs/plan_knowledge_screen.md` §5) — a discovery that finished this
+## turn. Built off the roster the columns draw and the pip counts, so the three surfaces are one answer.
+##
+## **TWO CALLERS, and the second deliberately does NOT roll the diff.**
+## `_refresh_knowledge_readouts` is the per-snapshot one, and it rolls on the line above — see its
+## docstring for why those two must not be separated. `reset_world_state` is the other: it pushes
+## straight after `_knowledge.reset_world_state()`, which has just DROPPED the diff, so there is
+## nothing to roll and what it pushes is the new world's nothing.
+func _push_knowledge_attention(roster: Array) -> void:
+    if _turnorb == null:
+        return
+    _turnorb.set_knowledge_attention(AttentionController.knowledge_attention(roster))
+
 ## Push the launcher's PIP — how many discoveries the faction has earned and nothing is using.
 ##
 ## **IT IS DERIVED FRESH EVERY TURN, NEVER LATCHED, AND OPENING THE SCREEN DOES NOT CLEAR IT.** What
 ## clears an unspent count is USING the knowledge; a pip that went quiet on a look would tell the
-## player they had dealt with something they had not. `KnowledgePanelController.unspent_count` answers
-## with the panel closed and never built, which is the point — the pip is what says there is something
-## on a screen you have not opened.
-func _push_knowledge_pip() -> void:
-    if _knowledge == null or _bandpanel == null or not _bandpanel.has_panel():
+## player they had dealt with something they had not. It answers with the panel closed and never
+## built, which is the point — the pip is what says there is something on a screen you have not opened.
+##
+## **AND IT IS THE ONLY SURFACE CARRYING THAT COUNT.** §5 asked for an orb row beside it; that row was
+## built and cut, because an unspent discovery is a STANDING condition and the orb never went quiet
+## again — see `AttentionController.knowledge_attention`. This pip is mounted on all three of the
+## Band/City panel's layouts, including the collapsed rail, so the nudge is always on screen.
+func _push_knowledge_pip(roster: Array) -> void:
+    if _bandpanel == null or not _bandpanel.has_panel():
         return
-    _bandpanel.set_action_pip(BandCityPanel.ACTION_KNOWLEDGE, _knowledge.unspent_count())
+    _bandpanel.set_action_pip(BandCityPanel.ACTION_KNOWLEDGE,
+        KnowledgePanelController.unspent_count_of(roster))
 
 ## **THE FORECAST QUERY SEAM, for `Main` to wire the transport into.** `Main` owns the command client,
 ## so it injects the sender and pumps `CommandBridge.poll_query_replies` in once a frame; nothing in
@@ -1544,6 +1594,11 @@ func reset_world_state() -> void:
     # new world starts KNOWING as "New this turn" — exactly what the `UNSEEN_TURN` sentinel exists to
     # prevent. See `KnowledgePanelController.reset_world_state`.
     _knowledge.reset_world_state()
+    # …and the orb's knowledge row goes with it. It is a CACHED half of the registry, so a row naming
+    # the old world's discovery would otherwise sit on the orb until the next snapshot that happens
+    # to carry a section this pushes from. `_topbar.reset_world_state()` above has already emptied
+    # the tracks, so what this pushes is the new world's nothing.
+    _push_knowledge_attention(_knowledge.nodes())
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
@@ -1895,11 +1950,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # ledger's life all move every turn. Refreshed from the same seam as the dock, so the two can
     # never be a turn apart about the same band.
     _crafting.refresh_snapshot()
-    # The knowledge screen is live too, and its refresh runs whether or not the panel is OPEN: the
-    # launcher's pip is on the Band/City header and has to be right on a turn nobody opened the
-    # screen. Pushed after the refresh, so the count is this turn's.
-    _knowledge.refresh_snapshot()
-    _push_knowledge_pip()
+    # The knowledge screen is live too, and its readouts run whether or not the panel is OPEN: the
+    # launcher's pip is on the Band/City header and the orb's knowledge rows are on the orb, and both
+    # have to be right on a turn nobody opened the screen.
+    _refresh_knowledge_readouts()
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
     # a herd/tile selection reads _band_labor.player_band(), which only just refreshed here).

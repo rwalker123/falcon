@@ -218,6 +218,102 @@ paths:
   eye here, at true size, against the widest number) / `turn_orb_awaiting_orders` (awaiting rows + idle workers coexisting, incl. the cap's
   overflow row) / **`turn_orb_resolving`** + **`turn_orb_hint_advance` / `turn_orb_hint_review` / `turn_orb_hint_4digit`** (the resolving gate and the hover hint — see "The resolving gate" below).
 
+## The KNOWLEDGE producer — a third half of the registry, and its own ordering rule
+
+`docs/plan_knowledge_screen.md` §5. **`knowledge_learned`** — ONE ROW PER TRACK COMPLETED THIS TURN,
+non-locating, `info`, opening the knowledge screen on its `New this turn` filter
+(`knowledge-panel.md`). Label `"<Discovery> learned"`, over the node's own player-facing name, so one
+format covers the ladder tracks and the craft fan alike. It supersedes
+`FactionReadouts._announce_knowledge_unlock`, the one-shot System-channel note, which is retired —
+see `band-readouts.md`.
+
+It wears `Open ▸`, so it needs an entry in `ATTENTION_KINDS_WITH_A_PANEL` **and** a branch in
+`TurnOrbController._on_turn_orb_panel_requested` — one decision made twice. A kind on the list with
+no branch renders an affordance that does nothing, which is the state `crew_handoff` avoids by being
+on neither.
+
+> ### ⛔ THE UNSPENT BACKLOG IS NOT A SECOND PRODUCER, AND THAT IS A DECISION RATHER THAN AN OMISSION
+>
+> §5 asked for one — an aggregate `"N discoveries unspent"` row — and it was built, rendered and then
+> cut before the arc landed. **THE ORB IS FOR EVENTS AND LOSSES IN PROGRESS; AN UNSPENT DISCOVERY IS
+> A STANDING CONDITION.** Its row therefore never went away, and the orb never returned to the calm
+> all-clear pulse — measured, it moved 400 of the harness's frames simply by adding one to the count
+> badge on every frame that draws the orb. A permanently-lit attention hub teaches the player to stop
+> looking at it, which costs more than the nudge is worth.
+>
+> **The nudge already has a home §1 gave it**: the action bar's PIP, mounted on all three of the
+> Band/City panel's layouts including the collapsed rail, derived fresh and cleared by USING the
+> knowledge. The row was the same standing fact on a second surface — and on the one surface whose
+> whole value is being quiet when nothing needs you.
+>
+> The player has also already been told: the discovery was announced by the row above, the turn it
+> landed.
+>
+> **`turn_orb.gd` asserts the ABSENCE against a faction sitting on four unspent discoveries** — an
+> exact row count plus the all-clear on the following turn — so re-adding the row in any wording
+> fails a test rather than quietly relighting the orb.
+
+### THE ORDERING TRAP, AND THE MECHANISM CHOSEN AGAINST IT
+
+**`build_band_attention` runs at `Hud.update_band_alerts` step 2; `_knowledge.refresh_snapshot()` —
+which rolls the turn diff producer 1 reads — runs THIRTY LINES LATER.** A knowledge producer built
+beside the band ones therefore reads the PREVIOUS turn's diff and names the wrong discovery, in a row
+that renders entirely plausibly. It happens to come out right today only because `Main` dispatches
+`update_intensification` before `update_band_alerts` and that section rolls the diff too — a
+coincidence of which sections a delta carries, not a guarantee. This is the recorded defect one field
+over: the attention producers running before `ingest_snapshot_bands`, so every improved patch alarmed
+as unworked on the first snapshot after a load.
+
+**The mechanism is a THIRD REGISTRY HALF plus a single seam, not an ordering comment.**
+`TurnOrbController` caches `_knowledge_attention` beside `_band_attention` and `_push_attention`
+folds three arrays into the one `set_attention` replace. `HudLayer._refresh_knowledge_readouts` is
+what fills it on a snapshot: it rolls the diff and pushes the pip and the row on three adjacent
+lines, and every seam that used to call `refresh_snapshot` + `_push_knowledge_pip` calls it instead.
+(The world boundary pushes it once more, over a diff `KnowledgePanelController.reset_world_state`
+has just dropped — nothing to roll there, and the point is to clear the old world's row.)
+So the ordering cannot be broken by a reorder somewhere else, and the knowledge row is also correct
+on a delta carrying knowledge but no populations — which never reaches `update_band_alerts` at all.
+
+`AttentionController.knowledge_attention` is a **`static func` taking the flattened roster**
+(`KnowledgePanelController.nodes`) and no collaborator, which is what puts it outside the hazard:
+every other producer there is a method because it reads the band/labor model, and this one can only
+be run against the list handed to it.
+
+### Verification — `tools/ui_preview/chapters/turn_orb.gd`
+
+**The chapter clears the faction's tracks for its band states and puts back what it inherited.** The
+knowledge producer is faction-wide and rides this same registry, and the walk's earlier chapters push
+tracks without always advancing the turn — so the screen's diff has not rolled since whichever of them
+last did, and **the first turn tick in this chapter rolls everything they taught in between onto one
+orb**. Measured: a `Cultivation learned` row riding State 6, which makes the ALL-CLEAR states not clear
+and adds a fifth row to the under-kept block's negative-control COUNT. Both restores are load-bearing
+in the other direction too — `compose_rungs` runs three chapters later and gates its hunt-compose
+frames on that knowledge, so leaving the tracks cleared moved four of its frames into judging a crew
+stepper under knowledge nobody meant to change.
+
+**The block stages FOUR tracks finishing in one turn and leaves all four UNSPENT**, which is what
+lets one staging carry both claims: the producer must emit four rows, one per track and each naming
+its own, and the registry must hold those four and NO backlog row. Then the turn ticks with nothing
+newly taught and the same four still unspent: the row goes quiet and the orb reads ALL-CLEAR, which
+is the property the cut exists to buy. `turn_orb_knowledge` is the frame; every count, every label
+and the affordance are ASSERTED, because all of them render fine when wrong.
+
+**Its band half is emptied at the CACHE (`set_band_attention([])`), never by ingesting a calm band.**
+`update_band_alerts` is not inert: `ingest_snapshot_bands` overwrites the walk's `player_band` /
+`player_bands` / `prev_band_sizes`, which later chapters render against.
+
+**AND IT HANDS BACK THE TURN, not just the tracks.** The block drives turns of its own, and
+`docks_legend`'s `reserved_dock` puts the orb FACE in a frame — so a chapter that wandered off to
+turn 611 and stayed there changes that number for a reason that has nothing to do with what it was
+testing. The tracks go back at TWO different turns, because the screen's diff only rolls when the
+turn moves: one push would roll the taught set out of the baseline and announce whatever the
+inherited tracks hold that the taught set did not, landing a stray row on some later chapter's
+frame; the second rolls the inherited set against itself and reports nothing.
+
+**Three leaks, all of them shared walk state, none of them visible to the exit status** — the tracks,
+the band roster and the turn. Each was found by pixel-diffing every frame against a run at `main` and
+asking what had moved OUTSIDE the orb's own corner.
+
 ## The resolving gate
 
 A turn takes a round trip to the server, and until this existed the orb said nothing about it: the

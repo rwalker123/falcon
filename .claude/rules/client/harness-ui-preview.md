@@ -1634,6 +1634,12 @@ line's own instruction being earned again.
 > - **Checkpoints, not assertions** — `_assert_hud` *and* `_save` both count, because `docks_legend`
 >   makes **zero** assertions and renders frames only; an assertion-only floor would be `0` there and
 >   leave the one chapter an abort truncates entirely unguarded.
+> - **EVERY assertion sink counts, and one of them did not.** `_assert_turn_orb` is a second sink
+>   beside `_assert_hud` — the turn-orb chapter's own — and it printed its PASS without touching the
+>   counter, so fifteen claims escaped the tally `_assert_hud`'s docstring says no claim can escape.
+>   An abort could have dropped the whole turn-orb guard set and still cleared that chapter's floor.
+>   A new sink must increment `_checkpoint_count`, or it is a hole in exactly the guard it looks like
+>   it is part of.
 > - **A floor, not an equality** — adding claims must never fail the run; losing them is the failure.
 > - **A chapter that declares nothing FAILS**, which is what makes it un-bypassable: were a missing
 >   const merely unguarded, deleting it would be the silent bypass and every new chapter would start
@@ -1648,9 +1654,44 @@ line's own instruction being earned again.
 > **So `$?` now covers a chapter dying mid-run.** It still does not cover a claim that is *present and
 > wrong* — that is what the sabotage discipline is for.
 
-## `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
+## The knowledge arc's two chapters — the screen (slice B) and its orb rows (slice C)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and fifty `PASS`, and **most
+`chapters/turn_orb.gd` grew the slice-C block; the screen's own chapter is below. Two things about
+the turn-orb one are the arc's, not the orb's, and both are about SHARED WALK STATE:
+
+- **It clears the faction's tracks for its band states and puts back what it inherited.** The
+  knowledge producer is faction-wide and rides the band rows' own registry, and earlier chapters push
+  tracks without always advancing the turn — so the screen's diff has not rolled since whichever of
+  them last did, and the first turn tick here rolls everything they taught in between onto one orb.
+  The ALL-CLEAR states stop being clear and the under-kept block's negative-control COUNT gains a row.
+  Restoring is the other half: `compose_rungs` runs three chapters later and gates its hunt-compose
+  frames on that knowledge, so leaving the tracks cleared moved four of its frames into judging a crew
+  stepper under knowledge nobody meant to change.
+- **It empties the band half at the CACHE (`set_band_attention([])`), never by ingesting a calm
+  band.** `update_band_alerts` is not inert — `ingest_snapshot_bands` overwrites the walk's
+  `player_band` / `player_bands` / `prev_band_sizes`, which later chapters render against. That was
+  the first cut, and it moved the same four frames a second way.
+- **It hands back the TURN as well**, which `docks_legend`'s `reserved_dock` draws on the orb face.
+  The tracks go back at two different turns, because the knowledge diff only rolls when the turn
+  moves and a single push would announce whatever the inherited tracks hold that the block's own
+  staging did not.
+
+**All three were found by PIXEL-DIFFING every frame against a run at `main`, not by the exit
+status** — the run was green through all of it. The tell was a frame moving outside the orb's own
+corner.
+
+> #### ⛔ A GITIGNORED BUILD ARTIFACT MOVES EVERY FRAME, AND IT IS NOT YOUR CHANGE
+>
+> `clients/godot_thin_client/build_stamp.txt` is written by the build and read by `ClientBuild` into
+> the bottom-centre `build cli … · srv ?` overlay, which **every frame draws**. It is absent on a
+> fresh worktree (the overlay reads `dev-unknown`) and appears the moment something stamps it — so a
+> baseline captured before that and a run captured after differ on **400+ frames**, in a 10px strip
+> nobody looks at. Move it aside before capturing either side, or the diff drowns the real movers.
+
+### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
+
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and 68 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured 72 — frames count too), and **most
 of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
 it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
 pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and

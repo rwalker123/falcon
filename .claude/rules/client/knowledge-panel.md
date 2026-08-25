@@ -16,7 +16,8 @@ not begun — and the ones it has earned and is not using.
 The problem it answers: the intensification ladder's knowledge was earned by practice, announced once
 into the event dock's System channel, and otherwise invisible. A player was never told a track
 finished, never told what it lets their hands do, and never told they were sitting on a discovery they
-had not spent.
+had not spent. **The announcement now lands on the TURN ORB instead, and the orb's rows open this
+screen** — see `turn-orb.md`, and the entry point below.
 
 ## IT IS A READING, NOT A PLANNER — and that is the review question for any change here
 
@@ -126,26 +127,47 @@ hand back a roster in which one of them is no longer complete, and a node marked
 `not begun` is a sentence about nothing. It shipped that way first: an empty tracks row after a
 completion rendered `New this turn 1` over a faction that knew nothing.
 
-### The turn diff is ONE diff over BOTH webs, and it is not `_announce_knowledge_unlock`'s
+### The turn diff is ONE diff over BOTH webs, and it is the ONLY one left
 
 The ladder tracks and the craft tracks arrive through different ingests, so a diff per ingest would
 make the LAND column's "new" and the CRAFT column's "new" two different rules — and the one that
 drifted would be invisible, both rendering as a plausible pill count. One diff over the SAME roster
 the panel draws cannot disagree with what is on screen.
 
-**It deliberately does not reuse `FactionReadouts._announce_knowledge_unlock`'s diff**, which answers
-a different question: that one is fire-once-EVER per faction+track and survives across turns, because
+**It deliberately did not reuse `FactionReadouts._announce_knowledge_unlock`'s diff**, which answered
+a different question: that one was fire-once-EVER per faction+track and survived across turns, because
 a nudge repeated is noise. This one is "since the turn ticked" and has to go quiet again next turn.
+That other diff is **gone** — the announcement it fed was retired in favour of the turn orb's
+freshly-learned row, and the row is built off THIS diff, through the roster. So the client now has one
+"a track just completed" detector rather than two, which is the point: two surfaces reporting one
+event from two independently-derived diffs is how they come to disagree about which turn it happened
+on.
 
-**THE FIRST OBSERVATION LEARNS NOTHING.** A fresh connect or a rehydrated save arrives with tracks
-already complete and no prior value to compare them against, so the first pass seeds the baseline and
-reports nothing — otherwise every discovery a returning player ever made lights up as new. That is the
-same trap `_announce_knowledge_unlock` guards with its "no prior value ⇒ not announced" rule, met here
-with an explicit `UNSEEN_TURN` sentinel rather than an empty dictionary, an empty baseline being
-indistinguishable from a faction that knows nothing.
+**NO PRIOR VALUE MEANS NO DISCOVERY — and the grain is PER KEY, not per pass.** A fresh connect or a
+rehydrated save arrives with tracks already complete and nothing to compare them against, so what has
+never been observed seeds the baseline and reports nothing; otherwise every discovery a returning
+player ever made lights up as new. (`_announce_knowledge_unlock` guarded the same trap with the same
+rule before it was retired.) The empty baseline is distinguished from a faction that knows nothing by
+an explicit `UNSEEN_TURN` sentinel rather than by an empty dictionary.
+
+> #### ⛔ "THE FIRST PASS LEARNS NOTHING" WAS THE WRONG GRAIN, AND THE CRAFT HALF PAID FOR IT
+>
+> **A SECTION CAN ARRIVE LATER THAN THE FIRST PASS.** `Main` dispatches `update_intensification`
+> before `update_crafting_catalogues`, and both roll this diff — so the baseline was seeded while
+> `_craft_knowledge` was still empty, and the later same-turn refresh early-returned on
+> `turn == _diff_turn` and never repaired it. On the next tick every craft the faction had known for
+> a hundred turns was in `known_now`, absent from the baseline, and therefore *new*: one
+> `"<Craft> learned"` row apiece. It held for the ladder half and failed for the craft half, which is
+> the shape a per-pass rule will always have.
+>
+> `_seen_keys` records every key the roster has EVER carried, and a key not in it cannot be fresh —
+> it is folded into the baseline instead, including on the same-turn path, which is the one the
+> catalogues actually take. That generalises: any future section that lands after the seeding pass
+> gets the same treatment for free.
 
 **A second snapshot inside one turn must not re-arm it.** The server re-captures after every command,
-and the baseline is the TURN's rather than the frame's.
+and the baseline is the TURN's rather than the frame's — but a key seen for the FIRST time in such a
+snapshot still joins the baseline, or it reports as new on the next tick.
 
 ## DOMAINS ARE COLUMNS, IT IS NOT A GRAPH, AND AN EMPTY ONE IS NEVER DRAWN
 
@@ -187,9 +209,9 @@ the player has not noticed it, so it has to be legible without a click.
 ## The detail pane reads `FactionReadouts`' copy, and authors only the half that did not exist
 
 - **What it lets you do** — `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES`, READ rather than re-authored, so
-  the pane and the unlock announcement cannot describe one discovery differently. (§5 retires that
-  announcement; that is Slice C, and retiring it early would leave the arc with no announcement at
-  all until C lands.)
+  the pane and any other surface naming a discovery cannot describe it differently. **That table
+  outlived the announcement it was written for**: the one-shot System note is retired (§5) and the
+  table is not, this pane being its reader now. See `band-readouts.md`.
 - **How it is learned** — `HudKnowledgeVocab.PRACTISE_NOTES`, which is the half that existed NOWHERE
   in the client. The rule lived only in a Rust doc comment on `intensification_ladder.json`
   (`_comment_earns_knowledge`, one per rung) and a player was never told any of it, which is most of
@@ -246,6 +268,47 @@ pip was pushed from. A turn that finishes a track and moves nobody would leave t
 on the one surface that exists to announce it. `update_intensification` and
 `update_crafting_catalogues` push it too. Populations move on nearly every turn, and "nearly" is what
 made this latent rather than absent.
+
+## THE ORB'S ROW OPENS THIS SCREEN ON A FILTER, AND `open()` COULD NOT DO IT
+
+`open_on_filter(filter)` exists because **the live filter is CONTROLLER state that survives a close**,
+deliberately — which node the player is reading and which filter they set outlast a turn tick, exactly
+as the crafting ledger's fold state does. So the launcher's plain `open()` reopens on whatever the
+player last set, and a row that has just said *"Penning learned"* would land them on a list that need
+not contain it.
+
+- **`knowledge_learned` → the `new` filter**, the list holding the discovery the row just named.
+  `TurnOrbController` owns that mapping; this controller just takes a filter.
+- **IT OPENS, IT NEVER TOGGLES.** The launcher glyph is a toggle because pressing it means *show me /
+  hide it*; pressing an attention row means *take me to this*, and a press that closed the screen
+  because it happened to be open already would answer a question nobody asked. It re-renders either
+  way, so an already-open panel redraws on the new filter.
+- **The SELECTION is left alone.** A filter is a question about the list, not about the node being
+  read, and throwing a reading away to answer it would lose the one thing the detail pane is for.
+
+`nodes()` is the other seam slice C added: the flattened roster, exposed rather than re-derived per
+reader, because the walk behind it resolves the faction's patches, herds, kit and bench. The columns
+draw it, the pip counts it and the orb's row is built off it — one derivation, so no two of the three
+can answer differently about one discovery.
+
+**AND ONE WALK PER SNAPSHOT, WHICH IS WHY `unspent_count_of(roster)` EXISTS.**
+`HudLayer._refresh_knowledge_readouts` asks two questions of one snapshot — the pip's number and the
+orb's row — and building `nodes()` for each is a second walk of the whole player world for one
+answer, on a seam that runs on every delta carrying populations, knowledge or catalogues. It shipped
+that way first and **the render harness caught it as a flake**: `band_panel_preview`'s queue
+auto-scroll gesture is bounded by a frame budget, and the extra per-snapshot walk was enough to leave
+it 53px short of the 56px it drives for — two failures in five runs against none in four at `main`,
+and none in five once the walk was shared. `unspent_count()` is the same expression over its own
+`nodes()`, so the two entry points cannot drift.
+
+**Asserted, never screenshotted** (`_assert_opens_on_filter`): a screen opened on the wrong filter
+renders a perfectly ordinary card. The claim is read off the DRAWN chrome — the lit pill is the one
+whose `normal` stylebox carries an opaque fill, every quiet pill sitting at `HudStyle.PILL_QUIET_ALPHA`.
+**The screen is parked on a DIFFERENT filter first, through the real pill**, which is what makes the
+landing falsifiable: the whole job of `open_on_filter` is to override retained view state, so a
+fixture that opened a panel already sitting on `new` would pass with the branch deleted. The block
+ends by proving the entry point is not redundant — parked on `unused` again, a plain launcher open
+comes back on `unused`.
 
 ## THE KNOW TAB IS DELETED, AND SETTLING AND DISCOVERIES ARE REHOMED RATHER THAN RETIRED
 

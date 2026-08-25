@@ -217,8 +217,9 @@ static func _ladder_node(track: String, domain: StringName, model: Dictionary) -
 		# calling that "earned and unused" would put every unlearned thing in the nudge count.
 		HudKnowledgeVocab.NODE_UNSPENT: state == HudKnowledgeVocab.NODE_STATE_KNOWN \
 			and testable and in_use == 0,
-		# The unlock copy is READ from `FactionReadouts`, not re-authored — one sentence per track, so
-		# the detail pane and the unlock announcement cannot say different things about one discovery.
+		# The unlock copy is READ from `FactionReadouts`, not re-authored — one sentence per track, so no
+		# two surfaces naming a discovery can describe it differently. That table OUTLIVED the one-shot
+		# unlock announcement it was written for (retired, §5); this pane is its reader now.
 		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_PRACTISE: String(HudKnowledgeVocab.PRACTISE_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_NEW: _is_new(track, state, model),

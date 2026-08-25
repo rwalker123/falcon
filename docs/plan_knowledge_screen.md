@@ -1,7 +1,12 @@
 # The Knowledge Screen
 
-**Status:** design settled, not implemented. Prototype: `docs/knowledge_screen_ux_proposal.html`
-(the eight-option comparison it came from is `docs/knowledge_visibility_ux_proposal.html`).
+**Status: SHIPPED.** All four slices of §9 have landed — A (the overlay migration), B (the screen and
+its launcher), C (the two attention rows and the System note's retirement), D (the
+`ready_for_improvement` channel). Sections carrying an **AS BUILT** note say where the implementation
+corrected the design; the engineering rationale lives in `.claude/rules/client/knowledge-panel.md`,
+`turn-orb.md`, `band-readouts.md` and `overlay-channels.md`, which is where to edit it from here.
+Prototype: `docs/knowledge_screen_ux_proposal.html` (the eight-option comparison it came from is
+`docs/knowledge_visibility_ux_proposal.html`).
 
 The problem: the intensification ladder's knowledge is earned by practice, announced once into the
 event dock's System channel, and otherwise invisible. A player is never told a track finished, never
@@ -143,6 +148,44 @@ branch renders an affordance that does nothing** — `hud_attention_vocab` says 
 The existing one-shot System note (`FactionReadouts._announce_knowledge_unlock`) is superseded by
 producer 1 and should be retired, not left to double-report.
 
+> ## ⛔ AS BUILT (Slice C): **ONE PRODUCER SHIPPED, NOT TWO. Producer 2 was cut.**
+>
+> Engineering rationale in `.claude/rules/client/turn-orb.md`; four corrections to the paragraphs
+> above.
+>
+> **PRODUCER 2 WAS BUILT, RENDERED, AND REMOVED BEFORE THE ARC LANDED — do not re-add it.** The orb
+> is for EVENTS and for LOSSES IN PROGRESS; an unspent discovery is a STANDING CONDITION, so its row
+> never went away and the orb never returned to its calm all-clear pulse. Measured: it moved 400 of
+> the render harness's frames simply by adding one to the count badge on every frame that draws the
+> orb. A permanently-lit attention hub teaches the player to stop looking at it, which costs more
+> than the nudge is worth — and **§1 had already given the unspent count a home**, the action bar's
+> PIP, which is mounted on all three of the Band/City panel's layouts including the collapsed rail
+> and clears on the same honest trigger. The row was the same standing fact on a second surface, and
+> on the one surface whose whole value is being quiet when nothing needs you. The player has also
+> already been told: producer 1 announced the discovery the turn it landed.
+>
+> `turn_orb.gd` asserts the ABSENCE against a faction sitting on four unspent discoveries, so
+> re-adding the row fails a test rather than quietly relighting the orb.
+>
+> **The surviving producer takes the branch, and it opens on `new`, not `unused`.** The paragraph
+> above names `unused` because it was written for producer 2's row; producer 1's row names a
+> discovery, so it lands on the list holding it. That still needed a new entry point —
+> `open_on_filter` — because the live filter is controller state that survives a close, so `open()`
+> reopens on whatever the player last set.
+>
+> **THE ORDERING WAS THE REAL WORK, AND IT IS NOT A COMMENT.** `build_band_attention` runs thirty
+> lines before the turn diff the producer reads is rolled, so a producer built beside the band ones
+> names the PREVIOUS turn's discovery in a row that renders perfectly plausibly. The knowledge row is
+> a THIRD registry half instead, filled by one `HudLayer` seam that rolls the diff and pushes the pip
+> and the row on adjacent lines — which also makes it correct on a delta carrying knowledge but no
+> populations, one that never reaches `update_band_alerts` at all.
+>
+> **RETIRING THE NOTE DID NOT RETIRE ITS COPY.** `KNOWLEDGE_UNLOCK_NOTES` is the knowledge screen's
+> *"what it lets you do"* line (`KnowledgeRoster` reads it); `KNOWLEDGE_UNLOCK_LABELS`,
+> `_knowledge_announced` and `FactionReadouts`' last Callable injection went. **A completed discovery
+> is now announced on the turn orb and nowhere else — it leaves the event log entirely**, which is
+> this section's intent rather than a side effect.
+
 ---
 
 ## 6. The overlay migration — modular, and no traces left
@@ -247,8 +290,15 @@ Each slice is its own PR and lands on its own.
 |---|---|---|
 | **A** | The overlay migration — registry / legend / picker split, the minimap mount, the Inspector cleanup (§6) | nothing |
 | **B** | The knowledge screen + the action-bar launcher; delete the Know tab (§3, §4) | nothing |
-| **C** | The two attention producers + the `panel_requested` branch; retire the System note (§5) | B |
+| **C** | The attention producer + the `panel_requested` branch; retire the System note (§5) | B |
 | **D** | The `ready_for_improvement` channel (§7) | A |
+
+> **AS BUILT: C shipped ONE producer, not two.** This row said *two* — the freshly-learned row and an
+> aggregate `"N discoveries unspent"` row. The second was built, rendered and cut: the orb is for
+> events and losses in progress, and a standing backlog row never goes away, so the orb never returns
+> to its calm all-clear pulse. §1 had already given that count the action-bar PIP. The full reasoning
+> is in §5's banner and in `.claude/rules/client/turn-orb.md`, and `turn_orb.gd` asserts the row's
+> ABSENCE — so re-adding it fails a test rather than quietly relighting the orb.
 
 **A is independent of the whole knowledge arc** and is the cleanest thing to do first — it is a
 self-contained cleanup with a visible win, and it leaves the registry D needs.

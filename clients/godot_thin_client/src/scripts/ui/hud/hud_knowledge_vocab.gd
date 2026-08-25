@@ -13,10 +13,12 @@ class_name HudKnowledgeVocab
 ## word, and that is a rule rather than an accident.
 ##
 ## **THE UNLOCK NOTES ARE NOT RE-AUTHORED HERE.** `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` is already
-## the "what it lets you do" copy for the five ladder tracks and the panel reads it, so the line the
-## detail pane shows is the same sentence the unlock announcement says. What this file adds is the
-## half that existed nowhere in the client: **how a knowledge is LEARNED** (`PRACTISE_NOTES`), which
-## lived only in a Rust doc comment on `intensification_ladder.json`.
+## the "what it lets you do" copy for the five ladder tracks and the panel reads it, so no two
+## surfaces naming a discovery can describe it differently. That table outlived the one-shot unlock
+## announcement it was written for — retired in favour of the turn orb's freshly-learned row
+## (`docs/plan_knowledge_screen.md` §5) — and this panel's detail pane is its reader now. What this
+## file adds is the half that existed nowhere in the client: **how a knowledge is LEARNED**
+## (`PRACTISE_NOTES`), which lived only in a Rust doc comment on `intensification_ladder.json`.
 ##
 ## DEPENDENCY DIRECTION: a vocab leaf reads nothing (`HudConst` is the model) — `HudStyle` is the one
 ## exception the family already makes, and it is a leaf too, so the pair stays acyclic.

@@ -185,6 +185,37 @@ const ATTENTION_HANDOFF_OVERFLOW_LABEL_FORMAT := "+%d more crews changed job"
 
 const ATTENTION_HANDOFF_OVERFLOW_DETAIL := "builds finished and their hands moved"
 
+## **THE KNOWLEDGE SCREEN'S PRODUCER — A DISCOVERY FINISHED THIS TURN**
+## (`docs/plan_knowledge_screen.md` §5).
+##
+## **NON-LOCATING**, for the reason §1 dropped the jump: a discovery unlocks a verb across the whole
+## map, so there is no one hex `focus_on_tile` could land on. It opens the screen instead, on the
+## `New this turn` filter — the list it just named (see `TurnOrbController`).
+##
+## **IT SUPERSEDES THE ONE-SHOT SYSTEM NOTE.** `FactionReadouts._announce_knowledge_unlock` posted
+## `"<Track> learned"` + the unlock sentence to the event dock's System channel; it is retired, so a
+## completed discovery is announced HERE and nowhere else. The unlock sentence did not go with it —
+## `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` is still the screen's *"what it lets you do"* copy, which
+## is where the row sends the player to read it.
+##
+## **THE UNSPENT BACKLOG IS DELIBERATELY NOT A SECOND KIND HERE** — see
+## `AttentionController.knowledge_attention` for why an aggregate `"N discoveries unspent"` row was
+## built and then cut. The count lives on the action bar's PIP, which §1 gave it.
+const ATTENTION_KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
+
+## `Cultivation learned` / `Tanning learned` — the node's OWN player-facing name, one format for both
+## webs. The retired note carried a five-entry table of these strings; a format over the label the
+## screen draws covers the craft column too, and cannot drift from what the column says.
+const ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT := "%s learned"
+
+## **THE DETAIL DOES NOT CARRY THE UNLOCK SENTENCE, and that is the `ATTENTION_DECISION_LABEL` rule
+## again.** The orb's rows CLIP at `POPOVER_WIDTH`, and the shortest of the unlock notes is already
+## wider than a row's text cell — so the sentence would ship cut mid-word on the one surface that
+## exists to announce it. It lives one press away, in full, under the detail pane's *"What it lets you
+## do"* head, which is what the row's `Open ▸` reaches.
+const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
+
+
 ## **WHICH NON-LOCATING KINDS ACTUALLY OPEN SOMETHING.** A row with no `x`/`y` renders `Open ▸` and
 ## routes through `panel_requested`, and `TurnOrbController` decides what that opens — so a kind with
 ## no branch there renders an affordance that does nothing when pressed.
@@ -193,7 +224,8 @@ const ATTENTION_HANDOFF_OVERFLOW_DETAIL := "builds finished and their hands move
 ## the row can name neither a hex to jump to nor one source to open (a turn may finish several). It
 ## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
 ## cannot keep is worse than no promise.
-const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION]
+const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
+    ATTENTION_KIND_KNOWLEDGE_LEARNED]
 
 const ATTENTION_SEVERITY_INFO := "info"
 
