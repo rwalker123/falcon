@@ -959,6 +959,38 @@ draws no meta underline. It was Morale's row before the Fodder row landed betwee
 Fodder row's now; the BBCode is byte-identical for all of them (`_key_cell` builds every one), so it
 is Godot's table-cell underline pass and not a client difference. Do not "fix" it in the formatter.
 
+**MAKING THAT ROW UNCONDITIONAL cost one frame and fourteen `PASS`** — measured, `1504 -> 1518` on
+one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The frame is **`band_fodder_dormant`**, appended
+after the pull-down state so nothing before it moves, and it is the first in this chapter to hold a
+LIVE fodder row and a DORMANT one in ONE render — the dim treatment is a claim about a DIFFERENCE,
+and a difference photographed one half at a time is not photographed.
+
+**The setup ORDER is what makes two band-detail surfaces possible at all.** A selected player band is
+the DOCK's subject wherever a dock exists and the Occupants drawer then renders a one-line pointer at
+it, so a docked HUD has exactly ONE. The state selects the forager band with **no panel injected**
+(the drawer's own fallback path, which every hay state above renders on) and injects the dock
+afterwards; neither `set_band_city_panel` nor `render_band` re-renders the drawer. That precondition
+is itself asserted — a drawer that had flipped to the pointer would carry one fodder row instead of
+two and photograph perfectly tidily.
+
+**The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
+REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
+inherits whatever this one leaves. The two dormant sentences need the track part-learned and then
+learned, so the block pushes both and restores the untouched zeros on the way out, the same restore
+`band_panel_preview` makes around its own five-track fixture.
+
+**A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
+`Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
+fire — measured: a dormant branch wrongly registering a full disclosure left that assertion green,
+and only the rendered-surface half caught it. The honest question is `DisclosureController.state()`,
+read BETWEEN the two productions (`unit_summary_lines` clears its rows on entry), with the LIVE
+band's registration beside it so "registers nothing" cannot pass on a build that registers nothing
+anywhere.
+
+**Falsified four ways from this chapter**, each failing a disjoint set: dropping the dim treatment
+(2), dropping the hover (5), re-gating the row (9 — including the frame's own both-surfaces
+precondition), and registering a disclosure on the dormant row (2).
+
 **`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
 on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
 states the band's `Fodder` ledger while the tile drawer states the starving pen's own

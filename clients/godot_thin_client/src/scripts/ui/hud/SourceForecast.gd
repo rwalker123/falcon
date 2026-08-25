@@ -1698,6 +1698,17 @@ static func _rate_sign(value: float) -> String:
 static func format_yield(value: float) -> String:
     return format_signed(value) + YIELD_PER_TURN_SUFFIX
 
+## …and the FODDER account's twin of it ("+5.0 /turn"), for the faction page's `Fodder:` headline.
+##
+## **THIS TAKES THE SPACED SUFFIX, AND THE COMPACT CLAUSES STILL DO NOT.** `format_fodder`'s note
+## above says the "/turn" rides the CALLER in the tight `POLICY_CAP_FODDER_FORMAT` spelling — that
+## rule is about a fodder figure riding INSIDE a longer clause (`· needs 6.0 hay/turn`). Here the
+## figure stands alone in a vitals row's value cell, in the same slot the food rollup's
+## `format_yield` fills one row above, and a faction page spelling its two larders' rates two ways
+## would be the drift both rules exist to stop.
+static func format_yield_fodder(value: float) -> String:
+    return format_signed_fodder(value) + YIELD_PER_TURN_SUFFIX
+
 ## True when a rate is a real quantity rather than the absence of one. The gate every
 ## render-only-when-non-zero decision goes through, so "is this component present?" is answered
 ## identically for food and fodder and by every surface.

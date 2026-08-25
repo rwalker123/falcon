@@ -21,6 +21,74 @@ paths:
 
 The Band/City dockable-panel PNG harness, and the arcs whose frames ride it.
 
+## The faction page's `Fodder:` row and its open drill-down
+
+**One frame and twelve `: PASS`** — measured `138 / 803` → `139 / 815` on one windowed run, `assert
+OK` unchanged at 436 (the claims go through `_assert_band_panel`, not the zone-fit helpers). The
+frame is **`band_panel_faction_fodder`**, the drill-down OPEN under `Fodder ▾ 100.0 · -1.0 /turn`.
+
+**IT RENDERS BEFORE THE PAGE'S OTHER ASSERTIONS, AND THAT IS LOAD-BEARING.** The breakdown popover is
+an EMBEDDED subwindow, so it hides the moment GUI focus moves — and `_assert_faction_page` drives real
+controls: `_assert_faction_party_row_jumps_home` presses a summary row's link, and the re-render that
+follows frees the focused button and takes the card down with it. Measured directly: the popover
+opened, and was gone one `process_frame` later, leaving a frame that photographed a CLOSED caret and
+an assertion that read `_breakdown_popover_key` as empty. So the state sits immediately after
+`band_panel_faction`'s own save, before anything is pressed, and closes its own popover behind it.
+**Do not move it below the assertions to keep the block tidy.**
+
+**`_faction_roster`'s SECOND band was given a fodder larder, and the first was deliberately left
+without one.** The faction stock is therefore one band's — distinguishable from an average, and from
+a drill-down filtered down to the bands that have a larder — and the open card carries a band WITH
+hay beside a band with none, which is the contrast a roster of two equal larders could not make. The
+numbers are `ui_preview`'s `band_hay_short` ledger, so the two harnesses describe one shape.
+
+**The rate is asserted AGAINST the food scale as well as for its own.** `format_yield_fodder` prints
+`-1.0 /turn` where `format_yield` would print `-1.00 /turn`; a page spelling its two larders' rates
+at two resolutions is the drift the paired claim exists to catch, and the positive alone passes on a
+build that prints both.
+
+**Falsified by registering the faction disclosure with an EMPTY row set: 7 failures**, and the split
+is the point — the summary row's sum and rate still PASS (the row renders fine), while every
+drill-down claim fails. A card with nothing in it looks entirely plausible in a thumbnail.
+
+### …and its DORMANT form, beside a live row
+
+**One more frame and thirteen `: PASS`** — measured `139 / 815` → `140 / 828`, `assert OK` still 436.
+The frame is **`band_panel_faction_fodder_dormant`**: the faction page's dim `Fodder  —` with no
+caret, beside a band's live `Fodder ▸ 100.0  (100 turns)` in the drawer.
+
+**BOTH STATES SHARE ONE RENDER, by DETACHING the panel rather than by selecting into it.** A selected
+player band is the dock's subject wherever a dock exists, so `set_band_city_panel(null)` is called
+*after* the dormant faction page has been painted: dropping the controller's reference does not touch
+the zones the panel is already drawing, so the page stays on screen while the drawer takes a band with
+a real hay ledger down its own fallback path. `ui_preview`'s `band_fodder_dormant` is the mirror image
+of the same trick. The frame asserts that precondition, because a drawer that had gone to the
+band-panel pointer would photograph one fodder row instead of two and look entirely tidy.
+
+**THE RESTORE MUST NOT CYCLE.** `_panel_is_faction` is never cleared by detaching, so a `CYCLE_PREV`
+on the way out walks OFF the page rather than back onto it — and every faction assertion below then
+reads a band's own vitals. Measured as four unrelated-looking failures (`PEOPLE reads the whole
+faction`, the Food alert, the runway, the weighted morale) before the cycle was dropped;
+`refresh_snapshot` re-renders the page on the push by itself.
+
+**TWO NEEDLES FOR ONE ROW, because `detail_bbcode` splits `Key: value` into two `[cell]`s.** The
+rendered BBCode never contains `Fodder: `, so the page is searched for the row's DIM run nested
+inside the neutral value tint, while the band's line — asked of the producer — still carries the key.
+Both come off `DetailFormat`'s own consts, so neither can drift from what is drawn. A needle written
+as the producer's line silently found nothing on the page (measured).
+
+**THE GATE CLAIM IS STAGED ON THE FLOOR, not on zero.** `_fodderless_faction_roster` strips every
+larder to HALF `SourceForecast.FODDER_FLOW_MIN` — a real quantity the shared per-band test refuses
+and a `store > 0` faction gate would admit — so "the two agree" is a discriminator rather than a
+restatement that zero is zero.
+
+**Falsified four ways.** Dropping the dim at the shared builder: **4** here and **2** in `ui_preview`,
+which is itself the evidence that one builder serves both scales. Registering a disclosure on the
+dormant row: **2** (the rendered caret and the registration, which are different claims — a payload
+the row merely failed to draw a caret for is still live). Swapping the fold for an independent
+`store > 0` gate: **8**, including the explicit agreement claim. Removing the page's new
+`clear_rows` call: **2** — the stale-caret defect this arc found, which is what that guard is for.
+
 ## The faction page lost its fourth zone (the knowledge screen, slice B)
 
 `docs/plan_knowledge_screen.md` §4 deleted the Know tab, so `band_panel_faction_knowledge` is **gone**

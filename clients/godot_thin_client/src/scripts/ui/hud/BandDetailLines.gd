@@ -22,7 +22,9 @@ extends RefCounted
 ## herd id to a species reads THREE collaborators — the selection card's roster, the current selection,
 ## and the snapshot herd list — so it cannot fold onto `HudBandLaborState` the way `find_world_herd`
 ## did. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` /
-## `BandPanelController` precedent — a one-line predicate is not worth a Callable).
+## `BandPanelController` precedent — a one-line predicate is not worth a Callable). The `FactionReadouts`
+## reference the dormant Fodder row's hover needs is a TYPED collaborator, not a fourth Callable —
+## the same cluster `BandPanelController` and `DrawerComposeController` already hold by type.
 ##
 ## IT NEVER SEES THE SELECTION MODEL. The old producers read `_selection` at exactly two sites, both
 ## `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload — ONE display
@@ -35,9 +37,9 @@ extends RefCounted
 ## and the morale-breakdown indent + sign glyphs in `DetailFormat`, `STORE_ITEM_PROVISIONS` in
 ## `HudConst`, `OUTPUT_FULL` / `FOOD_FLOW_MIN` in `SourceForecast` — each read as `Module.X`.
 
-# ---- The band's FODDER larder row, shown beneath Food for a band with a fodder economy — it has
-# stockpiled fodder, or its pens owe a bill — so a forager band with no animals never sprouts an empty
-# Fodder line.
+# ---- The band's FODDER larder row, beneath Food, on EVERY player band — one whose larder is live
+# (it holds hay, or its pens owe a bill) states the two terms below; one whose larder is not yet a
+# thing states the DORMANT form further down this block.
 #
 # **IT IS THE FOOD ROW, BEAT FOR BEAT**: a two-term summary — the STOCK and the RUNWAY — with the
 # flows that move it in a click-to-open disclosure beneath.
@@ -68,6 +70,13 @@ extends RefCounted
 # rule for one idea, and dropping it is what stops the two larders disagreeing about what worrying
 # looks like. `fodder_is_concerning` (the food test, on this account) tints the caret and nothing else.
 const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%s)"
+
+# ---- **THE DORMANT FODDER ROW LIVES ON `DetailFormat` NOW**, vocabulary and producer both
+# (`FODDER_DORMANT_ROW_FORMAT` / `FODDER_DORMANT_VALUE` / `FODDER_LOCKED_TOOLTIP_FORMAT` /
+# `FODDER_DORMANT_TOOLTIP` / `fodder_dormant_row`). It moved the moment the FACTION page grew the
+# same state: a const lives where every one of its readers can reach it, and the rollup is a static
+# layer that must not reach into a stateful producer. One row builder for both scales is also what
+# stops the band's dim dash and the faction's coming to mean different things.
 
 # ---- The SAME fodder stock as a CLAUSE on the Food row, for the `compact` (SHORT band-zone tier)
 # host. A horizontal dock is short of HEIGHT and has width to spare, so the two larders share one line
@@ -204,6 +213,13 @@ var _band_labor: HudBandLaborState = null
 # The Food/Morale caret + popover cluster. `unit_summary_lines` clears its rows, registers the two
 # disclosures as it emits them, and reads the caret state back onto the render context.
 var _disclosures: DisclosureController = null
+# The FACTION-scope readout cluster, for ONE question: how far along is the player's Foddering? A
+# band's dormant `Fodder:` row states the live percent when the craft is what is missing, and
+# knowledge is held faction-scoped — no band dict carries it. A TYPED collaborator, exactly as
+# `BandPanelController` and `DrawerComposeController` hold the same cluster for their own gate
+# reasons, so the class header's "the injection surface is ONE CALLABLE" is unchanged. Read for
+# nothing else.
+var _topbar: FactionReadouts = null
 
 # --- The one retained HudLayer helper, injected as a Callable (see the class header) ---
 # Reached through the typed adapter below rather than called raw: `Callable.call` returns `Variant`,
@@ -219,10 +235,18 @@ var _herd_label_for_id_fn: Callable
 var _food_flow_present: bool = false
 
 func _init(band_labor: HudBandLaborState, disclosures: DisclosureController,
-        herd_label_for_id: Callable) -> void:
+        herd_label_for_id: Callable, topbar: FactionReadouts = null) -> void:
     _band_labor = band_labor
     _disclosures = disclosures
     _herd_label_for_id_fn = herd_label_for_id
+    _topbar = topbar
+
+## The player faction's progress on ONE knowledge track, 0..1 — the dormant Fodder row's only reach
+## outside the band dict. `0.0` with no readouts cluster, which is what the preview harnesses that
+## construct this producer bare get, and which reads as "not learned" — the honest answer for a
+## client that has been told nothing.
+func _player_knowledge(track: String) -> float:
+    return _topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID, track) if _topbar != null else 0.0
 
 ## A friendlier label for a herd id. Retained on HudLayer, which resolves it from the roster, the
 ## current selection AND the snapshot herd list, and which also feeds the targeting banner and the
@@ -300,21 +324,30 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         if _food_flow_present:
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.BREAKDOWN_KIND_FOOD, unit_data,
                 _disclosures.food_breakdown_lines(unit_data))
-        # The band's fodder (hay) larder, beneath its food larder — shown for a band that HAS
-        # stockpiled hay or OWES its pens one, the two halves of having a fodder economy at all.
+        # The band's fodder (hay) larder, beneath its food larder — **on every one of our bands**,
+        # live where the band HAS stockpiled hay or OWES its pens one, dormant where it does not.
+        # An always-present row is what makes the account discoverable before a player has one; the
+        # gate that used to hide it now picks the form. See `DetailFormat.FODDER_DORMANT_ROW_FORMAT`.
         # **In the `compact` tier it is not a row at all**: `_band_food_line` has already carried the
         # stock as a clause on the Food line, because the SHORT tier's scarcity is HEIGHT and that
-        # host has width to spend. See `BAND_FOOD_FODDER_CLAUSE_FORMAT`.
-        if not compact and _band_has_fodder_economy(unit_data):
-            lines.append(_band_fodder_line(unit_data, context))
-            # …and its two flows in the SAME click-to-open popover Food uses, registered rather than
-            # appended for the identical reason: inline growth in a fixed-height zone is what clipped
-            # the Band panel once already. A larder with neither flow above the floor registers no
-            # disclosure at all — `register` declines an empty payload — so a caret never promises
-            # rows that are not there.
-            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FODDER,
-                HudDisclosureVocab.BREAKDOWN_KIND_FODDER, unit_data,
-                _disclosures.fodder_breakdown_lines(unit_data))
+        # host has width to spend. That clause stays GATED — the tier trades this row for a stock,
+        # and a dim `— fodder` clause states nothing the row it stands in does not. See
+        # `BAND_FOOD_FODDER_CLAUSE_FORMAT`.
+        if not compact:
+            if DetailFormat.band_has_fodder_economy(unit_data):
+                lines.append(_band_fodder_line(unit_data, context))
+                # …and its two flows in the SAME click-to-open popover Food uses, registered rather
+                # than appended for the identical reason: inline growth in a fixed-height zone is what
+                # clipped the Band panel once already. A larder with neither flow above the floor
+                # registers no disclosure at all — `register` declines an empty payload — so a caret
+                # never promises rows that are not there.
+                _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FODDER,
+                    HudDisclosureVocab.BREAKDOWN_KIND_FODDER, unit_data,
+                    _disclosures.fodder_breakdown_lines(unit_data))
+            else:
+                # **NOTHING IS REGISTERED HERE**, deliberately: there is no flow to put behind a
+                # caret, so the row renders as a plain dim key with no clickable run at all.
+                lines.append(_band_fodder_dormant_line(context))
         # THE BAND'S KIT, beneath its larders and above its morale: three consumable tools whose
         # condition only ever falls, and whose expiry silently drops a whole role to bare hands. It is
         # our OWN bands' business, like Food — a rival's equipment is not ours to count.
@@ -621,24 +654,10 @@ func _shipment_cargo_clause(unit_data: Dictionary) -> String:
 
 # ---- The band rows `unit_summary_lines` assembles -------------------------------------------------
 
-## Does this band have a fodder economy at all — **does it HAVE hay, or does it OWE a hay bill?** The
-## ONE test behind both spellings of that larder (the standalone `Fodder:` row and the `compact` host's
-## clause on the Food line), so the two hosts can never disagree about when it exists.
-##
-## **THE SECOND CLAUSE IS BACK, AND IT IS A FODDER FACT NOW.** It used to read `or pen_feed_upkeep > 0`
-## — *this band pays a bread bill it could offset with hay* — and went out with that food-unit pen
-## bill, which no band pays: a pen eats pasture and hay, and a shortfall starves it. But the store-only
-## gate it left behind hid **exactly the band that most needs this line**: pens owing hay, nothing
-## stockpiled, so `fodder_store == 0` and the row that would have said *you need 6.0 a turn and grow
-## none* never rendered at all. The bill is `fodder_need`, the sim's own sum over the band's pens, in
-## the same FODDER units as the store.
-##
-## The store term keeps its own floor, `FODDER_FLOW_MIN` rather than the food-flow `FOOD_FLOW_MIN` it
-## was written with — this is a fodder quantity rendered at one decimal, so the food-scale floor
-## admitted a store it then printed as `Fodder: 0.0`, the false precision that floor exists to stop.
-func _band_has_fodder_economy(unit_data: Dictionary) -> bool:
-    return float(unit_data.get("fodder_store", 0.0)) >= SourceForecast.FODDER_FLOW_MIN \
-        or float(unit_data.get("fodder_need", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+## **THE `has fodder OR owes a bill` TEST NOW LIVES ON `DetailFormat.band_has_fodder_economy`.** It
+## moved there when the faction page's own `Fodder:` row started asking it — the rollup is a static
+## layer and cannot reach a producer's private — and a second copy of the test is how two surfaces
+## come to disagree about when a larder exists. Every reader here calls it by that name.
 
 ## Is this band's fodder bill bigger than its fodder harvest — the slow trap, stated as a comparison.
 ## **Its ONE reader is the `compact` tier's merged clause**, which is the only host with no room to
@@ -667,8 +686,17 @@ func _band_fodder_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
     var turns := float(unit_data.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
     ctx.fodder_turns = turns
     return BAND_FODDER_ROW_FORMAT % [
-        SourceForecast.format_fodder(float(unit_data.get("fodder_store", 0.0))),
+        SourceForecast.format_fodder(DetailFormat.band_fodder_store(unit_data)),
         DetailFormat.food_turns_text(turns)]
+
+## The SAME row on a band with no fodder economy — a dim em-dash and the reason on the block's hover,
+## built by `DetailFormat.fodder_dormant_row` so this row and the FACTION page's twin cannot diverge.
+##
+## **ALL THIS SIDE CONTRIBUTES IS THE FACTION'S FODDERING**, which is the one fact the shared builder
+## cannot read for itself: knowledge is faction-scoped and no band dict carries it.
+func _band_fodder_dormant_line(ctx: DetailFormat.Context) -> String:
+    return DetailFormat.fodder_dormant_row(ctx,
+        _player_knowledge(HudFloraVocab.KNOWLEDGE_TRACK_FODDERING))
 
 ## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
 ## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
@@ -701,7 +729,7 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
     # is the same one the standalone row uses, so a band with no fodder economy renders no clause —
     # and so is the WARN, which is the only thing this tier has room to say about a bill the band's
     # Fields are not covering (see `BAND_FOOD_FODDER_CLAUSE_FORMAT`).
-    if merge_fodder and _band_has_fodder_economy(unit_data):
+    if merge_fodder and DetailFormat.band_has_fodder_economy(unit_data):
         var fodder_hex := HudStyle.WARN_HEX if _band_fodder_falls_short(unit_data) else HudStyle.INK_DIM_HEX
         line += BAND_FOOD_FODDER_CLAUSE_FORMAT % [
             fodder_hex, SourceForecast.format_fodder(float(unit_data.get("fodder_store", 0.0)))]

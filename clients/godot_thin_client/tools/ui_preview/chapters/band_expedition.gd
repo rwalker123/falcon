@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 86
+const EXPECTED_CHECKPOINTS := 101
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1353,8 +1353,12 @@ func _hay_ledger_states() -> void:
 	# render none. Restoring the old gate fails the first half; deleting the gate fails the second.
 	h._assert_hud("a band owing fodder with an EMPTY store still renders its Fodder row",
 		_lines_any_contain(empty_lines, HAY_ROW_NEEDLE))
-	h._assert_hud("…while a forager band with no animals sprouts no Fodder row at all",
-		not _lines_any_contain(forager_lines, HAY_ROW_NEEDLE))
+	# **AND THE FORAGER BAND STILL RENDERS ONE — DORMANT.** This half was the gate's other face until
+	# the row went unconditional: it asserted that a band with no animals sprouted NO Fodder row, and
+	# an invisible account is one a player never learns exists. The row is there now, and the claims
+	# about what it looks like are the dormant block further down.
+	h._assert_hud("…and a forager band with no animals renders the row DORMANT rather than not at all",
+		_lines_any_contain(forager_lines, HAY_ROW_NEEDLE))
 	# **AND THE SENTINEL NEVER REACHES THE GLASS.** The covered band's runway is 999 on the wire and
 	# the infinity glyph on the row; a client that printed the number would look entirely plausible in
 	# a PNG.
@@ -1423,6 +1427,219 @@ func _hay_ledger_states() -> void:
 	# Close it again: the popover is a long-lived Window on the shared HUD, and a stranded one sits
 	# over every frame after this for a reason unrelated to fodder.
 	_click_disclosure(HAY_DISCLOSURE_FODDER)
+	h._hud.clear_selection()
+	await h._settle()
+
+	await _fodder_dormant_states()
+
+# ---- THE DORMANT FODDER ROW — the state the old gate rendered as nothing at all ------------------
+
+## The two values this block stages the faction's Foddering at: part-learned (the craft is missing,
+## and the row says how far along) and learned (the craft is there and the band still keeps no pen).
+## The track's own KEY is read from the vocabulary the gate reason reads
+## (`HudFloraVocab.KNOWLEDGE_TRACK_FODDERING`), so a renamed track cannot leave this pushing a key
+## nothing consults and quietly staging the WRONG half of the two-sentence claim.
+const FODDER_KNOWLEDGE_PART := 0.35
+
+const FODDER_KNOWLEDGE_LEARNED := 1.0
+
+## The dormant row as it lands in the produced lines, VALUE AND TINT TOGETHER. This is the one needle
+## in the block deliberately recomposed rather than written as a flat answer: the claim IS the dim
+## treatment, so the hex has to be the one `HudStyle` actually publishes — a literal would keep
+## passing after the palette moved, which is the failure this frame family exists to catch. The
+## em-dash comes off the producer's own const for the `STOCK_UNKNOWN_GLYPH` reason: one value, so the
+## glyph searched for and the glyph drawn cannot drift.
+const FODDER_DORMANT_ROW_NEEDLE := HudDisclosureVocab.DETAIL_ROW_FODDER + ": [color=#%s]%s[/color]"
+
+## The live row's own value, as the CONTRAST — a band with a fodder economy must still read its two
+## terms in this same frame. Without it every dormant claim below passes on a build that dimmed every
+## Fodder row in the game.
+const FODDER_LIVE_ROW_NEEDLE := HAY_SHORT_SUMMARY_NEEDLE
+
+## What a dormant row must NEVER read: the live format on an empty larder. `0.0` in full ink beside a
+## healthy `(∞)` is a band that has fodder and is fine — the exact opposite of what this state means,
+## and the reading a bare gate deletion would have shipped.
+const FODDER_DORMANT_ZERO_NEEDLE := HudDisclosureVocab.DETAIL_ROW_FODDER + ": 0.0"
+
+## The band with no animals — the one the old gate rendered nothing for. It is `BandFx.band_fixture`
+## unchanged, which carries no fodder key of any kind: the dormant state is what a band looks like
+## when the sim has never had a fodder figure to send about it, not a fixture staged to be empty.
+func _forager_band_fixture() -> Dictionary:
+	return BandFx.band_fixture()
+
+## The player faction's Foddering, pushed the way the snapshot pushes it. Every OTHER track goes in
+## at zero with it — `_ingest_intensification` replaces the faction's whole row — which is also what
+## the restore at the end of this block relies on.
+func _push_foddering(progress: float) -> void:
+	h._hud.update_intensification([{
+		"faction": HudConst.PLAYER_FACTION_ID,
+		HudFloraVocab.KNOWLEDGE_TRACK_FODDERING: progress,
+	}])
+
+## The `Fodder:` row's registered hover, off a context the producer has just filled. The tooltip is
+## keyed by the ROW and `DetailFormat.block_tooltip` is what joins it onto a label — so asking the
+## CONTEXT here and asking the LABELS below are two different claims, and the second is the one that
+## catches a host that never attached it.
+func _fodder_row_tooltip(band: Dictionary) -> String:
+	var ctx := DetailFormat.Context.new()
+	h._hud._banddetail.unit_summary_lines(band, "", ctx)
+	return String(ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_FODDER, ""))
+
+## The Band/City dock's vitals label — the first `RichTextLabel` under the panel, which its band zone
+## is. Re-found after every render rather than held: that label is rebuilt per render, so a handle
+## taken before one points at a freed node.
+func _panel_vitals_label(node: Node) -> RichTextLabel:
+	if node is RichTextLabel:
+		return node as RichTextLabel
+	for child in node.get_children():
+		var found := _panel_vitals_label(child)
+		if found != null:
+			return found
+	return null
+
+## **STATE hay-e — A LIVE LARDER AND A DORMANT ONE, IN ONE FRAME.**
+##
+## The Fodder row was GATED on `has fodder OR owes a bill`, so a band with no pens rendered nothing
+## here — the account was invisible on precisely the bands whose player has never met it. It is
+## unconditional now and the gate picks the FORM: the two terms where there is a larder, a dim
+## em-dash where there is not.
+##
+## **THE TWO STATES SHARE ONE RENDER, and that is the whole point of the frame.** The dim treatment
+## is a claim about a DIFFERENCE — this row is quieter than that one — and a difference photographed
+## one half at a time is not photographed. So the DOCK holds the hay band's live row while the
+## DRAWER holds a forager band's dormant one: the `band_hay_and_pen` trick with a band on the far
+## side of it instead of a herd. `show_unit_selection` renders both hosts, then `render_band` puts a
+## different subject back into the dock alone.
+##
+## **AND THE TWO REASONS A ROW CAN BE DORMANT ARE DIFFERENT NEWS.** A faction without Foddering
+## CANNOT bank hay at any price — the craft is a whole rung away — while one that simply keeps no pen
+## is not blocked by anything. Both sentences are asserted, over the same fixture with the faction's
+## knowledge moved between them, because a single tooltip claim passes on a build that states one
+## sentence in both states.
+func _fodder_dormant_states() -> void:
+	_push_foddering(FODDER_KNOWLEDGE_PART)
+	var panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
+	h.add_child(panel)
+	await h.get_tree().process_frame
+	panel.reservation_changed.connect(func(edge: int, size: float) -> void:
+		MAIN_SCRIPT.push_hud_strip(h._hud, BAND_PANEL_RESERVER, edge, size,
+			MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, panel)))
+	# Docked RIGHT — a vertical dock is the TALL tier, which keeps the Fodder row STANDALONE. The
+	# SHORT tier trades that row for a stock clause on the Food line and states no dormant anything,
+	# which is a different claim and `band_panel_preview`'s.
+	panel.set_dock(SIDE_RIGHT)
+	panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	# **THE SELECTION COMES FIRST, AND THE PANEL IS INJECTED AFTER IT — the order IS the trick.** A
+	# selected player band is the DOCK's subject when a dock exists, and the Occupants drawer then
+	# renders a one-line pointer at it (`SubjectDrawerController`), so a docked HUD has exactly ONE
+	# band-detail surface and cannot show two bands at once. Selecting while no panel is injected
+	# takes the drawer's own fallback path — the path every hay state above renders on — and nothing
+	# in `set_band_city_panel` or `render_band` re-renders the drawer behind it. So the forager band
+	# stays on the drawer, dormant, while the dock is handed the hay band's live row.
+	h._hud.show_unit_selection(_forager_band_fixture())
+	await h._settle()
+	h._hud.set_band_city_panel(panel)
+	h._hud._bandpanel.render_band(_hay_short_band_fixture())
+	await h._settle()
+	await h._save("band_fodder_dormant")
+	# **THE FRAME'S OWN PRECONDITION, ASSERTED.** If the drawer had flipped to the band-panel pointer
+	# the PNG would look perfectly tidy and would carry ONE fodder row instead of two — the contrast
+	# silently gone, which is the failure this whole frame family exists to prevent.
+	h._assert_hud("the frame really holds BOTH surfaces — the drawer still renders the forager band",
+		h._hud.occupant_detail.text.contains(HudDisclosureVocab.DETAIL_ROW_FODDER))
+
+	var forager_lines := _band_lines(_forager_band_fixture())
+	# **THE CARET STATE IS READ HERE, BETWEEN THE TWO PRODUCTIONS.** `unit_summary_lines` clears the
+	# controller's rows on entry, so this dictionary describes the LAST band produced and nothing
+	# else — read it after the hay band and the dormant claim becomes a claim about the hay band.
+	var dormant_registered: bool = h._hud._disclosures.state().has(
+		HudDisclosureVocab.DETAIL_ROW_FODDER)
+	var hay_lines := _band_lines(_hay_short_band_fixture())
+	var live_registered: bool = h._hud._disclosures.state().has(
+		HudDisclosureVocab.DETAIL_ROW_FODDER)
+	var dormant_needle := FODDER_DORMANT_ROW_NEEDLE % [
+		HudStyle.INK_DIM_HEX, DetailFormat.FODDER_DORMANT_VALUE]
+	# **THE DIM DASH, AND THE LIVE PAIR BESIDE IT.** Dropping the dim treatment fails the first;
+	# dimming every Fodder row in the game fails the second.
+	h._assert_hud("a band with no fodder economy renders the row DIM, as %s" % dormant_needle,
+		_lines_any_contain(forager_lines, dormant_needle))
+	h._assert_hud("…while a band that HAS one still reads its two terms in full (%s)"
+		% FODDER_LIVE_ROW_NEEDLE,
+		_lines_any_contain(hay_lines, FODDER_LIVE_ROW_NEEDLE))
+	# **AND IT IS A DASH RATHER THAN A ZERO.** `Fodder: 0.0  (∞)` is what the live format renders on
+	# an empty larder, and in full ink beside a healthy infinity it reads as *this band has fodder and
+	# is fine* — the reading a bare gate deletion ships, and the one no frame would catch.
+	h._assert_hud("…and never the live format's %s, which would read as a measurement"
+		% FODDER_DORMANT_ZERO_NEEDLE,
+		not _lines_any_contain(forager_lines, FODDER_DORMANT_ZERO_NEEDLE))
+	# **NO CARET ON THE DORMANT ROW.** There is nothing behind it — `fodder_breakdown_lines` produces
+	# no rows for a band with neither flow — so it must offer no click at all. Claimed on the RENDERED
+	# surface as well as on the lines, since the clickable run is `detail_bbcode`'s and not the
+	# producer's: the drawer is showing the forager band this state selected.
+	# **NO CARET, ASKED OF THE REGISTRATION — because the produced LINES cannot answer it.** A
+	# producer emits plain `Key: value` strings and `detail_bbcode` is what draws the clickable run,
+	# so a `[url=` search over these lines is vacuous: it passes on a row that registered a full
+	# disclosure. (Measured — a dormant branch wrongly registering one left that search green.) What
+	# decides the caret is the controller's own per-render state, and the LIVE band's registration
+	# beside it is what stops "no caret" passing on a build that registers nothing at all.
+	h._assert_hud("…and registers no disclosure, having nothing to put behind one",
+		not dormant_registered)
+	h._assert_hud("…while the band with a larder registers its two flows as usual",
+		live_registered)
+	h._assert_hud("…which the rendered drawer agrees with (no Fodder disclosure meta on it)",
+		_find_meta_label(h._hud, HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX
+			+ DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FODDER,
+				_forager_band_fixture())) == null)
+
+	# **WHY IT IS DIM, SENTENCE ONE: THE CRAFT IS MISSING.** The faction is at 35% Foddering, so the
+	# hay in its meadows is unbankable, and the row says so in the words the forage panel already uses
+	# — the SHARED clause out of `GATE_REASON_WILD_FODDER_FORMAT`, with the live percent in it.
+	var locked_hover := _fodder_row_tooltip(_forager_band_fixture())
+	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
+		HudFormat.progress_percent(FODDER_KNOWLEDGE_PART),
+		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+	h._assert_hud("the dormant row says WHY, in the forage panel's own words: %s" % locked_hover,
+		locked_hover == locked_expected)
+	# **AND IT ATTACHES.** A registered hover with no host to carry it never reaches a cursor, and
+	# `[hint=…]` does not parse in this build — so the claim is made on the LABELS. The DOCK is the
+	# half `%OccupantDetail` cannot answer for: the two hosts attach the block hover separately, and
+	# the frame above deliberately has a LIVE band in the dock, whose label must therefore carry
+	# nothing. Both directions, one host: empty on the live band, the sentence on the dormant one.
+	h._assert_hud("…and the drawer label actually carries it",
+		h._hud.occupant_detail.tooltip_text.contains(locked_expected))
+	var live_vitals := _panel_vitals_label(panel)
+	h._assert_hud("…while the dock, showing a LIVE band, offers no hover at all",
+		live_vitals != null and live_vitals.tooltip_text == "")
+	h._hud._bandpanel.render_band(_forager_band_fixture())
+	await h._settle()
+	var dormant_vitals := _panel_vitals_label(panel)
+	h._assert_hud("…and the dock's own label carries it once the DORMANT band is its subject",
+		dormant_vitals != null and dormant_vitals.tooltip_text.contains(locked_expected))
+
+	# **SENTENCE TWO: NOTHING IS WRONG.** Learn Foddering and the same band's row is still dormant —
+	# it keeps no pen and grows no fodder crop — but the reason is calm and descriptive, and it must
+	# not be the lock's sentence. Asserted as an INEQUALITY against sentence one as well as an
+	# equality, since two states sharing one sentence is the defect being guarded.
+	_push_foddering(FODDER_KNOWLEDGE_LEARNED)
+	h._hud.show_unit_selection(_forager_band_fixture())
+	await h._settle()
+	var calm_hover := _fodder_row_tooltip(_forager_band_fixture())
+	h._assert_hud("a band that KNOWS Foddering and keeps no pen reads calm instead: %s" % calm_hover,
+		calm_hover == DetailFormat.FODDER_DORMANT_TOOLTIP)
+	h._assert_hud("…which is NOT the lock's sentence — the two reasons are different news",
+		calm_hover != locked_hover)
+	# …and the row itself is unchanged: knowing the craft does not hand the band a larder.
+	h._assert_hud("…and the row is dim either way — the craft is not a fodder economy",
+		_lines_any_contain(_band_lines(_forager_band_fixture()), dormant_needle))
+
+	# Release the dock and put the faction's knowledge back to the untouched zeros every chapter after
+	# this one inherits — a stranded reserved edge moves later frames, and a stranded knowledge row
+	# would silently unlock gates in chapters that stage their own.
+	h._hud.set_band_city_panel(null)
+	panel.queue_free()
+	_push_foddering(0.0)
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud.clear_selection()
 	await h._settle()
 

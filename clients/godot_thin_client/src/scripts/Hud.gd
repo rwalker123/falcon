@@ -604,7 +604,9 @@ func _ready() -> void:
     # `_herd_label_for_id` (it reads three collaborators here, so it cannot fold onto the labor model).
     # BOTH detail hosts render through this one instance: the Occupants-card drawer below, and
     # `BandPanelController`'s vitals label + parties inspector strip.
-    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id)
+    # `_topbar` rides along for ONE reading: the dormant `Fodder:` row's hover states the faction's
+    # live Foddering percent, and knowledge is held faction-scoped — no band dict carries it.
+    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id, _topbar)
     # The Band/City panel. Constructed AFTER `_disclosures` (the vitals row wires its carets through
     # it) and `_banddetail` (it renders its rows), and handed the SAME state models, the selection card
     # it routes map focus through, the HUD CanvasLayer as the host it parents its confirm dialog into,

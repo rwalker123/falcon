@@ -2421,6 +2421,94 @@ static func fodder_is_concerning(band: Dictionary) -> bool:
 static func band_net_fodder(band: Dictionary) -> float:
     return float(band.get("fodder_income", 0.0)) - float(band.get("fodder_need", 0.0))
 
+## The band's standing FODDER stock — the fodder twin of `band_provisions`, and here for the same
+## reason: the band's own `Fodder:` row, its gate and the faction page's rollup all state this stock,
+## and three `band.get("fodder_store", …)` calls are three chances to read a renamed key in two of
+## them. **A stock, not a rate** — render it through `SourceForecast.format_fodder`.
+static func band_fodder_store(band: Dictionary) -> float:
+    return float(band.get("fodder_store", 0.0))
+
+## ---- THE DORMANT FODDER ROW, AT BOTH SCALES ------------------------------------------------------
+##
+## `Fodder: —`, dim, with the reason on the block's hover. The band's own row renders it for a band
+## with no fodder economy (`BandDetailLines._band_fodder_dormant_line`) and the FACTION page renders
+## it when NO band on the roster has one (`FactionRollup._fodder_line`) — one builder, because two
+## surfaces spelling "there is no fodder here" two ways is the disagreement this state was added to
+## remove. A faction reading `Fodder: 0.0 · +0.0 /turn` in full ink while every one of its bands read
+## a dim dash is what it looked like before, and it read as a defect.
+##
+## **THE VALUE IS A DASH AND NEVER A ZERO.** The live format on an empty larder renders
+## `Fodder: 0.0  (∞)`, and a full-ink zero beside a healthy infinity reads as *this has fodder and is
+## fine* — the opposite of what the state means. The em-dash is the glyph this HUD already uses for an
+## account with no quantity to state (`HudComposeVocab.YIELD_LOCKED_GLYPH`, the wild patch's
+## unbankable hay; `HudFloraVocab.STOCK_UNKNOWN_GLYPH`, a fogged stock), read from that const rather
+## than typed again.
+##
+## **THE DIM IS A SELF-TINTED RUN INSIDE THE VALUE CELL**, the `BandDetailLines
+## .BAND_FOOD_FODDER_CLAUSE_FORMAT` idiom: `_value_hex`'s `Fodder` case keys on the RUNWAY spelling
+## and leaves anything else in neutral ink, so the row has to carry its own colour.
+const FODDER_DORMANT_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": [color=#%s]%s[/color]"
+
+const FODDER_DORMANT_VALUE := HudComposeVocab.YIELD_LOCKED_GLYPH
+
+## **NO FODDERING — nothing here can bank hay, at any price.** Foddering is what keeping a penned herd
+## teaches, so a pre-pastoral faction banks none of what its meadows grow. That is a sentence the
+## client already says, on the forage panel's yields row
+## (`HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT`), so this reads the SHARED clause out of it rather
+## than wording one lock twice — the patch-only half of that sentence ("or commit this patch to its
+## crop") is dropped, neither a band row nor a faction row having a patch to commit.
+## Format args: %d = the live faction Foddering percent, then the CORRAL glyph.
+const FODDER_LOCKED_TOOLTIP_FORMAT := "Hay stays in the field: " \
+    + HudFloraVocab.FODDERING_NOT_LEARNED_CLAUSE + "."
+
+## **KNOWS FODDERING, KEEPS NOTHING YET — nothing is wrong.** There is simply no fodder economy here,
+## so the sentence is calm and descriptive: it says what the row WILL hold, which is the whole reason
+## the row renders at all with nothing to put in it.
+const FODDER_DORMANT_TOOLTIP := "No fodder yet. Once your people keep a pen or grow a fodder crop, the hay store and what the pens draw on it read here."
+
+## The dormant row, and the hover that says why it is dim — the WHOLE of that state, so a caller adds
+## nothing to it but the faction's Foddering.
+##
+## **TWO REASONS, TWO SENTENCES, and the knowledge one goes first because it is the harder wall.** A
+## faction that cannot bank hay at all is blocked by a whole rung; one that simply keeps no pen is not
+## blocked by anything, and folding the two into one sentence would tell a pastoral player their
+## working ladder is locked.
+##
+## **THE RUNWAY CONTEXT IS DELIBERATELY LEFT ALONE.** Callers reset `Context.fodder_turns` to `NAN`
+## per render; writing a real `turns_of_fodder` here (999 for anything that drains nothing) would tint
+## the dash HEALTHY green through `_value_hex`'s runway branch — a calm reading of an account that
+## does not exist.
+##
+## **IT REGISTERS NO DISCLOSURE AND MUST NOT**, which is the caller's half of the contract: there is
+## no flow to put behind a caret, and a caret over an empty pull-down is worse than no pull-down.
+static func fodder_dormant_row(ctx: Context, foddering: float) -> String:
+    if ctx != null:
+        if foddering >= HudConst.KNOWLEDGE_COMPLETE:
+            ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = FODDER_DORMANT_TOOLTIP
+        else:
+            ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = FODDER_LOCKED_TOOLTIP_FORMAT % [
+                HudFormat.progress_percent(foddering),
+                FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+    return FODDER_DORMANT_ROW_FORMAT % [HudStyle.INK_DIM_HEX, FODDER_DORMANT_VALUE]
+
+## Does this band have a FODDER ECONOMY at all — **does it HOLD hay, or does it OWE a hay bill?**
+##
+## **THE ROW NO LONGER HANGS ON THIS, AND THAT IS THE WHOLE OF THE CHANGE.** It was the gate on
+## whether the `Fodder:` row rendered at all; the row is unconditional now (a band that cannot do
+## fodder yet renders it DORMANT, so the account is discoverable before there is one), and this test
+## says which of the two the row is. Its other readers are unmoved: the `compact` tier's merged
+## clause still fires on it, and `BandDetailLines` still refuses to register a disclosure without it.
+##
+## It lives here, beside the fodder arithmetic, because the faction rollup asks it too — one test
+## behind every spelling of "this band has a fodder larder", so no two surfaces can disagree about
+## when one exists.
+##
+## Each term takes `FODDER_FLOW_MIN` rather than the food-scale `FOOD_FLOW_MIN`: this account renders
+## at ONE decimal, so the finer floor admits a store that then prints as `Fodder: 0.0`.
+static func band_has_fodder_economy(band: Dictionary) -> bool:
+    return band_fodder_store(band) >= SourceForecast.FODDER_FLOW_MIN \
+        or float(band.get("fodder_need", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+
 ## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
 static func breakdown_key(kind: String, band: Dictionary) -> String:
     return "%s:%d" % [kind, int(band.get("entity", -1))]
