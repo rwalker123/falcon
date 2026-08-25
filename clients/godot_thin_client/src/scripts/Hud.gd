@@ -458,6 +458,17 @@ var _right_column_bottom_clearance: float = 0.0
 ## this → `Main`'s `PauseLayer` (200), which still covers everything. No cycle: `EventDockPanel`
 ## references nothing on `HudLayer` at class-load time, so the `const` direction runs one way only
 ## (see `.claude/rules/client/hud-modules.md`).
+##
+## ⛔ **THE BAND/CITY PANEL CHANGED SIDES, AND THAT IS A DECISION RATHER THAN A SIDE EFFECT.** The
+## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 105 it is over it, and
+## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher. So with a sheet open, the
+## first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
+## panel. **Intended, and not to be re-litigated**: no integer is both above 104 and below 103, a
+## click on the panel IS a click outside the sheet, and one click to put a transient write surface
+## away before using the persistent command centre is the wanted behaviour. The one case where the
+## sheet would be sabotaging its own affordance — its `Work tab` link, which sends the player to a
+## board on 103 — is closed by `DrawerComposeController._navigate_to_work_tab` closing the sheet as
+## it navigates. `.claude/rules/client/panel-framework.md` carries the long form.
 const COMPOSE_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
 ## The node the const names, created in `_ready` (see `compose_host`).
 const COMPOSE_LAYER_NAME := &"ComposeLayer"

@@ -1848,8 +1848,28 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         SourceForecast.build_pace(offer_turns, build_crew),
         # The ACTING band — the one this sheet is composing FOR, which is the band whose board carries
         # the `⌃` this sentence points at. Resolved above by the `Band:` picker, never re-read.
-        func(_meta: String) -> void: emit_signal("work_tab_requested",
+        #
+        # **AND THE SHEET CLOSES AS IT NAVIGATES** — see `_navigate_to_work_tab`.
+        func(_meta: String) -> void: _navigate_to_work_tab(
             int(band.get("entity", ComposeState.NO_BAND_ENTITY)))))
+
+## Send the player to a band's Work board, **and put this sheet away on the way**.
+##
+## ⛔ **THE CLOSE IS NOT TIDINESS — WITHOUT IT THE SHEET SABOTAGES THE AFFORDANCE IT JUST OFFERED.**
+## The board this link jumps to is `BandCityPanel`, on CanvasLayer 103; the sheet is on
+## `HudLayer.COMPOSE_LAYER_INDEX` (105), above the event dock's 104, and its dismiss catcher covers
+## the whole viewport at `MOUSE_FILTER_STOP`. So a sheet left open lands the player on a board whose
+## first click — the `⌃` this very sentence told them to press — is swallowed as a dismissal.
+## The sheet is a transient write surface and the panel is the persistent one; one click to put the
+## sheet away is right when the player chose to leave, and simply wrong when the sheet itself sent
+## them there.
+##
+## It is the ONE control inside the sheet that navigates to another surface — the sheet's other
+## outward signals commit a command and close through their own `close_compose_sheet()` — so this is
+## the whole of the exemption, not the first of a family.
+func _navigate_to_work_tab(band_entity: int) -> void:
+    close_compose_sheet()
+    emit_signal("work_tab_requested", band_entity)
 
 
 ## **THE DECLARATION `build_verb` SHOULD HONOUR — the overlay's if it has one, else the sheet's own.**

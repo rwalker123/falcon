@@ -146,14 +146,27 @@ const EXPANDER_COLUMN_WIDTH := 89.0
 ## subtraction it came from rather than restated as a literal.
 const ROW_BUDGET_WIDTH := MIN_STRIP_WIDTH - CARD_CHROME_WIDTH - EXPANDER_COLUMN_WIDTH
 ## Everything on a row that is NOT the detail phrase: the glyph column, the turn stamp, the row
-## padding, the separations, and the floor `clip_text` leaves the main label.
+## padding, the separations, the floor `clip_text` leaves the main label — **and the `Work tab` link
+## column, on the rows that carry one.**
 ##
-## **MEASURED ON THE WIDEST ROW, NOT ON A TYPICAL ONE, because `GLYPH_COLUMN_WIDTH` is a FLOOR rather
-## than a clip** — an emoji kind glyph draws past it, which is 9px between a `died` row (70) and a
-## `hunt` row (79). Re-measured on every harness run: `event_dock.gd`'s `_report_event_row_columns`
-## prints the widest row's minimum beside this budget, so a row that grows a control states the fact
-## rather than quietly eating the detail's share of the strip.
-const ROW_FURNITURE_WIDTH := 80.0
+## **MEASURED ON A LINK-BEARING ROW, WHICH IS THE WIDEST FURNITURE A ROW CAN HAVE.** Measured on the
+## reported shed line (`foragers at (44, 18) cut to 1 — too few workers`, `status=trimmed … band=5`):
+## **154** — a link-less row's 79, plus the link's own **66** and the `ROW_ITEM_SEPARATION` before it.
+##
+## ⛔ **IT WAS 80, MEASURED ON ROWS THAT CARRY NO LINK, AND THAT LEFT THE OVERFLOW OPEN FOR THE ROW
+## THE BUG WAS REPORTED ON.** `_make_work_tab_link` is deliberately NOT `clip_text` (a clipped
+## `Button` beside an expanding label is allotted zero pixels and renders as nothing at all), so the
+## whole word is in the row's minimum. Budgeted at 80 the reported row demanded 364 against 298, the
+## card's minimum came out at 473 against the 407 floor, and the card was drawn outside `_root` again
+## at the narrowest strip — the same failure, one row shape over.
+##
+## The two figures are 9px apart between kinds as well (`GLYPH_COLUMN_WIDTH` is a FLOOR rather than a
+## clip, so an emoji kind glyph draws past it: a `died` row 70 against a `hunt` row 79), which is why
+## it is the widest row rather than a typical one. Re-measured on every harness run:
+## `event_dock.gd`'s `_report_event_row_columns` prints the link-less and link-bearing furniture
+## separately beside this constant, so a row that grows a control states the fact rather than quietly
+## eating the detail's share of the strip.
+const ROW_FURNITURE_WIDTH := 154.0
 ## Kept back from the cap. The furniture above is a MEASUREMENT of font metrics that move with the
 ## platform, while the floor is what the card must honour whatever they measure — so the cap lands a
 ## hair inside the budget rather than exactly on it.
@@ -170,7 +183,7 @@ const STRETCH_WEIGHT_FLOOR := 1.0
 ## an unclipped `Label` reports its whole unwrapped string as its minimum width — so one long phrase
 ## set the row's minimum. Measured on the reported case (`engaged=0.340 fled=0.068 carried_biomass=0
 ## wasted_biomass=0 hunters_killed=0.007 hunters_wounded=0.020 outcome=Fight species=Wild Aurochs`):
-## **1015px**, against a row budgeted 298. That minimum climbs through `_log_scroll`
+## **824px drawn**, against a row budgeted 298. That minimum climbs through `_log_scroll`
 ## (`SCROLL_MODE_DISABLED` propagates a child's minimum WIDTH), the `PanelContainer` is clamped up past
 ## `_root` — a plain `Control`, which does not clip — and the overhang is drawn over whatever sits
 ## beside the strip, which on a top dock is the right dock's cards. Both surfaces, the collapsed bar
@@ -181,9 +194,17 @@ const STRETCH_WEIGHT_FLOOR := 1.0
 ## strip is quoting a width the card does not honour:
 ##
 ##     ROW_BUDGET_WIDTH      407 (the floor) − 20 (card chrome) − 89 (expander column) = 298
-##     ROW_FURNITURE_WIDTH   80 — measured on the widest row; everything that is not the detail
+##     ROW_FURNITURE_WIDTH   154 — measured on a row bearing a `Work tab` link, the widest furniture
+##                           a row can have; everything on it that is not the detail
 ##     DETAIL_CAP_SLACK      8
-##     DETAIL_MAX_WIDTH      298 − 80 − 8 = 210
+##     DETAIL_MAX_WIDTH      298 − 154 − 8 = 136
+##
+## **THE CAP IS NOT A TRUNCATION THRESHOLD, which is why folding the link column in costs nothing on
+## an ordinary strip.** It bounds what a row may DEMAND; the growth half hands the label whatever
+## slack the strip really has, so a phrase between this figure and its own natural width still draws
+## in full everywhere above the floor. What the lower cap changes is only which rows take the growth
+## branch — and at the floor, where the strip cannot pay, a link-bearing row now fits instead of
+## dragging the card outside it.
 ##
 ## ⛔ **A CAP WITHOUT THE GROWTH HALF IS A HARD 210px COLUMN, AND THAT WAS THE FIRST BUILD.** Without
 ## `SIZE_EXPAND_FILL` an `HBoxContainer` hands a non-expanding child exactly its minimum, so a long
@@ -1036,7 +1057,8 @@ func _build_log() -> VBoxContainer:
 	# `HBoxContainer` the foot's minimum width was the button PLUS the retention sentence — measured
 	# at 399 with the log open, which is 12px past what `MIN_STRIP_WIDTH` leaves the card, so the
 	# card was clamped up and drawn outside its own strip whenever the log was expanded. A flow
-	# container's minimum is its WIDEST CHILD rather than their sum (285 here), and a squeeze wraps
+	# container's minimum is its WIDEST CHILD rather than their sum (277 here, the figure
+	# `_report_event_row_columns` prints each run), and a squeeze wraps
 	# the sentence under the button instead of widening the card. Nothing is lost and nothing moves
 	# at any ordinary width.
 	_log_foot = HFlowContainer.new()
@@ -1067,6 +1089,35 @@ func _make_label(text: String, font_size: int, color: Color) -> Label:
 	label.add_theme_color_override("font_color", color)
 	return label
 
+## The width `label` will need once it is DRAWN — the units every figure in the width derivation
+## above is quoted in, and the units `DETAIL_MAX_WIDTH` is subtracted out of.
+##
+## ⛔ **NOT `Label.get_minimum_size()`, AND THE DIFFERENCE IS A WHOLE FONT SIZE.** A `Label` shapes
+## its text against its THEME CACHE, and that cache is filled on `NOTIFICATION_THEME_CHANGED` — which
+## a control that has never entered the tree has never received. So a DETACHED `Label` measures its
+## text at the default theme's `font_size` (16) no matter what `add_theme_font_size_override` was
+## handed: `Cold` reports 33 detached against the 27 it draws at `DETAIL_FONT_SIZE`, i.e. 16/13 too
+## wide, and the reported hunt phrase reports 1015 against the 824 it draws.
+##
+## Measured against a budget derived from DRAWN widths, that skew is not cosmetic: a phrase whose
+## drawn width is comfortably inside `DETAIL_MAX_WIDTH` can measure OVER it detached, take the growth
+## branch, and gain a `clip_text` and a minimum it does not need — which re-antialiases glyphs that
+## have not moved, against `_make_detail_label`'s own claim that a detail which fits is returned
+## untouched.
+##
+## **ASKING THE FONT SIDESTEPS THE CACHE.** `get_theme_font` / `get_theme_font_size` resolve through
+## the theme CHAIN rather than the cache and are correct while detached, and
+## `Font.get_string_size` at that size matches the drawn `Label`'s own minimum to the pixel
+## (`_report_event_row_columns` re-measures the pair every run). The row's labels set no per-control
+## font and the HUD installs no project theme, so the chain a detached row label resolves is the one
+## it will resolve attached.
+static func natural_label_width(label: Label) -> float:
+	var font: Font = label.get_theme_font(&"font")
+	if font == null:
+		return label.get_minimum_size().x
+	return font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		label.get_theme_font_size(&"font_size")).x
+
 ## The row's DETAIL phrase. **BOUNDED BELOW, FREE TO GROW ABOVE.**
 ##
 ## `custom_minimum_size.x` is `min(natural, DETAIL_MAX_WIDTH)` — a FLOOR ON WHAT THE ROW DEMANDS, not
@@ -1077,10 +1128,11 @@ func _make_label(text: String, font_size: int, color: Color) -> Label:
 ##
 ## **THE NATURAL WIDTH IS READ BEFORE THE LABEL IS CLIPPED, and the order is the whole of it.** A
 ## `Label` that is already `clip_text` reports Godot's one-pixel floor, so measuring after the fact
-## would floor every detail — short ones included — at that pixel. A non-wrapping `Label` measures
-## honestly while detached (the autopsy about detached `Label`s shaping at width 0 is about AUTOWRAP
-## ones, which re-shape against their allotted width); `_report_event_row_columns` prints the reading
-## each run so the claim stays a measurement.
+## would floor every detail — short ones included — at that pixel. It is read through
+## `natural_label_width` rather than off `get_minimum_size`, because a DETACHED `Label` shapes at the
+## default theme's font size rather than at the override — see that helper for the skew and why a
+## budget in drawn pixels cannot be compared against it. `_report_event_row_columns` prints the
+## reading beside the drawn one each run so the claim stays a measurement.
 ##
 ## **RIGHT-ALIGNED, WHICH IS WHAT KEEPS EVERY ORDINARY ROW WHERE IT WAS.** Unexpanded, the label's box
 ## was exactly its text and the main label's `SIZE_EXPAND_FILL` pushed it against the row's trailing
@@ -1088,7 +1140,7 @@ func _make_label(text: String, font_size: int, color: Color) -> Label:
 ## glyphs at the identical x they occupied before, and a short detail is pixel-identical.
 func _make_detail_label(text: String) -> Label:
 	var label := _make_label(text, DETAIL_FONT_SIZE, HudStyle.INK_FAINT)
-	var natural: float = label.get_minimum_size().x
+	var natural: float = natural_label_width(label)
 	# ⛔ **A DETAIL THAT FITS IS RETURNED UNTOUCHED, and that is a pixel claim rather than tidiness.**
 	# It cannot push the row's minimum past the share this constant reserves and it can never need
 	# trimming — its own minimum is its whole text — so every flag below would be inert. They are not
@@ -1247,9 +1299,12 @@ func _make_event_row(event: Dictionary, pinned: bool) -> Control:
 
 	var label := _make_label(_row_label(event), ROW_FONT_SIZE, _label_color(event))
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# BEFORE the clip, for the reason `_make_detail_label` states: a `clip_text` label reports the
-	# one-pixel floor, so the width it WANTS is only readable while it is still unclipped.
-	var label_natural: float = label.get_minimum_size().x
+	# IN DRAWN UNITS, and read BEFORE the clip: a `clip_text` label reports the one-pixel floor, so
+	# the width it WANTS is only readable while it is still unclipped. `natural_label_width` rather
+	# than `get_minimum_size` because this figure is weighed against the detail's on one scale, and a
+	# detached `Label`'s minimum is skewed by its own font size (16/14 here against the detail's
+	# 16/13) — so the two would be weighted in different units.
+	var label_natural: float = natural_label_width(label)
 	label.clip_text = true
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	line.add_child(label)

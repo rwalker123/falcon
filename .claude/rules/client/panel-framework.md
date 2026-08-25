@@ -170,6 +170,23 @@ band out of: one click puts the sheet away and the bar is still there for the se
 `BandComposeFloat` has no catcher at all and keeps none, its own header carrying the reason (the
 quarry picker needs the sheet to survive a map click), so a bar click reaches the bar there.
 
+**AND THE BAND/CITY PANEL IS NOW UNDER THAT CATCHER TOO — a decision, not a side effect.**
+`COMPOSE_LAYER_INDEX` is 105, above `BandCityPanel.LAYER_INDEX` (103) as well as the dock's 104,
+where the sheet used to sit at the HUD's 101, i.e. **under** the panel. So with a sheet open the
+first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
+panel. That is accepted and is not to be re-litigated: no integer is both above 104 and below 103,
+and carving the catcher back is the option that was explicitly declined. A click on the panel IS a
+click outside the sheet, and one click to put a transient write surface away before using the
+persistent command centre is the wanted behaviour.
+
+**THE ONE LOOPHOLE IT OPENS IS CLOSED AT THE SOURCE.** The sheet's improvement control carries a
+live `Work tab` link that jumps the Band panel to that band's Work board (see
+`.claude/rules/client/labor-ui.md` → "ONE LINE, AND `Work tab` IS A LIVE LINK") — so a sheet left
+open would land the player on a board whose first press, the `⌃` the sentence just told them to use,
+hits the catcher. `DrawerComposeController._navigate_to_work_tab` closes the sheet as it emits, and
+it is the only control inside a compose surface that navigates to another one: everything else the
+sheet emits is a command, and those already close through `close_compose_sheet()`.
+
 **A sibling CanvasLayer carries an identity transform**, so nothing about either surface's geometry
 moved: `ComposeSheet._sync_to_viewport` and `BandComposeFloat._room` both read
 `get_viewport().get_visible_rect()` and write a parent-local `position`, and both resolve to the same

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 162
+const EXPECTED_CHECKPOINTS := 165
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -743,6 +743,19 @@ const MEDIUM_DETAIL_LABEL := "The Roe Deer hunt"
 
 const MEDIUM_DETAIL := "carried_biomass=12.500 wasted_biomass=1.250 species=Roe Deer"
 
+## **THE ROW THE BUG REPORT WAS ACTUALLY ABOUT, and the one shape the three above cannot stage.** A
+## long detail that ALSO carries a `Work tab` link: `_make_event_row` appends that `Button` to the
+## same `HBoxContainer` for any row whose `status=` is one `DETAIL_STATUS_WORK_LINK` names and which
+## carries a `band=` id, and the link is deliberately NOT `clip_text` (see `_make_work_tab_link`), so
+## its whole word sits in the row's minimum BESIDE the detail's cap.
+##
+## Without it the widest row in this block carries no link, `ROW_FURNITURE_WIDTH` is measured on a
+## row that has none, and the overflow this whole section pins stays open for exactly the row that
+## reported it. It is the reported line verbatim, with the `band=` token the sim now writes.
+const LINKED_LONG_DETAIL_LABEL := "foragers at (44, 18) cut to 1 — too few workers"
+
+const LINKED_LONG_DETAIL := "status=trimmed reason=too_few_workers kind=forage x=44 y=18 band=5 workers=1 lost=1"
+
 func _event_dock_long_detail_fixture() -> Array:
 	return [
 		{"tick": 91, "kind": "died", "faction": 0,
@@ -751,16 +764,23 @@ func _event_dock_long_detail_fixture() -> Array:
 			"label": MEDIUM_DETAIL_LABEL, "detail": MEDIUM_DETAIL, "seq": 1202},
 		{"tick": 91, "kind": "hunt", "faction": 0,
 			"label": LONG_DETAIL_LABEL, "detail": LONG_DETAIL, "seq": 1203},
+		{"tick": 91, "kind": "forage", "faction": 0,
+			"label": LINKED_LONG_DETAIL_LABEL, "detail": LINKED_LONG_DETAIL, "seq": 1204},
 	]
 
 ## What a detail phrase WOULD measure with nothing bounding it — the quantity `_make_detail_label`
 ## reads before it clips, built the same way the row builds its own labels so the two cannot disagree
 ## about the type size being measured.
+##
+## **THROUGH `EventDockPanel.natural_label_width`, WHICH IS THE UNIT FIX ITSELF.** `get_minimum_size`
+## on a detached `Label` shapes at the DEFAULT theme's font size rather than at the override, so it
+## reported this phrase 16/13 too wide and every claim below was comparing a probe in one unit against
+## a budget derived in another. The helper asks the font instead and lands on the drawn pixel.
 func _natural_detail_width(detail: String = LONG_DETAIL) -> float:
 	var probe := Label.new()
 	probe.text = EventDockPanel.detail_phrase(detail)
 	probe.add_theme_font_size_override("font_size", EventDockPanel.DETAIL_FONT_SIZE)
-	var width: float = probe.get_minimum_size().x
+	var width: float = EventDockPanel.natural_label_width(probe)
 	probe.free()
 	return width
 
@@ -789,7 +809,7 @@ func _drawn_detail_width(dock: EventDockPanel, label: String) -> float:
 
 ## How much of the reported row's phrase counts as "drawn far past the cap rather than at it". Three
 ## times the cap: the hard-column build drew exactly `DETAIL_MAX_WIDTH` and the growth build draws
-## about 4.3x it here, so the threshold separates the two builds by a wide margin without pinning a
+## about 6.4x it here, so the threshold separates the two builds by a wide margin without pinning a
 ## pixel figure that moves with the canvas.
 const LONG_DETAIL_GROWTH_FACTOR := 3.0
 
@@ -806,7 +826,7 @@ func _natural_label_width(text: String) -> float:
 	var probe := Label.new()
 	probe.text = text
 	probe.add_theme_font_size_override("font_size", EventDockPanel.ROW_FONT_SIZE)
-	var width: float = probe.get_minimum_size().x
+	var width: float = EventDockPanel.natural_label_width(probe)
 	probe.free()
 	return width
 
@@ -854,6 +874,59 @@ func _assert_card_within_root(dock: EventDockPanel, what: String) -> void:
 			% [what, card_min, EventDockPanel.MIN_STRIP_WIDTH],
 		card_min <= EventDockPanel.MIN_STRIP_WIDTH)
 
+## Where `_make_event_row` puts the DETAIL phrase on its line: glyph, turn stamp, main label, then
+## the detail — and the `Work tab` link, when there is one, after that. Named because two helpers
+## below index it and a silent off-by-one would report furniture for the main label instead.
+const ROW_DETAIL_CHILD_INDEX := 3
+
+## The `Work tab` link on `row`, or `null`. It is the row's only `Button`, which is a sturdier test
+## than an index: the detail phrase may be absent, and then the link sits where the detail would.
+func _row_work_link(row: Control) -> Button:
+	for child in row.get_child(0).get_children():
+		if child is Button:
+			return child as Button
+	return null
+
+## What `row` demands for everything that is NOT its detail phrase — the quantity
+## `EventDockPanel.ROW_FURNITURE_WIDTH` states, re-measured off the live row.
+##
+## **A SUBTRACTION OFF THE ROW'S OWN COMBINED MINIMUM, never a sum of the controls this file knows
+## about.** The failure being guarded is precisely a control that was added to the line and left out
+## of the budget, and a hand-summed figure would leave the new one out a second time.
+func _row_furniture_width(row: Control) -> float:
+	var line: Node = row.get_child(0)
+	var detail_min := 0.0
+	if line.get_child_count() > ROW_DETAIL_CHILD_INDEX:
+		var child: Node = line.get_child(ROW_DETAIL_CHILD_INDEX)
+		if child is Label:
+			detail_min = (child as Label).get_combined_minimum_size().x
+	return row.get_combined_minimum_size().x - detail_min
+
+## The widest furniture on the bar — the quantity `EventDockPanel.ROW_FURNITURE_WIDTH` has to cover,
+## taken across every row on screen so the link-bearing one is the one that answers.
+func _widest_row_furniture(dock: EventDockPanel) -> float:
+	var widest := 0.0
+	for row in dock._rows.get_children():
+		widest = maxf(widest, _row_furniture_width(row as Control))
+	return widest
+
+## How many rows on the bar mount a `Work tab` link.
+func _work_link_row_count(dock: EventDockPanel) -> int:
+	var count := 0
+	for row in dock._rows.get_children():
+		if _row_work_link(row as Control) != null:
+			count += 1
+	return count
+
+## The bar's one `Work tab` link, or `null` — paired with the count above, which is what makes "the
+## one" a claim rather than an assumption.
+func _first_work_link(dock: EventDockPanel) -> Button:
+	for row in dock._rows.get_children():
+		var link := _row_work_link(row as Control)
+		if link != null:
+			return link
+	return null
+
 ## What each part of a row and of the log's own chrome demands, PRINTED rather than asserted — the
 ## `band_panel_preview._report_zone_content_extent` idiom. `DETAIL_MAX_WIDTH`'s derivation is written
 ## in terms of these figures, and a derivation nobody re-measures goes stale silently; a red line here
@@ -862,11 +935,27 @@ func _report_event_row_columns(dock: EventDockPanel) -> void:
 	# THE WIDEST ROW, never the last one: `GLYPH_COLUMN_WIDTH` is a floor rather than a clip, so an
 	# emoji kind glyph draws past it and rows of different kinds do not cost the same.
 	var widest := 0.0
+	# FURNITURE, SPLIT BY WHETHER THE ROW CARRIES A LINK, because that is the split the constant is
+	# derived across: a link-bearing row pays for the `Work tab` `Button` on top of everything a
+	# link-less one pays for, and `ROW_FURNITURE_WIDTH` has to be the larger of the two.
+	var linkless := 0.0
+	var linked := 0.0
+	var link_width := 0.0
 	for row in dock._rows.get_children():
-		widest = maxf(widest, (row as Control).get_combined_minimum_size().x)
+		var control := row as Control
+		widest = maxf(widest, control.get_combined_minimum_size().x)
+		var furniture := _row_furniture_width(control)
+		var link := _row_work_link(control)
+		if link == null:
+			linkless = maxf(linkless, furniture)
+		else:
+			linked = maxf(linked, furniture)
+			link_width = maxf(link_width, link.get_combined_minimum_size().x)
 	print("ui_preview: event row — long detail wants %.0f, capped at %.0f; widest row minimum %.0f of the %.0f budgeted"
 		% [_natural_detail_width(), EventDockPanel.DETAIL_MAX_WIDTH,
 			widest, EventDockPanel.ROW_BUDGET_WIDTH])
+	print("ui_preview: event row furniture — link-less %.0f, with a `Work tab` link %.0f (the link itself %.0f); constant %.0f"
+		% [linkless, linked, link_width, EventDockPanel.ROW_FURNITURE_WIDTH])
 	print("ui_preview: event log chrome — head %.0f, foot %.0f, card minimum %.0f (floor %.0f)"
 		% [dock._log_head.get_combined_minimum_size().x,
 			dock._log_foot.get_combined_minimum_size().x,
@@ -1783,22 +1872,38 @@ func run(harness) -> void:
 	h._assert_hud("precondition: the long detail really is wider than the cap (%.0f wanted, cap %.0f)"
 			% [_natural_detail_width(), EventDockPanel.DETAIL_MAX_WIDTH],
 		_natural_detail_width() > EventDockPanel.DETAIL_MAX_WIDTH)
+	# **AND A ROW ON THIS BAR REALLY MOUNTS A `Work tab` LINK.** Without it every claim below is made
+	# about link-LESS rows only, which is exactly how `ROW_FURNITURE_WIDTH` came to omit the link
+	# column: the card fitted its strip for the three rows staged here and overflowed it by 66px for
+	# the shed row the bug was reported on. A link that stopped mounting would make this block go
+	# quietly back to proving nothing.
+	h._assert_hud("precondition: one row on the bar mounts a `Work tab` link, so the claims below cover a link-bearing row (%d of %d)"
+			% [_work_link_row_count(event_dock), event_dock._rows.get_child_count()],
+		_work_link_row_count(event_dock) == 1)
+	# THE DERIVATION ITSELF, asserted rather than only printed: `DETAIL_MAX_WIDTH` is the row budget
+	# less this figure, so a row that grows a control has to be caught HERE — the card-fits claims
+	# below would otherwise fail on this canvas without saying which term went stale.
+	var widest_furniture := _widest_row_furniture(event_dock)
+	h._assert_hud("…and `ROW_FURNITURE_WIDTH` covers the widest furniture on it (%.0f measured, constant %.0f)"
+			% [widest_furniture, EventDockPanel.ROW_FURNITURE_WIDTH],
+		widest_furniture <= EventDockPanel.ROW_FURNITURE_WIDTH)
 	_assert_card_within_root(event_dock, "collapsed bar, long detail")
 	# THE SHORT DETAIL BESIDE IT IS UNTOUCHED, and without this half the cap could have been a fixed
 	# detail column trimming every row in the game while every claim above stayed green.
-	# **ASKED OF THE LABEL, NOT OF A PROBE'S WIDTH, and the difference is a defect this caught.** A
-	# `Label` built detached measures against the DEFAULT theme's font, while the drawn one measures
-	# against the project's — 33px against 27 for `Cause cold`. So a claim of the form "drawn >=
-	# probe natural" compares two fonts and fails a row that is in fact whole. What is actually being
-	# claimed is that the cap never touched this row, and the flags say that exactly.
+	# **BOTH HALVES: the flags say the cap never touched the label, and the WIDTH says its phrase is
+	# whole.** The width half was written against `_natural_detail_width` first, dropped when that
+	# probe disagreed with the drawn label for the same text at the same size (33 against 27 for
+	# `Cold`), and is back now that the probe reports drawn pixels — the disagreement was the
+	# detached-`Label` font-size skew `EventDockPanel.natural_label_width` closes, not a real
+	# difference between the two. An independent probe is the point: `get_minimum_size()` on the
+	# drawn label would be comparing the layout against itself.
 	var short_label := _drawn_detail_label(event_dock, SHORT_DETAIL_LABEL)
+	var short_natural := _natural_detail_width(SHORT_DETAIL)
 	h._assert_hud("…while a SHORT detail is not capped at all — no clip, no ellipsis, the plain Label it always was",
 		short_label != null and not short_label.clip_text)
-	h._assert_hud("…and it is drawn at its own full width, so nothing of the phrase is cut (%.0f drawn, wants %.0f)"
-			% [short_label.size.x if short_label != null else -1.0,
-				short_label.get_minimum_size().x if short_label != null else -1.0],
-		short_label != null
-			and short_label.size.x >= short_label.get_minimum_size().x - CO_EDGE_RECT_EPSILON)
+	h._assert_hud("…and it is drawn at its own full width, so nothing of the phrase is cut (%.0f drawn, %.0f natural)"
+			% [short_label.size.x if short_label != null else -1.0, short_natural],
+		short_label != null and short_label.size.x >= short_natural - CO_EDGE_RECT_EPSILON)
 
 	# ---- …AND THE CAP IS A FLOOR ON THE ROW'S MINIMUM, NOT THE WIDTH IT IS DRAWN AT --------------
 	# The first build of this fix set `custom_minimum_size.x` and stopped there. An `HBoxContainer`
@@ -1806,12 +1911,14 @@ func run(harness) -> void:
 	# width — `Engaged 0.34 · Fled 0.068 · Ca…` on an otherwise near-empty 1280px bar. The label
 	# expands now, so slack in the row flows back into it.
 	#
-	# **THE MEDIUM ROW IS THE ONE THAT CAN CLAIM "IN FULL", AND THAT IS A MEASUREMENT.** The reported
-	# row wants its label (~145) plus its phrase (1015) plus the row's furniture against the ~1107 a
-	# row gets on this canvas — it is ~130px short of fitting at ANY strip width, since the strip is
-	# itself capped at `MAX_STRIP_WIDTH`. So "renders in full" is pinned where it is achievable, and
-	# the long row is pinned on what it actually promises: far more than the cap, and a shortfall
-	# shared with its label rather than taken out of the phrase alone.
+	# **THE MEDIUM ROW IS THE ONE THAT CAN CLAIM "IN FULL", AND THAT IS STILL THE RIGHT ROW TO CLAIM
+	# IT ON.** The reported row wants its label (154) plus its phrase (824) plus the row's furniture,
+	# against the ~1107 a row gets on this canvas — which it now clears, because the phrase is
+	# measured in DRAWN pixels rather than at the detached `Label`'s inflated 1015 (see
+	# `EventDockPanel.natural_label_width`). But "clears it" is a property of THIS canvas at
+	# `MAX_STRIP_WIDTH`, not of the row, so the long row is still pinned on what it actually
+	# promises — far more than the cap, and a shortfall shared with its label rather than taken out
+	# of the phrase alone — and the medium row carries the unconditional in-full claim.
 	var medium_natural := _natural_detail_width(MEDIUM_DETAIL)
 	var medium_drawn := _drawn_detail_width(event_dock, MEDIUM_DETAIL_LABEL)
 	h._assert_hud("precondition: the medium detail is past the cap too (%.0f natural, cap %.0f) — a row the hard column would have trimmed"
@@ -1860,6 +1967,17 @@ func run(harness) -> void:
 			% [floored_drawn, EventDockPanel.DETAIL_MAX_WIDTH],
 		floored_drawn >= EventDockPanel.DETAIL_MAX_WIDTH - CO_EDGE_RECT_EPSILON)
 	_assert_card_within_root(event_dock, "floored strip, long detail")
+	# **AND THE LINK THE BUDGET NOW PAYS FOR IS STILL WHOLE AT THE FLOOR.** That is the whole point of
+	# folding its column into `ROW_FURNITURE_WIDTH` rather than letting the detail's cap have it: the
+	# link is not `clip_text` (it renders as zero pixels when it is), so the alternative to budgeting
+	# for it is the card leaving its strip. Asked against the link's OWN minimum, so it re-measures
+	# rather than restating a pixel.
+	var floored_link := _first_work_link(event_dock)
+	h._assert_hud("at the floor the `Work tab` link is still drawn in full (%.0f drawn, wants %.0f)"
+			% [floored_link.size.x if floored_link != null else -1.0,
+				floored_link.get_combined_minimum_size().x if floored_link != null else -1.0],
+		floored_link != null
+			and floored_link.size.x >= floored_link.get_combined_minimum_size().x - CO_EDGE_RECT_EPSILON)
 	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 	event_dock.set_expanded(true)
 	await h._settle()

@@ -3127,6 +3127,13 @@ retires, so no rung of that picker can be disabled.
 >   remedy note beneath, and Ray's verdict was that one line is all it needs and the pointer should be
 >   clickable. `work_tab_requested(band_entity)` is a `DrawerComposeController` signal relayed by
 >   `HudLayer` to the panel — **the compose sheet never reaches the dock itself**.
+>   - **THE SHEET CLOSES AS THE LINK NAVIGATES** (`_navigate_to_work_tab`), and that is not tidiness.
+>     The compose surfaces moved to `HudLayer.COMPOSE_LAYER_INDEX` (105), above `BandCityPanel`'s 103,
+>     and `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher — so a sheet left open
+>     lands the player on the board this sentence sent them to and swallows their first press, the `⌃`
+>     it just told them to use. It is the only control inside a compose surface that navigates to
+>     another one; everything else the sheet emits is a command, and those already close.
+>     `.claude/rules/client/panel-framework.md` carries the layering decision.
 > - **THE LINK CARRIES THE ACTING BAND, and shipping it without one was a defect.** It named the tab
 >   alone, so from the FACTION page it landed on the faction's Work **rollup** — a list of bands, with
 >   no `⌃` anywhere on it — delivering the player to a surface that cannot do what the sentence

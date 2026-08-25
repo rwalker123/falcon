@@ -591,7 +591,7 @@ chain in which every link is doing what it was built to do:
 
 1. `_make_event_row`'s MAIN label clips (`clip_text` + `OVERRUN_TRIM_ELLIPSIS`); the DETAIL label
    beside it did not, and an unclipped `Label` reports its whole unwrapped string as its minimum
-   width — **1015px** for the phrase above, measured.
+   width — **824px drawn** for the phrase above, measured.
 2. That becomes the ROW's minimum, and so `EventRows`'.
 3. In the expanded log it also climbs through `_log_scroll`, whose `horizontal_scroll_mode` is
    `SCROLL_MODE_DISABLED` — a `ScrollContainer` propagates a child's minimum on the axis it does not
@@ -601,13 +601,43 @@ chain in which every link is doing what it was built to do:
 
 **THE BOUND IS DERIVED FROM `MIN_STRIP_WIDTH`, because that is the width the card has to honour.**
 `EventDockPanel.DETAIL_MAX_WIDTH` = `ROW_BUDGET_WIDTH` (407 − 20 chrome − 89 expander = **298**) less
-`ROW_FURNITURE_WIDTH` (**80**, measured) less `DETAIL_CAP_SLACK` (8) = **210**. Measured after: the
-widest row demands 289 of its 298 and the card 398 of the 407 floor.
+`ROW_FURNITURE_WIDTH` (**154**, measured) less `DETAIL_CAP_SLACK` (8) = **136**. Measured after: the
+widest row demands 290 of its 298 and the card 399 of the 407 floor.
 
-- **`ROW_FURNITURE_WIDTH` IS MEASURED ON THE WIDEST ROW, NOT A TYPICAL ONE.** `GLYPH_COLUMN_WIDTH` is
-  a `custom_minimum_size` floor rather than a clip, so an emoji kind glyph draws past it — 9px between
-  a `died` row (70) and a `hunt` row (79). A figure taken off whichever row a fixture happened to
-  render last is 9px optimistic, which is most of the slack.
+- **`ROW_FURNITURE_WIDTH` IS MEASURED ON A ROW THAT CARRIES A `Work tab` LINK, which is the widest
+  furniture a row can have.** It was 80 first, measured on a `died` row (70) and a `hunt` row (79) —
+  **neither of which mounts a link.** `_make_event_row` appends `_make_work_tab_link` to the same
+  `HBoxContainer` for any row whose `status=` is one `DETAIL_STATUS_WORK_LINK` names and which
+  carries a `band=` id, and that control is deliberately NOT `clip_text`, so its whole word is in the
+  row's minimum: 154 = a link-less row's 79 + the link's own 66 + one `ROW_ITEM_SEPARATION`.
+  Budgeted at 80, the reported shed row (`foragers at (44, 18) cut to 1 — too few workers`) demanded
+  364 against 298 and dragged the card to 473 against the 407 floor — **the same overflow, still open
+  for the exact row the bug was reported on.** The two link-less figures differ by 9px between kinds
+  as well, since `GLYPH_COLUMN_WIDTH` is a `custom_minimum_size` floor rather than a clip and an
+  emoji kind glyph draws past it, so the figure must come from the widest row either way.
+- **Lowering the cap to 136 costs nothing on an ordinary strip**, because the cap bounds what a row
+  may DEMAND rather than what it draws: the growth half below hands the label whatever slack the
+  strip really has. What it changes is only which rows take the growth branch — and at the floor,
+  where there is no slack, a link-bearing row now fits instead of dragging the card outside its strip.
+
+#### ⛔ The natural width is measured in the units the budget is derived in
+
+`_make_detail_label` compares a phrase's natural width against `DETAIL_MAX_WIDTH`, a figure derived
+entirely from DRAWN measurements — so the natural width has to be a drawn one too, and
+`Label.get_minimum_size()` is not. **A `Label` shapes its text against its THEME CACHE, and that
+cache is filled on `NOTIFICATION_THEME_CHANGED`, which a control that has never entered the tree has
+never received.** A detached `Label` therefore measures at the default theme's `font_size` (16)
+whatever `add_theme_font_size_override` was handed: `Cold` reports 33 against the 27 it draws at
+`DETAIL_FONT_SIZE`, and the reported hunt phrase reports 1015 against the 824 it draws.
+
+Left as it was, a phrase whose drawn width is comfortably inside the budget could measure over it,
+take the growth branch, and gain a `clip_text` and a minimum it does not need — contradicting "a
+detail that fits is returned untouched" below, which is a pixel claim. `EventDockPanel.natural_label_width`
+asks the FONT instead (`get_theme_font` / `get_theme_font_size` resolve through the theme chain
+rather than the cache and are correct while detached, and `Font.get_string_size` matches the drawn
+`Label`'s own minimum to the pixel). Both of a row's naturals go through it, so the two are weighted
+on one scale; `event_dock.gd`'s probes call it too, which is what let the chapter's short-detail
+claim go back to a WIDTH comparison after the skew had forced it down to a flags check.
 
 ### ⛔ …AND THE BOUND IS A FLOOR ON THE ROW'S MINIMUM, NOT THE WIDTH THE PHRASE IS DRAWN AT
 
@@ -646,8 +676,10 @@ Weighted by each label's **natural width**, both are allotted
 `available × natural / Σ naturals` — so when the row can pay for both, which is nearly every row on
 nearly every strip, each clears its own natural and BOTH draw in full. When it cannot, both give up
 the same FRACTION rather than one being trimmed to nothing, and a detail squeezed under its bound
-falls back on `DETAIL_MAX_WIDTH`. The reported row wants 1238px of the 1171 a row gets at the widest
-the strip is ever drawn, so it is ~67px short at any width and the two share that shortfall.
+falls back on `DETAIL_MAX_WIDTH`. On this canvas the reported row now clears the ~1107 a row is
+given — the phrase is 824 drawn rather than the 1015 a detached probe reported — so the pair is
+pinned on the MEDIUM row, which fits at every ordinary width, and on the floored strip, where the
+shortfall is real and both labels give up the same fraction of it.
 
 **A CONSTANT RATIO CANNOT EXPRESS THIS**, which is why it is computed per row: the weighting is a
 property of what the row holds, and the dock ships both shapes (a short label beside a long phrase,
@@ -667,15 +699,20 @@ moves at any ordinary width.
 **The other candidates were measured and left alone**: `_log_head` is already an `HFlowContainer`
 (75), the per-turn group heads are one short `Turn N` at the smallest type size in the dock, and
 `_make_message_row`'s longest string (`All events — turns 91–91`) is well inside a row's budget. The
-`Work tab` link keeps its deliberate non-`clip_text` — it is a fixed-width control, not a text column,
-and its header's reasoning is untouched.
+`Work tab` link keeps its deliberate non-`clip_text` — a clipped `Button` beside an expanding label
+is allotted zero pixels and renders as nothing at all, and its header's reasoning is untouched. **The
+fix for it was the BUDGET, not the link**: its column is in `ROW_FURNITURE_WIDTH` now.
 
-`event_dock_long_detail` / `event_dock_long_detail_log` are the frames. Both assert the DRAWN card
-inside `_root` **and** the card's combined MINIMUM inside `MIN_STRIP_WIDTH` — the rects say what this
-window did, the minimum says what the card would demand of the narrowest strip it can ever be handed,
-and only the second survives a change of viewport. A SHORT detail on the same frame is asserted to
-draw its whole phrase, without which the cap could have been a fixed column trimming every row in the
-game with every claim still green.
+`event_dock_long_detail` / `event_dock_long_detail_log` / `event_dock_long_detail_floored` are the
+frames. Each asserts the DRAWN card inside `_root` **and** the card's combined MINIMUM inside
+`MIN_STRIP_WIDTH` — the rects say what this window did, the minimum says what the card would demand
+of the narrowest strip it can ever be handed, and only the second survives a change of viewport.
+Three things keep those claims from being vacuous, and each was a real gap first: a SHORT detail on
+the same frame is asserted to draw its whole phrase (or the cap could be a fixed column trimming
+every row in the game); one staged row is asserted to MOUNT a `Work tab` link (or the block proves
+nothing about the row shape the bug came from); and `ROW_FURNITURE_WIDTH` is asserted to cover the
+widest furniture actually measured on the bar, so a row that grows a control fails on the term that
+went stale rather than on a card rect three assertions later.
 
 ## The strip yields to the map, and the reservation never depends on content
 
