@@ -1869,6 +1869,87 @@ correct.
 
 ---
 
+## THE SHEET LIVES ON ITS OWN CANVAS LAYER, ABOVE THE EVENT DOCK
+
+`HudLayer.tscn`'s root `CanvasLayer` declares no `layer` at all and `Main` raises it to `HUD_LAYER`
+(101) on boot, while `EventDockPanel` puts ITSELF on `LAYER_INDEX` (104) from its own `_ready`. A
+compose sheet parented onto the HUD was therefore **under** a top-docked event bar — and the bar is
+`MOUSE_FILTER_STOP` by design, so it also swallowed every click meant for the sheet: the `✕` and the
+`Band:` / `Kit` rows under the bar's band could not be pressed at all. Reported from play with
+screenshots.
+
+**`HudLayer.compose_host()` is a `CanvasLayer` at `COMPOSE_LAYER_INDEX`, and the const is the
+RELATION rather than the number** — `EventDockPanel.LAYER_INDEX + 1`, which states the invariant the
+next reader has to preserve instead of restating a 105 they would have to go and check. There is no
+load cycle to fear: `EventDockPanel` references nothing on `HudLayer` at class-load time, so the
+`const` direction runs one way only (`hud-modules.md` → the `const` direction rule). The ladder it
+joins is `BandCityPanel.LAYER_INDEX` 103 → `EventDockPanel.LAYER_INDEX` 104 → compose → `Main`'s
+`PauseLayer` 200.
+
+- **It is created IN CODE, in `_ready`, not in `HudLayer.tscn`.** Every offline harness stands the HUD
+  up differently and several instance it without `Main`, so a node that exists only in the scene is a
+  silent divergence between what the harnesses render and what the game runs. It is the same idiom
+  `EventDockPanel._ready`, `MinimapPanel.setup` and `OverlayPicker._open` already use.
+- **BOTH compose surfaces take it**, because they are the same sheet reached from two places:
+  `DrawerComposeController._ensure_compose_sheet` (the drawer's) and
+  `BandPanelController._mount_compose_float` (the parties zone's `BandComposeFloat`). Fixing one and
+  not the other leaves the identical defect at the panel's own entry point.
+- **`_host` keeps every other job it has** in both controllers — `get_tree()`, the confirm dialog, the
+  motion node, the deferred measurements. Only the compose surface's PARENT moved.
+- **A sibling `CanvasLayer` carries an identity transform**, so `ComposeSheet._sync_to_viewport` and
+  `BandComposeFloat._room` — both of which read `get_viewport().get_visible_rect()` and write a
+  parent-local `position` — resolve to exactly the global coordinates they did before. Asserted rather
+  than assumed, in `event_dock.gd`'s `compose_sheet_over_event_dock`.
+
+**THE FULL-WINDOW CATCHER STAYS, SO A CLICK ON THE BAR IS A DISMISSAL BY DESIGN.** `ComposeSheet` IS
+its dismiss catcher with the card nested inside it, and now that the sheet is on top a press on the
+event bar lands on the catcher: the sheet closes and the bar does not get the click. That is the
+wanted behaviour for a modal write surface — one click puts the sheet away, and the bar is still
+there for the second — and it is not a case to carve the bar's band out of.
+`BandComposeFloat` still has no catcher at all (its header carries the reason: the quarry picker needs
+the sheet to survive a map click), so a bar click reaches the bar there.
+
+**And the sheet gains no `room_bounds`.** It COVERS the bar rather than dodging it, which is the fork
+`panel-framework.md` → "…AND THE OTHER ANSWER IS TO DRAW ABOVE THE OVERLAY" states: a card you READ
+insets off an overlay, a surface you WRITE INTO draws above it, and giving one both is two mechanisms
+answering one question.
+
+## `ComposeSheet.refit` COALESCES ITS FITS — a deferred request, never a discarded one
+
+The fit is a two-frame `await` (the content height is a function of the card's width, so a
+measurement taken in the same frame the body was rebuilt reports the previous wrapping), and
+`_fit_pending` keeps two of them from interleaving. That guard used to `return` on a request arriving
+mid-fit, which **throws it away**: the card is then left fitted to content that has already been
+replaced.
+
+**IT IS REACHABLE IN THE GAME, and it is invisible to everything that watches.**
+`DrawerComposeController.refresh_compose_sheet` refits on every snapshot, so a snapshot landing in
+the same frame as an `open()` had its fit swallowed. Nothing reported it because it **self-heals on
+the next snapshot**, and because a card fitted too TALL still holds its content — so
+`_assert_compose_sheet_card_holds_its_content` passes, and the preview run's exit status never
+notices. The author had already reasoned about swallowing on the SECOND await ("`_fit_pending` is
+already false here, so a refit arriving during this wait is not swallowed") and simply left the first
+window open.
+
+`_fit_requested` closes it: a request arriving mid-fit is recorded and re-run once the in-flight pass
+lands. **One coalesced re-run, not a queue** — the flag records THAT a fit was wanted, never how many
+— and it is cleared at the START of the run that honours it, so a request arriving during that re-run
+is recorded afresh rather than lost in turn.
+
+### ⚠ …and it is NOT what makes a card render taller than its content
+
+Worth stating because it is the obvious suspect and it is wrong. `refit`'s **`chrome` term
+over-counts**: on `ui_preview`'s `forage_take_default` it comes to **83** while the card's actual
+non-scroll furniture in the drawn layout (`_card.size.y - _scroll.size.y`) is **27**, so the card is
+fitted some 56px taller than it needs and draws with empty space under its commit button.
+`_header_row.get_combined_minimum_size().y` (41) is the term that does not survive contact with the
+laid-out header.
+
+Measured before and after the coalescing flag, that frame is **identical** — card 766, content 683,
+chrome 83 — because both of that state's two opens land before the first fit resumes from its await,
+so the single fit that runs already measures the final body. A dropped fit and an over-counted chrome
+produce the same symptom, and only the second one is producing it here.
+
 ## THE PRE-LAUNCH FIGHT IS DOWN TO ONE LINE, AND IT ONLY EVER REFUSES
 
 Two lines used to sit between the kit row and the forecast on the herd sheet, and both are retired
@@ -3046,6 +3127,13 @@ retires, so no rung of that picker can be disabled.
 >   remedy note beneath, and Ray's verdict was that one line is all it needs and the pointer should be
 >   clickable. `work_tab_requested(band_entity)` is a `DrawerComposeController` signal relayed by
 >   `HudLayer` to the panel — **the compose sheet never reaches the dock itself**.
+>   - **THE SHEET CLOSES AS THE LINK NAVIGATES** (`_navigate_to_work_tab`), and that is not tidiness.
+>     The compose surfaces moved to `HudLayer.COMPOSE_LAYER_INDEX` (105), above `BandCityPanel`'s 103,
+>     and `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher — so a sheet left open
+>     lands the player on the board this sentence sent them to and swallows their first press, the `⌃`
+>     it just told them to use. It is the only control inside a compose surface that navigates to
+>     another one; everything else the sheet emits is a command, and those already close.
+>     `.claude/rules/client/panel-framework.md` carries the layering decision.
 > - **THE LINK CARRIES THE ACTING BAND, and shipping it without one was a defect.** It named the tab
 >   alone, so from the FACTION page it landed on the faction's Work **rollup** — a list of bands, with
 >   no `⌃` anywhere on it — delivering the player to a surface that cannot do what the sentence

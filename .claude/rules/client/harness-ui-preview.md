@@ -1782,3 +1782,102 @@ assumption a single run can falsify.
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer
 > race (`labor-ui.md` → "THE SHEET DISMISSES ON PRESS **AND** RELEASE"). A run that fails only that
 > state's block is that race, not a regression; re-run before believing it.
+
+## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
+
+Four frames and twenty-five `PASS`, appended to the event-dock chapter before it frees its panel —
+so no earlier state moves and the chapter still hands the HUD back where it found it. RE-MEASURED off
+the run rather than hand-summed, as this file's own rule says: a first draft of this line read "three
+frames and fifteen", because `_assert_card_within_root` makes two claims per call and is called three
+times. The behaviour is `event-dock.md`'s and `panel-framework.md`'s; what belongs here is the shape
+of the drive.
+
+- **`_report_event_row_columns` PRINTS the derivation's own terms** — the long detail's natural width,
+  the cap, the widest row's minimum against the budget, and the log head / foot / card minimums
+  against the floor. `DETAIL_MAX_WIDTH` is derived from measurements, and a derivation nobody
+  re-measures goes stale silently; a red line there asks for a decision rather than a failing run.
+  **It reports the WIDEST row, never the last one**: `GLYPH_COLUMN_WIDTH` is a floor rather than a
+  clip, so an emoji kind glyph draws past it and two rows of different kinds do not cost the same —
+  a figure taken off whichever row rendered last is 9px optimistic, which is most of the slack.
+  It also splits a row's FURNITURE by whether the row carries a `Work tab` link (79 against 154 here,
+  the link itself 66), which is the split `ROW_FURNITURE_WIDTH` is derived across. Furniture is taken
+  as row minimum LESS the detail's, never as a sum of the controls the harness knows about — the
+  failure being guarded is a control added to the line and left out of the budget, and a hand-summed
+  figure would leave the new one out a second time.
+- **`_assert_card_within_root` asserts the DRAWN rect and the combined MINIMUM alike.** The rect says
+  what this window did; the minimum says what the card would demand of the narrowest strip the dock
+  can ever be handed, and only the second survives a change of viewport. Made on both surfaces, since
+  the expanded log is where a row's minimum propagates hardest (`_log_scroll` disables horizontal
+  scrolling, which passes a child's minimum width straight through).
+- **THREE DETAIL LENGTHS ON ONE FRAME, because the bound has three behaviours and no single row can
+  show more than one.** A SHORT one (untouched — asserted as `not clip_text`, the flags rather than a
+  width), a MEDIUM one past the bound that the row can still pay for in full, and the reported LONG
+  one that no strip can. Without the medium row, "it grows" is unprovable; without the short one, the
+  bound could be a fixed column trimming every row in the game with every other claim still green.
+  - ⛔ **The short one's key must not be one `HudEventVocab.DETAIL_KEY_HIDDEN` swallows** — the first
+    draft used `count=1`, which `detail_phrase` renders as `""`, so the row drew no detail label at
+    all and the claim was about a control that was not there.
+  - ⛔ **ITS CLAIM IS BOTH THE FLAGS AND A WIDTH, and the width half was lost once to a probe that
+    reported the wrong units.** A `Label` built detached shapes at the DEFAULT theme's font SIZE
+    rather than at its own override (33px against 27 for `Cold`), so `drawn >= probe natural` was
+    failing a row that is in fact whole and the claim was weakened to `not clip_text` alone. The
+    probe goes through `EventDockPanel.natural_label_width` now — which asks the font instead of the
+    label's theme cache — so it reports drawn pixels and the width claim is back beside the flags.
+    **A probe in the wrong units does not merely fail; it also silently weakens whatever assertion is
+    rewritten around it.**
+- **`event_dock_long_detail_floored` is where the growth half has to prove it did not undo the fix.**
+  Squeezed to `MIN_STRIP_WIDTH` there is no slack to hand out, so the phrase must fall back on
+  `DETAIL_MAX_WIDTH` exactly — asserted as trimmed AND as not below the bound, with
+  `_assert_card_within_root` beside it. A growth flag that let the label demand its natural width
+  again would put the card straight back outside its strip.
+- **The reported row's own LABEL is asserted beside its phrase.** The two share the shortfall in
+  proportion to what each wants, so the label keeps most of its text on the same row that grew the
+  phrase — the failure a constant stretch ratio produces in one direction or the other.
+- ⛔ **A FOURTH ROW MOUNTS A `Work tab` LINK, AND WITHOUT IT THE WHOLE BLOCK PROVED NOTHING ABOUT THE
+  ROW THE BUG CAME FROM.** `_make_event_row` appends that `Button` only for a `status=trimmed|lapsed|
+  pruned` detail carrying a `band=` id; the three rows above are a `died` and two `hunt`s, so no
+  fixture here mounted one and `ROW_FURNITURE_WIDTH` was measured — and passed — on rows with no link
+  column at all. Staged now as the reported shed line, with two preconditions that keep it honest: a
+  count of the links actually mounted, and `ROW_FURNITURE_WIDTH` asserted to cover the widest
+  furniture measured on the bar. **The second is the derivation itself as an assertion** — without it
+  a row that grows a control fails on a card rect three claims later, naming the symptom rather than
+  the stale term. A third claim pins the link drawn in full at the floored strip, which is what the
+  budget now pays for.
+- **`compose_sheet_over_event_dock` needs BOTH the frame and the index claim.** Stacking order is a
+  property of the CanvasLayer indices rather than of any rect, so no pixel comparison can state it;
+  and an index claim alone passes on a sheet that never opened. It also asserts the sheet's parent and
+  that `_sync_to_viewport` still resolves to the whole viewport under the new parent — the identity
+  transform of a sibling `CanvasLayer`, checked rather than assumed.
+- ⛔ **THAT FRAME PUSHES RAW ZERO INSETS FOR ITS ONE STATE, AND WITHOUT THEM IT IS A PICTURE OF
+  NOTHING.** The sheet floats beside the selection card, i.e. over the HUD's LEFT COLUMN — which is
+  exactly the band `_preview_push_event_dock_insets` keeps the bar out of — so at the ordinary insets
+  the two never share a pixel and the eye cannot judge which is on top. Zero insets are a real
+  configuration (a dock with no HUD column beside it); the state restores the ordinary ones after, and
+  a rect-intersection claim rides beside the frame as its non-vacuity guard.
+
+**A clean run is 357 frames / 1432 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+### The frame diff that attributed this arc, and the one frame it could not explain
+
+Nineteen frames differ from the pre-arc tree, and **the diff was taken against a build of the pre-arc
+CLIENT rather than against the previous run of this one** — the `git show`/swap/re-run method above.
+That mattered: an intermediate build of this arc was itself trimming rows, so a diff against it read
+the fix as the regression.
+
+Sixteen of the nineteen differ by **2 to 20 pixels** — sub-pixel antialiasing where a bounded label's
+box rounds a pixel differently; the glyphs are complete and in the same place. Three are real and two
+of those are the arc landing: `event_dock_band_founded` (a two-sentence prose refusal, 918px drawn, now
+sharing its shortfall with its label instead of overflowing the card) and `event_dock_narrow_band`
+(the deliberately squeezed 496px band, where the bound is meant to bite).
+
+⛔ **THE THIRD IS `forage_take_default`, AND IT IS NOT A DETAIL-BOUND FRAME AT ALL** — its compose
+sheet's card renders ~56px taller than its content. Attributed by isolation and then by measurement,
+and the first attribution was WRONG: with the sheet parented back onto the HUD and the compose
+`CanvasLayer` still created the frame differs identically, which pointed at frame timing and so at
+`ComposeSheet.refit`'s discarding `_fit_pending` guard. That guard was a real defect and is fixed — it
+coalesces now (`labor-ui.md`) — but the frame measures **identically before and after** it (card 766,
+content 683, chrome 83): both of that state's two opens land before the first fit resumes from its
+await, so the one fit that runs already measures the final body. The actual cause is `refit`'s own
+`chrome` term over-counting the header row, which is left as a separate decision. **The lesson is the
+method**: a plausible mechanism that explains the symptom is not the cause until the fix for it moves
+the number.

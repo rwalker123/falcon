@@ -444,7 +444,59 @@ const RIGHT_DOCK_MARGIN_UNCAPTURED := -1
 var _right_dock_margin_bottom: int = RIGHT_DOCK_MARGIN_UNCAPTURED
 var _right_column_bottom_clearance: float = 0.0
 
+## ---- THE COMPOSE LAYER: the write surfaces are drawn ABOVE the overlay bar -----------------------
+##
+## **THE DEFECT IT CLOSES.** `HudLayer.tscn`'s root declares no `layer`, so the whole HUD sat on
+## CanvasLayer 1 until `Main` raised it to `HUD_LAYER` (101) — while `EventDockPanel` puts ITSELF on
+## 104 in its own `_ready`. A compose sheet parented onto this node therefore drew UNDER a top-docked
+## event bar and, worse, took none of the clicks over it: the bar is `MOUSE_FILTER_STOP` by design
+## (it eats its own clicks so the map beneath does not get them), so the sheet's `✕` and its Band /
+## Kit rows were simply unreachable under it. Reported from play with screenshots.
+##
+## **ONE LAYER ABOVE THE DOCK, STATED AS THAT RELATION rather than as the number it evaluates to.**
+## The ladder it joins is `BandCityPanel.LAYER_INDEX` (103) → `EventDockPanel.LAYER_INDEX` (104) →
+## this → `Main`'s `PauseLayer` (200), which still covers everything. No cycle: `EventDockPanel`
+## references nothing on `HudLayer` at class-load time, so the `const` direction runs one way only
+## (see `.claude/rules/client/hud-modules.md`).
+##
+## ⛔ **THE BAND/CITY PANEL CHANGED SIDES, AND THAT IS A DECISION RATHER THAN A SIDE EFFECT.** The
+## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 105 it is over it, and
+## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher. So with a sheet open, the
+## first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
+## panel. **Intended, and not to be re-litigated**: no integer is both above 104 and below 103, a
+## click on the panel IS a click outside the sheet, and one click to put a transient write surface
+## away before using the persistent command centre is the wanted behaviour. The one case where the
+## sheet would be sabotaging its own affordance — its `Work tab` link, which sends the player to a
+## board on 103 — is closed by `DrawerComposeController._navigate_to_work_tab` closing the sheet as
+## it navigates. `.claude/rules/client/panel-framework.md` carries the long form.
+const COMPOSE_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
+## The node the const names, created in `_ready` (see `compose_host`).
+const COMPOSE_LAYER_NAME := &"ComposeLayer"
+var _compose_layer: CanvasLayer = null
+
+## The host a compose surface parents itself into — the sheet (`DrawerComposeController`) and the
+## Band panel's float (`BandPanelController`), which are the same sheet reached from two places.
+##
+## **NOT `self`, WHICH IS WHAT IT USED TO BE.** Everything else a `RefCounted` controller parents onto
+## this node (the fork panel, the targeting banner, the disclosure popover, the confirm dialog) is
+## content the event bar may legitimately overlap; a compose sheet is a MODAL WRITE surface, and a
+## surface you are typing into cannot be under an overlay that swallows the pointer.
+##
+## A sibling `CanvasLayer` carries an identity transform (no `offset` / `scale` / `transform` is set
+## on it), so the two surfaces' viewport arithmetic — `ComposeSheet._sync_to_viewport` and
+## `BandComposeFloat._room`, both of which read `get_viewport().get_visible_rect()` and write a
+## parent-local `position` — resolves to exactly the global coordinates it did as a child of the HUD.
+func compose_host() -> Node:
+    return _compose_layer
+
 func _ready() -> void:
+    # FIRST, before any controller is constructed: each is handed `self` as its host and reads
+    # `compose_host()` back off it lazily, and a null here would silently re-parent a sheet onto the
+    # HUD — the exact bug this layer exists to close, and one that shows only when a bar is docked.
+    _compose_layer = CanvasLayer.new()
+    _compose_layer.name = COMPOSE_LAYER_NAME
+    _compose_layer.layer = COMPOSE_LAYER_INDEX
+    add_child(_compose_layer)
     _selection = HudSelectionState.new()
     _band_labor = HudBandLaborState.new()
     # Both compose floors start on the sim's own default (the food peak); the number stays in

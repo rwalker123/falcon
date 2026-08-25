@@ -125,7 +125,9 @@ var _selectioncard: SelectionCardController = null
 var _disclosures: DisclosureController = null
 # The band/party detail-line producers behind the vitals label + the parties inspector strip.
 var _banddetail: BandDetailLines = null
-# The HUD CanvasLayer, so this RefCounted has a node to parent the confirm dialog into.
+# The HUD CanvasLayer, so this RefCounted has a node to parent the confirm dialog into and to reach
+# the tree through. The compose FLOAT is the one thing that does not hang off it — it goes into
+# `HudLayer.compose_host()`, the compose CanvasLayer above the event dock's (see `_mount_compose_float`).
 var _host: Node = null
 
 # --- The two retained HudLayer helpers, injected as Callables (see the class header) ---
@@ -438,8 +440,9 @@ var _party_compose_needed: float = 0.0
 var _party_compose_measured_box: Vector2 = Vector2.ZERO
 ## One deferred measurement in flight at a time.
 var _party_compose_measuring: bool = false
-## The compose sheet floated off the zone (see `BandComposeFloat`). A node, so it hangs off `_host` —
-## a `RefCounted` cannot parent, the same reason `_confirm_destructive` parents its dialog there.
+## The compose sheet floated off the zone (see `BandComposeFloat`). A node, so a `RefCounted` cannot
+## parent it — and its parent is `HudLayer.compose_host()` rather than `_host` itself, because a
+## compose surface must draw ABOVE the event dock's overlay (`_mount_compose_float`).
 ## Built lazily on the first render that needs it, so a session that never overflows never makes one.
 var _compose_float: BandComposeFloat = null
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
@@ -6561,13 +6564,22 @@ func _party_compose_floats() -> bool:
     return _party_compose_needed > box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK
 
 ## Float `sheet` beside the panel card. Builds the float on first use — a session whose sheets always
-## fit never makes one — and parents it on the HUD `CanvasLayer`, since a `RefCounted` cannot.
+## fit never makes one — and parents it on a `CanvasLayer`, since a `RefCounted` cannot.
+##
+## **THE COMPOSE LAYER, NOT THE HUD ITSELF** (`HudLayer.compose_host()`). This is the drawer sheet's
+## defect at the panel's own entry point to the same surface: on the HUD's own layer the float drew
+## under a top-docked event bar, which is `MOUSE_FILTER_STOP`, so the party form under it took no
+## clicks either. The compose layer sits one above the dock's — see `HudLayer.COMPOSE_LAYER_INDEX`.
+##
+## The float still has NO dismiss catcher of its own (its own header says why: the quarry picker needs
+## the sheet to survive a map click), so unlike `ComposeSheet` a click on the bar behind it reaches
+## the bar rather than putting the sheet away.
 func _mount_compose_float(sheet: Control) -> void:
     if _host == null or _panel == null:
         return
     if _compose_float == null or not is_instance_valid(_compose_float):
         _compose_float = BandComposeFloat.new()
-        _host.add_child(_compose_float)
+        _host.compose_host().add_child(_compose_float)
     _compose_float.mount(sheet, _panel.card_rect(),
         BandComposeFloat.map_facing_side(_panel.get_dock()), _parties_zone_box().x)
 

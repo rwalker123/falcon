@@ -83,7 +83,32 @@ var _anchor_rect: Rect2 = Rect2()
 ## Identifies the subject being composed, so the owner can tell "the same source, refreshed" from
 ## "a different source" on a per-snapshot re-render. Opaque to this node.
 var _subject_key: String = ""
+## A fit is in flight — see `refit`, which COALESCES on this rather than discarding.
 var _fit_pending: bool = false
+## …and a fit was asked for WHILE one was in flight, to be re-run once the in-flight one lands.
+##
+## ⛔ **A COALESCING GUARD MUST DEFER, NOT DISCARD, and this flag is the difference.** `refit` used to
+## `return` on `_fit_pending`, throwing the request away and leaving the card fitted to content that
+## had already been replaced. It is reachable in the game rather than only in a harness —
+## `DrawerComposeController.refresh_compose_sheet` refits on every snapshot, so a snapshot landing in
+## the same frame as an `open()` had its fit swallowed — and it is invisible to the checks that exist,
+## because it self-heals on the NEXT snapshot and a card fitted too TALL still holds its content, so
+## `_assert_compose_sheet_card_holds_its_content` passes either way.
+##
+## The author had already reasoned about swallowing on the SECOND await ("`_fit_pending` is already
+## false here, so a refit arriving during this wait is not swallowed", below) and simply did not close
+## the first window.
+##
+## **ONE COALESCED RE-RUN, NOT A QUEUE.** The flag records THAT a fit was wanted, never how many, so a
+## burst collapses to a single extra pass; and it is cleared at the START of the run that honours it,
+## so a request arriving during that re-run is recorded afresh rather than lost in turn.
+##
+## **WHAT IT IS NOT.** It is not what made `ui_preview`'s `forage_take_default` render its card taller
+## than its content: that state opens the sheet twice in one frame, but both opens land BEFORE the
+## first fit resumes from its await, so the one fit that runs already measures the final body. Before
+## and after this flag that frame measures identically (card 766, content 683, chrome 83). The gap
+## there is in `refit`'s own `chrome` term, which over-counts — see the note on `chrome` in `refit`.
+var _fit_requested: bool = false
 ## Whether the press half of a dismiss gesture landed on the CATCHER. A dismiss needs both halves
 ## outside the card — see `_on_catcher_input`.
 var _press_landed_outside: bool = false
@@ -201,10 +226,19 @@ func close() -> void:
 ## Re-fit the card to its content and re-place it. Coalesced across one frame: the content height is
 ## a function of the card's width, so a measurement taken in the same frame the body was rebuilt
 ## reports the PREVIOUS content's wrapping (the same reason `Hud._fit_subject_drawer` waits a frame).
+##
+## **A REQUEST ARRIVING MID-FIT IS REMEMBERED AND RE-RUN, NEVER DROPPED** — see `_fit_requested`,
+## which is where that contract and the defect it closes are written down.
 func refit() -> void:
-	if not visible or _fit_pending or _card == null or _body == null:
+	if not visible or _card == null or _body == null:
+		return
+	if _fit_pending:
+		_fit_requested = true
 		return
 	_fit_pending = true
+	# Cleared by the run that is about to honour it, so a request arriving DURING this pass is
+	# recorded afresh rather than being swallowed by the one already being served.
+	_fit_requested = false
 	await get_tree().process_frame
 	_fit_pending = false
 	if not visible or _card == null or _body == null:
@@ -214,6 +248,12 @@ func refit() -> void:
 	# a ✕ `Button`, and the button is the taller of the two (41 against the label's 20 at the shipped
 	# faces), so measuring the label alone understated the chrome by 21px — see `_fit_width`, which
 	# has always measured `_header_row` for the same reason on the other axis.
+	# ⚠ **THIS TERM OVER-COUNTS, MEASURED.** On `ui_preview`'s `forage_take_default` it comes to 83
+	# while the card's actual non-scroll furniture — `_card.size.y - _scroll.size.y` in the drawn
+	# layout — is 27, so the card is fitted some 56px taller than its content needs and renders with
+	# empty space under its commit button. The card still HOLDS its content, which is why no assertion
+	# and no report has ever caught it; `_header_row.get_combined_minimum_size().y` (41) is the term
+	# that does not survive contact with the laid-out header.
 	var chrome := card_style.content_margin_top + card_style.content_margin_bottom \
 		+ _header_row.get_combined_minimum_size().y + HEADER_SEPARATION + CARD_EXTRA_PADDING
 	_sync_to_viewport()
@@ -244,6 +284,12 @@ func refit() -> void:
 	_card.max_height = size.y
 	_card.fit_to_content(_body.get_combined_minimum_size().y, chrome, _scroll)
 	_place_card()
+	# THE DEFERRED REQUEST, honoured now that this pass has landed. Fire-and-forget, like every other
+	# call site: no caller awaits `refit`, and awaiting our own re-run here would only make this
+	# coroutine outlive the fit it was asked for.
+	if _fit_requested:
+		_fit_requested = false
+		refit()
 
 # ---- geometry --------------------------------------------------------------
 
