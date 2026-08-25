@@ -45,6 +45,12 @@ const NOTHING_DEMANDED: f32 = 0.0;
 /// fraction, so a tier the remaining store covers is paid in full and never more than once.
 const FULLY_SERVED: f32 = 1.0;
 
+/// **A BAND WITH NO HAY LEDGER AT ALL** — what `LaborAllocation`'s three fodder rates are cleared to
+/// at the top of every band's turn, before the exits that can end it without reaching the re-sum.
+/// Named for [`NOTHING_DEMANDED`]'s reason: this is the exact "keeps no pens, works no Fields"
+/// reading and not a small quantity of hay.
+const NO_FODDER_LEDGER: f32 = 0.0;
+
 /// **"Is there anything here for this crew to work with?"** — THE eligibility term a **build** is
 /// gated on, asked of [`crate::fauna::take_room`]: the escapement room **or** the share of this
 /// turn's growth the player's own floor left takeable, whichever is larger.
@@ -1283,13 +1289,25 @@ struct PenFeedShare {
     fed_fraction: f32,
     /// **The hay this pen needs per turn** — `max(0, demand_grass − footprint_intake)`, in fodder
     /// units, and the number the player acts on (grazing is free; hay is what has to be grown).
-    /// Stamped onto `Herd::pen_hay_need` by the corral arm and summed into the band's own
-    /// `LaborAllocation::last_fodder_need`.
+    /// Summed into the band's own `LaborAllocation::last_fodder_need` by the corral arm, and
+    /// differenced against the draw for `Herd::pen_fodder_shortfall`. Those are its only readers —
+    /// the gap itself is not published (`penHayNeed` is retired).
     ///
     /// ⛔ **It is the bid BEFORE the Foddering gate**, unlike [`Self::fodder_share`] beside it. A
     /// band that cannot draw hay at all still keeps a herd that is short exactly this much, and a
     /// need zeroed because the remedy is knowledge would hide the very case the readout is for.
     hay_need: f32,
+    /// **The hay this pen ASKED THE STORE FOR** — [`Self::hay_need`] *after* the Foddering gate and
+    /// *before* the split, so it is what the pen would draw every turn if the store could cover it.
+    /// Summed into the band's `LaborAllocation::last_fodder_drain`, which is the rate the published
+    /// fodder runway counts down.
+    ///
+    /// **It is neither of its neighbours.** [`Self::hay_need`] is ungated, so a band that cannot hay
+    /// a herd would appear to be emptying a store it never touches; [`Self::fodder_share`] is what a
+    /// *short* store could actually pay, and a runway off that would say the store lasts longer the
+    /// emptier it gets. What drains a store is what is asked of it — the same forward reading the
+    /// larder runway takes on `demand` rather than on last turn's debit.
+    fodder_demand: f32,
 }
 
 /// **SERVE ONE SCARCE STORE ACROSS EVERY CLAIM ON IT AT ONCE** — [`SourcePriority::High`] in full,
@@ -1455,6 +1473,7 @@ fn settle_pen_hay(
                 fodder_share,
                 fed_fraction,
                 hay_need: bid.grass_shortfall,
+                fodder_demand: bid.fodder_demand,
             },
         ));
     }
@@ -1717,6 +1736,18 @@ pub fn advance_labor_allocation(
         for shed in allocation.normalize(bench.as_deref_mut(), available, shed_facts) {
             announce_shed_crew(&mut event_log, tick.0, faction, band_id, &shed);
         }
+        // **THE HAY LEDGER IS CLEARED BEFORE ANY EXIT OUT OF THIS BAND'S TURN**, and re-summed at the
+        // foot of the loop from the rows it actually resolved. Every other per-turn ledger the
+        // cohort publishes is rebuilt from an emptied container (`last_yields` is resized to the
+        // surviving assignments by `normalize` above), and these three are plain accumulators
+        // written only at the foot — so a band that takes either `continue` below would keep
+        // republishing the previous turn's `fodderNeed` / `fodderIncome` and the runway derived from
+        // them, for pens it no longer keeps and Fields it no longer works. The band that loses its
+        // last working-age hand sheds every row and leaves here, which is exactly when the stale
+        // figures would be least true.
+        allocation.last_fodder_need = NO_FODDER_LEDGER;
+        allocation.last_fodder_inflow = NO_FODDER_LEDGER;
+        allocation.last_fodder_drain = NO_FODDER_LEDGER;
         if allocation.assignments.is_empty() {
             continue;
         }
@@ -1869,6 +1900,12 @@ pub fn advance_labor_allocation(
         // *"need 6.0/turn · growing 5.0/turn"* without summing pen rows of its own: **the sim does the
         // arithmetic**, which is the rule the retired `pen_feed_upkeep` was minted under.
         let mut band_fodder_need = 0.0_f32;
+        // **The hay this band's pens will actually DRAW, summed** (in fodder units per turn) — the
+        // need above *after* the Foddering gate, so a band that has not learned to hay a herd draws
+        // nothing however short its pens are. It is the rate the published fodder runway counts down
+        // (`turnsOfFodder`), which is why it is a second accumulator and not the need: the need is
+        // the alarm and this is the drain, and only one of them empties the store.
+        let mut band_fodder_drain = 0.0_f32;
         // The fauna ids of the pens this band tends this turn — the keepers whose `K_pen` gets the
         // fodder term. Collected in the loop; the rate is stamped on them post-loop (the take arm
         // already borrows the herd mutably, so a second pass keeps the borrows simple).
@@ -3315,17 +3352,23 @@ pub fn advance_labor_allocation(
                         });
                         herd.fodder_draw = fodder_draw;
                         // **WHAT THIS PEN STILL HAS TO BE GROWN FOR**, in fodder units per turn —
-                        // the gap the footprint's own grass leaves, published as `penHayNeed` and
-                        // summed into this band's own `last_fodder_need` below. It is the number the
-                        // player acts on: pasture is free, hay is farmed.
+                        // the gap the footprint's own grass leaves. It is summed into this band's own
+                        // `last_fodder_need` below and differenced against the draw just above, and
+                        // those are its only two readers: it rode the wire as `penHayNeed` until
+                        // nothing turned out to read it (`Herd::pen_hay_need`), because what a pen row
+                        // states is how much MORE it needs.
                         //
                         // **Ungated, unlike the draw above.** A band that has not learned Foddering
                         // settles a `0.0` hay *share* and still keeps a herd short by exactly this
                         // much, so the need states the herd's condition and the draw states what was
                         // done about it.
                         let hay_need = share.map_or(NOTHING_DEMANDED, |share| share.hay_need);
-                        herd.pen_hay_need = hay_need;
                         band_fodder_need += hay_need;
+                        // **AND WHAT IT WILL ACTUALLY ASK THE STORE FOR** — the same gap behind the
+                        // Foddering gate the draw above is behind, summed into the band's drain so
+                        // the runway counts down the hay that really leaves the store.
+                        band_fodder_drain +=
+                            share.map_or(NOTHING_DEMANDED, |share| share.fodder_demand);
                         // **HOW MUCH MORE FODDER THIS PEN NEEDS** — the need above less the draw
                         // above it, published as `penFodderShortfall`. It is the number the player
                         // acts on: the row reads "40% pasture · 7% fodder · needs 11.3 more/turn"
@@ -4346,15 +4389,20 @@ pub fn advance_labor_allocation(
         // free K boost from unusable hay. Always written (0 when un-foddered), so a pen a band stops
         // keeping does not carry a stale rate.
         // **THE BAND'S OWN HAY LEDGER, stamped once the loop has seen every row** — the need its pens
-        // carry (summed above) against the hay its Fields grew this turn. Both are per-turn **rates**
-        // in fodder units, and both are written unconditionally so a band that stops keeping pens (or
-        // stops farming hay) reads `0` rather than last turn's figure.
+        // carry and the hay they will draw against it (both summed above), against the hay its Fields
+        // grew this turn. All three are per-turn **rates** in fodder units.
+        //
+        // **A band that reaches an early exit above never gets here**, which is why the three are
+        // zeroed before those exits rather than only written here: a band whose last worker died
+        // sheds every row, leaves through the empty-assignments `continue`, and would otherwise
+        // republish last turn's figures forever for pens it no longer keeps.
         //
         // **The inflow is the RAW harvest, not the Foddering-gated share below.** What the pens may
         // *draw* is a capability question; what the Fields *grew* is not, and a band watching its hay
         // arrive is entitled to see it before it has learned what to do with it.
         allocation.last_fodder_need = band_fodder_need;
         allocation.last_fodder_inflow = band_fodder_inflow;
+        allocation.last_fodder_drain = band_fodder_drain;
         if !kept_pens.is_empty() {
             let per_pen = if knows(
                 &discovery,

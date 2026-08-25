@@ -946,7 +946,7 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
   keeping pool** — a real cost the player must see before committing — it is simply not netted off the
   build; see "A price without the rate that eats it is not a quote".
 - **ALL FOUR MANAGED RUNGS DECLARE ONE.** `upkeep_demand` is an honest `0` on the two `wild` rungs
-  rather than a sentinel — `HerdTelemetryState::pen_upkeep`'s rule.
+  rather than a sentinel — `corralYield`'s rule.
 - **THE DECAY IS PROPORTIONAL, continuously** (§2.4). Meet the demand and the net is zero and the
   improvement holds; fall short and the meter loses `shortfall_fraction × the rung's own rate`, past
   the upkeep's own `grace_turns`. Half the hands a meter needs means it slides at half rate — not at

@@ -853,25 +853,19 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // FOOD-unit third term and the hay-in-food-units conversion that only existed to sit
                 // in the same row as it.
                 fodder_draw: herd.map(|herd| herd.fodder_draw).unwrap_or(0.0),
-                // **What this pen still needs GROWN for it** — `max(0, demand_grass −
-                // footprint_intake)`, the gap its own footprint leaves, in fodder units. The GAP and
-                // not the gross demand, because grazing is free and hay is the thing the player has
-                // to farm; `pen_pasture_fraction` beside it already states the land's share, so the
-                // pair render as "land covers NN% · needs X.X hay/turn" with no arithmetic.
+                // **How much more fodder this pen needs per turn** — `max(0, hay need −
+                // fodder_draw)`, in fodder units, where the hay need is the gap the pen's own
+                // footprint leaves (`max(0, demand_grass − footprint_intake)`). The row reads "40%
+                // pasture · 7% fodder · needs 11.3 more/turn" off it and `pen_pasture_fraction`.
                 //
-                // **Ungated by Foddering**, unlike `fodder_draw` above: a keeper who cannot draw hay
-                // still holds a herd short by exactly this much, and that is the case the readout is
-                // most for.
-                pen_hay_need: herd.map(|herd| herd.pen_hay_need).unwrap_or(0.0),
-                // **How much more fodder this pen needs per turn** — `max(0, pen_hay_need −
-                // fodder_draw)`, the two fields above differenced by the sim rather than by the
-                // client, in fodder units. The row reads "40% pasture · 7% fodder · needs 11.3
-                // more/turn" off the three together.
+                // **The gap itself is not published** — it rode this row as `pen_hay_need` and
+                // nothing read it, because what a pen row states is how much MORE it needs. The band
+                // -level roll-up of the gross gap is `PopulationCohortState::fodder_need`.
                 //
                 // Stamped by the corral arm on the same pass as both its terms, so it cannot
-                // describe a different turn from them; **ungated by Foddering** like the need above
-                // and unlike the draw, so a band that cannot hay at all publishes its whole need as
-                // its shortfall. `0.0` for an unpenned/absent herd and for a pen its own land feeds.
+                // describe a different turn from them; **ungated by Foddering** unlike the draw, so a
+                // band that cannot hay at all publishes its whole need as its shortfall. `0.0` for an
+                // unpenned/absent herd and for a pen its own land feeds.
                 pen_fodder_shortfall: herd.map(|herd| herd.pen_fodder_shortfall).unwrap_or(0.0),
                 // Predators Phase 0 — the RAW combat components of this herd's species
                 // (`docs/plan_predators.md`). Danger is DERIVED client-side, never stored, because

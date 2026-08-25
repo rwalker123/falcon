@@ -5306,9 +5306,10 @@ spelled and never a raw count.
       subtraction back. `ui_preview` `herd_corral` / `improvement_done_penned` are the frames.
       **AND THE HAY BILL CANNOT TAKE ITS PLACE — checked, not assumed.** Quoting what the pen WILL
       cost in hay would be a better row than the bare payoff, and it is **not expressible**:
-      `penHayNeed` is a fact about a pen that EXISTS (`max(0, demand − footprint_intake)`) and
-      publishes `0` on the unpenned herd this row is composed for, while nothing else on the wire
-      reconstructs it — the herd's `fodderPerBiomass` is its YIELD rate, structurally `0` on every
+      every hay figure on the wire is a fact about a pen that EXISTS — `penFodderShortfall`
+      publishes `0` on the unpenned herd this row is composed for, and the gap it is drawn from
+      (`max(0, demand − footprint_intake)`) is not published per pen at all — while nothing else
+      on the wire reconstructs it: the herd's `fodderPerBiomass` is its YIELD rate, `0` on every
       animal because no animal PAYS fodder, and the footprint intake of a fence that has not been
       built is published nowhere. So a projected need would have to be synthesized from a ratio or
       minted as a new wire field, both of which are forbidden here. **The row states the payoff alone

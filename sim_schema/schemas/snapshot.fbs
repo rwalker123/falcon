@@ -1225,10 +1225,11 @@ table PopulationCohortState {
   // against the `fodderStore` above. A pen eats grass and hay and never the people's food, so the
   // hay bill is its own ledger and appears in NO food term (`penFeedUpkeep` is retired).
   //
-  // `fodderNeed` = the hay this band's pens are short PER TURN, summed over every pen it keeps
-  // (each pen's own share is `HerdTelemetryState.penHayNeed`). THE GAP, not the gross demand -
-  // pasture is free, hay is farmed. 0 for a band keeping no pens, and for pens their footprints
-  // cover. NOT gated on Foddering: a band that cannot draw hay still owes it.
+  // `fodderNeed` = the hay this band's pens are short PER TURN, summed over every pen it keeps (each
+  // pen's own share is not published - `HerdTelemetryState.penFodderShortfall` states what a pen
+  // needs MORE OF, which is a different number). THE GAP, not the gross demand - pasture is free, hay
+  // is farmed. 0 for a band keeping no pens, and for pens their footprints cover. NOT gated on
+  // Foddering: a band that cannot draw hay still owes it, and this is the field that says so.
   //
   // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** Herd rows are fog-filtered, so a pen out of
   // sight would silently drop out of a client-side total the band certainly still owes - and summing
@@ -1240,12 +1241,18 @@ table PopulationCohortState {
   // may draw is a fact about what the faction has learned. Render it against `fodderNeed` as
   // "need 6.0/turn - growing 5.0/turn".
   fodderIncome:float = 0;
-  // `turnsOfFodder` = turns until `fodderStore` empties at `fodderNeed - fodderIncome`, and it is
-  // the SAME idiom as `turnsOfFood` above, computed by the same function
-  // (`core_sim::snapshot::population::larder_runway_turns`) - INCLUDING ITS NO-DRAIN SENTINEL.
-  // 999 = not fodder-limited (the income meets or beats the need, or nothing is drawing at all,
-  // which is what a band with no pens publishes); read it as infinity. ONE phrasing for one concept:
-  // a client must not need a second way to say "turns of buffer left", and must not branch two ways.
+  // `turnsOfFodder` = turns until `fodderStore` empties, and it is the SAME idiom as `turnsOfFood`
+  // above, computed by the same function (`core_sim::snapshot::population::larder_runway_turns`) -
+  // INCLUDING ITS NO-DRAIN SENTINEL. 999 = not fodder-limited (the income meets or beats the drain,
+  // or nothing is drawing at all, which is what a band with no pens publishes); read it as infinity.
+  // ONE phrasing for one concept: a client must not need a second way to say "turns of buffer left",
+  // and must not branch two ways.
+  //
+  // *** IT COUNTS DOWN THE DRAIN, WHICH IS NOT ALWAYS `fodderNeed`. *** The pens' draw is gated on
+  // Foddering and the need above is not, so a band that has not learned to hay a herd is short every
+  // turn and empties nothing - it publishes the no-drain sentinel while `fodderNeed` still states
+  // what its pens are missing. That is the pairing to render: the NEED carries the alarm, the runway
+  // answers only "how long does this store last", and a store nothing draws lasts forever.
   turnsOfFodder:float = 0;
 }
 
@@ -1702,9 +1709,10 @@ table LaborAssignment {
   // and then takes the hand off the LOWEST-ranked candidate within that step. So a rank orders
   // candidates and never creates or removes one; a High mark does NOT lift a row out of the step it
   // belongs to, and the last hand still comes off the last row whatever it is marked. The band's pen
-  // feed reads it too: a short FODDER store and then a short larder serve High pens in full, then
-  // Normal, then Low, and pens on the same rank split what is left in proportion to what they asked
-  // for.
+  // feed reads it too: a short FODDER store serves High pens in full, then Normal, then Low, and pens
+  // on the same rank split what is left in proportion to what they asked for. THERE IS NO SECOND
+  // STORE BEHIND IT - the larder is what the PEOPLE eat, never feed, so hay is the whole of what a
+  // rank can win a pen, and a pen the hay does not reach is short and starves for it.
   //
   // `Normal` on every row that has never been marked, and on every band-wide role (scout, warrior,
   // agriculture, husbandry, builders): a role is not a worked source and has no rank to state.
@@ -4106,39 +4114,36 @@ table HerdTelemetryState {
   // The bottom rung is `animal:wild`, which every untouched herd on the map publishes.
   currentRung:string;
 
-  // WHAT THIS PEN STILL NEEDS GROWN FOR IT (appended last, append-only wire) - the hay this pen is
-  // short PER TURN, in fodder units: max(0, fodder_per_biomass x biomass - footprint_intake). 0 for
-  // an unpenned herd and for a pen whose own fenced footprint already covers it.
-  //
-  // IT IS THE GAP, NOT THE GROSS DEMAND, because the gap is the number the player acts on: grazing
-  // is free and hay is the thing they have to farm. The gross needs no field of its own -
-  // `penPastureFraction` above already states the land's share of it - so a pen row reads "land
-  // covers 40% - needs 12.0 hay/turn" from the two together, with no arithmetic.
-  //
-  // IT IS PUBLISHED EVEN WHEN THE KEEPER CANNOT ACT ON IT. Unlike `fodderDraw`, this is NOT gated on
-  // Foddering: a band that cannot draw hay at all still keeps a herd that is starving for exactly
-  // this much, and zeroing the need because the remedy is knowledge rather than hay would hide the
-  // one case the player most needs to see.
-  //
-  // A FIXED FOOTPRINT UNDER A GROWING HERD IS A RISING NEED, which is the slow trap this field exists
-  // to surface in advance: a pen's carrying capacity is fixed and its herd is not, so a pen that
-  // feeds itself today becomes hay-dependent long before an animal dies of it. The band-level
-  // roll-up is `PopulationCohortState.fodderNeed`.
-  penHayNeed:float = 0;
+  // RETIRED: `penHayNeed`. Was the hay this pen was short PER TURN, in fodder units:
+  // max(0, fodder_per_biomass x biomass - footprint_intake) - the gap its own fenced footprint left,
+  // published so a pen row could state what still had to be farmed for it. NOTHING EVER READ IT: the
+  // row states how much MORE the pen needs, which is `penFodderShortfall` below (that same gap less
+  // the hay the keeper actually carried in), so the gap on its own was a term of an arithmetic the
+  // sim already does. The sim still computes the quantity - it is what the band-level roll-up
+  // `PopulationCohortState.fodderNeed` is the sum of - but it is not a per-pen wire field. Kept as
+  // (deprecated) rather than deleted so the field id/slot stays reserved (a freed slot is how two
+  // branches collide on one id).
+  penHayNeed:float = 0 (deprecated);
 
   // HOW MUCH MORE FODDER THIS PEN NEEDS PER TURN (appended last, append-only wire) - the READOUT
-  // number, in fodder units: max(0, penHayNeed - fodderDraw). What the fenced footprint does not
-  // grow AND the keeper did not carry in, so a pen row reads "40% pasture - 7% fodder - needs 11.3
-  // more/turn" without the client subtracting two figures sitting on the same line.
+  // number, in fodder units: max(0, hay need - fodderDraw), where the hay need is the gap the pen's
+  // own fenced footprint leaves (fodder_per_biomass x biomass - footprint_intake). What the land does
+  // not grow AND the keeper did not carry in, so a pen row reads "40% pasture - 7% fodder - needs
+  // 11.3 more/turn" without the client subtracting two figures sitting on the same line.
   //
-  // THE SIM OWNS THE ARITHMETIC. `penHayNeed` and `fodderDraw` are both already on this row, so a
-  // client COULD subtract them - but the two are stamped on one pass and this is stamped with them,
-  // which is what makes it impossible for the difference to describe a different turn from its
-  // terms.
+  // THE SIM OWNS THE ARITHMETIC, AND IT IS THE ONLY TERM PUBLISHED. The gap it is taken from rode
+  // this row as `penHayNeed` and is retired above: a client that had both would be one subtraction
+  // away from a number describing a different turn from its own terms, and this one is struck on the
+  // same pass as both of them.
   //
-  // UNGATED BY FODDERING, exactly as `penHayNeed` is. A band that has not learned Foddering draws
-  // nothing, so its shortfall is its WHOLE need - the case where the herd is dying and the remedy is
+  // UNGATED BY FODDERING, unlike `fodderDraw`. A band that has not learned Foddering draws nothing,
+  // so its shortfall is its WHOLE need - the case where the herd is dying and the remedy is
   // knowledge rather than hay, which is precisely the case this readout exists for.
+  //
+  // A FIXED FOOTPRINT UNDER A GROWING HERD IS A RISING NEED, which is the slow trap it surfaces in
+  // advance: a pen's carrying capacity is fixed and its herd is not, so a pen that feeds itself today
+  // becomes hay-dependent long before an animal dies of it. The band-level roll-up of the gross gap
+  // is `PopulationCohortState.fodderNeed`.
   //
   // CLAMPED AT ZERO, never negative. The settlement never hands a pen more hay than its gap, so the
   // difference is non-negative by construction; the clamp is against the fixed-point quantisation of

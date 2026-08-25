@@ -5,17 +5,22 @@
 //! *gap the footprint leaves* — `max(0, fodder_per_biomass × biomass − footprint_intake)` — and not
 //! the gross demand, which `penPastureFraction` already states the land's share of.
 //!
-//! Five fields carry it, and this file asserts every one of them **off the encoded envelope** — the
+//! Four fields carry it, and this file asserts every one of them **off the encoded envelope** — the
 //! artifact a client actually parses, because a field can be right in the capture and wrong in the
 //! codec:
 //!
 //! | field | on | what it says |
 //! |---|---|---|
-//! | `penHayNeed` | the herd row | this pen's own hay need per turn |
-//! | `penFodderShortfall` | the herd row | how much MORE it needs — that need less `fodderDraw` |
-//! | `fodderNeed` | the cohort row | the same, summed over every pen the band keeps |
+//! | `penFodderShortfall` | the herd row | how much MORE this pen needs — its gap less `fodderDraw` |
+//! | `fodderNeed` | the cohort row | the gap itself, summed over every pen the band keeps |
 //! | `fodderIncome` | the cohort row | the hay the band's Fields grew this turn |
 //! | `turnsOfFodder` | the cohort row | the runway, in the larder runway's own idiom and sentinel |
+//!
+//! **The per-pen gap is not among them.** It rode the herd row as `penHayNeed` and nothing rendered
+//! it, because what a pen row states is how much MORE it needs; the field is `(deprecated)` and the
+//! quantity survives only as the band roll-up and as the shortfall's own first term. So a fixture
+//! that wants to read one pen's gap carries **nothing in** and reads the shortfall
+//! ([`published_hay_need_with_nothing_carried_in`], which pins the draw at zero as it goes).
 //!
 //! # ⛔ WHAT THESE FIXTURES PIN
 //!
@@ -36,11 +41,17 @@
 //! 6. **The runway is the larder's**, sentinel and all, on a band whose hay Field genuinely
 //!    out-grows the pen it feeds — which is also what pins `fodderIncome` as a live field rather
 //!    than a published zero.
-//! 7. **The shortfall is the sim's subtraction, not the client's** — `max(0, penHayNeed −
-//!    fodderDraw)` at four coverages (fully fed, part-supplied, nothing carried in, over-served by
-//!    the fixed-point quantisation), with the need and the draw held non-zero and *different* so no
-//!    arm can pass on a copy of either term. It rides the same ungated rule the need does, and it
-//!    moves with the need on one turn.
+//! 7. **The shortfall is the sim's subtraction, not the client's** — `max(0, gap − fodderDraw)` at
+//!    four coverages (fully fed, part-supplied, nothing carried in, over-served by the fixed-point
+//!    quantisation), with the gap and the draw held non-zero and *different* so no arm can pass on a
+//!    copy of either term. The gap it is differenced against is the **fixture's own** figure, not a
+//!    second published field, so the arithmetic is checked rather than restated.
+//! 8. **The runway counts down the DRAIN, not the need.** A band that cannot draw hay at all empties
+//!    nothing however short its pens are, so it publishes the no-drain sentinel while its need still
+//!    states the gap — the same band with Foddering gets a finite runway off the same store.
+//! 9. **The ledger dies with the band.** A band that loses its last working hand sheds every row and
+//!    leaves the labor pass early; it publishes `0` need, `0` income and the sentinel, never last
+//!    turn's figures for pens it no longer keeps.
 //!
 //! **The footprint intake is posed directly** (skipping `advance_herd_grazing`), the fixture idiom
 //! `grazing_f3_fodder.rs` and `pen_feed_priority.rs` already use: the coverage under test is then
@@ -298,9 +309,19 @@ fn published_herd_field<T>(
     read(&row)
 }
 
-/// The hay this pen needs per turn, as published.
-fn published_hay_need(app: &App, id: &str) -> f32 {
-    published_herd_field(app, id, |herd| herd.penHayNeed())
+/// **The hay this pen needs per turn, at a fixture that carries nothing in** — the published
+/// `penFodderShortfall`, which is the pen's own gap less the hay its keeper drew, read as the gap
+/// itself *because the draw is zero*. The gap has no field of its own on the wire (`penHayNeed` is
+/// retired: nothing rendered it), so the assertion that keeps this honest travels with the reader —
+/// a fixture that ever hands this pen hay fails here rather than quietly reading a difference as a
+/// need.
+fn published_hay_need_with_nothing_carried_in(app: &App, id: &str) -> f32 {
+    let draw = published_hay_draw(app, id);
+    assert!(
+        draw.abs() < EPSILON,
+        "this reader states a pen's GAP, which is its published shortfall only while nothing is          carried in — pen {id} drew {draw}"
+    );
+    published_hay_shortfall(app, id)
 }
 
 /// The hay this pen actually drew, as published — the *draw* beside the *need*, which is what makes
@@ -310,7 +331,8 @@ fn published_hay_draw(app: &App, id: &str) -> f32 {
 }
 
 /// **How much more fodder this pen still needs**, as published — the readout number the sim differences
-/// so the client does not have to: `max(0, penHayNeed − fodderDraw)`.
+/// so the client does not have to: `max(0, gap − fodderDraw)`, and the only term of that subtraction
+/// on the wire.
 fn published_hay_shortfall(app: &App, id: &str) -> f32 {
     published_herd_field(app, id, |herd| herd.penFodderShortfall())
 }
@@ -389,9 +411,9 @@ fn a_pens_published_need_is_the_gap_its_footprint_leaves() {
     );
     resolve_and_publish(&mut app);
 
-    let fed = published_hay_need(&app, FED_PEN);
-    let barren = published_hay_need(&app, BARREN_PEN);
-    let part = published_hay_need(&app, PART_PEN);
+    let fed = published_hay_need_with_nothing_carried_in(&app, FED_PEN);
+    let barren = published_hay_need_with_nothing_carried_in(&app, BARREN_PEN);
+    let part = published_hay_need_with_nothing_carried_in(&app, PART_PEN);
     println!("published need — fed {fed:.6}, barren {barren:.6}, part-covered {part:.6}");
 
     assert!(
@@ -444,8 +466,8 @@ fn the_bands_need_is_every_pen_it_keeps_added_up() {
     );
     resolve_and_publish(&mut app);
 
-    let big = published_hay_need(&app, BIG_PEN);
-    let small = published_hay_need(&app, SMALL_PEN);
+    let big = published_hay_need_with_nothing_carried_in(&app, BIG_PEN);
+    let small = published_hay_need_with_nothing_carried_in(&app, SMALL_PEN);
     let (band_need, _, _, _) = published_band_ledger(&app, band);
     println!("published need — big pen {big:.6}, small pen {small:.6}, band {band_need:.6}");
 
@@ -519,7 +541,7 @@ fn a_band_without_foddering_still_publishes_what_its_pen_needs() {
     stock_hay(&mut app, band, A_HAY_RESERVE);
     resolve_and_publish(&mut app);
 
-    let need = published_hay_need(&app, BARREN_PEN);
+    let need = published_hay_need_with_nothing_carried_in(&app, BARREN_PEN);
     let draw = published_hay_draw(&app, BARREN_PEN);
     let (band_need, _, _, store) = published_band_ledger(&app, band);
     println!("un-foddered — need {need:.6}, draw {draw:.6}, band {band_need:.6}");
@@ -574,7 +596,7 @@ fn a_growing_herd_publishes_a_rising_need_on_a_fixed_footprint() {
     pose_intake(&mut app, PART_PEN, FOOTPRINT_CEILING);
     spawn_band(&mut app, tile, vec![keeper_row(PART_PEN)]);
     resolve_and_publish(&mut app);
-    let before = published_hay_need(&app, PART_PEN);
+    let before = published_hay_need_with_nothing_carried_in(&app, PART_PEN);
 
     // The herd grows; the land does not. The intake is re-posed to the SAME ceiling, which is the
     // whole claim: a fixed footprint under a bigger appetite.
@@ -589,7 +611,7 @@ fn a_growing_herd_publishes_a_rising_need_on_a_fixed_footprint() {
     }
     pose_intake(&mut app, PART_PEN, FOOTPRINT_CEILING);
     resolve_and_publish(&mut app);
-    let after = published_hay_need(&app, PART_PEN);
+    let after = published_hay_need_with_nothing_carried_in(&app, PART_PEN);
 
     println!("growing herd — need before {before:.6}, after {after:.6}");
     assert!(
@@ -637,7 +659,7 @@ fn the_fodder_runway_reads_the_larders_own_no_drain_sentinel() {
     let band = spawn_band(&mut app, hay, vec![forager_row(hay), keeper_row(TINY_PEN)]);
     resolve_and_publish(&mut app);
 
-    let need = published_hay_need(&app, TINY_PEN);
+    let need = published_hay_need_with_nothing_carried_in(&app, TINY_PEN);
     let (band_need, income, runway, store) = published_band_ledger(&app, band);
     println!("hay Field — need {need:.6}, income {income:.6}, store {store:.6}, runway {runway}");
 
@@ -698,15 +720,167 @@ fn a_band_short_of_hay_publishes_a_finite_runway() {
     );
 }
 
+/// ⛔ **A BAND THAT CANNOT DRAW HAY IS NOT DRAINING ITS STORE.**
+///
+/// The runway says *turns until `fodderStore` empties*, so what it counts down is the **drain** —
+/// and the pens' draw is gated on Foddering while the need is deliberately not. A band can hold hay
+/// without Foddering: the harvest credit lifts on the **commitment** to a fodder crop, so a band that
+/// starts a Cultivate on `hay_grass` banks hay turns before it can feed any of it out. Counting such
+/// a store down against the ungated need published a few turns' runway for a store that never moved,
+/// and seven turns later it still read full.
+///
+/// Two worlds, identical but for the knowledge. The un-foddered band draws nothing and reads the
+/// larder's own **no-drain sentinel** — the existing ∞, not a second phrasing for *"cannot draw"* —
+/// while its `fodderNeed` still states the gap in full, because the need is what carries the alarm.
+/// The foddered twin, same pen and same store, gets a finite number off the same arithmetic.
+#[test]
+fn a_band_that_cannot_draw_hay_publishes_the_no_drain_sentinel() {
+    // World A — no Foddering, a full store, a pen short its whole demand.
+    let mut gated = a_world();
+    let tile = pen_tile(&gated);
+    // Deliberately NO `learn_foddering`.
+    seat_pens(&mut gated, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
+    pose_intake(&mut gated, SMALL_PEN, BARREN);
+    let gated_band = spawn_band(&mut gated, tile, vec![keeper_row(SMALL_PEN)]);
+    stock_hay(&mut gated, gated_band, A_HAY_RESERVE);
+    resolve_and_publish(&mut gated);
+    let gated_draw = published_hay_draw(&gated, SMALL_PEN);
+    let (gated_need, gated_income, gated_runway, gated_store) =
+        published_band_ledger(&gated, gated_band);
+
+    // World B — the same band, one knowledge richer.
+    let mut foddered = a_world();
+    learn_foddering(&mut foddered);
+    seat_pens(&mut foddered, tile, &[(SMALL_PEN, SMALL_BIOMASS)]);
+    pose_intake(&mut foddered, SMALL_PEN, BARREN);
+    let foddered_band = spawn_band(&mut foddered, tile, vec![keeper_row(SMALL_PEN)]);
+    stock_hay(&mut foddered, foddered_band, A_HAY_RESERVE);
+    resolve_and_publish(&mut foddered);
+    let (foddered_need, _, foddered_runway, foddered_store) =
+        published_band_ledger(&foddered, foddered_band);
+
+    println!(
+        "un-foddered — need {gated_need:.6}, draw {gated_draw:.6}, store {gated_store:.3}, \
+         runway {gated_runway}; foddered — need {foddered_need:.6}, store {foddered_store:.3}, \
+         runway {foddered_runway}"
+    );
+
+    assert!(
+        gated_draw.abs() < EPSILON && gated_store > 0.0 && gated_income.abs() < EPSILON,
+        "the un-foddered band holds hay it cannot touch and grows none (draw {gated_draw}, store \
+         {gated_store}, income {gated_income})"
+    );
+    assert!(
+        gated_need > 0.0 && (gated_need - foddered_need).abs() < EPSILON,
+        "and its NEED is untouched by the gate — the same figure its foddered twin publishes \
+         (un-foddered {gated_need}, foddered {foddered_need})"
+    );
+    assert_eq!(
+        gated_runway, NOT_FOOD_LIMITED_TURNS,
+        "a store nothing draws lasts forever: the runway is the larder's own ∞ sentinel, not the \
+         {gated_need}/turn the band is short"
+    );
+    assert!(
+        foddered_runway < NOT_FOOD_LIMITED_TURNS
+            && (foddered_runway - foddered_store / foddered_need).abs() < EPSILON,
+        "while the twin that CAN draw empties its store at the need: published {foddered_runway} \
+         vs {} (store {foddered_store}, need {foddered_need})",
+        foddered_store / foddered_need
+    );
+}
+
 // --------------------------------------------------------------------------------------------
-// 6. The shortfall — how much MORE fodder the pen needs
+// 6. The ledger does not outlive the band
+// --------------------------------------------------------------------------------------------
+
+/// ⛔ **A BAND THAT LOSES ITS LAST WORKER PUBLISHES NO HAY LEDGER, NOT LAST TURN'S.**
+///
+/// `fodderNeed` and `fodderIncome` are plain accumulators summed as the labor pass walks a band's
+/// rows and written at the foot of it — but a band with no working-age hands sheds **every** row and
+/// leaves that pass early, never reaching the write. Left unzeroed they would republish the previous
+/// turn's figures indefinitely, for pens the band no longer keeps and Fields it no longer works, and
+/// the runway derived from them with it. (`foodIncome` has never had the defect: its container is
+/// resized to the surviving assignments.)
+///
+/// The fixture builds a band with a real ledger — a hay Field it farms and a pen it keeps, so both
+/// terms are genuinely non-zero — then takes its workers away and publishes again.
+#[test]
+fn a_band_that_loses_its_last_worker_publishes_no_hay_ledger() {
+    let mut app = a_world();
+    let hay = a_hay_field(&mut app);
+    learn_foddering(&mut app);
+    // The BIG pen deliberately: its demand has to out-run the Field's harvest, or the band's runway
+    // is the no-drain sentinel while it is still alive and the reading below proves nothing.
+    seat_pens(&mut app, hay, &[(BIG_PEN, BIG_BIOMASS)]);
+    pose_intake(&mut app, BIG_PEN, BARREN);
+    let band = spawn_band(&mut app, hay, vec![forager_row(hay), keeper_row(BIG_PEN)]);
+    stock_hay(&mut app, band, A_HAY_RESERVE);
+    resolve_and_publish(&mut app);
+
+    let (need_alive, income_alive, runway_alive, _) = published_band_ledger(&app, band);
+    assert!(
+        need_alive > 0.0 && income_alive > 0.0 && runway_alive < NOT_FOOD_LIMITED_TURNS,
+        "the fixture must publish a real ledger first, or its disappearance proves nothing (need \
+         {need_alive}, income {income_alive}, runway {runway_alive})"
+    );
+
+    // The last working-age hand is gone. Nothing else about the band, its pen or its Field changes.
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band exists");
+        cohort.working = scalar_zero();
+    }
+    resolve_and_publish(&mut app);
+
+    assert!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture band keeps its allocation")
+            .assignments
+            .is_empty(),
+        "the premise of this fixture is that the band sheds every row and leaves the pass early"
+    );
+    let (need_dead, income_dead, runway_dead, store_dead) = published_band_ledger(&app, band);
+    println!(
+        "worked -> unworked — need {need_alive:.6} -> {need_dead:.6}, income {income_alive:.6} -> \
+         {income_dead:.6}, runway {runway_alive} -> {runway_dead} (store {store_dead:.3})"
+    );
+
+    assert!(
+        need_dead.abs() < EPSILON,
+        "a band keeping no pens owes no hay — it must not republish last turn's {need_alive} \
+         (published {need_dead})"
+    );
+    assert!(
+        income_dead.abs() < EPSILON,
+        "and it grows none either — not last turn's {income_alive} (published {income_dead})"
+    );
+    assert!(
+        store_dead > 0.0,
+        "its store is still stocked, so the sentinel below is about the DRAIN and not an empty \
+         store ({store_dead})"
+    );
+    assert_eq!(
+        runway_dead, NOT_FOOD_LIMITED_TURNS,
+        "and the runway that follows from them is the no-drain sentinel, not last turn's \
+         {runway_alive}"
+    );
+}
+
+// --------------------------------------------------------------------------------------------
+// 7. The shortfall — how much MORE fodder the pen needs
 // --------------------------------------------------------------------------------------------
 //
-// `penHayNeed` is the gap the *land* leaves and `fodderDraw` is what the keeper actually carried in.
+// The pen's GAP is what the *land* leaves and `fodderDraw` is what the keeper actually carried in.
 // What the player acts on is neither: it is what is **still missing**, so the sim differences the two
-// and publishes `penFodderShortfall` — `max(0, penHayNeed − fodderDraw)` — and a pen row reads
-// "40% pasture · 7% fodder · needs 11.3 more/turn" without a client subtracting two figures sitting
-// on the same line. Every assertion below is off the encoded envelope, like the rest of this file.
+// and publishes `penFodderShortfall` — `max(0, gap − fodderDraw)` — and a pen row reads "40% pasture ·
+// 7% fodder · needs 11.3 more/turn" without a client subtracting two figures sitting on the same
+// line. It is the ONLY term of that subtraction on the wire (the gap's own `penHayNeed` is retired,
+// unread), so every arm below differences against the **fixture's** gap rather than a second
+// published field — which is what makes these assertions check the arithmetic instead of restating
+// it. Every reading is off the encoded envelope, like the rest of this file.
 
 /// The hay a fixture puts in a band's store when it wants a **part-served** pen: materially under
 /// [`BARREN_BIOMASS`]'s whole demand, and materially different from the shortfall it leaves, so no
@@ -739,16 +913,16 @@ fn a_pen_its_own_land_feeds_publishes_no_shortfall() {
     resolve_and_publish(&mut app);
 
     let covered = published_hay_shortfall(&app, FED_PEN);
-    let covered_need = published_hay_need(&app, FED_PEN);
+    let covered_draw = published_hay_draw(&app, FED_PEN);
     let barren = published_hay_shortfall(&app, BARREN_PEN);
     println!(
-        "covered pen — need {covered_need:.6}, shortfall {covered:.6}; barren pen {barren:.6}"
+        "covered pen — draw {covered_draw:.6}, shortfall {covered:.6}; barren pen {barren:.6}"
     );
 
     assert!(
-        covered.abs() < EPSILON && covered_need.abs() < EPSILON,
-        "a pen its footprint covers owes nothing and is short nothing (need {covered_need}, \
-         shortfall {covered})"
+        covered.abs() < EPSILON && covered_draw.abs() < EPSILON,
+        "a pen its footprint covers is short nothing — and asked for nothing, so the zero is the \
+         gap and not a draw that closed it (draw {covered_draw}, shortfall {covered})"
     );
     assert!(
         barren > 0.0,
@@ -774,35 +948,38 @@ fn a_part_supplied_pen_publishes_what_is_still_missing() {
     stock_hay(&mut app, band, A_SHORT_HAY_RESERVE);
     resolve_and_publish(&mut app);
 
-    let need = published_hay_need(&app, BARREN_PEN);
+    // The gap the pen's barren footprint leaves, from the fixture's own arithmetic — the term the
+    // published shortfall is differenced from, and deliberately not a second reading off the wire.
+    let gap = gross_demand(BARREN_BIOMASS);
     let draw = published_hay_draw(&app, BARREN_PEN);
     let short = published_hay_shortfall(&app, BARREN_PEN);
-    println!("part-supplied — need {need:.6}, draw {draw:.6}, shortfall {short:.6}");
+    println!("part-supplied — gap {gap:.6}, draw {draw:.6}, shortfall {short:.6}");
 
     assert!(
-        (need - gross_demand(BARREN_BIOMASS)).abs() < EPSILON,
-        "the fixture pen's gap is its whole demand: published {need} vs {}",
-        gross_demand(BARREN_BIOMASS)
-    );
-    assert!(
         (draw - A_SHORT_HAY_RESERVE).abs() < EPSILON,
-        "and the keeper carried in every unit the store held: published {draw} vs \
+        "the keeper carried in every unit the store held: published {draw} vs \
          {A_SHORT_HAY_RESERVE}"
     );
     assert!(
-        (short - (need - draw)).abs() < EPSILON,
-        "the shortfall is the need less the draw: published {short} vs {} − {}",
-        need,
-        draw
+        (short - (gap - draw)).abs() < EPSILON,
+        "the shortfall is the gap less the draw: published {short} vs {gap} − {draw}"
     );
     assert!(
-        need > 0.0
+        gap > 0.0
             && draw > 0.0
             && short > 0.0
-            && (short - need).abs() > EPSILON
+            && (short - gap).abs() > EPSILON
             && (short - draw).abs() > EPSILON,
         "all three terms must be non-zero and mutually distinct, or a copy of one of them would \
-         pass (need {need}, draw {draw}, shortfall {short})"
+         pass (gap {gap}, draw {draw}, shortfall {short})"
+    );
+    // The band roll-up is the gap, un-differenced — the one place the gap itself is still published,
+    // and the reason the sim keeps computing it.
+    let (band_need, _, _, _) = published_band_ledger(&app, band);
+    assert!(
+        (band_need - gap).abs() < EPSILON,
+        "and the band's own need is the GAP, not the shortfall: published {band_need} vs {gap} \
+         (shortfall {short})"
     );
 }
 
@@ -892,23 +1069,25 @@ fn an_over_supplied_pen_floors_at_zero_instead_of_publishing_a_negative() {
     stock_hay(&mut app, band, A_HAY_RESERVE);
     resolve_and_publish(&mut app);
 
-    let need = published_hay_need(&app, PART_PEN);
+    // The gap, from the fixture's own arithmetic — the same expression the sim settles the draw
+    // from, so a draw above it is the quantisation and nothing else.
+    let gap = gross_demand(UNQUANTISED_BIOMASS);
     let draw = published_hay_draw(&app, PART_PEN);
     let short = published_hay_shortfall(&app, PART_PEN);
     println!(
-        "over-supplied — need {need:.9}, draw {draw:.9}, difference {:.3e}",
-        draw - need
+        "over-supplied — gap {gap:.9}, draw {draw:.9}, difference {:.3e}",
+        draw - gap
     );
 
     assert!(
-        draw > need,
+        draw > gap,
         "the fixture must really over-serve its pen, or the clamp below is not under test \
-         (need {need}, draw {draw})"
+         (gap {gap}, draw {draw})"
     );
     assert!(
         short >= 0.0,
         "a shortfall is never negative — an unclamped difference would publish {} here",
-        need - draw
+        gap - draw
     );
     assert!(
         short.abs() < EPSILON,
@@ -916,15 +1095,15 @@ fn an_over_supplied_pen_floors_at_zero_instead_of_publishing_a_negative() {
     );
 }
 
-/// ⛔ **THE SHORTFALL AND THE NEED DESCRIBE THE SAME TURN.**
+/// ⛔ **THE SHORTFALL AND THE GAP IT IS TAKEN FROM DESCRIBE THE SAME TURN.**
 ///
-/// Both are stamped by the corral arm on one pass, so they cannot drift apart. The fixture grows the
+/// Both are struck by the corral arm on one pass, so they cannot drift apart. The fixture grows the
 /// herd between two readings with the land and the hay on hand held *identical* — the draw is
-/// re-stocked to the same figure — and requires the need and the shortfall to rise by the **same**
-/// amount, the whole of the demand's rise.
+/// re-stocked to the same figure — and requires the published shortfall to rise by the whole of the
+/// demand's rise, which only this turn's gap can deliver.
 ///
-/// A shortfall carried over from a previous turn's need, or differenced against a draw from another
-/// pass, breaks the second assertion.
+/// A shortfall carried over from a previous turn's gap, or differenced against a draw from another
+/// pass, breaks it.
 #[test]
 fn the_shortfall_and_the_need_move_together_on_one_turn() {
     /// The herd before and after a season of breeding, on the same land and the same hay.
@@ -939,7 +1118,6 @@ fn the_shortfall_and_the_need_move_together_on_one_turn() {
     let band = spawn_band(&mut app, tile, vec![keeper_row(PART_PEN)]);
     stock_hay(&mut app, band, A_SHORT_HAY_RESERVE);
     resolve_and_publish(&mut app);
-    let need_before = published_hay_need(&app, PART_PEN);
     let draw_before = published_hay_draw(&app, PART_PEN);
     let short_before = published_hay_shortfall(&app, PART_PEN);
 
@@ -956,41 +1134,39 @@ fn the_shortfall_and_the_need_move_together_on_one_turn() {
     pose_intake(&mut app, PART_PEN, BARREN);
     stock_hay(&mut app, band, A_SHORT_HAY_RESERVE);
     resolve_and_publish(&mut app);
-    let need_after = published_hay_need(&app, PART_PEN);
     let draw_after = published_hay_draw(&app, PART_PEN);
     let short_after = published_hay_shortfall(&app, PART_PEN);
 
+    // Both pens stand on barren ground, so each turn's gap is that turn's whole gross demand — the
+    // fixture's own figure, which is what the published shortfall has to be differenced from.
+    let gap_before = gross_demand(HERD_BEFORE);
+    let gap_after = gross_demand(HERD_AFTER);
     println!(
-        "growing herd — before: need {need_before:.6} draw {draw_before:.6} short \
-         {short_before:.6}; after: need {need_after:.6} draw {draw_after:.6} short {short_after:.6}"
+        "growing herd — before: gap {gap_before:.6} draw {draw_before:.6} short \
+         {short_before:.6}; after: gap {gap_after:.6} draw {draw_after:.6} short {short_after:.6}"
     );
 
-    let demand_rise = gross_demand(HERD_AFTER) - gross_demand(HERD_BEFORE);
+    let demand_rise = gap_after - gap_before;
     assert!(
         (draw_before - draw_after).abs() < EPSILON && draw_before > 0.0,
         "the hay on hand is the same at both readings, and it is not zero (before {draw_before}, \
          after {draw_after})"
     );
     assert!(
-        (need_after - need_before - demand_rise).abs() < EPSILON,
-        "the need rises by the whole of the demand's rise: {need_after} − {need_before} vs \
-         {demand_rise}"
-    );
-    assert!(
         (short_after - short_before - demand_rise).abs() < EPSILON,
-        "and the shortfall rises by exactly the same amount — the two are one turn's arithmetic: \
-         {short_after} − {short_before} vs {demand_rise}"
+        "the shortfall rises by the whole of the demand's rise, because the gap did and the draw \
+         did not: {short_after} − {short_before} vs {demand_rise}"
     );
     assert!(
-        (short_before - (need_before - draw_before)).abs() < EPSILON
-            && (short_after - (need_after - draw_after)).abs() < EPSILON,
-        "and at both readings it is this turn's need less this turn's draw (before {short_before} \
-         vs {need_before} − {draw_before}, after {short_after} vs {need_after} − {draw_after})"
+        (short_before - (gap_before - draw_before)).abs() < EPSILON
+            && (short_after - (gap_after - draw_after)).abs() < EPSILON,
+        "and at both readings it is this turn's gap less this turn's draw (before {short_before} \
+         vs {gap_before} − {draw_before}, after {short_after} vs {gap_after} − {draw_after})"
     );
     assert!(
-        (short_before - need_before).abs() > EPSILON,
-        "the pen is part-supplied at the first reading, so a shortfall that merely copied the need \
-         would fail (short {short_before}, need {need_before})"
+        (short_before - gap_before).abs() > EPSILON,
+        "the pen is part-supplied at the first reading, so a shortfall that merely copied the gap \
+         would fail (short {short_before}, gap {gap_before})"
     );
 }
 

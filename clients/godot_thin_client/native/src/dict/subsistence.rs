@@ -439,18 +439,6 @@ pub(crate) fn herds_to_array(
         //                            it against this one — the fodder share is `fed − pasture`, a
         //                            subtraction of two shares of the same demand, NEVER `fodder_draw`
         //                            divided by a ratio.
-        //   `pen_hay_need`         = THE GAP the footprint does NOT cover, in FODDER units per turn —
-        //                            what this pen needs GROWN for it. `0` on an unpenned herd and on a
-        //                            pen its own land already feeds, so the readout says nothing rather
-        //                            than `needs 0.0`. It is NOT gated on Foddering: a keeper who cannot
-        //                            draw hay still owes exactly this much, and that is the case the
-        //                            player most needs to see. **A FIXED FOOTPRINT UNDER A GROWING HERD
-        //                            IS A RISING NEED** — a pen that feeds itself today goes
-        //                            hay-dependent long before an animal dies of it, which is the slow
-        //                            trap this field exists to surface in advance. The band-level
-        //                            roll-up is the cohort's `fodder_need`, which the SIM sums (herd
-        //                            rows are fog-filtered, so a client-side sum silently drops the pens
-        //                            it cannot see).
         //   `pen_extend_progress`  = the in-flight fence ring's build meter, in WORK UNITS (the same
         //                            unit-costed meter `tame_work_done`/`corral_work_done` carry, NOT a
         //                            0..1 fraction), and
@@ -463,16 +451,27 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("pen_radius", herd.penRadius() as i64);
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
-        let _ = dict.insert("pen_hay_need", herd.penHayNeed());
-        // `pen_fodder_shortfall` = HOW MUCH MORE fodder this pen needs per turn — the sim's own
-        // `max(0, penHayNeed − fodderDraw)`, in fodder units. It is the READOUT number the `Fed:` row
-        // ends on ("… · needs 11.3 more/turn"): what the fenced footprint does not grow AND the keeper
-        // did not carry in. **THE SIM OWNS THE ARITHMETIC** — both its terms are already on this row,
-        // so a client could subtract them, but the three are stamped on ONE pass, which is what makes
-        // it impossible for the difference to describe a different turn from its terms. Ungated by
-        // Foddering exactly as `penHayNeed` is (a band that cannot draw fodder is short its WHOLE
-        // need, which is precisely the case the row exists for), clamped at zero sim-side, and 0 both
-        // on an unpenned herd and on a pen its own land feeds.
+        // `pen_fodder_shortfall` = HOW MUCH MORE fodder this pen needs per turn, in fodder units —
+        // the sim's own `max(0, hay need − fodderDraw)`, where the hay need is the GAP the pen's own
+        // fenced footprint leaves uncovered. It is the READOUT number the `Fed:` row ends on
+        // ("… · needs 11.3 more/turn"): what the fenced footprint does not grow AND the keeper did
+        // not carry in. **THE SIM OWNS THE ARITHMETIC, AND THIS IS THE ONLY TERM ON THE WIRE** — the
+        // gap it is taken from is not published (it rode this row as `penHayNeed`, which nothing ever
+        // read and is now `(deprecated)`), so there is no second figure a client could difference
+        // into a number describing a different turn from its own terms. It is struck on the same pass
+        // as `fodder_draw`.
+        //
+        // UNGATED BY FODDERING, unlike `fodder_draw`: a band that cannot draw hay draws nothing, so
+        // its shortfall is its WHOLE need — precisely the case the row exists for, where the remedy
+        // is knowledge rather than hay. Clamped at zero sim-side, and 0 both on an unpenned herd and
+        // on a pen its own land feeds, so the readout says nothing rather than `needs 0.0`.
+        //
+        // **A FIXED FOOTPRINT UNDER A GROWING HERD IS A RISING SHORTFALL** — a pen's carrying
+        // capacity is fixed and its herd is not, so a pen that feeds itself today goes hay-dependent
+        // long before an animal dies of it, which is the slow trap this readout surfaces in advance.
+        // The band-level roll-up is the cohort's `fodder_need`, which the SIM sums over the GROSS
+        // gaps (herd rows are fog-filtered, so a client-side sum silently drops the pens it cannot
+        // see) — a different quantity from this one, not a total of it.
         let _ = dict.insert("pen_fodder_shortfall", herd.penFodderShortfall());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
         let _ = dict.insert("pen_extend_cost", herd.penExtendCost());
@@ -484,10 +483,10 @@ pub(crate) fn herds_to_array(
         // pen bill left to partition.
         //
         // THERE IS STILL NO ABSOLUTE FOR THE GROSS DEMAND ON THE WIRE. `pen_pasture_fraction` and
-        // `pen_fed_fraction` are ratios, `fodder_draw` is an absolute, and `pen_hay_need` /
-        // `pen_fodder_shortfall` are GAPS — the gross the shares partition is published nowhere. So the
-        // `Fed:` row subtracts the two SHARES ("40% pasture · 7% fodder") and quotes the sim's gap
-        // ("needs 11.3 more/turn"), and must NOT divide the draw by a ratio to synthesize the gross.
+        // `pen_fed_fraction` are ratios, `fodder_draw` is an absolute, and `pen_fodder_shortfall` is a
+        // GAP — the gross the shares partition is published nowhere. So the `Fed:` row subtracts the
+        // two SHARES ("40% pasture · 7% fodder") and quotes the sim's shortfall ("needs 11.3
+        // more/turn"), and must NOT divide the draw by a ratio to synthesize the gross.
         // The DRAW itself is no longer printed: it is the presence test that tells `no fodder` (nothing
         // carried in) from a short ration.
         let _ = dict.insert("fodder_draw", herd.fodderDraw());

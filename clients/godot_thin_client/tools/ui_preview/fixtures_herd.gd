@@ -66,14 +66,12 @@ const ANIMAL_PEN_UPKEEP_SUPPLIED := 1.0
 ## not being animal feed, so there is no gross figure for a fixture to partition.
 const PEN_FODDER_DRAW_RED_DEER := 1.10
 
-## What that same pen still needs GROWN for it per turn (`pen_hay_need`) — the gap its own fenced
-## footprint does not cover. Equal to the draw on the reference pen, whose footprint covers NOTHING
-## (`pen_pasture_fraction` 0.0) and which is nonetheless fully fed: the fodder arriving is exactly the
-## fodder owed, so its `pen_fodder_shortfall` is 0 and the row states no need.
-const PEN_HAY_NEED_RED_DEER := 1.10
-
 ## A fed pen owes nothing MORE — `max(0, need − draw)` is 0 wherever the draw covers the need, and the
-## `Fed:` row is silent rather than printing `needs 0.0`.
+## `Fed:` row is silent rather than printing `needs 0.0`. That is this reference pen exactly: its
+## fenced footprint covers NOTHING (`pen_pasture_fraction` 0.0), so the whole demand is owed as
+## fodder, and `PEN_FODDER_DRAW_RED_DEER` is every unit of it. **The gap itself is not a key here** —
+## the wire carries only this remainder, and a fixture that also stated the gap would be stating a
+## field no snapshot has.
 const PEN_FODDER_SHORTFALL_NONE := 0.0
 
 ## **THE STARVING PEN, AS ONE COHERENT SET OF NUMBERS.** Its demand is 21.3 fodder-units a turn: its
@@ -81,14 +79,14 @@ const PEN_FODDER_SHORTFALL_NONE := 0.0
 ## of what it wanted. The gap the land leaves is the other 60% — 12.79 a turn — of which 1.49 arrived,
 ## so `pen_fodder_shortfall` is 11.30. That last number is the ONLY absolute the row prints, and the
 ## one thing a fed-percentage alone can never say: how much more fodder a turn would fix this.
-## The gross 21.3 is deliberately NOT a key here — it is not on the wire, and no readout may quote it.
+## **Neither the gross 21.3 nor the 12.79 gap is a key here** — the wire carries the remainder and
+## nothing else, so both figures live in this comment as the arithmetic that makes 11.30 the number it
+## is, and no fixture states them as though a snapshot did.
 const PEN_FED_STARVING := 0.47
 
 const PEN_PASTURE_STARVING := 0.40
 
 const PEN_FODDER_DRAW_STARVING := 1.49
-
-const PEN_HAY_NEED_STARVING := 12.79
 
 const PEN_FODDER_SHORTFALL_STARVING := 11.30
 
@@ -99,8 +97,6 @@ const PEN_FODDER_SHORTFALL_STARVING := 11.30
 const PEN_FED_UNFODDERED := 0.40
 
 const PEN_FODDER_DRAW_NONE := 0.0
-
-const PEN_HAY_NEED_UNFODDERED := 12.00
 
 const PEN_FODDER_SHORTFALL_UNFODDERED := 12.00
 # The herder-deficit state's staffing PAIR (`herd_corral_under_herded`). The growing corral needs 2
@@ -771,10 +767,9 @@ static func domesticated_herd_fixture() -> Dictionary:
 	fixture["pen_footprint_tiles"] = 7
 	fixture["pen_pasture_fraction"] = 0.0
 	fixture["fodder_draw"] = PEN_FODDER_DRAW_RED_DEER
-	# …and the standing GAP that fodder is answering: the footprint covers none of the feed, so the
-	# whole demand is owed as fodder — and every unit of it arrived, so the pen owes nothing MORE and
-	# the row states no need at all.
-	fixture["pen_hay_need"] = PEN_HAY_NEED_RED_DEER
+	# …and what is left owed after it: the footprint covers none of the feed, so the whole demand is
+	# owed as fodder — and every unit of it arrived, so the pen owes nothing MORE and the row states
+	# no need at all.
 	fixture["pen_fodder_shortfall"] = PEN_FODDER_SHORTFALL_NONE
 	fixture["pen_extend_progress"] = 0.0
 	# **THE STANDING UPKEEP, UNDERPAID** (`docs/plan_standing_upkeep.md` §2, §2.4). The `animal:pen`
@@ -822,9 +817,9 @@ static func starving_pen_herd_fixture() -> Dictionary:
 	fixture["pen_pasture_fraction"] = PEN_PASTURE_STARVING
 	fixture["fodder_draw"] = PEN_FODDER_DRAW_STARVING
 	# The need and the draw come APART here, which is the whole shape of a starving pen: 12.79 owed a
-	# turn against the 1.49 that arrived, so `pen_fodder_shortfall` is 11.30 — the number that says how
-	# much more fodder would fix it, which a fed percentage alone never can.
-	fixture["pen_hay_need"] = PEN_HAY_NEED_STARVING
+	# turn against the 1.49 that arrived. Only the REMAINDER crosses the wire — `pen_fodder_shortfall`
+	# 11.30, the number that says how much more fodder would fix it, which a fed percentage alone never
+	# can. The 12.79 is the fixture's own arithmetic (see `PEN_FED_STARVING`), not a second key.
 	fixture["pen_fodder_shortfall"] = PEN_FODDER_SHORTFALL_STARVING
 	return fixture
 
@@ -837,6 +832,7 @@ static func unfoddered_pen_herd_fixture() -> Dictionary:
 	var fixture := starving_pen_herd_fixture()
 	fixture["pen_fed_fraction"] = PEN_FED_UNFODDERED
 	fixture["fodder_draw"] = PEN_FODDER_DRAW_NONE
-	fixture["pen_hay_need"] = PEN_HAY_NEED_UNFODDERED
+	# Nothing arrived, so the remainder IS the whole uncovered 12.0 — the one case where the shortfall
+	# and the gap coincide, which is why the gap needs no key of its own to state it.
 	fixture["pen_fodder_shortfall"] = PEN_FODDER_SHORTFALL_UNFODDERED
 	return fixture

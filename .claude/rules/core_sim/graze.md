@@ -425,43 +425,56 @@ pass *both* before and after this change.
 ### The hay bill is published as the GAP, and the sim does its arithmetic
 
 **Feeding off the land is free; hay is the thing you have to grow.** So what the readout carries is
-the *gap the fenced footprint leaves*, never the gross demand — `penHayNeed` on the herd row is
-`max(0, fodder_per_biomass × biomass − footprint_intake)`, in fodder units per turn, and a pen row
-reads *"land covers 40% · needs 12.0 hay/turn"* off it beside `penPastureFraction`. The gross gets no
-field of its own precisely because that fraction already states the land's share of it.
+the *gap the fenced footprint leaves*, never the gross demand — `max(0, fodder_per_biomass × biomass
+− footprint_intake)`, in fodder units per turn. The gross gets no field of its own precisely because
+`penPastureFraction` already states the land's share of it.
 
-**And the herd's ROLL-UP is the band's, not the client's** (`PopulationCohortState.fodderNeed`,
-`fodderIncome`, `turnsOfFodder` — see `yield-forecast.md` → "The band's hay ledger"). Three of the
-four numbers a player acts on are band-level, and the sim is what sums them.
+**The gap is published at BAND level, and per pen only as what is still missing.** The roll-up is the
+sim's, not the client's (`PopulationCohortState.fodderNeed`, `fodderIncome`, `turnsOfFodder` — see
+`yield-forecast.md` → "The band's hay ledger"), and a pen row states `penFodderShortfall`, the gap
+less the hay its keeper actually carried in. So the numbers a player acts on are the band's total and
+the per-pen remainder, and the sim is what sums and subtracts.
+
+> #### ⛔ THE GAP ITSELF HAD A HERD-ROW FIELD, AND NOTHING READ IT
+>
+> `penHayNeed` published one pen's gap un-differenced. It is `(deprecated)` in place (the slot stays
+> reserved): what a pen row says is *"needs 11.3 more/turn"*, which is the shortfall, and a client
+> holding both terms of a subtraction the sim already does is one expression away from a difference
+> that describes two different turns. The **quantity** is untouched — the corral arm still strikes it,
+> still sums it into `LaborAllocation::last_fodder_need`, and still differences it — only the copy on
+> `Herd` and the field on the wire are gone.
 
 > #### ⛔ THE NEED IS PUBLISHED EVEN WHERE THE BAND CANNOT ACT ON IT
 >
-> `penHayNeed` is struck **before** the Foddering gate, unlike `fodderDraw` beside it. A band that
-> has not learned Foddering bids `0` hay and still keeps a herd that is short by exactly this much —
-> zeroing the need because the remedy is a *knowledge* rather than a *harvest* would blank the one
-> case the player most needs to see, on the row where it is happening.
+> The band's `fodderNeed` is struck **before** the Foddering gate, unlike `fodderDraw` beside it. A
+> band that has not learned Foddering bids `0` hay and still keeps herds that are short by exactly
+> this much — zeroing the need because the remedy is a *knowledge* rather than a *harvest* would blank
+> the one case the player most needs to see.
 >
 > The three together are the honest sentence: the need says what the *land* leaves, the draw says
 > what was carried in, and `penFodderShortfall` says what is still missing.
 > `a_band_without_foddering_still_publishes_what_its_pen_needs` pins the need/draw pair — draw `0`,
 > need in full, against a genuinely stocked store.
+>
+> **But the RUNWAY beside it is gated**, because a band that cannot draw is not draining: see
+> `yield-forecast.md` → "The band's hay ledger".
 
 #### The number the player acts on is `penFodderShortfall`, and the sim subtracts
 
 A pen row states `Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn`. That last figure is
-**neither** of the two terms beside it: `penHayNeed` is the gap the *land* leaves and `fodderDraw` is
-what the keeper actually carried in, so what is still missing is their difference —
-`max(0, penHayNeed − fodderDraw)`, in fodder units per turn. The client *could* subtract, and does
-not: the sim owns the arithmetic and the client renders, which is the same rule that puts the band
-roll-up above on the wire instead of in a loop over herd rows.
+**neither** of the terms it is taken from: the gap is what the *land* leaves and `fodderDraw` is what
+the keeper actually carried in, so what is still missing is their difference — `max(0, gap −
+fodderDraw)`, in fodder units per turn. The client could not subtract even if it wanted to, because
+the gap is not on the row: the sim owns the arithmetic and the client renders, which is the same rule
+that puts the band roll-up above on the wire instead of in a loop over herd rows.
 
 **It is stamped between its own two terms**, in the corral-tend branch of `advance_labor_allocation`,
 on the same pass that writes both. That is the whole reason it is a field rather than a client-side
 expression: a difference struck anywhere else could describe a different turn from the numbers it is
 a difference of.
 
-**Ungated by Foddering, exactly as `penHayNeed` is** (and unlike `fodderDraw`). A band that cannot
-draw hay draws nothing, so its shortfall *is* its whole need — the case where the herd is dying and
+**Ungated by Foddering, exactly as the band's `fodderNeed` is** (and unlike `fodderDraw`). A band
+that cannot draw hay draws nothing, so its shortfall *is* its whole need — the case where the herd is dying and
 the remedy is a knowledge rather than a harvest, which is precisely the case the readout exists for.
 Pinned across both shapes of "no hay arrived" by
 `grazing_hay_readout::a_pen_with_no_hay_is_short_its_whole_need_gate_shut_or_store_empty`: an empty
@@ -494,7 +507,7 @@ the hunt leash, the two gates the arm applies before its tend branch. A pen the 
 otherwise hold a reservation nothing draws, starving a pen that is in reach.
 
 **This is not `upkeep_mode`.** That option (`spread` | `priority`) splits the band's **work** pool
-across keeping demands; this splits two **stores** across pens. They are different scarcities with
+across keeping demands; this splits the **`FODDER` store** across pens. They are different scarcities with
 different currencies and are deliberately not wired to one dial.
 
 **2d-β — the `ExtendPen` command + build ladder** (§4). Growing a pen's fenced footprint is a labor

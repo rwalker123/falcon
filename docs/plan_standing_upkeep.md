@@ -27,7 +27,7 @@ The shape is already in the sim. What is missing is that it is **one** thing.
 | Where | How it is expressed | Currency |
 |---|---|---|
 | A penned or tamed herd needs keepers | `herders_needed`, from `animals_per_herder` — a **headcount**. Fall short and the flock **sheds animals** | people |
-| A pen's animals must eat | `pen.upkeep_per_biomass × biomass`, offset by the footprint's grazing; hay and then the larder pay the remainder; underfed herds **shrink** | collected food |
+| A pen's animals must eat | `fodder_per_biomass × biomass`, offset by the footprint's grazing; **fodder pays the rest, and nothing else does** — the larder term was retired in #578, human food not being animal feed. Underfed herds **shrink** | collected fodder |
 | A plant improvement rots | `decay_fraction_per_turn × work_cost` bled off the meter every turn nobody works it, past `grace_turns` | **work units per turn** |
 
 The third row is the tell. **The plant bleed is already denominated in work units per turn** — it is

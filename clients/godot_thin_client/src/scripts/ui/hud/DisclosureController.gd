@@ -221,9 +221,11 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
 ## problem, not a width one: the Food row has always split a two-term summary from a click-to-open
 ## breakdown, and the comment at the top of this file says why the rows are never appended inline.
 ##
-## **`fodder_need` IS THE SIM'S SUM over the band's pens** (each pen's own share is its
-## `pen_hay_need`), never re-summed here from the herd rows — those are fog-filtered, so a pen out of
-## sight would silently drop out of a bill the band certainly still owes. `fodder_income` is the RAW
+## **`fodder_need` IS THE SIM'S SUM over the band's pens** (each pen's own share is the gap its fenced
+## footprint leaves, which the sim computes but does not publish per pen — a herd row carries only
+## `pen_fodder_shortfall`, that same gap less the hay actually drawn, so this total is not a sum of
+## anything the herd rows carry), never re-summed here from the herd rows — those are fog-filtered, so
+## a pen out of sight would silently drop out of a bill the band certainly still owes. `fodder_income` is the RAW
 ## harvest its fodder Fields took this turn.
 ##
 ## Each row is omitted below `SourceForecast.FODDER_FLOW_MIN` rather than printed as a zero, exactly

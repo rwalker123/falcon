@@ -1223,11 +1223,13 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub build_queue: Vec<BuildQueueEntryState>,
     /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — summed over every pen it keeps, in fodder
-    /// units (each pen's own share is
-    /// [`HerdTelemetryState::pen_hay_need`](crate::state::subsistence::HerdTelemetryState::pen_hay_need)).
+    /// units. A pen's own share is not published: what a pen row states is how much MORE it needs
+    /// ([`HerdTelemetryState::pen_fodder_shortfall`](crate::state::subsistence::HerdTelemetryState::pen_fodder_shortfall)),
+    /// which is this quantity less the hay the keeper actually carried in.
     ///
     /// **The GAP, not the gross demand**: pasture is free, hay is farmed. `0` for a band keeping no
-    /// pens. **Not gated on Foddering** — a band that cannot draw hay still owes it.
+    /// pens. **Not gated on Foddering** — a band that cannot draw hay still owes it, and this is the
+    /// field that says so ([`Self::turns_of_fodder`] beside it is the gated one).
     ///
     /// ⛔ **The sim sums it and a client must not.** Herd rows are fog-filtered, so a pen out of
     /// sight would silently drop out of a client-side total the band certainly still owes.
@@ -1240,12 +1242,18 @@ pub struct PopulationCohortState {
     /// Rendered against [`Self::fodder_need`] as *"need 6.0/turn · growing 5.0/turn"*. Appended last.
     #[serde(default)]
     pub fodder_income: f32,
-    /// **TURNS UNTIL THE HAY RUNS OUT** — [`Self::fodder_store`] over `fodder_need − fodder_income`,
-    /// through the **same** function and the **same no-drain sentinel** as [`Self::turns_of_food`]
-    /// (`core_sim::snapshot::population::larder_runway_turns`;
+    /// **TURNS UNTIL THE HAY RUNS OUT** — [`Self::fodder_store`] over the pens' **drain** less
+    /// [`Self::fodder_income`], through the **same** function and the **same no-drain sentinel** as
+    /// [`Self::turns_of_food`] (`core_sim::snapshot::population::larder_runway_turns`;
     /// `NOT_FOOD_LIMITED_TURNS` = `999` reads as ∞ and is what a band with nothing draining
     /// publishes, a band with no pens included). One phrasing for one concept — a client must not
-    /// have a second way to say *"turns of buffer left"*, nor branch two ways. Appended last.
+    /// have a second way to say *"turns of buffer left"*, nor branch two ways.
+    ///
+    /// ⛔ **The drain is not [`Self::fodder_need`].** The pens' draw is gated on Foddering and the
+    /// need is not, so a band that has not learned to hay a herd is short every turn and empties
+    /// nothing — it publishes the sentinel while `fodder_need` states what its pens are missing. The
+    /// need carries the alarm; this answers only *"how long does this store last"*, and a store
+    /// nothing draws lasts forever. Appended last.
     #[serde(default)]
     pub turns_of_fodder: f32,
 }

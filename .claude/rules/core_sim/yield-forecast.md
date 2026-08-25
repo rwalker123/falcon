@@ -769,9 +769,18 @@ of `foodIncome` / `foodConsumption` / `turnsOfFood`, all in fodder units per tur
 
 | field | what it is | written by |
 |---|---|---|
-| `fodderNeed` | Σ over the pens this band keeps of each pen's `penHayNeed` — **the gap**, not the gross demand (`graze.md` → "The hay bill is published as the GAP") | `advance_labor_allocation`, accumulated by the corral arm onto `LaborAllocation::last_fodder_need` |
+| `fodderNeed` | Σ over the pens this band keeps of each pen's own gap — **the gap**, not the gross demand (`graze.md` → "The hay bill is published as the GAP"); ungated by Foddering | `advance_labor_allocation`, accumulated by the corral arm onto `LaborAllocation::last_fodder_need` |
 | `fodderIncome` | the hay this band's fodder Fields **harvested this turn** — `band_fodder_inflow`, which previously reached only the pens' `K_pen` term and never the wire | the same pass, onto `last_fodder_inflow` |
-| `turnsOfFodder` | the runway: `fodderStore ÷ (need − income)` | the capture, through `larder_runway_turns` |
+| `turnsOfFodder` | the runway: `fodderStore ÷ (drain − income)`, where the **drain** is the need *behind* the Foddering gate | the capture, through `larder_runway_turns`, off `last_fodder_drain` |
+
+**⛔ THE RUNWAY COUNTS DOWN THE DRAIN, AND THE DRAIN IS NOT THE NEED.** `settle_pen_hay` zeroes every
+pen's bid without Foddering, so an un-foddered band's store does not move however short its pens are
+— and it *can* hold hay, because the harvest credit lifts on the **commitment** to a fodder crop
+(`patch.species.is_some() || knows(FODDERING)`) while the draw waits on the knowledge. Counted
+against the ungated need, such a band published a runway of a few turns for a store that never
+emptied. So the corral arm sums a second accumulator, `last_fodder_drain`, from the same gap
+*after* the gate, and a band that cannot draw reads the existing **no-drain sentinel** — not a second
+sentinel and not a second phrasing. The **need** is untouched and is what carries the alarm.
 
 **⛔ THE SIM SUMS IT, AND A CLIENT MUST NOT.** The standing rule the retired `pen_feed_upkeep` was
 minted under — the client renders, it does not sum — and on this ledger it is load-bearing rather
@@ -782,7 +791,7 @@ client-side total, while the band certainly still owes its hay.
 reads `turnsOfFodder` exactly as it reads `turnsOfFood` and must not branch two ways on *"turns of
 buffer left"*. `NOT_FOOD_LIMITED_TURNS` (`999`, now `pub` for exactly this reason — nothing should be
 spelling the literal) is the reading for **anything that is not draining**: income that meets the
-need, and a band with no pens at all. It is asked with an **empty arrival schedule**, which is what
+drain, a band with no pens at all, and a keeper who cannot feed hay out. It is asked with an **empty arrival schedule**, which is what
 selects that function's smooth `stock ÷ net drain` arm — a hay Field is a steady harvest into a
 stock, where the food runway walks per-source arrivals because a hunt lands in lumps.
 
@@ -791,9 +800,18 @@ stock, where the food runway walks per-source arrivals because a hunt lands in l
 fact about what the faction has learned, and conflating them would tell a band its hay had failed
 when it had merely not yet learned to feed it out.
 
+**⛔ THE LEDGER IS CLEARED BEFORE THE PASS'S EARLY EXITS, NOT ONLY WRITTEN AT ITS FOOT.** All three
+accumulators are written after the assignment loop, and a band whose working-age population reaches
+zero sheds every row and leaves the loop at `assignments.is_empty()` long before that write. Left as
+they were, they republished the previous turn's need and income — and the runway derived from them —
+for pens the band no longer keeps and Fields it no longer works, indefinitely. (`foodIncome` never
+had the defect: `align_yields` resizes `last_yields` to the surviving rows.) They are zeroed to
+`NO_FODDER_LEDGER` immediately after the shed walk, which is ahead of both `continue`s.
+
 `core_sim/tests/grazing_hay_readout.rs` pins all four fields off the **encoded envelope**, including
 a real hay Field beside a pen it out-grows — which is what keeps `fodderIncome` from being a field
-that is only ever asserted at zero.
+that is only ever asserted at zero — the gated runway against its foddered twin, and a band that
+loses its last worker publishing `0`/`0`/sentinel rather than last turn's figures.
 
 ### RETIRED: trade goods were a BAND-LOCAL store, and now there is no such store at all
 

@@ -1143,13 +1143,21 @@ impl Default for FollowConfig {
 /// |---|---|---|---|
 /// | Wild | `fauna.ecology` | per-species `wild_r` | a worker |
 /// | Mobile domesticated (**pastoral**) | [`PastoralConfig::ecology`] | `min(cap, wild_r × pastoral_gain)` | none — passive |
-/// | Penned (**pen**) | [`PenConfig::ecology`] | `min(cap, wild_r × pen_gain)` | a worker + **food upkeep** + pinned |
+/// | Penned (**pen**) | [`PenConfig::ecology`] | `min(cap, wild_r × pen_gain)` | a worker + **fodder** + pinned |
 ///
 /// Since Grazing 2d the managed rungs are **per-species** (`wild_r × gain`, capped) rather than the
 /// retired flat `0.25 / 0.90` — a penned rabbit and a penned mammoth are different economies. A penned
 /// herd's carrying capacity is its **fenced footprint's** graze flow (`hex_range_tiles(corralled_at,
-/// pen_radius)`), so it grazes its own land and the larder only pays what the pasture cannot cover
-/// (`pen_upkeep × biomass × (1 − pasture_fraction)`) — `capacity_fraction` is retired.
+/// pen_radius)`), so it grazes its own land and its keeper grows **hay** for whatever the pasture
+/// cannot cover (`Herd::fodder_per_biomass × biomass − footprint_intake`, drawn off the band's
+/// `FODDER` store) — `capacity_fraction` is retired.
+///
+/// ⛔ **THE PEN'S COST IS NOT FOOD, AND THE LARDER IS NEVER ASKED.** The retired
+/// `pen_upkeep × biomass × (1 − pasture_fraction)` priced a pen's feed in the units the *people* eat
+/// in, which let livestock eat the band's bread and short-circuited the starvation path — a pen whose
+/// pasture failed took food out of its keepers' mouths instead of shrinking. What grass and hay leave
+/// unpaid is a **shortfall** now, and a shortfall starves the herd ([`PenConfig`] below, whose
+/// `upkeep_per_biomass` is retired and refused at parse).
 ///
 /// The managed harvest **draws the herd down**, which is what makes it sustainable: the herd
 /// converges on `K/2` and holds there, paying `r·K/4` forever. Both husbandry rungs take it through

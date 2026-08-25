@@ -358,12 +358,11 @@ func _self_feeding_pen_herd_fixture() -> Dictionary:
 	fixture["pen_footprint_tiles"] = 19
 	fixture["pen_pasture_fraction"] = 1.0
 	# The footprint grazes the WHOLE feed, so the keeper carries no fodder in AND owes none: the
-	# inherited `fodder_draw`, `pen_hay_need` and `pen_fodder_shortfall` are all overridden to 0, the
-	# split collapses to `all pasture` and the shortfall clause drops out. **This is the frame that
-	# pins "a covered pen says nothing"** — a `needs 0.0 /turn` here would be a bill invented on the
-	# one pen in the corpus that owes none, and nothing about the PNG would look wrong.
+	# inherited `fodder_draw` and `pen_fodder_shortfall` are both overridden to 0, the split collapses
+	# to `all pasture` and the shortfall clause drops out. **This is the frame that pins "a covered pen
+	# says nothing"** — a `needs 0.0 /turn` here would be a bill invented on the one pen in the corpus
+	# that owes none, and nothing about the PNG would look wrong.
 	fixture["fodder_draw"] = 0.0
-	fixture["pen_hay_need"] = 0.0
 	fixture["pen_fodder_shortfall"] = 0.0
 	fixture["pen_extend_progress"] = 0.0
 	return fixture
@@ -490,6 +489,8 @@ func _fencing_badge() -> Label:
 ## draw above `FODDER_FLOW_MIN` so the row says a share rather than `no fodder`.
 ##
 ## Fully fed means nothing more is owed: `pen_fodder_shortfall` 0, and the row ends after the split.
+## The gap the footprint leaves is the draw itself here — every unit owed arrived — but that gap has
+## no key: the wire carries only what is left owed after the draw.
 const FODDERED_PEN_PASTURE_FRACTION := 0.88
 
 const FODDERED_PEN_FODDER_DRAW := 1.20
@@ -500,7 +501,6 @@ func _foddered_pen_herd_fixture() -> Dictionary:
 	fixture["pen_footprint_tiles"] = 7
 	fixture["pen_pasture_fraction"] = FODDERED_PEN_PASTURE_FRACTION
 	fixture["fodder_draw"] = FODDERED_PEN_FODDER_DRAW
-	fixture["pen_hay_need"] = FODDERED_PEN_FODDER_DRAW
 	fixture["pen_fodder_shortfall"] = HerdFx.PEN_FODDER_SHORTFALL_NONE
 	fixture["pen_extend_progress"] = 0.0
 	return fixture

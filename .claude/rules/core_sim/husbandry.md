@@ -542,10 +542,10 @@ a separate account in a separate currency: **fodder**. Its demand is the herd's 
 `fodder_per_biomass × biomass`, met by the fenced footprint's grass (`penPastureFraction`) and then by
 hay off the band's `FODDER` store (`fodderDraw`); `pen_fed_fraction` records how much of the demand the
 two covered between them, and `husbandry.pen.starve_shrink_rate` is what an underfed pen loses. **What
-the footprint leaves for the keeper to grow is published as `penHayNeed`** — the gap, ungated by
-Foddering, with its band roll-up and runway beside it — and what that gap still leaves *after* the
-draw is `penFodderShortfall`, the figure the row actually asks the player for; the reasoning for both
-is in `graze.md` → "The hay bill is published as the GAP". A
+the footprint leaves for the keeper to grow is published as the band's `fodderNeed`** — the gap,
+ungated by Foddering, with its income and its (gated) runway beside it — and what that gap still
+leaves *after* the draw is `penFodderShortfall`, the per-pen figure the row actually asks the player
+for; the reasoning for both is in `graze.md` → "The hay bill is published as the GAP". A
 keeper who is present but has **no grass and no hay** starves the herd; a keeper who is **absent** lets
 it shed. The two penalties are orthogonal and a pen can take both in one turn.
 
@@ -959,12 +959,15 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   - **The feed split is `penPastureFraction` + `fodderDraw`, and that is all of it.** Both are fodder,
     both measured against the one demand, so the client draws *"Fed by pasture NN% · hay X.X"* with
     **zero arithmetic** and whatever the two leave uncovered is what the herd starves for. The other
-    two fields on that row are **not** terms of the split: **`penHayNeed`** is what the *land* leaves
-    uncovered — the hay this pen needs grown for it, drawn or not — and **`penFodderShortfall`** is
-    `max(0, penHayNeed − fodderDraw)`, what is still missing once the draw is counted, which is the
-    figure the row asks the player to act on (`graze.md` → "The number the player acts on is
-    `penFodderShortfall`, and the sim subtracts"). Pinned by
+    field on that row is **not** a term of the split: **`penFodderShortfall`** is `max(0, gap −
+    fodderDraw)` — what is still missing once the draw is counted, where the gap is what the *land*
+    leaves uncovered — which is the figure the row asks the player to act on (`graze.md` → "The number
+    the player acts on is `penFodderShortfall`, and the sim subtracts"). Pinned by
     `core_sim/tests/grazing_f3_fodder.rs::the_pen_feed_terms_sum_to_the_fodder_demand_and_never_touch_the_larder`.
+    - **`penHayNeed` is RETIRED** (slot `(deprecated)`). It published the gap un-differenced, and
+      nothing rendered it: what a pen row states is how much MORE the pen needs. The quantity is still
+      struck and still summed into the band's `fodderNeed` — only the per-pen field is gone, along with
+      the `Herd` scratch that carried it.
     - **`penLarderBill` / `penHayFood` are RETIRED** (slots `(deprecated)`). They were the FOOD-unit
       terms of a three-way split `pasture_food + penHayFood + penLarderBill == penUpkeep` — the bread a
       keeper handed its livestock, and hay restated in the units the *people* eat in so it could share

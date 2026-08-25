@@ -593,8 +593,11 @@ const PEN_FEED_ALL_PASTURE_SEGMENT := "all pasture"
 const PEN_PASTURE_COVERS_ALL := 1.0
 
 # **HOW MUCH MORE FODDER A TURN WOULD FIX IT** — `pen_fodder_shortfall`, the sim's own
-# `max(0, penHayNeed − fodderDraw)`, struck on the same pass as both its terms so the difference can
-# never describe a different turn from them. It appears ONLY above `SourceForecast.FODDER_FLOW_MIN`:
+# `max(0, hay gap − fodderDraw)`, where the gap is what the pen's fenced footprint leaves uncovered.
+# It is struck on the same pass as both its terms, so it can never describe a different turn from
+# them, and it is the ONLY term of that subtraction on the wire: the gap has no per-pen field, so
+# there is no second figure here to difference or to cross-check against.
+# It appears ONLY above `SourceForecast.FODDER_FLOW_MIN`:
 # a fed pen owes nothing and must not read `needs 0.0`, the false precision that floor exists to stop.
 #
 # **`more` IS ONLY TRUE WHEN SOMETHING ARRIVED.** A pen drawing nothing is not short of MORE fodder,

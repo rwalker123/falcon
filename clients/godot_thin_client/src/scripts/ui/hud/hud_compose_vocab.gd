@@ -563,9 +563,10 @@ const IMPROVEMENT_PAYOFF_ROW_LABELS := {
 # against and the row states `corralYield` bare. Do not reintroduce a separator with nothing after it.
 #
 # **AND THE HAY BILL CANNOT TAKE ITS PLACE, which was checked rather than assumed.** Quoting what the
-# pen WILL cost in hay would be a better row than the bare payoff, but `penHayNeed` is a fact about a
-# pen that EXISTS — `max(0, demand − footprint_intake)` — and it publishes `0` on the unpenned herd
-# this row is composed for. Nothing else on the wire reconstructs it either: the herd's
+# pen WILL cost in hay would be a better row than the bare payoff, but every hay figure on the wire is
+# a fact about a pen that EXISTS: `penFodderShortfall` publishes `0` on the unpenned herd this row is
+# composed for, and the gap it is drawn from — `max(0, demand − footprint_intake)` — is not published
+# per pen at all. Nothing else on the wire reconstructs it either: the herd's
 # `fodderPerBiomass` is its YIELD rate (structurally `0` on every animal — no animal PAYS fodder) and
 # not the feed coefficient, and the footprint intake of a fence that has not been built is nowhere.
 # So the projected need would have to be synthesized from a ratio or minted as a new wire field, and

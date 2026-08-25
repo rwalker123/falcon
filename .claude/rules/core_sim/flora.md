@@ -463,12 +463,13 @@ and the two stores **never convert**.
   PEN'S FEED IS ITS OWN MECHANISM"), so what grass and hay leave uncovered is a **shortfall** and the
   herd shrinks for it. Growing hay no longer *shrinks a bread bill*; it is the only thing besides the
   land that feeds a pen at all.
-- **The `shortfall` above is also the READOUT** (`HerdTelemetryState.penHayNeed`, rolled up per band
-  as `fodderNeed` against `fodderIncome`): it is published **ungated**, before the Foddering test the
-  draw applies, because a band that cannot hay a herd still has a herd that is short. What it leaves
-  once `fodder_draw` is counted rides beside it as `penFodderShortfall` — `max(0, penHayNeed −
-  fodderDraw)`, ungated on the same rule, stamped on the same pass. See `graze.md` → "The hay bill is
-  published as the GAP".
+- **The `shortfall` above is also the READOUT**, rolled up per band as `fodderNeed` against
+  `fodderIncome`: it is published **ungated**, before the Foddering test the draw applies, because a
+  band that cannot hay a herd still has a herd that is short. Per pen what rides the herd row is what
+  the shortfall leaves once `fodder_draw` is counted — `HerdTelemetryState.penFodderShortfall`,
+  ungated on the same rule, stamped on the same pass, and the only term of that subtraction on the
+  wire (the gap's own `penHayNeed` is `(deprecated)`: nothing read it). See `graze.md` → "The hay bill
+  is published as the GAP".
 - **The ceiling (§5.3) — `K_pen = (footprint_graze_flow + fodder_delivery_rate) / fodder_per_biomass`**,
   the fodder term added inside the one `K` seam `ecological_carrying_capacity`. **Critical for
   convergence: it reads the sustained FLOW, not the store stock** — `Herd::fodder_delivery_rate` is the
@@ -490,8 +491,10 @@ and the two stores **never convert**.
   reconciles either way.
 - **Wire (append-only):** `PopulationCohortState.fodderStore` — plus the band's hay **ledger**
   `fodderNeed` / `fodderIncome` / `turnsOfFodder`, which is where `band_fodder_inflow` finally
-  reaches the client (`yield-forecast.md` → "The band's hay ledger") — `HerdTelemetryState.fodderDraw`
-  and its `penHayNeed` / `penFodderShortfall` twins,
+  reaches the client (`yield-forecast.md` → "The band's hay ledger", whose runway counts down the
+  **Foddering-gated** drain rather than that ungated need) — `HerdTelemetryState.fodderDraw` and its
+  `penFodderShortfall` twin (`penHayNeed` rode beside them until it turned out nothing read it, and
+  is `(deprecated)` in place),
   `FloraShareInfo.sowFodderPayoff` (the crop picker's hay payoff, so hay reads its fodder value instead of
   a bare `0×` provisions ratio). **`HerdTelemetryState.penLarderBill` / `penHayFood` are retired**
   (slots `(deprecated)`) with the food-unit split they belonged to: the feed row is `penPastureFraction`

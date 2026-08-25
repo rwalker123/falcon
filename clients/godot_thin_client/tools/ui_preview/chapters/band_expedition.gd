@@ -1368,9 +1368,12 @@ func _hay_ledger_states() -> void:
 		and not _lines_any_contain(covered_lines, HAY_SENTINEL_NEEDLE)
 		and not _lines_any_contain(short_lines, HAY_SENTINEL_NEEDLE))
 
-	# **THE BAND AND ITS PEN IN ONE FRAME.** The two readouts are the same fact at two scales — the
-	# band's `fodder_need` is the SIM's sum of its pens' `pen_hay_need` — and they render on different
-	# surfaces, so a frame carrying only one of them cannot show them disagreeing. Here the Band/City
+	# **THE BAND AND ITS PEN IN ONE FRAME.** The two readouts are the same hay bill at two scales — the
+	# band's `fodder_need` is the SIM's sum of the GAPS its pens' footprints leave, and a pen row
+	# states what is left of its own gap after the hay it drew — and they render on different
+	# surfaces, so a frame carrying only one of them cannot show them disagreeing. **They are not the
+	# same number and must not be read as a total and its parts**: the gap is not on the wire per pen,
+	# so nothing here sums the pen rows into the band's. Here the Band/City
 	# dock states the band's ledger while the tile drawer states the starving pen's own share of it:
 	# the pen's `Fed:` row reads `⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn`, the band's
 	# `Fodder:` row the ledger that shortfall is drawn against. **One word across both** — the pen row

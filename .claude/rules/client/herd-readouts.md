@@ -306,10 +306,11 @@ paths:
       is all it decides.
     - **`all pasture`** when the land covers the pen outright (`pen_pasture_fraction` at 1.0 within
       `PenStatus.FED_EPSILON`): no second term, and by construction no shortfall.
-    - **`needs N more/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, penHayNeed − fodderDraw)`
+    - **`needs N more/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, hay gap − fodderDraw)`
+      where the gap is what the pen's fenced footprint leaves uncovered
       (`HerdTelemetryState.penFodderShortfall`, decoded in `native/src/dict/subsistence.rs` beside
-      `pen_hay_need`), shown only at or above `FODDER_FLOW_MIN`: **a fed pen owes nothing and must not
-      read `needs 0.0`**. The `more` is dropped on the `no fodder` state — there is no "more" than
+      `pen_pasture_fraction`), shown only at or above `FODDER_FLOW_MIN`: **a fed pen owes nothing and
+      must not read `needs 0.0`**. The `more` is dropped on the `no fodder` state — there is no "more" than
       nothing — so that pen reads `needs N /turn`.
     - **The ⚠ LEADS the value** on `PenStatus.is_starving` (the existing test — the map badge's and the
       turn orb's), and `pen_feed_value_hex` reads that prefix to put the row in DANGER ink. That is the
@@ -321,19 +322,28 @@ paths:
     (`BandDetailLines.BAND_FOOD_FODDER_CLAUSE_FORMAT`, `band-readouts.md`).
 
     **THE GROSS DEMAND IS STILL NOT ON THE WIRE, so the row may not quote one.**
-    `penPastureFraction` and `penFedFraction` are ratios, `fodderDraw` an absolute, and `penHayNeed` /
-    `penFodderShortfall` are GAPS — the gross those shares are shares OF is published nowhere. So the
+    `penPastureFraction` and `penFedFraction` are ratios, `fodderDraw` an absolute, and
+    `penFodderShortfall` is a GAP — the gross those shares are shares OF is published nowhere. So the
     fodder term is a subtraction of two SHARES and **never `fodder_draw` divided by a ratio**; a
     readout like *"fodder 0.9 of 2.2"* is not expressible and synthesizing the total is the one thing
     this row must not do. If a future readout genuinely needs the gross, that is a new snapshot field,
     i.e. server-side work. The retired third FEED term, a NET food-larder bill (`pen_larder_bill`, with
     `pen_hay_food` as its food-equivalent twin), went with the model correction above.
 
-    **`penHayNeed` IS STILL DECODED AND IS NO LONGER RENDERED HERE.** It is the gap the LAND leaves —
-    what the pen needs grown for it whether or not any arrives — while the row states what would fix
-    the pen NOW, which is the shortfall. The band-level roll-up is the cohort's `fodder_need`
-    (`band-readouts.md` → "The band's FODDER LEDGER"), which the SIM sums over its pens' `penHayNeed`;
-    the two are one fact at two scales, and `band_hay_and_pen` is the frame that carries both at once.
+    **`penHayNeed` IS RETIRED — the gap has no per-pen field, and this row is why.** It published the
+    gap the LAND leaves (what the pen needs grown for it whether or not any arrives) so that a pen row
+    could state *"land covers 40% · needs 12.0 hay/turn"*. That is not the row that shipped: the row
+    states what would fix the pen NOW, which is the shortfall, so the gap was left decoded and read by
+    nothing. The wire slot is `(deprecated)` in place, the decoder no longer inserts it, and **a
+    readout must not reconstruct it** by adding `fodder_draw` back onto the shortfall — the sum would
+    be a figure no snapshot carries, presented as though one did.
+
+    The band-level roll-up is the cohort's `fodder_need` (`band-readouts.md` → "The band's FODDER
+    LEDGER"), which the SIM sums over those same gaps. **It is therefore NOT a total of the pen rows'
+    shortfalls** — the pens' hay draws are already netted out of each shortfall and not out of the
+    band's need — so the two are one bill at two scales rather than a sum and its parts, and nothing
+    client-side may derive either from the other. `band_hay_and_pen` is the frame that carries both at
+    once.
 
     **ALL FOUR STATES ARE ASSERTED IN ONE BLOCK, over four line-sets** (`ui_preview`,
     `chapters/herd_graze_pen.gd`): what tells them apart is which optional terms are present, so each

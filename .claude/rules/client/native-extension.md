@@ -228,20 +228,30 @@ from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to 
 **THE BAND'S HAY LEDGER, three cohort keys appended last** — `fodder_need` / `fodder_income` /
 `turns_of_fodder`, the fodder twins of `food_income` / `food_consumption` / `turns_of_food`, in FODDER
 units against the `fodder_store` above. `fodder_need` is the hay the band's pens are SHORT per turn,
-**summed by the sim** over every pen it keeps (each pen's own share is the herd's `pen_hay_need`
-below): herd rows are fog-filtered, so a client-side sum silently drops the pens it cannot see — the
+**summed by the sim** over every pen it keeps (each pen's own share is the gap its fenced footprint
+leaves, which the sim computes but does NOT publish per pen — see `pen_fodder_shortfall` below, which
+is a DIFFERENT quantity and does not sum to this one): herd rows are fog-filtered, so a client-side
+sum silently drops the pens it cannot see — the
 mistake the retired `pen_feed_upkeep` was minted to avoid. `fodder_income` is the raw harvest its
 fodder Fields took, not a Foddering-gated share. `turns_of_fodder` comes off the sim's own
 `larder_runway_turns`, **999 no-drain sentinel included**, so the client reads it through
 `BandFoodStatus.is_limited` / `DetailFormat.food_turns_text` exactly as it reads the food runway —
 one idea, one spelling, no second constant and no second branch.
 
-`herds_to_array` decodes the matching per-pen key **`pen_hay_need`**, beside `pen_pasture_fraction`:
-the gap this pen's own fenced footprint does NOT cover, in fodder units per turn, `0` on an unpenned
+`herds_to_array` decodes the per-pen hay key **`pen_fodder_shortfall`**, beside `pen_pasture_fraction`:
+how much MORE fodder this pen needs per turn, in fodder units — `max(0, hay gap − fodderDraw)`, the
+gap its own fenced footprint leaves less the hay its keeper actually carried in. `0` on an unpenned
 herd and on a pen its land already feeds (so the readout says nothing rather than `needs 0.0`). It is
-**not gated on Foddering** — a keeper who cannot draw hay still owes exactly this much. A FIXED
-footprint under a growing herd is a RISING need, which is the slow trap the field exists to surface
-before an animal dies of it.
+**not gated on Foddering** — a keeper who cannot draw hay is short its WHOLE need, which is precisely
+the case the row exists for. A FIXED footprint under a growing herd is a RISING shortfall, which is
+the slow trap the field surfaces before an animal dies of it.
+
+**THE GAP ITSELF IS NOT DECODED, BECAUSE IT IS NOT PUBLISHED.** It rode this row as `penHayNeed` until
+it turned out nothing rendered it — the pen row states how much more is needed, not the gross gap —
+and the wire slot is now `(deprecated)`. The sim owns that subtraction and publishes only its result,
+which is what makes it impossible for the difference to describe a different turn from its terms; a
+decoder that re-derived the gap from `pen_fodder_shortfall + fodder_draw` would be minting a wire
+field client-side.
 
 `population_to_dict` also decodes the **minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the
 band's three consumable kits and the tiers they resolve to: `hunting_kit_durability` /

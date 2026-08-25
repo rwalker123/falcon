@@ -478,11 +478,10 @@ fn create_herds<'a>(
                 pastoralYield: herd.pastoral_yield,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
-                // What the footprint leaves for the keeper to grow — appended last, always written.
-                penHayNeed: herd.pen_hay_need,
                 // **How much more fodder the pen still needs** — appended last (append-only wire).
-                // `max(0, penHayNeed − fodderDraw)`, struck sim-side on the same pass as both its
-                // terms so the difference can never describe a different turn from them.
+                // `max(0, hay need − fodderDraw)`, struck sim-side on the same pass as both its terms
+                // so the difference can never describe a different turn from them. The gap it is
+                // taken from rode this row as `penHayNeed` and is `(deprecated)`: nothing read it.
                 penFodderShortfall: herd.pen_fodder_shortfall,
                 // The render-ready feed split (F3) — appended last (append-only wire).
                 // Raw combat components (Predators Phase 0) — the client derives danger itself.

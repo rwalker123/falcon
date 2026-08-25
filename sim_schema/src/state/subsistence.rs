@@ -321,29 +321,23 @@ pub struct HerdTelemetryState {
     /// (append-only).
     #[serde(default)]
     pub fodder_draw: f32,
-    /// **The hay this pen is short, per turn** — `max(0, fodder_per_biomass × biomass −
-    /// footprint_intake)`, in fodder units. `0` for an unpenned herd and for a pen its own fenced
-    /// footprint already covers.
+    // **RETIRED: `pen_hay_need`** — the hay a pen was short per turn, `max(0, fodder_per_biomass ×
+    // biomass − footprint_intake)`. Nothing read it: a pen row states how much MORE the pen needs,
+    // which is [`Self::pen_fodder_shortfall`] below, and that is struck sim-side from the same
+    // quantity. The sim still computes it (it is what the band-level `fodder_need` roll-up sums), but
+    // it is no longer a per-pen wire field. The wire slot `penHayNeed` is `(deprecated)` in place.
+    /// **How much more fodder this pen needs per turn** — `max(0, hay need − fodder_draw)`, in fodder
+    /// units, where the hay need is the gap the pen's own fenced footprint leaves. What the land did
+    /// not grow *and* the keeper did not carry in, so a pen row reads *"40% pasture · 7% fodder ·
+    /// needs 11.3 more/turn"* with no client-side subtraction.
     ///
-    /// **The GAP, not the gross demand**, because the gap is what the player acts on: grazing is free
-    /// and hay is farmed. The gross needs no field — [`Self::pen_pasture_fraction`] already states
-    /// the land's share — so a pen row reads *"land covers 40% · needs 12.0 hay/turn"* from the pair.
+    /// **The sim owns the arithmetic, and this is the only term published.** The gap it is taken from
+    /// is not on the wire: it is stamped on the same pass as [`Self::fodder_draw`] and so is this,
+    /// which is what makes it impossible for the difference to describe a different turn from its
+    /// terms.
     ///
-    /// **Not gated on Foddering**, unlike [`Self::fodder_draw`]: a band that cannot draw hay still
-    /// keeps a herd short by exactly this much. Appended last (append-only).
-    #[serde(default)]
-    pub pen_hay_need: f32,
-    /// **How much more fodder this pen needs per turn** — `max(0, pen_hay_need − fodder_draw)`, in
-    /// fodder units. What the fenced footprint did not grow *and* the keeper did not carry in, so a
-    /// pen row reads *"40% pasture · 7% fodder · needs 11.3 more/turn"* with no client-side
-    /// subtraction.
-    ///
-    /// **The sim owns the arithmetic.** Both terms are on this row already, but they are stamped on
-    /// one pass and so is this, which is what makes it impossible for the difference to describe a
-    /// different turn from its terms.
-    ///
-    /// **Not gated on Foddering**, exactly as [`Self::pen_hay_need`] is: a band that cannot draw hay
-    /// draws nothing, so its shortfall is its *whole* need — the case the readout is most for.
+    /// **Not gated on Foddering**, unlike [`Self::fodder_draw`]: a band that cannot draw hay draws
+    /// nothing, so its shortfall is its *whole* need — the case the readout is most for.
     ///
     /// **Clamped at zero**; `0` for an unpenned herd and for a pen its own land feeds. Appended last
     /// (append-only).
@@ -886,7 +880,6 @@ impl Default for HerdTelemetryState {
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
             fodder_draw: 0.0,
-            pen_hay_need: 0.0,
             pen_fodder_shortfall: 0.0,
             attack: 0.0,
             defense: 0.0,

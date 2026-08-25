@@ -877,16 +877,25 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // phrasing for one concept, so a client reads `turns_of_fodder` exactly as it reads
     // `turns_of_food` and never branches two ways on "turns of buffer left".
     //
+    // ⛔ **IT COUNTS DOWN THE DRAIN, NOT THE NEED.** `last_fodder_drain` is the need behind the
+    // Foddering gate (`settle_pen_hay` zeroes every bid without it), and the gap between the two is
+    // reachable: a band may commit a patch to a fodder crop and bank hay *before* it can feed any
+    // out, because the harvest credit lifts on the commitment while the draw waits on the knowledge.
+    // Counting such a band's store down against its ungated need published a runway of a few turns
+    // for a store that never moved — the field says "turns until `fodderStore` empties", and nothing
+    // was emptying it. The **need** is untouched and still carries the alarm.
+    //
     // **No arrival schedule.** The food runway walks per-source arrivals because a hunt lands in
     // lumps; hay is a Field's steady harvest into a stock, so the smooth `store ÷ net drain` arm is
     // the whole of it — and an empty schedule is exactly how that function is asked for that arm.
     //
     // **A band with nothing draining reads [`NOT_FOOD_LIMITED_TURNS`]**, which is the same ∞ a
-    // well-fed larder publishes: no pens, or an income that meets the need, are both *not limited*
-    // rather than a number of turns.
+    // well-fed larder publishes: no pens, an income that meets the draw, and a keeper who cannot feed
+    // hay out at all are all *not limited* rather than a number of turns — the existing no-drain
+    // sentinel, and deliberately not a second one to mean "cannot draw".
     let turns_of_fodder = larder_runway_turns(
         cohort.stores.get(FODDER).to_f32(),
-        fodder_need,
+        allocation.map(|a| a.last_fodder_drain).unwrap_or(0.0),
         fodder_income,
         &[],
     );

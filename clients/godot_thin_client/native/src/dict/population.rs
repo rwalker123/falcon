@@ -165,7 +165,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // in FODDER units per turn against the `fodder_store` above. A pen eats grass and hay and never the
     // people's food, so the hay bill is its OWN ledger and appears in no food term.
     //   `fodder_need`     = the hay this band's pens are SHORT per turn, summed over every pen it keeps
-    //                       (each pen's own share is the herd's `pen_hay_need`). THE GAP, not the gross
+    //                       (each pen's own share is the gap its fenced footprint leaves, which the sim
+    //                       computes but does NOT publish per pen — the herd row carries only
+    //                       `pen_fodder_shortfall`, that same gap less the hay actually drawn, so this
+    //                       total is NOT a sum of anything on the herd rows). THE GAP, not the gross
     //                       demand — pasture is free, hay is farmed. 0 for a band keeping no pens and
     //                       for pens their footprints cover, and NOT gated on Foddering.
     //                       **THE SIM SUMS IT AND THE CLIENT MUST NOT**: herd rows are fog-filtered, so

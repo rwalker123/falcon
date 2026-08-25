@@ -3414,8 +3414,9 @@ pub struct LaborAllocation {
     /// `PopulationCohortState.fodder_need`.
     ///
     /// **It is the GAP, not the gross demand.** Grazing is free; hay is the thing the player has to
-    /// grow, so the roll-up states what the land does not cover. Each pen's own share of it rides
-    /// `Herd::pen_hay_need`.
+    /// grow, so the roll-up states what the land does not cover. A pen's own share is not published:
+    /// a pen row states how much MORE it needs (`Herd::pen_fodder_shortfall`), which is that pen's
+    /// share of this less the hay its keeper actually carried in.
     ///
     /// ⛔ **The sim sums it, not the client** — the standing rule the retired `pen_feed_upkeep` was
     /// minted under. A client cannot sum pen rows anyway: a herd row is fog-filtered, so a pen out of
@@ -3439,6 +3440,23 @@ pub struct LaborAllocation {
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_fodder_inflow: f32,
+    /// **THE HAY THIS BAND'S PENS WILL ACTUALLY DRAW, PER TURN** — [`Self::last_fodder_need`] behind
+    /// the **Foddering gate**, summed over the same pens, in fodder units. A band that has not
+    /// learned to hay a herd draws `0` however short its pens are, because `settle_pen_hay` zeroes
+    /// every bid without the knowledge.
+    ///
+    /// **It is the rate the fodder runway counts down** (`PopulationCohortState::turns_of_fodder`),
+    /// and it is a second number rather than a use of the need beside it because the two answer
+    /// different questions: the need is what the pens are *missing* — the alarm, and ungated on
+    /// purpose — while this is what leaves the `FODDER` store. A runway taken on the need would count
+    /// a store nothing draws down to empty and then go on reading full, which is the defect this
+    /// field exists to close.
+    ///
+    /// **Not published itself.** The client renders the need, the income and the runway; the drain is
+    /// the runway's own input.
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below.
+    pub last_fodder_drain: f32,
     /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — the player's own choice
     /// between *everything degrades a little* and *the biggest investments stay whole*
     /// ([`crate::intensification::UpkeepFundMode`], `docs/plan_standing_upkeep.md` §2.5).

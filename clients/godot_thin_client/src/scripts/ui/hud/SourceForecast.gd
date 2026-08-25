@@ -251,13 +251,13 @@ const FOOD_FLOW_MIN := 0.001
 # admits values it then prints as zeros, which is the one thing that gate exists to prevent.
 const COMPONENT_RENDER_MIN := 0.005
 # The same "is it there at all" question asked in FODDER units — the pen feed-split's hay term
-# (`fodder_draw`), the pen's own `pen_hay_need`, and the band hay ledger's `fodder_need` /
+# (`fodder_draw`), the pen's own `pen_fodder_shortfall`, and the band hay ledger's `fodder_need` /
 # `fodder_income` pair. Its OWN number rather than `FOOD_FLOW_MIN`'s, for two
 # reasons: fodder and food are different units (fodder runs an order of magnitude coarser, being
 # `fodder_per_biomass × biomass`), and the reader that gates on it prints ONE decimal. So this is HALF
 # OF THE SMALLEST QUANTITY THAT READOUT CAN SHOW — the `COMPONENT_RENDER_MIN` argument at one decimal
 # instead of two — which is what keeps the gate from admitting a draw it then renders as `hay 0.0`
-# or a need it then renders as `needs 0.0 hay/turn`.
+# or a shortfall it then renders as `needs 0.0 /turn`.
 const FODDER_FLOW_MIN := 0.05
 # THE ONE DECIMAL EVERY FODDER READING PRINTS AT, and the number `FODDER_FLOW_MIN` above is defined as
 # half of. Fodder is the coarse account — a stock reads in the hundreds where a food rate reads in
