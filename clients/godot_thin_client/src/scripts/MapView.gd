@@ -256,7 +256,7 @@ const SECONDARY_ICON_COLOR := Color(0.97, 0.98, 0.94, 1.0)
 # hazard that forced `MagnifierButton` and the line-art policy icons to hand-draw). So:
 #   • a DANGER ring around the herd's slot (the same primitive as the food-harvest ring), and
 #   • a filled DANGER disc badge on the icon's upper-right with a hand-drawn white "!".
-# Driven by `PenStatus.herd_is_starving` — the same test the herd drawer's "⚠ Starving" row uses.
+# Driven by `PenStatus.herd_is_starving` — the same test that marks the herd drawer's `Fed:` row.
 ## DERIVED from `HudStyle.DANGER` in `apply_palette` — a `const` here would be a parse error against a
 ## themed `static var`, and an initializer would freeze at the palette loaded before the theme.
 static var HERD_DISTRESS_COLOR: Color = Color()

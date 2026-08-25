@@ -2,12 +2,13 @@ extends RefCounted
 class_name PenStatus
 
 ## Single source of truth for "is this pen's herd starving?" — the ONE test the HUD's herd drawer
-## (`DetailFormat.corral_built_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the
-## turn orb's `starving_pen` attention producer all ask, so no two surfaces can disagree about which
-## pen is dying.
+## (`DetailFormat.pen_feed_value`, which puts the ⚠ on the `Fed:` row and the row in DANGER ink), the
+## map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` attention producer all
+## ask, so no two surfaces can disagree about which pen is dying. **The CORRAL row is not one of them
+## any more**: how fed a herd is was never a fact about how built its fence is.
 ##
 ## A corralled herd is a managed POPULATION (docs/plan_corral_managed_population.md): it cannot
-## graze, so its keeper band hauls it `pen_upkeep` food/turn off the larder. The sim exports the
+## graze at large, so it lives on its fenced footprint's grass and its keeper's fodder. The sim exports the
 ## share of that demand the keeper ACTUALLY paid last turn as `HerdTelemetryState.penFedFraction`:
 ##
 ##   fed == 1.0  → fully fed; the herd holds at its escapement operating point (also the value the

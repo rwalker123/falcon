@@ -686,9 +686,8 @@ pub struct PopulationCohort {
     /// turn's *opening* brackets — the real `stores` debit `advance_demographics` took, before the
     /// same turn's births/aging change the head-count). This — not a re-derived `food_demand` on the
     /// *post*-turn brackets — is the consumption term of the larder ledger identity
-    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, so it holds by
-    /// construction whether the band is fully fed or starving (the debit symmetry of
-    /// `LaborAllocation::last_pen_feed_upkeep`, the food the pen actually paid). Recomputed each turn
+    /// `larder_delta == food_income − food_consumption − raid_forfeit`, so it holds by
+    /// construction whether the band is fully fed or starving. Recomputed each turn
     /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
     /// **Food this band RECEIVED from another band, as of this turn's frame** — the per-turn twin of
@@ -700,14 +699,13 @@ pub struct PopulationCohort {
     /// the capture has read it, so a **recapture** — `snapshot::recapture_snapshot_in_place`, which
     /// re-runs the capture against live components after every dispatched command — would republish
     /// the band with the counter already zeroed and blank the row it had just shown. The four
-    /// sibling ledger terms (`food_income`, [`Self::last_food_consumption`], `pen_feed_upkeep`,
-    /// `raid_forfeit`) are per-turn values re-read unchanged on a recapture, and this pair is what
-    /// joins them in that.
+    /// sibling ledger terms (`food_income`, [`Self::last_food_consumption`], `raid_forfeit`) are
+    /// per-turn values re-read unchanged on a recapture, and this pair is what joins them in that.
     ///
     /// **It neither replaces the accumulator nor changes its window.** At the moment it is copied
     /// the accumulator holds *(command-time draws since the last turn capture) + (this turn's
     /// transfers)* — exactly the interval the ledger identity
-    /// `larder_delta == income − consumption − pen_feed − raid_forfeit + received − sent` measures —
+    /// `larder_delta == income − consumption − raid_forfeit + received − sent` measures —
     /// so the two readings cannot disagree on a turn frame. On the wire as
     /// `PopulationCohortState.transfer_received_turn`, beside the accumulator's own
     /// `transfer_received`.
@@ -2487,7 +2485,7 @@ pub struct SourceYield {
     /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
     /// include this — fodder credits the band's `FODDER` store and never touches the larder, so
     /// folding it in would break the larder identity
-    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`.
+    /// `larder_delta == food_income − food_consumption − raid_forfeit`.
     ///
     /// **There is deliberately NO `realized_fodder` twin.** The plant web's forward projection is
     /// food-only ([`crate::forage::plant_food_only`]) and fodder is paid by the plant web **alone**,
@@ -3343,46 +3341,31 @@ pub struct LaborAllocation {
     /// `LaborAssignmentState`. **Excluded from equality** (see the manual `PartialEq` below) so
     /// telemetry can never perturb a comparison of two allocations' intent.
     pub last_yields: Vec<SourceYield>,
-    /// **The food this band actually PAID for pen feed this turn** — the summed `paid` returned by
-    /// `LocalStore::take` in the corral-tend branch of `advance_labor_allocation`, across every pen it
-    /// keeps. The *real debit*, not the demanded amount: a band that could only part-pay records only
-    /// what it handed over (and its herds starve for the rest).
-    ///
-    /// **Why it must exist.** A pen's feed is taken straight off `cohort.stores`, so it appears in
-    /// **neither** `food_income` (Σ per-source `actual`) nor `food_consumption` (the food the
-    /// *people* actually ate, `PopulationCohort::last_food_consumption`). Without exporting it the
-    /// band's net-food readout overstates the surplus by
-    /// exactly the upkeep and the player watches the larder drain with no explanation. Exported as
-    /// `PopulationCohortState.pen_feed_upkeep` so the client can render "my people ate X" and "my
-    /// animals ate Y" as **separate lines** (deliberately NOT folded into `food_consumption` — that
-    /// separation is the readout the corral arc exists to give), and so the sim, not the client, is the
-    /// one doing the arithmetic. It closes the identity
-    ///
-    /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
-    /// ```
-    ///
-    /// which `core_sim/tests/fauna_husbandry.rs` pins against a real turn.
-    ///
-    /// Same treatment as `last_yields`: rebuilt from scratch each turn, and **excluded from equality**
-    /// below so it can never perturb a comparison of two allocations' intent.
-    pub last_pen_feed_upkeep: f32,
+    // **RETIRED: `last_pen_feed_upkeep`** — the `FOOD` a band's pens drew from its larder in a turn,
+    // exported as `PopulationCohortState.pen_feed_upkeep` and a negative row in the food ledger. A pen
+    // is fed grass and hay now; **human food is not animal feed**, so there is no such debit to
+    // report, and the identity it was minted to close loses its term:
+    //
+    //   larder_delta == food_income − food_consumption − raid_forfeit
+    //
+    // pinned against a real turn by `core_sim/tests/fauna_husbandry.rs` and
+    // `integration_tests/tests/pen_food_ledger.rs`.
     /// **The food this band forfeited to a predator raid this turn** (Predators Phase 3) — the actual
     /// `LocalStore::take` debit `advance_predator_raids` levies on a **casualty-causing** raid (the
     /// band's people were defending or fleeing, not gathering, so they forfeit
     /// `predators.raid_yield_forfeit_fraction` of that turn's food income, capped at the larder). `0.0`
     /// on a band not raided this turn.
     ///
-    /// Exported as `PopulationCohortState.raid_forfeit` — a negative food-ledger row, the raid twin of
-    /// `last_pen_feed_upkeep`. It is a **past** larder debit (a stochastic event), so it extends only the
-    /// reconciliation identity, NOT the forward runway drain:
+    /// Exported as `PopulationCohortState.raid_forfeit` — a negative food-ledger row. It is a **past**
+    /// larder debit (a stochastic event), so it extends only the reconciliation identity, NOT the
+    /// forward runway drain:
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit
     /// ```
     ///
-    /// Same treatment as `last_pen_feed_upkeep`: reset then re-levied each turn by
-    /// `advance_predator_raids`, and **excluded from equality** below.
+    /// Same treatment as `last_yields`: reset then re-levied each turn by `advance_predator_raids`,
+    /// and **excluded from equality** below.
     pub last_raid_forfeit: f32,
     /// **Food this band RECEIVED from another band this turn** — supply-network balancing, an
     /// arriving trade shipment, or an expedition of its own handing its pack back.
@@ -3391,11 +3374,11 @@ pub struct LaborAllocation {
     ///
     /// Food that crosses between two larders passes through **neither** `food_income` (Σ per-source
     /// `actual`, which is what this band's own workers produced) nor `food_consumption` (what its
-    /// people ate) — exactly the situation [`Self::last_pen_feed_upkeep`] and
-    /// [`Self::last_raid_forfeit`] were each minted for. The identity is therefore
+    /// people ate) — exactly the situation [`Self::last_raid_forfeit`] was minted for. The identity is
+    /// therefore
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit
     ///                 + transfer_received − transfer_sent
     /// ```
     ///
@@ -3425,6 +3408,37 @@ pub struct LaborAllocation {
     /// drawn off it walking away with cargo and provisions. See [`Self::last_transfer_received`] for
     /// the identity both terms close and why there is one pair rather than one per producer.
     pub last_transfer_sent: f32,
+    /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — `Σ max(0, demand_grass − footprint_intake)`
+    /// over every pen the band kept this turn, in fodder units. Written by
+    /// `advance_labor_allocation` once its assignment loop has seen every row, and exported as
+    /// `PopulationCohortState.fodder_need`.
+    ///
+    /// **It is the GAP, not the gross demand.** Grazing is free; hay is the thing the player has to
+    /// grow, so the roll-up states what the land does not cover. Each pen's own share of it rides
+    /// `Herd::pen_hay_need`.
+    ///
+    /// ⛔ **The sim sums it, not the client** — the standing rule the retired `pen_feed_upkeep` was
+    /// minted under. A client cannot sum pen rows anyway: a herd row is fog-filtered, so a pen out of
+    /// sight would silently drop out of a total the band certainly still owes.
+    ///
+    /// **Ungated by Foddering**, unlike [`Self::last_fodder_inflow`]'s use downstream: a band that
+    /// cannot draw hay still keeps a herd that is starving for exactly this much.
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
+    /// per-turn telemetry.
+    pub last_fodder_need: f32,
+    /// **THE HAY THIS BAND GREW THIS TURN, PER TURN** — the `FODDER` its fodder Fields harvested,
+    /// summed across the band's Forage rows (the same total the pens' `K_pen` flow term is split
+    /// from). Exported as `PopulationCohortState.fodder_income`, the fodder twin of
+    /// `food_income`, and the income term of the fodder runway.
+    ///
+    /// **The RAW harvest, deliberately** — not the Foddering-gated per-pen rate stamped onto
+    /// `Herd::fodder_delivery_rate`. What was grown is a fact about the Fields; what a pen may draw
+    /// is a fact about what the faction has learned, and a readout that conflated them would tell a
+    /// band its hay had failed when it had merely not yet learned to feed it out.
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below.
+    pub last_fodder_inflow: f32,
     /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — the player's own choice
     /// between *everything degrades a little* and *the biggest investments stay whole*
     /// ([`crate::intensification::UpkeepFundMode`], `docs/plan_standing_upkeep.md` §2.5).

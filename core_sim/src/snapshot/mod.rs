@@ -50,9 +50,9 @@ use crate::{
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     fauna::{
-        herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
-        Herd, HerdRegistry, HerdTelemetry, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-        HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        herd_herders_needed, hunt_forecast, would_be_herders_needed, EcologyPhase, Herd,
+        HerdRegistry, HerdTelemetry, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
@@ -132,6 +132,9 @@ pub(crate) use governance::*;
 pub(crate) use knowledge::*;
 pub(crate) use map::*;
 pub(crate) use population::*;
+// The runway sentinel is public: it is the reading BOTH `turnsOfFood` and `turnsOfFodder` carry for
+// "nothing is draining", so nothing outside the crate should be spelling `999.0`.
+pub use population::NOT_FOOD_LIMITED_TURNS;
 pub use publish::*;
 pub(crate) use subsistence::*;
 pub(crate) use vision::*;
@@ -1453,8 +1456,9 @@ mod tests {
                     range: YieldRange::certain(0.5),
                 },
             ],
-            last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_fodder_need: 0.0,
+            last_fodder_inflow: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1506,7 +1510,7 @@ mod tests {
     /// and real fodder, so its row must state that fodder rather than the `+0.00` every compact
     /// readout showed. And it must state it *beside* the ledger, never in it — `food_income` is one
     /// side of the pinned larder identity
-    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and fodder credits the
+    /// `larder_delta == food_income − food_consumption − raid_forfeit`, and fodder credits the
     /// band's `FODDER` store without ever touching the larder, so the income here is the hunt's
     /// alone. The hunt row is the control: no animal pays fodder, so its `0.0` is structural.
     #[test]
@@ -1553,8 +1557,9 @@ mod tests {
                     ..SourceYield::ZERO
                 },
             ],
-            last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_fodder_need: 0.0,
+            last_fodder_inflow: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1606,8 +1611,9 @@ mod tests {
             }],
             build_queue: Vec::new(),
             last_yields: Vec::new(),
-            last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_fodder_need: 0.0,
+            last_fodder_inflow: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -3093,12 +3099,17 @@ mod tests {
         );
     }
 
-    /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
-    /// (`pen_upkeep = pen.upkeep_per_biomass × biomass`) alongside its **gross** `corral_yield`, plus
-    /// last turn's `pen_fed_fraction` (`< 1` = starving) — what the client needs for the herd drawer
-    /// and the starving warning. A herd that is not penned is never starving.
+    /// **The pen as a managed population, on the wire.** A penned herd exports last turn's
+    /// `pen_fed_fraction` (`< 1` = starving) alongside its **gross** `corral_yield` — what the client
+    /// needs for the herd drawer and the starving warning. A herd that is not penned is never
+    /// starving.
+    ///
+    /// **The `pen_upkeep` half is retired with the larder feed.** It was the FOOD the pen demanded per
+    /// turn, exported so the drawer could set a running cost against the payoff; a pen eats grass and
+    /// hay, so `corral_yield` has nothing to be netted against and the fed fraction is the whole of
+    /// what the drawer needs to know about feeding.
     #[test]
-    fn herd_snapshot_reports_the_pens_upkeep_and_fed_fraction() {
+    fn herd_snapshot_reports_the_pens_fed_fraction() {
         use crate::fauna_config::SizeClass;
         const PEN_BIOMASS: f32 = 60.0;
         const HALF_FED: f32 = 0.5;
@@ -3151,16 +3162,10 @@ mod tests {
         );
 
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
-        let expected_upkeep = fauna.husbandry.pen.upkeep_per_biomass * PEN_BIOMASS;
-        assert!(
-            (pen.pen_upkeep - expected_upkeep).abs() < 1e-6,
-            "the pen exports its feed demand at the herd's current biomass: {} vs {expected_upkeep}",
-            pen.pen_upkeep
-        );
         assert!((pen.pen_fed_fraction - HALF_FED).abs() < 1e-6);
         assert!(
             pen.corral_yield > 0.0,
-            "the pen's gross managed yield rides alongside its upkeep"
+            "the pen's gross managed yield rides alongside its fed fraction"
         );
 
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
@@ -3170,105 +3175,11 @@ mod tests {
         );
     }
 
-    /// **The feed must be known at the moment the player DECIDES.** `penUpkeep` is answered for an
-    /// **unpenned** herd too — the feed the pen *would* demand once built, at the herd's current
-    /// biomass — because the pre-commit `Corral` row is by definition looking at a herd that is not yet
-    /// penned. Quoting `corralYield` (the payoff) while reporting `penUpkeep = 0` (the running cost)
-    /// would advertise a number the player will never bank: the same defect class as quoting the gross
-    /// yield. The two are computed on the **same biomass basis**, so the client can just subtract.
-    #[test]
-    fn an_unpenned_herd_exports_the_feed_its_pen_would_demand() {
-        use crate::fauna_config::SizeClass;
-        /// Above the managed harvest's escapement point (`K/2`), so the pen has a positive projected
-        /// yield to sit the projected feed *next to* — at or below `K/2` a pen honestly pays nothing
-        /// until the herd rebuilds, and the row would be `0 → 0`.
-        const BIOMASS: f32 = 900.0;
-        const CAP: f32 = 1200.0;
-
-        let mut registry = HerdRegistry::default();
-        // A tamed but MOBILE herd — exactly what a player inspects while deciding whether to corral.
-        let mut mobile = Herd::new(
-            "herd_mobile".to_string(),
-            "Red Deer".to_string(),
-            SizeClass::Big,
-            vec![UVec2::new(2, 2)],
-            BIOMASS,
-            CAP,
-            0.0,
-            0.05,
-            SNAPSHOT_BODY_MASS,
-        );
-        mobile.tame_outright(
-            FactionId(0),
-            &crate::intensification::LadderConfig::builtin(),
-        );
-        registry.herds.push(mobile);
-        // The same herd, penned — its upkeep must read the same at the same biomass.
-        let mut penned = Herd::new(
-            "herd_penned".to_string(),
-            "Red Deer".to_string(),
-            SizeClass::Big,
-            vec![UVec2::new(3, 3)],
-            BIOMASS,
-            CAP,
-            0.0,
-            0.05,
-            SNAPSHOT_BODY_MASS,
-        );
-        penned.tame_outright(
-            FactionId(0),
-            &crate::intensification::LadderConfig::builtin(),
-        );
-        assert!(
-            penned.corral_at(
-                UVec2::new(3, 3),
-                &crate::intensification::LadderConfig::builtin()
-            ),
-            "the fixture species must be pennable"
-        );
-        registry.herds.push(penned);
-
-        let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
-        };
-        let labor = LaborConfig::builtin();
-        let fauna = FaunaConfig::builtin();
-        let states = export_herds(
-            &telemetry,
-            &registry,
-            &fauna,
-            &labor,
-            &all_seeing_ledger(64),
-        );
-
-        let expected = fauna.husbandry.pen.upkeep_per_biomass * BIOMASS;
-        assert!(expected > 0.0);
-
-        let mobile = states.iter().find(|h| h.id == "herd_mobile").unwrap();
-        assert!(
-            !mobile.corralled,
-            "the herd under consideration is NOT penned"
-        );
-        assert!(
-            (mobile.pen_upkeep - expected).abs() < 1e-6,
-            "an unpenned herd must export the feed its pen WOULD demand \
-             (upkeep_per_biomass × biomass = {expected}): got {}",
-            mobile.pen_upkeep
-        );
-        assert!(
-            mobile.corral_yield > 0.0,
-            "the payoff is already projected for an unpenned herd — the cost must be too"
-        );
-
-        // A penned herd is unchanged, and reads the SAME upkeep at the same biomass: one field, one
-        // meaning, so `corralYield − penUpkeep` is a valid subtraction on either side of the decision.
-        let penned = states.iter().find(|h| h.id == "herd_penned").unwrap();
-        assert!(penned.corralled);
-        assert!(
-            (penned.pen_upkeep - mobile.pen_upkeep).abs() < 1e-6,
-            "penned and unpenned must agree at the same biomass: {} vs {}",
-            penned.pen_upkeep,
-            mobile.pen_upkeep
-        );
-    }
+    // **RETIRED: `an_unpenned_herd_exports_the_feed_its_pen_would_demand`.** It pinned that
+    // `penUpkeep` was answered for an *unpenned* herd too — the feed its pen WOULD demand — so the
+    // pre-commit `Corral` row could set a running cost beside `corralYield` and the player was not
+    // quoted a payoff they would never bank. The field is retired: a pen eats grass and hay, so there
+    // is no food-unit running cost, and `corralYield` is what the herd pays with nothing to net
+    // against it. What a pen still costs to hold is *work* (`upkeepDemand`, `herdersNeeded`) and hay,
+    // and those are answered on their own fields.
 }

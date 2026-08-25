@@ -50,12 +50,24 @@ const BREAKDOWN_KIND_GROWTH := "growth"
 # `DisclosureController.kit_breakdown_lines`.
 const BREAKDOWN_KIND_KIT := "kit"
 
+# The band's FODDER larder, itemized into the two flows that move it — what its Fields grew and what
+# its pens ate. It is a disclosure for the same reason Food is: the ROW answers "how long have I got"
+# in one glance, and the flows that explain it are a table. Its row carried those two rates INLINE
+# once (`Fodder: 100.0 · need 6.0/turn · growing 5.0/turn · 100 turns`) and wrapped to two lines in
+# the narrow drawer for it — inline growth in a fixed-height zone being the very mistake the popover
+# exists to prevent. See `DisclosureController.fodder_breakdown_lines`.
+const BREAKDOWN_KIND_FODDER := "fodder"
+
 # The detail-row labels the disclosure attaches to (must equal the `Key` the detail formatter splits out).
 const DETAIL_ROW_FOOD := "Food"
 
 const DETAIL_ROW_MORALE := "Morale"
 
 const DETAIL_ROW_GROWTH := "Growth"
+
+# The band's fodder larder, beneath Food and spelled exactly as its own summary row is — the row
+# label IS the registration key, so the two cannot drift.
+const DETAIL_ROW_FODDER := "Fodder"
 
 # **"Gear", not "Kit"** — this row and its disclosure list the condition of the ITEMS the band owns.
 # The KIT is the named loadout a crew is sent out with, and it is picked in the compose sheet

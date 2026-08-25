@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 71
+const EXPECTED_CHECKPOINTS := 78
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -202,6 +202,15 @@ func _lines_any_contain(lines: Array, text: String) -> bool:
 			return true
 	return false
 
+## Case-insensitive twin, for a RETIRED word that must not come back in ANY spelling. `Starving` and
+## `starving` are the same regression, and a needle that only catches one of them is the shape that
+## lets a retired face return capitalized.
+func _lines_any_contain_ci(lines: Array, text: String) -> bool:
+	for line in lines:
+		if String(line).to_lower().contains(text.to_lower()):
+			return true
+	return false
+
 ## ONE named row of a produced list — `Husbandry: 🐄 Domesticated 100% ⚠ drifting`. The state word is
 ## also in the shed SENTENCE two lines down, so a whole-list `contains` for it is vacuous: the claim
 ## is that the RUNG ROW carries it.
@@ -335,32 +344,34 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	# the 0.05-against-0.10 this used to restate is exactly the inherited 0.256 fraction of the new
 	# Sustain ceiling. That the override became unnecessary is the fraction form paying for itself.
 	fixture["corral_yield"] = 0.0     # below K/2 → the escapement harvest takes NOTHING
-	fixture["pen_upkeep"] = 0.14      # …and it would still have to be fed
 	return fixture
 
 ## A SELF-FEEDING pen on lush land (Grazing 2d-γ): a radius-2 fenced footprint (19 tiles) whose grazing
-## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and the NET larder bill `pen_larder_bill`
-## is 0 (the GROSS `pen_upkeep` stays 1.74). The feed-split row reads "Fed by pasture 100% · larder 0.0
-## food/turn" and the amber Pen-feed
-## debit row disappears (nothing left to haul). This is the state the Extend-pen affordance renders on —
-## a built pen, no ring in flight (`pen_extend_progress` 0), so `_build_herd_assign_controls` shows the
-## "Extend pen" button.
+## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and NO fodder is carried in at all. Its
+## `Fed:` row reads **"100% — all pasture"** — the ONE state in the corpus where the land covers the
+## pen outright, so the row has no second term and nothing to split. This is the state the Extend-pen
+## affordance renders on — a built pen, no ring in flight (`pen_extend_progress` 0), so
+## `_build_herd_assign_controls` shows the "Extend pen" button.
 func _self_feeding_pen_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.domesticated_herd_fixture()
 	fixture["pen_radius"] = 2
 	fixture["pen_footprint_tiles"] = 19
 	fixture["pen_pasture_fraction"] = 1.0
-	# `pen_upkeep` stays the realistic GROSS (inherited 1.74); the FOOTPRINT grazes the whole demand, so
-	# the net FOOD-larder bill is 0 → "100% · larder 0.0" and the Pen-feed debit row disappears.
-	# Invariant: gross × pasture(1.0) + hay(0) + larder(0) == gross(1.74).
-	fixture["pen_larder_bill"] = 0.0
-	fixture["pen_hay_food"] = 0.0
+	# The footprint grazes the WHOLE feed, so the keeper carries no fodder in AND owes none: the
+	# inherited `fodder_draw`, `pen_hay_need` and `pen_fodder_shortfall` are all overridden to 0, the
+	# split collapses to `all pasture` and the shortfall clause drops out. **This is the frame that
+	# pins "a covered pen says nothing"** — a `needs 0.0 /turn` here would be a bill invented on the
+	# one pen in the corpus that owes none, and nothing about the PNG would look wrong.
+	fixture["fodder_draw"] = 0.0
+	fixture["pen_hay_need"] = 0.0
+	fixture["pen_fodder_shortfall"] = 0.0
 	fixture["pen_extend_progress"] = 0.0
 	return fixture
 
 ## The SAME pen mid-EXTENSION (Grazing 2d-γ): the keeper is fencing the next ring, so
 ## `_build_herd_assign_controls` replaces the "Extend pen" button with a WARN-amber "Fencing 60%"
-## badge. Partial pasture (60%) so the feed-split reads "60% · larder N.N".
+## badge. Partial pasture (60%) with the inherited fodder draw covering the rest of a fed pen, so the
+## `Fed:` row reads "100% — 60% pasture · 40% fodder".
 ##
 ## **THE RING METER IS A WORK PAIR, NOT A FRACTION.** `pen_extend_progress` banks WORK against
 ## `pen_extend_cost` (both stamped by the sim's accrual seam), so the fixture states the pair and the
@@ -376,16 +387,53 @@ const PEN_RING_WORK_DONE := 42.0        # 42 / 70 == 60%, a clean fraction the P
 ## `Fencing 4200%` (the reported defect's shape) and `Fencing 0%` (an unpriced ring) both fail here.
 const PEN_RING_PERCENT := 60
 
+## **THE FOUR `Fed:` ROWS, WRITTEN OUT AS ANSWERS** rather than recomposed from
+## `DetailFormat.PEN_FEED_VALUE_FORMAT` and its segments — an assertion that rebuilds the format from
+## its own parts passes whatever that format says, including a dangling `·` or a doubled `%`. Each is
+## the WHOLE value, so a term appearing in the wrong order, a missing separator or a lost em-dash all
+## fail here.
+##
+## They are asserted TOGETHER, over four line-sets in one block, because what distinguishes them is
+## which optional terms are present: a state checked in a frame of its own, chapters away from its
+## siblings, is exactly the gap this arc has already lost three defects in.
+const PEN_FED_ALL_PASTURE_NEEDLE := "Fed: 100% — all pasture"
+
+const PEN_FED_MIXED_NEEDLE := "Fed: 100% — 88% pasture · 12% fodder"
+
+const PEN_FED_STARVING_NEEDLE := "Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn"
+
+const PEN_FED_UNFODDERED_NEEDLE := "Fed: ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn"
+
+## **THE CORRAL ROW MEANS THE RUNG AGAIN.** A starving pen's Corral row must read the plain badge and
+## its build meter — no fed percentage welded on, and above all not the word "starving", which is the
+## whole regression risk of collapsing `corral_built_label` down to the badge. Matched lowercased, so
+## a re-introduced "⚠ Starving — 47% fed" fails however it is capitalized.
+const CORRAL_BADGE_NEEDLE := "Corral: 🐄 Corralled 100%"
+
+const RETIRED_STARVING_WORD := "starving"
+
+## The word `hay` is retired from the pen's rows outright — fodder is the category and hay one instance
+## of it, and the band's own store row already says Fodder. One word for one thing, so a resurrected
+## `hay 1.1` or `needs 2.2 hay/turn` fails on ANY of the four states.
+const PEN_RETIRED_HAY_WORD := "hay"
+
+## The NEEDS segment's own word, for the negative half of the pair. Matched on the VERB rather than on
+## a number, so a covered pen printing `needs 0.0 /turn` fails here however the zero is spelled.
+const PEN_SPLIT_NEED_WORD := "needs"
+
+## …and the `more` that only a pen with SOMETHING arriving may say. A pen drawing nothing is not short
+## of MORE fodder, so this word separates the two shortfall spellings on its own.
+const PEN_SPLIT_MORE_WORD := "more/turn"
+
+const PEN_SPLIT_RETIRED_LARDER_WORD := "larder"
+
 func _extending_pen_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.domesticated_herd_fixture()
 	fixture["pen_radius"] = 1
 	fixture["pen_footprint_tiles"] = 7
 	fixture["pen_pasture_fraction"] = 0.6
-	# `pen_upkeep` stays the realistic GROSS (inherited 1.74); the footprint grazes 60%, so the net
-	# FOOD-larder bill is gross × (1 − 0.6) = 0.696 → "60% · larder 0.7", no hay.
-	# Invariant: gross(1.74) × pasture(0.6) + hay(0) + larder(0.696) == gross(1.74).
-	fixture["pen_larder_bill"] = 0.696
-	fixture["pen_hay_food"] = 0.0
+	# The footprint grazes 60% and the inherited 1.1 fodder draw covers the other 40% of a 2.75-a-turn
+	# demand, which is what "fully fed" makes the row's own subtraction (100% − 60%) come out at.
 	fixture["pen_extend_progress"] = PEN_RING_WORK_DONE
 	fixture["pen_extend_cost"] = PEN_RING_WORK_COST
 	return fixture
@@ -429,20 +477,31 @@ func _fencing_badge() -> Label:
 			return child as Label
 	return null
 
-## A FODDERED pen (Flora roster F3): the pen knows Foddering and drew hay, so its feed is a THREE-way
-## split, all food units. GROSS demand `pen_upkeep` = 2.0 partitions into: pasture 40%
-## (`pen_pasture_fraction` 0.40 → 0.80 food grazed free), hay 0.90 (`pen_hay_food`, the food it
-## displaced from the larder), and the NET bread bill 0.30 (`pen_larder_bill`). The frame PROVES the
-## sim-pinned invariant, not a hand-picked answer: 0.80 + 0.90 + 0.30 == 2.0 (gross). Feed-split reads
-## "Fed by pasture 40% · hay 0.9 · larder 0.3 food/turn"; the Pen-feed row states the same 0.3 net bill.
+## A FODDERED pen (Flora roster F3): the pen knows Foddering, its own footprint grazes most of the
+## feed and its keeper tops the rest up, so it is FULLY FED off BOTH sources — `Fed: 100% — 88%
+## pasture · 12% fodder`. This is the state that proves the split is a split: the pen above it
+## (`_self_feeding_pen_herd_fixture`, land covering it outright) collapses to `all pasture`, so the
+## two shapes are provably different and the second term provably conditional.
+##
+## **THE 12% IS A SUBTRACTION, NOT A DIVISION.** It is `pen_fed_fraction` (1.00) less
+## `pen_pasture_fraction` (0.88) — two shares of the same demand. The gross demand is NOT on the wire,
+## so the 1.20 draw below may not be divided by anything to reconstruct one; it exists here only so
+## the fixture is a pen a server could actually publish (12% of a 10.0-a-turn demand), and to put the
+## draw above `FODDER_FLOW_MIN` so the row says a share rather than `no fodder`.
+##
+## Fully fed means nothing more is owed: `pen_fodder_shortfall` 0, and the row ends after the split.
+const FODDERED_PEN_PASTURE_FRACTION := 0.88
+
+const FODDERED_PEN_FODDER_DRAW := 1.20
+
 func _foddered_pen_herd_fixture() -> Dictionary:
 	var fixture := HerdFx.domesticated_herd_fixture()
 	fixture["pen_radius"] = 1
 	fixture["pen_footprint_tiles"] = 7
-	fixture["pen_upkeep"] = 2.0        # realistic GROSS (upkeep_per_biomass × biomass scale)
-	fixture["pen_pasture_fraction"] = 0.40
-	fixture["pen_hay_food"] = 0.90
-	fixture["pen_larder_bill"] = 0.30  # 2.0 − (2.0 × 0.40) − 0.90 == 0.30
+	fixture["pen_pasture_fraction"] = FODDERED_PEN_PASTURE_FRACTION
+	fixture["fodder_draw"] = FODDERED_PEN_FODDER_DRAW
+	fixture["pen_hay_need"] = FODDERED_PEN_FODDER_DRAW
+	fixture["pen_fodder_shortfall"] = HerdFx.PEN_FODDER_SHORTFALL_NONE
 	fixture["pen_extend_progress"] = 0.0
 	return fixture
 
@@ -588,15 +647,19 @@ func run(harness) -> void:
 	await h._save("herd_grazing_small_game")
 
 	# State 3c — a domesticated + corralled herd: the drawer shows "Husbandry 🐄 Domesticated"
-	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder — plus the
-	# amber "Pen feed -1.74 /turn" row, the running cost a penned (non-grazing) herd costs its keeper.
+	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder — and NO cost
+	# row beneath them, a pen billing the food larder for nothing. What it does carry is the `Fed:` row,
+	# "100% — 0% pasture · 100% fodder": barren footprint, fodder doing the whole job, nothing owed.
 	h._show_herd(HerdFx.domesticated_herd_fixture())
 	await h._settle()
 	await h._save("herd_domesticated")
 
-	# State 3c-starving — the same pen, UNDERFED (`pen_fed_fraction` 0.40): the herd is shrinking
-	# every turn and the drawer says so in red — "Corral ⚠ Starving — 40% fed" replaces the penned
-	# badge, and the Pen feed row names the shortfall ("only 40% paid"). Biomass is visibly down.
+	# State 3c-starving — the same pen, UNDERFED (`pen_fed_fraction` 0.47): its pasture grazed 40% and
+	# its keeper carried in 7%, so the herd is shrinking every turn and the `Fed:` row says so in red —
+	# "⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn". **The Corral row above it is the plain
+	# badge**: how fed the herd is was never a fact about how built its fence is, and the two
+	# percentages sat on that row unseparated. There is still no cost row — a pen has no bill, only a
+	# consequence. Biomass is visibly down.
 	h._show_herd(HerdFx.starving_pen_herd_fixture())
 	await h._settle()
 	await h._save("herd_corral_starving")
@@ -702,10 +765,10 @@ func run(harness) -> void:
 		and not _lines_any_contain(unpaid_lines, "the pool covers"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
-	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
-	# amber Pen-feed debit row is gone. With no ring in flight, `_build_herd_assign_controls` shows the
-	# "Extend pen" button (issues extend_pen at the pen anchor). Also carries the "Pen: radius 2 · 19
-	# tiles" footprint row.
+	# grazes the WHOLE feed and no fodder is carried in, so the `Fed:` row reads "100% — all pasture" —
+	# no second term and no shortfall. With no ring in flight, `_build_herd_assign_controls`
+	# shows the "Extend pen" button (issues extend_pen at the pen anchor). Also carries the
+	# "Pen: radius 2 · 19 tiles" footprint row.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_self_feeding_pen_herd_fixture())
 	h._compose_herd(_self_feeding_pen_herd_fixture())
@@ -714,8 +777,8 @@ func run(harness) -> void:
 
 	# State 2d-γ extending pen — the SAME pen mid-extension (42 of 70 work banked toward the ring): the
 	# keeper is fencing the next ring, so the "Extend pen" button is replaced by a WARN-amber
-	# "Fencing 60%" badge (the pen twin of the corral-build "Building N%" meter). Partial pasture →
-	# "Fed by pasture 60% · larder 0.7 food/turn".
+	# "Fencing 60%" badge (the pen twin of the corral-build "Building N%" meter). Partial pasture with
+	# the fodder share topping it up → "Fed: 100% — 60% pasture · 40% fodder".
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_extending_pen_herd_fixture())
 	h._compose_herd(_extending_pen_herd_fixture())
@@ -723,17 +786,77 @@ func run(harness) -> void:
 	await h._save("herd_pen_extending")
 	_assert_fencing_badge_quotes_the_work_pair()
 
-	# State F3 foddered pen — the honest THREE-way feed split. The pen drew hay, so its GROSS demand
-	# (`pen_upkeep` 2.0) partitions into pasture 40% (0.80 free) · hay 0.9 (`pen_hay_food`) · larder 0.3
-	# (`pen_larder_bill`, the NET bread bill) — 0.80 + 0.90 + 0.30 == 2.0, the sim-pinned invariant. It
-	# reads "Fed by pasture 40% · hay 0.9 · larder 0.3 food/turn"; the two-term states above
-	# (`herd_domesticated` 0% · larder 1.7, `herd_pen_self_feeding` 100% · larder 0.0) show NO hay term,
-	# so the two forms are provably different — and the larder term is now the true net, not the gross.
+	# State F3 foddered pen — the pen's TWO feed sources, both stated as SHARES of the one demand:
+	# "Fed: 100% — 88% pasture · 12% fodder", the 12% being `pen_fed_fraction` less
+	# `pen_pasture_fraction`. The state ABOVE it (`herd_pen_self_feeding`, land covering it outright)
+	# renders the `all pasture` form, so the two shapes are provably different and the second term
+	# provably conditional. **Neither frame quotes a demand**: the gross the shares are shares OF is not
+	# on the wire, so it may not be reconstructed by dividing the draw by a ratio.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_foddered_pen_herd_fixture())
 	h._compose_herd(_foddered_pen_herd_fixture())
 	await h._settle()
 	await h._save("herd_pen_foddered")
+	# **THE `Fed:` ROW HAS FOUR STATES AND THEY ARE JUDGED IN ONE BLOCK, over four line-sets.** What
+	# tells them apart is which optional terms are present — the second share, the `no fodder` stand-in
+	# for it, the shortfall clause and its `more` — so each pair of states is the other's control, and
+	# checking one in a frame of its own leaves the defect living in the gap between frames. That gap
+	# is where this arc has already lost three of them. The needles are the WHOLE value, so a dangling
+	# `·`, a doubled `%`, a lost em-dash or a term in the wrong order fails here where no PNG could.
+	var all_pasture_lines := DetailFormat.herd_summary_lines(
+		_self_feeding_pen_herd_fixture(), h._hud._band_labor.world_herds())
+	var mixed_lines := DetailFormat.herd_summary_lines(
+		_foddered_pen_herd_fixture(), h._hud._band_labor.world_herds())
+	var starving_lines := DetailFormat.herd_summary_lines(
+		HerdFx.starving_pen_herd_fixture(), h._hud._band_labor.world_herds())
+	var unfoddered_lines := DetailFormat.herd_summary_lines(
+		HerdFx.unfoddered_pen_herd_fixture(), h._hud._band_labor.world_herds())
+	h._assert_hud("a pen its own land covers reads the fed share and `all pasture`, no second term",
+		_lines_any_contain(all_pasture_lines, PEN_FED_ALL_PASTURE_NEEDLE))
+	h._assert_hud("…a pen fed from BOTH sources splits the same 100% into pasture and fodder shares",
+		_lines_any_contain(mixed_lines, PEN_FED_MIXED_NEEDLE))
+	h._assert_hud("…a STARVING pen leads with ⚠, splits what it DID get, and prices the gap in `more`",
+		_lines_any_contain(starving_lines, PEN_FED_STARVING_NEEDLE))
+	h._assert_hud("…and a pen that drew NOTHING says `no fodder`, and drops the `more` it has no more than",
+		_lines_any_contain(unfoddered_lines, PEN_FED_UNFODDERED_NEEDLE))
+	# **THE 7% IS `fed − pasture`, AND THIS IS THE ASSERTION THAT SAYS SO.** The gross demand is not on
+	# the wire, so the other arithmetic available — `fodder_draw` over a ratio — is forbidden, and the
+	# starving fixture is picked so the two ANSWERS differ: 0.47 − 0.40 is 7%, while 1.49 ÷ 21.3 of a
+	# synthesized gross is not what any published pair would produce. A division that happened to agree
+	# would make this assertion vacuous, which is why the fixture's shares and its draw are set apart.
+	h._assert_hud("…and the fodder share is the SUBTRACTION of the two published shares, not a division",
+		_lines_any_contain(starving_lines, DetailFormat.PEN_FEED_FODDER_SEGMENT % int(round(
+			(HerdFx.PEN_FED_STARVING - HerdFx.PEN_PASTURE_STARVING)
+			* HudConst.PROGRESS_PERCENT_SCALE))))
+	# **A COVERED PEN SAYS NOTHING ABOUT A NEED**, claimed on the WORD so a `needs 0.0 /turn` fails
+	# however the zero rounds, and on the same line-sets as the pens that owe one.
+	h._assert_hud("…a fed pen states no NEED at all, where both starving pens state one",
+		not _lines_any_contain(all_pasture_lines, PEN_SPLIT_NEED_WORD)
+		and not _lines_any_contain(mixed_lines, PEN_SPLIT_NEED_WORD)
+		and _lines_any_contain(starving_lines, PEN_SPLIT_NEED_WORD)
+		and _lines_any_contain(unfoddered_lines, PEN_SPLIT_NEED_WORD))
+	h._assert_hud("…and `more` is said ONLY by the pen something arrived at",
+		_lines_any_contain(starving_lines, PEN_SPLIT_MORE_WORD)
+		and not _lines_any_contain(unfoddered_lines, PEN_SPLIT_MORE_WORD))
+	# **THE CORRAL ROW IS THE RUNG AND NOTHING ELSE NOW** — the regression risk of collapsing
+	# `corral_built_label` to the badge is that the starving face comes back and welds a fed percentage
+	# onto a build meter (`⚠ Starving — 47% fed 100%`). Pinned on the STARVING pens, which are the only
+	# fixtures that could reproduce it.
+	h._assert_hud("…while a STARVING pen's Corral row states the rung: the badge, its meter, no feed",
+		_lines_any_contain(starving_lines, CORRAL_BADGE_NEEDLE)
+		and _lines_any_contain(unfoddered_lines, CORRAL_BADGE_NEEDLE)
+		and not _lines_any_contain_ci(starving_lines, RETIRED_STARVING_WORD)
+		and not _lines_any_contain_ci(unfoddered_lines, RETIRED_STARVING_WORD))
+	# **AND THE WORD IS `fodder` ON ALL FOUR** — `hay` is one instance of the category and the rows name
+	# the category, as the band's own store row does. A resurrected `larder` term is the older ghost:
+	# a pen never draws on the people's food, so no state may price one.
+	h._assert_hud("…and no state says `hay` or quotes a larder bill",
+		not _lines_any_contain_ci(all_pasture_lines, PEN_RETIRED_HAY_WORD)
+		and not _lines_any_contain_ci(mixed_lines, PEN_RETIRED_HAY_WORD)
+		and not _lines_any_contain_ci(starving_lines, PEN_RETIRED_HAY_WORD)
+		and not _lines_any_contain_ci(unfoddered_lines, PEN_RETIRED_HAY_WORD)
+		and not _lines_any_contain(mixed_lines, PEN_SPLIT_RETIRED_LARDER_WORD)
+		and not _lines_any_contain(all_pasture_lines, PEN_SPLIT_RETIRED_LARDER_WORD))
 
 	# State 2d-δ wild ceiling — a hunt-only species. NO husbandry track in the drawer (no
 	# domestication / corral / pen rows), just the dim "Wild game — hunt only" hint, and the hunt policy
@@ -848,15 +971,15 @@ func run(harness) -> void:
 	# reason. `HudStyle.apply_checkbox` keeps the autopsy for the next `CheckBox` the HUD grows.
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
-	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
-	# − 0.34 feed", the `corral` ceiling row → corral_yield minus the projected pen_upkeep, stepper capped at the
-	# 1 keeper a managed source needs), and the drawer carries the "Corral: Building 40%" row — the
-	# herd twin of the tile's "Cultivation N%". The picker's 🐄 Corral button wears the `→ +1.50/turn`
-	# PAYOFF (corral_yield), above ◎ Tame's `→ +1.20/turn` and Sustain's `up to +0.90/turn`.
+	# ENABLED and selected, the forecast states the deal ("then +1.50 /turn", the `corral` ceiling row
+	# → corral_yield ALONE, stepper capped at the 1 keeper a managed source needs), and the drawer
+	# carries the "Corral: Building 40%" row — the herd twin of the tile's "Cultivation N%". The
+	# picker's 🐄 Corral button wears the `→ +1.50/turn` PAYOFF (corral_yield), above ◎ Tame's
+	# `→ +1.20/turn` and Sustain's `up to +0.90/turn`.
 	#
-	# `pen_upkeep` is the feed this pen WOULD demand once built — the sim projects it at the herd's
-	# current biomass (on the same basis as `corral_yield`), so the pre-commit row subtracts the real
-	# running cost rather than saying "before feed".
+	# **THE ROW USED TO END `− 0.34 feed` AND NO LONGER DOES.** That subtracted the pen's projected
+	# food-unit upkeep, and a pen has none: it eats its own fenced pasture and hay. The payoff now
+	# stands alone, and this frame is where a dangling `−` or an orphaned `feed` word would show.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(HerdFx.corral_ready_herd_fixture())
 	h._compose_herd(HerdFx.corral_ready_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "corral")
@@ -938,8 +1061,8 @@ func run(harness) -> void:
 
 	# State 3d-corral-depleted — the SAME rung on a herd BELOW the pen's escapement point (K/2). The
 	# managed harvest takes only the biomass standing above that point, so the payoff is honestly
-	# +0.00 /turn while the feed is still 0.14 — a pure loss. The face must SHOW both zeros and carry
-	# the WARN "⚠ Too depleted to pen" note, never suppress the zero as if it were missing data.
+	# +0.00 /turn while the pen still costs work to raise and land to feed — a pure loss. The face must
+	# SHOW that zero and carry the WARN "⚠ Too depleted to pen" note, never suppress it as missing data.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(_depleted_corral_herd_fixture())
 	h._compose_herd(_depleted_corral_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "corral")
@@ -953,7 +1076,7 @@ func run(harness) -> void:
 	h._assert_hud("a pen that would pay nothing says so, in the note slot under its own box",
 		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE))
-	h._assert_hud("…beside a readout row that still states the zero payoff and the feed it would eat",
+	h._assert_hud("…beside a readout row that still states the zero payoff, bare and unsubtracted",
 		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
 				% SourceForecast.format_magnitude(0.0)))
@@ -1119,3 +1242,15 @@ func run(harness) -> void:
 		bare_cap_note.contains("max 7 workers useful"))
 	h._assert_hud("…and the composed Tame read the SAME cap, so the verb moves no take-side number",
 		tame_cap_note == bare_cap_note)
+
+	# State — THE PEN THAT DREW NOTHING, appended last so no frame before it moves. Same 40% pasture as
+	# the starving pen above, but its keeper carried in nothing at all (no store, or no Foddering), so
+	# the `Fed:` row reads "⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn": `no fodder` where the
+	# share would sit, and a shortfall clause with no `more` in it, there being no more than nothing.
+	# **Its Corral row is the plain "🐄 Corralled 100%" badge**, like every other pen's — the frame that
+	# shows a starving pen and a rung row minding its own business in the same picture.
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(HerdFx.unfoddered_pen_herd_fixture())
+	h._compose_herd(HerdFx.unfoddered_pen_herd_fixture())
+	await h._settle()
+	await h._save("herd_pen_no_fodder")

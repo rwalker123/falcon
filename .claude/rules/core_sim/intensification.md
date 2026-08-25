@@ -508,7 +508,7 @@ makes a hand worth more. A pool has no leftover by construction.
 > `LaborAssignmentState.improvement` survives, and the sim **resolves it at capture** from that
 > band's queue entry: the derived verb (`cultivate`/`sow`/`tame`/`corral`) or the literal
 > `"extend_pen"` for a ring, `""` when the band has nothing queued there. So a client still reads
-> *what is being raised* off the row and still does **no arithmetic** to get it — the `penFeedUpkeep`
+> *what is being raised* off the row and still does **no arithmetic** to get it — the sim-answers
 > discipline — while there is exactly one authority for the fact.
 >
 > **`improvementWorkers` is `(deprecated)` in place**, beside `maintainWorkers`; FlatBuffers field
@@ -1245,9 +1245,9 @@ other row (§2.5).
 
 `ForagePatchState` / `HerdTelemetryState` each carry **`upkeepDemand`**, **`upkeepSupplied`**,
 **`upkeepShortfall`** and **`upkeepWorkersNeeded`**. The first three ship rather than two, per the
-`penFeedUpkeep` discipline — the sim answers and the client does zero arithmetic.
+sim-answers discipline — the sim answers and the client does zero arithmetic.
 
-- **`upkeepDemand` follows `penUpkeep`'s rule: always meaningful, never a sentinel.** A rung with no
+- **`upkeepDemand` follows `corralYield`'s rule: always meaningful, never a sentinel.** A rung with no
   upkeep publishes an honest `0`.
 - **IT ANSWERS FOR THE RUNG THE SOURCE IS ON, WHICH IS WHY A QUOTE CANNOT READ IT** — see "A price
   without the rate that eats it is not a quote" below, the pair that closes that gap.
@@ -1864,7 +1864,7 @@ case, "never store anything" satisfies the pair and silently deletes the overrid
 
 **The meter stores absolute work units; the wire keeps publishing a `0..1` fraction, and the sim
 divides at capture** (`docs/plan_unit_costed_work.md` §8 — the client does zero arithmetic, the
-`penFeedUpkeep` discipline). `ForagePatchState.cultivationProgress` / `fieldProgress`,
+sim-answers discipline). `ForagePatchState.cultivationProgress` / `fieldProgress`,
 `HerdTelemetryState.corralProgress` / `domestication` and the `isCultivated` / `isField` /
 `corralled` bools are **unchanged in type, meaning and range**, so every shipped readout keeps
 working untouched. `intensification::build_fraction` is the one divisor, and it divides by the
@@ -1989,9 +1989,9 @@ Appended (append-only) on both tables:
   > **The compose sheet is BY DEFINITION looking at a source nobody has started**, so a sentinel there
   > withheld the one readout that makes this arc legible — *turns are an output; add hands and watch
   > them fall* — at the exact moment the player is deciding. That is the same defect
-  > `HerdTelemetryState.penUpkeep` already fixed on the animal web (`husbandry.md`: *"a **projection**
-  > for an unpenned herd, the **live** demand for a penned one… always meaningful, never
-  > `0`-because-unpenned"*), and it takes the same remedy. The client still cannot compute it — it
+  > `HerdTelemetryState.corralYield` already states on the animal web (`husbandry.md`: *"a
+  > **projection** for an unpenned herd, the **live** payoff for a penned one… always meaningful,
+  > never `0`-because-unpenned"*), and it takes the same remedy. The client still cannot compute it — it
   > holds neither the crew's output, nor the floor multiplier, nor the kit's coverage-weighted
   > contribution — so the sim answers.
 - **IT IS A PER-SOURCE FIELD WRITTEN PER ASSIGNMENT, so several bands can answer for one source** —

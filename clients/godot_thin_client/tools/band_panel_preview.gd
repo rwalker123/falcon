@@ -77,10 +77,12 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
-## The merged Food line's hay clause, as it reads AFTER the BBCode is stripped — the needle proving the
-## SHORT tier really merged the two larders rather than dropping one. The word, not the number: the
-## stock is a fixture value and this is a claim about the CLAUSE.
-const MERGED_FOOD_HAY_NEEDLE := "hay"
+## The merged Food line's fodder clause, as it reads AFTER the BBCode is stripped — the needle proving
+## the SHORT tier really merged the two larders rather than dropping one. The word, not the number: the
+## stock is a fixture value and this is a claim about the CLAUSE. **Lowercase, and that is what tells
+## it from the row below**: the clause says `1.2 fodder`, the standalone row's KEY says `Fodder`, and
+## `contains` is case-sensitive, so the two needles cannot both fire on one host.
+const MERGED_FOOD_FODDER_NEEDLE := "fodder"
 ## The standalone `Fodder:` row's key, which must be ABSENT wherever the merge fired. Matched bare —
 ## `DetailFormat._split_kv` drops the `": "` separator into two table cells, so the colon is never in
 ## the rendered text.
@@ -328,11 +330,6 @@ const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
 ## The crew that pen owes — the SAME number as the row's `workers_needed`, which is where the shed
 ## comes from (staffed 2 < needed 4), so the two read from one const rather than two loose literals.
 const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
-
-## The pen feed the faction roster's herd-keeping band pays — the conditional Food row that makes the
-## faction band zone's worst case its worst case. The figure is the shipped pen upkeep the per-band
-## fixtures already quote, so the row measures what a live one does.
-const FACTION_PEN_FEED_UPKEEP := 1.74
 
 ## The faction roster's SECOND band — deliberately smaller and unhappier than the first, so a
 ## population-weighted mean and a plain one give different answers. See `_faction_roster`.
@@ -1033,7 +1030,7 @@ func _ready() -> void:
 	# TOP dock. Nothing in this harness had ever rendered one: each optional row had its own frame and
 	# each of those fixtures was otherwise ordinary, so the zone was never asked to hold all of them
 	# together — which is exactly how a band with the full set came to overflow a box that CLIPS.
-	# The fixture carries a hay larder AND a pen feed bill, productivity below full, a fertility
+	# The fixture carries a hay larder, productivity below full, a fertility
 	# reading, and the projected arrivals the FOOD OUTLOOK chart needs, so
 	# every gate in `build_band_zone` / `unit_summary_lines` is live at once.
 	#
@@ -6626,8 +6623,8 @@ func _contains_scroll(node: Node) -> bool:
 			return true
 	return false
 
-## GUARD: the SHORT tier merges the hay larder onto the Food line (`BandDetailLines`'
-## `BAND_FOOD_HAY_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
+## GUARD: the SHORT tier merges the fodder larder onto the Food line (`BandDetailLines`'
+## `BAND_FOOD_FODDER_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
 ## line too wide for the band zone WRAPS and costs back the very row the merge bought. A wrap is also
 ## invisible in the frame: two lines of a rendered vitals block look exactly like two rows.
 ##
@@ -6645,8 +6642,8 @@ func _assert_merged_food_row_fits() -> void:
 		_fail("merged-food-row assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
-	if not text.contains(MERGED_FOOD_HAY_NEEDLE):
-		_fail("the SHORT tier's Food row carries no hay clause — the merge is off (got: %s)" % text)
+	if not text.contains(MERGED_FOOD_FODDER_NEEDLE):
+		_fail("the SHORT tier's Food row carries no fodder clause — the merge is off (got: %s)" % text)
 		return
 	if text.contains(FODDER_ROW_NEEDLE):
 		_fail("the SHORT tier still renders a standalone Fodder row beside the merged Food line")
@@ -7275,19 +7272,16 @@ func _faction_discoveries_fixture() -> Dictionary:
 func _faction_roster() -> Array:
 	var second := _concerning_food_band_fixture()
 	# **THE SECOND BAND KEEPS A HERD**, the corralled aurochs `_under_herded_work_herd_fixtures` stages.
-	# Every other fixture band in this file hunts WILD game, so on an all-wild roster no band on this
-	# page pays a pen's feed — and the pen feed below is a real term of `band_net_food`, which is the
-	# headline the `band` zone's Food row is built on.
+	# It keeps one for the WORK board's sake, not the Food row's: a pen bills the food larder for
+	# nothing (its feed is its fenced pasture plus hay), so keeping a herd no longer moves
+	# `band_net_food` at all.
 	second["labor_assignments"] = [
 		{"kind": "hunt", "workers": 4, "fauna_id": UNDER_HERDED_WORK_HERD_ID, "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.30, "sustainable_yield": 0.30},
 	]
-	# …and PAYS ITS PEN'S FEED. It renders no row of its own — the Food block states a stock and a rate,
-	# not a ledger — but it is a real term of `band_net_food`, so without it the headline net on this
-	# page would be the one figure a live pen-keeping faction never sees. It is also what caught the
-	# zone at **328px of its 300px box** when the rows were briefly a four-row ledger at the vitals type
-	# size, which is why the fixture keeps paying it.
-	second["pen_feed_upkeep"] = FACTION_PEN_FEED_UPKEEP
+	# **IT SEEDS NO `pen_feed_upkeep`.** It used to pay 1.74 off the larder as a term of `band_net_food`;
+	# that field is retired with the pen's food bill, so a fixture still seeding it would be feeding a
+	# key nothing reads — a dead field dressed as a live one.
 	# **IT IS A SMALLER BAND WITH WORSE MORALE, and both halves are load-bearing.** Population-weighted
 	# and plain means agree exactly when every band is the same size, so a roster of two 30-person bands
 	# makes `_assert_faction_weighted_morale` vacuous — it would pass under either rule. At 12 people and
@@ -12418,18 +12412,33 @@ func _arrivals_band_fixture() -> Dictionary:
 ## combination (a big store draining slowly) and the widest the Food row can render: three digits of
 ## provisions, three digits of turns, a signed rate, and a three-digit hay stock beside them.
 const WORST_CASE_PROVISIONS := 248.0
-## `WORST_CASE_PROVISIONS` walked down at the net drain below (3.60 income − 4.60 eaten − 0.41 pen
-## feed = −1.41/turn), so the runway the row prints is the one the larder actually implies.
-const WORST_CASE_TURNS_OF_FOOD := 176.0
-## The hay larder (Flora roster F3) and the pen bill it offsets — either one alone lights the fodder
-## readout, and this fixture carries BOTH so neither gate can be the thing keeping it on.
+## `WORST_CASE_PROVISIONS` walked down at the net drain below (3.60 income − 4.60 eaten = −1.00/turn),
+## so the runway the row prints is the one the larder actually implies. It was 176 while a 0.41 pen
+## feed was a third term; that term is retired (a pen never bills the larder), and the row still
+## prints three digits of turns, which is what this fixture is measuring.
+const WORST_CASE_TURNS_OF_FOOD := 248.0
+## The hay larder (Flora roster F3), and the ledger that now rides beside it. **The Fodder row is no
+## longer a bare stock**: it mirrors the Food line with the band's hay bill, the harvest answering it
+## and the runway between them, which makes it by some distance the WIDEST optional row a band can
+## carry — so a worst case that seeded the stock alone stopped being a worst case the moment the row
+## grew. Three digits on the stock and a three-digit runway, the same "longest form" rule every other
+## constant in this block follows.
 const WORST_CASE_FODDER_STORE := 128.4
-const WORST_CASE_PEN_FEED_UPKEEP := 0.41
+
+## The pens owe more than the Fields grow, which is also the row's WARN state — the widest spelling
+## AND the loudest one, in one fixture.
+const WORST_CASE_FODDER_NEED := 12.4
+
+const WORST_CASE_FODDER_INCOME := 10.2
+
+## 128.4 / (12.4 - 10.2), as the sim's `larder_runway_turns` answers it — three digits, matching the
+## food runway beside it.
+const WORST_CASE_TURNS_OF_FODDER := 583.0
 ## Discontent below full, so the WORK head renders its Output item.
 const WORST_CASE_OUTPUT_MULTIPLIER := 0.62
-## Chosen against the two worked rows' realized income (3.60) and the pen bill so the net comes out
-## NEGATIVE — a signed rate is a character wider than an unsigned one, and a draining larder beside a
-## long runway is the shape a big-store band really shows.
+## Chosen against the two worked rows' realized income (3.60) so the net comes out NEGATIVE — a signed
+## rate is a character wider than an unsigned one, and a draining larder beside a long runway is the
+## shape a big-store band really shows.
 const WORST_CASE_FOOD_CONSUMPTION := 4.60
 
 ## THE WORST CASE: a band carrying EVERY optional vitals row it can simultaneously have. Built on the
@@ -12442,7 +12451,9 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
 	band["stores"] = {"provisions": WORST_CASE_PROVISIONS}
 	band["fodder_store"] = WORST_CASE_FODDER_STORE
-	band["pen_feed_upkeep"] = WORST_CASE_PEN_FEED_UPKEEP
+	band["fodder_need"] = WORST_CASE_FODDER_NEED
+	band["fodder_income"] = WORST_CASE_FODDER_INCOME
+	band["turns_of_fodder"] = WORST_CASE_TURNS_OF_FODDER
 	band["output_multiplier"] = WORST_CASE_OUTPUT_MULTIPLIER
 	band["food_consumption"] = WORST_CASE_FOOD_CONSUMPTION
 	# Falling morale with a named cause, so the Morale row renders its longest form beside the rest.

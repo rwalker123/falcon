@@ -396,30 +396,48 @@ fn a_penned_herd_converges_at_radius_0_and_1_from_every_start() {
     );
 }
 
-/// Read the keeper's per-turn pen feed bill (the food it actually paid) + the herd's pasture fraction.
-fn pen_feed_and_pasture(app: &App, keeper: Entity, id: &str) -> (f32, f32) {
-    let feed = app
-        .world
-        .get::<LaborAllocation>(keeper)
-        .expect("keeper")
-        .last_pen_feed_upkeep;
-    let pasture = app
+/// Read the herd's `(pasture_fraction, fed_fraction)` — the share of its feed the fenced footprint
+/// grew, and the share grass and hay covered between them.
+fn pen_pasture_and_fed(app: &App, id: &str) -> (f32, f32) {
+    let herd = app
         .world
         .resource::<HerdRegistry>()
         .find(id)
-        .map(|h| h.pen_pasture_fraction)
-        .unwrap_or(0.0);
-    (feed, pasture)
+        .expect("the pen is still seated");
+    (herd.pen_pasture_fraction, herd.pen_fed_fraction)
 }
 
+/// What the keeper's `FOOD` larder holds.
+fn larder_of(app: &App, keeper: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(keeper)
+        .expect("keeper")
+        .stores
+        .get(FOOD)
+        .to_f32()
+}
+
+/// **A LUSH FOOTPRINT FEEDS THE PEN FOR FREE; A BARREN ONE STARVES IT — AND NEITHER TOUCHES THE
+/// KEEPER'S LARDER.**
+///
+/// This is the fix's central behaviour change. The barren case used to read *"the keeper pays the
+/// full bill"* — `upkeep_per_biomass × biomass` out of the `FOOD` store, every turn, for ever — which
+/// meant a pen on dead ground was a permanent tax on the people's bread rather than a herd that
+/// cannot be fed. **Human food is not animal feed.** With no grass and no hay the pen is simply
+/// unfed: `pen_fed_fraction` reads `0`, `advance_husbandry` shrinks it, and the larder is exactly
+/// where the fixture left it.
+///
+/// The larder is stocked to [`RESTOCK`] on the instrumented turn precisely so *"nothing was taken"*
+/// is a claim with something to take — a fixture with an empty larder would pass vacuously.
 #[test]
-fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
+fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_starves_and_neither_touches_the_larder() {
     const FODDER: f32 = 0.10;
     const WILD_R: f32 = 0.35;
     const SETTLE_TURNS: u32 = 120;
+    /// `f32` sums off a `Scalar`-quantized store — a few ULPs, no more.
+    const EPS: f32 = 1e-4;
 
-    // --- LUSH footprint: the richest pasture tile. The pen grazes its own land; the larder barely
-    // pays. ---
+    // --- LUSH footprint: the richest pasture tile. The pen grazes its own land and is fully fed. ---
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
     let id = seat_pen(
@@ -436,23 +454,27 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     for _ in 0..SETTLE_TURNS {
         run_pen_turn(&mut app, keeper);
     }
-    let (lush_feed, lush_pasture) = pen_feed_and_pasture(&app, keeper, &id);
-    let lush_biomass = biomass_of(&app, &id);
-    println!("LUSH: pasture_fraction {lush_pasture:.3}, larder feed/turn {lush_feed:.4}");
+    let (lush_pasture, lush_fed) = pen_pasture_and_fed(&app, &id);
+    let lush_larder = larder_of(&app, keeper);
+    println!(
+        "LUSH: pasture_fraction {lush_pasture:.3}, fed {lush_fed:.3}, larder {lush_larder:.2}"
+    );
     assert!(
         lush_pasture > 0.98,
         "a lush footprint feeds the pen for free: pasture_fraction {lush_pasture} should be ~1"
     );
-    // The larder bill is a rounding whisper next to what a fully-larder-fed pen of this size costs.
-    let full_bill = 0.002 * lush_biomass; // pen.upkeep_per_biomass × biomass
     assert!(
-        lush_feed < full_bill * 0.02,
-        "a lush pen's larder bill → ~0: paid {lush_feed}/turn vs a full bill of {full_bill}"
+        lush_fed > 0.98,
+        "and a pen its own pasture feeds is fully fed: {lush_fed}"
+    );
+    assert!(
+        lush_larder >= RESTOCK - EPS,
+        "the keeper's larder is not feed — the turn restocked it to {RESTOCK} and nothing left it \
+         for the pen (got {lush_larder})"
     );
 
     // --- BARREN footprint: strip the graze patch under the pen (radius 0 → the footprint is exactly
-    // this tile). A wholly-barren footprint keeps the herd's frozen K and is fully larder-fed — §2.3's
-    // preserved worst case. ---
+    // this tile). Nothing grows and no hay is grown, so the pen has no feed at all. ---
     let mut app = base_world();
     let (tile, _) = richest_pasture(&app);
     let id = seat_pen(
@@ -470,11 +492,12 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
         .patches
         .remove(&tile);
     let keeper = spawn_keeper(&mut app, &id, tile);
-    // Settle, then run ONE instrumented final turn so we can read the FEED-time biomass (post-regrow,
-    // pre-harvest) — the biomass the feed is actually charged on — and compare the bill to it exactly.
+    // Settle, then run ONE instrumented final turn so the FEED-time biomass (post-regrow,
+    // pre-harvest) — the biomass the demand is struck on — is the one under the assertions.
     for _ in 0..SETTLE_TURNS - 1 {
         run_pen_turn(&mut app, keeper);
     }
+    let before_starving = biomass_of(&app, &id);
     app.world
         .get_mut::<PopulationCohort>(keeper)
         .unwrap()
@@ -494,18 +517,28 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_pays_the_full_bill() {
     app.world.run_system_once(advance_husbandry);
     let feed_time_biomass = biomass_of(&app, &id); // post-regrow, pre-harvest = what FEED charges on
     app.world.run_system_once(advance_labor_allocation);
-    let (barren_feed, barren_pasture) = pen_feed_and_pasture(&app, keeper, &id);
-    println!("BARREN: pasture_fraction {barren_pasture:.3}, larder feed/turn {barren_feed:.4}");
+    let (barren_pasture, barren_fed) = pen_pasture_and_fed(&app, &id);
+    let barren_larder = larder_of(&app, keeper);
+    println!(
+        "BARREN: pasture_fraction {barren_pasture:.3}, fed {barren_fed:.3}, \
+         biomass {before_starving:.2} -> {feed_time_biomass:.2}, larder {barren_larder:.2}"
+    );
     assert!(
-        barren_pasture.abs() < 1e-6,
+        barren_pasture.abs() < EPS,
         "a barren footprint covers nothing: pasture_fraction {barren_pasture} should be 0"
     );
-    // The keeper pays the FULL bill: upkeep_per_biomass × biomass (charged on the pre-harvest biomass).
-    let expected = 0.002 * feed_time_biomass;
     assert!(
-        barren_feed > 0.0 && (barren_feed - expected).abs() < expected * 0.02,
-        "a barren pen pays the full larder bill: paid {barren_feed}/turn vs expected {expected} \
-         (upkeep × feed-time biomass {feed_time_biomass})"
+        barren_fed.abs() < EPS,
+        "and with no hay either the pen is fed NOTHING — it does not fall back on the larder \
+         (fed fraction {barren_fed})"
+    );
+    assert!(
+        feed_time_biomass > 0.0,
+        "the pen is still there to be starving — a herd that vanished proves nothing about feeding"
+    );
+    assert!(
+        barren_larder >= RESTOCK - EPS,
+        "and the keeper's larder is untouched: restocked to {RESTOCK}, still holds {barren_larder}"
     );
 }
 

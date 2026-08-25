@@ -56,9 +56,53 @@ const ANIMAL_PEN_UPKEEP_DEMAND := 2.0
 
 const ANIMAL_PEN_UPKEEP_SUPPLIED := 1.0
 
-const PEN_UPKEEP_RED_DEER := 1.74
+## The fodder this red deer pen draws out of its keeper's FODDER store per turn, in fodder units (the
+## same units `fodder_store` is stated in). **The `Fed:` row never PRINTS it** — the fodder SHARE it
+## bought is `pen_fed_fraction − pen_pasture_fraction`, a subtraction of two shares of the same
+## demand — so what this value decides on screen is only whether the row says a share at all or says
+## `no fodder`. It is kept as a real quantity anyway: a fixture whose draw did not match its shares
+## would be a pen no server could produce.
+## **There is no `PEN_UPKEEP_RED_DEER` any more**: the pen's food-unit demand is retired, human food
+## not being animal feed, so there is no gross figure for a fixture to partition.
+const PEN_FODDER_DRAW_RED_DEER := 1.10
 
-const PEN_FED_STARVING := 0.40
+## What that same pen still needs GROWN for it per turn (`pen_hay_need`) — the gap its own fenced
+## footprint does not cover. Equal to the draw on the reference pen, whose footprint covers NOTHING
+## (`pen_pasture_fraction` 0.0) and which is nonetheless fully fed: the fodder arriving is exactly the
+## fodder owed, so its `pen_fodder_shortfall` is 0 and the row states no need.
+const PEN_HAY_NEED_RED_DEER := 1.10
+
+## A fed pen owes nothing MORE — `max(0, need − draw)` is 0 wherever the draw covers the need, and the
+## `Fed:` row is silent rather than printing `needs 0.0`.
+const PEN_FODDER_SHORTFALL_NONE := 0.0
+
+## **THE STARVING PEN, AS ONE COHERENT SET OF NUMBERS.** Its demand is 21.3 fodder-units a turn: its
+## fenced footprint grazes 40% of it, its keeper carried in 1.49 (7%), and the herd therefore got 47%
+## of what it wanted. The gap the land leaves is the other 60% — 12.79 a turn — of which 1.49 arrived,
+## so `pen_fodder_shortfall` is 11.30. That last number is the ONLY absolute the row prints, and the
+## one thing a fed-percentage alone can never say: how much more fodder a turn would fix this.
+## The gross 21.3 is deliberately NOT a key here — it is not on the wire, and no readout may quote it.
+const PEN_FED_STARVING := 0.47
+
+const PEN_PASTURE_STARVING := 0.40
+
+const PEN_FODDER_DRAW_STARVING := 1.49
+
+const PEN_HAY_NEED_STARVING := 12.79
+
+const PEN_FODDER_SHORTFALL_STARVING := 11.30
+
+## **THE PEN THAT DREW NOTHING AT ALL**, on the same 40% pasture: a 20.0-a-turn demand, its footprint
+## grazing 40% of it and its keeper carrying in NOTHING (no store, or no Foddering), so the herd got
+## exactly its pasture share — 40% — and owes the whole uncovered 12.0. `no fodder` is a different
+## fact from `0% fodder`, and this is the fixture that proves the row can tell them apart.
+const PEN_FED_UNFODDERED := 0.40
+
+const PEN_FODDER_DRAW_NONE := 0.0
+
+const PEN_HAY_NEED_UNFODDERED := 12.00
+
+const PEN_FODDER_SHORTFALL_UNFODDERED := 12.00
 # The herder-deficit state's staffing PAIR (`herd_corral_under_herded`). The growing corral needs 2
 # herders every turn to hold its tameness while only 1 is staffed, and the two numbers must DISAGREE
 # for the deficit to render at all — so the fixture's `herders_needed`, the band's dialed-down hunt
@@ -696,10 +740,9 @@ static func corral_ready_herd_fixture() -> Dictionary:
 	fixture["corralled"] = false
 	fixture["corral_progress"] = 0.4
 	price_animal_build(fixture)
-	# `pen_upkeep` is the feed this pen WOULD demand once built (the sim projects it at the herd's
-	# current biomass, on the same basis as `corral_yield`) — so the pre-commit row can quote the
-	# real running cost at the moment the player decides, rather than saying "before feed".
-	fixture["pen_upkeep"] = 0.34
+	# **NO `pen_upkeep`.** The pre-commit Corral row quotes `corral_yield` and subtracts nothing: a pen
+	# has no food-unit running cost to net against the payoff, being fed by its own fenced pasture and
+	# by hay. A fixture seeding that key would be feeding a readout that no longer exists.
 	fixture["tile_info"] = {
 		"x": 66, "y": 10,
 		"terrain_label": "Prairie Steppe",
@@ -716,20 +759,23 @@ static func domesticated_herd_fixture() -> Dictionary:
 	price_animal_build(fixture)
 	# A fully-domesticated herd is penned: the drawer adds a "🐄 Corralled" row.
 	fixture["corralled"] = true
-	# A PENNED herd is a managed population — it eats from its keeper's larder every turn. Fully fed
-	# here (`pen_fed_fraction` 1.0), so the drawer reads the healthy "🐄 Corralled" badge plus the
-	# amber "Pen feed: -1.74 /turn" standing debit.
-	fixture["pen_upkeep"] = PEN_UPKEEP_RED_DEER
+	# A PENNED herd is a managed population — it eats its fenced footprint's grass plus the hay its
+	# keeper carries in, and NEVER the people's food. Fully fed here (`pen_fed_fraction` 1.0), so the
+	# drawer reads the healthy "🐄 Corralled" badge and states no cost row at all.
 	fixture["pen_fed_fraction"] = 1.0
 	# Grazing 2d-γ — a radius-1 pen on POOR footprint: its fenced land covers NONE of the feed
-	# (`pen_pasture_fraction` 0.0), so the whole GROSS demand falls on the FOOD larder as the net bill
-	# (`pen_larder_bill` == gross, no hay). Feed-split reads "Fed by pasture 0% · larder 1.7 food/turn".
-	# Invariant: gross × pasture(0) + hay(0) + larder(1.74) == gross(1.74).
+	# (`pen_pasture_fraction` 0.0), so FODDER is carrying it, and the `Fed:` row reads
+	# "100% — 0% pasture · 100% fodder". The fodder share is the row's own subtraction
+	# (`pen_fed_fraction` 1.0 − `pen_pasture_fraction` 0.0), never this draw divided by anything.
 	fixture["pen_radius"] = 1
 	fixture["pen_footprint_tiles"] = 7
 	fixture["pen_pasture_fraction"] = 0.0
-	fixture["pen_larder_bill"] = PEN_UPKEEP_RED_DEER
-	fixture["pen_hay_food"] = 0.0
+	fixture["fodder_draw"] = PEN_FODDER_DRAW_RED_DEER
+	# …and the standing GAP that fodder is answering: the footprint covers none of the feed, so the
+	# whole demand is owed as fodder — and every unit of it arrived, so the pen owes nothing MORE and
+	# the row states no need at all.
+	fixture["pen_hay_need"] = PEN_HAY_NEED_RED_DEER
+	fixture["pen_fodder_shortfall"] = PEN_FODDER_SHORTFALL_NONE
 	fixture["pen_extend_progress"] = 0.0
 	# **THE STANDING UPKEEP, UNDERPAID** (`docs/plan_standing_upkeep.md` §2, §2.4). The `animal:pen`
 	# rung asks `1.0` work per KEEPER-LOAD and this herd is two loads over; one keeper is on it, so
@@ -758,13 +804,39 @@ static func domesticated_herd_fixture() -> Dictionary:
 	}
 	return RungFx.stamp_herd(fixture)
 
-## The SAME penned herd, STARVING: its keeper paid only 40% of the 1.74/turn feed, so the herd is
-## shrinking (`pen.starve_shrink_rate × (1 − fed) × biomass`) every turn and its yield with it. The
-## drawer must say so loudly — the Corral row drops its badge for a red "⚠ Starving — 40% fed", and
-## the Pen feed row names the shortfall. Biomass is down from the fed fixture's 820 to show the herd
-## has actually lost ground.
+## The SAME penned herd, STARVING: its footprint's grass and its keeper's fodder together covered only
+## 47% of what it demanded, so the herd is shrinking (`pen.starve_shrink_rate × (1 − fed) × biomass`)
+## every turn and its yield with it. The `Fed:` row says so and says the whole of it —
+## **"⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn"**: the mark, what arrived, where it came
+## from and what would fix it. **The CORRAL row says none of that any more** — it reads the plain
+## "🐄 Corralled 100%" badge, because how fed the herd is was never a fact about how built its fence
+## is, and the two percentages sat on that row with nothing between them. Biomass is down from the fed
+## fixture's 820 to show the herd has actually lost ground.
 static func starving_pen_herd_fixture() -> Dictionary:
 	var fixture := domesticated_herd_fixture()
 	fixture["biomass"] = 310.0
 	fixture["pen_fed_fraction"] = PEN_FED_STARVING
+	# The land carries part of it here, which is what makes the two shares readable as a split: 40%
+	# grazed, 7% carried in, 47% fed. The 7% is the row's SUBTRACTION of those two published shares —
+	# a fixture that left the pasture at 0 would let a division of the draw pass unnoticed.
+	fixture["pen_pasture_fraction"] = PEN_PASTURE_STARVING
+	fixture["fodder_draw"] = PEN_FODDER_DRAW_STARVING
+	# The need and the draw come APART here, which is the whole shape of a starving pen: 12.79 owed a
+	# turn against the 1.49 that arrived, so `pen_fodder_shortfall` is 11.30 — the number that says how
+	# much more fodder would fix it, which a fed percentage alone never can.
+	fixture["pen_hay_need"] = PEN_HAY_NEED_STARVING
+	fixture["pen_fodder_shortfall"] = PEN_FODDER_SHORTFALL_STARVING
+	return fixture
+
+## The pen that drew NOTHING — starving on its pasture share alone (`fodder_draw` 0, under
+## `SourceForecast.FODDER_FLOW_MIN`), because the band has no fodder store or has not learned
+## Foddering. Its `Fed:` row reads **"⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn"**: `no
+## fodder` where the share would sit, since nothing carried in is a different fact from a little
+## carried in — and the shortfall drops its `more`, there being no "more" than nothing.
+static func unfoddered_pen_herd_fixture() -> Dictionary:
+	var fixture := starving_pen_herd_fixture()
+	fixture["pen_fed_fraction"] = PEN_FED_UNFODDERED
+	fixture["fodder_draw"] = PEN_FODDER_DRAW_NONE
+	fixture["pen_hay_need"] = PEN_HAY_NEED_UNFODDERED
+	fixture["pen_fodder_shortfall"] = PEN_FODDER_SHORTFALL_UNFODDERED
 	return fixture

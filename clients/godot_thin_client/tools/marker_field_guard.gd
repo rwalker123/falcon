@@ -94,11 +94,14 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"fertility_hunger": 0.6225,
 	"fertility_reserve": 1.4375,
 	"fertility_trend": 0.2575,
-	# Food ledger — `float` wire fields (foodIncome / foodConsumption / penFeedUpkeep / turnsOfFood).
+	# Food ledger — `float` wire fields (foodIncome / foodConsumption / turnsOfFood). **`penFeedUpkeep`
+	# is NOT pinned here any more**: the field is retired (a `(deprecated)` wire slot the decoder no
+	# longer publishes), because a pen is fed by its fenced pasture and by hay and never bills the food
+	# larder. A pin on a key nothing writes passes for the wrong reason — it is exactly the shape of a
+	# dead field looking alive.
 	"turns_of_food": 12.75,
 	"food_income": 0.8325,
 	"food_consumption": 0.6075,
-	"pen_feed_upkeep": 1.7425,
 	# Expedition + config levers that are `float` in the schema (carry caps, rates, move speed).
 	"expedition_carry_cap": 16.25,
 	# Next-delivery projected food — a `float` copied onto the marker, so it must survive un-truncated

@@ -439,10 +439,20 @@ moves it. So hay and concrete are the same kind of thing, and grazing and the st
 both **not upkeep at all**.
 
 That makes the land's contribution an **offset**, which is exactly what the shipped pen already does:
-the footprint's grazing covers what it can, hay covers some, and the larder pays only the remainder
-(`pen_pasture_fraction`, `penHayFood`, `penLarderBill` — three terms of one demand, already asserted
-to sum to it). A pen on lush pasture is cheap because the land is doing the work; a pen on barren
-ground pays in full. **A route down a river valley versus one over a range is the same sentence**, and
+the footprint's grazing covers what it can and **hay covers the rest** (`pen_pasture_fraction` and
+`fodderDraw` — two terms of one demand, in one unit, asserted to sum to it). A pen on lush pasture is
+cheap because the land is doing the work; a pen on barren ground pays in full, and **if hay cannot
+cover it the herd starves** — the shortfall has nowhere else to go.
+
+> ⛔ **IT WAS THREE TERMS UNTIL #578, AND THE THIRD ONE WAS A DEFECT.** The pen also drew **human
+> food** from the keeper's larder for whatever grazing and hay left uncovered — the corral arm's
+> *"the keeper must bring it food"* read as the food the people eat. It is fodder. The larder term
+> was short-circuiting the starvation path this section's own model depends on: when the land and the
+> hay fall short the answer is an underfed herd, never people going hungry to feed livestock. Retired
+> with `pen.upkeep_per_biomass`, the food-unit lever that expressed it; `penFeedUpkeep`, `penUpkeep`,
+> `penLarderBill` and `penHayFood` are deprecated slots. **A resource upkeep generalised from this
+> pen must not reintroduce a human-food path** — the reference implementation is *land offsets a
+> collected good*, and nothing else. **A route down a river valley versus one over a range is the same sentence**, and
 `infrastructure_cost` is where that per-terrain answer is already written.
 
 **What is NOT upkeep**, and both were reached for during design:
@@ -1404,7 +1414,17 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > **Routes are what force it.** A road wants hands *and* quarried stone, and it is the first
     > improvement whose resource draw does not already exist somewhere else — the pen's does. So this
     > lands before §4.13 rather than after, and generalising the pen's shipped
-    > pasture-offsets-hay-offsets-larder split is the reference implementation.
+    > **pasture-offsets-hay** split is the reference implementation. It is a TWO-term split since
+    > #578 — see §2.7's callout on the human-food term that was removed, and do not reintroduce one.
+    >
+    > **AND IT OWES A PROJECTED DEMAND, which #578 could not express.** A pen states its standing
+    > fodder bill once it exists (`penHayNeed`, the gap its footprint leaves), but the **pre-commit**
+    > row — the moment the player decides whether to build the thing — states only what it will earn,
+    > never what it will cost to hold. Nothing on the wire reconstructs it: a herd's
+    > `fodderPerBiomass` is its *yield* rate (structurally zero — no animal pays fodder), not its feed
+    > coefficient, and an unbuilt fence has no published footprint intake. **The cost of holding an
+    > improvement should be quotable BEFORE it is held**, which is this item's own subject, so the
+    > projection belongs here rather than as a pen special case.
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,

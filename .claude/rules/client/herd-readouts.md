@@ -245,18 +245,28 @@ paths:
   Cultivation row. See the Cultivate/Corral investment-rung bullet under **Labor allocation UI**, and
   "The build meter says WORK" below for what a meter row states now.
 - **The pen is a managed POPULATION** (`docs/plan_corral_managed_population.md`; snapshot
-  `HerdTelemetryState.penUpkeep` / `penFedFraction` → `pen_upkeep` / `pen_fed_fraction`): a penned
-  herd cannot graze, so its keeper hauls it food every turn, and **an underfed herd shrinks**. Two
-  rows carry that, both in `_herd_summary_lines`:
-  - the **Corral** row flips from the "🐄 Corralled" badge to a DANGER-tinted **"⚠ Starving — 40%
-    fed"** whenever `PenStatus.is_starving(pen_fed_fraction)` (`_corral_label` / `_corral_value_hex`,
-    one tint path, no parallel styling);
-  - a **Pen feed** row (only on a penned herd) states the demand — `−1.74 /turn`, WARN amber as a
-    standing debit — and, when the keeper came up short, what was actually paid: `−1.74 /turn — only
-    40% paid`, DANGER (`_pen_feed_label` / `_pen_feed_value_hex`).
-  `pen_upkeep` is this HERD's demand; the band's ledger row is the sim-summed `pen_feed_upkeep`
-  across all its pens — the two are never added together, and the client sums neither.
-  ui_preview: `herd_domesticated` (fed) / `herd_corral_starving` (40% fed).
+  `HerdTelemetryState.penFedFraction` → `pen_fed_fraction`): a penned herd eats the grass its fenced
+  footprint grows plus the fodder its keeper carries in, and **an underfed herd shrinks**. ONE row
+  carries that, in `herd_summary_lines` — the **`Fed:`** row below, which leads with the ⚠ and takes
+  the DANGER tint whenever `PenStatus.is_starving(pen_fed_fraction)` (`pen_feed_value` /
+  `pen_feed_value_hex`, one tint path, no parallel styling).
+
+  **THE CORRAL ROW STATES THE RUNG AND NOTHING ELSE.** It wore that starving face for a while
+  (`PEN_STARVING_LABEL`, retired) — and a BUILT rung row renders `<label> <meter %>`, so the row came
+  out as **`Corral: ⚠ Starving — 47% fed 100%`**: how FED the herd is beside how BUILT its pen is, two
+  unrelated percentages with nothing between them. `corral_built_label` takes no `fed_fraction` and
+  returns the badge alone; `corral_value_hex`'s *"if the value contains 'starving', paint it red"*
+  special case is DELETED with the label that produced that string, so the Corral row is an ordinary
+  rung row tinted by the shared `rung_value_hex` rule. Feed is the `Fed:` row's whole job — the mark,
+  the fraction, the split and the remedy.
+
+  **THERE IS NO `Pen feed` COST ROW, and there must not be one again.** A `−1.74 /turn` WARN-amber row
+  stated the pen's food demand beside that badge, reading `pen_upkeep` (later `pen_larder_bill`). Both
+  fields are retired `(deprecated)` wire slots: **human food is not animal feed**. A pen is fed by land
+  and by fodder, so a shortfall has no price to quote — it has a CONSEQUENCE, and the marked `Fed:` row
+  is it. The band's food ledger lost its matching `🐄 Pen feed (animals)` row for the same reason
+  (`band-readouts.md`), so there is no per-herd figure and no per-band one, and nothing to add together.
+  ui_preview: `herd_domesticated` (fed) / `herd_corral_starving` (47% fed).
   **The map flags it too** (`MapView._draw_herd` → `_draw_distress_badge`): a starving pen's marker
   gets a DANGER **ring** (under the glyph) plus a filled DANGER **badge with a hand-drawn "!"** (over
   it). Both are **drawn geometry, never a tint or a font glyph** — a herd marker is a full-color
@@ -268,15 +278,79 @@ paths:
 - **The pen is fenced LAND — the pen-economy surface** (Grazing 2d-γ, `docs/plan_grazing_2d.md` §7;
   snapshot `HerdTelemetryState.penRadius` / `penFootprintTiles` / `penPastureFraction` /
   `penExtendProgress` → `pen_radius` / `pen_footprint_tiles` / `pen_pasture_fraction` /
-  `pen_extend_progress`, decoded in `native/src/lib.rs herds_to_array`). A penned herd grazes its own
-  fenced footprint and the grass it eats **offsets** the larder bill (`pen_upkeep` is now that offset).
-  Three surfaces:
-  - **Herd drawer** (`_herd_summary_lines`, corralled branch): a **`Pen: radius R · N tiles`** footprint
+  `pen_extend_progress`, decoded in `native/src/dict/subsistence.rs`). A penned herd grazes its own
+  fenced footprint, and that grass is one of the only TWO things that feed it. Three surfaces:
+  - **Herd drawer** (`herd_summary_lines`, corralled branch): a **`Pen: radius R · N tiles`** footprint
     row — `pen_footprint_tiles` is the SERVER's in-bounds count, shown **verbatim** (the closed-form
-    hex-disk count is wrong at map edges) — and a **`Fed by pasture NN% · larder N.N food/turn`** feed
-    split (`pen_pasture_fraction` × 100 + `pen_upkeep`): a self-feeding pen on lush land reads "100% ·
-    larder 0.0" (and the amber Pen-feed debit row disappears), a scrub pen "0% · larder 1.7". The Corral
-    / Pen-feed / starving rows above are unchanged.
+    hex-disk count is wrong at map edges) — and the **`Fed:`** row, which carries the whole feed story
+    in FOUR states (`DetailFormat.pen_feed_value`):
+
+    ```
+    Fed:  100% — all pasture
+    Fed:  100% — 88% pasture · 12% fodder
+    Fed:  ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn
+    Fed:  ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn
+    ```
+
+    **THE ROW IS NAMED FOR WHAT IT MEASURES, NOT FOR ONE OF ITS TERMS.** It read `Fed by pasture` and
+    then listed the OTHER feed source in its value — one source named in the label, the other beside
+    it. The headline is `pen_fed_fraction`, how much of its demand the pen actually got, and the terms
+    under it say where that came from.
+    - **`NN% pasture`** — `pen_pasture_fraction` × 100, the share its own fenced footprint grazed.
+    - **`NN% fodder`** — **`fed − pasture`**, the SUBTRACTION of two published shares of the same
+      demand, taken on the rounded percentages so the two terms visibly add to the headline and
+      clamped at zero (`pen_fed_fraction` is clamped at 1.0, so the pair can round-cross).
+    - **`no fodder`** in that term's place when `fodder_draw` is under
+      `SourceForecast.FODDER_FLOW_MIN`: nothing was carried in — no store, or no Foddering — which is
+      a different fact from a short ration. The draw's MAGNITUDE is never printed; this presence test
+      is all it decides.
+    - **`all pasture`** when the land covers the pen outright (`pen_pasture_fraction` at 1.0 within
+      `PenStatus.FED_EPSILON`): no second term, and by construction no shortfall.
+    - **`needs N more/turn`** — `pen_fodder_shortfall`, the sim's own `max(0, penHayNeed − fodderDraw)`
+      (`HerdTelemetryState.penFodderShortfall`, decoded in `native/src/dict/subsistence.rs` beside
+      `pen_hay_need`), shown only at or above `FODDER_FLOW_MIN`: **a fed pen owes nothing and must not
+      read `needs 0.0`**. The `more` is dropped on the `no fodder` state — there is no "more" than
+      nothing — so that pen reads `needs N /turn`.
+    - **The ⚠ LEADS the value** on `PenStatus.is_starving` (the existing test — the map badge's and the
+      turn orb's), and `pen_feed_value_hex` reads that prefix to put the row in DANGER ink. That is the
+      tint the Corral row's retired `contains("starving")` case used to carry.
+
+    **THE WORD IS `fodder`, NEVER `hay`.** Fodder is the category — food for livestock, dried hay or
+    straw among it — hay is one instance of it, and the band's own store row already says `Fodder`. The
+    `compact` tier's merged clause on the band Food line took the same sweep
+    (`BandDetailLines.BAND_FOOD_FODDER_CLAUSE_FORMAT`, `band-readouts.md`).
+
+    **THE GROSS DEMAND IS STILL NOT ON THE WIRE, so the row may not quote one.**
+    `penPastureFraction` and `penFedFraction` are ratios, `fodderDraw` an absolute, and `penHayNeed` /
+    `penFodderShortfall` are GAPS — the gross those shares are shares OF is published nowhere. So the
+    fodder term is a subtraction of two SHARES and **never `fodder_draw` divided by a ratio**; a
+    readout like *"fodder 0.9 of 2.2"* is not expressible and synthesizing the total is the one thing
+    this row must not do. If a future readout genuinely needs the gross, that is a new snapshot field,
+    i.e. server-side work. The retired third FEED term, a NET food-larder bill (`pen_larder_bill`, with
+    `pen_hay_food` as its food-equivalent twin), went with the model correction above.
+
+    **`penHayNeed` IS STILL DECODED AND IS NO LONGER RENDERED HERE.** It is the gap the LAND leaves —
+    what the pen needs grown for it whether or not any arrives — while the row states what would fix
+    the pen NOW, which is the shortfall. The band-level roll-up is the cohort's `fodder_need`
+    (`band-readouts.md` → "The band's FODDER LEDGER"), which the SIM sums over its pens' `penHayNeed`;
+    the two are one fact at two scales, and `band_hay_and_pen` is the frame that carries both at once.
+
+    **ALL FOUR STATES ARE ASSERTED IN ONE BLOCK, over four line-sets** (`ui_preview`,
+    `chapters/herd_graze_pen.gd`): what tells them apart is which optional terms are present, so each
+    is the others' control and a state checked in a frame of its own leaves the defect living in the
+    gap between frames — the shape that has hidden three defects in this arc. The needles are the
+    WHOLE value, so a dangling `·`, a doubled `%`, a lost em-dash or a term in the wrong order fails
+    there where no PNG could. Beside them: the fodder share pinned as the SUBTRACTION (on a fixture
+    where a division answers differently), `needs` present on both starving pens and absent on both fed
+    ones, `more` on the drawing pen alone, `hay` and `larder` on none of the four — and **the Corral
+    row pinned separately on both starving pens** as the plain `Corral: 🐄 Corralled 100%` badge that
+    does not contain the word "starving", which is the whole regression risk of collapsing
+    `corral_built_label` down to the badge.
+
+    **The starving fixture is ONE coherent set of numbers**: a 21.3-a-turn demand, 40% grazed, 1.49
+    carried in (7%), 12.79 owed by the land and 11.30 still owed after the draw. Its shares and its
+    draw are deliberately set apart so a division-based fodder share answers 12% where the subtraction
+    answers 7% — an assertion both arithmetics satisfied would be vacuous.
   - **Extend affordance** (`_build_extend_pen_control`, in the herd `%HerdAssignControls`): on a built
     pen with no ring in flight (`pen_extend_progress == 0`) a **`Fencers` stepper** over an
     **"Extend pen"** button, emitting `extend_pen_requested{faction,x,y,workers}` →
@@ -301,7 +375,10 @@ paths:
     of the roam-range ring, so a fenced footprint reads as a different thing. Reuses the range ring's
     wrapped-column / `_hex_distance` / `_fill_hex` / `_outline_hex` primitives (bounds-clamped by the
     loop). A corralled herd draws no roam-range, so exactly one of the two ever renders.
-  ui_preview: `herd_pen_self_feeding` (radius 2 · 19 tiles, 100% · larder 0.0, Extend-pen button) /
-  `herd_pen_extending` (mid-extension → "Fencing 60%" badge) / `herd_domesticated` (radius 1 · 7 tiles,
-  0% · larder 1.7); map_preview: `map_pasture_pen_footprint` (the green footprint disc, the A/B against
-  `map_pasture_herd_range`'s gold roam-range).
+  ui_preview: `herd_pen_self_feeding` (radius 2 · 19 tiles, `Fed: 100% — all pasture`, Extend-pen
+  button) / `herd_pen_extending` (mid-extension → "Fencing 60%" badge) / `herd_pen_foddered`
+  (`Fed: 100% — 88% pasture · 12% fodder`) / `herd_pen_no_fodder` (the `no fodder` state, appended
+  last in its chapter) / `herd_domesticated` (radius 1 · 7 tiles, `Fed: 100% — 0% pasture · 100%
+  fodder` — the barren footprint fodder carries outright); map_preview:
+  `map_pasture_pen_footprint` (the green footprint disc, the A/B against `map_pasture_herd_range`'s
+  gold roam-range).

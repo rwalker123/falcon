@@ -643,11 +643,13 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     var block := _make_alloc_block()
     block.add_child(HudWidgets.alloc_section_label(HudWorkVocab.ALLOC_HEADER_FOOD_OUTLOOK))
     var chart := FoodOutlookChart.new()
-    # Drain = the people's meals plus the pens' feed, held flat across the horizon (see the chart's
-    # header): the same two debits the Food breakdown itemizes, so the two readouts cannot disagree.
+    # Drain = the people's meals, held flat across the horizon (see the chart's header): the same
+    # STEADY debit the Food breakdown itemizes, so the two readouts cannot disagree. **The pens' feed
+    # is no longer a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and
+    # raids stay out for the reason they always did: an episodic past loss is not a steady drain.
     chart.set_projection(
         DetailFormat.band_provisions(band), arrivals,
-        float(band.get("food_consumption", 0.0)) + DetailFormat.band_pen_feed(band), _band_labor.current_turn())
+        float(band.get("food_consumption", 0.0)), _band_labor.current_turn())
     # A short zone gets a COMPACT chart — same series, same empty marker, less height. This is the
     # whole of what the band zone's tier now buys: the chart is built either way, and drawing it
     # denser is cheaper for the reader than pushing the blocks below it under the scroll.

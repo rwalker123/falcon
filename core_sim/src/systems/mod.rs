@@ -40,8 +40,8 @@ use crate::{
     equipment_config::EquipmentConfigHandle,
     expedition_config::ExpeditionConfig,
     fauna::{
-        self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield, Herd,
-        HerdRegistry, FODDERING_DISCOVERY_ID,
+        self, herd_capacity, herd_ecology, herd_hunt_yield, sustainable_yield, Herd, HerdRegistry,
+        FODDERING_DISCOVERY_ID,
     },
     fauna_config::{Diet, FaunaConfig, FaunaConfigHandle, HuntYield},
     flora_config::FloraConfigHandle,

@@ -3,11 +3,11 @@
 //! `PopulationCohortState`'s food ledger is documented, and pinned by two sibling files, as
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+//! larder_delta == foodIncome − foodConsumption − raidForfeit
 //! ```
 //!
 //! Every term on the right is about **this** band: what its own workers produced, what its own
-//! people ate, what its own pen and its own raid cost it. So food that *moves between larders* fits
+//! people ate, what its own raid cost it. So food that *moves between larders* fits
 //! nowhere in it — and two systems move food between larders every game:
 //!
 //! - **`balance_supply_networks`** equalises co-networked same-faction bands, every turn, since turn
@@ -26,7 +26,7 @@
 //! fact — *food that crossed between bands outside income and consumption* — and the identity is now
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+//! larder_delta == foodIncome − foodConsumption − raidForfeit
 //!                 + transferReceived − transferSent
 //! ```
 //!
@@ -73,7 +73,6 @@ const FOREIGN_FACTION: core_sim::FactionId = core_sim::FactionId(9);
 struct Ledger {
     income: f32,
     consumption: f32,
-    pen_feed: f32,
     raid_forfeit: f32,
     received: f32,
     sent: f32,
@@ -82,14 +81,13 @@ struct Ledger {
 impl Ledger {
     /// The identity's right-hand side, with the two new terms.
     fn expected_delta(&self) -> f32 {
-        self.income - self.consumption - self.pen_feed - self.raid_forfeit + self.received
-            - self.sent
+        self.income - self.consumption - self.raid_forfeit + self.received - self.sent
     }
 
     /// The right-hand side **as it read before the transfer terms existed** — what a client
     /// computing the documented identity would have got.
     fn pre_transfer_delta(&self) -> f32 {
-        self.income - self.consumption - self.pen_feed - self.raid_forfeit
+        self.income - self.consumption - self.raid_forfeit
     }
 }
 
@@ -108,7 +106,6 @@ fn ledger_of(app: &bevy::prelude::App, band: BandId) -> Ledger {
     Ledger {
         income: cohort.food_income,
         consumption: cohort.food_consumption,
-        pen_feed: cohort.pen_feed_upkeep,
         raid_forfeit: cohort.raid_forfeit,
         received: cohort.transfer_received,
         sent: cohort.transfer_sent,

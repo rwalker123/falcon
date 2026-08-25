@@ -97,7 +97,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > people eat"* — a question with a consumption clock. Nothing consumes the fodder store on that
 > clock, so a fodder timetable would answer a question nobody asks. **And `food_income` stays
 > `Σ actual` and must never include `fodder`**: that sum is one side of the pinned larder identity
-> `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and fodder never touches the
+> `larder_delta == food_income − food_consumption − raid_forfeit`, and fodder never touches the
 > larder.
 >
 > **THE PLANT SIDE'S FODDER COMPONENT IS `0.0` — a known gap, not a claim.** `forage_forecast` fills
@@ -530,7 +530,8 @@ rather than being two shapes. Pinned by
   `herd_capacity`** (which ecology/capacity a herd lives under — *no call site may re-derive either*) —
   called by both `systems::hunt_take` / the corral arm of `advance_labor_allocation` **and**
   `hunt_forecast`. The shared `SourceYieldForecast` struct (with `::tended`) is the common return shape.
-  A corralled herd's `managed_yield` is **gross**; its `penUpkeep` is exported separately.
+  A corralled herd's `managed_yield` is **gross**, and now also net — a pen's feed is fodder (its
+  footprint's grass and the band's hay), so nothing in provisions stands against it.
 - Guarded across **both products, on the exported snapshot**, by
   `core_sim/tests/hunt_yield_vector.rs` (`the_forecast_equals_the_paid_take_on_the_wire`,
   `a_wolves_exported_rate_reads_no_food_and_it_is_still_huntable_at_every_floor`,
@@ -758,6 +759,41 @@ player-facing is issue #272's notification system.
 
 Guarded by `labor_allocation::forage_lapses_when_the_band_walks_out_of_work_range`, which asserts in the
 same run that an in-range band's assignment survives, so "lapse" cannot silently widen to "always drop".
+
+### The band's hay ledger — three fields, and the sim does the arithmetic
+
+**A pen's upkeep changed currency, and the readout followed it.** `fodderStore` used to be a bare
+stock on the band panel — no rate, no demand, no runway — beside a Food line that had income,
+consumption, a runway in turns and an arrivals strip. Three cohort fields close it, the fodder twins
+of `foodIncome` / `foodConsumption` / `turnsOfFood`, all in fodder units per turn:
+
+| field | what it is | written by |
+|---|---|---|
+| `fodderNeed` | Σ over the pens this band keeps of each pen's `penHayNeed` — **the gap**, not the gross demand (`graze.md` → "The hay bill is published as the GAP") | `advance_labor_allocation`, accumulated by the corral arm onto `LaborAllocation::last_fodder_need` |
+| `fodderIncome` | the hay this band's fodder Fields **harvested this turn** — `band_fodder_inflow`, which previously reached only the pens' `K_pen` term and never the wire | the same pass, onto `last_fodder_inflow` |
+| `turnsOfFodder` | the runway: `fodderStore ÷ (need − income)` | the capture, through `larder_runway_turns` |
+
+**⛔ THE SIM SUMS IT, AND A CLIENT MUST NOT.** The standing rule the retired `pen_feed_upkeep` was
+minted under — the client renders, it does not sum — and on this ledger it is load-bearing rather
+than stylistic: **herd rows are fog-filtered**, so a pen out of sight silently drops out of any
+client-side total, while the band certainly still owes its hay.
+
+**⛔ THE RUNWAY IS `larder_runway_turns`, SENTINEL AND ALL.** One phrasing for one concept: a client
+reads `turnsOfFodder` exactly as it reads `turnsOfFood` and must not branch two ways on *"turns of
+buffer left"*. `NOT_FOOD_LIMITED_TURNS` (`999`, now `pub` for exactly this reason — nothing should be
+spelling the literal) is the reading for **anything that is not draining**: income that meets the
+need, and a band with no pens at all. It is asked with an **empty arrival schedule**, which is what
+selects that function's smooth `stock ÷ net drain` arm — a hay Field is a steady harvest into a
+stock, where the food runway walks per-source arrivals because a hunt lands in lumps.
+
+**The income is the RAW harvest, not the Foddering-gated share** stamped onto
+`Herd::fodder_delivery_rate`. What was grown is a fact about the Fields; what a pen may draw is a
+fact about what the faction has learned, and conflating them would tell a band its hay had failed
+when it had merely not yet learned to feed it out.
+
+`core_sim/tests/grazing_hay_readout.rs` pins all four fields off the **encoded envelope**, including
+a real hay Field beside a pen it out-grows — which is what keeps `fodderIncome` from being a field
+that is only ever asserted at zero.
 
 ### RETIRED: trade goods were a BAND-LOCAL store, and now there is no such store at all
 
@@ -1105,7 +1141,7 @@ and says nothing about priority.
   that is really part of the shipped **ordering** has to be a level beneath it instead.
 
 **It is intent, so it is inside `LaborAllocation`'s hand-written `PartialEq`** (it rides
-`assignments`), unlike `last_yields` and `last_pen_feed_upkeep`, which are derived telemetry and are
+`assignments`), unlike `last_yields` and `last_raid_forfeit`, which are derived telemetry and are
 deliberately outside it. Two allocations differing only in a mark are two different orders, and a
 rollback record or a command no-op guard that could not tell them apart would report *nothing changed*
 on the one input the scarcity handlers read.

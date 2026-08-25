@@ -706,20 +706,21 @@ table PopulationCohortState {
   // Appended last (append-only schema discipline).
   huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput (global rate)
   expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
-  // The food this band ACTUALLY PAID for pen feed this turn (summed across every corral it keeps —
-  // the real `LocalStore::take` debit, not the demanded amount; a band that could only part-pay
-  // records only what it handed over, and its herds starve for the rest).
+  // RETIRED. Was the food this band PAID for pen feed in a turn, drawn by the client as its own
+  // negative row in the food ledger ("my people ate X" / "my animals ate Y"). HUMAN FOOD IS NOT ANIMAL
+  // FEED: a penned herd eats the grass its fenced footprint grows and the hay its keeper carries in
+  // (FODDER, a separate store that never converts to FOOD), and what those two leave uncovered makes
+  // the pen UNDERFED — `penFedFraction` < 1, and the herd shrinks. The larder draw was
+  // short-circuiting exactly that starvation path: a pen whose pasture failed took food out of its
+  // keepers' mouths instead of withering. It stopped being written when the draw was removed, so the
+  // ledger identity loses a term:
   //
-  // A pen's feed comes straight off the band's stores, so it is in NEITHER foodIncome (per-source
-  // yields) NOR foodConsumption (the PEOPLE's food demand). Draw it as its own NEGATIVE line in the
-  // food ledger — "my people ate X" and "my animals ate Y" are deliberately separate rows; it is not
-  // folded into foodConsumption. The sim answers it so the client does no arithmetic:
+  //   larder_delta == foodIncome - foodConsumption - raidForfeit        (pinned by a sim test)
   //
-  //   larder_delta == foodIncome - foodConsumption - penFeedUpkeep       (pinned by a sim test)
-  //
-  // Derived per-turn, not persisted (a rehydrated cohort reads 0 until the next tick), same as
-  // foodIncome. Appended (append-only schema discipline).
-  penFeedUpkeep:float = 0;
+  // Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo is worked
+  // by concurrent sessions that append to these tables, and a freed slot is how two branches collide
+  // on one id.
+  penFeedUpkeep:float = 0 (deprecated);
   // Hunt expedition lever: one worker's carry contribution = expedition_config.hunt.per_worker_carry.
   // Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`,
   // `expeditionViabilityWarnTurns`, `huntPerWorkerProvisions` — the outfit UI lives on the
@@ -740,7 +741,7 @@ table PopulationCohortState {
   // redundant. Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo
   // is worked by concurrent sessions that append to these tables, and a freed slot is how two branches
   // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
-  // larder_delta == foodIncome − foodConsumption − penFeedUpkeep ledger identity.
+  // larder_delta == foodIncome − foodConsumption − raidForfeit ledger identity.
   foodIncomeAverage:float = 0 (deprecated);
   // In-flight hunt-party delivery forecast (the client's "Next delivery: ~X food in ~N turns" drawer
   // line) — the in-flight twin of the pre-launch `huntTripEstimates`. Computed at capture by
@@ -778,10 +779,10 @@ table PopulationCohortState {
   // Append-only.
   raidRadius:uint = 0;
   // Food the band FORFEITED to predator raids this turn (Predators Phase 3) — a negative food-ledger
-  // line, the raid twin of penFeedUpkeep. A casualty-causing raid costs the band a fraction of that
+  // line. A casualty-causing raid costs the band a fraction of that
   // turn's food income (the people were defending/fleeing, not gathering), debited from the larder and
   // capped at what it held. Extends the ledger identity to
-  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+  //   larder_delta == foodIncome − foodConsumption − raidForfeit
   //                   + transferReceived − transferSent            (see those two fields below)
   // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
   // drain. Append-only.
@@ -1074,14 +1075,14 @@ table PopulationCohortState {
   //
   // The last two terms of the food-ledger identity, which now reads
   //
-  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+  //   larder_delta == foodIncome − foodConsumption − raidForfeit
   //                   + transferReceived − transferSent
   //
   // pinned against real turns by integration_tests/tests/transfer_food_ledger.rs.
   //
   // *** WHY THEY EXIST. *** Food moving from one band's larder to another passes through NEITHER
   // foodIncome (Sum of per-source actual — what THIS band's workers produced) nor foodConsumption
-  // (what its people ate) — exactly the hole penFeedUpkeep and raidForfeit were each minted for.
+  // (what its people ate) — exactly the hole raidForfeit was minted for.
   // Before these fields a client watching two co-networked bands saw both larders move for no stated
   // reason every turn, because balance_supply_networks equalizes them and exported nothing.
   //
@@ -1160,7 +1161,7 @@ table PopulationCohortState {
   // every dispatched command (core_sim `snapshot::recapture_snapshot_in_place`), so a client's
   // latest frame is often a REFRESHED one rather than the turn's. The accumulating pair is cleared
   // straight after the turn capture reads it, so on a refreshed frame it reads 0 and blanks the row
-  // it had just shown; the four sibling terms — foodIncome, foodConsumption, penFeedUpkeep,
+  // it had just shown; the three sibling terms — foodIncome, foodConsumption,
   // raidForfeit — are per-turn values that re-read unchanged, which is why only these two flickered.
   // This pair is per-turn state on the cohort, so a refresh republishes it intact.
   //
@@ -1218,6 +1219,34 @@ table PopulationCohortState {
   // UNFILTERED: exactly what the band holds, in the band's order. The sim prunes dead entries
   // (`prune_build_queue`), so anything here is a build this band is really going to raise.
   buildQueue:[BuildQueueEntryState];
+
+  // --- THE BAND'S HAY LEDGER (appended last, append-only wire) -----------------------------------
+  // The fodder twins of `foodIncome` / `foodConsumption` / `turnsOfFood`, in FODDER units per turn,
+  // against the `fodderStore` above. A pen eats grass and hay and never the people's food, so the
+  // hay bill is its own ledger and appears in NO food term (`penFeedUpkeep` is retired).
+  //
+  // `fodderNeed` = the hay this band's pens are short PER TURN, summed over every pen it keeps
+  // (each pen's own share is `HerdTelemetryState.penHayNeed`). THE GAP, not the gross demand -
+  // pasture is free, hay is farmed. 0 for a band keeping no pens, and for pens their footprints
+  // cover. NOT gated on Foddering: a band that cannot draw hay still owes it.
+  //
+  // *** THE SIM SUMS IT, AND A CLIENT MUST NOT. *** Herd rows are fog-filtered, so a pen out of
+  // sight would silently drop out of a client-side total the band certainly still owes - and summing
+  // rows to restate a band-level fact is the same mistake the retired `penFeedUpkeep` was minted to
+  // avoid.
+  fodderNeed:float = 0;
+  // `fodderIncome` = the hay this band's fodder Fields HARVESTED this turn, per turn. The RAW
+  // harvest, not a Foddering-gated share: what was grown is a fact about the Fields, where what a pen
+  // may draw is a fact about what the faction has learned. Render it against `fodderNeed` as
+  // "need 6.0/turn - growing 5.0/turn".
+  fodderIncome:float = 0;
+  // `turnsOfFodder` = turns until `fodderStore` empties at `fodderNeed - fodderIncome`, and it is
+  // the SAME idiom as `turnsOfFood` above, computed by the same function
+  // (`core_sim::snapshot::population::larder_runway_turns`) - INCLUDING ITS NO-DRAIN SENTINEL.
+  // 999 = not fodder-limited (the income meets or beats the need, or nothing is drawing at all,
+  // which is what a band with no pens publishes); read it as infinity. ONE phrasing for one concept:
+  // a client must not need a second way to say "turns of buffer left", and must not branch two ways.
+  turnsOfFodder:float = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -1440,7 +1469,7 @@ table LaborAssignment {
   //
   // NEITHER IS FOOD INCOME: `PopulationCohortState.foodIncome` stays Sum(actualYield) and must never
   // include these, because that sum is one side of the pinned larder identity
-  //   larder_delta == foodIncome - foodConsumption - penFeedUpkeep
+  //   larder_delta == foodIncome - foodConsumption - raidForfeit
   // and trade goods never touch the larder (they credit the faction stockpile). Render a trade line
   // ONLY when the value is > 0, the rule flora's cash-crop line already uses.
   //
@@ -2303,7 +2332,7 @@ table ForagePatchState {
   // turn — and A PROJECTION WHEN NOTHING IS BEING BUILT, which is by definition the state a compose
   // sheet is looking at. With an improvement in flight it counts down the running meter; with none
   // it is what the NEXT rung would take the crew currently working the patch. Always meaningful,
-  // never `-1`-because-unstarted — the same rule `penUpkeep` follows on a herd.
+  // never `-1`-because-unstarted — the same always-meaningful rule `corralYield` follows on a herd.
   //
   // READ IT BESIDE the `*WorkCost` for the assignment's own `improvement`, or for the next rung up
   // (`isCultivated`/`isField`) when that is empty — the pair reads "50 work, ~25 turns", so they
@@ -2351,7 +2380,7 @@ table ForagePatchState {
   // gate refuses it still reads `-1` at any staffing and any meter — it is not running at all.
   //
   // THE CLIENT CANNOT COMPUTE THIS. It holds neither the crew's output, nor the floor multiplier,
-  // nor the kit's build rate — so the sim answers, exactly as it does for `penFeedUpkeep` and the
+  // nor the kit's build rate — so the sim answers, exactly as it does for the
   // yield forecast. One field for both plant rungs: at most one improvement is ever in flight on
   // one source, and at most one rung is ever next.
   buildTurnsRemaining:int = -1;
@@ -2421,9 +2450,9 @@ table ForagePatchState {
   // --- THE STANDING UPKEEP (appended, docs/plan_standing_upkeep.md section 2) --------------------
   // What it costs to HOLD this patch at the rung it stands on, in WORK UNITS - the RATE half of
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
-  // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
+  // answers and the client does zero arithmetic.
   //
-  //   upkeepDemand    = THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn. Follows penUpkeep's
+  //   upkeepDemand    = THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn. Follows corralYield's
   //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
   //                     no upkeep it is honestly 0, and a source nobody has started reads 0 (see
   //                     the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
@@ -2479,7 +2508,7 @@ table ForagePatchState {
   // So what this pair is FOR is the standing bill: what holding the rung will cost the keeping pool
   // once the build lands, which is a cost the player has to be able to see before committing.
   //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the corralYield rule): it is the LADDER's rate for that rung,
   // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
   // On a patch mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
   // cannot yet give. `0` only where the rung declares no upkeep.
@@ -2509,7 +2538,7 @@ table ForagePatchState {
   // the PREVIOUS turn's shortfall while this reads 0 - correctly, because that loss is already spent.
   // A readout wanting the turn's realised cost must read the meter, not this field.
   //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule). It is `0` when the keeping covers the
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the corralYield rule). It is `0` when the keeping covers the
   // demand, when the source is still inside its rung's grace, when nothing is built here, and when
   // the rung declares no `meter_decay` at all - WHICH IS BOTH ANIMAL RUNGS, whose penalty is the shed
   // rather than a meter bleed. An animal source therefore always reads `0` here and that is the
@@ -2870,7 +2899,7 @@ table BuildQueueEntryState {
 // So each row states the per-worker contribution **under its own policy**, with the markup already
 // folded in server-side. The client does `min(w × row.perWorker*, row.ceiling*)` per component and
 // never learns what a markup is — the same "the sim answers, the client renders" discipline as
-// `penFeedUpkeep` and `huntTripEstimates`. `perWorkerProvisions`/`perWorkerFodder` repeat an
+// `huntTripEstimates`. `perWorkerProvisions`/`perWorkerFodder` repeat an
 // invariant number across the rows; that redundancy is the price of the `min` being honest per
 // component, and it is cheap.
 table ForagePolicyCeiling {
@@ -3366,21 +3395,18 @@ table HerdTelemetryState {
   huntTripEstimates:[HuntTripEstimate] (deprecated);
   // --- The pen as a managed POPULATION (appended) --- a corralled herd is a population in its own
   // right: it EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md).
-  // `corralYield` above is the GROSS managed harvest; the feed is this separate debit, so the client
-  // can show both halves of the trade rather than one netted number.
-  // `penUpkeep` = the feed this pen DEMANDS, or WOULD demand once built, at the herd's CURRENT
-  // biomass (= pen.upkeep_per_biomass × biomass). A PROJECTION for an unpenned herd, the LIVE demand
-  // for a penned one — always meaningful, never 0-because-unpenned. Computed on the same biomass
-  // basis as `corralYield`, so the two are a matched pair: the pre-commit Corral row must show the
-  // running cost next to the payoff ("then +5.40/turn, feed −2.40/turn"), because the herd it is
-  // deciding about is by definition NOT yet penned.
   //
-  // DEMANDED, not PAID: a starving pen demands more than it is paid, and `penFedFraction` is that
-  // ratio. The band's ACTUAL ledger debit is `PopulationCohortState.penFeedUpkeep` (the real
-  // LocalStore::take amount) — draw THAT in the food ledger, not this.
-  penUpkeep:float = 0;
-  // `penFedFraction` = the fraction of that demand the keeper actually paid last turn. 1.0 = fully
-  // fed (also the value for a herd that is not penned); < 1 = STARVING — the herd is shrinking by
+  // RETIRED: `penUpkeep`. Was the FOOD the pen demanded per turn (= pen.upkeep_per_biomass × biomass),
+  // quoted beside `corralYield` so a pre-commit Corral row could show the running cost next to the
+  // payoff. HUMAN FOOD IS NOT ANIMAL FEED — a pen eats the grass its fenced footprint grows and the
+  // hay its keeper carries in — so there is no food-unit running cost to quote and `corralYield`
+  // stands alone. What a pen demands is fodder: fodder_per_biomass × biomass, of which
+  // `penPastureFraction` and `fodderDraw` below are the two sources. Kept as (deprecated) rather than
+  // deleted so the field id/slot stays reserved (a freed slot is how two branches collide on one id).
+  penUpkeep:float = 0 (deprecated);
+  // `penFedFraction` = the fraction of that FODDER demand the pen's grass and hay actually covered
+  // last turn, = (footprint_intake + fodderDraw) / (fodder_per_biomass × biomass). 1.0 = fully fed
+  // (also the value for a herd that is not penned); < 1 = STARVING — the herd is shrinking by
   // pen.starve_shrink_rate × (1 - penFedFraction) × biomass each turn, and its yield with it. It
   // recovers when fed again (it never despawns and never loses the pen). Render a warning.
   penFedFraction:float = 1;
@@ -3406,7 +3432,7 @@ table HerdTelemetryState {
   // closed-form disk count 1,7,19,… — it is wrong at map edges (the 2b HUD lesson). 0 if unpenned.
   penFootprintTiles:uint = 0;
   // `penPastureFraction` = the share of the pen's feed its footprint covered (0..1). 1.0 = the fenced
-  // pasture feeds it for free; 0.0 = a barren footprint pays the full larder bill. With `penUpkeep`
+  // pasture feeds it for free; 0.0 = a barren footprint lives entirely on hay. With `fodderDraw`
   // the client renders "fed by pasture NN% · larder N/turn". 0.0 if unpenned.
   penPastureFraction:float = 0;
   // `penExtendProgress` = the in-flight ExtendPen ring's build meter, **in WORK UNITS** — the same
@@ -3452,28 +3478,21 @@ table HerdTelemetryState {
   // `ceilingTame` in `huntPolicyCeilings` is Tame's DURING-BUILDING dip, this is what the herd pays
   // after taming completes — so the client can render Tame as "→ +Y" (like Cultivate/Sow/Corral)
   // instead of quoting only the dip. 0 on a herd that never offers Tame (already penned, or a species
-  // whose husbandry ceiling is "wild"). Matched to `corralYield`/`penUpkeep`: Sustain < Tame < Corral.
+  // whose husbandry ceiling is "wild"). Matched to `corralYield`: Sustain < Tame < Corral.
   pastoralYield:float = 0;
   // The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3, §5.2), in
-  // fodder units. Lets the client show "fed by hay" beside `penUpkeep`'s "fed by bread": a pen fed by
-  // its hay draws down provisions less (or not at all). 0 for an unpenned herd, a keeper that has not
-  // learned Foddering, or a pen whose own footprint already fed it. Appended (append-only).
+  // fodder units. With `penPastureFraction` it is the WHOLE feed split — "Fed by pasture NN% · hay
+  // X.X", both sources in fodder against one fodder demand — and whatever the two leave uncovered is
+  // what `penFedFraction` falls short by. 0 for an unpenned herd, a keeper that has not learned
+  // Foddering, or a pen whose own footprint already fed it. Appended (append-only).
   fodderDraw:float = 0;
-  // --- The render-ready feed split (Flora Roster F3, appended last) --- the three terms one pen
-  // demand partitions into, so the client draws "Fed by pasture NN% · hay X.X · larder Y.Y" with ZERO
-  // arithmetic (the `penFeedUpkeep` precedent). `penUpkeep` above is the GROSS bill (upkeep × biomass,
-  // the same basis `corralYield` uses); these two are the NET remainders, in FOOD units.
-  // `penLarderBill` = the food/turn the keeper hauls from the FOOD larder AFTER the footprint's pasture
-  // and any drawn hay covered their share — the corral-tend branch's own `demand` local (= penUpkeep ×
-  // (1 − (footprint + hay)/grass_demand)). 0 when fully fed by pasture + hay, or unpenned. The
-  // invariant the client relies on: pasture_food + penHayFood + penLarderBill == penUpkeep (gross),
-  // where pasture_food = penUpkeep × penPastureFraction.
-  penLarderBill:float = 0;
-  // `penHayFood` = hay's contribution in FOOD-equivalent units (the food it DISPLACED from the larder
-  // = penUpkeep × fodderDraw / grass_demand). `fodderDraw` is in grass units (~25× the food scale) and
-  // cannot sit in the same row as the food-unit pasture/larder terms; this can. 0 when no hay drawn /
-  // no Foddering / unpenned.
-  penHayFood:float = 0;
+  // RETIRED: `penLarderBill` and `penHayFood`. They were the FOOD-unit terms of a three-way split
+  // (pasture_food + penHayFood + penLarderBill == penUpkeep): the bread a keeper handed its livestock,
+  // and hay restated in the units the PEOPLE eat in so it could sit in the same row. Both die with the
+  // larder feed — the split is grass and hay, in fodder, and `penPastureFraction` + `fodderDraw` are
+  // the whole of it. Kept as (deprecated) rather than deleted so the field ids/slots stay reserved.
+  penLarderBill:float = 0 (deprecated);
+  penHayFood:float = 0 (deprecated);
   // --- Predators Phase 0 (docs/plan_predators.md, appended last) --- the RAW combat components of this
   // herd's species, so the client can DERIVE danger itself (danger is never stored server-side, because
   // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression). `attack`/
@@ -3524,7 +3543,7 @@ table HerdTelemetryState {
   // its four extractive rungs correctly read `0.74 food · 0.18 trade`.
   // Read each beside its food sibling as one vector, and render each component only when it is
   // non-zero (the same rule `perWorkerTrade` follows). 0 on a herd that never offers the rung.
-  // `corralTrade` is GROSS like `corralYield`; the pen's feed (`penUpkeep`) is a PROVISIONS debit
+  // `corralTrade` is GROSS like `corralYield`; the pen's feed is FODDER, never a PROVISIONS debit,
   // and stays on the food half only.
   // RETIRED (arc #527) with the trade-goods axis.
   pastoralTrade:float (deprecated);
@@ -3804,7 +3823,7 @@ table HerdTelemetryState {
   // (SourceYieldForecast::managedYieldBiomass / pastoralYieldBiomass, resolved once in
   // hunt_forecast), so a rung's two readouts cannot describe different harvests.
   //
-  // corralMaterial is GROSS like corralYield - the pen's feed (penUpkeep) is a PROVISIONS debit and
+  // corralMaterial is GROSS like corralYield - the pen's feed is FODDER, never a PROVISIONS debit, and
   // never touches it. EMPTY on a herd that never offers the rung, and EMPTY means "no row".
   corralMaterial:[MaterialPayoff];
   pastoralMaterial:[MaterialPayoff];
@@ -3926,9 +3945,9 @@ table HerdTelemetryState {
   // --- THE STANDING UPKEEP (appended, docs/plan_standing_upkeep.md section 2) --------------------
   // What it costs to HOLD this herd at the rung it stands on, in WORK UNITS - the RATE half of
   // the ladder, beside the build's PILE. All three are published rather than two, because the sim
-  // answers and the client does zero arithmetic (the penFeedUpkeep discipline).
+  // answers and the client does zero arithmetic.
   //
-  //   upkeepDemand    = THE BILL THIS HERD'S KEEPERS WERE HANDED this turn. Follows penUpkeep's
+  //   upkeepDemand    = THE BILL THIS HERD'S KEEPERS WERE HANDED this turn. Follows corralYield's
   //                     rule: it is ALWAYS MEANINGFUL, never a sentinel - for a rung that declares
   //                     no upkeep it is honestly 0, and a herd nobody has started taming reads 0
   //                     (see the `<rung>UpkeepDemand` pair below for the number a PRE-COMMIT quote
@@ -3990,7 +4009,7 @@ table HerdTelemetryState {
   // So what this pair is FOR is the standing bill: what holding the rung will cost the keeping pool
   // once the build lands, which is a cost the player has to be able to see before committing.
   //
-  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the penUpkeep rule): it is the LADDER's rate for that rung,
+  // ALWAYS MEANINGFUL, NEVER A SENTINEL (the corralYield rule): it is the LADDER's rate for that rung,
   // resolved at capture whether or not a build is in flight, exactly as the `*WorkCost` beside it is.
   // On a herd mid-build it equals `upkeepDemand`; on an unstarted one it is the number that field
   // cannot yet give. `0` only where the rung declares no upkeep.
@@ -4086,6 +4105,47 @@ table HerdTelemetryState {
   //
   // The bottom rung is `animal:wild`, which every untouched herd on the map publishes.
   currentRung:string;
+
+  // WHAT THIS PEN STILL NEEDS GROWN FOR IT (appended last, append-only wire) - the hay this pen is
+  // short PER TURN, in fodder units: max(0, fodder_per_biomass x biomass - footprint_intake). 0 for
+  // an unpenned herd and for a pen whose own fenced footprint already covers it.
+  //
+  // IT IS THE GAP, NOT THE GROSS DEMAND, because the gap is the number the player acts on: grazing
+  // is free and hay is the thing they have to farm. The gross needs no field of its own -
+  // `penPastureFraction` above already states the land's share of it - so a pen row reads "land
+  // covers 40% - needs 12.0 hay/turn" from the two together, with no arithmetic.
+  //
+  // IT IS PUBLISHED EVEN WHEN THE KEEPER CANNOT ACT ON IT. Unlike `fodderDraw`, this is NOT gated on
+  // Foddering: a band that cannot draw hay at all still keeps a herd that is starving for exactly
+  // this much, and zeroing the need because the remedy is knowledge rather than hay would hide the
+  // one case the player most needs to see.
+  //
+  // A FIXED FOOTPRINT UNDER A GROWING HERD IS A RISING NEED, which is the slow trap this field exists
+  // to surface in advance: a pen's carrying capacity is fixed and its herd is not, so a pen that
+  // feeds itself today becomes hay-dependent long before an animal dies of it. The band-level
+  // roll-up is `PopulationCohortState.fodderNeed`.
+  penHayNeed:float = 0;
+
+  // HOW MUCH MORE FODDER THIS PEN NEEDS PER TURN (appended last, append-only wire) - the READOUT
+  // number, in fodder units: max(0, penHayNeed - fodderDraw). What the fenced footprint does not
+  // grow AND the keeper did not carry in, so a pen row reads "40% pasture - 7% fodder - needs 11.3
+  // more/turn" without the client subtracting two figures sitting on the same line.
+  //
+  // THE SIM OWNS THE ARITHMETIC. `penHayNeed` and `fodderDraw` are both already on this row, so a
+  // client COULD subtract them - but the two are stamped on one pass and this is stamped with them,
+  // which is what makes it impossible for the difference to describe a different turn from its
+  // terms.
+  //
+  // UNGATED BY FODDERING, exactly as `penHayNeed` is. A band that has not learned Foddering draws
+  // nothing, so its shortfall is its WHOLE need - the case where the herd is dying and the remedy is
+  // knowledge rather than hay, which is precisely the case this readout exists for.
+  //
+  // CLAMPED AT ZERO, never negative. The settlement never hands a pen more hay than its gap, so the
+  // difference is non-negative by construction; the clamp is against the fixed-point quantisation of
+  // the draw, which can round a fully-served pen's take a fraction of a unit above its own need.
+  //
+  // 0 for an unpenned herd, and for a pen its own land feeds (which owes nothing to start with).
+  penFodderShortfall:float = 0;
 }
 
 table CommandEventState {

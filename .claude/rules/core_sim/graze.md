@@ -192,7 +192,7 @@ layer inert.
   **proportional to each tile's available graze** and floored at each patch's `reseed_floor_fraction ×
   capacity` (never permanently kills a tile). Herds draw **sequentially in `HerdRegistry` order** (that
   Vec is rollback-persisted in a fixed order), so a shared tile is order-independent under rollback.
-  Corralled herds are fed from the larder (`pen_upkeep`), not the land, so they are skipped.
+  Corralled herds eat their **fenced footprint** on a different draw (Phase 2d), so they are skipped.
 - **Graze-aware movement** (§4.1): `advance_herd_roam` (`best_land_neighbor_toward` /
   `wander_near_anchor`) **never steps onto a zero-graze tile** (no patch / zero capacity) and **biases
   toward higher graze capacity** among candidates, folding graze into the *existing* per-turn seeded
@@ -229,7 +229,7 @@ oscillates or crashes if built carelessly.
   consumer is unchanged** (no `&GrazeRegistry` threaded through the ~15 capacity call sites). Since
   **Grazing 2d** a **corralled** herd's `K` is likewise recomputed — over its *fenced footprint*
   (`hex_range_tiles(corralled_at, pen_radius)`), via the same `ecological_carrying_capacity` seam (a
-  wholly-barren footprint keeps the frozen `K` and is fully larder-fed). A non-grazing herd
+  wholly-barren footprint keeps the frozen `K` and must live entirely on hay). A non-grazing herd
   (`fodder ≤ 0`) or an absent graze layer keeps the constant `K`.
   > **⛔ THE SEAM IS NOW PARAMETERISED BY A STANDING, so a build can QUOTE the `K` it is heading for.**
   > `ecological_carrying_capacity(..., at: CapacityStanding)` answers at the standing it is handed:
@@ -313,21 +313,41 @@ See Also: `docs/plan_grazing_2b.md` §2.2 (the convergence risk), §9 (the measu
 ## Phase 2d — the pen economy: a pen becomes fenced land
 
 The pen slice (`docs/plan_grazing_2d.md`). A pen stops being a special case (a single frozen tile fed
-entirely from the larder) and becomes **a piece of fenced land the herd grazes**:
+entirely from the keeper's stores) and becomes **a piece of fenced land the herd grazes**:
 
 - **`Herd.pen_radius`** (default `0` = today's single tile) — the pen's footprint is
   `hex_range_tiles(corralled_at, pen_radius)`. All footprint logic (`herd_footprint`) reads it; the
   `ExtendPen` command grows it (2d-β, below).
 - **Footprint `K`** — `advance_herds` recomputes a penned herd's `K` over its footprint via the same
   `ecological_carrying_capacity` seam a mobile herd uses (penned herds stop being frozen). A
-  **wholly-barren** footprint keeps the frozen `K` and is fully larder-fed (§2.3's preserved worst case).
+  **wholly-barren** footprint keeps the frozen `K` and must be fed entirely on hay (§2.3's preserved
+  worst case) — or, with no hay, goes unfed and shrinks.
 - **Penned grazing** — `advance_herd_grazing` no longer skips corralled herds; a pen draws its footprint
   down with the same `graze_take` + `overgraze_escapement_fraction` (0.25) floor as a wild herd,
   capturing `footprint_intake`.
-- **The larder offset** (§2.3) — the FEED phase pays only `pen.upkeep_per_biomass × biomass ×
-  (1 − pasture_fraction)`, `pasture_fraction = clamp(footprint_intake / (fodder_per_biomass × biomass),
-  0, 1)`; `pen_fed_fraction` = the total fed share (pasture + the paid part of the reduced bill). The
-  food-ledger identity (`penFeedUpkeep`) is untouched — it draws the *actual* paid amount.
+- **The pasture offset** (§2.3) — the FEED phase measures `pasture_fraction =
+  clamp(footprint_intake / (fodder_per_biomass × biomass), 0, 1)`, and hay covers what is left;
+  `pen_fed_fraction = clamp((footprint_intake + fodder_draw) / (fodder_per_biomass × biomass), 0, 1)`.
+
+  > #### ⛔ THE LARDER OFFSET IS RETIRED — HUMAN FOOD IS NOT ANIMAL FEED
+  >
+  > 2d shipped this as a **larder** offset: the FEED phase drew
+  > `pen.upkeep_per_biomass × biomass × (1 − pasture_fraction)` of `FOOD` from the keeper band and
+  > `pen_fed_fraction` was *pasture + the paid part of that bill*. That was a modelling error, and its
+  > real effect was to **short-circuit the starvation path**: a pen whose pasture failed took the food
+  > out of its keepers' mouths instead of shrinking, so `starve_underfed_pen` only ever ran once the
+  > *people* were already starving. A pen is fed grass and hay, both fodder, and a shortfall is a
+  > shortfall.
+  >
+  > Gone with it: `pen.upkeep_per_biomass` (`PenConfig` now carries `deny_unknown_fields`, so a stale
+  > key **fails the load** rather than being silently dropped), `fauna::pen_upkeep`, the food-unit wire
+  > terms `penUpkeep` / `penLarderBill` / `penHayFood`, `LaborAllocation::last_pen_feed_upkeep` and its
+  > wire field `PopulationCohortState.penFeedUpkeep`, and `FoodFlow::pen_feed_upkeep` (the fertility
+  > half of the same error — your animals' appetite suppressed your births). Every one of those slots
+  > is `(deprecated)` in `snapshot.fbs` rather than deleted; field ids are positional.
+  >
+  > **The fed fraction is one expression in one unit** now. It used to add a fodder-unit land share to
+  > a food-unit payment ratio, which is precisely how the two units came to be mixed at all.
 - **Per-species husbandry `r`** (§3) — retires flat pastoral 0.25 / pen 0.90 for `min(cap, wild_r ×
   gain)` (`pastoral_gain` 1.5, `pen_gain` 3.0, `husbandry_regrowth_cap` 0.75). `capacity_fraction` /
   `pen_capacity` are **deleted**; `herd_capacity` collapses to `herd.carrying_capacity`.
@@ -338,25 +358,32 @@ entirely from the larder) and becomes **a piece of fenced land the herd grazes**
   grazer domesticates (goat/aurochs **2.0 / 5.0**). Orthogonal to `r`, byte-identical for a wild herd
   (`×1.0`), and scale-free in the pen net-positive floor. See "The husbandry yield ladder" for the
   roster and the resolver.
-- **The net-positive invariant** is reworked to a **best-case floor** (§2.4): validate guarantees only
-  the *fastest* species' pen nets positive when fully larder-fed; a slow breeder or poor-pasture pen may
-  run at a **loss by design** (it pays off only when self-feeding drives upkeep → 0).
+- **The net-positive invariant is retired with the larder feed it priced.** §2.4 reworked it to a
+  best-case floor — validate guaranteed only that the *fastest* species' pen nets positive when fully
+  larder-fed. With no food-unit upkeep there is no food-unit yield to clear, so the bound, its
+  `PEN_ESCAPEMENT_QUARTERS` derivation and `max_wild_regrowth_rate` (its only caller) are all gone. A
+  pen that cannot be fed starves its herd; it does not drain a granary.
 - **Wire** (append-only on `HerdTelemetryState`): `penRadius`, `penFootprintTiles` (server in-bounds
   count), `penPastureFraction`, `penExtendProgress`. Convergence gated by
-  `core_sim/tests/grazing_2d_pen.rs` (a pen converges at radius 0/1; lush → free, barren → full bill).
+  `core_sim/tests/grazing_2d_pen.rs` (a pen converges at radius 0/1; lush → free and fully fed, barren
+  → starving, and **neither touches the keeper's larder**).
 
 ### The pen feed is settled across every pen at once
 
-**A band keeps more than one pen, and the two stores that feed them are shared.** The FEED phase's
-draws are struck across every corralled-herd row the band holds, by one rule and in two passes
-(`systems/labor.rs`): `settle_pen_hay` splits the `FODDER` store **before** the assignment loop, and
-`settle_pen_larder` splits the larder **after** it. The corral-tend arm in between spends each pen's
-settled hay, stamps the herd, and *bids* its remaining bread bill; it takes no allocation decision of
-its own. `last_pen_feed_upkeep` keeps its meaning — the summed *actual* `LocalStore::take`, which is
-what the food-ledger identity
-`larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit` is closed with.
+**A band keeps more than one pen, and the hay that feeds them is shared.** The FEED phase's draw is
+struck across every corralled-herd row the band holds, by one rule and in one pass
+(`systems/labor.rs`): `settle_pen_hay` splits the `FODDER` store **before** the assignment loop. The
+corral-tend arm in between spends each pen's settled hay and stamps the herd; it takes no allocation
+decision of its own.
 
-**Each store is served by priority tier, and proportionally within one.** `High` pens in full, then
+**There is one store, and it is the hay.** There used to be a second pass — `settle_pen_larder`, which
+split the keeper's `FOOD` **after** the loop for whatever pasture and hay left unpaid, and which had to
+run late because provisions are credited *inside* it. It is retired with `PenLarderBid`,
+`last_pen_feed_upkeep` and `penFeedUpkeep`: human food is not animal feed. The food-ledger identity
+loses its term and reads
+`larder_delta == food_income − food_consumption − raid_forfeit`.
+
+**The store is served by priority tier, and proportionally within one.** `High` pens in full, then
 `Normal`, then `Low`; when the remainder cannot cover a tier, every pen in it gets
 `demand_i × (remaining ÷ tier_demand)`. Proportional-within-a-tier is what makes the split need no
 second ordering rule at all, so there is nothing left for a vector position to decide. The rank is the
@@ -374,37 +401,93 @@ row's own `SourcePriority` (`yield-forecast.md` → "The player's rank on a work
 > arrangements** — marked row first, marked row last, and marked row re-pushed to the end by an edit —
 > because a fixture with a single layout passes on the old code half the time.
 
-**The two stores are settled at different moments, because they are different kinds of thing.**
+**`FODDER` is a STOCK, settled before the loop**, against the store standing at the top of the pass —
+so a pen eats hay its band harvested on a *previous* turn. That is the store's own nature (the buffer
+the overwintering carry rides), and same-turn hay was reachable only by a pen whose row happened to sit
+after the hay Field's in `assignments`, which is the same positional artifact.
 
-- **`FODDER` is a STOCK, settled before the loop**, against the store standing at the top of the pass —
-  so a pen eats hay its band harvested on a *previous* turn. That is the store's own nature (the buffer
-  the overwintering carry rides), and same-turn hay was reachable only by a pen whose row happened to
-  sit after the hay Field's in `assignments`, which is the same positional artifact.
-- **The larder is a FLOW, settled after the loop.** `FOOD` is credited *inside* the assignment loop —
-  forage provisions, the pen's own harvest, the hunt take — so a band living hand to mouth has always
-  paid its pens out of the same turn's income, back when the draws ran inline. Settling bread off the
-  top-of-pass store would have taken that away: a keeper who opened the turn with an empty larder would
-  see `larder_share = 0`, the fed fraction collapse to the land/hay share, `last_pen_feed_upkeep`
-  publish `0`, and next turn's `advance_husbandry` shrink a herd it was carrying food home for.
+**Settling before the loop is safe because nothing in the pass reads what it writes.**
+`pen_fed_fraction` is consumed a stage *and* a turn later (`starve_underfed_pen` and `regrow_biomass`,
+both in Logistics, which runs ahead of Population).
 
-**Paying late is safe because nothing in the pass reads what the payment writes.** `pen_fed_fraction`
-is consumed a stage *and* a turn later (`starve_underfed_pen` and `regrow_biomass`, both in Logistics,
-which runs ahead of Population), and `last_pen_feed_upkeep` is read by the snapshot in Finalize. The
-late settlement therefore changes only *when the store is read*. What it may not do is let one row's
-income reach only the rows behind it, which is why it is a settlement and not a walk:
-`a_pen_is_fed_from_the_same_turns_gather_when_the_larder_opened_empty` drives both vector orders and
-`the_mark_decides_who_eats_out_of_the_days_gather_whatever_the_vector_says` drives all three
-arrangements against a larder that is nothing but the day's gather.
-
-> A pen can therefore be part-fed **from its own slaughter** — the harvest is food in the larder like
-> any other. Draining a keeper's store no longer starves a pen that pays for itself; the fixtures that
-> want a genuinely unfed pen work it at a floor of `1.0` (`fauna_husbandry.rs`,
+> **A pen can no longer be part-fed from its own slaughter.** While the larder paid the shortfall, a
+> keeper's harvest was food in the store like any other, so draining a keeper did not starve a pen that
+> paid for itself and the fixtures that wanted a genuinely unfed pen had to work it at a harvest floor
+> of `1.0` to defeat that. Both are back in their natural shape: what starves a pen is a barren
+> footprint with no hay behind it (`fauna_husbandry.rs`,
 > `integration_tests/tests/pen_food_ledger.rs`).
 
 **The Foddering gate is asked once, for the faction, in the settlement.** A band that has not learned
 it bids `0` hay, so every term downstream collapses to the pasture-only pen exactly as before hay
 existed — pinned by `a_faction_without_foddering_draws_no_hay_however_full_the_store_is`, which must
 pass *both* before and after this change.
+
+### The hay bill is published as the GAP, and the sim does its arithmetic
+
+**Feeding off the land is free; hay is the thing you have to grow.** So what the readout carries is
+the *gap the fenced footprint leaves*, never the gross demand — `penHayNeed` on the herd row is
+`max(0, fodder_per_biomass × biomass − footprint_intake)`, in fodder units per turn, and a pen row
+reads *"land covers 40% · needs 12.0 hay/turn"* off it beside `penPastureFraction`. The gross gets no
+field of its own precisely because that fraction already states the land's share of it.
+
+**And the herd's ROLL-UP is the band's, not the client's** (`PopulationCohortState.fodderNeed`,
+`fodderIncome`, `turnsOfFodder` — see `yield-forecast.md` → "The band's hay ledger"). Three of the
+four numbers a player acts on are band-level, and the sim is what sums them.
+
+> #### ⛔ THE NEED IS PUBLISHED EVEN WHERE THE BAND CANNOT ACT ON IT
+>
+> `penHayNeed` is struck **before** the Foddering gate, unlike `fodderDraw` beside it. A band that
+> has not learned Foddering bids `0` hay and still keeps a herd that is short by exactly this much —
+> zeroing the need because the remedy is a *knowledge* rather than a *harvest* would blank the one
+> case the player most needs to see, on the row where it is happening.
+>
+> The three together are the honest sentence: the need says what the *land* leaves, the draw says
+> what was carried in, and `penFodderShortfall` says what is still missing.
+> `a_band_without_foddering_still_publishes_what_its_pen_needs` pins the need/draw pair — draw `0`,
+> need in full, against a genuinely stocked store.
+
+#### The number the player acts on is `penFodderShortfall`, and the sim subtracts
+
+A pen row states `Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn`. That last figure is
+**neither** of the two terms beside it: `penHayNeed` is the gap the *land* leaves and `fodderDraw` is
+what the keeper actually carried in, so what is still missing is their difference —
+`max(0, penHayNeed − fodderDraw)`, in fodder units per turn. The client *could* subtract, and does
+not: the sim owns the arithmetic and the client renders, which is the same rule that puts the band
+roll-up above on the wire instead of in a loop over herd rows.
+
+**It is stamped between its own two terms**, in the corral-tend branch of `advance_labor_allocation`,
+on the same pass that writes both. That is the whole reason it is a field rather than a client-side
+expression: a difference struck anywhere else could describe a different turn from the numbers it is
+a difference of.
+
+**Ungated by Foddering, exactly as `penHayNeed` is** (and unlike `fodderDraw`). A band that cannot
+draw hay draws nothing, so its shortfall *is* its whole need — the case where the herd is dying and
+the remedy is a knowledge rather than a harvest, which is precisely the case the readout exists for.
+Pinned across both shapes of "no hay arrived" by
+`grazing_hay_readout::a_pen_with_no_hay_is_short_its_whole_need_gate_shut_or_store_empty`: an empty
+store with Foddering known, and a full store without it, publish the same figure.
+
+**It floors at zero.** `settle_pen_hay` never settles a pen more hay than its own gap, so a negative
+difference is unreachable through the allocation — but the draw is *spent* through the `FODDER`
+store's fixed-point `Scalar`, which rounds to the nearest millionth and can hand a fully-served pen a
+take a hair above the `f32` need it was settled from.
+`an_over_supplied_pen_floors_at_zero_instead_of_publishing_a_negative` builds that pen from a biomass
+whose gross demand does not land on a `Scalar` step, and asserts the draw genuinely exceeds the need
+before asserting the clamp — so the arm cannot pass because nothing overshot.
+
+> #### ⛔ THE SLOW TRAP THIS EXISTS FOR: a footprint's capacity is FIXED and a herd is NOT
+>
+> A pen that feeds itself off the land today becomes hay-dependent as its herd grows, and until this
+> field there was nothing on screen that said so until animals started dying. The need rises turn on
+> turn with nothing about the map having changed, which is why a *rate comparison* — the need against
+> the hay actually being grown — is the readout rather than a stock. Pinned by
+> `grazing_hay_readout::a_growing_herd_publishes_a_rising_need_on_a_fixed_footprint`, whose
+> non-vacuity clause requires the need to stay strictly under the gross demand at both readings.
+
+**It is the retired `pen_feed_upkeep`'s replacement in kind, not in currency.** That field made a
+pen's upkeep visible by charging it to the food ledger; the charge was the modelling error, but the
+*visibility* was not, and it went out with it. What is published now is the same fact in the currency
+a pen actually eats in.
 
 **Only the rows the corral arm will actually reach are settled** — the herd must exist and be inside
 the hunt leash, the two gates the arm applies before its tend branch. A pen the arm lapses would
@@ -437,8 +520,8 @@ investment worked off over turns, reusing the corral build ladder — no materia
   rung's own `work_cost`, which it stamps into `pen_extend_cost`. At `pen_extend_cost` the ring
   completes: `pen_radius += 1` (saturating at `pen_radius_max`), meter and cost reset,
   `pen_extending` clears, and a `Corral` feed line fires; the larger
-  footprint's higher K arrives on the next `advance_herds`. The FEED (larder offset) is unchanged while
-  extending — self-feeding and the harvest dip are orthogonal.
+  footprint's higher K arrives on the next `advance_herds`. The FEED (the pasture offset) is unchanged
+  while extending — self-feeding and the harvest dip are orthogonal.
 - **Config:** `husbandry.pen_radius_max` (**2** → up to a 19-tile footprint; validated `>= 1`). The only
   new lever. **`pen_extending`** rides the checkpoint alongside `pen_radius` / `pen_extend_progress`,
   so a rollback rewinds an in-flight extension. `penExtendProgress` on the wire carries the live ring
@@ -448,7 +531,8 @@ investment worked off over turns, reusing the corral build ladder — no materia
   ring accrues over ~25 turns, flips `pen_radius` 0→1, K rises with the 7-tile footprint, and caps at
   `pen_radius_max`); `server::tests::extend_pen_*` (the five validation rejections + the happy path).
 - **Deferred (2d-γ, client):** the footprint highlight, the feed-split readout (`penPastureFraction` +
-  `penUpkeep`), and the extend affordance / "Fencing N%" badge (`penExtendProgress`).
+  `fodderDraw` — both fodder, against one demand, since `penUpkeep` is retired), and the extend
+  affordance / "Fencing N%" badge (`penExtendProgress`).
 
 **2d-δ — the husbandry ceiling: which species climb the ladder** (§4a). Not every animal can be herded,
 and not every herdable one can be penned. The ladder is a **sequence** (wild → pastoral → pen), so a

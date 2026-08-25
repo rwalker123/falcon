@@ -1721,7 +1721,7 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         if turns_clause != "":
             running_face = HudComposeVocab.IMPROVEMENT_RUNNING_TURNS_FORMAT % [
                 running_face, turns_clause]
-        if _rung_pays_nothing_under_its_feed(deal, band):
+        if _pen_rung_pays_nothing(deal, band):
             notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
         # **THE STATE OF THE METER IS THE FACE'S COLOUR, AND IT HAS THREE VALUES** — green while the
         # surplus is positive and a real turn count is quoted, amber while the crew banks exactly the
@@ -1939,7 +1939,7 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
     var notes: Array = []
     if build_crew <= SourceForecast.BUILD_CREW_NONE:
         notes.append(HudComposeVocab.BUILD_UNSTARTED_NOTE)
-    if _rung_pays_nothing_under_its_feed(
+    if _pen_rung_pays_nothing(
             SourceForecast.improvement_forecast(source, source_kind, prefix, floor, rung), band):
         notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
     target.add_child(HudWidgets.build_improvement_control(rung,
@@ -1949,18 +1949,24 @@ func _mount_declared_control(source: Dictionary, prefix: String, source_kind: St
         String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")),
         notes, true, SourceForecast.build_pace(turns, build_crew)))
 
-## **A ZERO PAYOFF UNDER A RUNNING FEED IS A PURE LOSS, and the note that says so has now outlived
-## three homes for the zero itself.** The pen harvests by constant escapement, so a herd at or below
-## the MSY point pays 0.00 while still eating feed every turn. It is a warning about the RUNG rather
-## than about the work in flight, which is why it rides the DECLARED control as well as the RUNNING
-## one — and why the test is ONE predicate, so those two cannot come to disagree about whether a
-## commitment is a loss.
-func _rung_pays_nothing_under_its_feed(deal: Dictionary, band: Dictionary) -> bool:
-    if deal.is_empty() or not bool(deal["feed_rung"]):
+## **A PEN THAT WOULD PAY NOTHING IS A PURE LOSS, and the note that says so has now outlived three
+## homes for the zero itself.** The pen harvests by constant escapement, so a herd at or below the MSY
+## point pays 0.00 while still eating its footprint and its keeper's hay, and while its keepers still
+## owe it work every turn. It is a warning about the RUNG rather than about the work in flight, which
+## is why it rides the DECLARED control as well as the RUNNING one — and why the test is ONE
+## predicate, so those two cannot come to disagree about whether a commitment is a loss.
+##
+## **GATED ON THE RUNG, not on a feed magnitude.** It used to require a non-zero `pen_upkeep` beside
+## the zero payoff; that field is retired with the food-unit pen bill, and a gate reading it would be
+## permanently false — the note would silently never fire again. The rung itself is the honest test,
+## and it is the only rung the note's own words can be said of ("Too depleted to PEN"): a plant rung
+## paying zero is a different sentence, and this note must not start speaking it.
+func _pen_rung_pays_nothing(deal: Dictionary, band: Dictionary) -> bool:
+    if deal.is_empty() \
+            or String(deal["improvement"]) != SourceForecast.IMPROVEMENT_CORRAL:
         return false
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    return float(deal["feed"]) * output >= SourceForecast.FOOD_FLOW_MIN \
-        and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN
+    return float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN
 
 ## **RETIRED — `_improvement_offer_face`, the verb and its PRICE.** It composed
 ## `🌱 Cultivate this patch — 50 work, ≈25 turns · 2 work a turn from Agriculture to hold` and was
@@ -1987,20 +1993,16 @@ func _rung_pays_nothing_under_its_feed(deal: Dictionary, band: Dictionary) -> bo
 func _improvement_running_tooltip(improvement: String) -> String:
     return String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, ""))
 
-## The done-state label's face. **The Corral rung carries the pen's per-turn upkeep and the Tame rung
-## does not, and that asymmetry is deliberate and permanent** (spec §4): a penned herd cannot graze,
-## so someone feeds it every turn, and a standing obligation belongs with the standing state. Do not
-## make the two webs match here.
+## The done-state label's face — the glyph and the rung's noun, THE SAME SHAPE ON BOTH WEBS.
+##
+## **The Corral rung's `· N.NN fodder/turn upkeep` clause is gone.** It quoted `pen_upkeep`, the pen's
+## food-unit feed bill, and that bill is retired: a pen is fed by its own fenced pasture and by hay,
+## never off the larder, so there is no standing food obligation for a done state to carry. What the
+## rung really costs to hold is WORK, and the work row's `⌃` tooltip states that for every rung alike.
 func _improvement_done_face(source: Dictionary, prefix: String, rung: String,
         band: Dictionary) -> String:
     var glyph := FoodIcons.for_policy(rung)
     var noun := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(rung, rung.capitalize()))
-    if SourceForecast.FORECAST_FEED_KEYS.has(rung):
-        var feed := float(source.get(prefix + String(SourceForecast.FORECAST_FEED_KEYS[rung]), 0.0)) \
-            * float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-        if feed >= SourceForecast.FOOD_FLOW_MIN:
-            return HudComposeVocab.IMPROVEMENT_DONE_UPKEEP_FORMAT % [
-                glyph, noun, SourceForecast.format_magnitude(feed)]
     return HudComposeVocab.IMPROVEMENT_DONE_FORMAT % [glyph, noun]
 
 ## **THE RUNG THE READOUT'S DEAL BLOCK QUOTES** — the composed verb while a build is in flight, else
@@ -2032,31 +2034,19 @@ func _improvement_deal_rung(kind: String, source: Dictionary, prefix: String,
 ## no deal for this rung, and no row is then rendered at all — never a fabricated `0.00`, the same
 ## rule the bare face formats follow.
 ##
-## **THE FORECAST LOOKUP SURVIVED THE ROW THAT NEEDED A FLOOR.** Corral's feed debit rides this row's
-## value, and `feed_rung` / `feed` are what say whether there is one — a structural test, so a rung
-## the wire does not describe can never quote an upkeep. Everything read here is floor-independent,
-## which is why the block is NOT in the live registry: `improvement_forecast` is asked at the FOOD
-## PEAK, the floor `_improvement_payoff_terms` already quotes the payoff at, a rung's pay being a
-## property of the finished rung rather than of the floor the crew holds while building it.
+## **THE ROW IS THE PAYOFF TERMS, AND NOTHING SUBTRACTED FROM THEM.** Corral used to append
+## `− N.NN feed` here, quoting `pen_upkeep` against a GROSS `corralYield`; that food-unit pen bill is
+## retired, so `corralYield` is what the pen actually pays and the row states it bare. There is no
+## dangling separator and no empty slot — the term is gone, not blanked. The rung's standing price is
+## WORK and is stated on the work row's `⌃` tooltip, the same place every other rung's is.
 func _improvement_deal_row(kind: String, source: Dictionary, prefix: String, band: Dictionary,
         rung: String, payoff_terms: String) -> Dictionary:
     if rung == "" or payoff_terms == "":
         return {}
-    var value := payoff_terms
-    var deal := SourceForecast.improvement_forecast(source,
-        SourceForecast.source_kind_for_labor(kind), prefix, SourceForecast.FLOOR_FOOD_PEAK, rung)
-    # THE PEN'S UPKEEP RIDES THE PAYOFF ROW, Corral only. `corralYield` is GROSS, so the row would
-    # otherwise promise a rate the pen never nets.
-    if not deal.is_empty() and bool(deal["feed_rung"]):
-        var feed := float(deal["feed"]) \
-            * float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-        if feed >= SourceForecast.FOOD_FLOW_MIN:
-            value = HudComposeVocab.IMPROVEMENT_DEAL_FEED_FORMAT % [
-                payoff_terms, SourceForecast.format_magnitude(feed)]
     return {
         HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL:
             String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung)),
-        HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE: value,
+        HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE: payoff_terms,
     }
 
 ## The payoff terms for a rung — the payoff VECTOR the built rung pays, each account only when

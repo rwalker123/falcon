@@ -909,6 +909,66 @@ twelve frames and one hundred and four `PASS`es (counted on the `: PASS` delimit
 assertions carrying the bare word in its prose); the band-compose arc three frames and twelve `PASS`es (the
 drawer pair's three, the dock frame's three, and the two-band compose pair below).
 
+**The band FODDER LEDGER arc is worth four frames and six `PASS`es** — measured, `1381 → 1387` and
+`490 → 494` on one windowed run. Five of the six are `band_expedition`'s
+(`band_hay_short` / `band_hay_covered` / `band_hay_empty_store` / `band_hay_and_pen`, whose block
+makes every claim over FOUR line-sets at once) and one is `herd_graze_pen`'s (the pen's hay need,
+appended to the existing self-feeding/foddered pair's block). `EXPECTED_CHECKPOINTS` moved 70 → 79
+and 71 → 72 respectively.
+
+**The PEN's `Fed:` ROW is worth one frame and five `PASS`** — measured, `1387 -> 1392` on one windowed
+run. The frame is `herd_pen_no_fodder`, appended LAST in `chapters/herd_graze_pen.gd` so no frame
+before it moves; the `PASS`es are that chapter's pen block growing from four assertions to nine, over
+FOUR line-sets in ONE block. The four states differ only in which optional terms are present -
+`all pasture`, a fodder share, `no fodder`, a shortfall clause with and without its `more` - so each
+is the others' control, and checking one in a frame of its own is exactly the gap this arc has lost
+three defects in. Two of the nine make claims no needle on a single state can: the fodder share pinned
+as `fed - pasture` on a fixture where a division answers 12% to the subtraction's 7%, and the CORRAL
+row pinned as the plain badge on both starving pens, which is the regression risk of collapsing
+`corral_built_label` down to it. `_lines_any_contain_ci` is the chapter's case-insensitive twin, for a
+RETIRED word that must not return in ANY spelling. The chapter's `EXPECTED_CHECKPOINTS` moved
+72 -> 78.
+
+**Its band frames are three states of ONE row and are judged together, not in three places.** Every
+claim in the block is a CONTRAST — draining against covered, rendered against absent, in the
+pull-down against on the row — and a contrast checked one half at a time is not checked: the runway
+alone passes on a row that always reads a number, the gate alone on a row that renders for every band
+in the game. So the fourth line-set is a plain forager band that must render NO Fodder row, and the
+assertions compare the four against each other rather than each against itself.
+
+**RESHAPING THAT ROW INTO THE FOOD ROW'S SHAPE cost one frame and six `PASS`** — measured,
+`1392 -> 1398`, `EXPECTED_CHECKPOINTS` 79 -> 86. The frame is `band_hay_breakdown`, the Fodder
+pull-down OPEN, appended after the block's dock frame is released so nothing before it moves; the
+block itself went from five assertions to nine and gained two outside it. **The open pull-down is a
+new STATE, so the four states stayed in the one block rather than splitting into a second family** —
+what an inline append produces is a perfectly plausible popover beside a row that ALSO carries the
+rows, which only a claim holding both halves at once can catch. So the block asserts the flows are in
+`fodder_breakdown_lines` AND that none of them is in the produced lines, and the frame then asks the
+opened POPOVER what it actually holds (a disclosure registered with an empty payload draws a card
+with nothing in it and looks fine in a thumbnail).
+
+**The WRAP is the thing that reshape removed, and it is MEASURED, not looked at**
+(`_assert_fodder_row_fits`): two lines of a rendered vitals block look exactly like two rows, and no
+`contains` can see the difference. The row's natural unwrapped run is measured in the drawer label's
+OWN font at its OWN size plus the `[table=2]` gutter — **216px in a 354px column** — with the run cut
+out of the parsed text by the row that FOLLOWS it, since `[table]` rows carry no line break into
+`get_parsed_text()`. It is asserted on `band_hay_short`, the state the long row wrapped in.
+
+**A pre-existing engine quirk visible in these frames:** the SECOND `[url]` row of a vitals table
+draws no meta underline. It was Morale's row before the Fodder row landed between them and it is the
+Fodder row's now; the BBCode is byte-identical for all of them (`_key_cell` builds every one), so it
+is Godot's table-cell underline pass and not a client difference. Do not "fix" it in the formatter.
+
+**`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
+on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
+states the band's `Fodder` ledger while the tile drawer states the starving pen's own
+`Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn` share of it — **one word across both**,
+the pen row saying `fodder` as the band's store row always has. The dock is `SIDE_RIGHT` on purpose — a vertical dock is the TALL
+tier, which keeps the Fodder row STANDALONE rather than merging it onto Food, the SHORT tier's merge
+being `band_panel_preview`'s to hold. The chapter releases the panel and hands the reference band
+back afterwards, the raid block's own restore idiom, so a stranded reserved edge cannot move frames
+in later chapters.
+
 **The bench's rate / finish / tint / clear block is worth sixteen of that hundred and four and one
 frame** — measured on the `: PASS` delimiter over the contiguous run from the crew-of-zero frame's
 first claim to the ✕-verb pair, the running bench's own five claims sitting up in state 1's block

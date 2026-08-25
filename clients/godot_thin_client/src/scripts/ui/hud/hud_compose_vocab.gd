@@ -249,32 +249,44 @@ const READOUT_ASIDE_SEPARATION := 4
 # gate reasons below (one per line), so a hover names the rung AND explains any lock.
 const POLICY_TOOLTIP_NAME_FORMAT := "%s — %s"
 
-# The pen as a managed POPULATION (docs/plan_corral_managed_population.md). A penned herd cannot
-# graze: its keeper hauls it `pen_upkeep` food/turn off the band larder. `pen_fed_fraction` is the
-# share of that demand the keeper actually paid last turn — anything below fully-fed means the herd
-# is SHRINKING and its yield with it, so the Corral row swaps its penned badge for a loud starving
-# state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView); the two
-# starving LABELS are `DetailFormat.PEN_STARVING_LABEL` / `PEN_FEED_STARVING_FORMAT`, beside the row
-# builders that are their only readers.
-# The pen's feed row in the herd drawer — the NET food-larder bill THIS pen draws per turn
-# (`pen_larder_bill`, after pasture + hay), and whether it is being paid. The same bill the feed-split's
-# "larder Y.Y" term states, so the two never disagree. The band's own ledger row is the sim-summed
-# `pen_feed_upkeep` across all its pens; this is the per-herd figure, which is why the two are never added.
+# The pen as a managed POPULATION (docs/plan_corral_managed_population.md). **A PEN IS FED BY LAND AND
+# BY FODDER, NEVER BY THE PEOPLE'S LARDER** — human food is not animal feed. It eats the grass its
+# fenced footprint grows plus whatever FODDER its keeper carries in, and `pen_fed_fraction` is the
+# share of its demand those two covered last turn. Anything below fully-fed means the herd is SHRINKING
+# and its yield with it, so the drawer's `Fed:` row leads with a ⚠ in DANGER ink and the herd's map
+# glyph tints red. `PenStatus` owns that test (shared with MapView).
+#
+# **THE CORRAL ROW STATES THE RUNG AND NOTHING ELSE.** It wore the starving face
+# (`PEN_STARVING_LABEL`, retired) beside its own build meter, so a starving pen read
+# `Corral: ⚠ Starving — 47% fed 100%` — how FED the herd is against how BUILT its fence is, two
+# unrelated percentages with no separator. Feed is the `Fed:` row's whole job, mark and tint included.
+#
+# **THERE IS NO PEN-FEED COST ROW ANYWHERE** — not in the herd drawer, not on the band's food ledger,
+# not beside the pre-commit Corral payoff. A pen bills the food larder for nothing, so a shortfall has
+# no price to quote; it has a CONSEQUENCE, and the starving state is it.
+#
 # Grazing 2d-γ — the pen is fenced LAND that grazes itself. Two herd-drawer rows state it:
 #   • the FOOTPRINT — "Pen: radius R · N tiles" (`pen_radius` + the SERVER's in-bounds
 #     `pen_footprint_tiles` count, displayed VERBATIM — the closed-form hex-disk count is wrong at map
 #     edges, so the client never recomputes it).
-#   • the FEED SPLIT — "Fed by pasture NN% · hay X.X · larder Y.Y food/turn". The three render-ready
-#     terms the sim partitions the pen's GROSS demand into, ALL in food units, ZERO client arithmetic:
-#     `pen_pasture_fraction` × 100 (grazed free), `pen_hay_food` (hay's food-equivalent draw), and
-#     `pen_larder_bill` (the NET bread bill after pasture + hay). NOTE the larder term reads
-#     `pen_larder_bill`, NOT `pen_upkeep` — `pen_upkeep` is the GROSS projection (`upkeep_per_biomass ×
-#     biomass`, same basis as `corral_yield`, used only for the pre-commit Corral decision, pinned by
-#     `core_sim` `snapshot/mod.rs` `pen_upkeep_*` tests); the honest bill the keeper actually hauls is
-#     `pen_larder_bill`. Sim-pinned invariant: `pen_upkeep × pen_pasture_fraction + pen_hay_food +
-#     pen_larder_bill == pen_upkeep`. The hay segment shows ONLY when `pen_hay_food >= SourceForecast.FOOD_FLOW_MIN` (a
-#     pre-Foddering / no-hay pen renders the two-term form); a self-feeding pen reads "100% · larder
-#     0.0", a scrub pen "0% · larder N.N". The Pen-feed row below still carries the debit + starving detail.
+#   • the FEED ROW — `Fed:`, which carries the whole story in four states:
+#         Fed:  100% — all pasture
+#         Fed:  100% — 88% pasture · 12% fodder
+#         Fed:  ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn
+#         Fed:  ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn
+#     The headline is `pen_fed_fraction`, the first term `pen_pasture_fraction`, the second their
+#     DIFFERENCE (the share fodder covered) and the last `pen_fodder_shortfall`, the sim's own
+#     `max(0, need − draw)`. **THE WORD IS `fodder`, never `hay`** — the category, as the band's own
+#     store row names it.
+#     **THE GROSS DEMAND IS NOT ON THE WIRE**: two ratios, a draw and two GAPS are published, no
+#     absolute for the total, so the fodder share is a SUBTRACTION of two shares of the same demand
+#     and may never be `fodder_draw` divided by a ratio. The shortfall shows only at or above
+#     `SourceForecast.FODDER_FLOW_MIN` — a pen its own land covers says nothing rather than
+#     `needs 0.0` — and `fodder_draw` under that floor prints `no fodder` in the share's place, nothing
+#     carried in being a different fact from a little carried in (its shortfall drops the `more` to
+#     match). **The shortfall is published whether or not the keeper can act on it** (unlike
+#     `fodder_draw` it is not gated on Foddering), because a fixed footprint under a growing herd is a
+#     RISING need and that is the one thing a player must learn before an animal dies of it.
 # The Extend-pen affordance (Grazing 2d-γ; command `extend_pen <faction> <x> <y>` at the pen anchor).
 # On a built pen with no ring in flight it offers "Extend pen"; while a ring is being worked off
 # (`pen_extend_progress > 0`) it is replaced by a "Fencing N%" badge — the pen twin of the corral-build
@@ -545,7 +557,20 @@ const IMPROVEMENT_PAYOFF_ROW_LABELS := {
 # The pen's running upkeep, subtracted from the payoff on the row that states it (Corral only), so
 # the deal is never quoted gross on the register that commits to it. `corralYield` does NOT deduct
 # the feed, which is why this suffix has to be composed here rather than read off one wire field.
-const IMPROVEMENT_DEAL_FEED_FORMAT := "%s − %s feed"
+# **RETIRED — `IMPROVEMENT_DEAL_FEED_FORMAT`** (`"%s − %s feed"`), the pre-commit Corral row's
+# running-cost column. It subtracted `pen_upkeep` from `corralYield`, and that food-unit pen bill is
+# retired: a pen eats pasture and hay, never the larder, so the payoff has nothing to be netted
+# against and the row states `corralYield` bare. Do not reintroduce a separator with nothing after it.
+#
+# **AND THE HAY BILL CANNOT TAKE ITS PLACE, which was checked rather than assumed.** Quoting what the
+# pen WILL cost in hay would be a better row than the bare payoff, but `penHayNeed` is a fact about a
+# pen that EXISTS — `max(0, demand − footprint_intake)` — and it publishes `0` on the unpenned herd
+# this row is composed for. Nothing else on the wire reconstructs it either: the herd's
+# `fodderPerBiomass` is its YIELD rate (structurally `0` on every animal — no animal PAYS fodder) and
+# not the feed coefficient, and the footprint intake of a fence that has not been built is nowhere.
+# So the projected need would have to be synthesized from a ratio or minted as a new wire field, and
+# both are forbidden here. **The row states the payoff alone until the SIM publishes a projected
+# demand for an unpenned herd.**
 
 # `<glyph> <state noun>` — the done label. Static: there is nothing to uncheck and nothing to clear.
 const IMPROVEMENT_DONE_FORMAT := "%s %s"
@@ -553,7 +578,10 @@ const IMPROVEMENT_DONE_FORMAT := "%s %s"
 # **THE ONE ASYMMETRY BETWEEN THE TWO WEBS, and it is deliberate** (spec §4): a penned herd cannot
 # graze, so someone feeds it every turn. That standing obligation belongs with the standing state, so
 # the Corral done label carries it and the Tame one does not. Do not make these match.
-const IMPROVEMENT_DONE_UPKEEP_FORMAT := "%s %s · %s fodder/turn upkeep"
+# **RETIRED — `IMPROVEMENT_DONE_UPKEEP_FORMAT`**, the Corral done-state's `· N.NN /turn upkeep`
+# clause, for the same reason: it quoted the retired `pen_upkeep`. Both webs' done faces are now the
+# bare `IMPROVEMENT_DONE_FORMAT`, and the standing price a built rung really carries is WORK, stated
+# on the work row's `⌃` tooltip for every rung alike.
 
 # **RETIRED — `IMPROVEMENT_ABANDON_HINTS`** (`docs/plan_standing_upkeep.md` §2.4). Two per-web
 # sentences described what UNCHECKING a running build did, and there is no uncheck: the running

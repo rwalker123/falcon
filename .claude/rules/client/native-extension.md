@@ -220,9 +220,28 @@ party with nothing left to deliver.
 the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
 NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's
 larder; and `raid_forfeit` ← `cohort.raidForfeit()` (`float`, `as f64`), the food this band lost to
-raids THIS turn — the raid twin of `pen_feed_upkeep`. Both are consumed client-side by the band panel:
+raids THIS turn — the ledger's only debit beyond consumption, `pen_feed_upkeep` having been retired
+(human food is not animal feed; see `band-readouts.md`). Both are consumed client-side by the band panel:
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
+
+**THE BAND'S HAY LEDGER, three cohort keys appended last** — `fodder_need` / `fodder_income` /
+`turns_of_fodder`, the fodder twins of `food_income` / `food_consumption` / `turns_of_food`, in FODDER
+units against the `fodder_store` above. `fodder_need` is the hay the band's pens are SHORT per turn,
+**summed by the sim** over every pen it keeps (each pen's own share is the herd's `pen_hay_need`
+below): herd rows are fog-filtered, so a client-side sum silently drops the pens it cannot see — the
+mistake the retired `pen_feed_upkeep` was minted to avoid. `fodder_income` is the raw harvest its
+fodder Fields took, not a Foddering-gated share. `turns_of_fodder` comes off the sim's own
+`larder_runway_turns`, **999 no-drain sentinel included**, so the client reads it through
+`BandFoodStatus.is_limited` / `DetailFormat.food_turns_text` exactly as it reads the food runway —
+one idea, one spelling, no second constant and no second branch.
+
+`herds_to_array` decodes the matching per-pen key **`pen_hay_need`**, beside `pen_pasture_fraction`:
+the gap this pen's own fenced footprint does NOT cover, in fodder units per turn, `0` on an unpenned
+herd and on a pen its land already feeds (so the readout says nothing rather than `needs 0.0`). It is
+**not gated on Foddering** — a keeper who cannot draw hay still owes exactly this much. A FIXED
+footprint under a growing herd is a RISING need, which is the slow trap the field exists to surface
+before an animal dies of it.
 
 `population_to_dict` also decodes the **minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the
 band's three consumable kits and the tiers they resolve to: `hunting_kit_durability` /

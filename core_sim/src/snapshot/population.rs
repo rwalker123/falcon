@@ -203,22 +203,28 @@ fn allocation_summary(allocation: Option<&LaborAllocation>) -> String {
 /// `turns_of_food` sentinel for a cohort that is **not food-limited** — no food demand at all (a
 /// zero-population cohort), or income that meets or beats the drain so the larder never empties.
 /// The client reads it as ∞.
-pub(crate) const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
+///
+/// **Public because it is the sentinel for BOTH runways** — `turns_of_food` and `turns_of_fodder`
+/// are one concept in two currencies and share this one reading, so a test (or any consumer) names
+/// the constant rather than the literal `999`.
+pub const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
 
 /// The larder runway, in **TURNS until the larder is empty** — the value the wire's `turnsOfFood`
 /// carries.
 ///
-/// **One formula, both actors.** `runway = larder / net drain`, `net drain = consumption +
-/// pen_feed − income`. An **expedition** has no labor income and keeps no pens, so it reduces to
-/// `provisions / consumption` — exactly the historical reading, unchanged. A resident band with
-/// real income gets the honest number instead of the "we stop gathering and hunting" pessimism the
-/// old `larder / demand` assumed.
+/// **One formula, both actors.** `runway = larder / net drain`, `net drain = consumption − income`.
+/// An **expedition** has no labor income, so it reduces to `provisions / consumption` — exactly the
+/// historical reading, unchanged. A resident band with real income gets the honest number instead of
+/// the "we stop gathering and hunting" pessimism the old `larder / demand` assumed.
+///
+/// **A band's PENS are not in the drain**, and were wrongly subtracted here while a pen drew the
+/// larder: a pen eats grass and hay, so no number of animals shortens the people's runway.
 ///
 /// Resolved the way the client's FOOD OUTLOOK chart resolves it, so the two cannot disagree by a
 /// turn or two on the same panel:
 /// 1. Walk the larder forward over the merged per-source **arrival schedules** (`arrivals[i]` = the
-///    food landing `i + 1` turns from now), debiting `consumption + pen_feed` each turn and
-///    clamping at zero. The first turn that reaches zero is the answer, counted from now.
+///    food landing `i + 1` turns from now), debiting `consumption` each turn and clamping at zero.
+///    The first turn that reaches zero is the answer, counted from now.
 /// 2. It never empties within the horizon (or no source was projected at all — an empty schedule
 ///    is "no data", never a famine): fall back to the smooth `larder / net_drain` on the **steady**
 ///    `realized` income, capped at the sentinel.
@@ -226,11 +232,10 @@ pub(crate) const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
 pub(crate) fn larder_runway_turns(
     larder: f32,
     consumption: f32,
-    pen_feed_upkeep: f32,
     steady_income: f32,
     arrivals: &[f32],
 ) -> f32 {
-    let drain = consumption + pen_feed_upkeep;
+    let drain = consumption;
     if !arrivals.is_empty() {
         let mut food = larder.max(0.0);
         for (turn, arrival) in arrivals.iter().enumerate() {
@@ -837,16 +842,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
         .unwrap_or(0.0);
     let food_consumption = cohort.last_food_consumption;
-    // The pen feed this band ACTUALLY paid this turn (the real `LocalStore::take` debit, summed across
-    // its pens by `advance_labor_allocation`). It is in NEITHER of the two terms above — a pen's feed
-    // comes straight off `cohort.stores` — so without exporting it the client's
-    // `food_income − food_consumption` net-food row overstates the surplus by exactly the upkeep, and
-    // the player watches the larder drain with no explanation. Derived per-turn, like `food_income`.
-    let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
     // The food this band forfeited to a predator raid this turn (the real `LocalStore::take` debit
-    // `advance_predator_raids` levied on a casualty-causing raid). Like `pen_feed_upkeep` it is in
-    // NEITHER food term — a negative ledger row the client draws separately — and, like it, is derived
-    // per-turn by `advance_predator_raids` (`0.0` on a band not raided this turn).
+    // `advance_predator_raids` levied on a casualty-causing raid). It is in NEITHER food term — a
+    // negative ledger row the client draws separately — and it is derived per-turn by
+    // `advance_predator_raids` (`0.0` on a band not raided this turn). It is the ledger's only
+    // remaining third term: the retired `pen_feed_upkeep` beside it priced a pen's feed in the food
+    // the *people* eat, which is not what an animal eats.
     let raid_forfeit = allocation.map(|a| a.last_raid_forfeit).unwrap_or(0.0);
     // The honest larder runway — turns until the larder empties, INCOME INCLUDED (the wire calls it
     // `turns_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
@@ -858,11 +859,37 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         larder_runway_turns(
             cohort.stores.get(FOOD).to_f32(),
             demand.to_f32(),
-            pen_feed_upkeep,
             steady_food_income,
             &merged_arrival_schedule(allocation),
         )
     };
+    // **THE HAY LEDGER, in fodder units** — the pens' unmet feed against the Fields' harvest, both
+    // read off the allocation the way `raid_forfeit` is, and `0.0` for a band with no allocation at
+    // all. A pen eats grass and hay and never the people's bread, so none of this touches a food
+    // term: it is its own ledger beside its own store.
+    //
+    // **The need is the GAP the footprints leave, summed by the sim.** A client cannot sum it — herd
+    // rows are fog-filtered, so a pen out of sight would silently leave a client-side total the band
+    // still owes.
+    let fodder_need = allocation.map(|a| a.last_fodder_need).unwrap_or(0.0);
+    let fodder_income = allocation.map(|a| a.last_fodder_inflow).unwrap_or(0.0);
+    // **The fodder runway, through the LARDER'S OWN function and the larder's own sentinel** — one
+    // phrasing for one concept, so a client reads `turns_of_fodder` exactly as it reads
+    // `turns_of_food` and never branches two ways on "turns of buffer left".
+    //
+    // **No arrival schedule.** The food runway walks per-source arrivals because a hunt lands in
+    // lumps; hay is a Field's steady harvest into a stock, so the smooth `store ÷ net drain` arm is
+    // the whole of it — and an empty schedule is exactly how that function is asked for that arm.
+    //
+    // **A band with nothing draining reads [`NOT_FOOD_LIMITED_TURNS`]**, which is the same ∞ a
+    // well-fed larder publishes: no pens, or an income that meets the need, are both *not limited*
+    // rather than a number of turns.
+    let turns_of_fodder = larder_runway_turns(
+        cohort.stores.get(FODDER).to_f32(),
+        fodder_need,
+        fodder_income,
+        &[],
+    );
     // Expedition discriminators + persistence fields (empty/false for a normal band).
     let (
         is_expedition,
@@ -1067,7 +1094,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         settlement_stage,
         food_income,
         food_consumption,
-        pen_feed_upkeep,
         raid_forfeit,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
@@ -1169,8 +1195,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_destination_name,
         expedition_cargo_food,
         expedition_cargo_materials,
-        // The food ledger's last two terms — read off the allocation like `pen_feed_upkeep` and
-        // `raid_forfeit` beside them, and `0.0` for a band that has none. **These answer "what has
+        // The food ledger's last two terms — read off the allocation like `raid_forfeit` beside
+        // them, and `0.0` for a band that has none. **These answer "what has
         // crossed since the last published frame"**, the window the ledger identity closes over, and
         // they are cleared right after this capture (`systems::reset_transfer_ledger`).
         transfer_received: allocation.map(|a| a.last_transfer_received).unwrap_or(0.0),
@@ -1216,6 +1242,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     .collect()
             })
             .unwrap_or_default(),
+        // **THE BAND'S HAY LEDGER** — the fodder twins of `food_income` / `food_consumption` /
+        // `turns_of_food` above, resolved here for the same reason they are: the client renders, it
+        // does not sum. `fodder_need` is the roll-up the labor pass struck across every pen this
+        // band keeps, `fodder_income` the raw harvest its Fields paid in, and the runway below is
+        // the two against the store.
+        fodder_need,
+        fodder_income,
+        turns_of_fodder,
     }
 }
 

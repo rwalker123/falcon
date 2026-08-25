@@ -19,8 +19,8 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER, FODDERING_DISCOVERY_ID, FOOD,
+    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -1322,13 +1322,24 @@ fn stock_larder(app: &mut App, band: bevy::prelude::Entity, amount: f32) {
     cohort.stores.set(FOOD, scalar_from_f32(amount));
 }
 
-/// Empty the band's larder (so a keeper *cannot* pay its pen's feed → the herd starves).
-fn drain_larder(app: &mut App, band: bevy::prelude::Entity) {
+// **RETIRED: `drain_larder`.** It emptied the band's `FOOD` store so a keeper *could not pay* its
+// pen's feed, which is how every starvation fixture here used to be posed. A pen is fed grass and hay
+// now — the larder is what the *people* eat — so emptying it starves nobody's animals. What starves a
+// pen is a barren footprint with no hay behind it: see `feed_the_pens` for the other end of the same
+// lever.
+
+/// **Fill the band's hay store and grant it Foddering**, which is the whole of *"the keeper feeds its
+/// pen"*. `run_turns_with_hunt` never runs `advance_herd_grazing`, so a fixture pen's footprint grows
+/// nothing and hay is its only feed — which makes this an exact on/off switch for the feed.
+fn feed_the_pens(app: &mut App, band: bevy::prelude::Entity, hay: f32) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
     let mut cohort = app
         .world
         .get_mut::<PopulationCohort>(band)
         .expect("band exists");
-    cohort.stores.set(FOOD, scalar_zero());
+    cohort.stores.set(FODDER, scalar_from_f32(hay));
 }
 
 fn progress_of(app: &App, id: &str) -> f32 {
@@ -1705,7 +1716,7 @@ fn taming_is_a_per_species_cost_on_the_shared_rung() {
 ///
 /// A compose sheet is by definition looking at a herd nobody has started taming, so a sentinel there
 /// withholds the readout at the one moment it drives the decision. It is the same defect, and the
-/// same remedy, as `HerdTelemetryState.penUpkeep` projecting an unpenned herd's running cost.
+/// same remedy, as `HerdTelemetryState.corralYield` projecting an unpenned herd's payoff.
 ///
 /// The halving is the arc's thesis stated directly — add hands and watch the number fall — and is
 /// asserted as a **relation** rather than against turn literals, because turns are an output of the
@@ -2279,14 +2290,15 @@ fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
     // MSY = r·K/4 (the ceiling plateaus for any biomass at or above K/2).
     let msy_provisions = pen_r * cap / 4.0 * prov_rate;
 
-    // A Hunt assignment on the penned herd = herding/tending it. Keep its larder stocked so the pen's
-    // feed is always paid (the starvation path has its own test).
+    // A Hunt assignment on the penned herd = herding/tending it. Keep its HAY store stocked so the
+    // pen's feed is always covered (the starvation path has its own test) — the harness never grazes
+    // the footprint, so hay is the only feed a fixture pen can have.
     let keeper = spawn_hunter(&mut app, &id, 0.5);
-    stock_larder(&mut app, keeper, cap);
+    feed_the_pens(&mut app, keeper, cap);
 
     let mut last_yield = 0.0f32;
     for _ in 0..CONVERGENCE_TURNS {
-        stock_larder(&mut app, keeper, cap); // never let the feed run out
+        feed_the_pens(&mut app, keeper, cap); // never let the feed run out
         run_turns_with_hunt(&mut app, 1);
         last_yield = yield_of(&app, keeper);
     }
@@ -2336,9 +2348,9 @@ fn pen_collection_turn(
     app: &mut App,
     id: &str,
     band: bevy::prelude::Entity,
-    larder: f32,
+    hay: f32,
 ) -> (f32, f32) {
-    stock_larder(app, band, larder);
+    feed_the_pens(app, band, hay);
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_husbandry);
     let before = herd_of(app, id).biomass;
@@ -2572,8 +2584,9 @@ fn the_re_expressed_pen_lands_where_the_managed_rate_did() {
         let mut last = 0.0f32;
         for _ in 0..CONVERGENCE_TURNS {
             // Never let a pen's feed run out — the starvation path has its own test, and a hungry
-            // pen would be measuring that instead.
-            stock_larder(&mut app, keeper, cap);
+            // pen would be measuring that instead. **Hay**, because that (with the footprint's grass,
+            // which this harness does not run) is what a pen eats.
+            feed_the_pens(&mut app, keeper, cap);
             run_turns_with_hunt(&mut app, 1);
             last = yield_of(&app, keeper);
         }
@@ -2604,26 +2617,30 @@ fn the_re_expressed_pen_lands_where_the_managed_rate_did() {
     );
 }
 
-/// **The pen EATS.** Its keeper's larder is debited exactly `pen.upkeep_per_biomass × biomass` every
-/// turn it tends — a confined herd cannot graze, so the keeper brings it food.
+/// **THE PEN EATS, AND IT DOES NOT EAT THE PEOPLE'S FOOD.** A keeper tending a pen credits its
+/// larder with the harvest and debits it for nothing at all — the larder comes out at exactly
+/// `stock + gross yield`.
+///
+/// This test used to assert the opposite: `larder == stock − upkeep_per_biomass × biomass + gross`,
+/// *"the keeper must bring it food"*. **Human food is not animal feed.** A penned herd eats the grass
+/// its fenced footprint grows and the hay its keeper carries in; what those leave short leaves the
+/// **herd** hungry, never the band. The pen here is on a barren footprint with no hay, so it is
+/// maximally short — which is precisely the state the retired larder draw would have billed for.
 ///
 /// **Seated at the OPERATING POINT (slice 8).** `corral_herd` seats the herd at `B = K`, where the
 /// pen's escapement harvest is the standing **stock** `K/2` — a one-off windfall identical at every
-/// rung, not the `r·K/4` *rate* this test asserts the pen pays. So it re-seats to where a running
-/// pen actually stands (`K/2` + the turn's regrowth) before measuring. The **upkeep** half was never
-/// in doubt (it is charged on biomass, whatever the biomass is); what the reseat restores is the
-/// **gross-yield** half and the `upkeep < gross` net-positive claim underneath it.
+/// rung, not the `r·K/4` *rate* this test measures the gross yield against. So it re-seats to where a
+/// running pen actually stands (`K/2` + the turn's regrowth) before measuring.
 #[test]
-fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
+fn tending_a_pen_never_debits_the_keepers_larder() {
     const STOCK: f32 = 500.0;
 
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     corral_herd(&mut app, &id);
-    let (upkeep_rate, pen_r, prov_rate) = {
+    let (pen_r, prov_rate) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         (
-            fauna.husbandry.pen.upkeep_per_biomass,
             // Per-species pen rate (Grazing 2d): the corralled herd's own rung.
             herd_ecology(&herd_of(&app, &id), &fauna).regrowth_rate,
             fauna.hunt.provisions_per_biomass,
@@ -2633,7 +2650,6 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
     let cap = herd_of(&app, &id).carrying_capacity;
     let pen_msy = pen_r * cap / 4.0;
     reseat(&mut app, &id, cap, cap * MSY_BIOMASS_FRACTION + pen_msy);
-    let biomass = herd_of(&app, &id).biomass;
 
     let keeper = spawn_hunter(&mut app, &id, 0.5);
     stock_larder(&mut app, keeper, STOCK);
@@ -2641,44 +2657,53 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
     // One Population turn only, so the herd's biomass (and thus the demand) is the one we measured.
     app.world.run_system_once(advance_labor_allocation);
 
-    let expected_upkeep = upkeep_rate * biomass;
     let gross = yield_of(&app, keeper);
     let expected_gross = pen_msy * prov_rate;
     assert!(
         (gross - expected_gross).abs() < expected_gross * 0.02,
-        "the credited yield is GROSS (upkeep is a separate debit): {gross} vs {expected_gross}"
+        "the credited yield is GROSS, and now also net: {gross} vs {expected_gross}"
     );
-    // larder = stock − upkeep + gross yield.
-    let expected_larder = STOCK - expected_upkeep + gross;
+    // **NOT ONE UNIT WAS TAKEN FOR FEED**: larder = stock + gross yield, with no third term.
+    let expected_larder = STOCK + gross;
     let larder = larder_of(&app, keeper);
     assert!(
         (larder - expected_larder).abs() < 0.05,
-        "the pen debits exactly upkeep_per_biomass × biomass ({expected_upkeep}): \
-         larder {larder} vs expected {expected_larder}"
+        "the pen debits NOTHING from the larder: larder {larder} vs stock {STOCK} + yield {gross} \
+         = {expected_larder}"
     );
+    // **Not vacuous**: the pen really was short of feed this turn, which is the exact state the
+    // retired larder draw billed for.
     assert!(
-        expected_upkeep > 0.0 && expected_upkeep < gross,
-        "the pen must cost real food, and still net positive: upkeep {expected_upkeep}, yield {gross}"
+        fed_fraction_of(&app, &id) < 1.0,
+        "the pen is on a barren footprint with no hay, so it must read underfed (got {})",
+        fed_fraction_of(&app, &id)
     );
 }
 
-/// **An underfed pen starves — and recovers.** A keeper with an empty larder cannot pay the feed, so
-/// the herd shrinks (its yield falling with it) and floors at the extinction floor rather than
-/// despawning or losing the pen. Feed it again and it grows back. Starving your animals to feed your
-/// people is a *decision*, not an accident.
+/// A penned herd's `pen_fed_fraction` — the share of its fodder demand grass and hay covered.
+fn fed_fraction_of(app: &App, id: &str) -> f32 {
+    herd_of(app, id).pen_fed_fraction
+}
+
+/// **An underfed pen starves — and recovers.** A pen whose fenced footprint grows nothing and whose
+/// keeper has no hay for it cannot be fed, so the herd shrinks (its yield falling with it) and floors
+/// at the extinction floor rather than despawning or losing the pen. Grow it some hay and it comes
+/// back. Letting your animals go hungry is a *decision* — what you spend a Field on — not an
+/// accident.
+///
+/// **The fixture is back in its natural shape.** It was posed at a harvest floor of `1.0` (take
+/// nothing at all) only to defeat the retired larder fallback: the feed was settled off the larder at
+/// the *end* of the labor pass, so a keeper who slaughtered out of the pen had that meat in hand and
+/// fed the herd back some of it, and draining the store alone no longer starved a pen that paid for
+/// itself. With human food out of the feed model the keeper works its pen at [`SUSTAIN`] like any
+/// other, harvests it, and the herd still starves — because what it is short of is grass.
 #[test]
 fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
     const STARVE_TURNS: u32 = 40;
     const RECOVER_TURNS: u32 = 30;
-    /// **The keeper harvests NOTHING** — a floor of `1.0` leaves the whole stock standing, so the row
-    /// pays no provisions in.
-    ///
-    /// It is what makes "the larder is empty" true for the whole turn. The pen's feed is settled off
-    /// the larder as it stands at the **end** of the labor pass (`settle_pen_larder`), so a keeper who
-    /// slaughters out of the pen has that meat in hand when the feed is paid and can feed the herd
-    /// back some of it — which is honest, and is not the case this test is about. Draining the store
-    /// alone no longer starves a pen that pays for itself.
-    const LEAVE_THE_WHOLE_STOCK_STANDING: f32 = 1.0;
+    /// Hold the herd on its most productive biomass and carry the surplus home — the ordinary
+    /// keeper's floor, and the one the fixture wanted all along.
+    const SUSTAIN: f32 = 0.5;
 
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
@@ -2688,12 +2713,14 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         fauna.husbandry.pen.ecology.extinction_floor * cap
     };
-    let keeper = spawn_hunter(&mut app, &id, LEAVE_THE_WHOLE_STOCK_STANDING);
+    let keeper = spawn_hunter(&mut app, &id, SUSTAIN);
 
-    // Starve it: drain the keeper's larder every turn, so the feed can never be paid.
+    // Starve it: no hay, ever. `run_turns_with_hunt` never grazes the footprint either, so the pen
+    // has no feed at all. The larder is kept **full** throughout — the point is that a stocked band
+    // does not rescue a pen it cannot feed.
     let mut previous = herd_of(&app, &id).biomass;
     for _ in 0..STARVE_TURNS {
-        drain_larder(&mut app, keeper);
+        stock_larder(&mut app, keeper, cap);
         run_turns_with_hunt(&mut app, 1);
         let now = herd_of(&app, &id).biomass;
         assert!(
@@ -2731,10 +2758,11 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
         starving[0].label
     );
 
-    // Feed it again → it recovers (the pen's r = 0.60 is the fastest curve on the ladder).
+    // Feed it again — HAY, not bread → it recovers (the pen's r = 0.60 is the fastest curve on the
+    // ladder).
     let remnant = herd_of(&app, &id).biomass;
     for _ in 0..RECOVER_TURNS {
-        stock_larder(&mut app, keeper, cap);
+        feed_the_pens(&mut app, keeper, cap);
         run_turns_with_hunt(&mut app, 1);
     }
     let recovered = herd_of(&app, &id);
@@ -2787,12 +2815,14 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
 /// advantage — and for a slow breeder the barren pen is a **net loss by design** (§2.4: mammoth pen
 /// `r ≈ 0.12`, feed > yield). `FaunaConfig::validate` enforces only a best-case floor (the *fastest*
 /// breeder stays net-positive even fully larder-fed); the rest is a placement decision, not a config
-/// error. So this test asserts the GROSS growth-rate ladder + that the barren pen costs real feed, and
-/// records `pen_net` for observability rather than asserting it tops pastoral (which self-feeding, not
-/// this harness, delivers).
+/// error. So this test asserts the GROSS growth-rate ladder + that the barren pen eats real hay, and
+/// records the hay rate for observability rather than netting it against the yield — a pen pays
+/// provisions and eats fodder, two stores that never trade.
 #[test]
 fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
-    const MEASURE_STOCK: f32 = 50_000.0;
+    /// The `FODDER` store every pen row is topped back up to before each measured turn — deep enough
+    /// that hay is never the binding constraint, so the draw measures the pen's demand.
+    const MEASURE_HAY: f32 = 50_000.0;
     /// Turns averaged per rung, seeded at the operating point.
     ///
     /// Sized by the **slowest pulse the table contains**: a wild Thunder Mammoth sustains
@@ -2839,8 +2869,8 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
          point (B* = K/2) (provisions/turn) ==="
     );
     println!(
-        "{:<18} {:>8} {:>9} {:>9} {:>11} {:>9} {:>9}",
-        "species", "K", "wild", "pastoral", "pen gross", "upkeep", "pen net"
+        "{:<18} {:>8} {:>9} {:>9} {:>11} {:>9}",
+        "species", "K", "wild", "pastoral", "pen gross", "hay/turn"
     );
     for (species, cap, wild_r, body_mass) in &species_caps {
         let (species, cap, wild_r, body_mass) = (species.clone(), *cap, *wild_r, *body_mass);
@@ -2868,7 +2898,8 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
         let band = spawn_hunter(&mut app, &id, 0.5);
         let pastoral = average_yield_over_run(&mut app, band, MEASURE_TURNS);
 
-        // --- Pen: the gross yield credited + the feed debited, both read off the keeper's larder.
+        // --- Pen: the gross yield credited, and the HAY it ate — the feed is fodder, so it is read
+        // off the `FODDER` store and never off the larder, which a pen no longer touches.
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
         reseat(&mut app, &id, cap, cap);
@@ -2876,12 +2907,11 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
         corral_herd(&mut app, &id);
         reseat(&mut app, &id, cap, biomass); // corral_herd seats at cap; re-seat for B*
         let keeper = spawn_hunter(&mut app, &id, 0.5);
-        let (pen_gross, upkeep) =
-            average_pen_yield_and_upkeep(&mut app, keeper, MEASURE_TURNS, MEASURE_STOCK);
-        let pen_net = pen_gross - upkeep;
+        let (pen_gross, hay_eaten) =
+            average_pen_yield_and_hay(&mut app, keeper, MEASURE_TURNS, MEASURE_HAY);
 
         println!(
-            "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
+            "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {hay_eaten:>9.3}"
         );
 
         assert_growth_rate_ladder(
@@ -2891,8 +2921,7 @@ fn the_husbandry_ladder_is_a_per_species_growth_rate_ladder() {
             wild,
             pastoral,
             pen_gross,
-            upkeep,
-            pen_net,
+            hay_eaten,
         );
     }
     println!();
@@ -2916,37 +2945,46 @@ fn average_yield_over_run(app: &mut App, band: bevy::prelude::Entity, turns: u32
 }
 
 /// [`average_yield_over_run`] for the **pen**, which also has a bill: returns
-/// `(mean gross yield, mean larder upkeep)`.
+/// `(mean gross yield, mean hay eaten)`.
 ///
-/// The larder is topped back up to `stock` **before every turn**, so each turn's debit is readable in
-/// isolation (`upkeep = stock + gross − larder`) *and* the pen never goes hungry mid-run — an unfed
+/// The hay store is topped back up to `hay` **before every turn**, so each turn's draw is readable in
+/// isolation (`eaten = hay − remaining`) *and* the pen never goes hungry mid-run — an unfed
 /// pen shrinks (`starve_shrink_rate`), which would quietly turn this into a measurement of starvation
 /// rather than of the rung.
-fn average_pen_yield_and_upkeep(
+fn average_pen_yield_and_hay(
     app: &mut App,
     keeper: bevy::prelude::Entity,
     turns: u32,
-    stock: f32,
+    hay: f32,
 ) -> (f32, f32) {
     let mut gross_total = 0.0;
-    let mut upkeep_total = 0.0;
+    let mut hay_total = 0.0;
     for _ in 0..turns {
-        stock_larder(app, keeper, stock);
+        feed_the_pens(app, keeper, hay);
         run_turns_with_hunt(app, 1);
-        let gross = yield_of(app, keeper);
-        gross_total += gross;
-        // larder = stock − upkeep + gross ⇒ upkeep = stock + gross − larder.
-        upkeep_total += stock + gross - larder_of(app, keeper);
+        gross_total += yield_of(app, keeper);
+        // What the pen ate came out of the FODDER store, which this turn topped up to `hay`.
+        hay_total += hay - fodder_of(app, keeper);
     }
-    (gross_total / turns as f32, upkeep_total / turns as f32)
+    (gross_total / turns as f32, hay_total / turns as f32)
+}
+
+/// The band's remaining `FODDER` (hay) store.
+fn fodder_of(app: &App, band: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("band exists")
+        .stores
+        .get(FODDER)
+        .to_f32()
 }
 
 /// The **per-species GROWTH-RATE ladder** (Grazing 2d §3), asserted on **measured** numbers. Since the
 /// managed rungs now scale each species' own wild `r` (`pastoral_gain` 1.5 < `pen_gain` 3.0, capped),
 /// the ladder is monotone in GROSS yield for **every** species — the old fast-breeder pastoral
-/// inversion is gone. The pen's *net* payoff over pastoral is realized by SELF-FEEDING (this barren
-/// harness runs the pen fully larder-fed, so it only asserts the pen costs real feed; the net-positive
-/// floor for the fastest breeder lives in `fauna_config`'s validate tests).
+/// inversion is gone. The pen's payoff over pastoral is realized by SELF-FEEDING: this barren harness
+/// runs the pen entirely on **hay**, so it only asserts that the pen eats real fodder — which is what
+/// a lush footprint saves the keeper from having to farm.
 #[allow(clippy::too_many_arguments)] // one measured column per argument — a struct would only rename them
 fn assert_growth_rate_ladder(
     species: &str,
@@ -2955,8 +2993,7 @@ fn assert_growth_rate_ladder(
     wild: f32,
     pastoral: f32,
     pen_gross: f32,
-    upkeep: f32,
-    pen_net: f32,
+    hay_eaten: f32,
 ) {
     assert!(
         wild > 0.0,
@@ -2981,11 +3018,15 @@ fn assert_growth_rate_ladder(
         pen_gross > pastoral,
         "{species}: the pen's GROSS yield ({pen_gross}) tops the pastoral rung ({pastoral})"
     );
-    // The barren pen costs real feed — the worst-case cost self-feeding removes (§2.3). `pen_net` is
-    // recorded (it may sit below pastoral, or negative for a slow breeder, BY DESIGN — §2.4).
+    // The barren pen costs real feed — the worst-case cost self-feeding removes (§2.3) — and that
+    // feed is **HAY**, out of the `FODDER` store, never the people's bread. There is no `pen_net`
+    // column any more because the two quantities are in different units and different stores: a pen
+    // pays provisions and eats fodder, and subtracting one from the other was only ever possible
+    // while its feed came out of the larder.
     assert!(
-        upkeep > 0.0,
-        "{species}: the barren pen costs real feed ({upkeep}); net of it = {pen_net}"
+        hay_eaten > 0.0,
+        "{species}: the barren pen eats real hay ({hay_eaten}/turn) — the fodder cost self-feeding \
+         is what removes"
     );
 }
 

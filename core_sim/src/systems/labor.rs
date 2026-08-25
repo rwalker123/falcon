@@ -1257,10 +1257,13 @@ fn source_with_keeping_already_banked(
         })
 }
 
-/// **WHAT ONE PEN IS SETTLED TO DRAW OFF THE LAND AND THE HAY STOCK** — the pasture-and-`FODDER` half
-/// of the feed decision, struck by [`settle_pen_hay`] *before* the assignment loop and merely applied
-/// inside it. The bread half is settled *after* the loop by [`settle_pen_larder`], off a larder this
-/// turn's income has already been paid into.
+/// **WHAT ONE PEN IS SETTLED TO EAT** — the whole feed decision, struck by [`settle_pen_hay`]
+/// *before* the assignment loop and merely applied inside it.
+///
+/// **Two sources, one unit.** A pen eats the grass its fenced footprint grew and the hay its keeper
+/// carried in, both fodder, both measured against one demand (`fodder_per_biomass × biomass`).
+/// Nothing else feeds it: the keeper's `FOOD` larder is what the *people* eat, and a pen its pasture
+/// and hay cannot fill goes underfed and shrinks (`Herd::pen_fed_fraction` → `starve_underfed_pen`).
 ///
 /// Every field is the number the loop stamps or spends; nothing here is recomputed downstream, which
 /// is the point. [`Self::fodder_share`] is the **cap** the loop's `LocalStore::take` is made with, and
@@ -1274,33 +1277,19 @@ struct PenFeedShare {
     /// Grass units off the band's `FODDER` store — `0.0` without Foddering, which is what keeps a
     /// pen byte-identical to the pre-hay pasture-only one.
     fodder_share: f32,
-    /// The share of the grass demand the LAND and the settled HAY cover together, before the larder
-    /// is touched.
-    land_hay_fraction: f32,
-    /// The hay's food-equivalent — the share of the gross bread bill it paid off
-    /// (`Herd::pen_hay_food`).
-    hay_food: f32,
-    /// The NET larder bill after pasture and hay: the full amount this pen is owed
-    /// (`Herd::pen_larder_bill`), which is what its fed fraction is measured against and what it bids
-    /// into [`settle_pen_larder`] with.
-    larder_bill: f32,
-}
-
-/// **ONE PEN'S CLAIM ON THE LARDER**, recorded by the corral arm as the assignment loop passes its
-/// row and settled across every pen at once once the loop is done.
-///
-/// It carries the two terms the post-loop settlement cannot re-derive without the registry: the mark
-/// the player put on the row, and the share of the demand the land and hay already covered (which is
-/// what a short bread payment is added to for the herd's total fed fraction).
-struct PenLarderBid {
-    /// The herd the bill belongs to.
-    fauna_id: String,
-    /// The rank on the keeper's row — what decides who eats when the larder is short.
-    priority: SourcePriority,
-    /// The NET bread bill after pasture and hay ([`PenFeedShare::larder_bill`]).
-    bill: f32,
-    /// [`PenFeedShare::land_hay_fraction`], carried so the fed fraction can be stamped post-loop.
-    land_hay_fraction: f32,
+    /// **The whole fed fraction** — `(footprint_intake + fodder_share) / demand_grass`, clamped
+    /// `[0, 1]`, and [`FULLY_SERVED`] when nothing was demanded (a pen with no biomass is not
+    /// starving). Stamped onto `Herd::pen_fed_fraction` by the corral arm.
+    fed_fraction: f32,
+    /// **The hay this pen needs per turn** — `max(0, demand_grass − footprint_intake)`, in fodder
+    /// units, and the number the player acts on (grazing is free; hay is what has to be grown).
+    /// Stamped onto `Herd::pen_hay_need` by the corral arm and summed into the band's own
+    /// `LaborAllocation::last_fodder_need`.
+    ///
+    /// ⛔ **It is the bid BEFORE the Foddering gate**, unlike [`Self::fodder_share`] beside it. A
+    /// band that cannot draw hay at all still keeps a herd that is short exactly this much, and a
+    /// need zeroed because the remedy is knowledge would hide the very case the readout is for.
+    hay_need: f32,
 }
 
 /// **SERVE ONE SCARCE STORE ACROSS EVERY CLAIM ON IT AT ONCE** — [`SourcePriority::High`] in full,
@@ -1354,24 +1343,22 @@ fn settle_scarce_store(demands: &[(SourcePriority, f32)], available: f32) -> Vec
 /// inside the hunt leash, the two gates the arm itself applies before its tend branch. A pen the arm
 /// lapses would otherwise hold a reservation nothing ever draws, starving a pen that is in reach.
 ///
-/// # ⛔ THE TWO STORES ARE SETTLED AT DIFFERENT MOMENTS, AND THAT IS THE MODEL
+/// # ⛔ `FODDER` IS A STOCK, AND THAT IS THE MODEL
 ///
-/// **`FODDER` is a STOCK, settled here, against the store standing at the top of the pass** — so a pen
-/// eats the hay its band harvested on a *previous* turn. That is the store's own nature (the buffer
-/// the overwintering carry rides), and the alternative is the defect this settlement exists to kill:
+/// It is settled here, against the store standing at the **top of the pass** — so a pen eats the hay
+/// its band harvested on a *previous* turn. That is the store's own nature (the buffer the
+/// overwintering carry rides), and the alternative is the defect this settlement exists to kill:
 /// same-turn hay was reachable only by a pen whose row happened to sit after the hay Field's in
 /// `assignments`.
 ///
-/// **The larder is a FLOW, and is settled AFTER the loop** by [`settle_pen_larder`] — `FOOD` is
-/// credited *inside* the assignment loop (forage provisions, the pen's own harvest, the hunt take), so
-/// a band living hand to mouth has always paid its pens out of the same turn's income. Settling bread
-/// here too would have taken that away: an empty opening larder would starve every pen of a band that
-/// was carrying food home all day.
+/// **There is no second store to settle.** A pen used to bid on the keeper's `FOOD` larder for
+/// whatever pasture and hay left unpaid, which had to wait until after the loop because provisions
+/// are credited *inside* it. Human food is not animal feed, so that bid is gone and with it the whole
+/// second pass: what grass and hay do not cover is a **shortfall**, and a shortfall starves the herd.
 #[allow(clippy::too_many_arguments)] // the store, the config, the leash, and the knowledge gate
 fn settle_pen_hay(
     assignments: &[LaborAssignment],
     registry: &HerdRegistry,
-    fauna: &FaunaConfig,
     stores: &LocalStore,
     foddering_known: bool,
     band_pos: UVec2,
@@ -1386,6 +1373,8 @@ fn settle_pen_hay(
         priority: SourcePriority,
         demand_grass: f32,
         pasture_fraction: f32,
+        /// What the footprint leaves uncovered, **ungated** — the readout's `hay_need`.
+        grass_shortfall: f32,
         fodder_demand: f32,
     }
     // The pens in hand, each with the demands it is about to bid with. Collected first so both
@@ -1430,6 +1419,7 @@ fn settle_pen_hay(
             priority: assignment.priority,
             demand_grass,
             pasture_fraction,
+            grass_shortfall,
             fodder_demand,
         });
     }
@@ -1441,97 +1431,43 @@ fn settle_pen_hay(
         .map(|bid| (bid.priority, bid.fodder_demand))
         .collect();
     let fodder_shares = settle_scarce_store(&fodder_bids, stores.get(FODDER).to_f32());
-    // With the hay settled, every pen's larder bill is known — hay pays the bread bill down exactly
-    // as pasture does, so the two are one `land_hay_fraction` term. The bill is *carried*, not paid:
-    // [`settle_pen_larder`] settles it after the loop, once this turn's food income is in the store.
+    // With the hay settled every pen's feed is decided, because hay and grass are the whole of it.
+    // **One expression in one unit**: what the land grew plus what the keeper carried in, over what
+    // the herd eats. Anything it falls short of is a shortfall, and the shortfall starves the herd.
     let mut settled: Vec<(String, PenFeedShare)> = Vec::with_capacity(pens.len());
     for (index, bid) in pens.iter().enumerate() {
         let herd = registry
             .find(bid.fauna_id)
             .expect("every bid was collected from this registry");
         let fodder_share = fodder_shares[index];
-        let land_hay_fraction = if bid.demand_grass > 0.0 {
-            ((herd.footprint_intake + fodder_share) / bid.demand_grass).clamp(0.0, 1.0)
+        // A pen that demands nothing (no biomass left) is not starving — the same
+        // nothing-demanded reading `Herd::pen_fed_fraction` has always carried.
+        let fed_fraction = if bid.demand_grass > NOTHING_DEMANDED {
+            ((herd.footprint_intake + fodder_share) / bid.demand_grass)
+                .clamp(NOTHING_DEMANDED, FULLY_SERVED)
         } else {
-            0.0
+            FULLY_SERVED
         };
-        let gross_upkeep = pen_upkeep(herd, fauna);
-        let hay_food = if bid.demand_grass > 0.0 {
-            gross_upkeep * (fodder_share / bid.demand_grass)
-        } else {
-            0.0
-        };
-        let larder_bill = gross_upkeep * (1.0 - land_hay_fraction);
         settled.push((
             bid.fauna_id.to_string(),
             PenFeedShare {
                 pasture_fraction: bid.pasture_fraction,
                 fodder_share,
-                land_hay_fraction,
-                hay_food,
-                larder_bill,
+                fed_fraction,
+                hay_need: bid.grass_shortfall,
             },
         ));
     }
     settled.into_iter().collect()
 }
 
-/// **THE BREAD SPLIT, STRUCK ONCE ACROSS EVERY PEN THIS BAND KEPT** — the larder half of the feed, and
-/// the mirror of [`settle_pen_hay`]: [`SourcePriority::High`] served whole, then `Normal`, then `Low`,
-/// and proportionally to demand within a short tier, so a pen's place in `assignments` decides nothing
-/// here either.
-///
-/// **It runs AFTER the assignment loop, and that is the whole reason it is a separate pass.** The
-/// larder is a flow: every food-crediting row (forage provisions, the pen's own harvest, the hunt
-/// take) pays into `FOOD` as the loop walks it, so a keeper whose larder opened empty still feeds its
-/// pens out of what its crews brought home today — as it always could when the draws ran inline. What
-/// it may *not* do is let one pen's income reach only the rows behind it in the vector, which is why
-/// this is a settlement and not a walk.
-///
-/// **Nothing in the loop reads what this writes.** `Herd::pen_fed_fraction` is consumed a stage later
-/// and a turn later — `advance_husbandry`'s `starve_underfed_pen` and `regrow_biomass` both run in
-/// Logistics, which precedes Population — and `LaborAllocation::last_pen_feed_upkeep` is published by
-/// the snapshot in Finalize. So deferring the payment to the end of the pass changes *when the store
-/// is read*, and nothing else.
-///
-/// Returns the food actually handed over, summed across the pens — the band's real larder debit
-/// (`LaborAllocation::last_pen_feed_upkeep`).
-fn settle_pen_larder(
-    bids: &[PenLarderBid],
-    registry: &mut HerdRegistry,
-    stores: &mut LocalStore,
-) -> f32 {
-    let demands: Vec<(SourcePriority, f32)> =
-        bids.iter().map(|bid| (bid.priority, bid.bill)).collect();
-    let shares = settle_scarce_store(&demands, stores.get(FOOD).to_f32());
-    let mut paid_total = NOTHING_DEMANDED;
-    for (index, bid) in bids.iter().enumerate() {
-        let Some(herd) = registry
-            .herds
-            .iter_mut()
-            .find(|herd| herd.id == bid.fauna_id)
-        else {
-            continue;
-        };
-        // The share is bounded by what the store held when it was struck and nothing takes `FOOD`
-        // between then and here, so this take pays in full; `LocalStore::take` still reports what it
-        // actually took, which is the number the ledger and the herd are stamped with.
-        let paid = stores.take(FOOD, scalar_from_f32(shares[index])).to_f32();
-        paid_total += paid;
-        // The herd's TOTAL fed fraction: the land+hay share plus the paid share of the
-        // (further-reduced) larder bill. Fully fed when the larder covers its remainder (or nothing
-        // was demanded). A pen fed by its grass and hay whose keeper can't pay is still fed by them —
-        // `land_hay_fraction`, never falsely 0 — so starvation/shrink sees a hayed pen as fed.
-        let larder_covered = if bid.bill > NOTHING_DEMANDED {
-            (paid / bid.bill).clamp(NOTHING_DEMANDED, FULLY_SERVED)
-        } else {
-            FULLY_SERVED
-        };
-        herd.pen_fed_fraction =
-            bid.land_hay_fraction + (FULLY_SERVED - bid.land_hay_fraction) * larder_covered;
-    }
-    paid_total
-}
+// **RETIRED: `settle_pen_larder` / `PenLarderBid`** — the bread half of the pen feed, settled across
+// every pen after the assignment loop because `FOOD` is credited *inside* it. It drew the keeper's
+// larder for whatever pasture and hay left unpaid, and it was a modelling error: **human food is not
+// animal feed**. Its real effect was to hide the starvation path — a pen whose pasture failed took the
+// food out of its keepers' mouths instead of shrinking, so `starve_underfed_pen` only ever ran once
+// the *people* were already starving. What grass and hay leave unpaid is a shortfall now, and
+// [`settle_pen_hay`] is the only settlement there is.
 
 /// **EVERY PIECE OF A BAND [`advance_labor_allocation`] TOUCHES**, named because the tuple crossed
 /// clippy's complexity bar when the bench joined it.
@@ -1919,16 +1855,6 @@ pub fn advance_labor_allocation(
         // **queue order** afterwards — the loop visits assignments, and the queue's order is the
         // player's.
         let mut build_quotes: Vec<(BuildSource, BuildQuote)> = Vec::new();
-        // The pen feed this band ACTUALLY pays this turn, summed across every pen it keeps (a band may
-        // keep more than one). Rebuilt from scratch each turn, exactly like `yields` — it is the real
-        // debit off `cohort.stores`, and it appears in neither `food_income` nor `food_consumption`, so
-        // the snapshot must export it or the band's net-food readout overstates the surplus by exactly
-        // this much (see `LaborAllocation::last_pen_feed_upkeep`).
-        let mut pen_feed_paid = 0.0_f32;
-        // **EVERY PEN'S BREAD BILL, RECORDED AS THE LOOP PASSES ITS ROW** and settled together once
-        // the loop is done — see [`settle_pen_larder`] for why the larder is settled late and the hay
-        // early.
-        let mut pen_larder_bids: Vec<PenLarderBid> = Vec::new();
         // **The band's fodder inflow rate this turn** (Flora Roster F3, §5.3) — the fodder its hay
         // Fields harvest into the `FODDER` store, summed across every Forage assignment. This is the
         // *sustained flow* the pen's `K_pen` term reads (NOT the store's stock, which would spike K
@@ -1937,6 +1863,12 @@ pub fn advance_labor_allocation(
         // by `advance_herds`' `ecological_carrying_capacity` — the deliberate Logistics-reads-what-
         // Population-wrote one-turn lag, exactly as `footprint_intake` is.
         let mut band_fodder_inflow = 0.0_f32;
+        // **The hay this band's pens are short, summed** (in fodder units per turn) — each kept pen's
+        // `max(0, demand_grass − footprint_intake)`, accumulated by the corral arm as it stamps the
+        // herds. Published as `fodderNeed` against the `fodderIncome` beside it, so the client renders
+        // *"need 6.0/turn · growing 5.0/turn"* without summing pen rows of its own: **the sim does the
+        // arithmetic**, which is the rule the retired `pen_feed_upkeep` was minted under.
+        let mut band_fodder_need = 0.0_f32;
         // The fauna ids of the pens this band tends this turn — the keepers whose `K_pen` gets the
         // fodder term. Collected in the loop; the rate is stamped on them post-loop (the take arm
         // already borrows the herd mutably, so a second pass keeps the borrows simple).
@@ -1948,13 +1880,13 @@ pub fn advance_labor_allocation(
         // the end, the pen the player had just adjusted was the one fed last. One pass that sees every
         // pen at once has no vector position left to spend: see [`settle_pen_hay`].
         //
-        // **Only the hay is settled here.** `FODDER` is a stock, so the store standing at the top of
-        // the pass is the right one to split; the bread bill is settled by [`settle_pen_larder`] after
-        // the loop, because the larder is a flow this turn's own rows pay into.
+        // **The hay is the whole of it.** `FODDER` is a stock, so the store standing at the top of
+        // the pass is the right one to split, and there is no second settlement behind it: a pen the
+        // land and the hay cannot fill is underfed, and the keeper's `FOOD` larder — which is what
+        // the *people* eat — is never asked.
         let pen_feed = settle_pen_hay(
             &allocation.assignments,
             &registry,
-            &fauna,
             &cohort.stores,
             knows(
                 &discovery,
@@ -3330,91 +3262,96 @@ pub fn advance_labor_allocation(
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
                     //
-                    // 1. **FEED.** The pen demands `pen.upkeep_per_biomass × biomass` from the
-                    //    keeper's own larder — a penned herd is confined and cannot graze, so the
-                    //    keeper must bring it food. `LocalStore::take` returns what it *actually*
-                    //    took, which is the partial-payment primitive: `fed_fraction = paid / demand`.
-                    //    A keeper who cannot pay starves the herd (next turn's `advance_husbandry`
-                    //    reads the flag and shrinks it — the deliberate one-turn lag).
+                    // 1. **FEED.** The pen demands `fodder_per_biomass × biomass` in **fodder** — a
+                    //    penned herd is confined and cannot roam to graze, so it eats the grass its
+                    //    fenced footprint grew and the hay its keeper carried in, and nothing else.
+                    //    **The keeper's larder is not on the table**: human food is not animal feed,
+                    //    and a pen that outgrows its pasture must shrink rather than take the food out
+                    //    of its keepers' mouths. What grass and hay leave unpaid is a shortfall, so
+                    //    `fed_fraction < 1` and next turn's `advance_husbandry` reads the flag and
+                    //    shrinks the herd — the deliberate one-turn lag.
                     // 2. **HARVEST.** The keeper takes the *pen's* MSY (`corral_provisions` →
                     //    `sustainable_yield` under the pen's ecology, `r` = 0.60), and — unlike the
                     //    retired flat rate — this **draws the herd down**, which is exactly what makes
                     //    it sustainable: the herd converges on `K_pen/2` and pays `r·K/4` forever.
                     //
-                    // The credited yield is **gross** (the feed is a separate debit above), so the
-                    // player sees both halves of the trade rather than one netted number. Marks the
-                    // herd tended so it doesn't escape in `advance_husbandry`. The animal mirror of
-                    // the tended-patch arm in Forage.
+                    // Marks the herd tended so it doesn't escape in `advance_husbandry`. The animal
+                    // mirror of the tended-patch arm in Forage.
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
                         // **THE FEED IS ALREADY SETTLED** (`docs/plan_standing_upkeep.md` §4.9 item
-                        // 9b). Every term below — the pasture offset (Grazing 2d §2.3), the hay draw
-                        // and its Foddering gate (Flora Roster F3 §5.2), and the three-terms-of-one-
-                        // demand split — is struck by [`settle_pen_hay`] across **every** pen this
-                        // band keeps, before the loop. What is left here is applying this pen's share:
-                        // the arm stamps the herd and spends the settled hay, and takes no allocation
-                        // decision of its own. **The bread bill is only recorded here**, and paid by
-                        // [`settle_pen_larder`] once the loop has finished crediting this turn's food.
+                        // 9b). Both terms below — the pasture offset (Grazing 2d §2.3) and the hay
+                        // draw with its Foddering gate (Flora Roster F3 §5.2) — are struck by
+                        // [`settle_pen_hay`] across **every** pen this band keeps, before the loop.
+                        // What is left here is applying this pen's share: the arm stamps the herd and
+                        // spends the settled hay, and takes no allocation decision of its own.
                         //
                         // **Why it moved.** The draws used to happen here, in loop order, so a store
                         // that could not cover every pen fed the earliest row and starved the last.
                         //
                         //   demand_grass     = fodder_per_biomass × biomass   (grass to fully feed it)
                         //   pasture_fraction = clamp(footprint_intake / demand_grass, 0, 1)
-                        //   larder_bill      = pen_upkeep × (1 − land_hay_fraction)
+                        //   fed_fraction     = clamp((footprint_intake + hay) / demand_grass, 0, 1)
                         //
                         // A lush footprint (pasture_fraction → 1) feeds the pen for free; a barren one
-                        // (→ 0) pays the full bill.
+                        // (→ 0) lives entirely on hay, and starves for whatever the hay cannot cover.
                         //
                         // **A pen with no settled share is a pen the settlement did not see**, which
                         // is only possible if this arm and [`settle_pen_hay`] disagree about which
-                        // rows are pens in reach — so it feeds on nothing rather than silently
-                        // inventing a draw the split never accounted for.
+                        // rows are pens in reach — so it feeds on nothing (and reads starving) rather
+                        // than silently inventing a draw the split never accounted for.
                         let share = pen_feed.get(fauna_id).copied();
                         herd.pen_pasture_fraction =
-                            share.map_or(0.0, |share| share.pasture_fraction);
+                            share.map_or(NOTHING_DEMANDED, |share| share.pasture_fraction);
                         // The settled hay, spent. The share is bounded by what the store held when it
                         // was struck and nothing takes `FODDER` between then and here, so this take
                         // pays in full; `LocalStore::take` still reports what it actually took, which
                         // is the number the herd is stamped with.
-                        let fodder_draw = share.map_or(0.0, |share| {
+                        let fodder_draw = share.map_or(NOTHING_DEMANDED, |share| {
                             cohort
                                 .stores
                                 .take(FODDER, scalar_from_f32(share.fodder_share))
                                 .to_f32()
                         });
                         herd.fodder_draw = fodder_draw;
-                        // The share fed by the LAND and HAY together (grass + delivered hay), before
-                        // the larder is touched. Hay *is* feed, so it pays down the larder bill exactly
-                        // as pasture does — one term, both jobs.
-                        let land_hay_fraction = share.map_or(0.0, |share| share.land_hay_fraction);
-                        // **The three-terms-of-one-demand split (Flora Roster F3).** The gross bread
-                        // bill (`pen_upkeep`, on the SAME basis `corralYield` uses) is paid down by three
-                        // sources that PARTITION it — the footprint's pasture, delivered hay, and the
-                        // larder. Stamp the two NET, food-unit terms the client renders (pasture is
-                        // `gross × pen_pasture_fraction`, so it needs no field of its own), ready to draw
-                        // "Fed by pasture NN% · hay X.X · larder Y.Y" with zero client arithmetic:
-                        //   pasture_food + pen_hay_food + pen_larder_bill == gross   (± f32 epsilon)
-                        // Hay's food-equivalent is the share of the bread bill it paid off — its grass
-                        // draw over the grass demand — converting `fodder_draw` out of grass units (~25×
-                        // the food scale) so it sits in the same row as the food-unit pasture/larder
-                        // terms. Struck from the same settlement, so the wire cannot disagree with what
-                        // the pen paid.
-                        herd.pen_hay_food = share.map_or(0.0, |share| share.hay_food);
-                        // The NET larder bill after pasture + hay. It is the pen's whole remaining
-                        // demand, **not** what the band could afford — the fed fraction is measured
-                        // against it, so a pen served short reads short.
-                        let demand = share.map_or(0.0, |share| share.larder_bill);
-                        herd.pen_larder_bill = demand;
-                        // **The bill is BID, not drawn.** The larder is settled across every pen at
-                        // once after the loop ([`settle_pen_larder`]), which is what stamps this
-                        // herd's `pen_fed_fraction` and adds to `pen_feed_paid`.
-                        pen_larder_bids.push(PenLarderBid {
-                            fauna_id: fauna_id.clone(),
-                            priority: assignment.priority,
-                            bill: demand,
-                            land_hay_fraction,
-                        });
+                        // **WHAT THIS PEN STILL HAS TO BE GROWN FOR**, in fodder units per turn —
+                        // the gap the footprint's own grass leaves, published as `penHayNeed` and
+                        // summed into this band's own `last_fodder_need` below. It is the number the
+                        // player acts on: pasture is free, hay is farmed.
+                        //
+                        // **Ungated, unlike the draw above.** A band that has not learned Foddering
+                        // settles a `0.0` hay *share* and still keeps a herd short by exactly this
+                        // much, so the need states the herd's condition and the draw states what was
+                        // done about it.
+                        let hay_need = share.map_or(NOTHING_DEMANDED, |share| share.hay_need);
+                        herd.pen_hay_need = hay_need;
+                        band_fodder_need += hay_need;
+                        // **HOW MUCH MORE FODDER THIS PEN NEEDS** — the need above less the draw
+                        // above it, published as `penFodderShortfall`. It is the number the player
+                        // acts on: the row reads "40% pasture · 7% fodder · needs 11.3 more/turn"
+                        // instead of asking a reader to subtract two figures sitting on one line.
+                        //
+                        // **Stamped here, between its own two terms**, so the difference cannot
+                        // describe a different turn from the numbers it is a difference of.
+                        //
+                        // **Ungated, like the need and unlike the draw.** A band without Foddering
+                        // draws nothing, so its shortfall is its whole need — the herd is dying and
+                        // the remedy is knowledge, which is the case this readout is most for.
+                        //
+                        // **Clamped**, though [`settle_pen_hay`] never settles a pen more hay than
+                        // its own gap: the take is quantised through `Scalar`, which can round a
+                        // fully-served pen's draw a fraction of a unit above the need it was
+                        // settled from. A negative shortfall is not a reading, so it floors.
+                        herd.pen_fodder_shortfall = (hay_need - fodder_draw).max(NOTHING_DEMANDED);
+                        // **THE FED FRACTION, IN ONE UNIT** — `(footprint_intake + hay) ÷ demand`, all
+                        // fodder. It used to add this land-and-hay share to the paid share of a
+                        // *food*-unit larder bill, and mixing the two units is precisely how the
+                        // people's bread came to be counted as feed. Read a stage later and a turn
+                        // later (`advance_husbandry`'s `starve_underfed_pen` / `regrow_biomass`, both
+                        // in Logistics, which precedes Population), so nothing in this loop depends on
+                        // when in the pass it is stamped.
+                        herd.pen_fed_fraction =
+                            share.map_or(NOTHING_DEMANDED, |share| share.fed_fraction);
                         // This band keeps this pen — its `K_pen` gets the fodder-flow term next turn.
                         kept_pens.push(fauna_id.clone());
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
@@ -4399,15 +4336,6 @@ pub fn advance_labor_allocation(
                 }
             }
         }
-        // **THE PENS EAT NOW THE LARDER IS IN** — every bill the corral arm bid, settled together
-        // against the `FOOD` store as it stands at the end of the pass, so this turn's forage,
-        // harvest and hunt income is on the table for every pen and not only for the ones whose rows
-        // happened to sit behind the earners. See [`settle_pen_larder`]: the hay was split off the
-        // top-of-pass stock before the loop for the opposite reason, and nothing inside the loop
-        // reads the fed fraction this writes.
-        if !pen_larder_bids.is_empty() {
-            pen_feed_paid += settle_pen_larder(&pen_larder_bids, &mut registry, &mut cohort.stores);
-        }
         // **Stamp the fodder-flow rate onto every pen this band keeps** (Flora Roster F3, §5.3), now
         // that the whole band's hay harvest (`band_fodder_inflow`) is summed. Split evenly across the
         // band's pens so the *total* K contribution reflects the *total* hay grown, not N copies of
@@ -4417,6 +4345,16 @@ pub fn advance_labor_allocation(
         // to its footprint-only self — the fodder term is all-or-nothing with the capability, never a
         // free K boost from unusable hay. Always written (0 when un-foddered), so a pen a band stops
         // keeping does not carry a stale rate.
+        // **THE BAND'S OWN HAY LEDGER, stamped once the loop has seen every row** — the need its pens
+        // carry (summed above) against the hay its Fields grew this turn. Both are per-turn **rates**
+        // in fodder units, and both are written unconditionally so a band that stops keeping pens (or
+        // stops farming hay) reads `0` rather than last turn's figure.
+        //
+        // **The inflow is the RAW harvest, not the Foddering-gated share below.** What the pens may
+        // *draw* is a capability question; what the Fields *grew* is not, and a band watching its hay
+        // arrive is entitled to see it before it has learned what to do with it.
+        allocation.last_fodder_need = band_fodder_need;
+        allocation.last_fodder_inflow = band_fodder_inflow;
         if !kept_pens.is_empty() {
             let per_pen = if knows(
                 &discovery,
@@ -4494,7 +4432,6 @@ pub fn advance_labor_allocation(
             yields.remove(idx);
         }
         allocation.last_yields = yields;
-        allocation.last_pen_feed_upkeep = pen_feed_paid;
         // **A row that lapsed mid-loop takes its declaration with it**, on the same rule the
         // pre-loop prune enforces: an entry requires a row. **And a ring the dropped entry was
         // funding stops with it** — see [`fauna::cancel_dropped_rings`]; the lapse is the one exit

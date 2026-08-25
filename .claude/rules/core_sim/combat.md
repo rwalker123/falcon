@@ -552,21 +552,22 @@ costs a fraction of **that turn's food income** — a real larder debit, capped 
   a playtest dial) — `#[serde(default)]` on `PredatorConfig`; `FaunaConfig::validate` rejects
   not-finite or outside `[0, 1]` (`validate_rejects_an_out_of_range_raid_yield_forfeit_fraction`).
 - **`LaborAllocation.last_raid_forfeit: f32`** is a **derived, per-turn, NOT-persisted** field treated
-  exactly like `last_pen_feed_upkeep` (excluded from the manual `PartialEq`, absent from serde/rollback
-  state, defaults `0.0`).
+  exactly like `last_yields` (excluded from the manual `PartialEq`, absent from serde/rollback state,
+  defaults `0.0`).
 - **Two new `PopulationCohortState` wire fields** (append-only, after `fodderStore`), captured in
   `snapshot/population.rs`:
   - **`raidRadius:uint`** — echo of `fauna.predators.raid_radius`, surfaced per-cohort exactly like
     `workRange` (a global lever the client needs per-band to check whether a visible aggressive predator
     is within exact raid range).
-  - **`raidForfeit:float`** — `last_raid_forfeit`, a negative food-ledger line, the raid twin of
-    `penFeedUpkeep`.
+  - **`raidForfeit:float`** — `last_raid_forfeit`, a negative food-ledger line. It was minted in the
+    image of `penFeedUpkeep`, which has since been **retired**: a pen eats grass and hay, so no food
+    crosses from the people's larder to the animals and `raidForfeit` is the ledger's only third term.
 - **The ledger identity gains a term** (see `campaign.md`): the forfeit is a real larder debit in
   neither `foodIncome` nor `foodConsumption`, so
-  `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`, pinned through a real
-  raid turn by `integration_tests/tests/raid_food_ledger.rs`. **`raidForfeit` is a PAST-turn stochastic
-  debit, NOT a recurring cost** — it is deliberately **absent** from the `turnsOfFood` forward-runway
-  drain (`larder_runway_turns`), which drains only by `consumption + penFeedUpkeep`.
+  `larder_delta == foodIncome − foodConsumption − raidForfeit`, pinned through a real raid turn by
+  `integration_tests/tests/raid_food_ledger.rs`. **`raidForfeit` is a PAST-turn stochastic debit, NOT a
+  recurring cost** — it is deliberately **absent** from the `turnsOfFood` forward-runway drain
+  (`larder_runway_turns`), which drains only by `consumption`.
 - Tests: `core_sim/tests/predator_raid.rs` gains the working-band-forfeits / idle-band-forfeits-nothing /
   forfeit-capped-at-larder cases; the config rejection rides `fauna_config.rs`'s unit tests.
 - **Client half — LANDED (this PR).** The native reader (`native/src/dict/population.rs`) decodes
@@ -574,8 +575,8 @@ costs a fraction of **that turn's food income** — a real larder debit, capped 
   table styles the threat/casualty feed events (`predator_raid` → ⚔ crimson, `hunt_danger` → ⚠ amber,
   reusing the `HudStyle` palette so the accent matches the map-overlay hues); the Warrior card shows a
   live **"⚠ Predator nearby — N on guard"** warning (a visible camp-threat predator within `raidRadius`
-  of the band); and the `raidForfeit` **"⚔ Lost to raids"** negative food-ledger line renders beside
-  `penFeedUpkeep`. ui_preview fixtures `predator_feed` / `predator_band_raided` pin both. **NOTE — Phase 4
+  of the band); and the `raidForfeit` **"⚔ Lost to raids"** negative food-ledger line renders in the
+  Food ledger (then beside `penFeedUpkeep`, since retired). ui_preview fixtures `predator_feed` / `predator_band_raided` pin both. **NOTE — Phase 4
   (`docs/plan_predators.md`) replaces this client-side `raidRadius` proximity check with a
   visibility-gated, server-computed per-band alert.**
 

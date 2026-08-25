@@ -250,6 +250,21 @@ const FOOD_FLOW_MIN := 0.001
 # the floor `has_component` uses: a gate whose threshold is finer than its formatter's resolution
 # admits values it then prints as zeros, which is the one thing that gate exists to prevent.
 const COMPONENT_RENDER_MIN := 0.005
+# The same "is it there at all" question asked in FODDER units — the pen feed-split's hay term
+# (`fodder_draw`), the pen's own `pen_hay_need`, and the band hay ledger's `fodder_need` /
+# `fodder_income` pair. Its OWN number rather than `FOOD_FLOW_MIN`'s, for two
+# reasons: fodder and food are different units (fodder runs an order of magnitude coarser, being
+# `fodder_per_biomass × biomass`), and the reader that gates on it prints ONE decimal. So this is HALF
+# OF THE SMALLEST QUANTITY THAT READOUT CAN SHOW — the `COMPONENT_RENDER_MIN` argument at one decimal
+# instead of two — which is what keeps the gate from admitting a draw it then renders as `hay 0.0`
+# or a need it then renders as `needs 0.0 hay/turn`.
+const FODDER_FLOW_MIN := 0.05
+# THE ONE DECIMAL EVERY FODDER READING PRINTS AT, and the number `FODDER_FLOW_MIN` above is defined as
+# half of. Fodder is the coarse account — a stock reads in the hundreds where a food rate reads in
+# hundredths — so a second decimal here claims a precision the units do not have, and a THIRD surface
+# picking its own precision is how a stock and the rate that drains it stop looking like the same
+# quantity. Spelled once here; `format_fodder` is the only renderer.
+const FODDER_DECIMALS := 1
 # An EXTRACTIVE rung's policy-button metric: the bare signed rate on the one-line button face, this
 # wording in the tooltip so it reads as the ceiling it is (and the four rungs read as ASCENDING).
 const POLICY_CAP_FORMAT := "up to %s/turn"
@@ -793,17 +808,17 @@ const FORECAST_PAYOFF_MATERIAL_KEYS := {
     "corral": "corral_material",
     "tame": "pastoral_material",
 }
-# The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
-# population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
-# GROSS take with that feed NOT deducted — so advertising the payoff bare would promise a number the
-# player never banks. A tended patch has no running cost, hence no entry.
+# **RETIRED — `FORECAST_FEED_KEYS`, the RUNNING COST a payoff was paid against.** It held exactly one
+# entry, `corral -> pen_upkeep`, so a pre-commit Corral row could read `+5.40/turn − 2.40/turn feed`.
+# There is no such cost: HUMAN FOOD IS NOT ANIMAL FEED. A pen eats the grass its fenced footprint
+# grows and the hay its keeper carries in — both FODDER — and a shortfall STARVES the herd
+# (`pen_fed_fraction` < 1) rather than billing the people's larder. `pen_upkeep` is a `(deprecated)`
+# wire slot the native reader no longer publishes.
 #
-# **This asymmetry is deliberate and permanent** (spec §4): the Corral done-state label carries the
-# pen's per-turn upkeep and the Tame one does not, because a penned herd cannot graze and a pastoral
-# one still can. Do not make the two webs match here.
-const FORECAST_FEED_KEYS := {
-    "corral": "pen_upkeep",
-}
+# So `corral_yield` STANDS ALONE, and no rung on either web quotes a food-unit running cost. The
+# rung's real standing price is in WORK, and it is already stated where every rung's is — the work
+# row's `⌃` tooltip, via `FORECAST_BUILD_UPKEEP_DEMAND_KEYS`. Do not mint a second feed term here to
+# put the subtraction back.
 # **THE DURING-BUILD DIP IS RETIRED, and so is the build's `crew_needed`**
 # (`docs/plan_standing_upkeep.md` §2.2). `<rung>BuildFraction` and `<rung>CrewNeeded` are deprecated
 # wire slots the native reader no longer publishes, so nothing here reads them and nothing composes
@@ -1013,7 +1028,7 @@ const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # **THE SIM ANSWERS AND THIS CLIENT SUBTRACTS NOTHING.** `upkeep_shortfall` is published, not derived
 # from `demand − supplied`: it is EXACTLY what the improvement decays by once the shortfall outlasts
 # the rung's grace, and a client re-deriving it would be a second authority over the number the whole
-# readout exists to make legible (the `pen_feed_upkeep` discipline).
+# readout exists to make legible (the sim-answers-the-client-renders discipline).
 #
 # **`upkeep_supplied` IS THIS SOURCE'S SHARE OF ITS BAND'S POOL** (`docs/plan_standing_upkeep.md`
 # §2.5), not the hands standing on it: maintenance is a band-level role, so the three fields stopped
@@ -1052,7 +1067,7 @@ const FORECAST_NEGLECT_GRACE_KEY := "neglect_grace_remaining"
 # CONSTANT with respect to the build stepper, which is why the sim publishes it rather than leaving
 # the client to compose it: the crew the player is dragging changes the progress, never the rot.
 #
-# **ALWAYS MEANINGFUL, NEVER A SENTINEL** (the `penUpkeep` rule). `NO_METER_ROT` is a measured
+# **ALWAYS MEANINGFUL, NEVER A SENTINEL** (the `corralYield` rule). `NO_METER_ROT` is a measured
 # nothing, and it is the honest reading in three ordinary states: the keeping covers this source, the
 # source is still inside its grace, or the rung declares no meter decay at all — which is BOTH animal
 # rungs, whose penalty is a shed rather than a bleed, so an animal meter never goes backwards.
@@ -1636,17 +1651,48 @@ const SEND_HUNT_DENIAL_BUTTON := "Send (brings nothing home)"
 static func format_stock(value: float) -> String:
     return "%d" % int(round(value))
 
+## The bare magnitude of a FODDER quantity ("100.0", "6.0") — the `format_magnitude` rule struck in the
+## coarse account's own resolution (`FODDER_DECIMALS`). Every fodder reading in the HUD goes through
+## it: the band's hay stock and its need/growing rate pair, and the pen row's hay draw and hay need.
+##
+## **A STOCK AND A RATE SHARE ONE RENDERER HERE, where food splits them** (`format_stock` vs
+## `format_magnitude`). That split exists because a food rate needs two decimals and a biomass stock
+## needs none; fodder's stock and its rate are the SAME units at the same scale, so one decimal is
+## right for both, and giving them two renderers would only let them drift apart.
+##
+## The "/turn" that marks the rate ones rides the CALLER's format string (`" · needs %s hay/turn"`,
+## `POLICY_CAP_FODDER_FORMAT`) rather than being appended here — the tight, no-space spelling those
+## compact clauses already use, as distinct from `YIELD_PER_TURN_SUFFIX`'s spaced form that follows a
+## standalone food figure.
+static func format_fodder(value: float) -> String:
+    return String.num(absf(value), FODDER_DECIMALS).pad_decimals(FODDER_DECIMALS)
+
 ## The bare magnitude of a food rate ("1.74"), for a readout that supplies its own sign in words
 ## ("− 1.74 feed"). One rounding rule for every food rate the HUD prints.
 static func format_magnitude(value: float) -> String:
     return String.num(absf(value), YIELD_DECIMALS).pad_decimals(YIELD_DECIMALS)
 
+## The sign a rate is prefixed with, typed ONCE for both accounts: the food rates below and the
+## fodder ones beside them are the same readout convention at two resolutions, and a second spelling
+## of "+" is how the two would come to differ in the one character a player reads first.
+const RATE_SIGN_POSITIVE := "+"
+const RATE_SIGN_NEGATIVE := "-"
+
 ## A signed, fixed-decimal food-rate string ("+0.31" / "-0.30"). Actual yields are ≥0, but the
 ## formatter is sign-aware so it also renders Net (which can go negative) and Consumption (shown
 ## as a negative cost).
 static func format_signed(value: float) -> String:
-    var sign_str := "+" if value >= 0.0 else "-"
-    return sign_str + format_magnitude(value)
+    return _rate_sign(value) + format_magnitude(value)
+
+## The same, at the FODDER account's own resolution (`format_fodder`, one decimal) — "+5.0" / "-6.0".
+## The `Fodder:` row's breakdown prints through this, so a fodder rate is spelled the way every other
+## fodder reading in the HUD is spelled and never at the food scale's two decimals.
+static func format_signed_fodder(value: float) -> String:
+    return _rate_sign(value) + format_fodder(value)
+
+## The sign of a rate, zero counting as positive (a zero income is not a debit).
+static func _rate_sign(value: float) -> String:
+    return RATE_SIGN_POSITIVE if value >= 0.0 else RATE_SIGN_NEGATIVE
 
 ## The same rate with the "/turn" suffix, for the per-source row headline ("+0.31 /turn").
 static func format_yield(value: float) -> String:
@@ -3942,8 +3988,8 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
 ## axes are independent, and a floor below the food peak beside a running build is LEGAL (it defeats
 ## itself through the ecology — the meter accrues only while the source is Thriving).
 ##
-## The `feed` term is the pen's per-turn upkeep and rides ONLY the Corral rung (`FORECAST_FEED_KEYS`) —
-## the one asymmetry between the two webs, and a deliberate one.
+## **THERE IS NO `feed` TERM** — the pen's food-unit upkeep is retired (see `FORECAST_FEED_KEYS`
+## above), so the deal a rung quotes is its payoff and nothing subtracted from it, on BOTH webs.
 static func improvement_forecast(src: Dictionary, kind: String, prefix: String, floor: float,
         improvement: String) -> Dictionary:
     if improvement == IMPROVEMENT_NONE or not FORECAST_PAYOFF_KEYS.has(improvement):
@@ -3971,10 +4017,6 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
     if FORECAST_PAYOFF_MATERIAL_KEYS.has(improvement):
         payoff_material = material_payoff_rows(
             src.get(prefix + String(FORECAST_PAYOFF_MATERIAL_KEYS[improvement]), []))
-    var feed_rung: bool = FORECAST_FEED_KEYS.has(improvement)
-    var feed := 0.0
-    if feed_rung:
-        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[improvement]), 0.0))
     return {
         "improvement": improvement,
         "floor": clamp_floor(floor),
@@ -3987,8 +4029,6 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
         "payoff": payoff,
         "payoff_fodder": payoff_fodder,
         "payoff_material": payoff_material,
-        "feed_rung": feed_rung,
-        "feed": feed,
         # Which account's zero is worth printing on any of the three terms (§7.7).
         "zero_account": String(base_forecast["zero_account"]),
     }
@@ -4415,7 +4455,7 @@ static func pen_extend_fraction(herd: Dictionary) -> float:
 ## question — *what is this source billed right now*.
 ##
 ## `NO_UPKEEP_DEMAND` for a rung the wire states no rate on, which is an honest measured nothing (the
-## `penUpkeep` rule): a rung that costs nothing to hold is free to keep once it is built.
+## `corralYield` rule): a rung that costs nothing to hold is free to keep once it is built.
 static func build_upkeep_demand(src: Dictionary, prefix: String, improvement: String) -> float:
     if not FORECAST_BUILD_UPKEEP_DEMAND_KEYS.has(improvement):
         return NO_UPKEEP_DEMAND
@@ -4850,7 +4890,7 @@ static func build_work_per_worker_turn(src: Dictionary, prefix: String) -> float
 ## to price. A compose sheet has one, and *"add hands and watch it drop"* is the whole point of the
 ## reading it sits beside. So the sim ships the TERMS as well as the answer and this evaluates them
 ## (`.claude/rules/core_sim/yield-forecast.md` → "THE BOUNDARY, stated once" — the ceiling's
-## discipline, not `penFeedUpkeep`'s). Evaluated at the COMMITTED crew and floor the two agree
+## discipline, not a per-band ledger term's). Evaluated at the COMMITTED crew and floor the two agree
 ## exactly, which is the safety argument for having both: a sheet that could disagree with the card
 ## would lie about the very decision the card then reports.
 ##

@@ -35,19 +35,59 @@ extends RefCounted
 ## and the morale-breakdown indent + sign glyphs in `DetailFormat`, `STORE_ITEM_PROVISIONS` in
 ## `HudConst`, `OUTPUT_FULL` / `FOOD_FLOW_MIN` in `SourceForecast` — each read as `Module.X`.
 
-# ---- The band's fodder (hay) larder row, shown beneath Food only for a band with a fodder economy
-# (it has stockpiled hay, or it pays a pen bread bill it could offset with hay) — so a forager band
-# with no animals never sprouts an empty Fodder line.
-const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
+# ---- The band's FODDER larder row, shown beneath Food for a band with a fodder economy — it has
+# stockpiled fodder, or its pens owe a bill — so a forager band with no animals never sprouts an empty
+# Fodder line.
+#
+# **IT IS THE FOOD ROW, BEAT FOR BEAT**: a two-term summary — the STOCK and the RUNWAY — with the
+# flows that move it in a click-to-open disclosure beneath.
+#
+#   `Fodder: 100.0  (100 turns)`
+#     ▲ +5.0  Grown
+#     ▼ -6.0  Pens
+#
+# **THE RATES CAME OFF THE ROW, AND THAT IS A SHAPE FIX RATHER THAN A WIDTH ONE.** The row stated
+# `Fodder: 100.0 · need 6.0/turn · growing 5.0/turn · 100 turns` and wrapped to two lines in the
+# narrow drawer column for it — carrying on ONE line what the Food row has always split between a
+# summary and a pull-down, in a client whose disclosure module documents at the top of its own file
+# that breakdown rows are NEVER appended inline. The pair still matters for exactly the reason it was
+# added (a pen's fenced footprint has a fixed carrying capacity and its herd does not, so a
+# self-feeding pen goes fodder-dependent as the herd grows), and the disclosure is where it now says
+# so: see `DisclosureController.fodder_breakdown_lines`.
+#
+# **THE LABEL IS THE REGISTRATION KEY**, so the row is spelled from `DETAIL_ROW_FODDER` rather than
+# typed again: a renamed row that still registered under the old key would lose its caret silently.
+# The runway is `DetailFormat.food_turns_text` over `turns_of_fodder` — which the sim computes with
+# the very function it computes `turns_of_food` with, **999 and all** — so `∞` here means what it
+# means there (this larder is not draining) and there is no second constant, no second branch and no
+# second phrasing of "turns of buffer left" anywhere in the client. The whole value cell tints through
+# `BandFoodStatus.hex_for_turns` off the context, exactly as the Food row's does.
+#
+# **AND THE `need` CLAUSE'S AMBER WENT WITH IT.** The runway already says a larder is draining — a
+# finite, shrinking number under the shared thresholds — so a separate warn on one term was a second
+# rule for one idea, and dropping it is what stops the two larders disagreeing about what worrying
+# looks like. `fodder_is_concerning` (the food test, on this account) tints the caret and nothing else.
+const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%s)"
 
-# ---- The SAME hay stock as a CLAUSE on the Food row, for the `compact` (SHORT band-zone tier) host.
-# A horizontal dock is short of HEIGHT and has width to spare, so the two larders share one line
-# there; a vertical dock is short of WIDTH and keeps them as two rows. The word is `hay`, the
-# vocabulary the flora basket rows already use (`HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT`), and the
-# stock keeps the Fodder row's ONE decimal. It carries its OWN colour rather than inheriting the Food
-# row's value tint: a starving band's hay stock is not itself a red reading, and the net rate beside it
-# sets the precedent for a self-tinted run inside that value cell.
-const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
+# ---- The SAME fodder stock as a CLAUSE on the Food row, for the `compact` (SHORT band-zone tier)
+# host. A horizontal dock is short of HEIGHT and has width to spare, so the two larders share one line
+# there; a vertical dock is short of WIDTH and keeps them as two rows. **The word is `fodder`, the
+# word its own standalone row and the pen's `Fed:` row use** — it read `hay` while the pen rows did,
+# and one larder called two things across two tiers of the same panel is the confusion that sweep
+# removed. The stock keeps the Fodder row's ONE decimal (`SourceForecast.format_fodder`). Lowercase,
+# which is also what keeps `band_panel_preview`'s merge guard honest: the standalone row's key
+# `Fodder` must be ABSENT wherever this clause fired, and the two are told apart by case. It carries
+# its OWN colour
+# rather than inheriting the Food row's value tint: a starving band's hay stock is not itself a red
+# reading, and the net rate beside it sets the precedent for a self-tinted run inside that value cell.
+#
+# **THAT COLOUR IS THE SHORTFALL WARN, and it is the whole of what this tier can say about the trap.**
+# The stock alone cannot carry the need/growing pair — this host merges rows precisely because it has
+# no height — but the gate that puts the clause on screen now admits a band with a hay BILL and an
+# empty store, and `0.0 hay` stated in neutral ink beside a bill it cannot pay would read as *fine*.
+# So the clause takes `HudStyle.WARN_HEX` on exactly the condition the full row's need clause does,
+# and the tall tiers carry the two numbers that explain it.
+const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
@@ -241,6 +281,10 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     _disclosures.clear_rows()
     _food_flow_present = false
     context.food_turns = NAN
+    # …and the fodder runway beside it, for the same reason and with the same reach: a band with no
+    # fodder economy emits no Fodder row, and a stale runway from the last band rendered would tint a
+    # row that is not there — or, worse, the next band's.
+    context.fodder_turns = NAN
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
     # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
@@ -256,13 +300,21 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         if _food_flow_present:
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.BREAKDOWN_KIND_FOOD, unit_data,
                 _disclosures.food_breakdown_lines(unit_data))
-        # The band's fodder (hay) larder, beneath its food larder — shown only for a band with a
-        # fodder economy: it has stockpiled hay, or it pays a pen bread bill it could offset with hay.
+        # The band's fodder (hay) larder, beneath its food larder — shown for a band that HAS
+        # stockpiled hay or OWES its pens one, the two halves of having a fodder economy at all.
         # **In the `compact` tier it is not a row at all**: `_band_food_line` has already carried the
         # stock as a clause on the Food line, because the SHORT tier's scarcity is HEIGHT and that
-        # host has width to spend. See `BAND_FOOD_HAY_CLAUSE_FORMAT`.
+        # host has width to spend. See `BAND_FOOD_FODDER_CLAUSE_FORMAT`.
         if not compact and _band_has_fodder_economy(unit_data):
-            lines.append(BAND_FODDER_ROW_FORMAT % float(unit_data.get("fodder_store", 0.0)))
+            lines.append(_band_fodder_line(unit_data, context))
+            # …and its two flows in the SAME click-to-open popover Food uses, registered rather than
+            # appended for the identical reason: inline growth in a fixed-height zone is what clipped
+            # the Band panel once already. A larder with neither flow above the floor registers no
+            # disclosure at all — `register` declines an empty payload — so a caret never promises
+            # rows that are not there.
+            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FODDER,
+                HudDisclosureVocab.BREAKDOWN_KIND_FODDER, unit_data,
+                _disclosures.fodder_breakdown_lines(unit_data))
         # THE BAND'S KIT, beneath its larders and above its morale: three consumable tools whose
         # condition only ever falls, and whose expiry silently drops a whole role to bare hands. It is
         # our OWN bands' business, like Food — a rival's equipment is not ours to count.
@@ -569,19 +621,61 @@ func _shipment_cargo_clause(unit_data: Dictionary) -> String:
 
 # ---- The band rows `unit_summary_lines` assembles -------------------------------------------------
 
-## Does this band have a fodder economy at all — hay in store, or a pen bill it could offset with hay?
-## The ONE test behind both spellings of that larder (the standalone `Fodder:` row and the `compact`
-## host's clause on the Food line), so the two hosts can never disagree about when it exists.
+## Does this band have a fodder economy at all — **does it HAVE hay, or does it OWE a hay bill?** The
+## ONE test behind both spellings of that larder (the standalone `Fodder:` row and the `compact` host's
+## clause on the Food line), so the two hosts can never disagree about when it exists.
+##
+## **THE SECOND CLAUSE IS BACK, AND IT IS A FODDER FACT NOW.** It used to read `or pen_feed_upkeep > 0`
+## — *this band pays a bread bill it could offset with hay* — and went out with that food-unit pen
+## bill, which no band pays: a pen eats pasture and hay, and a shortfall starves it. But the store-only
+## gate it left behind hid **exactly the band that most needs this line**: pens owing hay, nothing
+## stockpiled, so `fodder_store == 0` and the row that would have said *you need 6.0 a turn and grow
+## none* never rendered at all. The bill is `fodder_need`, the sim's own sum over the band's pens, in
+## the same FODDER units as the store.
+##
+## The store term keeps its own floor, `FODDER_FLOW_MIN` rather than the food-flow `FOOD_FLOW_MIN` it
+## was written with — this is a fodder quantity rendered at one decimal, so the food-scale floor
+## admitted a store it then printed as `Fodder: 0.0`, the false precision that floor exists to stop.
 func _band_has_fodder_economy(unit_data: Dictionary) -> bool:
-    return float(unit_data.get("fodder_store", 0.0)) > SourceForecast.FOOD_FLOW_MIN \
-        or float(unit_data.get("pen_feed_upkeep", 0.0)) > SourceForecast.FOOD_FLOW_MIN
+    return float(unit_data.get("fodder_store", 0.0)) >= SourceForecast.FODDER_FLOW_MIN \
+        or float(unit_data.get("fodder_need", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+
+## Is this band's fodder bill bigger than its fodder harvest — the slow trap, stated as a comparison.
+## **Its ONE reader is the `compact` tier's merged clause**, which is the only host with no room to
+## state the pair it is a verdict about: that tier trades the whole Fodder row for a stock clause on
+## the Food line, so the tint is all it can say about a bill the band's Fields are not covering.
+##
+## **THE FULL ROW NO LONGER ASKS.** Its `need` clause and that clause's amber are retired with the
+## rates themselves — the runway says the larder is draining, under the same thresholds the Food row
+## uses — so this is not a second opinion about the standalone row's severity any more.
+##
+## **STRICTLY GREATER, past the flow floor**, so a band whose Fields exactly meet its pens does not
+## flicker amber on float noise, and a band owing nothing at all is never warned.
+func _band_fodder_falls_short(unit_data: Dictionary) -> bool:
+    var need := float(unit_data.get("fodder_need", 0.0))
+    if need < SourceForecast.FODDER_FLOW_MIN:
+        return false
+    return need - float(unit_data.get("fodder_income", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
+
+## The band's fodder larder as the Food row's twin: the STOCK and the RUNWAY, and nothing else. The
+## two flows that move it are the disclosure `unit_summary_lines` registers on this row — see
+## `BAND_FODDER_ROW_FORMAT` for why they are not on it.
+##
+## Stashes the runway on the render context so `DetailFormat._value_hex` tints the value by the shared
+## runway thresholds, the same handshake `_band_food_line` makes one row above.
+func _band_fodder_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var turns := float(unit_data.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
+    ctx.fodder_turns = turns
+    return BAND_FODDER_ROW_FORMAT % [
+        SourceForecast.format_fodder(float(unit_data.get("fodder_store", 0.0))),
+        DetailFormat.food_turns_text(turns)]
 
 ## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
 ## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
 ## Stashes the turns on the render context so `DetailFormat.detail_bbcode` can
 ## tint the value by the shared warn/critical thresholds.
-## `merge_fodder` is the `compact` host asking for the hay stock to ride this line instead of taking a
-## row of its own — see `BAND_FOOD_HAY_CLAUSE_FORMAT`.
+## `merge_fodder` is the `compact` host asking for the fodder stock to ride this line instead of
+## taking a row of its own — see `BAND_FOOD_FODDER_CLAUSE_FORMAT`.
 func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fodder: bool = false) -> String:
     var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     ctx.food_turns = turns
@@ -597,17 +691,20 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
     _food_flow_present = false
     if _is_player_unit(unit_data) and DetailFormat.band_has_food_flow(unit_data):
         # The headline "/turn" is the STEADY net: income (Gathered + Hunted — the realized average,
-        # so it no longer swings turn-to-turn) minus what the people (Eaten) and the pens (Pen feed)
-        # draw off the larder. The breakdown below itemizes the income rows and the debits.
+        # so it no longer swings turn-to-turn) minus what the people eat and what raids take off the
+        # larder. The breakdown below itemizes the income rows and the debits.
         var net := DetailFormat.band_net_food(unit_data)
         var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
         line += " · [color=#%s]%s[/color]" % [net_hex, SourceForecast.format_yield(net)]
         _food_flow_present = true
     # The hay larder, on this line rather than beneath it, for the height-scarce host only. The gate
-    # is the same one the standalone row uses, so a band with no fodder economy renders no clause.
+    # is the same one the standalone row uses, so a band with no fodder economy renders no clause —
+    # and so is the WARN, which is the only thing this tier has room to say about a bill the band's
+    # Fields are not covering (see `BAND_FOOD_FODDER_CLAUSE_FORMAT`).
     if merge_fodder and _band_has_fodder_economy(unit_data):
-        line += BAND_FOOD_HAY_CLAUSE_FORMAT % [
-            HudStyle.INK_DIM_HEX, float(unit_data.get("fodder_store", 0.0))]
+        var fodder_hex := HudStyle.WARN_HEX if _band_fodder_falls_short(unit_data) else HudStyle.INK_DIM_HEX
+        line += BAND_FOOD_FODDER_CLAUSE_FORMAT % [
+            fodder_hex, SourceForecast.format_fodder(float(unit_data.get("fodder_store", 0.0)))]
     return line
 
 ## Selection-panel band KIT row: `Kit: Spears 87 · Sled 54 · Baskets dry` — the band's three

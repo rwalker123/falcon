@@ -731,7 +731,6 @@ fn create_populations<'a>(
                     moraleUnrest: cohort.morale_unrest,
                     settlementStage: Some(settlement_stage),
                     foodIncome: cohort.food_income,
-                    penFeedUpkeep: cohort.pen_feed_upkeep,
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
@@ -825,6 +824,12 @@ fn create_populations<'a>(
                     // THE BAND'S OWN BUILD QUEUE — appended last. The rank is the index, so this
                     // vector's ORDER is the payload; a reader must not re-sort it.
                     buildQueue: build_queue,
+                    // The band's hay ledger — appended last, always written. `fodderNeed` is the
+                    // GAP the pens' own footprints leave, `fodderIncome` the raw harvest beside it,
+                    // and the runway is `turnsOfFood`'s own function and sentinel over the two.
+                    fodderNeed: cohort.fodder_need,
+                    fodderIncome: cohort.fodder_income,
+                    turnsOfFodder: cohort.turns_of_fodder,
                 },
             )
         })

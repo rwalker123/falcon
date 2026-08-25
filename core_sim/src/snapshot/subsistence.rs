@@ -641,14 +641,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
                 // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).
                 corral_yield: forecast.managed_yield.provisions,
-                // The pen as a managed population: what it EATS, and whether its keeper is paying.
-                // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
-                // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
-                // basis as `corral_yield`, so the pre-commit Corral row can show the running cost next
-                // to the payoff. `pen_fed_fraction` is the value the keeper's tend branch wrote this
-                // turn (Population runs before the capture), so the client reads the CURRENT turn's
-                // feeding, and `1.0` for anything unpenned.
-                pen_upkeep: herd.map(|herd| pen_upkeep(herd, fauna)).unwrap_or(0.0),
+                // The pen as a managed population: whether its grass and hay are feeding it.
+                // `pen_fed_fraction` is the value the keeper's tend branch wrote this turn (Population
+                // runs before the capture), so the client reads the CURRENT turn's feeding, and `1.0`
+                // for anything unpenned.
+                //
+                // **`pen_upkeep` is RETIRED** — `upkeep_per_biomass × biomass`, the running FOOD cost
+                // quoted here beside `corral_yield` so a pre-commit Corral row could subtract one from
+                // the other. A pen eats grass and hay, so there is no food-unit running cost to
+                // subtract and the payoff stands alone.
                 pen_fed_fraction: herd
                     .map(|herd| herd.pen_fed_fraction)
                     .unwrap_or(PEN_FULLY_FED),
@@ -843,16 +844,35 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     })
                     .unwrap_or_default(),
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
-                // the corral-tend branch wrote, so the client can render "fed by hay" beside the
-                // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
+                // the corral-tend branch wrote. **It is the whole of the feed split beside
+                // `pen_pasture_fraction`**: grass and hay in one unit against one demand, so the
+                // client draws "fed by pasture NN% · hay X.X" and the remainder, if any, is what the
+                // herd starves for. `0.0` for an unpenned/absent herd or one no hay reached.
+                //
+                // **`pen_larder_bill` and `pen_hay_food` are RETIRED with the larder feed** — the
+                // FOOD-unit third term and the hay-in-food-units conversion that only existed to sit
+                // in the same row as it.
                 fodder_draw: herd.map(|herd| herd.fodder_draw).unwrap_or(0.0),
-                // The render-ready feed split (Flora Roster F3): the NET larder bill after pasture +
-                // hay, and hay's food-equivalent, both the transient `Herd` scratch the corral-tend
-                // branch stamped, both in FOOD units. `0.0` for an unpenned/absent herd. With
-                // `pen_upkeep` (gross) and `pen_pasture_fraction`, the client draws "pasture NN% · hay
-                // X.X · larder Y.Y" with no arithmetic of its own.
-                pen_larder_bill: herd.map(|herd| herd.pen_larder_bill).unwrap_or(0.0),
-                pen_hay_food: herd.map(|herd| herd.pen_hay_food).unwrap_or(0.0),
+                // **What this pen still needs GROWN for it** — `max(0, demand_grass −
+                // footprint_intake)`, the gap its own footprint leaves, in fodder units. The GAP and
+                // not the gross demand, because grazing is free and hay is the thing the player has
+                // to farm; `pen_pasture_fraction` beside it already states the land's share, so the
+                // pair render as "land covers NN% · needs X.X hay/turn" with no arithmetic.
+                //
+                // **Ungated by Foddering**, unlike `fodder_draw` above: a keeper who cannot draw hay
+                // still holds a herd short by exactly this much, and that is the case the readout is
+                // most for.
+                pen_hay_need: herd.map(|herd| herd.pen_hay_need).unwrap_or(0.0),
+                // **How much more fodder this pen needs per turn** — `max(0, pen_hay_need −
+                // fodder_draw)`, the two fields above differenced by the sim rather than by the
+                // client, in fodder units. The row reads "40% pasture · 7% fodder · needs 11.3
+                // more/turn" off the three together.
+                //
+                // Stamped by the corral arm on the same pass as both its terms, so it cannot
+                // describe a different turn from them; **ungated by Foddering** like the need above
+                // and unlike the draw, so a band that cannot hay at all publishes its whole need as
+                // its shortfall. `0.0` for an unpenned/absent herd and for a pen its own land feeds.
+                pen_fodder_shortfall: herd.map(|herd| herd.pen_fodder_shortfall).unwrap_or(0.0),
                 // Predators Phase 0 — the RAW combat components of this herd's species
                 // (`docs/plan_predators.md`). Danger is DERIVED client-side, never stored, because
                 // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression.

@@ -275,9 +275,14 @@ const STACK_ADDITIONAL_MARGIN := 16.0
 # The band's FODDER larder (Flora roster F3): hay stockpiled to feed penned animals — a SECOND stock
 # distinct from the food larder above, in fodder/grass units (the raw `FODDER` `LocalStore` value,
 # `fodder_per_biomass × biomass` scale, ~25× the food scale — NOT comparable to and never summed onto
-# the food larder; only `pen_hay_food` is the food-equivalent conversion). Shown as its own stat line
-# beneath Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread
-# bill — `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
+# the food larder, and there is NO food-equivalent conversion of it: hay is feed, not food, and the
+# pen's food-unit terms are retired). The per-pen draw OUT of this stock is `fodder_draw`, the herd
+# drawer's feed-split hay term, in these same units. Shown as its own stat line beneath Food —
+# **mirroring that line beat for beat**: the stock, then the `fodder_need` / `fodder_income` rate pair
+# that moves it, then the `turns_of_fodder` runway (999 = infinity, the SAME sentinel and the same
+# renderer as `turns_of_food`). It renders for a band that HAS hay **or OWES a hay bill**, so the band
+# whose pens need hay it does not have is the first to see the row rather than the only one that
+# cannot; a forager band with no animals still sprouts no Fodder line at all.
 # (The larder-runway vocabulary — `DetailFormat.FOOD_UNLIMITED_GLYPH` / `DetailFormat.FOOD_RUNWAY_UNIT`
 # — travelled to that module with BOTH its readers: the one renderer (`food_turns_text`) and the one
 # Food/Provisions/Carried threshold tint that recognizes the row by looking for that same unit word.

@@ -237,7 +237,7 @@ pub(crate) fn herds_to_array(
         // herd. **`-1` IS "NO ESTIMATE" AND MUST RENDER AS NOTHING AT ALL** — a stalled build has no
         // finite answer, and a `0` in its place is a promise. The client CANNOT compute it (it holds
         // neither the crew's output, nor the floor multiplier, nor the kit's contribution), so the
-        // sim answers, exactly as it does for `pen_upkeep` and the yield forecast.
+        // sim answers, exactly as it does for the yield forecast.
         // **FIVE NEGATIVES, FIVE FACTS** — `-1` is *no estimate*, `-2` is *the meter holds exactly
         // where it is*, `-3` is *the meter is going backwards*, `-4` is *the builders are staffed and
         // standing on this entry, and its own gate refuses it*, and `-5` is *the player queued this
@@ -372,29 +372,24 @@ pub(crate) fn herds_to_array(
         // **On an ALREADY-PENNED herd this same field is the pen's live managed production** — a
         // corralled herd is never drawn down, so its ceiling is this number at EVERY floor and the
         // escapement composition above does not apply to it (sim `SourceYieldForecast::managed`).
-        // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
+        // `corral_yield` STANDS ALONE: there is no food-unit running cost to subtract from it. A pen is
+        // fed by its fenced footprint's grass and by hay (both FODDER), never from the FOOD larder, so
+        // the pre-commit Corral row quotes the payoff with nothing beside it.
         let _ = dict.insert("corral_yield", herd.corralYield());
         // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
         // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
         // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
         // key it used to insert is a separate pass — the key simply stops appearing.
-        // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
-        // cannot graze, so its keeper hauls it food every turn.
-        //   `pen_upkeep`       = the feed/turn the pen DEMANDS, or WOULD demand once built, at the
-        //                        herd's CURRENT biomass. Always meaningful — a projection for an
-        //                        unpenned herd, the live demand for a penned one — NEVER
-        //                        "0-because-unpenned". Computed on the same biomass basis as
-        //                        `corral_yield`, so the two are a matched pair the Corral forecast row
-        //                        subtracts ("…then +Y − Z feed"). This is the DEMANDED figure, distinct
-        //                        from the PAID amount (the per-band PopulationCohortState.penFeedUpkeep
-        //                        the food ledger actually debits) — a starving pen demands more than it
-        //                        is paid, and `pen_fed_fraction` is that ratio.
-        //   `pen_fed_fraction` = the share of that demand the keeper actually paid last turn.
+        // The pen as a managed POPULATION (docs/plan_corral_managed_population.md). `pen_upkeep` — the
+        // pen's food-unit feed demand — IS RETIRED (schema `(deprecated)`, no accessor): human food is
+        // not animal feed. What remains is the outcome of the pen's FODDER budget:
+        //   `pen_fed_fraction` = the share of the pen's fodder demand its footprint's grass plus the hay
+        //                        carried in actually covered last turn — i.e. exactly what
+        //                        `pen_pasture_fraction` and `fodder_draw` below leave uncovered.
         //                        1.0 = fully fed (also the value for any un-penned herd); < 1.0 = the
         //                        herd is STARVING and shrinking every turn.
         // Read by Hud's herd drawer (the Corral row's starving state + the Pen feed row) and by
         // MapView's herd marker (a starving pen's glyph tints DANGER).
-        let _ = dict.insert("pen_upkeep", herd.penUpkeep());
         let _ = dict.insert("pen_fed_fraction", herd.penFedFraction());
         // Ecological carrying capacity + grazing range (Grazing Phase 2b-iii). `carrying_capacity` is
         // the herd's CURRENT derived K (what it caps at on its range); `graze_range_radius` is the hex
@@ -433,15 +428,29 @@ pub(crate) fn herds_to_array(
         // beside the graze radius it replaces.
         let _ = dict.insert("prey_sense_radius", herd.preySenseRadius() as i64);
         // The pen as a piece of fenced LAND (docs/plan_grazing_2d.md §7). A penned herd grazes its own
-        // fenced footprint and the grass it eats offsets the larder bill:
+        // fenced footprint, and that grass is one of the only two things that feed it:
         //   `pen_radius`           = the footprint hex radius (0 = the single corralled tile).
         //   `pen_footprint_tiles`  = the count of IN-BOUNDS fenced tiles the SIM computes over
         //                            (`hex_range_tiles(corralled_at, penRadius)` length). Display as-is —
         //                            the client must NOT reconstruct the closed-form hex-disk count, which
         //                            is wrong at map edges.
-        //   `pen_pasture_fraction` = the share of the pen's feed its footprint covered (0..1); with
-        //                            `pen_upkeep` (the OFFSET larder bill) this drives the "Fed by pasture
-        //                            NN% · larder N.N food/turn" split in the herd drawer.
+        //   `pen_pasture_fraction` = the share of the pen's feed its footprint covered (0..1). The
+        //                            herd drawer's `Fed:` row leads with `pen_fed_fraction` and splits
+        //                            it against this one — the fodder share is `fed − pasture`, a
+        //                            subtraction of two shares of the same demand, NEVER `fodder_draw`
+        //                            divided by a ratio.
+        //   `pen_hay_need`         = THE GAP the footprint does NOT cover, in FODDER units per turn —
+        //                            what this pen needs GROWN for it. `0` on an unpenned herd and on a
+        //                            pen its own land already feeds, so the readout says nothing rather
+        //                            than `needs 0.0`. It is NOT gated on Foddering: a keeper who cannot
+        //                            draw hay still owes exactly this much, and that is the case the
+        //                            player most needs to see. **A FIXED FOOTPRINT UNDER A GROWING HERD
+        //                            IS A RISING NEED** — a pen that feeds itself today goes
+        //                            hay-dependent long before an animal dies of it, which is the slow
+        //                            trap this field exists to surface in advance. The band-level
+        //                            roll-up is the cohort's `fodder_need`, which the SIM sums (herd
+        //                            rows are fog-filtered, so a client-side sum silently drops the pens
+        //                            it cannot see).
         //   `pen_extend_progress`  = the in-flight fence ring's build meter, in WORK UNITS (the same
         //                            unit-costed meter `tame_work_done`/`corral_work_done` carry, NOT a
         //                            0..1 fraction), and
@@ -454,26 +463,34 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("pen_radius", herd.penRadius() as i64);
         let _ = dict.insert("pen_footprint_tiles", herd.penFootprintTiles() as i64);
         let _ = dict.insert("pen_pasture_fraction", herd.penPastureFraction());
+        let _ = dict.insert("pen_hay_need", herd.penHayNeed());
+        // `pen_fodder_shortfall` = HOW MUCH MORE fodder this pen needs per turn — the sim's own
+        // `max(0, penHayNeed − fodderDraw)`, in fodder units. It is the READOUT number the `Fed:` row
+        // ends on ("… · needs 11.3 more/turn"): what the fenced footprint does not grow AND the keeper
+        // did not carry in. **THE SIM OWNS THE ARITHMETIC** — both its terms are already on this row,
+        // so a client could subtract them, but the three are stamped on ONE pass, which is what makes
+        // it impossible for the difference to describe a different turn from its terms. Ungated by
+        // Foddering exactly as `penHayNeed` is (a band that cannot draw fodder is short its WHOLE
+        // need, which is precisely the case the row exists for), clamped at zero sim-side, and 0 both
+        // on an unpenned herd and on a pen its own land feeds.
+        let _ = dict.insert("pen_fodder_shortfall", herd.penFodderShortfall());
         let _ = dict.insert("pen_extend_progress", herd.penExtendProgress());
         let _ = dict.insert("pen_extend_cost", herd.penExtendCost());
         // `fodder_draw` = the hay this pen drew from its keeper's fodder store last turn (Flora roster
-        // F3). NOTE THE UNITS: this is in FODDER units (`fodder_per_biomass × biomass` scale, ~25× the
-        // food-unit scale for deer), NOT food-equivalent — so it CANNOT sit in the feed-split row beside
-        // the food-unit pasture/larder terms. `pen_hay_food` below is its food-equivalent twin, which
-        // does drive the split. Surfaced for the fodder-store readout / completeness.
+        // F3), in FODDER units — the same units `fodder_store` on the cohort carries, and the same units
+        // the pen's demand is struck in, so it is directly renderable beside the pasture SHARE.
+        // It is the SECOND and LAST feed term: `pen_larder_bill` / `pen_hay_food` (the food-equivalent
+        // partition of a food-unit pen bill) are retired with `pen_upkeep`, because there is no food-unit
+        // pen bill left to partition.
+        //
+        // THERE IS STILL NO ABSOLUTE FOR THE GROSS DEMAND ON THE WIRE. `pen_pasture_fraction` and
+        // `pen_fed_fraction` are ratios, `fodder_draw` is an absolute, and `pen_hay_need` /
+        // `pen_fodder_shortfall` are GAPS — the gross the shares partition is published nowhere. So the
+        // `Fed:` row subtracts the two SHARES ("40% pasture · 7% fodder") and quotes the sim's gap
+        // ("needs 11.3 more/turn"), and must NOT divide the draw by a ratio to synthesize the gross.
+        // The DRAW itself is no longer printed: it is the presence test that tells `no fodder` (nothing
+        // carried in) from a short ration.
         let _ = dict.insert("fodder_draw", herd.fodderDraw());
-        // The RENDER-READY three-way feed split (Flora roster F3), both in FOOD units so they share the
-        // row with the pasture term — the sim partitions the pen's GROSS demand (`pen_upkeep`) into
-        // three, ZERO client arithmetic (the `pen_feed_upkeep` precedent):
-        //   pasture_food     = pen_upkeep × pen_pasture_fraction  (grazed free by the footprint)
-        //   `pen_hay_food`   = hay's contribution, food-equivalent (0 without Foddering / no hay drawn)
-        //   `pen_larder_bill`= the NET food/turn the keeper actually hauls from the FOOD larder, AFTER
-        //                      pasture + hay (0 when fully fed by them). This is the honest bread bill —
-        //                      the herd drawer's "larder Y.Y" term reads THIS, never the gross
-        //                      `pen_upkeep` (which stays the pre-commit Corral decision's projection).
-        // Sim-pinned invariant: pasture_food + pen_hay_food + pen_larder_bill == pen_upkeep (gross).
-        let _ = dict.insert("pen_larder_bill", herd.penLarderBill());
-        let _ = dict.insert("pen_hay_food", herd.penHayFood());
         // Body mass = the biomass of ONE animal of this species (intensification ladder slice 8b). A
         // real appended wire field (was being dropped — decoder audit), surfaced for completeness /
         // future "N animals" readouts. NOTE: it is BIOMASS, so it CANNOT drive the kill-rhythm — that
@@ -524,7 +541,7 @@ pub(crate) fn herds_to_array(
         //
         // THE STANDING UPKEEP (same doc, section 2) — what it costs to HOLD this herd's rung, per
         // turn, in work units. All three terms ship so the client subtracts nothing, and
-        // `upkeep_demand` follows `pen_upkeep`'s rule: ALWAYS MEANINGFUL, so a rung with no upkeep
+        // `upkeep_demand` follows `corral_yield`'s rule: ALWAYS MEANINGFUL, so a rung with no upkeep
         // reads an honest `0` (which is every shipped rung today) rather than a sentinel.
         //
         // THERE IS NO `maintain` FLAG: "stop maintaining this" is a crew of ZERO

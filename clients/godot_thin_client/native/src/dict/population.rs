@@ -146,21 +146,44 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // independently-computed number that could drift from them. The cohort-level `foodIncomeAverage`
     // that briefly existed for this was redundant and is retired.
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
-    // The THIRD term of the band's food ledger: the food this band actually PAID this turn to feed
-    // the pens it keeps, summed across every corralled herd it works. It is taken straight off the
-    // larder and is in NEITHER of the two rows above, so the true net is
-    //     larder_delta == food_income − food_consumption − pen_feed_upkeep
-    // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`). The sim answers this — the
-    // client must never re-derive it by summing the herds' `pen_upkeep`.
-    let _ = dict.insert("pen_feed_upkeep", cohort.penFeedUpkeep() as f64);
+    // THE LEDGER HAS NO PEN TERM. `penFeedUpkeep` is retired (schema `(deprecated)`): human food is
+    // not animal feed, so a pen never touches the FOOD larder — it eats the grass its fenced
+    // footprint grows plus the hay its keeper carries in, and what those two leave uncovered makes it
+    // UNDERFED (`pen_fed_fraction` < 1) instead of billing the people. The identity is now
+    //     larder_delta == food_income − food_consumption − raid_forfeit
+    //                     + transfer_received − transfer_sent
+    // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`).
     // The band's FODDER store (Flora roster F3): hay this band has stockpiled to feed its pens, a second
     // larder distinct from the food larder above. Copied verbatim from `cohort.fodderStore()` — the
     // FODDER `LocalStore` value in fodder/grass units (`fodder_per_biomass × biomass` scale, ~25× the
-    // food scale, no conversion), consistent with `fodder_draw` (grass units) and distinct from
-    // `pen_hay_food` (the food-equivalent term). A pen that knows Foddering draws from this each turn
-    // (`HerdTelemetryState.fodderDraw`) to shrink the bread bill it would otherwise pay from the food
-    // larder. 0 for a forager band with no fodder economy.
+    // food scale, no conversion), consistent with `fodder_draw`, which is the per-pen draw OUT of this
+    // store and is in the same fodder units. A pen that knows Foddering draws from this each turn
+    // (`HerdTelemetryState.fodderDraw`) to cover feed its own footprint's pasture could not.
+    // 0 for a forager band with no fodder economy.
     let _ = dict.insert("fodder_store", cohort.fodderStore() as f64);
+    // THE BAND'S HAY LEDGER — the fodder twins of `food_income` / `food_consumption` / `turns_of_food`,
+    // in FODDER units per turn against the `fodder_store` above. A pen eats grass and hay and never the
+    // people's food, so the hay bill is its OWN ledger and appears in no food term.
+    //   `fodder_need`     = the hay this band's pens are SHORT per turn, summed over every pen it keeps
+    //                       (each pen's own share is the herd's `pen_hay_need`). THE GAP, not the gross
+    //                       demand — pasture is free, hay is farmed. 0 for a band keeping no pens and
+    //                       for pens their footprints cover, and NOT gated on Foddering.
+    //                       **THE SIM SUMS IT AND THE CLIENT MUST NOT**: herd rows are fog-filtered, so
+    //                       a pen out of sight would drop out of a client-side total the band still
+    //                       owes — the same mistake the retired `pen_feed_upkeep` was minted to avoid.
+    //   `fodder_income`   = what this band's fodder Fields actually HARVESTED this turn. The RAW
+    //                       harvest, not a Foddering-gated share: what was grown is a fact about the
+    //                       Fields, where what a pen may draw is a fact about what the faction learned.
+    //                       Rendered against `fodder_need` as "need 6.0/turn · growing 5.0/turn".
+    //   `turns_of_fodder` = turns until `fodder_store` empties at `fodder_need − fodder_income`. THE
+    //                       SAME IDIOM AS `turns_of_food`, off the same sim function, **INCLUDING ITS
+    //                       999 NO-DRAIN SENTINEL** — read it as infinity through
+    //                       `BandFoodStatus.is_limited` / `DetailFormat.food_turns_text` exactly as the
+    //                       food runway is. One idea, one spelling: no second constant and no second
+    //                       branch for "turns of buffer left".
+    let _ = dict.insert("fodder_need", cohort.fodderNeed() as f64);
+    let _ = dict.insert("fodder_income", cohort.fodderIncome() as f64);
+    let _ = dict.insert("turns_of_fodder", cohort.turnsOfFodder() as f64);
     // Predators Phase 3 (raid legibility pair, appended after fodderStore in the schema):
     //   raid_radius  — echo of `fauna.predators.raid_radius`: how close (odd-r hex distance) an
     //                  aggressive carnivore herd must be to raid this band's larder. The band panel
@@ -168,19 +191,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  range and to raise the live "Predator nearby" Warrior-card alert. The
     //                  `work_range` idiom above (a plain `uint` reach) — decoded the same way.
     let _ = dict.insert("raid_radius", cohort.raidRadius() as i64);
-    //   raid_forfeit — food this band lost to predator raids THIS turn (the raid twin of
-    //                  `pen_feed_upkeep`): a negative food-ledger line the sim answers, never
-    //                  re-derived client-side. 0 when no raid landed → the ledger omits the row.
-    //                  Full net is larder_delta == food_income − food_consumption − pen_feed_upkeep
-    //                  − raid_forfeit.
+    //   raid_forfeit — food this band lost to predator raids THIS turn: the ledger's ONLY negative
+    //                  line beyond consumption, a figure the sim answers and the client never
+    //                  re-derives. 0 when no raid landed → the ledger omits the row.
+    //                  Full net is larder_delta == food_income − food_consumption − raid_forfeit.
     let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
     //   transfer_received / transfer_sent — FOOD THAT CROSSED BETWEEN BANDS (arc #527), the last two
     //                  terms of the ledger identity
-    //                    larder_delta == food_income − food_consumption − pen_feed_upkeep
-    //                                    − raid_forfeit + transfer_received − transfer_sent
+    //                    larder_delta == food_income − food_consumption − raid_forfeit
+    //                                    + transfer_received − transfer_sent
     //                  Food moving from one larder to another passes through NEITHER income (what
     //                  THIS band's workers produced) nor consumption (what its people ate) — the
-    //                  same hole pen_feed_upkeep and raid_forfeit were each minted for. TWO NAMED
+    //                  same hole raid_forfeit was minted for. TWO NAMED
     //                  MAGNITUDES, never one signed net: a band that both sends and receives in a
     //                  window is doing something, and a net would render that as nothing happening.
     //                  **NOT trade-only** — `balance_supply_networks` has pooled food between

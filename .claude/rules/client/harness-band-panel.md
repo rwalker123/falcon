@@ -296,11 +296,21 @@ and PRINTS its extent, which reads **294 of the 300px box**.
 **`band_panel_vitals_worst_case`** is the state that pins it — one band carrying EVERY optional
 vitals row at once in the height-capped TOP dock, which no fixture had ever staged, run through the
 bounds assertion, `_assert_zone_content_fits` and the new **`_assert_merged_food_row_fits`** (the
-SHORT tier's merged `Food … · 128.4 hay` line measured against the column it must not wrap in —
+SHORT tier's merged `Food … · 128.4 fodder` line measured against the column it must not wrap in —
 353px of 380). Beside them **`_report_zone_content_extent` PRINTS each zone's content extent against
 its box** rather than asserting: it reads 299 of a 300px box, and a near-miss and a comfortable fit
 are the same green line otherwise. The rows, the merge and the flank widths are specified in
 `band-city-panel.md` / `band-readouts.md`.
+
+**Its fixture carries the band's whole FODDER LEDGER, not just the stock.** The Fodder row grew the Food
+line's other three beats (`fodder_need` / `fodder_income` / `turns_of_fodder`), which makes it by some
+distance the LONGEST optional vitals row a band can hold — so a worst case seeding `fodder_store`
+alone stopped being a worst case the moment the row grew, and `WORST_CASE_FODDER_NEED` /
+`_INCOME` / `WORST_CASE_TURNS_OF_FODDER` follow the same longest-form rule every other constant in
+that block does. The need deliberately outruns the income, so the frame is the WARN state as well as
+the widest one: at this tier the row is MERGED, so what it renders is ` · 128.4 fodder` in amber. **The
+tally did not move** (805 `PASS`, no frame count change) — the merged clause is the same width it
+was, which is the check that the widening did not reach the SHORT tier's measured column.
 
 **The PER-SOURCE CARRY AXIS contributes SEVEN `PASS` to `ui_preview`, ZERO frames and nothing at all
 to `band_panel_preview`.** Two of the seven are the husbandry-hint pair becoming a 2×2 (both kits

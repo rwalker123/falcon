@@ -1,23 +1,31 @@
 //! **THE PEN FEED SPLIT IS A SETTLEMENT, NOT A WALK DOWN A VECTOR**
 //! (`docs/plan_standing_upkeep.md` §4.9 item 9b).
 //!
-//! The corral-tend arm used to draw hay and then bread off the band's stores **inside** the assignment
-//! loop, one row at a time, so a store that could not cover every pen fed the earliest row in
-//! `assignments` and starved the last. And because `LaborAllocation::set_assignment` removes an edited
-//! row and re-pushes it at the **end**, the pen the player had just adjusted was the one fed last —
-//! positional allocation, with the position controlled by the most recent stepper press.
+//! The corral-tend arm used to draw hay off the band's `FODDER` store **inside** the assignment loop,
+//! one row at a time, so a store that could not cover every pen fed the earliest row in `assignments`
+//! and starved the last. And because `LaborAllocation::set_assignment` removes an edited row and
+//! re-pushes it at the **end**, the pen the player had just adjusted was the one fed last — positional
+//! allocation, with the position controlled by the most recent stepper press.
 //!
 //! Every test here drives the **real** `advance_labor_allocation` against a keeper band holding two
-//! pens and a store too thin for both, and asserts:
+//! pens and a hay store too thin for both, and asserts:
 //!
 //! - **the mark decides, and the vector does not** — a `High` pen is fed whole and a `Low` one
 //!   starves, and the *same* outcome holds with the assignments reversed and again after an edit has
 //!   re-pushed the fed row to the end (the arrangement the old code was guaranteed to get wrong);
 //! - **equal ranks split in proportion** — two `Normal` pens against a short store are each part-fed
-//!   in proportion to what they asked for, the shares sum to what the store held, and neither pen
-//!   gets everything;
-//! - **both stores behave the same way** — the `FODDER` store and then the larder, in the order the
-//!   pen economy already spends them.
+//!   in proportion to what they asked for, and neither pen gets everything;
+//! - **the band's larder is not on the table at all** — however hungry the pens, not one unit of
+//!   `FOOD` moves for feed.
+//!
+//! # ⛔ THERE IS ONE STORE, AND IT IS THE HAY
+//!
+//! There used to be two: hay first, then the keeper's `FOOD` larder for whatever the pasture and hay
+//! left unpaid, settled after the loop because provisions are credited inside it. **Human food is not
+//! animal feed.** The larder draw was the modelling error, and its real effect was to hide the
+//! starvation path — a pen whose pasture failed took the food out of its keepers' mouths instead of
+//! shrinking. So the three fixtures that exercised the larder-as-a-flow are gone with it, and the
+//! priority rules they asserted are asserted here on the store that is actually spent.
 //!
 //! Deterministic (a pinned map seed, no `Date`/rand), mirroring `grazing_f3_fodder.rs`, whose fixture
 //! shape this file follows: the graze footprint is posed directly so the feed is charged on exactly
@@ -32,9 +40,9 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForagePatch,
-    ForageRegistry, GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
@@ -54,15 +62,11 @@ const PEN_BODY_MASS: f32 = 2.0;
 /// The pen carrying capacity every fixture herd is seated under — well above the biomass posed, so
 /// nothing here is capacity-limited.
 const PEN_CAPACITY: f32 = 4000.0;
-/// `fauna_config.json`'s `husbandry.pen.upkeep_per_biomass` — the gross bread bill per unit biomass.
-/// An INDEPENDENT reconstruction of the sim's own `pen_upkeep`, exactly as `grazing_f3_fodder.rs`
-/// keeps one, so a fixture that sizes a store to "one pen's bill" is not sized from the number under
-/// test.
-const PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 /// `f32` sums of `Scalar`-quantized stores — a few ULPs of slack, no more.
 const EPSILON: f32 = 1e-5;
-/// A larder deep enough that the bread bill is never the binding constraint.
-const AMPLE_LARDER: f32 = 1_000_000.0;
+/// A larder deep enough that *"nothing was taken from it"* is a claim with something to take. Every
+/// fixture stocks it, and every fixture asserts it comes out whole.
+const STOCKED_LARDER: f32 = 1_000_000.0;
 /// Hay enough that the `FODDER` store is never the binding constraint.
 const AMPLE_HAY: f32 = 1_000_000.0;
 /// The Sustain floor every fixture keeper works its pen at.
@@ -75,27 +79,8 @@ const LEAN_PEN_BIOMASS: f32 = 100.0;
 /// A barren footprint — the drylot case, so the whole grass demand is a shortfall and every term
 /// under test is decided by the two stores rather than by the land.
 const BARREN: f32 = 0.0;
-/// A larder with **nothing in it** at the top of the pass — the hand-to-mouth band whose pens live on
-/// what its crews bring home this very turn.
-const EMPTY_LARDER: f32 = 0.0;
 /// No hay at all, and no Foddering to draw it with.
 const NO_HAY: f32 = 0.0;
-/// The gathering row's floor: take the whole stand, so the gather is bounded by the crew and the
-/// patch rather than by a floor the test would then have to reason about.
-const STRIP_THE_STAND: f32 = 0.0;
-/// The gathering patch's `K`. Deep enough that one turn's gather is worth many times a pen's bread
-/// bill, so *"the pen ate out of this turn's income"* is unambiguous.
-const GATHER_CAPACITY: f32 = 500.0;
-/// A **thin** stand, for the fixtures whose point is that the day's gather does not go round: one
-/// turn's take off it is worth about one small pen's bread bill, and the pens are then posed against
-/// the income it actually paid (`gathered_income`), never against this number.
-const SCANT_GATHER_CAPACITY: f32 = 6.0;
-/// The crew every row of a gather-funded fixture carries. Small enough that all of them together fit
-/// the band's worker pool, so the shed walk never runs and the gather is bounded by the **stand** —
-/// which is what makes one probe run's income the income the real fixture sees. (The stocked fixtures
-/// keep [`KEEPER_WORKERS`]: there the shed is harmless, because a pen's feed is priced off its
-/// biomass and not off its crew.)
-const GATHERING_CREW: u32 = 1_000;
 
 fn base_world() -> App {
     let mut app = App::new();
@@ -217,22 +202,6 @@ fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssig
     }
 }
 
-/// One gathering row on `tile`, stripping the stand — the food-crediting row the hand-to-mouth cases
-/// need. It pays into the same larder the pens are fed from, **inside** the assignment loop.
-fn forage_row(tile: UVec2, priority: SourcePriority, workers: u32) -> LaborAssignment {
-    LaborAssignment {
-        target: LaborTarget::Forage {
-            tile,
-            floor: STRIP_THE_STAND,
-            species: None,
-            take_species: Default::default(),
-        },
-        workers,
-        kit: None,
-        priority,
-    }
-}
-
 /// A keeper band standing on `tile` holding `assignments`, in the order given — which is the axis
 /// these tests vary.
 fn spawn_keeper(app: &mut App, assignments: Vec<LaborAssignment>, tile: UVec2) -> Entity {
@@ -290,15 +259,6 @@ fn pose_footprints(app: &mut App, intake: f32) {
     }
 }
 
-/// Seat a full stand of wild plants on `tile` for the gathering row to work.
-fn seat_gathering_patch(app: &mut App, tile: UVec2, capacity: f32) {
-    let mut registry = app.world.resource_mut::<ForageRegistry>();
-    registry.patches.clear();
-    registry
-        .patches
-        .insert(tile, ForagePatch::new(tile, capacity));
-}
-
 /// What is left in the keeper's larder after the turn.
 fn larder_left(app: &App, keeper: Entity) -> f32 {
     app.world
@@ -316,8 +276,8 @@ fn stock(app: &mut App, keeper: Entity, hay: f32, larder: f32) {
     cohort.stores.set(FOOD, scalar_from_f32(larder));
 }
 
-/// The share of its own feed bill a pen actually got. With a barren footprint and no hay this is
-/// exactly the share of its larder bill the band paid.
+/// The share of its own fodder demand a pen actually got — grass plus hay over
+/// `fodder_per_biomass × biomass`. With a barren footprint this is exactly the share the hay covered.
 fn fed_fraction(app: &App, herd_id: &str) -> f32 {
     app.world
         .resource::<HerdRegistry>()
@@ -335,18 +295,25 @@ fn hay_drawn(app: &App, herd_id: &str) -> f32 {
         .fodder_draw
 }
 
-/// The band's whole pen-feed debit this turn — the summed `LocalStore::take`, which is what the food
-/// ledger identity is closed with.
-fn pen_feed_paid(app: &App, keeper: Entity) -> f32 {
-    app.world
-        .get::<LaborAllocation>(keeper)
-        .expect("keeper")
-        .last_pen_feed_upkeep
+/// The fodder a pen at `biomass` demands in a turn on a barren footprint — its whole demand,
+/// reconstructed from the species rate rather than read off the sim.
+fn grass_demand(biomass: f32) -> f32 {
+    FODDER_RATE * biomass
 }
 
-/// The gross bread bill of a pen at `biomass`, reconstructed from config rather than from the sim.
-fn gross_bill(biomass: f32) -> f32 {
-    PEN_UPKEEP_PER_BIOMASS * biomass
+/// **NOT ONE UNIT OF `FOOD` LEFT THIS BAND'S LARDER.** Every fixture stocks the larder and calls
+/// this: a pen is fed grass and hay, so however short its feed runs, the store the *people* eat from
+/// is exactly where the fixture left it.
+///
+/// The corral harvest CREDITS food, so the assertion is one-sided by construction — the larder may
+/// only go **up**. `>=` is the whole claim: a debit of any size fails it.
+fn assert_larder_untouched(app: &App, keeper: Entity, context: &str) {
+    let left = larder_left(app, keeper);
+    assert!(
+        left >= STOCKED_LARDER - EPSILON,
+        "{context}: the keeper's larder is not feed — it held {STOCKED_LARDER} and must still hold \
+         at least that (got {left})"
+    );
 }
 
 /// **THE ARRANGEMENT AXIS** — how the two rows are laid out before the turn runs. All three describe
@@ -425,36 +392,49 @@ fn run_two_pen_turn(
 
 /// **THE HIGH PEN EATS AND THE LOW PEN STARVES — IN ALL THREE ARRANGEMENTS.**
 ///
-/// The larder holds exactly the rich pen's bread bill and the two pens together ask for one and a
-/// half times that, so somebody goes hungry and the marks say who. The shipped loop-order draw
-/// passes none of the three: it fed whichever pen's row came first, and
+/// The `FODDER` store holds exactly the rich pen's whole grass demand and the two pens together ask
+/// for one and a half times that, so somebody goes hungry and the marks say who. The shipped
+/// loop-order draw passes none of the three: it fed whichever pen's row came first, and
 /// [`Arrangement::Edited`] is the case where that is the pen the player just touched.
+///
+/// **And the starving pen really starves.** It used to fall back on the keeper's larder and read fed;
+/// with hay the only feed there is, a `Low` pen behind a `High` one on a short store gets nothing at
+/// all — and the larder it would have eaten is untouched.
 #[test]
 fn a_high_marked_pen_is_fed_whole_and_a_low_one_starves_whatever_the_vector_says() {
+    let rich_grass = grass_demand(RICH_PEN_BIOMASS);
     for arrangement in [Arrangement::First, Arrangement::Last, Arrangement::Edited] {
         let (app, keeper) = run_two_pen_turn(
             arrangement,
             SourcePriority::High,
             SourcePriority::Low,
-            false,
-            0.0,
-            gross_bill(RICH_PEN_BIOMASS),
+            true,
+            rich_grass,
+            STOCKED_LARDER,
         );
         let rich = fed_fraction(&app, "pen_rich");
         let lean = fed_fraction(&app, "pen_lean");
-        println!("{arrangement:?}: rich {rich:.6}, lean {lean:.6}");
+        let rich_hay = hay_drawn(&app, "pen_rich");
+        let lean_hay = hay_drawn(&app, "pen_lean");
+        println!("{arrangement:?}: rich {rich:.6} (hay {rich_hay:.4}), lean {lean:.6} (hay {lean_hay:.4})");
+        assert!(
+            (rich_hay - rich_grass).abs() < EPSILON,
+            "{arrangement:?}: the High pen draws its whole shortfall off the hay store (got {rich_hay})"
+        );
+        assert!(
+            lean_hay.abs() < EPSILON,
+            "{arrangement:?}: and the Low pen draws nothing from what is left (got {lean_hay})"
+        );
         assert!(
             (rich - 1.0).abs() < EPSILON,
             "{arrangement:?}: the High pen is fed whole (got {rich})"
         );
         assert!(
             lean.abs() < EPSILON,
-            "{arrangement:?}: the Low pen gets nothing once the store is spent (got {lean})"
+            "{arrangement:?}: the Low pen gets NOTHING once the store is spent — no larder catches it \
+             (got {lean})"
         );
-        assert!(
-            (pen_feed_paid(&app, keeper) - gross_bill(RICH_PEN_BIOMASS)).abs() < EPSILON,
-            "{arrangement:?}: the band's real debit is the whole larder and no more"
-        );
+        assert_larder_untouched(&app, keeper, &format!("{arrangement:?}"));
     }
 }
 
@@ -463,14 +443,14 @@ fn a_high_marked_pen_is_fed_whole_and_a_low_one_starves_whatever_the_vector_says
 /// either row sits.
 #[test]
 fn swapping_the_marks_swaps_which_pen_eats() {
-    // The lean pen is High now, and the larder holds exactly ITS bill.
-    let (app, _) = run_two_pen_turn(
+    // The lean pen is High now, and the hay store holds exactly ITS demand.
+    let (app, keeper) = run_two_pen_turn(
         Arrangement::First,
         SourcePriority::Low,
         SourcePriority::High,
-        false,
-        0.0,
-        gross_bill(LEAN_PEN_BIOMASS),
+        true,
+        grass_demand(LEAN_PEN_BIOMASS),
+        STOCKED_LARDER,
     );
     let rich = fed_fraction(&app, "pen_rich");
     let lean = fed_fraction(&app, "pen_lean");
@@ -482,96 +462,36 @@ fn swapping_the_marks_swaps_which_pen_eats() {
         rich.abs() < EPSILON,
         "and the pen marked Low goes without, though it is the bigger holding (got {rich})"
     );
-}
-
-/// **THE SAME RULE ON THE HAY STORE.** `FODDER` is served before the larder and by the same
-/// settlement, so a `High` pen draws its whole grass shortfall and a `Low` one draws nothing.
-#[test]
-fn a_short_hay_store_serves_the_high_pen_first_too() {
-    // Barren footprints, so each pen's grass shortfall is its whole demand: FODDER_RATE x biomass.
-    let rich_grass = FODDER_RATE * RICH_PEN_BIOMASS;
-    let (app, _) = run_two_pen_turn(
-        Arrangement::Last,
-        SourcePriority::High,
-        SourcePriority::Low,
-        true,
-        rich_grass,
-        AMPLE_LARDER,
-    );
-    let rich_hay = hay_drawn(&app, "pen_rich");
-    let lean_hay = hay_drawn(&app, "pen_lean");
-    assert!(
-        (rich_hay - rich_grass).abs() < EPSILON,
-        "the High pen draws its whole shortfall off the hay store (got {rich_hay})"
-    );
-    assert!(
-        lean_hay.abs() < EPSILON,
-        "and the Low pen draws nothing from what is left (got {lean_hay})"
-    );
-    assert!(
-        (fed_fraction(&app, "pen_rich") - 1.0).abs() < EPSILON,
-        "a pen fed entirely by hay reads fully fed"
-    );
+    assert_larder_untouched(&app, keeper, "swapped marks");
 }
 
 /// **TWO PENS ON THE SAME MARK SPLIT A SHORT STORE IN PROPORTION TO WHAT THEY ASKED FOR** — which is
 /// what makes the settlement need no second ordering rule at all, and therefore nothing a vector
 /// position could decide.
 ///
-/// The larder holds half the two bills together. Each pen must come out at half its own bill — so the
-/// rich pen gets twice the food the lean one does while both read the *same* fed fraction, and
+/// The hay store holds half the two demands together. Each pen must come out at half its own demand —
+/// so the rich pen draws twice the hay the lean one does while both read the *same* fed fraction, and
 /// neither reads `0` or `1`.
-#[test]
-fn two_equally_ranked_pens_split_a_short_larder_in_proportion_to_demand() {
-    const HALF: f32 = 0.5;
-    let total_bill = gross_bill(RICH_PEN_BIOMASS) + gross_bill(LEAN_PEN_BIOMASS);
-    let (app, keeper) = run_two_pen_turn(
-        Arrangement::First,
-        SourcePriority::Normal,
-        SourcePriority::Normal,
-        false,
-        0.0,
-        total_bill * HALF,
-    );
-    let rich = fed_fraction(&app, "pen_rich");
-    let lean = fed_fraction(&app, "pen_lean");
-    println!("proportional: rich {rich:.6}, lean {lean:.6}");
-    assert!(
-        (rich - HALF).abs() < EPSILON,
-        "the rich pen is fed half its bill (got {rich})"
-    );
-    assert!(
-        (lean - HALF).abs() < EPSILON,
-        "the lean pen is fed half of its own, smaller bill (got {lean})"
-    );
-    assert!(
-        rich > EPSILON && rich < 1.0 - EPSILON && lean > EPSILON && lean < 1.0 - EPSILON,
-        "NEITHER pen gets everything and neither is starved out: rich {rich}, lean {lean}"
-    );
-    assert!(
-        (pen_feed_paid(&app, keeper) - total_bill * HALF).abs() < EPSILON,
-        "and the shares together are exactly what the larder held"
-    );
-}
-
-/// **THE SAME PROPORTIONAL RULE ON THE HAY STORE**, for the reason the priority rule is asserted on
-/// both: the two stores are served by one settlement and a fix applied to only one of them would
-/// leave half the defect standing.
 #[test]
 fn two_equally_ranked_pens_split_a_short_hay_store_in_proportion_to_demand() {
     const HALF: f32 = 0.5;
-    let rich_grass = FODDER_RATE * RICH_PEN_BIOMASS;
-    let lean_grass = FODDER_RATE * LEAN_PEN_BIOMASS;
-    let (app, _) = run_two_pen_turn(
+    let rich_grass = grass_demand(RICH_PEN_BIOMASS);
+    let lean_grass = grass_demand(LEAN_PEN_BIOMASS);
+    let (app, keeper) = run_two_pen_turn(
         Arrangement::Last,
         SourcePriority::Normal,
         SourcePriority::Normal,
         true,
         (rich_grass + lean_grass) * HALF,
-        AMPLE_LARDER,
+        STOCKED_LARDER,
     );
     let rich_hay = hay_drawn(&app, "pen_rich");
     let lean_hay = hay_drawn(&app, "pen_lean");
+    let rich = fed_fraction(&app, "pen_rich");
+    let lean = fed_fraction(&app, "pen_lean");
+    println!(
+        "proportional: rich {rich:.6} (hay {rich_hay:.4}), lean {lean:.6} (hay {lean_hay:.4})"
+    );
     assert!(
         (rich_hay - rich_grass * HALF).abs() < EPSILON,
         "the rich pen draws half its shortfall (got {rich_hay})"
@@ -584,20 +504,34 @@ fn two_equally_ranked_pens_split_a_short_hay_store_in_proportion_to_demand() {
         rich_hay > lean_hay,
         "proportional, not equal: the bigger demand draws the bigger share"
     );
+    assert!(
+        (rich - HALF).abs() < EPSILON && (lean - HALF).abs() < EPSILON,
+        "and both are fed the SAME fraction of their own demands (rich {rich}, lean {lean})"
+    );
+    assert!(
+        rich > EPSILON && rich < 1.0 - EPSILON && lean > EPSILON && lean < 1.0 - EPSILON,
+        "NEITHER pen gets everything and neither is starved out: rich {rich}, lean {lean}"
+    );
+    assert_larder_untouched(&app, keeper, "equal marks");
 }
 
-/// **WITHOUT FODDERING NOTHING CHANGES AT ALL.** A faction that has not learned to hay a herd bids
-/// `0` into the settlement, so a full `FODDER` store is untouched and both pens fall back on the
-/// larder exactly as a pasture-only pen always did.
+/// **WITHOUT FODDERING NOTHING FEEDS THEM AT ALL.** A faction that has not learned to hay a herd bids
+/// `0` into the settlement, so a full `FODDER` store is untouched — and on a barren footprint that
+/// leaves both pens with **no feed whatsoever**.
+///
+/// This is the fix stated at its plainest. The same fixture used to assert *"both pens fall back on
+/// the larder exactly as a pasture-only pen always did"* and *"the whole debit is bread": a band that
+/// could not use its hay fed its animals its people's food instead. Now the hay pile and the larder
+/// both come out whole and the herds shrink.
 #[test]
-fn a_faction_without_foddering_draws_no_hay_however_full_the_store_is() {
+fn a_faction_without_foddering_draws_no_hay_and_its_pens_go_unfed() {
     let (app, keeper) = run_two_pen_turn(
         Arrangement::First,
         SourcePriority::Normal,
         SourcePriority::Normal,
         false,
         AMPLE_HAY,
-        AMPLE_LARDER,
+        STOCKED_LARDER,
     );
     for id in ["pen_rich", "pen_lean"] {
         assert!(
@@ -605,15 +539,12 @@ fn a_faction_without_foddering_draws_no_hay_however_full_the_store_is() {
             "{id} drew hay with no Foddering"
         );
         assert!(
-            (fed_fraction(&app, id) - 1.0).abs() < EPSILON,
-            "{id} is fed in full off the larder, as it always was"
+            fed_fraction(&app, id).abs() < EPSILON,
+            "{id} is fed NOTHING — a barren footprint and undrawable hay leave no feed, and the \
+             larder is not a fallback (got {})",
+            fed_fraction(&app, id)
         );
     }
-    let both_bills = gross_bill(RICH_PEN_BIOMASS) + gross_bill(LEAN_PEN_BIOMASS);
-    assert!(
-        (pen_feed_paid(&app, keeper) - both_bills).abs() < EPSILON,
-        "and the whole debit is bread, on the pre-hay basis"
-    );
     let hay_left = app
         .world
         .get::<PopulationCohort>(keeper)
@@ -625,216 +556,57 @@ fn a_faction_without_foddering_draws_no_hay_however_full_the_store_is() {
         (hay_left - AMPLE_HAY).abs() < EPSILON,
         "the hay store is untouched (got {hay_left})"
     );
+    assert_larder_untouched(&app, keeper, "no Foddering");
 }
 
-/// **A BAND THAT OPENED THE TURN WITH AN EMPTY LARDER STILL FEEDS ITS PEN OUT OF WHAT IT GATHERED
-/// TODAY** — and it does so whichever way round the two rows sit.
+/// **THE STRONGEST STATEMENT OF THE RULE: A BAND'S LARDER IS UNTOUCHED BY ITS PENS, TURN AFTER TURN.**
 ///
-/// The larder is a **flow** as much as a stock: `FOOD` is credited *inside* the assignment loop, by
-/// the gather, the pen's own harvest and the hunt take, so a keeper living hand to mouth has paid its
-/// pens out of the same turn's income for as long as pens have existed. Settling the larder against
-/// the store standing at the **top** of the pass would take that away: the fed fraction would
-/// collapse to the land/hay share, `last_pen_feed_upkeep` would publish `0`, and next turn's
-/// `advance_husbandry` would shrink a herd whose keeper was carrying home food all along.
+/// Two pens on a barren footprint with no hay at all — the maximum possible feed shortfall — and a
+/// larder deep enough to have paid every bill many times over. Driven for several passes so a debit
+/// that only lands on, say, the turn a pen first goes hungry cannot hide.
 ///
-/// The hay half is deliberately different (it is settled off the top-of-pass `FODDER` stock, a
-/// buffer), which is why this is asserted on the larder alone — see `settle_pen_larder`.
+/// **It is not vacuous**: the pens really are demanding feed (`grass_demand > 0`) and really are going
+/// without (`fed_fraction == 0`), which is exactly the state in which the retired `settle_pen_larder`
+/// would have drawn `upkeep_per_biomass × biomass` out of this store every single turn.
 #[test]
-fn a_pen_is_fed_from_the_same_turns_gather_when_the_larder_opened_empty() {
-    let bill = gross_bill(LEAN_PEN_BIOMASS);
-    let mut fed_each_way: Vec<f32> = Vec::new();
-    for gather_first in [true, false] {
-        let mut app = base_world();
-        let tile = pen_tile(&app);
-        seat_pens(&mut app, tile, &[("pen_lean", LEAN_PEN_BIOMASS)]);
-        seat_gathering_patch(&mut app, tile, GATHER_CAPACITY);
-        let gather = forage_row(tile, SourcePriority::Normal, GATHERING_CREW);
-        let pen = hunt_row("pen_lean", SourcePriority::Normal, GATHERING_CREW);
-        let rows = if gather_first {
-            vec![gather, pen]
-        } else {
-            vec![pen, gather]
-        };
-        let keeper = spawn_keeper(&mut app, rows, tile);
-        stock(&mut app, keeper, NO_HAY, EMPTY_LARDER);
+fn a_bands_larder_is_untouched_by_its_pens_across_repeated_turns() {
+    const TURNS: u32 = 5;
+
+    let mut app = base_world();
+    let tile = pen_tile(&app);
+    seat_two_pens(&mut app, tile, RICH_PEN_BIOMASS, LEAN_PEN_BIOMASS);
+    let keeper = spawn_keeper(
+        &mut app,
+        vec![
+            hunt_row("pen_rich", SourcePriority::Normal, KEEPER_WORKERS),
+            hunt_row("pen_lean", SourcePriority::Normal, KEEPER_WORKERS),
+        ],
+        tile,
+    );
+
+    for turn in 0..TURNS {
+        // Re-pose the barren footprint and re-stock both stores each pass: `advance_labor_allocation`
+        // is the only system driven here, so nothing else would restore them, and pinning the larder
+        // to a known figure is what makes "it did not move" measurable rather than inferred.
+        stock(&mut app, keeper, NO_HAY, STOCKED_LARDER);
         pose_footprints(&mut app, BARREN);
         app.world.run_system_once(advance_labor_allocation);
 
-        let fed = fed_fraction(&app, "pen_lean");
-        let paid = pen_feed_paid(&app, keeper);
-        let left = larder_left(&app, keeper);
-        println!("gather_first={gather_first}: fed {fed:.6}, paid {paid:.6}, left {left:.6}");
-        // **Not vacuous**: the gather really did credit more food than the pen's whole bill, so a
-        // fully-fed pen means the income paid it and not that there was nothing to pay.
-        assert!(
-            left > EPSILON,
-            "gather_first={gather_first}: the gathering row must credit food this turn, or this \
-             fixture proves nothing (larder left {left})"
-        );
-        assert!(
-            (paid - bill).abs() < EPSILON,
-            "gather_first={gather_first}: the pen is paid its whole bread bill out of this turn's \
-             income (paid {paid}, bill {bill})"
-        );
-        assert!(
-            (fed - 1.0).abs() < EPSILON,
-            "gather_first={gather_first}: a pen paid in full reads fully fed (got {fed})"
-        );
-        fed_each_way.push(fed);
+        for id in ["pen_rich", "pen_lean"] {
+            assert!(
+                fed_fraction(&app, id).abs() < EPSILON,
+                "turn {turn}: {id} must be genuinely unfed, or this fixture proves nothing (got {})",
+                fed_fraction(&app, id)
+            );
+        }
+        assert_larder_untouched(&app, keeper, &format!("turn {turn}"));
     }
-    assert!(
-        (fed_each_way[0] - fed_each_way[1]).abs() < EPSILON,
-        "and the answer does not depend on which row came first: {fed_each_way:?}"
-    );
-}
 
-/// **WHAT ONE TURN'S GATHERING PAYS INTO AN EMPTY LARDER** on this fixture, measured by running the
-/// gathering row on its own — so the tests below can size a pen's bread bill against the band's real
-/// income rather than pin a number that a flora retune would silently invalidate.
-fn gathered_income() -> f32 {
-    let mut app = base_world();
-    let tile = pen_tile(&app);
-    seat_pens(&mut app, tile, &[]);
-    seat_gathering_patch(&mut app, tile, SCANT_GATHER_CAPACITY);
-    let keeper = spawn_keeper(
-        &mut app,
-        vec![forage_row(tile, SourcePriority::Normal, GATHERING_CREW)],
-        tile,
-    );
-    stock(&mut app, keeper, NO_HAY, EMPTY_LARDER);
-    app.world.run_system_once(advance_labor_allocation);
-    let income = larder_left(&app, keeper);
+    // And the demand really was positive throughout — the assertion above is about a pen that WANTED
+    // feed, not about a pen with nothing left to feed.
     assert!(
-        income > EPSILON,
-        "the gathering row must credit real food, or every fixture built on it is vacuous"
-    );
-    income
-}
-
-/// The pen biomass whose gross bread bill is exactly `bill` — [`gross_bill`] inverted, so a fixture
-/// can pose a pen that asks for a named share of the day's income.
-fn biomass_billed(bill: f32) -> f32 {
-    bill / PEN_UPKEEP_PER_BIOMASS
-}
-
-/// Drive one real turn on two pens whose **only** larder is what the band gathers during it: the store
-/// opens empty and one gathering row, sitting **behind both pens** in the vector, pays into it as the
-/// loop walks. `rich`/`lean` name each pen's mark and the bread bill it is posed to ask for.
-fn run_gather_funded_turn(
-    arrangement: Arrangement,
-    rich: (SourcePriority, f32),
-    lean: (SourcePriority, f32),
-) -> (App, Entity) {
-    let mut app = base_world();
-    let tile = pen_tile(&app);
-    seat_pens(
-        &mut app,
-        tile,
-        &[
-            ("pen_rich", biomass_billed(rich.1)),
-            ("pen_lean", biomass_billed(lean.1)),
-        ],
-    );
-    seat_gathering_patch(&mut app, tile, SCANT_GATHER_CAPACITY);
-    let mut rows = match arrangement {
-        Arrangement::First | Arrangement::Edited => vec![
-            hunt_row("pen_rich", rich.0, GATHERING_CREW),
-            hunt_row("pen_lean", lean.0, GATHERING_CREW),
-        ],
-        Arrangement::Last => vec![
-            hunt_row("pen_lean", lean.0, GATHERING_CREW),
-            hunt_row("pen_rich", rich.0, GATHERING_CREW),
-        ],
-    };
-    // **The earner goes LAST**, behind both pens: the income has to reach a row the loop visited
-    // before it was banked, which a walk down the vector could never do.
-    rows.push(forage_row(tile, SourcePriority::Normal, GATHERING_CREW));
-    let keeper = spawn_keeper(&mut app, rows, tile);
-    if arrangement == Arrangement::Edited {
-        edit_the_rich_row(&mut app, keeper, rich.0);
-    }
-    stock(&mut app, keeper, NO_HAY, EMPTY_LARDER);
-    pose_footprints(&mut app, BARREN);
-    app.world.run_system_once(advance_labor_allocation);
-    (app, keeper)
-}
-
-/// **THE MARK STILL DECIDES WHO EATS WHEN THE LARDER IS A DAY'S GATHER RATHER THAN A STOCK** — in all
-/// three arrangements.
-///
-/// The band opens with nothing; the gathering row pays in exactly one pen's bill; the two pens
-/// together ask for half as much again. So the settlement is short, the marks say who is served, and
-/// the answer is the same one the stocked fixtures give.
-#[test]
-fn the_mark_decides_who_eats_out_of_the_days_gather_whatever_the_vector_says() {
-    /// The Low pen asks for half what the High one does, so a short settlement that ignored the marks
-    /// and split in proportion would read `0.67`/`0.67` rather than `1`/`0`.
-    const LEAN_SHARE_OF_INCOME: f32 = 0.5;
-    let income = gathered_income();
-    for arrangement in [Arrangement::First, Arrangement::Last, Arrangement::Edited] {
-        let (app, keeper) = run_gather_funded_turn(
-            arrangement,
-            (SourcePriority::High, income),
-            (SourcePriority::Low, income * LEAN_SHARE_OF_INCOME),
-        );
-        let rich = fed_fraction(&app, "pen_rich");
-        let lean = fed_fraction(&app, "pen_lean");
-        let paid = pen_feed_paid(&app, keeper);
-        let left = larder_left(&app, keeper);
-        println!("{arrangement:?}: rich {rich:.6}, lean {lean:.6}, paid {paid:.6}, left {left:.6}");
-        assert!(
-            (paid + left - income).abs() < EPSILON,
-            "{arrangement:?}: the day's gather is the WHOLE larder under test — paid {paid} + left \
-             {left} must be the measured income {income}, or something else fed these pens"
-        );
-        assert!(
-            (rich - 1.0).abs() < EPSILON,
-            "{arrangement:?}: the High pen is fed whole out of the day's gather (got {rich})"
-        );
-        assert!(
-            lean.abs() < EPSILON,
-            "{arrangement:?}: the Low pen gets nothing once the gather is spent (got {lean})"
-        );
-        assert!(
-            (paid - income).abs() < EPSILON,
-            "{arrangement:?}: and the whole day's gather went into the High pen (paid {paid} of \
-             {income})"
-        );
-    }
-}
-
-/// **AND TWO PENS ON THE SAME MARK SPLIT THE DAY'S GATHER IN PROPORTION TO WHAT THEY ASKED FOR** — the
-/// income-funded twin of the stocked proportional case, so the late larder settlement is shown to be
-/// the *same* settlement and not merely a payment that happens later.
-#[test]
-fn two_equally_marked_pens_split_the_days_gather_in_proportion_to_demand() {
-    /// The lean pen asks for half what the rich one does, so the two shares are visibly different
-    /// while the two fed fractions are equal.
-    const LEAN_SHARE_OF_INCOME: f32 = 0.5;
-    let income = gathered_income();
-    let lean_bill = income * LEAN_SHARE_OF_INCOME;
-    // Every pen in a short tier is served the same fraction of its own bill: the store over what the
-    // tier asked for.
-    let served = income / (income + lean_bill);
-    let (app, keeper) = run_gather_funded_turn(
-        Arrangement::First,
-        (SourcePriority::Normal, income),
-        (SourcePriority::Normal, lean_bill),
-    );
-    let rich = fed_fraction(&app, "pen_rich");
-    let lean = fed_fraction(&app, "pen_lean");
-    println!("gather-funded proportional: rich {rich:.6}, lean {lean:.6}, served {served:.6}");
-    assert!(
-        (rich - served).abs() < EPSILON && (lean - served).abs() < EPSILON,
-        "both pens are served the same fraction {served} of their own bills (rich {rich}, lean \
-         {lean})"
-    );
-    assert!(
-        rich > EPSILON && rich < 1.0 - EPSILON,
-        "NEITHER pen is fed whole and neither is starved out (rich {rich})"
-    );
-    assert!(
-        (pen_feed_paid(&app, keeper) - income).abs() < EPSILON,
-        "and the shares together are exactly the day's gather"
+        grass_demand(LEAN_PEN_BIOMASS) > 0.0,
+        "the leaner pen demands real fodder ({})",
+        grass_demand(LEAN_PEN_BIOMASS)
     );
 }

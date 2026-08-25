@@ -451,7 +451,6 @@ fn create_herds<'a>(
                 corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
                 corralYield: herd.corral_yield,
-                penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 // RETIRED: the four stance rows cannot express a continuous dial. The client
@@ -479,9 +478,13 @@ fn create_herds<'a>(
                 pastoralYield: herd.pastoral_yield,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
+                // What the footprint leaves for the keeper to grow — appended last, always written.
+                penHayNeed: herd.pen_hay_need,
+                // **How much more fodder the pen still needs** — appended last (append-only wire).
+                // `max(0, penHayNeed − fodderDraw)`, struck sim-side on the same pass as both its
+                // terms so the difference can never describe a different turn from them.
+                penFodderShortfall: herd.pen_fodder_shortfall,
                 // The render-ready feed split (F3) — appended last (append-only wire).
-                penLarderBill: herd.pen_larder_bill,
-                penHayFood: herd.pen_hay_food,
                 // Raw combat components (Predators Phase 0) — the client derives danger itself.
                 // Appended last (append-only wire).
                 attack: herd.attack,
@@ -537,7 +540,7 @@ fn create_herds<'a>(
                 buildWorkPerWorkerTurn: herd.build_work_per_worker_turn,
                 // **The standing upkeep** — appended last (append-only wire,
                 // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
-                // nothing; `upkeepDemand` follows `penUpkeep`'s always-meaningful rule.
+                // nothing; `upkeepDemand` follows `corralYield`'s always-meaningful rule.
                 upkeepDemand: herd.upkeep_demand,
                 upkeepSupplied: herd.upkeep_supplied,
                 upkeepShortfall: herd.upkeep_shortfall,
@@ -730,7 +733,7 @@ fn create_forage_patches<'a>(
                 buildWorkPerWorkerTurn: patch.build_work_per_worker_turn,
                 // **The standing upkeep** — appended last (append-only wire,
                 // docs/plan_standing_upkeep.md §2). All three terms ship, so the client subtracts
-                // nothing; `upkeepDemand` follows `penUpkeep`'s always-meaningful rule.
+                // nothing; `upkeepDemand` follows `corralYield`'s always-meaningful rule.
                 upkeepDemand: patch.upkeep_demand,
                 upkeepSupplied: patch.upkeep_supplied,
                 upkeepShortfall: patch.upkeep_shortfall,
