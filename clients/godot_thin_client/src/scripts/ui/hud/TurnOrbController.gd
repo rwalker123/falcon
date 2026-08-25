@@ -154,11 +154,24 @@ func set_band_attention(attention: Array) -> void:
 ##
 ## **IT IS A SEPARATE HALF BECAUSE OF WHEN ITS ROWS CAN BE BUILT, not for tidiness.** The band
 ## producers run inside `HudLayer.update_band_alerts`, BEFORE that method ingests the snapshot; the
-## knowledge producers read a roster that is only correct AFTER the screen's turn diff has rolled,
+## knowledge producer reads a roster that is only correct AFTER the screen's turn diff has rolled,
 ## thirty lines later — and on a delta carrying knowledge but no populations, `update_band_alerts`
 ## does not run at all. Folded into the band half they would have to be built at a moment that is
-## wrong for one of the two; as their own half each is built where its own inputs are ready.
+## wrong for one of the two; as its own half each is built where its own inputs are ready.
+##
+## **AND IT ONLY PUSHES WHEN THE ROWS ACTUALLY CHANGED, which is rarely.** A discovery finishes on a
+## handful of turns in a campaign, so this half is EMPTY on nearly every snapshot — and re-pushing an
+## unchanged half costs a deep copy of the band half, a re-sort and an orb redraw, on a seam that runs
+## on every delta carrying populations, knowledge or catalogues. Unguarded, that is a SECOND full
+## registry push per snapshot beside `set_band_attention`'s.
+##
+## **The cost showed up as a FLAKE, not as a number.** `band_panel_preview`'s queue drag gestures are
+## bounded by a frame budget, and the extra push was enough to drop build orders the same harness
+## never drops on `main` — measured across paired runs, since a gesture that lands 53px of the 56px
+## it drives for reports as a mysterious intermittent failure rather than as a slowdown.
 func set_knowledge_attention(attention: Array) -> void:
+	if _knowledge_attention == attention:
+		return
 	_knowledge_attention = attention
 	_push_attention()
 
@@ -172,7 +185,7 @@ func set_turn(turn: int) -> void:
 	if _turn_orb != null:
 		_turn_orb.set_turn(turn)
 
-## The orb registry = the cached band/expedition producers + the cached knowledge producers + the fork
+## The orb registry = the cached band/expedition producers + the cached knowledge producer + the fork
 ## producer, pushed as ONE replace. `TurnOrb.set_attention` replaces wholesale, so every half must fold
 ## in here rather than call it separately — a second call would wipe every row the others produced.
 func _push_attention() -> void:
@@ -243,10 +256,8 @@ func _open_fork_panel() -> void:
 ## method and falls off the end. So the two lists are one decision made twice, and adding a
 ## non-locating producer means both.
 ##
-## **THE TWO KNOWLEDGE KINDS OPEN ONE SCREEN ON TWO DIFFERENT FILTERS**, because they asked two
-## different questions: the freshly-learned row lands on `New this turn` — the discovery it just
-## named — and the backlog row on `Ready · unused`, the list whose length it just quoted. A row that
-## opened on whatever filter the player last set would make the player hunt for what it counted.
+## **THE KNOWLEDGE ROW OPENS ITS SCREEN ON `New this turn`** — the list holding the discovery it just
+## named. A row that opened on whatever filter the player last set would make them hunt for it.
 func _on_turn_orb_panel_requested(kind: String) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
@@ -255,8 +266,6 @@ func _on_turn_orb_panel_requested(kind: String) -> void:
 		return
 	if kind == HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED:
 		_knowledge.open_on_filter(HudKnowledgeVocab.FILTER_NEW)
-	elif kind == HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_UNSPENT:
-		_knowledge.open_on_filter(HudKnowledgeVocab.FILTER_UNUSED)
 
 ## The player answered. Drop the fork from the local cache OPTIMISTICALLY (so the orb's gate lifts
 ## immediately) and let the next snapshot be authoritative.

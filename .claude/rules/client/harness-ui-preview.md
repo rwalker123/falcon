@@ -1660,19 +1660,33 @@ line's own instruction being earned again.
 the turn-orb one are the arc's, not the orb's, and both are about SHARED WALK STATE:
 
 - **It clears the faction's tracks for its band states and puts back what it inherited.** The
-  knowledge producers are faction-wide and ride the band rows' own registry, so a track an earlier
-  chapter left complete-and-unused puts a standing row on every orb in the chapter — the ALL-CLEAR
-  states stop being clear and the under-kept block's negative-control COUNT gains a row. Restoring is
-  the other half: `compose_rungs` runs three chapters later and gates its hunt-compose frames on that
-  knowledge, so leaving the tracks cleared moved four of its frames into judging a crew stepper under
-  knowledge nobody meant to change.
+  knowledge producer is faction-wide and rides the band rows' own registry, and earlier chapters push
+  tracks without always advancing the turn — so the screen's diff has not rolled since whichever of
+  them last did, and the first turn tick here rolls everything they taught in between onto one orb.
+  The ALL-CLEAR states stop being clear and the under-kept block's negative-control COUNT gains a row.
+  Restoring is the other half: `compose_rungs` runs three chapters later and gates its hunt-compose
+  frames on that knowledge, so leaving the tracks cleared moved four of its frames into judging a crew
+  stepper under knowledge nobody meant to change.
 - **It empties the band half at the CACHE (`set_band_attention([])`), never by ingesting a calm
   band.** `update_band_alerts` is not inert — `ingest_snapshot_bands` overwrites the walk's
   `player_band` / `player_bands` / `prev_band_sizes`, which later chapters render against. That was
   the first cut, and it moved the same four frames a second way.
+- **It hands back the TURN as well**, which `docks_legend`'s `reserved_dock` draws on the orb face.
+  The tracks go back at two different turns, because the knowledge diff only rolls when the turn
+  moves and a single push would announce whatever the inherited tracks hold that the block's own
+  staging did not.
 
-**Both were found by PIXEL-DIFFING every frame against a run at HEAD, not by the exit status** — the
-run was green through all of it. The tell was a frame moving outside the orb's own corner.
+**All three were found by PIXEL-DIFFING every frame against a run at `main`, not by the exit
+status** — the run was green through all of it. The tell was a frame moving outside the orb's own
+corner.
+
+> #### ⛔ A GITIGNORED BUILD ARTIFACT MOVES EVERY FRAME, AND IT IS NOT YOUR CHANGE
+>
+> `clients/godot_thin_client/build_stamp.txt` is written by the build and read by `ClientBuild` into
+> the bottom-centre `build cli … · srv ?` overlay, which **every frame draws**. It is absent on a
+> fresh worktree (the overlay reads `dev-unknown`) and appears the moment something stamps it — so a
+> baseline captured before that and a run captured after differ on **400+ frames**, in a 10px strip
+> nobody looks at. Move it aside before capturing either side, or the diff drowns the real movers.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 

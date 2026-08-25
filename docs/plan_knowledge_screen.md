@@ -148,33 +148,43 @@ branch renders an affordance that does nothing** — `hud_attention_vocab` says 
 The existing one-shot System note (`FactionReadouts._announce_knowledge_unlock`) is superseded by
 producer 1 and should be retired, not left to double-report.
 
-> **AS BUILT (Slice C).** Both producers ship as `knowledge_learned` and `knowledge_unspent`, with
-> three corrections to the paragraphs above, and the engineering rationale in
-> `.claude/rules/client/turn-orb.md`.
+> ## ⛔ AS BUILT (Slice C): **ONE PRODUCER SHIPPED, NOT TWO. Producer 2 was cut.**
 >
-> **BOTH kinds take a branch, not one.** The paragraph says "a knowledge kind", and a second
-> non-locating kind with no branch is precisely the dead affordance the paragraph beside it forbids.
-> They open on DIFFERENT filters, matching the question each row asked: the freshly-learned row on
-> `new`, the backlog row on `unused`. That needed a new entry point — `open_on_filter` — because the
-> live filter is controller state that survives a close, so `open()` reopens on whatever the player
-> last set.
+> Engineering rationale in `.claude/rules/client/turn-orb.md`; four corrections to the paragraphs
+> above.
+>
+> **PRODUCER 2 WAS BUILT, RENDERED, AND REMOVED BEFORE THE ARC LANDED — do not re-add it.** The orb
+> is for EVENTS and for LOSSES IN PROGRESS; an unspent discovery is a STANDING CONDITION, so its row
+> never went away and the orb never returned to its calm all-clear pulse. Measured: it moved 400 of
+> the render harness's frames simply by adding one to the count badge on every frame that draws the
+> orb. A permanently-lit attention hub teaches the player to stop looking at it, which costs more
+> than the nudge is worth — and **§1 had already given the unspent count a home**, the action bar's
+> PIP, which is mounted on all three of the Band/City panel's layouts including the collapsed rail
+> and clears on the same honest trigger. The row was the same standing fact on a second surface, and
+> on the one surface whose whole value is being quiet when nothing needs you. The player has also
+> already been told: producer 1 announced the discovery the turn it landed.
+>
+> `turn_orb.gd` asserts the ABSENCE against a faction sitting on four unspent discoveries, so
+> re-adding the row fails a test rather than quietly relighting the orb.
+>
+> **The surviving producer takes the branch, and it opens on `new`, not `unused`.** The paragraph
+> above names `unused` because it was written for producer 2's row; producer 1's row names a
+> discovery, so it lands on the list holding it. That still needed a new entry point —
+> `open_on_filter` — because the live filter is controller state that survives a close, so `open()`
+> reopens on whatever the player last set.
 >
 > **THE ORDERING WAS THE REAL WORK, AND IT IS NOT A COMMENT.** `build_band_attention` runs thirty
-> lines before the turn diff producer 1 reads is rolled, so a producer built beside the band ones
-> names the PREVIOUS turn's discovery in a row that renders perfectly plausibly. The knowledge rows
-> are a THIRD registry half instead, filled by one `HudLayer` seam that rolls the diff and pushes the
-> pip and the rows on adjacent lines — which also makes them correct on a delta carrying knowledge
-> but no populations, one that never reaches `update_band_alerts` at all.
+> lines before the turn diff the producer reads is rolled, so a producer built beside the band ones
+> names the PREVIOUS turn's discovery in a row that renders perfectly plausibly. The knowledge row is
+> a THIRD registry half instead, filled by one `HudLayer` seam that rolls the diff and pushes the pip
+> and the row on adjacent lines — which also makes it correct on a delta carrying knowledge but no
+> populations, one that never reaches `update_band_alerts` at all.
 >
 > **RETIRING THE NOTE DID NOT RETIRE ITS COPY.** `KNOWLEDGE_UNLOCK_NOTES` is the knowledge screen's
 > *"what it lets you do"* line (`KnowledgeRoster` reads it); `KNOWLEDGE_UNLOCK_LABELS`,
 > `_knowledge_announced` and `FactionReadouts`' last Callable injection went. **A completed discovery
 > is now announced on the turn orb and nowhere else — it leaves the event log entirely**, which is
 > this section's intent rather than a side effect.
->
-> **And one consequence to know about:** producer 2's row is STANDING, so the orb's calm all-clear
-> pulse is gone for as long as the faction sits on an unspent discovery. It clears the way the pip
-> does — by USING the knowledge, never by looking at it.
 
 ---
 

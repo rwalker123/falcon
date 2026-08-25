@@ -115,11 +115,11 @@ func open() -> void:
 	_open = true
 	render()
 
-## **OPEN ON A GIVEN FILTER — the entry point the turn orb's knowledge rows take**
-## (`docs/plan_knowledge_screen.md` §5). A row that says *"2 discoveries unspent"* has to land the
-## player on the ones it counted, and the live filter is CONTROLLER state that survives a turn tick,
-## so `open()` alone would reopen on whatever the player last set and leave them looking for a list
-## the row already made.
+## **OPEN ON A GIVEN FILTER — the entry point the turn orb's knowledge row takes**
+## (`docs/plan_knowledge_screen.md` §5). A row that says *"Penning learned"* has to land the player
+## on the list holding it — `New this turn` — and the live filter is CONTROLLER state that survives a
+## turn tick, so `open()` alone would reopen on whatever the player last set and leave them hunting
+## for the discovery the row just named.
 ##
 ## **IT OPENS, IT NEVER TOGGLES.** The launcher glyph is a toggle because pressing it is *"show me /
 ## hide it"*; pressing an attention row is *"take me to this"*, and a press that CLOSED the screen
@@ -188,10 +188,17 @@ func reset_world_state() -> void:
 ## Answerable with the panel CLOSED and never built, which is the point: the pip is what tells a
 ## player there is something on a screen they have not opened.
 func unspent_count() -> int:
-	return KnowledgeRoster.count_matching(nodes(), HudKnowledgeVocab.FILTER_UNUSED)
+	return unspent_count_of(nodes())
+
+## The same count over a roster the CALLER already built. `HudLayer` asks two questions of one
+## snapshot — the pip's number and the orb's row — and building `nodes()` for each is a second walk
+## of the faction's patches, herds, kit and bench for one answer. Same expression either way, so the
+## two entry points cannot drift.
+static func unspent_count_of(roster: Array) -> int:
+	return KnowledgeRoster.count_matching(roster, HudKnowledgeVocab.FILTER_UNUSED)
 
 ## **THE FLATTENED ROSTER — ONE DERIVATION, THREE READERS.** The columns draw it, the launcher's pip
-## counts it, and the orb's two knowledge producers are built off it
+## counts it, and the orb's knowledge producer is built off it
 ## (`AttentionController.knowledge_attention`). Exposed rather than re-derived per reader because the
 ## walk behind it resolves the faction's patches, herds, kit and bench — so a second call is both a
 ## second cost and a second chance for two surfaces to answer differently about one discovery.

@@ -981,18 +981,11 @@ func close_knowledge_panel() -> void:
 func knowledge_panel() -> KnowledgePanelController:
     return _knowledge
 
-## Push the launcher's PIP — how many discoveries the faction has earned and nothing is using.
+## **ROLL THE KNOWLEDGE SCREEN'S TURN DIFF AND RE-PUSH BOTH READOUTS DERIVED FROM IT** — the
+## launcher's pip and the orb's knowledge row. Every caller takes this method; neither push it makes
+## has a caller of its own.
 ##
-## **IT IS DERIVED FRESH EVERY TURN, NEVER LATCHED, AND OPENING THE SCREEN DOES NOT CLEAR IT.** What
-## clears an unspent count is USING the knowledge; a pip that went quiet on a look would tell the
-## player they had dealt with something they had not. `KnowledgePanelController.unspent_count` answers
-## with the panel closed and never built, which is the point — the pip is what says there is something
-## on a screen you have not opened.
-## **ROLL THE KNOWLEDGE SCREEN'S TURN DIFF AND RE-PUSH EVERYTHING DERIVED FROM IT** — the launcher's
-## pip and the orb's two knowledge rows. Every caller takes this method; none of the three calls it
-## makes has a caller of its own.
-##
-## **THIS IS THE ORDERING MECHANISM, AND IT IS THE WHOLE POINT OF THE METHOD.** Producer 1 names the
+## **THIS IS THE ORDERING MECHANISM, AND IT IS THE WHOLE POINT OF THE METHOD.** The orb's row names the
 ## track that finished THIS TURN, which is `refresh_snapshot`'s diff — and that diff rolls THIRTY
 ## LINES BELOW `build_band_attention` in `update_band_alerts`. A knowledge producer built with the
 ## band ones would therefore read the PREVIOUS turn's diff and name the wrong discovery, in a row that
@@ -1008,24 +1001,41 @@ func _refresh_knowledge_readouts() -> void:
     if _knowledge == null:
         return
     _knowledge.refresh_snapshot()
-    _push_knowledge_pip()
-    _push_knowledge_attention()
+    # **ONE ROSTER BUILD FOR BOTH READOUTS.** The walk behind `nodes()` resolves the faction's
+    # patches, herds, kit and bench, and both readouts derive from it — so asking for it twice per
+    # snapshot is a second walk of the whole player world for one answer, on a seam that runs on
+    # every delta carrying populations, knowledge or catalogues. It shipped that way first, and the
+    # cost showed up as a FLAKE: `band_panel_preview`'s queue auto-scroll gesture is bounded by a
+    # frame budget, and the extra walk left it 53px short of the 56 it drives for.
+    var roster := _knowledge.nodes()
+    _push_knowledge_pip(roster)
+    _push_knowledge_attention(roster)
 
-## Push the orb's two KNOWLEDGE rows (`docs/plan_knowledge_screen.md` §5) — what finished this turn,
-## and how many discoveries nothing is using. Built off `nodes()`, the same flattened roster the
-## columns draw and the pip counts, so the three surfaces are one answer.
+## Push the orb's KNOWLEDGE row (`docs/plan_knowledge_screen.md` §5) — a discovery that finished this
+## turn. Built off the roster the columns draw and the pip counts, so the three surfaces are one answer.
 ##
 ## Never called except from `_refresh_knowledge_readouts` — see its docstring for why.
-func _push_knowledge_attention() -> void:
-    if _knowledge == null or _turnorb == null:
+func _push_knowledge_attention(roster: Array) -> void:
+    if _turnorb == null:
         return
-    _turnorb.set_knowledge_attention(
-        AttentionController.knowledge_attention(_knowledge.nodes()))
+    _turnorb.set_knowledge_attention(AttentionController.knowledge_attention(roster))
 
-func _push_knowledge_pip() -> void:
-    if _knowledge == null or _bandpanel == null or not _bandpanel.has_panel():
+## Push the launcher's PIP — how many discoveries the faction has earned and nothing is using.
+##
+## **IT IS DERIVED FRESH EVERY TURN, NEVER LATCHED, AND OPENING THE SCREEN DOES NOT CLEAR IT.** What
+## clears an unspent count is USING the knowledge; a pip that went quiet on a look would tell the
+## player they had dealt with something they had not. It answers with the panel closed and never
+## built, which is the point — the pip is what says there is something on a screen you have not opened.
+##
+## **AND IT IS THE ONLY SURFACE CARRYING THAT COUNT.** §5 asked for an orb row beside it; that row was
+## built and cut, because an unspent discovery is a STANDING condition and the orb never went quiet
+## again — see `AttentionController.knowledge_attention`. This pip is mounted on all three of the
+## Band/City panel's layouts, including the collapsed rail, so the nudge is always on screen.
+func _push_knowledge_pip(roster: Array) -> void:
+    if _bandpanel == null or not _bandpanel.has_panel():
         return
-    _bandpanel.set_action_pip(BandCityPanel.ACTION_KNOWLEDGE, _knowledge.unspent_count())
+    _bandpanel.set_action_pip(BandCityPanel.ACTION_KNOWLEDGE,
+        KnowledgePanelController.unspent_count_of(roster))
 
 ## **THE FORECAST QUERY SEAM, for `Main` to wire the transport into.** `Main` owns the command client,
 ## so it injects the sender and pumps `CommandBridge.poll_query_replies` in once a frame; nothing in
@@ -1580,11 +1590,11 @@ func reset_world_state() -> void:
     # new world starts KNOWING as "New this turn" — exactly what the `UNSEEN_TURN` sentinel exists to
     # prevent. See `KnowledgePanelController.reset_world_state`.
     _knowledge.reset_world_state()
-    # …and the orb's two knowledge rows go with it. They are a CACHED half of the registry, so a row
-    # naming the old world's discovery would otherwise sit on the orb until the next snapshot that
-    # happens to carry a section this pushes from. `_topbar.reset_world_state()` above has already
-    # emptied the tracks, so what this pushes is the new world's nothing.
-    _push_knowledge_attention()
+    # …and the orb's knowledge row goes with it. It is a CACHED half of the registry, so a row naming
+    # the old world's discovery would otherwise sit on the orb until the next snapshot that happens
+    # to carry a section this pushes from. `_topbar.reset_world_state()` above has already emptied
+    # the tracks, so what this pushes is the new world's nothing.
+    _push_knowledge_attention(_knowledge.nodes())
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()

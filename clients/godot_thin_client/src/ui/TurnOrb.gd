@@ -36,9 +36,9 @@ const HudStyle := preload("res://src/scripts/ui/HudStyle.gd")
 # Only for the awaiting-orders row icon: the orb stays producer-agnostic, but that glyph must be the
 # SAME one the Band panel's awaiting row wears, so it comes from the shared registry, not a copy.
 const FoodIcons := preload("res://src/scripts/ui/FoodIcons.gd")
-# Only for the two knowledge row icons, and for the same reason as `FoodIcons` above: the glyph must
-# be the one the LAUNCHER those rows open already wears, so pressing the row lands on a button with
-# the same mark on it. Read from the screen's own vocab, never copied.
+# Only for the knowledge row's icon, and for the same reason as `FoodIcons` above: the glyph must be
+# the one the LAUNCHER that row opens already wears, so pressing the row lands on a button with the
+# same mark on it. Read from the screen's own vocab, never copied.
 const HudKnowledgeVocab := preload("res://src/scripts/ui/hud/hud_knowledge_vocab.gd")
 
 ## Jump the camera to (x, y) — reuses the Alerts-panel focus wiring in Hud/Main.
@@ -77,11 +77,10 @@ const KIND_UNDER_KEPT_HERD := "under_kept_herd"
 # (`docs/plan_standing_upkeep.md` §2.3). The icon is the workers' own glyph rather than a rung's: the
 # row is about the HANDS, and which rung finished is already in the sim's own sentence on it.
 const KIND_CREW_HANDOFF := "crew_handoff"
-# The knowledge screen's two rows (`docs/plan_knowledge_screen.md` §5) — a discovery that finished
-# this turn, and the standing count of discoveries nothing is using. Both non-locating, both opening
-# that screen, so both wear its launcher's own mark rather than a glyph of their own.
+# The knowledge screen's row (`docs/plan_knowledge_screen.md` §5) — a discovery that finished this
+# turn. Non-locating, and it opens that screen, so it wears the screen's launcher's own mark rather
+# than a glyph of its own.
 const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
-const KIND_KNOWLEDGE_UNSPENT := "knowledge_unspent"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
@@ -96,7 +95,6 @@ const KIND_ICON := {
 	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.
 	KIND_DECISION: "?",
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_GLYPH,
-	KIND_KNOWLEDGE_UNSPENT: HudKnowledgeVocab.LAUNCH_GLYPH,
 }
 const KIND_ICON_FALLBACK := "●"
 

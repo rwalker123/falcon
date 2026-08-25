@@ -185,24 +185,23 @@ const ATTENTION_HANDOFF_OVERFLOW_LABEL_FORMAT := "+%d more crews changed job"
 
 const ATTENTION_HANDOFF_OVERFLOW_DETAIL := "builds finished and their hands moved"
 
-## **THE KNOWLEDGE SCREEN'S TWO PRODUCERS** (`docs/plan_knowledge_screen.md` §5). They answer two
-## different questions and are deliberately NOT one row: producer 1 is *this just happened*, producer
-## 2 is *this is still waiting*. A discovery is announced once and then, if nothing takes it up, keeps
-## being counted — merging them would make the announcement disappear the turn it was made or the
-## backlog re-announce itself every turn.
+## **THE KNOWLEDGE SCREEN'S PRODUCER — A DISCOVERY FINISHED THIS TURN**
+## (`docs/plan_knowledge_screen.md` §5).
 ##
-## **BOTH ARE NON-LOCATING**, and for the reason §1 dropped the jump: a discovery unlocks a verb across
-## the whole map, so there is no one hex `focus_on_tile` could land on. Both open the screen instead —
-## on the filter that matches the question the row asked (see `TurnOrbController`).
+## **NON-LOCATING**, for the reason §1 dropped the jump: a discovery unlocks a verb across the whole
+## map, so there is no one hex `focus_on_tile` could land on. It opens the screen instead, on the
+## `New this turn` filter — the list it just named (see `TurnOrbController`).
 ##
-## **PRODUCER 1 SUPERSEDES THE ONE-SHOT SYSTEM NOTE.** `FactionReadouts._announce_knowledge_unlock`
-## posted `"<Track> learned"` + the unlock sentence to the event dock's System channel; it is retired,
-## so a completed discovery is announced HERE and nowhere else. The unlock sentence did not go with
-## it — `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` is still the screen's *"what it lets you do"* copy,
-## which is where the row sends the player to read it.
+## **IT SUPERSEDES THE ONE-SHOT SYSTEM NOTE.** `FactionReadouts._announce_knowledge_unlock` posted
+## `"<Track> learned"` + the unlock sentence to the event dock's System channel; it is retired, so a
+## completed discovery is announced HERE and nowhere else. The unlock sentence did not go with it —
+## `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` is still the screen's *"what it lets you do"* copy, which
+## is where the row sends the player to read it.
+##
+## **THE UNSPENT BACKLOG IS DELIBERATELY NOT A SECOND KIND HERE** — see
+## `AttentionController.knowledge_attention` for why an aggregate `"N discoveries unspent"` row was
+## built and then cut. The count lives on the action bar's PIP, which §1 gave it.
 const ATTENTION_KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
-
-const ATTENTION_KIND_KNOWLEDGE_UNSPENT := "knowledge_unspent"
 
 ## `Cultivation learned` / `Tanning learned` — the node's OWN player-facing name, one format for both
 ## webs. The retired note carried a five-entry table of these strings; a format over the label the
@@ -216,24 +215,6 @@ const ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT := "%s learned"
 ## do"* head, which is what the row's `Open ▸` reaches.
 const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 
-## **ONE AGGREGATE ROW, NEVER ONE PER DISCOVERY** (§5). The tree is 8 nodes today and the prototype
-## draws 36; a row each would push every other producer off the top of the popover the first time a
-## player banked a few discoveries they had not spent. The count is the launcher pip's own
-## (`KnowledgePanelController.unspent_count`), so the orb and the pip cannot report different numbers.
-const ATTENTION_KNOWLEDGE_UNSPENT_LABEL_FORMAT := "%d discoveries unspent"
-
-## The singular, spelled rather than suffixed: `discovery`/`discoveries` is not an `s`, and ONE unspent
-## discovery is the ordinary early state — the turn a player finishes their first track and has not yet
-## put it to work — so it is the reading this row wears most often.
-const ATTENTION_KNOWLEDGE_UNSPENT_LABEL_ONE := "1 discovery unspent"
-
-## **THE DETAIL SAYS *NOTHING IS USING IT*, NEVER *NEVER USED*.** Same rule as
-## `HudKnowledgeVocab.UNSPENT_CLAUSE` and for the same reason: nothing in the sim or the client records
-## that a verb was ever exercised, so the honest claim is the present tense. Worded in the second
-## person, the unlock notes' voice, so the row and the screen it opens read as one sentence.
-const ATTENTION_KNOWLEDGE_UNSPENT_DETAIL_ONE := "nothing your people do uses it yet"
-
-const ATTENTION_KNOWLEDGE_UNSPENT_DETAIL_MANY := "nothing your people do uses them yet"
 
 ## **WHICH NON-LOCATING KINDS ACTUALLY OPEN SOMETHING.** A row with no `x`/`y` renders `Open ▸` and
 ## routes through `panel_requested`, and `TurnOrbController` decides what that opens — so a kind with
@@ -244,7 +225,7 @@ const ATTENTION_KNOWLEDGE_UNSPENT_DETAIL_MANY := "nothing your people do uses th
 ## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
 ## cannot keep is worse than no promise.
 const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
-    ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_KNOWLEDGE_UNSPENT]
+    ATTENTION_KIND_KNOWLEDGE_LEARNED]
 
 const ATTENTION_SEVERITY_INFO := "info"
 

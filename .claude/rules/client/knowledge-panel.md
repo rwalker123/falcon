@@ -254,17 +254,16 @@ on the one surface that exists to announce it. `update_intensification` and
 `update_crafting_catalogues` push it too. Populations move on nearly every turn, and "nearly" is what
 made this latent rather than absent.
 
-## THE ORB'S ROWS OPEN THIS SCREEN ON A FILTER, AND `open()` COULD NOT DO IT
+## THE ORB'S ROW OPENS THIS SCREEN ON A FILTER, AND `open()` COULD NOT DO IT
 
 `open_on_filter(filter)` exists because **the live filter is CONTROLLER state that survives a close**,
 deliberately — which node the player is reading and which filter they set outlast a turn tick, exactly
 as the crafting ledger's fold state does. So the launcher's plain `open()` reopens on whatever the
-player last set, and a row that has just said *"2 discoveries unspent"* would land them on a list that
-is not the one it counted.
+player last set, and a row that has just said *"Penning learned"* would land them on a list that need
+not contain it.
 
-- **The two knowledge kinds land on DIFFERENT filters**, matching the question each row asked:
-  `knowledge_learned` → `new`, `knowledge_unspent` → `unused`. `TurnOrbController` owns that mapping;
-  this controller just takes a filter.
+- **`knowledge_learned` → the `new` filter**, the list holding the discovery the row just named.
+  `TurnOrbController` owns that mapping; this controller just takes a filter.
 - **IT OPENS, IT NEVER TOGGLES.** The launcher glyph is a toggle because pressing it means *show me /
   hide it*; pressing an attention row means *take me to this*, and a press that closed the screen
   because it happened to be open already would answer a question nobody asked. It re-renders either
@@ -274,15 +273,27 @@ is not the one it counted.
 
 `nodes()` is the other seam slice C added: the flattened roster, exposed rather than re-derived per
 reader, because the walk behind it resolves the faction's patches, herds, kit and bench. The columns
-draw it, the pip counts it and both orb producers are built off it — one derivation, so no two of the
-three can answer differently about one discovery.
+draw it, the pip counts it and the orb's row is built off it — one derivation, so no two of the three
+can answer differently about one discovery.
+
+**AND ONE WALK PER SNAPSHOT, WHICH IS WHY `unspent_count_of(roster)` EXISTS.**
+`HudLayer._refresh_knowledge_readouts` asks two questions of one snapshot — the pip's number and the
+orb's row — and building `nodes()` for each is a second walk of the whole player world for one
+answer, on a seam that runs on every delta carrying populations, knowledge or catalogues. It shipped
+that way first and **the render harness caught it as a flake**: `band_panel_preview`'s queue
+auto-scroll gesture is bounded by a frame budget, and the extra per-snapshot walk was enough to leave
+it 53px short of the 56px it drives for — two failures in five runs against none in four at `main`,
+and none in five once the walk was shared. `unspent_count()` is the same expression over its own
+`nodes()`, so the two entry points cannot drift.
 
 **Asserted, never screenshotted** (`_assert_opens_on_filter`): a screen opened on the wrong filter
 renders a perfectly ordinary card. The claim is read off the DRAWN chrome — the lit pill is the one
-whose `normal` stylebox carries an opaque fill, every quiet pill sitting at `HudStyle.PILL_QUIET_ALPHA`
-— and the fixture puts something under BOTH filters, which is what makes either landing falsifiable.
-The block ends by proving the entry point is not redundant: a plain launcher open keeps the last
-filter.
+whose `normal` stylebox carries an opaque fill, every quiet pill sitting at `HudStyle.PILL_QUIET_ALPHA`.
+**The screen is parked on a DIFFERENT filter first, through the real pill**, which is what makes the
+landing falsifiable: the whole job of `open_on_filter` is to override retained view state, so a
+fixture that opened a panel already sitting on `new` would pass with the branch deleted. The block
+ends by proving the entry point is not redundant — parked on `unused` again, a plain launcher open
+comes back on `unused`.
 
 ## THE KNOW TAB IS DELETED, AND SETTLING AND DISCOVERIES ARE REHOMED RATHER THAN RETIRED
 

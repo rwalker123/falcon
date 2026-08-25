@@ -608,7 +608,7 @@ const TURN_FILTER_ROUTE_SEED := 43
 
 const TURN_FILTER_ROUTE := 44
 
-## **THE ORB'S TWO KNOWLEDGE ROWS OPEN THIS SCREEN ON THE FILTER THEY ASKED ABOUT**
+## **THE ORB'S KNOWLEDGE ROW OPENS THIS SCREEN ON THE FILTER IT ASKED ABOUT**
 ## (`docs/plan_knowledge_screen.md` §5, slice C). Driven through `TurnOrb.panel_requested`, which is
 ## the signal a non-locating row really emits when pressed, so the branch under test is
 ## `TurnOrbController._on_turn_orb_panel_requested` and not a method this chapter called directly.
@@ -617,9 +617,11 @@ const TURN_FILTER_ROUTE := 44
 ## ordinary card — the columns are the same, the pills are the same, and only which pill is lit says
 ## anything — so the claim is read off the drawn chrome (`_live_filter`) rather than saved as a frame.
 ##
-## **AND THE FIXTURE PUTS SOMETHING UNDER BOTH FILTERS, which is what makes either landing
-## falsifiable.** With nothing new and nothing unused, both filters render the same empty-handed card
-## and a branch that mapped both kinds to one filter would pass.
+## **THE SCREEN IS DELIBERATELY LEFT ON A DIFFERENT FILTER FIRST, and that is what makes the landing
+## falsifiable.** `open_on_filter` exists precisely to OVERRIDE the retained view state, so a fixture
+## that opened a panel already sitting on `new` would pass with the branch deleted. The screen is
+## parked on `unused` — through the real pill, with real pointer input — before the row is pressed,
+## and the fixture keeps BOTH filters non-empty so neither is an empty-handed card.
 func _assert_opens_on_filter() -> void:
 	var controller: KnowledgePanelController = h._hud.knowledge_panel()
 	controller.close()
@@ -642,35 +644,43 @@ func _assert_opens_on_filter() -> void:
 	h._assert_hud("knowledge route — the fixture has something under BOTH filters (%d unused, %d new)"
 			% [unused_count, new_count],
 		unused_count > 0 and new_count > 0)
-	# **THE BACKLOG ROW.** It named a count; it has to land the player on the list it counted.
-	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_UNSPENT)
+	# **PARK THE SCREEN ON A DIFFERENT FILTER FIRST** — through the pill itself, so what the row has to
+	# override is the state a real player would have left behind.
+	controller.toggle()
 	await h._settle()
-	h._assert_hud("knowledge route — the orb's backlog row OPENS the screen", controller.is_open())
-	h._assert_hud("knowledge route — …on the `%s` filter (lit pill: `%s`)"
-			% [HudKnowledgeVocab.FILTER_UNUSED, _live_filter()],
-		_live_filter() == HudKnowledgeVocab.FILTER_UNUSED)
-	# **THE FRESHLY-LEARNED ROW, PRESSED WHILE THE SCREEN IS ALREADY OPEN.** Two claims at once: the
-	# entry point OPENS rather than toggles (the launcher glyph toggles; an attention row must not close
-	# the thing it points at), and the two kinds land on DIFFERENT filters — which is what a branch
-	# mapping both to one filter fails, having passed everything above.
+	await _press_filter(HudKnowledgeVocab.FILTER_UNUSED)
+	controller.close()
+	await h._settle()
+	# **THE FRESHLY-LEARNED ROW.** It named a discovery; it has to land the player on the list holding
+	# it, not on the `unused` the screen was last left on.
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED)
+	await h._settle()
+	h._assert_hud("knowledge route — the orb's knowledge row OPENS the screen", controller.is_open())
+	h._assert_hud("knowledge route — …on `%s`, overriding the `%s` it was left on (lit pill: `%s`)"
+			% [HudKnowledgeVocab.FILTER_NEW, HudKnowledgeVocab.FILTER_UNUSED, _live_filter()],
+		_live_filter() == HudKnowledgeVocab.FILTER_NEW)
+	# **PRESSED AGAIN WHILE THE SCREEN IS ALREADY OPEN, it must not toggle shut.** The launcher glyph is
+	# a toggle because pressing it means *show me / hide it*; an attention row means *take me to this*,
+	# and a press that closed the thing it points at would answer a question nobody asked.
 	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED)
 	await h._settle()
 	h._assert_hud("knowledge route — a row pressed while the screen is open does NOT toggle it shut",
 		controller.is_open())
-	h._assert_hud("knowledge route — …and the freshly-learned row lands on `%s`, not the backlog's filter (lit pill: `%s`)"
+	h._assert_hud("knowledge route — …and it is still on `%s` (lit pill: `%s`)"
 			% [HudKnowledgeVocab.FILTER_NEW, _live_filter()],
 		_live_filter() == HudKnowledgeVocab.FILTER_NEW)
 	# **WHY THE ENTRY POINT HAS TO EXIST AT ALL.** The live filter is CONTROLLER state that survives a
-	# close, so a plain launcher open reopens on whatever was last set — here, the `new` the row above
-	# left behind. Without `open_on_filter`, the backlog row would open the screen on that and leave the
-	# player hunting for the discoveries it had just counted.
+	# close, so a plain launcher open reopens on whatever was last set. Parked on `unused` again and
+	# reopened through `toggle`, the screen comes back on `unused` — which is what the row would have
+	# got had it called `open()`, leaving the player hunting for the discovery it had just named.
+	await _press_filter(HudKnowledgeVocab.FILTER_UNUSED)
 	controller.close()
 	await h._settle()
 	controller.toggle()
 	await h._settle()
 	h._assert_hud("knowledge route — a plain launcher open keeps the LAST filter (`%s`), which is why the row needs its own entry point"
 			% _live_filter(),
-		_live_filter() == HudKnowledgeVocab.FILTER_NEW)
+		_live_filter() == HudKnowledgeVocab.FILTER_UNUSED)
 	controller.close()
 	await h._settle()
 
