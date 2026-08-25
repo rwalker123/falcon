@@ -216,6 +216,60 @@ func _crew_handoff_attention() -> Array:
         })
     return items
 
+## **THE KNOWLEDGE SCREEN'S TWO PRODUCERS** (`docs/plan_knowledge_screen.md` §5), over the flattened
+## roster the screen itself draws (`KnowledgePanelController.nodes`).
+##
+## **IT IS A `static func` AND TAKES NO COLLABORATOR, WHICH IS WHAT PUTS IT OUTSIDE THE ORDERING
+## HAZARD.** Every other producer here is a method because it reads the band/labor model; these two
+## read nothing but the list handed to them, so they cannot be run against a model that has not caught
+## up. `HudLayer._refresh_knowledge_readouts` is the one caller, and it rolls the screen's turn diff on
+## the line above — see that method for why the two must not be separated.
+##
+## **THE TWO ROWS ARE NOT ONE ROW.** Producer 1 answers *what just finished*, producer 2 *what is still
+## waiting*: a discovery is announced on the turn it lands and then, if nothing takes it up, keeps
+## being counted. Folded together, either the announcement would vanish the turn it was made or the
+## backlog would re-announce itself every turn.
+##
+## Both are NON-LOCATING and both are `info`: nothing is wrong — a track finished, which is the good
+## news, and an unspent discovery is an opportunity rather than a loss — so they sort below every real
+## problem, the `crew_handoff` argument exactly.
+static func knowledge_attention(nodes: Array) -> Array:
+    var items: Array = []
+    # Producer 1 — ONE ROW PER TRACK COMPLETED THIS TURN, read off the roster's own `new_this_turn`
+    # rather than off the raw diff: the roster applies the "new implies KNOWN" conjunction, and taking
+    # the flag off the same nodes the columns draw is what stops the orb naming a discovery the
+    # screen's `New this turn` pill does not count.
+    for node_variant in nodes:
+        if not (node_variant is Dictionary):
+            continue
+        var node: Dictionary = node_variant
+        if not KnowledgeRoster.matches(node, HudKnowledgeVocab.FILTER_NEW):
+            continue
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT % String(
+                node.get(HudKnowledgeVocab.NODE_LABEL, "")),
+            "detail": HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_DETAIL,
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    # Producer 2 — the BACKLOG, as ONE aggregate row. Counted through the same `count_matching` the
+    # launcher's pip is (`unspent_count`), so the two numbers are one expression and cannot disagree.
+    var unspent := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_UNUSED)
+    if unspent > 0:
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_UNSPENT,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_LABEL_ONE if unspent == 1 \
+                else HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_LABEL_FORMAT % unspent,
+            "detail": HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_DETAIL_ONE if unspent == 1 \
+                else HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_DETAIL_MANY,
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    return items
+
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
     for i in player_bands.size():

@@ -58,19 +58,21 @@ const KNOWLEDGE_TRACK_LABELS := {
 	"penning": "Penning",
 	"foddering": "Foddering",
 }
-# Command-feed nudge fired ONCE when a track completes: the rung it unlocks is a new verb the player
-# has never seen, so learning the discovery has to say what it bought — and, since the verb is only
-# HALF the story, what the verb then asks of them (a per-source meter to fill).
-const KNOWLEDGE_UNLOCK_LABELS := {
-	"cultivation": "Cultivation learned",
-	"seed_selection": "Seed Selection learned",
-	"herding": "Herding learned",
-	"penning": "Penning learned",
-	"foddering": "Foddering learned",
-}
-# NOTE: `herding` used to read "The Corral policy is now available on domesticated herds." Both
-# halves were wrong after the §4.3 reshuffle — Herding gates **Tame** (rung 2) and it is **Penning**
-# that gates Corral (rung 3).
+## **WHAT EACH DISCOVERY LETS THE FACTION'S HANDS DO — one sentence per ladder track, and this table
+## OUTLIVED THE ANNOUNCEMENT IT WAS WRITTEN FOR.**
+##
+## It was the body of a one-shot System-channel nudge (`_announce_knowledge_unlock`, retired with its
+## `KNOWLEDGE_UNLOCK_LABELS` companion — `docs/plan_knowledge_screen.md` §5). The copy did not go with
+## it: **`KnowledgeRoster` reads this table** for the knowledge screen's detail pane, under its *"What
+## it lets you do"* head, and `HudKnowledgeVocab` deliberately does not re-author the sentences so the
+## screen and any other surface naming a discovery cannot describe it differently.
+##
+## It also remains the DECLARED SET of tracks that unlock something — `foddering` is in it and gates
+## no verb, which `HudKnowledgeVocab.UNLOCKLESS_TRACKS` is what states.
+##
+## NOTE: `herding` used to read "The Corral policy is now available on domesticated herds." Both
+## halves were wrong after the §4.3 reshuffle — Herding gates **Tame** (rung 2) and it is **Penning**
+## that gates Corral (rung 3).
 const KNOWLEDGE_UNLOCK_NOTES := {
 	"cultivation": "The Cultivate policy is now available on Thriving wild patches.",
 	"seed_selection": "The Sow policy is now available — but only on rich, well-watered ground.",
@@ -82,19 +84,11 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	"foddering": "Hay you gather now goes into the fodder store and feeds your pens.",
 }
 
-# --- Top-bar label nodes (handed in by HudLayer) ---
-# --- Collaborators ---
-## Where the one-shot knowledge-unlock nudge goes: `HudLayer.note_system_event`, i.e. the event
-## dock's System channel. It was the retired left-dock command feed.
-var _note_sink: Callable
-
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
-# each 0..1. Backs the top-bar meters AND the policy-gate reasons (via faction_knowledge()); the
-# previous value is what makes the one-shot unlock nudge possible.
+# each 0..1. Backs the faction page's knowledge rows, the knowledge screen's LAND and HERDS columns
+# (through `faction_tracks`) and the policy-gate reasons (through `faction_knowledge()`).
 var _intensification_knowledge: Dictionary = {}
-# "<faction>:<track>" keys already announced, so the nudge fires once.
-var _knowledge_announced: Dictionary = {}
 ## The player faction's own sedentarization entry (`{score, stage}`) and discovered sites from the
 ## latest snapshot — RETAINED, not merely rendered, because the Band/City panel's faction page draws
 ## both in its KNOWLEDGE zone (issue #450) and must read the same answer this strip does.
@@ -107,17 +101,13 @@ var _knowledge_announced: Dictionary = {}
 var _sedentarization: Dictionary = {}
 var _discovered_sites: Array = []
 
-func _init(note_sink: Callable) -> void:
-	_note_sink = note_sink
-
 ## WORLD BOUNDARY (`Main._reset_per_world_state` → `HudLayer.reset_world_state`): drop every top-bar
 ## cache that belongs to ONE world, then re-render each strip off the now-empty caches.
 ##
 ## THE RE-RENDER IS THE POINT, and `_intensification_knowledge` is why this method exists. A freshly
 ## generated world sends `intensification_knowledge: []`, and `_ingest_intensification` MERGES — an
 ## empty array writes nothing, so without this the strip kept showing the PREVIOUS game's
-## `Herding ✔`. `_knowledge_announced` rides along because a track re-learned in the new world
-## deserves its unlock nudge again.
+## `Herding ✔`.
 ##
 ## THE FACTION STOCKPILE IS NO LONGER RESET HERE, and no longer needs to be: it left this cluster with
 ## the Stockpiles card (issue #381), and the band dock's Trade row that replaced it holds no cached
@@ -128,7 +118,6 @@ func _init(note_sink: Callable) -> void:
 ## a world change is the one moment stale values could otherwise persist unchallenged.
 func reset_world_state() -> void:
 	_intensification_knowledge.clear()
-	_knowledge_announced.clear()
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
@@ -180,12 +169,18 @@ func update_discoveries(discovered_variant: Variant) -> void:
 func update_intensification(intensification_variant: Variant) -> void:
 	_ingest_intensification(intensification_variant)
 
-## Capture the per-faction intensification tracks off the snapshot AND announce the moment one
-## COMPLETES — the transition (`< 1.0` last snapshot, `>= 1.0` now) is exactly when a new policy
-## becomes usable, and nothing else in the HUD would tell the player. One-shot per faction+track
-## (`_knowledge_announced`), so it never re-fires on subsequent snapshots; a track already complete
-## on the first snapshot we see (fresh connect / rehydrated save) has no prior value and is NOT
-## announced — a nudge about something learned long ago is noise.
+## Capture the per-faction intensification tracks off the snapshot.
+##
+## **IT NO LONGER ANNOUNCES ANYTHING, AND THE PREVIOUS VALUE WENT WITH THE ANNOUNCEMENT.** This ingest
+## carried the client's only "a track just completed" detector: it compared each track's prior value
+## against the new one and posted a one-shot `"<Track> learned"` note to the event dock's System
+## channel. The turn orb's freshly-learned row supersedes it (`docs/plan_knowledge_screen.md` §5) — a
+## completion is announced there and nowhere else — and two surfaces reporting one event from two
+## independently-derived diffs is exactly how they come to disagree about which turn it happened on.
+##
+## The surviving diff is `KnowledgePanelController`'s, which asks a DIFFERENT question: not
+## fire-once-ever per faction+track, but *since the turn ticked*, over BOTH knowledge webs at once and
+## off the roster the screen itself draws.
 func _ingest_intensification(intensification_variant: Variant) -> void:
 	if not (intensification_variant is Array):
 		return
@@ -196,33 +191,12 @@ func _ingest_intensification(intensification_variant: Variant) -> void:
 		var faction := int(row.get("faction", -1))
 		if faction < 0:
 			continue
-		var previous: Dictionary = _intensification_knowledge.get(faction, {})
 		# Every track the ladder defines, off the one list — so adding a rung's knowledge is a
 		# KNOWLEDGE_TRACK_LABELS entry plus a decoder field, never an edit here.
 		var current := {}
 		for track in KNOWLEDGE_TRACK_LABELS:
 			current[track] = float(row.get(track, 0.0))
-		for track in KNOWLEDGE_UNLOCK_NOTES:
-			if not previous.has(track):
-				continue
-			if float(previous[track]) >= HudConst.KNOWLEDGE_COMPLETE:
-				continue
-			if float(current[track]) < HudConst.KNOWLEDGE_COMPLETE:
-				continue
-			_announce_knowledge_unlock(faction, String(track))
 		_intensification_knowledge[faction] = current
-
-## Post the one-shot "policy unlocked" nudge to the command feed. Player faction only — another
-## faction's tech is not the player's to see, and every other intensification readout filters the
-## same way; the announced set is still keyed per faction so the dedupe is correct for all of them.
-func _announce_knowledge_unlock(faction: int, track: String) -> void:
-	var key := "%d:%s" % [faction, track]
-	if _knowledge_announced.has(key):
-		return
-	_knowledge_announced[key] = true
-	if faction != HudConst.PLAYER_FACTION_ID:
-		return
-	_note_sink.call(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
 
 ## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
 ## (the snapshot row is sparse) or no snapshot has arrived yet. PUBLIC because the rung-gate reasons

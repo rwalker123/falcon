@@ -1634,6 +1634,12 @@ line's own instruction being earned again.
 > - **Checkpoints, not assertions** — `_assert_hud` *and* `_save` both count, because `docks_legend`
 >   makes **zero** assertions and renders frames only; an assertion-only floor would be `0` there and
 >   leave the one chapter an abort truncates entirely unguarded.
+> - **EVERY assertion sink counts, and one of them did not.** `_assert_turn_orb` is a second sink
+>   beside `_assert_hud` — the turn-orb chapter's own — and it printed its PASS without touching the
+>   counter, so fifteen claims escaped the tally `_assert_hud`'s docstring says no claim can escape.
+>   An abort could have dropped the whole turn-orb guard set and still cleared that chapter's floor.
+>   A new sink must increment `_checkpoint_count`, or it is a hole in exactly the guard it looks like
+>   it is part of.
 > - **A floor, not an equality** — adding claims must never fail the run; losing them is the failure.
 > - **A chapter that declares nothing FAILS**, which is what makes it un-bypassable: were a missing
 >   const merely unguarded, deleting it would be the silent bypass and every new chapter would start
@@ -1648,9 +1654,30 @@ line's own instruction being earned again.
 > **So `$?` now covers a chapter dying mid-run.** It still does not cover a claim that is *present and
 > wrong* — that is what the sabotage discipline is for.
 
-## `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
+## The knowledge arc's two chapters — the screen (slice B) and its orb rows (slice C)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and fifty `PASS`, and **most
+`chapters/turn_orb.gd` grew the slice-C block; the screen's own chapter is below. Two things about
+the turn-orb one are the arc's, not the orb's, and both are about SHARED WALK STATE:
+
+- **It clears the faction's tracks for its band states and puts back what it inherited.** The
+  knowledge producers are faction-wide and ride the band rows' own registry, so a track an earlier
+  chapter left complete-and-unused puts a standing row on every orb in the chapter — the ALL-CLEAR
+  states stop being clear and the under-kept block's negative-control COUNT gains a row. Restoring is
+  the other half: `compose_rungs` runs three chapters later and gates its hunt-compose frames on that
+  knowledge, so leaving the tracks cleared moved four of its frames into judging a crew stepper under
+  knowledge nobody meant to change.
+- **It empties the band half at the CACHE (`set_band_attention([])`), never by ingesting a calm
+  band.** `update_band_alerts` is not inert — `ingest_snapshot_bands` overwrites the walk's
+  `player_band` / `player_bands` / `prev_band_sizes`, which later chapters render against. That was
+  the first cut, and it moved the same four frames a second way.
+
+**Both were found by PIXEL-DIFFING every frame against a run at HEAD, not by the exit status** — the
+run was green through all of it. The tell was a frame moving outside the orb's own corner.
+
+### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
+
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and 68 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured 72 — frames count too), and **most
 of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
 it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
 pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and

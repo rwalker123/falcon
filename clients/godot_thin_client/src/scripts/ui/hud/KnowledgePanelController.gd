@@ -115,6 +115,24 @@ func open() -> void:
 	_open = true
 	render()
 
+## **OPEN ON A GIVEN FILTER — the entry point the turn orb's knowledge rows take**
+## (`docs/plan_knowledge_screen.md` §5). A row that says *"2 discoveries unspent"* has to land the
+## player on the ones it counted, and the live filter is CONTROLLER state that survives a turn tick,
+## so `open()` alone would reopen on whatever the player last set and leave them looking for a list
+## the row already made.
+##
+## **IT OPENS, IT NEVER TOGGLES.** The launcher glyph is a toggle because pressing it is *"show me /
+## hide it"*; pressing an attention row is *"take me to this"*, and a press that CLOSED the screen
+## because it happened to be open already would answer a question nobody asked. `render()` runs either
+## way, so an already-open panel re-draws on the new filter rather than keeping the old one.
+##
+## The selection is deliberately left alone: a filter is a question about the list, not about the node
+## being read, and throwing a reading away to answer it would lose the one thing the pane is for.
+func open_on_filter(filter: StringName) -> void:
+	_filter = filter
+	_open = true
+	render()
+
 func close() -> void:
 	_open = false
 	if _panel != null and is_instance_valid(_panel):
@@ -170,8 +188,15 @@ func reset_world_state() -> void:
 ## Answerable with the panel CLOSED and never built, which is the point: the pip is what tells a
 ## player there is something on a screen they have not opened.
 func unspent_count() -> int:
-	return KnowledgeRoster.count_matching(KnowledgeRoster.flatten(domains()),
-		HudKnowledgeVocab.FILTER_UNUSED)
+	return KnowledgeRoster.count_matching(nodes(), HudKnowledgeVocab.FILTER_UNUSED)
+
+## **THE FLATTENED ROSTER — ONE DERIVATION, THREE READERS.** The columns draw it, the launcher's pip
+## counts it, and the orb's two knowledge producers are built off it
+## (`AttentionController.knowledge_attention`). Exposed rather than re-derived per reader because the
+## walk behind it resolves the faction's patches, herds, kit and bench — so a second call is both a
+## second cost and a second chance for two surfaces to answer differently about one discovery.
+func nodes() -> Array[Dictionary]:
+	return KnowledgeRoster.flatten(domains())
 
 ## The roster the panel draws and the pip counts, built off one model so the two cannot disagree.
 ## Public because every assertion in the harness asks it rather than reading a Label back.

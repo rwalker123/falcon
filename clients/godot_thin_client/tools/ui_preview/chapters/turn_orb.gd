@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 24
+const EXPECTED_CHECKPOINTS := 51
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
@@ -94,6 +94,77 @@ const UNDER_KEPT_EXPECTED_ROWS := 4
 # the two can never be written equal, which would silently turn that negative control into a positive.
 const RIVAL_FACTION_ID := HudConst.PLAYER_FACTION_ID + 1
 
+# The three turns the knowledge block walks. Distinct from every other turn this chapter drives, so
+# a diff that failed to roll shows up as a claim about the wrong turn rather than as a silent pass.
+const KNOWLEDGE_TURN_LEARNED := 610
+
+const KNOWLEDGE_TURN_NEXT := 611
+
+const KNOWLEDGE_TURN_SINGULAR := 612
+
+# **THE FOUR LADDER TRACKS THAT UNLOCK SOMETHING TO STAND ON**, taught in one turn so producer 1 has
+# to emit four rows while producer 2 emits ONE. `foddering` is deliberately absent: it unlocks no
+# verb (`HudKnowledgeVocab.UNLOCKLESS_TRACKS`), so it can never be unspent and would make the two
+# producers' counts differ for a reason that is not the aggregation being tested.
+const KNOWLEDGE_TRACKS_TAUGHT := {
+	"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
+}
+
+# What that many discoveries, none of them in use, must read as: FOUR `X learned` rows and exactly
+# ONE aggregate row saying `4`. The prototype draws 36 nodes — the whole point of the aggregate is
+# that 36 unlocks are not 36 rows — so the two numbers being different in ONE frame is the claim.
+const KNOWLEDGE_LEARNED_ROWS := 4
+
+# The one calm band staged beside them contributes nothing, so the registry is exactly the knowledge
+# half: four learned rows plus the aggregate. A fifth row means a band producer fired too.
+const KNOWLEDGE_TOTAL_ROWS := KNOWLEDGE_LEARNED_ROWS + 1
+
+# The placeholder `ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT` opens with, and the only thing about
+# that format this chapter spells. `_learned_suffix` strips it to get the tail every producer-1 row
+# must end with, so the rows are found by the format the client really composes rather than by a
+# hand-typed copy of one of its outputs.
+const KNOWLEDGE_LEARNED_FORMAT_TOKEN := "%s"
+
+# The affordance a non-locating row that a panel branch answers must wear. It is `TurnOrb`'s own
+# literal — the orb composes it inline — so this is the one string here that is a transcription, and
+# it is the whole assertion: a knowledge kind missing from `ATTENTION_KINDS_WITH_A_PANEL` renders a
+# BLANK here, and a kind missing from `TurnOrbController`'s branch renders this and does nothing.
+const OPEN_AFFORDANCE := "Open ▸"
+
+## GUARD: the orb's KNOWLEDGE half is producing nothing at all right now. Asked of the PRODUCER,
+## not of the rendered rows, because it has to be answerable with the popover shut — which is the
+## state most of this chapter's band claims are made in.
+func _assert_knowledge_half_silent(claim: String) -> void:
+	var rows := AttentionController.knowledge_attention(h._hud.knowledge_panel().nodes())
+	h._assert_turn_orb("%s (%d rows)" % [claim, rows.size()], rows.is_empty())
+
+## The tail of `ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT` — see `KNOWLEDGE_LEARNED_FORMAT_TOKEN`.
+## A `func` rather than a `const` because `substr` is not a constant expression.
+static func _learned_suffix() -> String:
+	return HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT.substr(
+		KNOWLEDGE_LEARNED_FORMAT_TOKEN.length())
+
+## Every rendered row whose label matches `"<X> learned"` — producer 1's output, found by the
+## FORMAT rather than by kind, so a row that fired with the wrong words is a miss.
+func _learned_rows(rows: Array) -> Array:
+	var found: Array = []
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		var label := String(row["label"])
+		if label.ends_with(_learned_suffix()):
+			found.append(row)
+	return found
+
+## Push the player faction's ladder tracks and let the whole HUD settle. `update_intensification` is
+## the seam that rolls the knowledge screen's turn diff, and `update_overlay` ahead of it is what
+## carries the turn that diff rolls AGAINST — the same order `Main` dispatches them in.
+func _teach(turn: int, tracks: Dictionary) -> void:
+	var row: Dictionary = {"faction": HudConst.PLAYER_FACTION_ID}
+	row.merge(tracks)
+	h._hud.update_overlay(turn, {})
+	h._hud.update_intensification([row])
+	await h._settle()
+
 func _set_forage_patches(patches: Array) -> void:
 	for p in patches:
 		if p is Dictionary:
@@ -119,9 +190,18 @@ func _orb_rows() -> Array:
 		for cell in row_node.get_child(0).get_children():
 			if not (cell is VBoxContainer) or cell.get_child_count() < 2:
 				continue
+			# **AND THE AFFORDANCE**, which is the last child of the row's own HBox: `Jump →` for a
+			# locating row, `Open ▸` for a non-locating kind that a panel branch answers, and EMPTY for
+			# one that neither locates nor opens. Read here rather than asserted off the kind, because
+			# the failure this catches is a row that WEARS the affordance and does nothing when pressed.
+			var jump := ""
+			var last: Node = row_node.get_child(0).get_child(row_node.get_child(0).get_child_count() - 1)
+			if last is Label:
+				jump = String((last as Label).text)
 			rows.append({
 				"label": String((cell.get_child(0) as Label).text),
 				"detail": String((cell.get_child(1) as Label).text),
+				"jump": jump,
 			})
 			break
 	return rows
@@ -474,6 +554,28 @@ func _assert_handoff_ingest_windows_on_one_turn() -> void:
 
 func run(harness) -> void:
 	h = harness
+	# **THE FACTION IS TAUGHT NOTHING FOR THE BAND STATES, AND THAT IS A CONTROL, NOT A TIDY-UP.**
+	# The knowledge screen's two producers (`docs/plan_knowledge_screen.md` §5) ride the SAME registry
+	# these band rows do, and they are FACTION-wide rather than per-band: any track an earlier chapter
+	# left complete-and-unused puts a standing `N discoveries unspent` row on every orb from here on.
+	# That would make the ALL-CLEAR states not clear, and would put a fifth row inside the under-kept
+	# block's negative-control COUNT — a count whose whole job is to say no producer over-fired.
+	# Measured before it was cleared: 2 unspent, and a `Cultivation learned` row riding the first turn
+	# tick of the chapter. Staged deliberately at the END of the chapter instead.
+	#
+	# **AND IT IS PUT BACK ON THE WAY OUT — the tracks are SHARED WALK STATE, not this chapter's.**
+	# `compose_rungs` runs three chapters later and renders its hunt-compose frames against whatever
+	# knowledge it inherits: `RungGates` gates the rung options on it, so a faction taught nothing
+	# offers a different ladder, a different crew requirement and a different forecast. Leaving the
+	# tracks cleared moved four of those frames — `hunt_picker_ascending`, `hunt_crew_herders`,
+	# `herd_assign_button_targets_selected_herd`, `hunt_actions_rhythm` — into judging a compose sheet
+	# under knowledge the chapter never meant to change. Captured by VALUE, because `faction_tracks`
+	# hands back the retained dict itself rather than a copy.
+	var inherited_tracks: Dictionary = h._hud._topbar.faction_tracks(
+		HudConst.PLAYER_FACTION_ID).duplicate()
+	h._hud.update_intensification([{"faction": HudConst.PLAYER_FACTION_ID}])
+	await h._settle()
+	_assert_knowledge_half_silent("the band states run with the knowledge producers silent")
 
 	# State 6 — turn orb, ALL-CLEAR: a player band with zero idle workers → empty
 	# attention registry → the orb calm-pulses (dashed cyan arc), the caption reads
@@ -854,9 +956,123 @@ func run(harness) -> void:
 	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 	h._hud.turn_orb.set_attention([])
 
+	await _assert_knowledge_producers(inherited_tracks)
+
 	# ---- THE CREW HAND-OFF INGEST IS A WINDOW ON ONE TURN (Producer 8) -----------------------------
 	# **PNG-LESS AND DRIVEN, because a picture cannot make either claim.** Both failures render a
 	# perfectly ordinary popover — the rows are correctly shaped, correctly worded and correctly
 	# inked; there are simply too many of them, and only counting says so. So the producer is asked
 	# directly, over an events array in each of the two shapes the wire really delivers.
 	_assert_handoff_ingest_windows_on_one_turn()
+
+## **THE KNOWLEDGE SCREEN'S TWO PRODUCERS** (`docs/plan_knowledge_screen.md` §5, slice C).
+##
+## **THE TWO ARE DIFFERENT QUESTIONS AND THE FIXTURE IS BUILT SO THAT ONE ANSWER CANNOT SATISFY BOTH.**
+## Producer 1 is *what finished this turn* — one row per track — and producer 2 is *what is still
+## waiting* — ONE row however many are waiting. Taught FOUR tracks in a single turn, they must render
+## 4 rows and 1 row respectively, in the same frame: a merged producer, an aggregated producer 1 or a
+## per-discovery producer 2 each fail on a different one of the counts below.
+##
+## Then the turn ticks with nothing taught, which is the DISJOINT half: producer 1 must go silent and
+## producer 2 must not. An implementation that latched the announcement, or that re-announced the
+## backlog every turn, passes the block above and fails here.
+func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
+	# **THE BAND HALF IS EMPTIED AT THE CACHE, NOT BY INGESTING A CALM BAND**, so the registry the
+	# popover draws is exactly the knowledge half. A calm-band `update_band_alerts` was the first cut
+	# and it is not inert: `ingest_snapshot_bands` overwrites the walk's `player_band` / `player_bands`
+	# / `prev_band_sizes`, and `compose_rungs` — three chapters later — renders its hunt-compose frames
+	# against that roster's idle workers. It moved `hunt_crew_herders` and `hunt_picker_ascending` into
+	# judging a crew stepper against a band this chapter had swapped underneath them.
+	#
+	# Clearing the CACHE also leaves the chapter tidier than it found it: `TurnOrb.set_attention([])`
+	# only empties the NODE, so the under-kept block's four rows stayed in `_band_attention` and any
+	# later `_push_attention` would resurrect them.
+	h._hud.turn_orb.set_attention([])
+	h._hud._turnorb.set_band_attention([])
+	await _teach(KNOWLEDGE_TURN_LEARNED, KNOWLEDGE_TRACKS_TAUGHT)
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	await h._save("turn_orb_knowledge")
+	var rows := _orb_rows()
+	for row in rows:
+		print("ui_preview: orb row  %s | %s | %s" % [
+			String(row["label"]), String(row["detail"]), String(row["jump"])])
+	# **PRODUCER 1 IS ONE ROW PER TRACK.** Counted, not searched: a producer that emitted one row for
+	# the whole turn would still satisfy a "is `Cultivation learned` present" test.
+	var learned := _learned_rows(rows)
+	h._assert_hud("knowledge — %d tracks finishing in one turn raise %d rows, one each (got %d)"
+			% [KNOWLEDGE_TRACKS_TAUGHT.size(), KNOWLEDGE_LEARNED_ROWS, learned.size()],
+		learned.size() == KNOWLEDGE_LEARNED_ROWS)
+	# …and each names its OWN discovery, in the words the knowledge screen's column uses. Asserted over
+	# every taught track rather than one of them, so a producer naming the first track four times passes
+	# the count above and fails here.
+	var all_named := true
+	for track in KNOWLEDGE_TRACKS_TAUGHT:
+		var wanted := HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT % String(
+			FactionReadouts.KNOWLEDGE_TRACK_LABELS[track])
+		if _orb_row_with(rows, wanted) == null:
+			all_named = false
+	h._assert_hud("…each naming its own discovery, `%s`-style"
+			% (HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT % String(
+				FactionReadouts.KNOWLEDGE_TRACK_LABELS["cultivation"])),
+		all_named)
+	# **PRODUCER 2 IS ONE ROW, WHATEVER THE COUNT — the claim the prototype's 36 nodes make load-bearing.**
+	# The label carries the number, so a per-discovery producer would render four of these.
+	var aggregate := HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_LABEL_FORMAT % KNOWLEDGE_LEARNED_ROWS
+	h._assert_hud("knowledge — %d discoveries nothing uses raise ONE row, `%s`"
+			% [KNOWLEDGE_LEARNED_ROWS, aggregate],
+		_orb_row_with(rows, aggregate) != null)
+	# THE TOTAL, which is what forbids the aggregate ALSO appearing per discovery: the two producers'
+	# counts differ in this one frame, and only a total can say the registry holds 4 + 1 and not 4 + 4.
+	h._assert_hud("…and the registry holds exactly those %d rows (got %d)"
+			% [KNOWLEDGE_TOTAL_ROWS, rows.size()],
+		rows.size() == KNOWLEDGE_TOTAL_ROWS)
+	# **BOTH ROWS WEAR `Open ▸`, AND THAT IS A CLAIM ABOUT TWO LISTS AT ONCE** — the kind must be in
+	# `HudAttentionVocab.ATTENTION_KINDS_WITH_A_PANEL` (or the affordance is blank) and it must have a
+	# branch in `TurnOrbController._on_turn_orb_panel_requested` (or the affordance is a lie). Where the
+	# press LANDS is the panel's own state and is asserted in `chapters/knowledge_panel.gd`.
+	var every_row_opens := true
+	for row in rows:
+		if String(row["jump"]) != OPEN_AFFORDANCE:
+			every_row_opens = false
+	h._assert_hud("…and every knowledge row is non-locating, wearing `%s` rather than a jump"
+			% OPEN_AFFORDANCE,
+		every_row_opens)
+
+	# **THE NEXT TURN, WITH NOTHING TAUGHT — the DISJOINT half.** Producer 1 has to go quiet (it answers
+	# "this turn") and producer 2 has to not (it answers "still waiting"). Both halves are asserted here,
+	# because either one alone is satisfied by a producer that never fires.
+	await _teach(KNOWLEDGE_TURN_NEXT, KNOWLEDGE_TRACKS_TAUGHT)
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	var next_rows := _orb_rows()
+	h._assert_hud("knowledge — the next turn teaches nothing, so no discovery is announced (got %d)"
+			% _learned_rows(next_rows).size(),
+		_learned_rows(next_rows).is_empty())
+	h._assert_hud("…while the backlog row STANDS, still reading `%s`" % aggregate,
+		_orb_row_with(next_rows, aggregate) != null)
+
+	# **AND THE SINGULAR, which is the reading this row wears most often** — the turn a player finishes
+	# their first track and has not yet put it to work. `discovery`/`discoveries` is not a suffix, so a
+	# plural-by-`s` producer renders `1 discoveries unspent` here and passes every count above.
+	await _teach(KNOWLEDGE_TURN_SINGULAR, {"cultivation": 1.0})
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	var one_rows := _orb_rows()
+	h._assert_hud("knowledge — ONE unspent discovery reads `%s`, not a pluralised count"
+			% HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_LABEL_ONE,
+		_orb_row_with(one_rows, HudAttentionVocab.ATTENTION_KNOWLEDGE_UNSPENT_LABEL_ONE) != null)
+	h._assert_hud("…and it is still ONE row (got %d)" % one_rows.size(), one_rows.size() == 1)
+
+	# **RESTORE WHAT THE CHAPTER INHERITED, not what it staged** — see the note at the top of `run`.
+	# The silence guard is made against the CLEARED tracks first, so it is still a claim about this
+	# chapter's own staging rather than about whatever the walk happens to hand on.
+	h._hud.turn_orb.toggle_popover()
+	h._hud.update_intensification([{"faction": HudConst.PLAYER_FACTION_ID}])
+	await h._settle()
+	_assert_knowledge_half_silent("the chapter hands on with the knowledge producers silent again")
+	var restored: Dictionary = {"faction": HudConst.PLAYER_FACTION_ID}
+	restored.merge(inherited_tracks)
+	h._hud.update_intensification([restored])
+	await h._settle()
+	h._hud.turn_orb.set_attention([])

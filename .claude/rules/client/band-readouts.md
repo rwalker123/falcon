@@ -444,6 +444,40 @@ which is a property of the tier and not of the merge.
   returns `BAND_UNKNOWN "—"`). The row is **informational** — neutral ink, no HEALTHY/WARN/DANGER
   tint, so it doesn't overload the Habitability row's warning semantics.
 
+## THE ONE-SHOT UNLOCK NOTE IS RETIRED, AND ITS COPY IS NOT
+
+`_announce_knowledge_unlock` posted `"<Track> learned"` plus the unlock sentence to the event dock's
+System channel the turn a track crossed `KNOWLEDGE_COMPLETE` — fire-once-ever per faction+track, and
+for a long time the only thing in the client that said a discovery had happened at all. The turn orb's
+freshly-learned row supersedes it (`docs/plan_knowledge_screen.md` §5), so it and
+`KNOWLEDGE_UNLOCK_LABELS`, `_knowledge_announced` and this cluster's last Callable injection
+(`_note_sink`) are gone. `FactionReadouts` takes no constructor argument at all now.
+
+**A completed discovery is therefore announced on the TURN ORB and nowhere else. It leaves the event
+log entirely**, which is the intent rather than a side effect: the orb finds the player wherever they
+are looking and the log is read after the fact, if at all, and two surfaces reporting one event from
+two independently-derived diffs is how they come to disagree about which turn it happened on.
+
+> ### ⛔ `KNOWLEDGE_UNLOCK_NOTES` SURVIVED THE ANNOUNCEMENT IT WAS WRITTEN FOR
+>
+> The table looks like part of the retirement and is not: **`KnowledgeRoster` reads it** for the
+> knowledge screen's detail pane, under its *"What it lets you do"* head, and `HudKnowledgeVocab`
+> deliberately does not re-author those sentences so the screen and any other surface naming a
+> discovery cannot describe it differently. Deleting it with the announcement takes a line off the
+> detail pane, and the harness says so — *"knowledge detail — the unlock line is FactionReadouts' own,
+> not a second copy"* — but only if you look.
+>
+> It is also still the DECLARED SET of tracks that unlock something. `_ingest_intensification` no
+> longer walks it (that loop was the announcement), so its readers are now the roster and that
+> assertion.
+
+**The ingest lost its `previous` value with the announcement**, and that is the whole of what changed
+behaviourally here: comparing each track's prior reading against the new one was the client's only
+"a track just completed" detector, and it existed solely to fire the note. The surviving diff is
+`KnowledgePanelController`'s, which asks a different question — not fire-once-ever, but *since the
+turn ticked*, over BOTH knowledge webs at once and off the roster the screen itself draws. See
+`knowledge-panel.md`.
+
 ## The knowledge strip's FIFTH track is a capability, not a rung transition
 
 `IntensificationKnowledgeState.foddering` rides beside the ladder's four rung-transition tracks and

@@ -218,6 +218,83 @@ paths:
   eye here, at true size, against the widest number) / `turn_orb_awaiting_orders` (awaiting rows + idle workers coexisting, incl. the cap's
   overflow row) / **`turn_orb_resolving`** + **`turn_orb_hint_advance` / `turn_orb_hint_review` / `turn_orb_hint_4digit`** (the resolving gate and the hover hint — see "The resolving gate" below).
 
+## The KNOWLEDGE producers — a third half of the registry, and its own ordering rule
+
+`docs/plan_knowledge_screen.md` §5. Two producers, both **non-locating**, both **info**, both opening
+the knowledge screen (`knowledge-panel.md`):
+
+- **`knowledge_learned`** — ONE ROW PER TRACK COMPLETED THIS TURN. Label
+  `"<Discovery> learned"`, over the node's own player-facing name, so one format covers the ladder
+  tracks and the craft fan alike. It supersedes `FactionReadouts._announce_knowledge_unlock`, the
+  one-shot System-channel note, which is retired — see `band-readouts.md`.
+- **`knowledge_unspent`** — ONE AGGREGATE ROW, `"N discoveries unspent"` (singular spelled, not
+  suffixed: `discovery`/`discoveries` is not an `s`, and one unspent discovery is the ordinary early
+  state). Its number is `KnowledgePanelController.unspent_count`, the launcher pip's own count, so
+  the orb and the pip cannot disagree.
+
+**THEY ARE TWO QUESTIONS AND MUST NOT BE MERGED.** One is *this just happened*, the other *this is
+still waiting*. A discovery is announced on the turn it lands and then, if nothing takes it up, keeps
+being counted. Folded together, either the announcement vanishes the turn it was made or the backlog
+re-announces itself every turn — and both render a perfectly ordinary popover.
+
+**NEVER ONE ROW PER DISCOVERY on the second.** The tree is 8 nodes today and the prototype draws 36;
+a row each would push every other producer off the top of the popover the first time a player banked
+a few discoveries they had not spent.
+
+**Both wear `Open ▸`, so both need a branch in `TurnOrbController._on_turn_orb_panel_requested`** —
+and they land on DIFFERENT filters, matching the question each row asked: the learned row on
+`New this turn`, the backlog row on `Ready · unused`. `ATTENTION_KINDS_WITH_A_PANEL` and that branch
+are one decision made twice; a kind on the list with no branch renders an affordance that does
+nothing, which is the state `crew_handoff` avoids by being on neither.
+
+**A CONSEQUENCE WORTH KNOWING: the backlog row is STANDING, so the orb's calm all-clear pulse is gone
+for as long as the faction is sitting on an unspent discovery.** That is the same nudge the launcher
+pip carries and it clears the same way — by USING the knowledge, never by looking at it.
+
+### THE ORDERING TRAP, AND THE MECHANISM CHOSEN AGAINST IT
+
+**`build_band_attention` runs at `Hud.update_band_alerts` step 2; `_knowledge.refresh_snapshot()` —
+which rolls the turn diff producer 1 reads — runs THIRTY LINES LATER.** A knowledge producer built
+beside the band ones therefore reads the PREVIOUS turn's diff and names the wrong discovery, in a row
+that renders entirely plausibly. It happens to come out right today only because `Main` dispatches
+`update_intensification` before `update_band_alerts` and that section rolls the diff too — a
+coincidence of which sections a delta carries, not a guarantee. This is the recorded defect one field
+over: the attention producers running before `ingest_snapshot_bands`, so every improved patch alarmed
+as unworked on the first snapshot after a load.
+
+**The mechanism is a THIRD REGISTRY HALF plus a single seam, not an ordering comment.**
+`TurnOrbController` caches `_knowledge_attention` beside `_band_attention` and `_push_attention`
+folds three arrays into the one `set_attention` replace. `HudLayer._refresh_knowledge_readouts` is
+the only thing that fills it: it rolls the diff and pushes the pip and the rows on three adjacent
+lines, and every seam that used to call `refresh_snapshot` + `_push_knowledge_pip` calls it instead.
+So the ordering cannot be broken by a reorder somewhere else, and the knowledge rows are also correct
+on a delta carrying knowledge but no populations — which never reaches `update_band_alerts` at all.
+
+`AttentionController.knowledge_attention` is a **`static func` taking the flattened roster**
+(`KnowledgePanelController.nodes`) and no collaborator, which is what puts it outside the hazard:
+every other producer there is a method because it reads the band/labor model, and these two can only
+be run against the list handed to them.
+
+### Verification — `tools/ui_preview/chapters/turn_orb.gd`
+
+**The chapter clears the faction's tracks for its band states and puts back what it inherited.** The
+knowledge producers are faction-wide and ride this same registry, so a track an earlier chapter left
+complete-and-unused puts a standing row on every orb in the chapter: the ALL-CLEAR states stop being
+clear and the under-kept block's negative-control COUNT gains a fifth row. Both restores are
+load-bearing in the other direction too — `compose_rungs` runs three chapters later and gates its
+hunt-compose frames on that knowledge, so leaving the tracks cleared moved four of its frames into
+judging a crew stepper under knowledge nobody meant to change.
+
+**The block stages FOUR tracks finishing in one turn**, so producer 1 must emit four rows while
+producer 2 emits one, in the same frame — the two cardinalities differing at once is the claim, and
+no single wrong implementation satisfies both. Then the turn ticks with nothing taught: producer 1
+must go silent and producer 2 must not. `turn_orb_knowledge` is the frame; every count, every label
+and the affordance are ASSERTED, because all of them render fine when wrong.
+
+**Its band half is emptied at the CACHE (`set_band_attention([])`), never by ingesting a calm band.**
+`update_band_alerts` is not inert: `ingest_snapshot_bands` overwrites the walk's `player_band` /
+`player_bands` / `prev_band_sizes`, which later chapters render against.
+
 ## The resolving gate
 
 A turn takes a round trip to the server, and until this existed the orb said nothing about it: the

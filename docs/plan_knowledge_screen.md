@@ -1,7 +1,12 @@
 # The Knowledge Screen
 
-**Status:** design settled, not implemented. Prototype: `docs/knowledge_screen_ux_proposal.html`
-(the eight-option comparison it came from is `docs/knowledge_visibility_ux_proposal.html`).
+**Status: SHIPPED.** All four slices of §9 have landed — A (the overlay migration), B (the screen and
+its launcher), C (the two attention rows and the System note's retirement), D (the
+`ready_for_improvement` channel). Sections carrying an **AS BUILT** note say where the implementation
+corrected the design; the engineering rationale lives in `.claude/rules/client/knowledge-panel.md`,
+`turn-orb.md`, `band-readouts.md` and `overlay-channels.md`, which is where to edit it from here.
+Prototype: `docs/knowledge_screen_ux_proposal.html` (the eight-option comparison it came from is
+`docs/knowledge_visibility_ux_proposal.html`).
 
 The problem: the intensification ladder's knowledge is earned by practice, announced once into the
 event dock's System channel, and otherwise invisible. A player is never told a track finished, never
@@ -142,6 +147,34 @@ branch renders an affordance that does nothing** — `hud_attention_vocab` says 
 
 The existing one-shot System note (`FactionReadouts._announce_knowledge_unlock`) is superseded by
 producer 1 and should be retired, not left to double-report.
+
+> **AS BUILT (Slice C).** Both producers ship as `knowledge_learned` and `knowledge_unspent`, with
+> three corrections to the paragraphs above, and the engineering rationale in
+> `.claude/rules/client/turn-orb.md`.
+>
+> **BOTH kinds take a branch, not one.** The paragraph says "a knowledge kind", and a second
+> non-locating kind with no branch is precisely the dead affordance the paragraph beside it forbids.
+> They open on DIFFERENT filters, matching the question each row asked: the freshly-learned row on
+> `new`, the backlog row on `unused`. That needed a new entry point — `open_on_filter` — because the
+> live filter is controller state that survives a close, so `open()` reopens on whatever the player
+> last set.
+>
+> **THE ORDERING WAS THE REAL WORK, AND IT IS NOT A COMMENT.** `build_band_attention` runs thirty
+> lines before the turn diff producer 1 reads is rolled, so a producer built beside the band ones
+> names the PREVIOUS turn's discovery in a row that renders perfectly plausibly. The knowledge rows
+> are a THIRD registry half instead, filled by one `HudLayer` seam that rolls the diff and pushes the
+> pip and the rows on adjacent lines — which also makes them correct on a delta carrying knowledge
+> but no populations, one that never reaches `update_band_alerts` at all.
+>
+> **RETIRING THE NOTE DID NOT RETIRE ITS COPY.** `KNOWLEDGE_UNLOCK_NOTES` is the knowledge screen's
+> *"what it lets you do"* line (`KnowledgeRoster` reads it); `KNOWLEDGE_UNLOCK_LABELS`,
+> `_knowledge_announced` and `FactionReadouts`' last Callable injection went. **A completed discovery
+> is now announced on the turn orb and nowhere else — it leaves the event log entirely**, which is
+> this section's intent rather than a side effect.
+>
+> **And one consequence to know about:** producer 2's row is STANDING, so the orb's calm all-clear
+> pulse is gone for as long as the faction sits on an unspent discovery. It clears the way the pip
+> does — by USING the knowledge, never by looking at it.
 
 ---
 

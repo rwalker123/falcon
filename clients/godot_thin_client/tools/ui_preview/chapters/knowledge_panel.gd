@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 51
+const EXPECTED_CHECKPOINTS := 72
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The rung derivation, shared with `map_preview` / `band_panel_preview` / `snapshot_alias_guard`.
@@ -97,6 +97,7 @@ func run(harness) -> void:
 	await _assert_new_this_turn()
 	await _knowledge_frames()
 	await _assert_launcher_pip()
+	await _assert_opens_on_filter()
 
 # ---- the greyed `0.0` track --------------------------------------------------
 
@@ -594,6 +595,106 @@ func _assert_launcher_pip() -> void:
 	panel.queue_free()
 	await h.get_tree().process_frame
 	await h._settle()
+
+# ---- the orb's rows open this screen ----------------------------------------
+
+## The two turns the routing block walks, and **it is TWO because a diff needs a baseline it set
+## itself.** The blocks between here and `_assert_new_this_turn` push tracks without advancing the
+## turn, so the screen's `_known_at_turn_start` is still whatever that block left — measured: it
+## already held `herding`, so teaching `herding` on one turn produced NOTHING new and the `new`
+## filter counted zero, which would have made a landing on it unfalsifiable. The first turn seeds a
+## baseline of one track; the second adds the second, which is then genuinely this turn's.
+const TURN_FILTER_ROUTE_SEED := 43
+
+const TURN_FILTER_ROUTE := 44
+
+## **THE ORB'S TWO KNOWLEDGE ROWS OPEN THIS SCREEN ON THE FILTER THEY ASKED ABOUT**
+## (`docs/plan_knowledge_screen.md` §5, slice C). Driven through `TurnOrb.panel_requested`, which is
+## the signal a non-locating row really emits when pressed, so the branch under test is
+## `TurnOrbController._on_turn_orb_panel_requested` and not a method this chapter called directly.
+##
+## **THE FILTER IS ASSERTED, NEVER LOOKED AT.** A screen opened on the wrong filter renders a perfectly
+## ordinary card — the columns are the same, the pills are the same, and only which pill is lit says
+## anything — so the claim is read off the drawn chrome (`_live_filter`) rather than saved as a frame.
+##
+## **AND THE FIXTURE PUTS SOMETHING UNDER BOTH FILTERS, which is what makes either landing
+## falsifiable.** With nothing new and nothing unused, both filters render the same empty-handed card
+## and a branch that mapped both kinds to one filter would pass.
+func _assert_opens_on_filter() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	controller.close()
+	# Two discoveries, neither in use (no patches, no herds), and `herding` finishing on the SECOND of
+	# the two turns — so the `unused` filter counts two and the `new` filter counts one.
+	h._hud.update_forage_patches([])
+	h._set_world_herds([])
+	h._hud.update_overlay(TURN_FILTER_ROUTE_SEED, {})
+	h._hud.update_intensification([_wire_tracks({"cultivation": PROGRESS_KNOWN})])
+	h._hud.update_band_alerts([_band([])])
+	await h._settle()
+	h._hud.update_overlay(TURN_FILTER_ROUTE, {})
+	h._hud.update_intensification([_wire_tracks({
+		"cultivation": PROGRESS_KNOWN, "herding": PROGRESS_KNOWN})])
+	h._hud.update_band_alerts([_band([])])
+	await h._settle()
+	var nodes := controller.nodes()
+	var unused_count := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_UNUSED)
+	var new_count := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_NEW)
+	h._assert_hud("knowledge route — the fixture has something under BOTH filters (%d unused, %d new)"
+			% [unused_count, new_count],
+		unused_count > 0 and new_count > 0)
+	# **THE BACKLOG ROW.** It named a count; it has to land the player on the list it counted.
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_UNSPENT)
+	await h._settle()
+	h._assert_hud("knowledge route — the orb's backlog row OPENS the screen", controller.is_open())
+	h._assert_hud("knowledge route — …on the `%s` filter (lit pill: `%s`)"
+			% [HudKnowledgeVocab.FILTER_UNUSED, _live_filter()],
+		_live_filter() == HudKnowledgeVocab.FILTER_UNUSED)
+	# **THE FRESHLY-LEARNED ROW, PRESSED WHILE THE SCREEN IS ALREADY OPEN.** Two claims at once: the
+	# entry point OPENS rather than toggles (the launcher glyph toggles; an attention row must not close
+	# the thing it points at), and the two kinds land on DIFFERENT filters — which is what a branch
+	# mapping both to one filter fails, having passed everything above.
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED)
+	await h._settle()
+	h._assert_hud("knowledge route — a row pressed while the screen is open does NOT toggle it shut",
+		controller.is_open())
+	h._assert_hud("knowledge route — …and the freshly-learned row lands on `%s`, not the backlog's filter (lit pill: `%s`)"
+			% [HudKnowledgeVocab.FILTER_NEW, _live_filter()],
+		_live_filter() == HudKnowledgeVocab.FILTER_NEW)
+	# **WHY THE ENTRY POINT HAS TO EXIST AT ALL.** The live filter is CONTROLLER state that survives a
+	# close, so a plain launcher open reopens on whatever was last set — here, the `new` the row above
+	# left behind. Without `open_on_filter`, the backlog row would open the screen on that and leave the
+	# player hunting for the discoveries it had just counted.
+	controller.close()
+	await h._settle()
+	controller.toggle()
+	await h._settle()
+	h._assert_hud("knowledge route — a plain launcher open keeps the LAST filter (`%s`), which is why the row needs its own entry point"
+			% _live_filter(),
+		_live_filter() == HudKnowledgeVocab.FILTER_NEW)
+	controller.close()
+	await h._settle()
+
+## **THE FILTER THE PANEL IS ACTUALLY RENDERING ON, read off the drawn pills.** The live pill is styled
+## `HudStyle.apply_pill_toggle(_, true)` and so carries an OPAQUE `normal` fill, while every quiet pill
+## sits at `HudStyle.PILL_QUIET_ALPHA` — zero. Taken from the chrome rather than from the controller's
+## own `_filter`, so a panel handed a filter and rendering the previous one fails here.
+##
+## Answers `&""` unless EXACTLY ONE pill is lit: two lit pills is a rendering fault of its own, and a
+## helper that returned the first of them would report a correct-looking filter over a broken row.
+func _live_filter() -> StringName:
+	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
+	if panel == null:
+		return &""
+	var lit: Array[StringName] = []
+	for spec in HudKnowledgeVocab.FILTERS:
+		var key := String(spec[HudKnowledgeVocab.FILTER_SPEC_KEY])
+		var pill := _filter_pill(panel, key)
+		if not (pill is Button):
+			continue
+		var box := (pill as Button).get_theme_stylebox("normal")
+		if box is StyleBoxFlat and (box as StyleBoxFlat).bg_color.a > HudStyle.PILL_QUIET_ALPHA:
+			lit.append(StringName(key))
+	return lit[0] if lit.size() == 1 else &""
 
 ## The pip's rect must sit inside its button's. It is an anchored, mouse-transparent child of a
 ## `Button` — which is not a `Container`, so it contributes nothing to the parent's minimum size — and
