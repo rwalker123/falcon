@@ -37,8 +37,8 @@ use core_sim::{
     build_test_app, recapture_snapshot_in_place, run_turn, scalar_from_f32, scalar_one,
     scalar_zero, FactionId, ForageRegistry, GenerationId, Improvement, LaborAllocation,
     LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, RungKey, SnapshotHistory, StartingUnit, TakeSelection, TileRegistry,
-    DEFAULT_ESCAPEMENT_FLOOR,
+    ResidentBand, RungKey, SnapshotHistory, SourcePriority, StartingUnit, TakeSelection,
+    TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// How close two work-unit figures have to be to be the same job — pure f32 slack.
@@ -230,16 +230,19 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
                     },
                     workers: A_GATHERER,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: A_MEASURED_BUILD_POOL,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: A_FULL_KEEPING_CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {

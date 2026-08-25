@@ -717,6 +717,12 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# beside the floor everywhere the map is read, so no consumer has to go back to the raw
 			# assignment for it.
 			"improvement": String(a.get("improvement", "")), "pending": false,
+			# **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** (`docs/plan_standing_upkeep.md`
+			# §4.9 item 9b) — one of the three WORDS the decoder writes, normalized here so no reader
+			# downstream has to decide what an unrecognised token means. It rides beside the floor for
+			# the floor's reason: it is a standing property of the row, and every surface that reads
+			# this map reads it.
+			"priority": HudWorkVocab.work_priority_of(a.get("priority", "")),
 			# Per-source yields (food/turn) for the row headline/tooltip/overhunt flag. `has_yield`
 			# gates the readout — a confirmed assignment carries them; a pending one (below) does not.
 			"actual_yield": float(a.get("actual_yield", 0.0)),
@@ -766,6 +772,14 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# hands on the row plus the band's idle ones) is unmoved by a `+`/`-` on this same row.
 		var settled: Variant = (merged.get(key, {}) as Dictionary).get(
 			SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY, null)
+		# **AND THE RANK SURVIVES A PENDING CREW EDIT, for the reason the ceiling above does.**
+		# `assign_labor` states no priority — the mark is `work_priority`'s alone — so rebuilding the
+		# row from the pending dict would blank a High mark for exactly the frame the `+` is being
+		# clicked in, and the player would watch their own prefix flicker off their own press. Read
+		# off the CONFIRMED row; a source with no confirmed row at all is a brand-new assignment,
+		# which the sim creates at `Normal`, and that is what the normalizer answers for `""`.
+		var settled_priority := HudWorkVocab.work_priority_of(
+			(merged.get(key, {}) as Dictionary).get("priority", ""))
 		# **THERE IS NO BUILD CREW LEFT TO PRESERVE HERE** (`docs/plan_standing_upkeep.md` §2.5). This
 		# overlay used to carry the confirmed `improvement_workers` through a pending TAKE edit,
 		# because `assign_labor` states no build crew and blanking it made staffed builders read as
@@ -782,6 +796,7 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# clears) an improvement — that is the whole point of the split — so a pending crew edit
 			# on a cultivating patch must keep showing the build, not blank it for one turn.
 			"improvement": String(pd.get("improvement", "")), "pending": true,
+			"priority": settled_priority,
 			# A pending (optimistic) assign has no confirmed yield yet — render no yield number.
 			# Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
 			# the next snapshot resolves what the source actually used.

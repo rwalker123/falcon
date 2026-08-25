@@ -112,7 +112,7 @@ write (`.claude/rules/core_sim/campaign.md` → the transfer callout, which owns
 **A split is a command, so it lands *between* two captures** — inside the interval a client's
 `larder_delta` measures. Without the booking the parent publishes a frame whose Food line is short by
 exactly the provisions and the child's opens at food it never grew, and the identity
-`larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit + transferReceived −
+`larder_delta == foodIncome − foodConsumption − raidForfeit + transferReceived −
 transferSent` is simply false on the turn a band splits. The child receives it on the
 `LaborAllocation` it is spawned with, because its first published frame is the one that has to
 account for it.

@@ -52,7 +52,17 @@ const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% —
 # that fixes it sits directly below on the same sheet.
 # Format args: %d = the live Foddering percent, then the CORRAL glyph and the CULTIVATE glyph — the
 # rung each remedy is reached through, the `GATE_REASON_HERD_DOMESTICATED_FORMAT` idiom.
-const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: your people know Foddering %d%% — %s keep a penned herd to learn it, or %s commit this patch to its crop."
+#
+# **THE KNOWLEDGE HALF IS ITS OWN CONST BECAUSE A SECOND SURFACE SAYS IT.** The band's `Fodder:` row
+# states the same lock when the row is dormant for want of the craft, and it has no patch to offer
+# the second remedy about — so the shared clause is the part that is true wherever Foddering is
+# missing, and the patch-only remedy stays on this format. Spelled by CONCATENATION rather than
+# copied (`BandDetailLines.BAND_FODDER_ROW_FORMAT`'s idiom), so the sentence the forage panel renders
+# is byte-identical to the one it always rendered and cannot drift from the row's.
+# Format args: %d = the live Foddering percent, then the CORRAL glyph.
+const FODDERING_NOT_LEARNED_CLAUSE := "your people know Foddering %d%% — %s keep a penned herd to learn it"
+
+const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: " + FODDERING_NOT_LEARNED_CLAUSE + ", or %s commit this patch to its crop."
 
 # The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
 # `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames

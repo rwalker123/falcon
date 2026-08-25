@@ -15,7 +15,7 @@ extends RefCounted
 ## every per-snapshot fact this page sums already lives.
 ##
 ## **IT IS THE BAND PAGE'S VITALS BLOCK, ONE SCALE UP.** The same rows in the same order through the
-## same `DetailFormat.detail_bbcode` renderer — Food, Kit, Morale, Growth — so the two pages cannot
+## same `DetailFormat.detail_bbcode` renderer — Food, Fodder, Kit, Morale, Growth — so the two pages cannot
 ## drift into different vocabularies for the same facts. (A Trade row stood between Food and Kit until
 ## arc #527 retired the account it summed.) What the faction page spends its
 ## disclosures on is the thing only it can answer: **which band each total came from**, one clickable
@@ -27,7 +27,8 @@ extends RefCounted
 ## carries which. Morale and Growth are percentages and go through `FactionAggregate`.
 ##
 ## **IT RE-DERIVES NOTHING.** Every figure is a SUM or a weighted mean over answers the per-band
-## surfaces already give — `DetailFormat.band_net_food` / `band_provisions` / `band_fertility` /
+## surfaces already give — `DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` /
+## `band_fertility` /
 ## `kit_condition_face`, `HudBandLaborState.effective_idle` — so a band's own page
 ## and this one can never disagree about a number. A rollup that computed its own food ledger would be
 ## a second source of truth for the identity
@@ -41,7 +42,7 @@ extends RefCounted
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
 ## **A ROW ON THIS PAGE IS THE SIZE THE FACTION TAB'S OWN ROWS ARE.** The `band` zone's vitals — Food,
-## Kit, Morale, Growth — are the page's reference row, and every other zone's rows match them,
+## Fodder, Kit, Morale, Growth — are the page's reference row, and every other zone's rows match them,
 ## so a player moving between the four tabs is reading one list at one size.
 ##
 ## **THIS REVERSES AN EARLIER RULE, and the reversal was reported by eye.** The rows were pinned to the
@@ -103,11 +104,16 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## prints this zone's extent, and it has been at the edge of the ~300px a horizontal dock offers twice.
 ## The tier's threshold is `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, and it must stay above the
 ## full block's measured height.
+## `knowledge` is the player faction's `{track: progress}` row, threaded in as a PARAMETER like every
+## other input this stateless layer needs. Its ONE reader is the dormant `Fodder:` row's hover, which
+## states how far along Foddering is — knowledge is faction-scoped and no band dict carries it, so
+## this is the only level at which the figure exists.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
-        sedentarization: Dictionary, sites: Array, full: bool) -> VBoxContainer:
+        sedentarization: Dictionary, sites: Array, full: bool,
+        knowledge: Dictionary) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
-    col.add_child(_build_vitals_label(bands, disclosures))
+    col.add_child(_build_vitals_label(bands, disclosures, knowledge))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
@@ -121,7 +127,7 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
         col.add_child(discoveries)
     return col
 
-## THE FACTION'S VITALS — the band page's own five rows, one scale up, through the band page's own
+## THE FACTION'S VITALS — the band page's own rows, one scale up, through the band page's own
 ## renderer. A fresh `RichTextLabel` each render, so its `meta_clicked` is wired here (bound to ITSELF
 ## as the popover's anchor), exactly as `BandPanelController._build_vitals_label` does.
 ##
@@ -130,7 +136,8 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
 ## numbers; a runway is one larder against one band's drain and a kit condition is three durabilities
 ## per band, so neither has a faction value to state and those rows carry the ALERT instead. The
 ## detail is one click away in every case.
-static func _build_vitals_label(bands: Array, disclosures: DisclosureController) -> RichTextLabel:
+static func _build_vitals_label(bands: Array, disclosures: DisclosureController,
+        knowledge: Dictionary) -> RichTextLabel:
     var label := RichTextLabel.new()
     label.bbcode_enabled = true
     label.fit_content = true
@@ -138,19 +145,43 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     label.autowrap_mode = TextServer.AUTOWRAP_WORD
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     disclosures.wire_label(label)
+    # ⛔ **THE PREVIOUS RENDER'S CARETS ARE DROPPED FIRST, exactly as the band producer drops them**
+    # (`BandDetailLines.unit_summary_lines`). `_disclosure_state` is per-render and this page never
+    # cleared it, so a row that registers on one render and NOT on the next kept the caret — and the
+    # payload — it had last time. Found by eye on the dormant `Fodder:` row: a faction whose last pen
+    # is gone re-rendered a dim dash still wearing `▸`, over a per-band card built from the larders it
+    # no longer has. `Kit` and `Growth` can both return "" the same way and had the same latent bug.
+    _disclosures_clear(disclosures)
     var ctx := DetailFormat.Context.new()
-    var lines := _faction_summary_lines(bands, disclosures)
+    # The context goes IN as well as out: the dormant `Fodder:` row registers its hover on it, exactly
+    # as the band page's producers do, and `block_tooltip` below reads it back off the same object.
+    var lines := _faction_summary_lines(bands, disclosures, knowledge, ctx)
     # The carets are read from the CONTROLLER, not from a context the producer filled — every row
     # here registers its own disclosure as it is built, so the state is complete only after the last
     # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
     ctx.disclosures = disclosures.state()
     label.text = DetailFormat.detail_bbcode(lines, ctx)
+    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK.** The dormant `Fodder:` row says why it is
+    # dim this way; `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`),
+    # so the label carries it. The band page's two hosts attach it exactly like this, and a page that
+    # skipped it would show the same dim row with no explanation on this scale alone. Empty for a
+    # block whose every row is live, which shows no tooltip at all.
+    label.tooltip_text = DetailFormat.block_tooltip(ctx)
     return label
 
+## Drop the previous render's caret state. A one-line hop through a helper because this layer is
+## `static` and the controller is not: naming it says what the call is FOR at the one site that makes
+## it, rather than leaving a bare `clear_rows()` reading like a teardown.
+static func _disclosures_clear(disclosures: DisclosureController) -> void:
+    if disclosures != null:
+        disclosures.clear_rows()
+
 ## The rows, in the band page's order, registering each row's per-band drill-down as it goes.
-static func _faction_summary_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
+static func _faction_summary_lines(bands: Array, disclosures: DisclosureController,
+        knowledge: Dictionary, ctx: DetailFormat.Context) -> Array[String]:
     var lines: Array[String] = []
     lines.append(_food_line(bands, disclosures))
+    lines.append(_fodder_line(bands, disclosures, knowledge, ctx))
     lines.append(_kit_line(bands, disclosures))
     lines.append(_morale_line(bands, disclosures))
     var growth := _growth_line(bands, disclosures)
@@ -187,6 +218,84 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
         HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX,
         SourceForecast.format_yield(net),
         _alert_clause(starving, HudStyle.DANGER_HEX)]
+
+## `Fodder: 245.0 · −1.0 /turn` (+ the alert clause) — **THE FOOD ROW, ON THE OTHER LARDER, and every
+## beat of it is the food row's beat.** Two terms, no runway, one clickable row per band, the alert in
+## place of the faction figure that would hide the band it is about.
+##
+## It sums the way the Food row sums: per band, out of the answers that band's OWN page gives —
+## `DetailFormat.band_fodder_store` for the stock, `band_net_fodder` for the rate — never recomposed
+## from `fodder_income` and `fodder_need` here. That is the same rule for the same reason: a rollup
+## that did its own subtraction is a second source of truth for a figure the band page already states,
+## and the two would drift the first time either moved.
+##
+## **NO FACTION RUNWAY, for the food row's reason exactly** — turns-of-fodder is one larder against one
+## band's pens, and an average of them describes no band that exists. The per-band rows carry it, in
+## `food_turns_text` (the ∞ sentinel included, since `turns_of_fodder` comes off the sim's own
+## `larder_runway_turns`), and the ALERT is what reaches this row.
+##
+## **THE ALERT IS THE FOOD ROW'S TEST ON THIS ACCOUNT** — `BandFoodStatus.is_critical` over
+## `turns_of_fodder`, in DANGER ink, exactly as the starving count above it. One severity rule for
+## both larders is the same choice `DetailFormat.fodder_is_concerning` made for the band row's caret.
+##
+## **EVERY BAND GETS A ROW, INCLUDING ONE WITH NO PENS.** The Food drill-down lists the whole roster
+## and this one does too: *which band holds the hay* is the question the page exists to answer, and
+## "none of them" is a real answer to it — a filtered list would state a faction total over a subset
+## of the bands that make it up.
+##
+## ⛔ **AND IT HAS A DORMANT FORM, ON THE BAND ROW'S OWN GATE FOLDED ACROSS THE ROSTER.** A faction
+## with no fodder economy anywhere used to read `Fodder: 0.0 · +0.0 /turn` in FULL INK — a live-looking
+## readout for an economy that does not exist, and one that disagreed with the dim `—` every one of its
+## own bands was showing. The two scales say it the same way now, through the same builder
+## (`DetailFormat.fodder_dormant_row`) and the same hover.
+##
+## **THE GATE IS `band_has_fodder_economy` OVER THE BANDS, NOT A SECOND PREDICATE.** `_any_fodder_economy`
+## is a fold and nothing else: whatever the per-band test admits, this page admits, and a faction test
+## of its own — `store > 0`, say — would go live on a sub-floor crumb the band row was already calling
+## dormant. That divergence is asserted against in `band_panel_preview`.
+##
+## **A DORMANT ROW REGISTERS NO DISCLOSURE**, so it wears no caret: there are no per-band rows worth
+## opening when not one of them has a larder, and an empty pull-down is worse than none.
+static func _fodder_line(bands: Array, disclosures: DisclosureController,
+        knowledge: Dictionary, ctx: DetailFormat.Context) -> String:
+    if not _any_fodder_economy(bands):
+        # `RungGates.track` is the ONE reader of a `{track: progress}` row in this client — the same
+        # accessor every gate reason goes through, so a faction that has never begun the craft reads
+        # 0.0 here exactly as it does there.
+        return DetailFormat.fodder_dormant_row(ctx,
+            RungGates.track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_FODDERING))
+    var store := 0.0
+    var net := 0.0
+    var rows: Array[String] = []
+    var starving := 0
+    for i in range(bands.size()):
+        var band: Dictionary = bands[i]
+        store += DetailFormat.band_fodder_store(band)
+        net += DetailFormat.band_net_fodder(band)
+        var turns := float(band.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
+        if BandFoodStatus.is_critical(turns):
+            starving += 1
+        rows.append(_band_row(band, i, "%s · %s" % [
+            SourceForecast.format_fodder(DetailFormat.band_fodder_store(band)),
+            SourceForecast.format_signed_fodder(DetailFormat.band_net_fodder(band))],
+            DetailFormat.food_turns_text(turns)))
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_FODDER,
+        HudDisclosureVocab.BREAKDOWN_KIND_FODDER, rows, starving > 0)
+    return "%s%s%s · [color=#%s]%s[/color]%s" % [
+        HudDisclosureVocab.DETAIL_ROW_FODDER, DetailFormat.DETAIL_KV_SEPARATOR,
+        SourceForecast.format_fodder(store),
+        HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX,
+        SourceForecast.format_yield_fodder(net),
+        _alert_clause(starving, HudStyle.DANGER_HEX)]
+
+## Does ANY band on the roster have a fodder economy — **the band row's own test, folded**, and
+## deliberately nothing more. See `_fodder_line` for why a faction-scoped predicate of its own is
+## forbidden here.
+static func _any_fodder_economy(bands: Array) -> bool:
+    for band_variant in bands:
+        if DetailFormat.band_has_fodder_economy(band_variant as Dictionary):
+            return true
+    return false
 
 ## **THE `Trade: 15.6 · +0.39 /turn` ROW IS RETIRED** (arc #527) with the account it summed. A faction's
 ## materials do not roll up into one figure — that is the flattening the materials model exists to

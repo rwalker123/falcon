@@ -1,56 +1,60 @@
-//! **The band's food ledger must reconcile with its larder.**
+//! **The band's food ledger must reconcile with its larder — and a pen is not a line in it.**
 //!
-//! A pen's feed is taken straight off `cohort.stores` (`LocalStore::take`, the corral-tend branch of
-//! `advance_labor_allocation`), so it appears in **neither** `foodIncome` (Σ per-source `actual`) nor
-//! `foodConsumption` (the *people's* `food_demand`). Without exporting it, the client's net-food row
-//! (`foodIncome − foodConsumption`) overstates the surplus by exactly the upkeep and the player watches
-//! the larder drain with no explanation.
-//!
-//! `PopulationCohortState.penFeedUpkeep` closes it, and this is the identity that gives the field its
-//! meaning — asserted against a **real turn** through the real systems and the real snapshot export,
-//! not a re-derivation:
+//! A penned herd eats the grass its fenced footprint grows and the hay its keeper carries in. Both are
+//! `FODDER`, a store that never converts to `FOOD`. **Human food is not animal feed**, so no food
+//! crosses from the people's larder to the animals and the identity has three terms, not four:
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − penFeedUpkeep
+//! larder_delta == foodIncome − foodConsumption − raidForfeit
 //! ```
 //!
-//! Pinned both when the band can pay the feed in full and when it can only **partially** pay (the
-//! field is the *actual* debit, not the demanded amount).
+//! asserted against a **real turn** through the real systems and the real snapshot export, not a
+//! re-derivation. There is no raid in this fixture, so it reduces to `income − consumption` and any
+//! third flow at all would break it — which is what makes this the strongest available statement that
+//! the pens took nothing.
+//!
+//! # ⛔ WHAT THIS FILE USED TO ASSERT, AND WHY IT WAS WRONG
+//!
+//! It pinned `larder_delta == foodIncome − foodConsumption − penFeedUpkeep`: the pen's feed came
+//! straight off `cohort.stores`, appeared in neither income nor consumption, and had to be exported
+//! as its own negative row or the client's net-food line overstated the surplus. The *export* was
+//! sound; the **draw** was the modelling error. Its real effect was to short-circuit starvation — a
+//! pen whose pasture failed took food out of its keepers' mouths instead of shrinking. So
+//! `penFeedUpkeep` stopped being written, and the fixture that had to defeat it (a keeper posed at
+//! harvest floor `1.0`, taking nothing, so its own harvest could not feed the pen back) is back in
+//! its natural shape.
 
 use bevy::prelude::Entity;
 use core_sim::{
     build_test_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
     GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
+    SimulationConfig, SnapshotHistory, SourcePriority, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
 /// run lands on a different map.
 const SEED: u64 = 119_304_647;
-/// Enough food that the pen's feed (and the people's demand) are both paid in full.
+/// A larder deep enough that the band's own people are fed in full **and** that "nothing was taken
+/// for the pen" is a claim with something to take. Every case here stocks it.
 const AMPLE_LARDER: f32 = 500.0;
-/// **The people eat first, off the same larder** (`simulate_population` runs before the corral-tend
-/// branch of `advance_labor_allocation`). So a thin larder that only part-pays the *pen* must still
-/// cover the band's own ~4/turn food demand in full — otherwise the humans drain it dry and the pen
-/// is paid **zero**, which tests starvation, not a partial pen payment. This value feeds the people
-/// fully and leaves a remainder that is a genuine *fraction* of the penned herd's per-turn feed
-/// demand (~3.1/turn on the pinned map), so the payment is partial. Re-pinned when the
-/// climate-authority arc reshaped the map under the pen; measured against the same-map fully-fed
-/// run, not guessed.
-const THIN_LARDER: f32 = 6.0;
 /// The exported floats are `f32` sums of `Scalar`-quantized takes; a few ULPs of slack, no more.
 const EPSILON: f32 = 0.01;
+/// The keeper's harvest floor: hold the herd on its most productive biomass and carry the surplus
+/// home, which is what a keeper is for.
+const SUSTAIN: f32 = 0.5;
+/// No hay, and no Foddering to draw it with — the pen on a barren footprint has no feed at all.
+const NO_HAY: f32 = 0.0;
 
 /// Stand a band up with a **penned herd it keeps**, seed its larder, run one real turn, and return
-/// `(larder_before, larder_after, food_income, food_consumption, pen_feed_upkeep, pen_fed_fraction)`.
-/// `pen_fed_fraction` (paid ÷ demanded, read off the live herd) is the partial-payment witness: `1.0`
-/// = fully fed, `< 1.0` = the pen only part-paid and the herd starves for the rest.
+/// `(larder_before, larder_after, food_income, food_consumption, pen_fed_fraction)`.
+/// `pen_fed_fraction` (grass + hay ÷ demand, read off the live herd) is the feeding witness: `1.0` =
+/// fully fed, `< 1.0` = the pen went short and the herd starves for the rest.
 ///
 /// `hay > 0` (Flora Roster F3) grants the band **Foddering** and seeds its `FODDER` store with that
-/// much hay: the pen then draws hay *before* the larder, so its `penFeedUpkeep` (the **provisions**
-/// paid) drops — but the ledger identity is over the FOOD store alone, so it must still hold, because
-/// `FODDER` is a separate store that never converts to `FOOD`.
-fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f32) {
+/// much hay, which is the only way a pen on a barren footprint can be fed. The ledger identity is over
+/// the FOOD store alone and must read the same either way, because `FODDER` is a separate store that
+/// never converts to `FOOD`.
+fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32, f32, f32) {
     let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -67,8 +71,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         .position;
 
     // Pen the biggest **pennable** herd: domesticate it for the band's faction and corral it on the
-    // band's own tile, so the band's Hunt assignment TENDS it (and pays its feed) rather than hunting
-    // it.
+    // band's own tile, so the band's Hunt assignment TENDS it (and feeds it) rather than hunting it.
     //
     // **`can_pen()` is load-bearing, not defensive.** Picking the biggest herd outright picks a
     // **mammoth** (8000–12000 biomass dwarfs every other species; the best `pen`-ceiling animal, the
@@ -111,28 +114,28 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         herd.id.clone()
     };
 
-    // **Pin the pen to a BARREN footprint (Grazing 2d).** A penned herd now grazes its fenced footprint
-    // and the larder pays only what the pasture cannot cover (§2.3) — so on real pasture `penUpkeep → 0`
-    // and there is no ongoing feed to reconcile. This test is about the LEDGER identity when the pen
-    // DOES draw the larder, so we preserve the pre-2d worst case: strip the graze patch under the pen
-    // tile (`pen_radius = 0` → the footprint is exactly `band_pos`). A wholly-barren footprint keeps the
-    // herd's frozen K and is fully larder-fed (§2.3's preserved worst case), so the feed is the full
-    // `upkeep × biomass` and the identity has a real, positive `penFeedUpkeep` to reconcile against.
+    // **Pin the pen to a BARREN footprint (Grazing 2d).** A penned herd grazes its fenced footprint
+    // and is fed hay for whatever the pasture cannot cover (§2.3) — so on real pasture the pen is fed
+    // for free and there is no feed pressure at all. Stripping the graze patch under the pen tile
+    // (`pen_radius = 0` → the footprint is exactly `band_pos`) puts the pen in its **hungriest**
+    // state, which is the state the retired larder draw used to bill for: it is the case where a
+    // fourth ledger term, if one still existed, would be at its largest.
     app.world
         .resource_mut::<GrazeRegistry>()
         .patches
         .remove(&band_pos);
 
-    // The band's ONLY assignment: keep the pen. So every food flow this turn is one of the three the
-    // identity names — the pen's harvest (income), the people's demand (consumption), the pen's feed.
+    // The band's ONLY assignment: keep the pen. So every food flow this turn is one of the two the
+    // identity names — the pen's harvest (income) and the people's demand (consumption).
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
-                floor: 0.5,
+                floor,
             },
             workers: workers.max(1),
             kit: None,
+            priority: SourcePriority::default(),
         }],
         ..Default::default()
     });
@@ -142,7 +145,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         .stores
         .set(FOOD, scalar_from_f32(larder));
 
-    // F3: a hayed pen. Grant Foddering and seed the FODDER store — the pen draws hay before bread.
+    // F3: a hayed pen. Grant Foddering and seed the FODDER store — hay is the pen's only feed here.
     if hay > 0.0 {
         app.world
             .resource_mut::<DiscoveryProgressLedger>()
@@ -200,112 +203,104 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         after,
         cohort.food_income,
         cohort.food_consumption,
-        cohort.pen_feed_upkeep,
         pen_fed_fraction,
     )
 }
 
-/// **The identity, fully fed.** The pen's feed is a real debit that shows up in the exported ledger,
-/// and the three exported terms reconcile with the larder exactly.
+/// **The identity when the pen is at its HUNGRIEST.** A barren footprint, no hay: the pen's whole feed
+/// demand goes unmet, which is precisely the turn the retired larder draw would have billed the band
+/// its full `upkeep_per_biomass × biomass`. The two exported terms still reconcile with the larder
+/// exactly, so **no third flow touched the FOOD store**.
 #[test]
-fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
-    let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(AMPLE_LARDER, 0.0);
+fn a_hungry_pen_takes_nothing_from_the_larder_and_the_ledger_reconciles() {
+    let (before, after, income, consumption, pen_fed_fraction) =
+        run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
 
+    // **Not vacuous**: the pen genuinely went hungry, so there was a real feed shortfall to (wrongly)
+    // pay for. A fully-fed pen would make the reconciliation below prove nothing.
     assert!(
-        pen_feed > 0.0,
-        "a band keeping a pen must report a real feed debit (got {pen_feed})"
-    );
-    assert!(
-        (pen_fed_fraction - 1.0).abs() < EPSILON,
-        "an ample larder pays the pen in full (fed fraction {pen_fed_fraction})"
+        pen_fed_fraction < 1.0 - EPSILON,
+        "a barren, hayless pen must read UNDERFED — that is the state a larder fallback would have \
+         paid for (fed fraction {pen_fed_fraction})"
     );
     assert!(income > 0.0, "the pen pays its keeper (got {income})");
     assert!(consumption > 0.0, "the people eat (got {consumption})");
-
-    let delta = after - before;
-    let ledger = income - consumption - pen_feed;
     assert!(
-        (delta - ledger).abs() < EPSILON,
-        "larder_delta must equal foodIncome − foodConsumption − penFeedUpkeep: \
-         delta={delta} vs ledger={ledger} (income={income} consumption={consumption} feed={pen_feed})"
-    );
-
-    // The bug this field exists to kill: the naive net-food row the client used to draw overstates the
-    // surplus by exactly the upkeep.
-    let naive_net = income - consumption;
-    assert!(
-        (naive_net - delta - pen_feed).abs() < EPSILON,
-        "the pre-fix readout (income − consumption) overstates the true change by exactly the feed"
-    );
-}
-
-/// **The identity when the band can only PART-pay.** `penFeedUpkeep` is the food actually handed over
-/// (`LocalStore::take`'s return), never the amount demanded — so the ledger still reconciles, and the
-/// herd starves for the difference (its own `penFedFraction` carries that).
-#[test]
-fn the_food_ledger_reconciles_when_the_pen_is_only_partly_fed() {
-    let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(THIN_LARDER, 0.0);
-
-    // The people ate first (in full — `THIN_LARDER` covers their demand), so the pen was paid only
-    // the larder's *remainder*: a real, positive, but **partial** debit. `pen_fed_fraction < 1` is the
-    // proof it is genuinely partial (the herd starves for the shortfall); `> 0` that it paid at all.
-    assert!(
-        consumption > 0.0 && consumption < THIN_LARDER,
-        "the band eats its fill from the thin larder first: ate {consumption} of {THIN_LARDER}"
-    );
-    assert!(
-        pen_feed > 0.0,
-        "the larder's remainder still part-pays the pen: paid {pen_feed}"
-    );
-    assert!(
-        pen_fed_fraction > 0.0 && pen_fed_fraction < 1.0,
-        "a PARTIAL payment — the pen got some feed but not all it demanded (fed fraction \
-         {pen_fed_fraction})"
+        before >= AMPLE_LARDER - EPSILON,
+        "the larder really was stocked, or 'nothing was taken' is trivially true (held {before})"
     );
 
     let delta = after - before;
-    let ledger = income - consumption - pen_feed;
+    let ledger = income - consumption;
     assert!(
         (delta - ledger).abs() < EPSILON,
-        "the identity must hold on a PARTIAL payment too (penFeedUpkeep is the real debit, not the \
-         demand): delta={delta} vs ledger={ledger} \
-         (income={income} consumption={consumption} feed={pen_feed})"
+        "larder_delta must equal foodIncome − foodConsumption with NO pen term: \
+         delta={delta} vs ledger={ledger} (income={income} consumption={consumption})"
     );
 }
 
-/// **The identity when the pen is fed HAY** (Flora Roster F3). Hay is a *separate* store, drawn before
-/// the larder, so a hayed pen's `penFeedUpkeep` (the provisions paid) **drops** — but the identity is
-/// over the FOOD store alone and `FODDER` never converts to `FOOD`, so it must still reconcile. This is
-/// the ledger half of "provisions stays lossy": the food line moves by *less* precisely because hay,
-/// not bread, covered the feed.
+/// **HAY FEEDS THE PEN, AND THE LARDER STILL DOES NOT.** The same barren pen with hay in the `FODDER`
+/// store reads **fully fed** — so the feed really is being paid, just out of the right store — while
+/// the FOOD-side identity reads exactly as it did when the pen went hungry.
+///
+/// This is the ledger half of *"FODDER never converts to FOOD"*: feeding the animals moves a
+/// different store, and the food line is indifferent to whether they ate at all.
 #[test]
-fn the_food_ledger_reconciles_when_the_pen_is_fed_hay() {
-    // Ample provisions AND ample hay: the pen covers its whole feed from hay first, so almost nothing
-    // is drawn from the FOOD store.
-    let (before, after, income, consumption, hay_pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(AMPLE_LARDER, 10_000.0);
-    // For contrast, the same pen with NO hay pays a real provisions feed (the fully-fed bread case).
-    let (_, _, _, _, bread_pen_feed, _) = run_one_turn_with_a_pen(AMPLE_LARDER, 0.0);
+fn hay_feeds_the_pen_while_the_food_ledger_reads_the_same() {
+    const AMPLE_HAY: f32 = 10_000.0;
+
+    let (hay_before, hay_after, hay_income, hay_consumption, hay_fed) =
+        run_one_turn_with_a_pen(AMPLE_LARDER, AMPLE_HAY, SUSTAIN);
+    // The same pen with NO hay, for contrast: it starves.
+    let (_, _, _, _, hungry_fed) = run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
 
     assert!(
-        (pen_fed_fraction - 1.0).abs() < EPSILON,
-        "hay feeds the pen in full (fed fraction {pen_fed_fraction})"
+        (hay_fed - 1.0).abs() < EPSILON,
+        "hay feeds the pen in full (fed fraction {hay_fed})"
     );
-    // Hay covered the feed, so the PROVISIONS bill collapsed — the food line barely moved for the feed.
     assert!(
-        hay_pen_feed < bread_pen_feed * 0.05,
-        "a hayed pen's provisions feed collapses: {hay_pen_feed} vs the bread-fed {bread_pen_feed}"
+        hungry_fed < hay_fed - EPSILON,
+        "and without it the same pen goes short — so the hay is what fed it, not something else \
+         (hayed {hay_fed} vs hayless {hungry_fed})"
     );
 
     // The identity still holds — hay is off-ledger (a separate store), FODDER never became FOOD.
-    let delta = after - before;
-    let ledger = income - consumption - hay_pen_feed;
+    let delta = hay_after - hay_before;
+    let ledger = hay_income - hay_consumption;
     assert!(
         (delta - ledger).abs() < EPSILON,
         "the identity must hold for a HAY-fed pen too — FODDER is a separate store, never converted \
          to FOOD: delta={delta} vs ledger={ledger} \
-         (income={income} consumption={consumption} penFeedUpkeep={hay_pen_feed})"
+         (income={hay_income} consumption={hay_consumption})"
+    );
+}
+
+/// **FEEDING THE ANIMALS COSTS THE PEOPLE NOTHING AT ALL** — the two runs above move the FOOD store
+/// by the *same* amount, though one pen ate its fill and the other starved.
+///
+/// The retired `penFeedUpkeep` is exactly the gap this asserts is zero: under it, the hungry pen's
+/// band paid its whole bill in bread and the hayed pen's paid almost none, so the two larders moved
+/// by visibly different amounts. That difference **was** the defect.
+#[test]
+fn a_fed_pen_and_a_starving_pen_move_their_keepers_larder_identically() {
+    const AMPLE_HAY: f32 = 10_000.0;
+
+    let (fed_before, fed_after, _, _, fed_fraction) =
+        run_one_turn_with_a_pen(AMPLE_LARDER, AMPLE_HAY, SUSTAIN);
+    let (hungry_before, hungry_after, _, _, hungry_fraction) =
+        run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
+
+    assert!(
+        (fed_fraction - 1.0).abs() < EPSILON && hungry_fraction < 1.0 - EPSILON,
+        "the two runs must genuinely differ in FEEDING (fed {fed_fraction}, hungry \
+         {hungry_fraction}), or they cannot show that feeding costs the larder nothing"
+    );
+
+    let fed_delta = fed_after - fed_before;
+    let hungry_delta = hungry_after - hungry_before;
+    assert!(
+        (fed_delta - hungry_delta).abs() < EPSILON,
+        "whether the pen ate or starved, the band's larder moved by the same amount: \
+         fed {fed_delta} vs hungry {hungry_delta}"
     );
 }

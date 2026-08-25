@@ -26,7 +26,7 @@ class_name DetailFormat
 ##
 ## CONSTS. The rule is: a const lives HERE iff every one of its readers moved here. The herd-drawer
 ## vocabulary came with `herd_summary_lines` (the pen/husbandry/range/size rows, `OVERGRAZING_WARNING`,
-## `FULLY_HERDED`, `CORRAL_PROGRESS_COMPLETE`, `PEN_FEED_ROW`) and the expedition
+## `FULLY_HERDED`, `CORRAL_PROGRESS_COMPLETE`, `PEN_STARVING_LABEL`) and the expedition
 ## delivery/tooltip vocabulary with the tooltip trio, plus the recovery-guidance PAIR (the tint
 ## registry matches the glyph, the producer emits the text — splitting them across files would put a
 ## one-string invariant in two). The rest of that vocabulary now lives HERE too (the morale-breakdown
@@ -125,31 +125,30 @@ const FOOD_LABEL_GATHERED := "Gathered"
 
 const FOOD_LABEL_HUNTED := "Hunted"
 
-# The two DEBIT rows, deliberately separate: the people eat (`food_consumption`), and the ANIMALS in
-# the band's pens eat (`pen_feed_upkeep` — a confined herd cannot graze, so its keeper hauls it food
-# every turn). Both come straight off the same larder, and telling them apart is the entire readout
-# of the corral-as-a-managed-population arc: a band whose larder drains because it is feeding its
-# herd must be able to SEE that, not just watch the number fall.
-const FOOD_LABEL_EATEN := "Eaten (people)"
+# THE CONSUMPTION DEBIT — what the band's PEOPLE ate. It has no animal counterpart: the `🐄 Pen feed
+# (animals)` row that stood beside it is retired with `penFeedUpkeep`, because human food is not
+# animal feed. A pen eats the grass its fenced footprint grows and the hay its keeper carries in, and
+# what those two leave uncovered starves the herd (`pen_fed_fraction` < 1) instead of draining the
+# people's larder — so a pen has nothing to report on THIS ledger at all. The bare word is therefore
+# unambiguous again; the "(people)" qualifier only ever existed to contrast with the animals' row.
+const FOOD_LABEL_EATEN := "Eaten"
 
-const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
-
-# The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — the raid twin
-# of Pen feed. The sim answers it as `PopulationCohortState.raidForfeit` (the client never re-derives
-# it), and it is the fourth term of the larder identity
-# `larder_delta == income − consumption − pen_feed − raid_forfeit`. Crossed-swords glyph so the row
+# The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — the ledger's
+# only debit beyond consumption. The sim answers it as `PopulationCohortState.raidForfeit` (the
+# client never re-derives it), and it is the third term of the larder identity
+# `larder_delta == income − consumption − raid_forfeit`. Crossed-swords glyph so the row
 # reads as a loss to an attacker, matching the command feed's `predator_raid` alert.
 const RAID_GLYPH := "⚔"
 const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 
 # The TRANSFER pair (arc #527): food that crossed between bands, in or out. They are the fifth and
 # sixth terms of the larder identity
-#   larder_delta == income − consumption − pen_feed − raid_forfeit + received − sent
+#   larder_delta == income − consumption − raid_forfeit + received − sent
 # and they close a hole that was NEVER about trade alone: `balance_supply_networks` has been pooling
 # food between neighbouring larders every turn since turn one, so any two co-networked bands had a
 # Food line that silently did not add up — by the whole transfer, not a rounding drift.
 #
-# TWO ROWS, NOT ONE SIGNED ONE, matching the two debit rows above and the wire's own shape: a band
+# TWO ROWS, NOT ONE SIGNED ONE, matching the debit rows above and the wire's own shape: a band
 # that both sends and receives in one window is doing something, and a net would render that as
 # nothing having happened. The received row is an INCOME row (▲ green) and the sent row a DEBIT
 # (▼ amber), which the shared `food_breakdown_row` decides from the sign it is handed.
@@ -159,11 +158,22 @@ const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 # supply network never made. And the emoji that says "deal" (🤝) is not in this client's fallback
 # font: it renders as an INVISIBLE gap — no tofu box, just a wider indent — which is the silent
 # failure mode `Typography.gd` is retired for. ⇄ is in the Arrows block the ▸/◀/▲▼ carets already
-# come from, so it draws everywhere they do. **One glyph for both rows**, unlike Pen feed and Lost to
+# come from, so it draws everywhere they do. **One glyph for both rows**, unlike Eaten and Lost to
 # raids: these two are ONE fact in two directions, and the row's own words say which way.
 const TRANSFER_GLYPH := "⇄"
 const FOOD_LABEL_TRANSFER_RECEIVED := "%s From other bands" % TRANSFER_GLYPH
 const FOOD_LABEL_TRANSFER_SENT := "%s To other bands" % TRANSFER_GLYPH
+
+# ---- THE FODDER LEDGER'S TWO FLOWS, the labels of the `Fodder:` row's own breakdown. The larder has
+# exactly two: what the band's fodder Fields GREW this turn (`fodder_income`) and what its pens ATE
+# (`fodder_need`, the sim's sum over the pens it keeps). They are named for the THING at each end —
+# the harvest and the animals — because the row above states neither and the popover has to answer
+# *why is this draining*.
+#
+# **`Pens`, not `Fed to pens` or `Eaten`**: the food ledger's `Eaten` is the PEOPLE's, and a fodder
+# larder that also said "Eaten" would read as the same account twice. One noun per debit.
+const FODDER_LABEL_GROWN := "Grown"
+const FODDER_LABEL_PENS := "Pens"
 
 # ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
 # ONE KIT, ONE JOB: spears raise a hunter's `attack`, a SLED is the HUNT's carry (a carcass is one
@@ -523,25 +533,79 @@ const CULTIVATION_PROGRESS_COMPLETE := 1.0
 const FIELD_PROGRESS_COMPLETE := 1.0
 const FIELD_BADGE_LABEL := "Field"
 
-# ---- The pen's standing feed debit + its two starving states. The row KEY is read by the herd-lines
-# producer below AND by this file's tint registry.
-const PEN_FEED_ROW := "Pen feed"
-const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
-const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
+# ---- RETIRED — **`PEN_STARVING_LABEL`** (`⚠ Starving — %d%% fed`), the Corral row's starving face.
+# It welded two unrelated percentages into one row: a built rung row renders `<label> <meter %>`, so a
+# starving pen read `Corral: ⚠ Starving — 47% fed 100%` — how FED the herd is beside how BUILT the pen
+# is, with no separator between them. The Corral row means the rung again (`🐄 Corralled 100%`), and
+# the whole feed story — including the hazard mark and the tint — is the `Fed:` row below.
 
-# ---- The penned herd's own rows (the fenced footprint + the three-way feed split). Every reader is
-# `herd_summary_lines` below, so the whole block lives here.
+# ---- The penned herd's own rows: the fenced footprint, and the `Fed:` row that carries the WHOLE
+# feed story. Every reader is `herd_summary_lines` below, so the whole block lives here.
 const PEN_FOOTPRINT_ROW := "Pen"
 const PEN_FOOTPRINT_FORMAT := "radius %d · %d tiles"
-const PEN_FEED_SPLIT_ROW := "Fed by pasture"
-# The `%s` is the optional hay segment (empty, or `PEN_FEED_SPLIT_HAY_SEGMENT`) spliced between the
-# pasture percent and the NET larder bill — so a pen that drew no hay renders exactly the two-term form.
-# The larder term reads `pen_larder_bill` (the NET bread bill after pasture + hay), NOT the gross
-# `pen_upkeep`; sim-pinned invariant: `pen_upkeep × pen_pasture_fraction + pen_hay_food +
-# pen_larder_bill == pen_upkeep`. A self-feeding pen reads "100% · larder 0.0", a scrub pen "0% ·
-# larder N.N"; the hay segment shows ONLY when `pen_hay_food >= SourceForecast.FOOD_FLOW_MIN`.
-const PEN_FEED_SPLIT_FORMAT := "%d%%%s · larder %.1f food/turn"
-const PEN_FEED_SPLIT_HAY_SEGMENT := " · hay %.1f"
+
+# **THE ROW IS NAMED FOR WHAT IT MEASURES, NOT FOR ONE OF ITS TERMS.** It read `Fed by pasture` and
+# then listed hay, naming one feed source in the label and the other in the value. `Fed:` leads with
+# `pen_fed_fraction` — how much of its demand the pen actually got — and the terms beneath it say
+# where that came from:
+#
+#     Fed:  100% — all pasture
+#     Fed:  100% — 88% pasture · 12% fodder
+#     Fed:  ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn
+#     Fed:  ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn
+#
+# **THE WORD IS `fodder`, NEVER `hay`.** Fodder is the category (food for livestock, dried hay or
+# straw among it) and hay is one instance of it; the band's own store row already says `Fodder`, and
+# the sim's fields and units are fodder throughout. One word for one thing.
+const PEN_FEED_ROW := "Fed"
+const PEN_FEED_VALUE_FORMAT := "%s%d%% — %s%s"
+
+# The hazard mark LEADS the value on a starving pen (`PenStatus.is_starving`, the one test the map
+# badge and the turn orb also ask), which is both the mark the player sees and — via
+# `pen_feed_value_hex` — what puts the row in DANGER ink. That tint is the one the Corral row's
+# retired `contains("starving")` special case used to carry.
+const PEN_FEED_HAZARD_PREFIX := "%s " % HudSelectionVocab.RUNG_HAZARD_GLYPH
+
+# **THE TWO SHARES ARE ONE SUBTRACTION, NEVER A DIVISION.** `pen_pasture_fraction` is the share the
+# fenced footprint grazed and `pen_fed_fraction` is the share that arrived in total, so the fodder
+# share is the DIFFERENCE of two published ratios over the same denominator. The gross demand those
+# ratios are shares OF is **not on the wire** — `fodder_draw` is an absolute in fodder units — so
+# dividing the draw by a ratio to synthesize a total, or to price the fodder share, is the one thing
+# this row must not do. The subtraction is taken on the ROUNDED percentages so the two terms visibly
+# add up to the headline, and clamped at zero because `pen_fed_fraction` is clamped at 1.0 and the
+# pair can round-cross.
+const PEN_FEED_PASTURE_SEGMENT := "%d%% pasture"
+const PEN_FEED_FODDER_SEGMENT := " · %d%% fodder"
+
+# **NOTHING CARRIED IN IS A DIFFERENT FACT FROM A LITTLE CARRIED IN**, so a pen whose draw is under
+# `SourceForecast.FODDER_FLOW_MIN` says `no fodder` in the share's place rather than `0% fodder`: the
+# keeper brought none — because the band has none, or has not learned Foddering — which is a
+# different problem from a ration that fell short.
+const PEN_FEED_NO_FODDER_SEGMENT := " · no fodder"
+
+# The share the land covers outright: no second term and, by construction, no shortfall. A pen whose
+# own fenced footprint feeds it is the one state where the split has nothing to split.
+const PEN_FEED_ALL_PASTURE_SEGMENT := "all pasture"
+
+# The pasture share at which the footprint covers the whole feed. `PenStatus.FED_EPSILON` is the slack
+# either side of it — the same rounding slack the fed fraction takes, for the same reason: a share
+# that lands at 0.998 is a covered pen, not a 99.8% one.
+const PEN_PASTURE_COVERS_ALL := 1.0
+
+# **HOW MUCH MORE FODDER A TURN WOULD FIX IT** — `pen_fodder_shortfall`, the sim's own
+# `max(0, hay gap − fodderDraw)`, where the gap is what the pen's fenced footprint leaves uncovered.
+# It is struck on the same pass as both its terms, so it can never describe a different turn from
+# them, and it is the ONLY term of that subtraction on the wire: the gap has no per-pen field, so
+# there is no second figure here to difference or to cross-check against.
+# It appears ONLY above `SourceForecast.FODDER_FLOW_MIN`:
+# a fed pen owes nothing and must not read `needs 0.0`, the false precision that floor exists to stop.
+#
+# **`more` IS ONLY TRUE WHEN SOMETHING ARRIVED.** A pen drawing nothing is not short of MORE fodder,
+# it is short of fodder, so the `no fodder` state takes the plain form. The "/turn" is spelled tight
+# in the compact spelling `SourceForecast.POLICY_CAP_FODDER_FORMAT` uses, not `YIELD_PER_TURN_SUFFIX`'s
+# spaced standalone form.
+const PEN_FEED_SHORTFALL_MORE_SEGMENT := " · needs %s more/turn"
+const PEN_FEED_SHORTFALL_SEGMENT := " · needs %s /turn"
 
 # ---- Husbandry-ceiling stand-ins. Rendered in place of the whole husbandry section on a wild-ceiling
 # herd, and where the corral affordance would sit on a pastoral one — so the missing controls read as
@@ -692,6 +756,11 @@ const DETAIL_KV_SEPARATOR := ": "
 ## `DisclosureController.state`); empty means no row wears a caret.
 class Context extends RefCounted:
     var food_turns: float = NAN
+    ## The FODDER larder's runway, for the `Fodder:` row's value tint — the food field's twin, filled
+    ## by `BandDetailLines._band_fodder_line` and read by `_value_hex` through the same
+    ## `BandFoodStatus.hex_for_turns` map. NAN when no fodder row was emitted (a band with no fodder
+    ## economy, or the `compact` tier, which carries the stock as a clause on Food instead).
+    var fodder_turns: float = NAN
     var morale: float = NAN
     ## The band's fertility MULTIPLIER (`hunger x reserve x trend`), 1.0 = its normal birth rate.
     ## NAN when there is no band, or when the sim published no reading yet (the not-projected
@@ -834,6 +903,13 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # not food-limited.
         if not is_nan(ctx.food_turns) and (value.contains(FOOD_RUNWAY_UNIT) or value.contains(FOOD_UNLIMITED_GLYPH)):
             return BandFoodStatus.hex_for_turns(ctx.food_turns)
+    elif key == HudDisclosureVocab.DETAIL_ROW_FODDER:
+        # The fodder larder's row, tinted by ITS runway through the same threshold map the Food row
+        # uses — one severity rule for both larders, which is what lets the row's own amber `need`
+        # clause be retired rather than replaced. Recognized by the SHARED runway spelling, exactly as
+        # the food case above is, so a re-worded runway cannot leave this reading a stale tint.
+        if not is_nan(ctx.fodder_turns) and (value.contains(FOOD_RUNWAY_UNIT) or value.contains(FOOD_UNLIMITED_GLYPH)):
+            return BandFoodStatus.hex_for_turns(ctx.fodder_turns)
     elif key == HudDisclosureVocab.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
@@ -871,7 +947,8 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
     elif key == CORRAL_ROW:
         return corral_value_hex(value)
     elif key == PEN_FEED_ROW:
-        # The pen's running feed cost: amber as a standing debit, red when it goes unpaid.
+        # The penned herd's feed row: red while the pen is starving. This is the case the Corral row
+        # above used to carry, and it belongs to the row that states the fed fraction.
         return pen_feed_value_hex(value)
     return HudStyle.INK_HEX
 
@@ -1352,7 +1429,7 @@ static func rung_badge_word(improvement: String) -> String:
 ## that function is ROUTING (which of a card's two rows may print the source's one countdown, and
 ## whether this row is a built badge or a bare declaration); this is the part that reads the wire's
 ## `buildTurnsRemaining` and answers for every value it can carry — a positive count, `-2` holding,
-## `-3` rotting, `-4` the queue blocked, `-1` no answer.
+## `-3` rotting, `-4` the queue blocked, `-5` queued and not yet estimated, `-1` no answer.
 ##
 ## **IT IS EXTRACTED RATHER THAN COPIED, and that is the whole point.** The BUILD QUEUE block's date
 ## column asks exactly this question and has none of the routing problem — a queue entry IS the rung,
@@ -1418,6 +1495,7 @@ static func build_completion_value(turns: int, build_crew: int, percent: int,
 ## wire can put on `buildTurnsRemaining` otherwise. **A second fork is how this client has twice been
 ## left behind by a newly-spelled sentinel** (`-3` split out of `-2`, then `-4` added beside them), so
 ## a caller that wants a new rendering of a COUNT writes it in terms of this rather than beside it.
+## **`-5` IS THE THIRD TIME**, and it landed INSIDE this fork for exactly that reason.
 static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> String:
     if turns == SourceForecast.BUILD_TURNS_HOLDS:
         if build_crew <= SourceForecast.BUILD_CREW_NONE:
@@ -1442,6 +1520,23 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int) -> S
     # and gating the client's own answer on a crew is a defect this client already shipped once and
     # fixed (`chapters/improvements.gd`'s `tile_meter_stalled`, where the sheet answered the neutral
     # *held* while the card said `⚠ Stalled`: two producers disagreeing about one meter).
+    # **THE SIM HAS NOT LOOKED AT THIS ENTRY YET** (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`,
+    # `docs/plan_standing_upkeep.md` §4.9). Queued since the last turn resolved, so no estimate pass
+    # has run over it — which is a different fact from `-1`'s *the pass ran and had no number*, and it
+    # is the one the branch below used to swallow.
+    #
+    # ⛔ **NO HAZARD GLYPH AND NO CREW FORK.** Nothing is wrong: a build one command old with a staffed
+    # pool on it is not a stall, and folding it into `-1` put `⚠ Stalled 0%` on a fresh `Cultivate`
+    # until the next turn cleared it. The crew is irrelevant for the same reason it is on `-1` — this
+    # says what the SIM has done, not what a crew is doing — so a staffed and an unstaffed fresh entry
+    # read alike here, and whether anybody is on it is the queue's own head/tail question.
+    #
+    # **IT IS TESTED BEFORE `-1`** so the two cannot be read as one by a future edit that widens either
+    # test, and it is written HERE rather than beside this function: a caller wanting a new rendering
+    # of a count writes it in terms of this fork, which is what stopped `-3` and `-4` being missed a
+    # third time.
+    if turns == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED:
+        return HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
@@ -1455,6 +1550,12 @@ const BUILD_METER_EMPTY := 0.0
 ## crew is red, any other value carrying the hazard mark is amber, a value carrying its rung's BUILT
 ## badge is signal green, and everything else is neutral ink — so the four `*_value_hex` leaves are one
 ## shape and a new hazard state cannot ship without its colour.
+##
+## **THE RULE IS WHY A NON-HAZARD STATE NEEDS NO LEAF OF ITS OWN.** `RUNG_QUEUED_FORMAT` (`-5`, queued
+## and not yet estimated) carries neither needle, so it falls through to `INK_HEX` — the neutral it
+## wants — without a branch. That is the rule working rather than a coincidence: a face that MEANT to
+## be amber would have to earn it by wearing the hazard mark, which is the property this test exists
+## to enforce in both directions.
 ##
 ## **THE ROTTING TEST RUNS FIRST BECAUSE THAT ROW WEARS BOTH NEEDLES.** It leads with the hazard mark
 ## like every other failure state — it must, or the mark stops meaning *something is wrong here* — so
@@ -1976,49 +2077,80 @@ static func _flora_biomass_split(entries: Array[Dictionary], stock: float) -> Ar
     split[0] = split[0] + int(round(stock)) - total
     return split
 
-## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
-## `cultivation_built_label`. A finished pen shows the livestock glyph; an in-progress one reads
-## "Building N%", naming the work under way. A finished pen whose keeper did NOT pay this turn's feed
-## reads the STARVING state instead of the penned badge — the herd is losing biomass every turn,
-## which is the one fact the player must not be able to miss. `detail_bbcode` tints via
-## `corral_value_hex`.
-static func corral_built_label(fed_fraction: float) -> String:
-    if PenStatus.is_starving(fed_fraction):
-        return PEN_STARVING_LABEL % int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE))
+## Player-facing corral label — the herd twin of `cultivation_built_label`. A finished pen shows the
+## livestock glyph; an in-progress one is the rung row's own meter, so this states only the badge.
+##
+## **IT NO LONGER SPEAKS FOR THE FEED.** It took the fed fraction and returned a STARVING face, which
+## a built rung row then rendered beside its own build meter — `⚠ Starving — 47% fed 100%`, two
+## unrelated percentages with nothing between them. The feed story is the `Fed:` row's whole job now,
+## warning mark and DANGER tint included, and this rung means the rung again. `detail_bbcode` tints
+## via `corral_value_hex`.
+static func corral_built_label() -> String:
     return "%s %s" % [DetailFormat.CORRAL_GLYPH, CORRAL_BUILT_WORD]
 
-## The Corral rung's BUILT badge word and its lowercased needle. A STARVING pen states its own face
-## instead (`PEN_STARVING_LABEL`), which is why this rung is the one that hands `rung_row_value` a
-## caller-decided label rather than a fixed one.
+## The Corral rung's BUILT badge word and its lowercased needle.
 const CORRAL_BUILT_WORD := "Corralled"
 
 const CORRAL_BUILT_NEEDLE := "corralled"
 
-## The "Pen feed" row's value: what this pen demands per turn, plus — when the keeper is short — how
-## much of it was actually paid. Amber/red-tinted via `pen_feed_value_hex`.
-static func pen_feed_label(upkeep: float, fed_fraction: float) -> String:
-    var demand := SourceForecast.format_yield(-upkeep)
-    if PenStatus.is_starving(fed_fraction):
-        return PEN_FEED_STARVING_FORMAT % [
-            demand, int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE)),
-        ]
-    return demand
-
-## BBCode hex for a "Corral" value — the shared rung rule with ONE case above it: a STARVING pen is
-## DANGER red, because the herd is shrinking right now and that outranks every hazard the four-state
-## fork can raise. `PEN_STARVING_LABEL` leads with the same ⚠ every hazard does, so the order here is
-## what keeps the louder reading.
+## BBCode hex for a "Corral" value — **the shared rung rule and nothing else**. The starving special
+## case above it (`value.contains("starving")` → DANGER) is deleted with the label that produced that
+## string: a pen's feed is not a fact about how built its fence is, and the `Fed:` row carries both
+## the mark and the red now.
 static func corral_value_hex(value: String) -> String:
-    if value.to_lower().contains("starving"):
-        return HudStyle.DANGER_HEX
     return rung_value_hex(value, CORRAL_BUILT_NEEDLE)
 
-## BBCode hex for the "Pen feed" value: DANGER while the pen goes unfed (the herd is shrinking), WARN
-## otherwise — a paid pen is still a standing debit on the larder, never good news.
+## BBCode hex for the penned herd's `Fed:` value — DANGER while the pen is starving, ordinary ink
+## otherwise. It reads the hazard prefix the value was BUILT with (`PEN_FEED_HAZARD_PREFIX`) rather
+## than re-deriving `PenStatus.is_starving` from a fraction this layer no longer holds, which is the
+## same idiom the full-width WARN branch of `detail_bbcode` uses to find a hazard sentence.
 static func pen_feed_value_hex(value: String) -> String:
-    if value.to_lower().contains("paid"):
+    if value.begins_with(PEN_FEED_HAZARD_PREFIX):
         return HudStyle.DANGER_HEX
-    return HudStyle.WARN_HEX
+    return HudStyle.INK_HEX
+
+## The penned herd's `Fed:` value — the WHOLE feed story in one line: how much of its demand arrived,
+## which of its two sources it came from, and how much more fodder a turn would close the gap.
+##
+##     100% — all pasture
+##     100% — 88% pasture · 12% fodder
+##     ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn
+##     ⚠ 40% — 40% pasture · no fodder · needs 12.0 /turn
+##
+## **THE FODDER SHARE IS `fed − pasture`.** Both are published shares of the same (unpublished) gross
+## demand, so their difference is the share fodder covered — arithmetic the wire supports. What it
+## does NOT support is dividing `fodder_draw` (an absolute) by a ratio to reconstruct that gross; the
+## gross is not on the wire and may not be synthesized. The subtraction runs on the rounded
+## percentages so the terms add up to the headline on screen, and clamps at zero because
+## `pen_fed_fraction` is clamped at 1.0 and the two can round-cross.
+##
+## **`no fodder` IS NOT `0% fodder`.** Below `SourceForecast.FODDER_FLOW_MIN` the keeper carried
+## nothing in at all — no store, or no Foddering — which is a different problem from a short ration,
+## and the shortfall clause drops its `more` to match: there is no "more" than nothing.
+static func pen_feed_value(herd_data: Dictionary) -> String:
+    var fed_fraction := PenStatus.fed_fraction(herd_data)
+    var fed_percent := int(round(fed_fraction * HudConst.PROGRESS_PERCENT_SCALE))
+    var pasture_percent := int(round(
+        float(herd_data.get("pen_pasture_fraction", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))
+    var hazard := PEN_FEED_HAZARD_PREFIX if PenStatus.is_starving(fed_fraction) else ""
+    # Where the feed came from. A footprint that covers the whole demand has nothing to split.
+    var sources := PEN_FEED_ALL_PASTURE_SEGMENT
+    if float(herd_data.get("pen_pasture_fraction", 0.0)) \
+            < PEN_PASTURE_COVERS_ALL - PenStatus.FED_EPSILON:
+        sources = PEN_FEED_PASTURE_SEGMENT % pasture_percent
+        if float(herd_data.get("fodder_draw", 0.0)) >= SourceForecast.FODDER_FLOW_MIN:
+            sources += PEN_FEED_FODDER_SEGMENT % maxi(0, fed_percent - pasture_percent)
+        else:
+            sources += PEN_FEED_NO_FODDER_SEGMENT
+    # …and what would close the gap: the sim's own `max(0, need − draw)`, silent when the pen is fed.
+    var shortfall := float(herd_data.get("pen_fodder_shortfall", 0.0))
+    var shortfall_segment := ""
+    if shortfall >= SourceForecast.FODDER_FLOW_MIN:
+        var shortfall_format := PEN_FEED_SHORTFALL_MORE_SEGMENT \
+            if float(herd_data.get("fodder_draw", 0.0)) >= SourceForecast.FODDER_FLOW_MIN \
+            else PEN_FEED_SHORTFALL_SEGMENT
+        shortfall_segment = shortfall_format % SourceForecast.format_fodder(shortfall)
+    return PEN_FEED_VALUE_FORMAT % [hazard, fed_percent, sources, shortfall_segment]
 
 
 # =====================================================================================
@@ -2073,8 +2205,9 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 #  FOOD OUTLOOK chart — which is why it lives here rather than travelling with either one.
 # =====================================================================================
 
-## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat − what
-## PREDATORS raided off the larder this turn.
+## Net per-turn food flow: income − what the PEOPLE eat − what PREDATORS raided off the larder this
+## turn. **The band's penned ANIMALS are not a term** — a pen is fed by its fenced footprint's grass
+## and by hay, never from the food larder, so it cannot move this number.
 ##
 ## **THE TRANSFER PAIR IS DELIBERATELY NOT A TERM HERE** (arc #527). Transfers are what CROSSED
 ## between larders — a past event, not a
@@ -2092,12 +2225,10 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 ## reflect a neighbour's recurring supply-network contribution, and no client-side fold-in may fake
 ## one.
 ##
-## Positive → the larder is growing. `pen_feed_upkeep` is
-## the sim's own answer for the third term (`PopulationCohortState.penFeedUpkeep` — the food this band
-## actually PAID for pen feed this turn, summed across every pen it keeps) and `raid_forfeit` is the
-## fourth (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
-## client must NOT re-derive either, and the full identity
-## `larder_delta == income − consumption − pen_feed − raid_forfeit + transfers` is pinned sim-side
+## Positive → the larder is growing. `raid_forfeit` is the sim's own answer for the third term
+## (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
+## client must NOT re-derive it, and the full identity
+## `larder_delta == income − consumption − raid_forfeit + transfers` is pinned sim-side
 ## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger,transfer_food_ledger}.rs`) — the
 ## BREAKDOWN is what states it in full, this headline being the steady rate rather than the ledger.
 ## Raids are EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart
@@ -2105,13 +2236,12 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
         - float(band.get("food_consumption", 0.0)) \
-        - band_pen_feed(band) \
         - band_raid_forfeit(band)
 
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
-## does NOT swing. It feeds the headline net (`band_net_food` = income − Eaten − Pen feed) and the
+## does NOT swing. It feeds the headline net (`band_net_food` = income − Eaten − Lost to raids) and the
 ## `food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
 ## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
 ## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
@@ -2120,12 +2250,8 @@ static func band_food_income(band: Dictionary) -> float:
     return sum_realized_yield(band, SourceForecast.LABOR_KIND_FORAGE) \
         + sum_realized_yield(band, SourceForecast.LABOR_KIND_HUNT)
 
-## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
-static func band_pen_feed(band: Dictionary) -> float:
-    return float(band.get("pen_feed_upkeep", 0.0))
-
 ## What predators raided off this band's larder this turn (food, `PopulationCohortState.raidForfeit`).
-## 0 when no raid landed — the ledger then omits the row entirely, exactly like Pen feed.
+## 0 when no raid landed — the ledger then omits the row entirely.
 static func band_raid_forfeit(band: Dictionary) -> float:
     return float(band.get("raid_forfeit", 0.0))
 
@@ -2156,7 +2282,7 @@ static func band_transfer_sent(band: Dictionary) -> float:
 ##
 ## **PER-TURN STATE ON THE COHORT, so a recapture re-reads it unchanged** — which is the whole
 ## difference from the accumulating twin above, and the reason every row of this breakdown is now on
-## the same basis as `Gathered` / `Eaten` / pen upkeep / raid forfeit beside it. On the turn's own
+## the same basis as `Gathered` / `Eaten` / raid forfeit beside it. On the turn's own
 ## frame the two agree exactly.
 static func band_transfer_received_turn(band: Dictionary) -> float:
     return float(band.get("transfer_received_turn", 0.0))
@@ -2208,7 +2334,6 @@ static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 static func band_has_food_flow(band: Dictionary) -> bool:
     return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
-        or band_pen_feed(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_received_turn(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_sent_turn(band) >= SourceForecast.FOOD_FLOW_MIN
@@ -2282,6 +2407,110 @@ static func food_is_concerning(band: Dictionary) -> bool:
     var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     return band_net_food(band) < 0.0 \
         or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
+
+## Is the band's FODDER larder worth opening right now — **the food test, on the fodder account**.
+## Draining at all, or a runway inside the shared warn line, exactly as `food_is_concerning` reads it,
+## through the SAME `BandFoodStatus` thresholds the runway is tinted by. That sameness is the point:
+## the `Fodder:` row's own amber `need` clause is retired, so "worrying" is one rule for both larders
+## and the two cannot disagree about what it looks like.
+static func fodder_is_concerning(band: Dictionary) -> bool:
+    var turns := float(band.get("turns_of_fodder", BandFoodStatus.UNLIMITED_TURNS))
+    return band_net_fodder(band) < 0.0 \
+        or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
+
+## What the band's fodder larder is doing per turn: grown less eaten. The ONE subtraction of that
+## pair in the client, so the caret's verdict and the popover's two rows cannot describe different
+## turns.
+static func band_net_fodder(band: Dictionary) -> float:
+    return float(band.get("fodder_income", 0.0)) - float(band.get("fodder_need", 0.0))
+
+## The band's standing FODDER stock — the fodder twin of `band_provisions`, and here for the same
+## reason: the band's own `Fodder:` row, its gate and the faction page's rollup all state this stock,
+## and three `band.get("fodder_store", …)` calls are three chances to read a renamed key in two of
+## them. **A stock, not a rate** — render it through `SourceForecast.format_fodder`.
+static func band_fodder_store(band: Dictionary) -> float:
+    return float(band.get("fodder_store", 0.0))
+
+## ---- THE DORMANT FODDER ROW, AT BOTH SCALES ------------------------------------------------------
+##
+## `Fodder: —`, dim, with the reason on the block's hover. The band's own row renders it for a band
+## with no fodder economy (`BandDetailLines._band_fodder_dormant_line`) and the FACTION page renders
+## it when NO band on the roster has one (`FactionRollup._fodder_line`) — one builder, because two
+## surfaces spelling "there is no fodder here" two ways is the disagreement this state was added to
+## remove. A faction reading `Fodder: 0.0 · +0.0 /turn` in full ink while every one of its bands read
+## a dim dash is what it looked like before, and it read as a defect.
+##
+## **THE VALUE IS A DASH AND NEVER A ZERO.** The live format on an empty larder renders
+## `Fodder: 0.0  (∞)`, and a full-ink zero beside a healthy infinity reads as *this has fodder and is
+## fine* — the opposite of what the state means. The em-dash is the glyph this HUD already uses for an
+## account with no quantity to state (`HudComposeVocab.YIELD_LOCKED_GLYPH`, the wild patch's
+## unbankable hay; `HudFloraVocab.STOCK_UNKNOWN_GLYPH`, a fogged stock), read from that const rather
+## than typed again.
+##
+## **THE DIM IS A SELF-TINTED RUN INSIDE THE VALUE CELL**, the `BandDetailLines
+## .BAND_FOOD_FODDER_CLAUSE_FORMAT` idiom: `_value_hex`'s `Fodder` case keys on the RUNWAY spelling
+## and leaves anything else in neutral ink, so the row has to carry its own colour.
+const FODDER_DORMANT_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": [color=#%s]%s[/color]"
+
+const FODDER_DORMANT_VALUE := HudComposeVocab.YIELD_LOCKED_GLYPH
+
+## **NO FODDERING — nothing here can bank hay, at any price.** Foddering is what keeping a penned herd
+## teaches, so a pre-pastoral faction banks none of what its meadows grow. That is a sentence the
+## client already says, on the forage panel's yields row
+## (`HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT`), so this reads the SHARED clause out of it rather
+## than wording one lock twice — the patch-only half of that sentence ("or commit this patch to its
+## crop") is dropped, neither a band row nor a faction row having a patch to commit.
+## Format args: %d = the live faction Foddering percent, then the CORRAL glyph.
+const FODDER_LOCKED_TOOLTIP_FORMAT := "Hay stays in the field: " \
+    + HudFloraVocab.FODDERING_NOT_LEARNED_CLAUSE + "."
+
+## **KNOWS FODDERING, KEEPS NOTHING YET — nothing is wrong.** There is simply no fodder economy here,
+## so the sentence is calm and descriptive: it says what the row WILL hold, which is the whole reason
+## the row renders at all with nothing to put in it.
+const FODDER_DORMANT_TOOLTIP := "No fodder yet. Once your people keep a pen or grow a fodder crop, the hay store and what the pens draw on it read here."
+
+## The dormant row, and the hover that says why it is dim — the WHOLE of that state, so a caller adds
+## nothing to it but the faction's Foddering.
+##
+## **TWO REASONS, TWO SENTENCES, and the knowledge one goes first because it is the harder wall.** A
+## faction that cannot bank hay at all is blocked by a whole rung; one that simply keeps no pen is not
+## blocked by anything, and folding the two into one sentence would tell a pastoral player their
+## working ladder is locked.
+##
+## **THE RUNWAY CONTEXT IS DELIBERATELY LEFT ALONE.** Callers reset `Context.fodder_turns` to `NAN`
+## per render; writing a real `turns_of_fodder` here (999 for anything that drains nothing) would tint
+## the dash HEALTHY green through `_value_hex`'s runway branch — a calm reading of an account that
+## does not exist.
+##
+## **IT REGISTERS NO DISCLOSURE AND MUST NOT**, which is the caller's half of the contract: there is
+## no flow to put behind a caret, and a caret over an empty pull-down is worse than no pull-down.
+static func fodder_dormant_row(ctx: Context, foddering: float) -> String:
+    if ctx != null:
+        if foddering >= HudConst.KNOWLEDGE_COMPLETE:
+            ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = FODDER_DORMANT_TOOLTIP
+        else:
+            ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_FODDER] = FODDER_LOCKED_TOOLTIP_FORMAT % [
+                HudFormat.progress_percent(foddering),
+                FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+    return FODDER_DORMANT_ROW_FORMAT % [HudStyle.INK_DIM_HEX, FODDER_DORMANT_VALUE]
+
+## Does this band have a FODDER ECONOMY at all — **does it HOLD hay, or does it OWE a hay bill?**
+##
+## **THE ROW NO LONGER HANGS ON THIS, AND THAT IS THE WHOLE OF THE CHANGE.** It was the gate on
+## whether the `Fodder:` row rendered at all; the row is unconditional now (a band that cannot do
+## fodder yet renders it DORMANT, so the account is discoverable before there is one), and this test
+## says which of the two the row is. Its other readers are unmoved: the `compact` tier's merged
+## clause still fires on it, and `BandDetailLines` still refuses to register a disclosure without it.
+##
+## It lives here, beside the fodder arithmetic, because the faction rollup asks it too — one test
+## behind every spelling of "this band has a fodder larder", so no two surfaces can disagree about
+## when one exists.
+##
+## Each term takes `FODDER_FLOW_MIN` rather than the food-scale `FOOD_FLOW_MIN`: this account renders
+## at ONE decimal, so the finer floor admits a store that then prints as `Fodder: 0.0`.
+static func band_has_fodder_economy(band: Dictionary) -> bool:
+    return band_fodder_store(band) >= SourceForecast.FODDER_FLOW_MIN \
+        or float(band.get("fodder_need", 0.0)) >= SourceForecast.FODDER_FLOW_MIN
 
 ## Per-row-per-band disclosure key — also the `[url]` meta payload and the popover's identity.
 static func breakdown_key(kind: String, band: Dictionary) -> String:
@@ -2462,8 +2691,25 @@ static func kit_breakdown_row(band: Dictionary, item_id: String, label: String,
 
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
 static func food_breakdown_row(value: float, label: String) -> String:
+    return _breakdown_row(value, SourceForecast.format_signed(value), label)
+
+## The FODDER larder's breakdown row — the same indent, the same ▲/▼ and the same tint as the food
+## row above, with the number at the FODDER account's own resolution (`format_fodder`, one decimal).
+##
+## **THE SHAPE IS SHARED AND THE RESOLUTION IS NOT.** Every convention that makes a breakdown row
+## READ as one is common (`_breakdown_row`), so the two ledgers cannot drift apart on the glyph, the
+## indent or the sign; but a fodder rate is a one-decimal quantity wherever the client prints it
+## (`SourceForecast.format_fodder` — its stock and its rate share that renderer), and printing
+## `+5.00 Grown` under a `100.0` stock would state the same account at two precisions.
+static func fodder_breakdown_row(value: float, label: String) -> String:
+    return _breakdown_row(value, SourceForecast.format_signed_fodder(value), label)
+
+## The shape BOTH ledgers' breakdown rows have: the shared indent, the ▲/▼ the sign picks, the
+## already-formatted magnitude and the label. It takes the number as TEXT because the two accounts
+## round differently and nothing else about the row does.
+static func _breakdown_row(value: float, magnitude: String, label: String) -> String:
     var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
-    return "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, SourceForecast.format_signed(value), label]
+    return "%s%s %s  %s" % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, magnitude, label]
 
 
 # =====================================================================================
@@ -2628,45 +2874,31 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
         # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
         # "Cultivation N%" row, so the investment the player committed to is visibly under way.
-        # A PENNED herd is a managed population: it eats from its keeper's larder every turn, and an
-        # underfed one is shrinking right now. That is the loudest thing the drawer can say about it, so
-        # the Corral row itself flips to the starving state (DANGER-tinted via `corral_value_hex`) and a
-        # "Pen feed" row states the demand and how much of it the keeper actually paid.
+        # A PENNED herd is a managed population: it eats its fenced footprint's grass plus whatever
+        # fodder its keeper carries in, and an underfed one is shrinking right now. That is the loudest
+        # thing the drawer can say about it, and the `Fed:` row below says it — the mark, the fed
+        # fraction, where the feed came from and what would fix it. **The Corral row states the RUNG
+        # and nothing else**: it wore the starving face beside its own build meter, which read as two
+        # unrelated percentages on one row. There is no companion cost row either — a pen bills the
+        # FOOD larder for nothing, so the shortfall has a consequence, never a price.
         # The whole corral/pen readout is PEN-ceiling only — a pastoral herd can never be penned (the
         # server never builds one), so its Corral/pen rows are suppressed and a hint stands in their place.
         if ceiling == SourceForecast.HUSBANDRY_CEILING_PEN:
             var corral_progress := float(herd_data.get("corral_progress", 0.0))
-            var fed_fraction := PenStatus.fed_fraction(herd_data)
             if bool(herd_data.get("corralled", false)):
                 lines.append("%s: %s" % [CORRAL_ROW, rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
-                    corral_built_label(fed_fraction), true, CORRAL_PROGRESS_COMPLETE,
+                    corral_built_label(), true, CORRAL_PROGRESS_COMPLETE,
                     SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)])
                 note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
                 # The pen is fenced LAND (Grazing 2d-γ): its footprint (radius + the SERVER's in-bounds
-                # tile count, shown verbatim) and the feed SPLIT — how much of the herd's feed its own
-                # grazed footprint covers vs what the keeper still hauls from the larder.
+                # tile count, shown verbatim) and the `Fed:` row — how much of its demand arrived, which
+                # of its TWO sources it came from, and how much more fodder a turn would close the gap.
                 var pen_radius := int(herd_data.get("pen_radius", 0))
                 var footprint_tiles := int(herd_data.get("pen_footprint_tiles", 0))
                 lines.append("%s: %s" % [PEN_FOOTPRINT_ROW, PEN_FOOTPRINT_FORMAT % [pen_radius, footprint_tiles]])
-                # The larder term is the NET bread bill (`pen_larder_bill`), NOT the gross `pen_upkeep`.
-                var larder_bill := float(herd_data.get("pen_larder_bill", 0.0))
-                var pasture_fraction := float(herd_data.get("pen_pasture_fraction", 0.0))
-                # Hay is the middle feed term, in food-equivalent units (`pen_hay_food`, NOT the
-                # grass-unit `fodder_draw`), shown ONLY when the pen drew hay. pasture_food + hay +
-                # larder == gross pen_upkeep (sim-pinned), so the three never double-count.
-                var hay_food := float(herd_data.get("pen_hay_food", 0.0))
-                var hay_segment := ""
-                if hay_food >= SourceForecast.FOOD_FLOW_MIN:
-                    hay_segment = PEN_FEED_SPLIT_HAY_SEGMENT % hay_food
-                lines.append("%s: %s" % [PEN_FEED_SPLIT_ROW, PEN_FEED_SPLIT_FORMAT \
-                    % [int(round(pasture_fraction * HudConst.PROGRESS_PERCENT_SCALE)), hay_segment, larder_bill]])
-                # The standing "Pen feed" debit is the SAME food-larder bill the split's larder term
-                # states (`pen_larder_bill`, net of pasture + hay), not the gross `pen_upkeep` — so a
-                # pen fed for free by pasture + hay shows NO debit row, and the two never disagree.
-                if larder_bill >= SourceForecast.FOOD_FLOW_MIN:
-                    lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_label(larder_bill, fed_fraction)])
+                lines.append("%s: %s" % [PEN_FEED_ROW, pen_feed_value(herd_data)])
             elif corral_progress > 0.0 \
                     or unstaffed_build == SourceForecast.IMPROVEMENT_CORRAL:
                 # Penning is a flat job for every species — a fence is a fence — so unlike the Tame
@@ -2674,7 +2906,7 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 # move only with the keeper crew, their floor and their kit.
                 lines.append("%s: %s" % [CORRAL_ROW, rung_row_value(herd_data, herd_prefix,
                     SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.SOURCE_KIND_HERD,
-                    corral_built_label(PenStatus.FULLY_FED), false, corral_progress,
+                    corral_built_label(), false, corral_progress,
                     build_crew, unstaffed_build)])
                 note_under_kept_hover(ctx, CORRAL_ROW, herd_data, herd_prefix,
                     SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)

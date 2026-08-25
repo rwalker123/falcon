@@ -175,6 +175,56 @@ func _preview_dock_work_links(dock: EventDockPanel) -> Array[Button]:
 			found.append(node as Button)
 	return found
 
+## **THE MARK ONE DRAWN ROW IS WEARING, SAMPLED OFF THE RENDER.** `_make_event_row` builds each row
+## as an `HBoxContainer` whose FIRST child is the glyph `Label`, so this finds the row by the text of
+## its LABEL column and answers the text of its glyph column — the mark the player is actually looking
+## at, rather than the one this chapter would get by asking the vocab that is under test.
+##
+## Walks the bar AND the expanded log, like `_preview_dock_work_links`, so the claim does not depend
+## on which surface is open.
+func _preview_dock_row_glyph(dock: EventDockPanel, label: String) -> String:
+	var line := _preview_dock_row_line(dock, label)
+	if line == null:
+		return EVENT_DOCK_GLYPH_ABSENT
+	for child in line.get_children():
+		if child is Label:
+			return (child as Label).text
+	return EVENT_DOCK_GLYPH_ABSENT
+
+## …and its INK, off the same node. The decision keeps both rungs amber — the glyph carries the rung
+## and the colour carries *this is not good news* — so a fix that quietly demoted the trim to a calm
+## ink would be a different change from the one that was asked for.
+func _preview_dock_row_glyph_color(dock: EventDockPanel, label: String) -> Color:
+	var line := _preview_dock_row_line(dock, label)
+	if line == null:
+		return EVENT_DOCK_GLYPH_COLOR_ABSENT
+	for child in line.get_children():
+		if child is Label:
+			return (child as Label).get_theme_color("font_color")
+	return EVENT_DOCK_GLYPH_COLOR_ABSENT
+
+## The `HBoxContainer` of the drawn row whose label column reads `label`, or `null`. Shared by the two
+## readers above so they cannot come to disagree about which row they are describing.
+func _preview_dock_row_line(dock: EventDockPanel, label: String) -> HBoxContainer:
+	var stack: Array[Node] = [dock._rows, dock._log_body]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node == null:
+			continue
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is HBoxContainer):
+			continue
+		for child in node.get_children():
+			if child is Label and (child as Label).text == label:
+				return node as HBoxContainer
+	return null
+
+## What the two readers answer for a row the dock has not DRAWN — values no row can carry, so a
+## missing row fails its claim rather than accidentally matching one.
+const EVENT_DOCK_GLYPH_ABSENT := ""
+const EVENT_DOCK_GLYPH_COLOR_ABSENT := Color(0.0, 0.0, 0.0, 0.0)
+
 ## ---- A SHORT BAND SHEDS A CREW (`systems::labor::announce_shed_crew`) -------------------------
 ## The five rows of the shed fixture, spelled out so the assertions compare against strings this
 ## chapter states rather than against strings recomposed through the code under test.
@@ -208,14 +258,44 @@ const SHED_PRUNED_LABEL := "kelp no longer stands here — dropped from the take
 
 const SHED_PRUNED_DETAIL := "status=pruned reason=not_here role=forage dropped=kelp"
 
+## **THE CRAFTING BENCH LOSING ITS LAST HAND** (`systems::labor::announce_shed_bench`). A third shed
+## token, because neither existing one is true: the bench is not *still worked* (`trimmed`) and it is
+## not GONE (`lapsed`) — the recipe, the progress, the finished count and the drawn materials all stay
+## and re-staffing resumes. It is Notable and recoverable, so it takes `trimmed`'s rung and mark and
+## never `lapsed`'s.
+##
+## **THE KIND IS `craft`, WHICH IS NOT IN `RUNG_BY_KIND`** — so without its `DETAIL_STATUS_STYLE` row
+## this line takes `DEFAULT_RUNG` (`RUNG_ROUTINE`) and falls under the dock's own default floor. That
+## is what the rung claim below is really testing.
+const SHED_STALLED_LABEL := "the bench stalled — too few workers"
+
+const SHED_STALLED_DETAIL := "status=stalled reason=too_few_workers kind=bench workers=0 lost=2 band=5"
+
+const SHED_STALLED_BAND := 5
+
+## **THE BENCH THINNED BUT NOT STOPPED, which is the token the new one must NOT have taken over.**
+## `announce_shed_bench` reuses `status=trimmed` with `kind=bench` where hands remain, so this row
+## proves the existing entry still serves the craft web rather than the new token being reached for
+## on every bench line.
+const SHED_BENCH_TRIMMED_LABEL := "crafters cut to 2 — too few workers"
+
+const SHED_BENCH_TRIMMED_DETAIL := "status=trimmed reason=too_few_workers kind=bench workers=2 lost=1 band=5"
+
 ## **THE POSITIVE COMPANION, AND THE CLAIMS ABOVE ARE HOLLOW WITHOUT IT.** An ordinary `forage`
 ## receipt — the same KIND the two trimmed rows ride — with no `status=` token at all. It must stay
 ## Routine and must NOT reach the default floor, or "the shed rows are visible" would only be saying
 ## that the dock shows everything.
 const SHED_RECEIPT_LABEL := "Ashfoot Forage x4"
 
-## The band ids the two linked rows name, sorted, which is what a press of each must hand back.
-const SHED_LINK_BANDS: Array[int] = [SHED_TRIMMED_LINKED_BAND, SHED_LAPSED_BAND]
+## The band ids the linked rows name, sorted, which is what a press of each must hand back. **Both
+## craft rows are in it**: a stalled bench and a thinned one are each a labor row the sim changed
+## unasked, and a bench is staffed from the Work tab like every other crew.
+## **STATED IN SORTED ORDER**, because the claim sorts what it collected before comparing — the dock's
+## draw order is the log's, not this list's, and a sorted expectation is what keeps the claim about
+## WHICH bands were asked rather than about the order they came back in. Band 5 twice: both craft rows
+## name the same band, and a set would have hidden the second one.
+const SHED_LINK_BANDS: Array[int] = [SHED_TRIMMED_LINKED_BAND, SHED_STALLED_BAND,
+	SHED_STALLED_BAND, SHED_LAPSED_BAND]
 
 ## **THE NARROWEST A DRAWN LINK MAY BE, and this is a regression floor rather than a design figure.**
 ## The link shipped for one build with `clip_text` set — which keeps a `Button`'s text out of its
@@ -236,6 +316,12 @@ func _event_dock_shed_fixture() -> Array:
 			"label": SHED_LAPSED_LABEL, "detail": SHED_LAPSED_DETAIL, "seq": 954},
 		{"tick": 84, "kind": "forage", "faction": 0,
 			"label": SHED_PRUNED_LABEL, "detail": SHED_PRUNED_DETAIL, "seq": 955},
+		# The two CRAFT rows, in the SAME frame as the four above — the third rung has to be visible
+		# beside the other two, or "they read apart" is a claim about a picture nobody took.
+		{"tick": 84, "kind": "craft", "faction": 0,
+			"label": SHED_STALLED_LABEL, "detail": SHED_STALLED_DETAIL, "seq": 956},
+		{"tick": 84, "kind": "craft", "faction": 0,
+			"label": SHED_BENCH_TRIMMED_LABEL, "detail": SHED_BENCH_TRIMMED_DETAIL, "seq": 957},
 	]
 
 ## The tick one RETAINED row carries — the stamp `note_system` took off the dock's current turn.
@@ -1798,18 +1884,26 @@ func run(harness) -> void:
 	# default settings, which reads as the number the player just set moving on its own.
 	#
 	# **RENDERED AT THE DEFAULT FLOOR, and the floor is the whole point.** A frame taken at
-	# `Everything` shows all five rows and proves nothing; here the four that must be heard are the
-	# four that are drawn, and the plain receipt beside them is filtered out.
+	# `Everything` would show the plain receipt too and prove nothing; here the rows that must be
+	# heard are the rows that are drawn, and the receipt beside them is filtered out. Every floor
+	# claim below reads `_visible_events()` rather than the drawn bar, so it is about the FLOOR and
+	# not about which surface happens to be open.
+	#
+	# ⛔ **AND THE LOG IS OPEN, because the bar caps at `RECENT_COUNT_MAX` (4) and this fixture stages
+	# SIX status rows.** All three rungs have to be in ONE render — that is the whole claim the glyph
+	# assertions make — and collapsed, the two oldest are pushed off the bar, which silently turned
+	# `trimmed` and the linked hunt row into rows nobody could sample. Expanded, `_render_bar` draws a
+	# single title line and `_log_body` draws every visible event, so there is no double-count either.
 	#
 	# **THE RUNGS ARE ASSERTED, NOT INFERRED FROM THE PICTURE.** A row drawn at the wrong importance
 	# is invisible to a default player and looks perfectly fine in a frame that renders everything, so
 	# every claim below reads the stamped rung off the accumulator.
 	event_dock.set_dock(SIDE_BOTTOM)
-	event_dock.set_expanded(false)
 	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
 	event_dock.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
 	event_dock.reset()
 	event_dock.ingest_events(_event_dock_shed_fixture())
+	event_dock.set_expanded(true)
 	await h._settle()
 	await h._save("event_dock_crew_cut")
 	h._assert_hud("a crew merely CUT is Notable — the player asked for six and got three, which is no receipt (got %s)"
@@ -1826,14 +1920,99 @@ func run(harness) -> void:
 		_preview_event_rung(event_dock, SHED_RECEIPT_LABEL) == HudEventVocab.RUNG_ROUTINE)
 	h._assert_hud("the cut reaches the DEFAULT floor, which is the whole defect",
 		_preview_visible_label_count(event_dock, SHED_TRIMMED_LINKLESS_LABEL) == 1)
+	# ---- …AND THE TWO RUNGS ARE DRAWN APART ----------------------------------------------------
+	# **THE SECOND DEFECT ON THIS FRAME, AND IT IS THE OPPOSITE SHAPE OF THE FIRST.** The rungs above
+	# were always right; all four rows then drew the SAME `⚠`, so the ladder did real work in
+	# filtering and was invisible on the line. Reported from play as *"losing hunts and scouts is an
+	# alert but foragers are notable"* — which is not the rule at all, and is exactly the conclusion a
+	# player reaches from two identically-drawn rows at two different rungs.
+	#
+	# **SAMPLED OFF THE RENDER, never recomposed.** The expectation is the vocab's named const and the
+	# reading is the drawn `Label`'s text, so this compares the glyph the PLAYER sees against the one
+	# the table promises — where composing both sides through `HudEventVocab` would assert only that
+	# the table agrees with itself.
+	#
+	# **THE FRAME ALREADY HELD BOTH ROWS, WHICH IS WHY THE CLAIM CAN BE MADE AT ALL.** A trimmed line
+	# and a lapsed line are in one fixture and one render here; a frame with only one of them is green
+	# with the fix and green with the defect restored.
+	var trimmed_glyph := _preview_dock_row_glyph(event_dock, SHED_TRIMMED_LINKLESS_LABEL)
+	var lapsed_glyph := _preview_dock_row_glyph(event_dock, SHED_LAPSED_LABEL)
+	var pruned_glyph := _preview_dock_row_glyph(event_dock, SHED_PRUNED_LABEL)
+	h._assert_hud("a CUT crew is drawn with the reduction mark \"%s\" (got \"%s\")"
+			% [HudEventVocab.STATUS_REDUCED_GLYPH, trimmed_glyph],
+		trimmed_glyph == HudEventVocab.STATUS_REDUCED_GLYPH)
+	h._assert_hud("…a DESTROYED row still wears the hazard \"%s\" (got \"%s\")"
+			% [HudEventVocab.STATUS_SHED_GLYPH, lapsed_glyph],
+		lapsed_glyph == HudEventVocab.STATUS_SHED_GLYPH)
+	h._assert_hud("⛔ …so the Notable row and the Alert row READ APART in one frame, which is the whole defect (\"%s\" vs \"%s\")"
+			% [trimmed_glyph, lapsed_glyph], trimmed_glyph != lapsed_glyph)
+	h._assert_hud("…and a NARROWED take, being the same rung as a cut, wears the same mark (got \"%s\")"
+			% pruned_glyph, pruned_glyph == trimmed_glyph)
+	# ---- …AND THE BENCH, whose stall is the THIRD Notable token -------------------------------
+	# **NEITHER EXISTING TOKEN WAS TRUE OF IT** (`systems::labor::announce_shed_bench`): a bench at
+	# zero is not *still worked*, so it is not a `trimmed`; and it keeps its recipe, its progress, its
+	# finished count and its drawn materials, so it is not `lapsed` — which would be false AND would
+	# shout, on a state one command undoes.
+	#
+	# **THE RUNG CLAIM IS REALLY ABOUT `RUNG_BY_KIND`.** `craft` is not in it, so it takes
+	# `DEFAULT_RUNG` (`RUNG_ROUTINE`) — under the dock's own default floor. Without the
+	# `DETAIL_STATUS_STYLE` row this line announces a craft crew disappearing to nobody, which is the
+	# `trimmed` / `pruned` defect one web over.
+	var stalled_glyph := _preview_dock_row_glyph(event_dock, SHED_STALLED_LABEL)
+	h._assert_hud("a STALLED bench is Notable — recoverable, and nothing destroyed (got %s)"
+			% _preview_event_rung(event_dock, SHED_STALLED_LABEL),
+		_preview_event_rung(event_dock, SHED_STALLED_LABEL) == HudEventVocab.RUNG_NOTABLE)
+	h._assert_hud("…and NOT the Alert a `lapsed` row earns, which is the token it is not",
+		_preview_event_rung(event_dock, SHED_STALLED_LABEL) != HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…so it wears the reduction mark beside the cut, not the hazard beside the loss (got \"%s\")"
+			% stalled_glyph, stalled_glyph == trimmed_glyph and stalled_glyph != lapsed_glyph)
+	h._assert_hud("…and it reaches the DEFAULT floor, which `craft` alone would not have",
+		_preview_visible_label_count(event_dock, SHED_STALLED_LABEL) == 1)
+	# **THE BENCH THAT WAS ONLY THINNED STILL READS AS A `trimmed`** — the negative that stops the new
+	# token quietly becoming *every* bench line. Same kind, same band, one hand still on it.
+	h._assert_hud("a bench merely CUT is still a `trimmed` — Notable, same mark (rung %s, mark \"%s\")"
+			% [_preview_event_rung(event_dock, SHED_BENCH_TRIMMED_LABEL),
+				_preview_dock_row_glyph(event_dock, SHED_BENCH_TRIMMED_LABEL)],
+		_preview_event_rung(event_dock, SHED_BENCH_TRIMMED_LABEL) == HudEventVocab.RUNG_NOTABLE
+			and _preview_dock_row_glyph(event_dock, SHED_BENCH_TRIMMED_LABEL) == trimmed_glyph)
+	# **THE AMBER DOES NOT MOVE.** A trim is still unwelcome and still the player's to reverse, so the
+	# fix must not have traded an over-loud row for an invisible one — the glyph carries the rung, the
+	# colour carries *this is not good news*, and both rows keep it.
+	h._assert_hud("…and BOTH keep the WARN amber — the glyph carries the rung, not the colour",
+		_preview_dock_row_glyph_color(event_dock, SHED_TRIMMED_LINKLESS_LABEL) == HudStyle.WARN
+			and _preview_dock_row_glyph_color(event_dock, SHED_LAPSED_LABEL) == HudStyle.WARN)
+	# ⛔ **THE RULE ITSELF, over the WHOLE table — the claim a new row can actually break.** Every
+	# assertion above names a token this chapter already stages; a status added later at
+	# `RUNG_NOTABLE` wearing the hazard would pass all of them and be exactly the defect again. The
+	# invariant is an iff in both directions, so neither a hazard on a Notable row nor a reduction
+	# mark on an Alert one survives it.
+	var mismarked: Array[String] = []
+	for token in HudEventVocab.DETAIL_STATUS_STYLE:
+		var entry: Dictionary = HudEventVocab.DETAIL_STATUS_STYLE[token]
+		var is_alert: bool = String(entry["rung"]) == HudEventVocab.RUNG_ALERT
+		var wants: String = HudEventVocab.STATUS_SHED_GLYPH if is_alert \
+			else HudEventVocab.STATUS_REDUCED_GLYPH
+		if String(entry["glyph"]) != wants:
+			mismarked.append("%s(%s wants %s)" % [token, String(entry["glyph"]), wants])
+	h._assert_hud("⛔ …and EVERY status token's glyph tracks its rung, so a new one cannot ship mismarked (%s)"
+		% str(mismarked), mismarked.is_empty())
+	# ⛔ **AND THE PRECONDITION THAT MAKES THAT INVARIANT MEAN ANYTHING.** The check above is an
+	# equality against one of two consts, so if the two ever became the SAME string it would go on
+	# passing over a table where every row is marked identically — which is the defect. Measured: with
+	# `STATUS_REDUCED_GLYPH` set back to `⚠` the invariant passes and only the row-level claims fail,
+	# so this is the claim that keeps the set honest rather than a restatement of it.
+	h._assert_hud("…the two marks BEING DIFFERENT is what makes that invariant mean anything (\"%s\" vs \"%s\")"
+			% [HudEventVocab.STATUS_SHED_GLYPH, HudEventVocab.STATUS_REDUCED_GLYPH],
+		HudEventVocab.STATUS_SHED_GLYPH != HudEventVocab.STATUS_REDUCED_GLYPH)
 	h._assert_hud("…while the plain receipt beside it does not — the floor is still doing its job",
 		_preview_visible_label_count(event_dock, SHED_RECEIPT_LABEL) == 0)
 	# **THE JUMP TO WHAT WAS CUT.** The link is offered only where the sim NAMED a band, so the two
 	# rows carrying `band=` wear one and the row that carries only its source does not — the client
 	# does not recover a band by parsing `foragers at (60, 0)` out of a rendered sentence.
 	var work_links := _preview_dock_work_links(event_dock)
-	h._assert_hud("exactly the two rows that NAME a band offer the jump (got %d links)"
-			% work_links.size(), work_links.size() == SHED_LINK_BANDS.size())
+	h._assert_hud("exactly the %d rows that NAME a band offer the jump (got %d links)"
+			% [SHED_LINK_BANDS.size(), work_links.size()],
+		work_links.size() == SHED_LINK_BANDS.size())
 	var linkless_event := {"detail": SHED_TRIMMED_LINKLESS_DETAIL}
 	h._assert_hud("…and the row that names no band offers none, rather than jumping somewhere plausible",
 		event_dock._work_tab_link_band(linkless_event) == HudConst.NO_BAND_ID)

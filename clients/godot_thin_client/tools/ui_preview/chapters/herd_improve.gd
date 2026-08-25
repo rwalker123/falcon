@@ -78,9 +78,13 @@ const HERD_DIP_WOULD_BE_HERDERS := 3
 
 const HERD_DIP_IDLE_WORKERS := 12
 
-## The Corral done-label's upkeep clause — asserted PRESENT on the penned frame and ABSENT on the
-## pastoral one, which is the only way to pin an asymmetry rather than merely one side of it.
-const UPKEEP_NEEDLE := "fodder/turn upkeep"
+## The done-label's RETIRED upkeep clause. It read `· N.NN fodder/turn upkeep` on a Corral and nothing
+## on a Tame, and that asymmetry was the claim the pair below made. **The asymmetry is gone and the
+## needle now pins its ABSENCE ON BOTH WEBS**: it quoted `pen_upkeep`, the pen's food-unit feed bill,
+## and a pen has no such bill — it eats its fenced footprint's grass and the hay carried in, never the
+## people's larder. So both faces are the bare rung, and the pair is what would catch the clause
+## growing back on one of them.
+const UPKEEP_NEEDLE := "upkeep"
 
 ## The invariant TAIL of `SourceForecast.HUNT_WASTE_NOTE_FORMAT` (`⚠ %d%% wasted`) — the only part of
 ## that note a percentage-free ABSENCE test can name. The present-case assertion uses the whole
@@ -258,7 +262,7 @@ func run(harness) -> void:
 	h._assert_hud("a finished Tame renders the DONE state",
 		pastoral_label is Label and String(pastoral_label.get_meta(
 			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_DONE)
-	h._assert_hud("…and carries NO upkeep — a pastoral herd still grazes (the asymmetry, held)",
+	h._assert_hud("…and carries NO upkeep clause on its face",
 		pastoral_label != null
 		and not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			HudConst.LABOR_POLICY_TAME).contains(UPKEEP_NEEDLE))
@@ -266,9 +270,13 @@ func run(harness) -> void:
 		String(ForageFx.improvement_state(h._hud._drawercompose._compose_sheet, "corral"))
 			== HudWidgets.IMPROVEMENT_STATE_OFFERED)
 
-	# State 442-corral-done — the OTHER half of that asymmetry: a PENNED herd's 🐄 label DOES carry the
-	# pen's per-turn fodder upkeep, because a penned herd cannot graze and someone feeds it every turn.
-	# A standing obligation belongs with the standing state. The two frames must NOT be made to match.
+	# State 442-corral-done — the OTHER half of the pair, and **the two frames now MATCH.** The penned
+	# 🐄 label used to end `· N.NN fodder/turn upkeep` while the pastoral ◎ one did not, and that
+	# asymmetry was the claim; it quoted `pen_upkeep`, the pen's food-unit feed bill, and there is no
+	# such bill — a pen eats its own fenced pasture and the hay its keeper carries in. So neither web's
+	# done face carries a running cost, and what a built rung really costs to HOLD is work, stated on
+	# the work row's `⌃` tooltip for both alike. The pair is kept, inverted, because it is what catches
+	# the clause growing back.
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._band_labor._player_bands = [BandFx.band_fixture()]
 	h._hud._compose.reset_hunt_source()
@@ -280,8 +288,8 @@ func run(harness) -> void:
 	h._assert_hud("a finished Corral renders the DONE state",
 		penned_label is Label and String(penned_label.get_meta(
 			HudWidgets.IMPROVEMENT_STATE_META, "")) == HudWidgets.IMPROVEMENT_STATE_DONE)
-	h._assert_hud("…and DOES carry the pen's upkeep — the one asymmetry between the two webs",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+	h._assert_hud("…and carries NO upkeep clause either — a pen bills the larder for nothing",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_CORRAL).contains(UPKEEP_NEEDLE))
 
 	# ---- THE BUILDING HERD: THE TAKE THE BUILD DOES **NOT** MOVE ---------------------------------

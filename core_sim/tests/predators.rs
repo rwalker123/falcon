@@ -20,8 +20,9 @@ use core_sim::{
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SizeClass,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, TileRegistry,
+    WellbeingConfigHandle,
 };
 
 fn spawn_world() -> App {
@@ -129,6 +130,7 @@ fn hunting_band(
         },
         workers: hunters,
         kit: None,
+        priority: SourcePriority::default(),
     }];
     app.world
         .spawn((

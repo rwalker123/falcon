@@ -280,6 +280,45 @@ pub struct LaborAssignmentState {
     /// capture. Appended last (append-only).
     #[serde(default)]
     pub hunt_useful_workers: u32,
+    /// **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — the outermost level of every
+    /// scarcity handler's ordering (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+    ///
+    /// **It is a stated value on the row and never a place in this list.** core_sim's
+    /// `set_assignment` re-pushes an edited row to the *end* of its vector, so a rank read off an
+    /// index would reset itself on the very `−`/`+` the player just pressed. Send the mark with
+    /// `work_priority <faction> <band> <source…> high|normal|low`; never infer one from the order
+    /// these rows arrive in.
+    ///
+    /// **What it does, so a readout can say so.** The shedding walk still chooses its *step* exactly
+    /// as before — a spare scout before a spare builder, an unimproved source before an improved one
+    /// — and then takes the hand off the **lowest-ranked candidate within that step**. A rank orders
+    /// candidates and never creates or removes one, so a `High` mark does not lift a row out of the
+    /// step it belongs to and the last hand still comes off the last row. The band's pen feed reads
+    /// it too: a short `FODDER` store and then a short larder serve `High` pens in full, then
+    /// `Normal`, then `Low`, and pens on the same rank split what is left in proportion to demand.
+    ///
+    /// [`SourcePriorityState::Normal`] on every unmarked row and on every band-wide role, which is
+    /// not a worked source and has no rank to state. Captured live from the allocation. Appended
+    /// last (append-only).
+    #[serde(default)]
+    pub priority: SourcePriorityState,
+}
+
+/// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and
+/// `snapshot.fbs`'s `SourcePriority` enum.
+///
+/// **`Normal` is the default and is wire value 0**, because most rows sit there and a FlatBuffers
+/// scalar equal to its default costs no bytes. The numbering is therefore *not* the shedding order
+/// (which runs `Low`, then `Normal`, then `High`); the codec maps the two rather than casting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SourcePriorityState {
+    /// The default: this row takes its turn like every other.
+    #[default]
+    Normal,
+    /// Served first, and the last thing a short band takes a hand off.
+    High,
+    /// The first thing given up.
+    Low,
 }
 
 /// **One item's remaining condition in a band's TOE** — a row of
@@ -745,23 +784,17 @@ pub struct PopulationCohortState {
     /// (`expedition_config.hunt.viability_warn_turns`).
     #[serde(default)]
     pub expedition_viability_warn_turns: u32,
-    /// **The food this band actually PAID for pen feed this turn**, summed across every corral it
-    /// keeps — the real `LocalStore::take` debit, not the demanded amount (a band that could only
-    /// part-pay records only what it handed over, and its herds starve for the rest).
-    ///
-    /// A pen's feed comes straight off the band's stores, so it is in **neither** [`Self::food_income`]
-    /// **nor** [`Self::food_consumption`]. Render it as its own **negative** row in the food ledger —
-    /// "my people ate X" and "my animals ate Y" are deliberately separate lines, and it is *not* folded
-    /// into `food_consumption`. The sim answers it so the client does no arithmetic:
-    ///
-    /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
-    /// ```
-    ///
-    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, exactly like `food_income`.
-    /// Appended.
-    #[serde(default)]
-    pub pen_feed_upkeep: f32,
+    // **RETIRED: `pen_feed_upkeep`** — the food a band's pens drew from its larder in a turn, drawn
+    // by the client as its own negative row ("my people ate X, my animals ate Y"). **Human food is not
+    // animal feed**: a pen eats the grass its fenced footprint grows and the hay its keeper carries in,
+    // so no such debit exists and the identity loses a term —
+    //
+    // ```text
+    // larder_delta == food_income − food_consumption − raid_forfeit
+    // ```
+    //
+    // pinned by `core_sim/tests/fauna_husbandry.rs` and `integration_tests/tests/pen_food_ledger.rs`.
+    // The wire slot `penFeedUpkeep` is `(deprecated)` in place.
     /// One worker's carry contribution to a hunt expedition's haul
     /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
     /// [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`]), populated
@@ -819,13 +852,13 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub raid_radius: u32,
     /// Food the band **forfeited** to predator raids this turn (Predators Phase 3) — a negative
-    /// food-ledger line, the raid twin of [`Self::pen_feed_upkeep`]. A casualty-causing raid costs the
-    /// band `predators.raid_yield_forfeit_fraction` of that turn's food income (its people were
-    /// defending or fleeing, not gathering), debited from the larder and capped at what it held. It
-    /// extends the ledger identity to
+    /// food-ledger line. A casualty-causing raid costs the band
+    /// `predators.raid_yield_forfeit_fraction` of that turn's food income (its people were defending
+    /// or fleeing, not gathering), debited from the larder and capped at what it held. It extends the
+    /// ledger identity to
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit
     /// ```
     ///
     /// (pinned by `integration_tests/tests/raid_food_ledger.rs`). It is a **past-turn** stochastic
@@ -1083,13 +1116,13 @@ pub struct PopulationCohortState {
     /// With [`Self::transfer_sent`] it completes the food-ledger identity
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit
     ///                 + transfer_received − transfer_sent
     /// ```
     ///
     /// Food crossing between larders passes through neither `food_income` (what *this* band's
     /// workers produced) nor `food_consumption` (what its people ate) — the same hole
-    /// `pen_feed_upkeep` and `raid_forfeit` were each minted for. **One pair for every producer**,
+    /// `raid_forfeit` was minted for. **One pair for every producer**,
     /// because they are all one fact; **two magnitudes rather than a signed net**, because a band
     /// that both sends and receives in one turn is doing something.
     #[serde(default)]
@@ -1143,8 +1176,8 @@ pub struct PopulationCohortState {
     /// which is the window the ledger identity closes over. This one is per-turn state on the cohort
     /// and is not cleared, so it survives a **recapture** — the sim re-runs its capture against live
     /// components after every dispatched command, and on such a refreshed frame the accumulating
-    /// pair reads `0.0` while the four sibling terms (`food_income`, `food_consumption`,
-    /// `pen_feed_upkeep`, `raid_forfeit`) re-read unchanged.
+    /// pair reads `0.0` while the three sibling terms (`food_income`, `food_consumption`,
+    /// `raid_forfeit`) re-read unchanged.
     ///
     /// **On a turn frame the two agree** — the copy is taken immediately before that capture, off
     /// the same counter.
@@ -1189,6 +1222,40 @@ pub struct PopulationCohortState {
     /// Unfiltered: exactly what the band holds, in the band's order. Appended last (append-only).
     #[serde(default)]
     pub build_queue: Vec<BuildQueueEntryState>,
+    /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — summed over every pen it keeps, in fodder
+    /// units. A pen's own share is not published: what a pen row states is how much MORE it needs
+    /// ([`HerdTelemetryState::pen_fodder_shortfall`](crate::state::subsistence::HerdTelemetryState::pen_fodder_shortfall)),
+    /// which is this quantity less the hay the keeper actually carried in.
+    ///
+    /// **The GAP, not the gross demand**: pasture is free, hay is farmed. `0` for a band keeping no
+    /// pens. **Not gated on Foddering** — a band that cannot draw hay still owes it, and this is the
+    /// field that says so ([`Self::turns_of_fodder`] beside it is the gated one).
+    ///
+    /// ⛔ **The sim sums it and a client must not.** Herd rows are fog-filtered, so a pen out of
+    /// sight would silently drop out of a client-side total the band certainly still owes.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub fodder_need: f32,
+    /// **THE HAY THIS BAND GREW THIS TURN, PER TURN** — what its fodder Fields harvested into
+    /// [`Self::fodder_store`]. The **raw** harvest, not a Foddering-gated share: what was grown is a
+    /// fact about the Fields, where what a pen may draw is a fact about what the faction has learned.
+    /// Rendered against [`Self::fodder_need`] as *"need 6.0/turn · growing 5.0/turn"*. Appended last.
+    #[serde(default)]
+    pub fodder_income: f32,
+    /// **TURNS UNTIL THE HAY RUNS OUT** — [`Self::fodder_store`] over the pens' **drain** less
+    /// [`Self::fodder_income`], through the **same** function and the **same no-drain sentinel** as
+    /// [`Self::turns_of_food`] (`core_sim::snapshot::population::larder_runway_turns`;
+    /// `NOT_FOOD_LIMITED_TURNS` = `999` reads as ∞ and is what a band with nothing draining
+    /// publishes, a band with no pens included). One phrasing for one concept — a client must not
+    /// have a second way to say *"turns of buffer left"*, nor branch two ways.
+    ///
+    /// ⛔ **The drain is not [`Self::fodder_need`].** The pens' draw is gated on Foddering and the
+    /// need is not, so a band that has not learned to hay a herd is short every turn and empties
+    /// nothing — it publishes the sentinel while `fodder_need` states what its pens are missing. The
+    /// need carries the alarm; this answers only *"how long does this store last"*, and a store
+    /// nothing draws lasts forever. Appended last.
+    #[serde(default)]
+    pub turns_of_fodder: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
@@ -1340,6 +1407,29 @@ pub struct BenchState {
     /// Appended last (append-only).
     #[serde(default)]
     pub blocked_severity: String,
+    /// **WHERE THE PLAYER PUT THE BENCH WHEN THE BAND RUNS SHORT** — the **same**
+    /// [`SourcePriorityState`] a worked row carries on [`LaborAssignmentState::priority`], reusing
+    /// that vocabulary rather than minting a second one: it is one property of one kind, and two
+    /// spellings of it would drift. Set with `bench_priority <faction> <band> high|normal|low`.
+    ///
+    /// **Why the bench has one.** It spends the same workers the gathering rows do, so a short band
+    /// ranks it against them — and a craft pays into no food, fodder or material account, so an
+    /// **unmarked bench is the first thing thinned**. That is the right default in a famine, and this
+    /// is how the player overrides it. The bench is ranked in the *same step* as the worked sources,
+    /// never a step of its own; its **last** hand goes before any source is emptied, so a `High`
+    /// bench still stalls before a `Low` patch is given up — the steps say what is at stake, the mark
+    /// says who goes first among equals.
+    ///
+    /// [`SourcePriorityState::Normal`] on an unmarked bench **and** on a band with no bench at all.
+    /// It is published on an **idle** bench too (empty [`Self::recipe_id`]), because a rank is a
+    /// standing statement about the bench rather than about the job on it — and the command sets it
+    /// either way, so a client that hid the control while the bench was empty would hide the one
+    /// moment the player most wants to state it.
+    ///
+    /// Captured **live** off the bench, as [`LaborAssignmentState::priority`] is, so an edit lands on
+    /// the command's own recapture and no optimistic overlay is needed. Appended last (append-only).
+    #[serde(default)]
+    pub priority: SourcePriorityState,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of

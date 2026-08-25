@@ -734,23 +734,37 @@ const WORK_INSPECTOR_ARRIVALS_HEIGHT := WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT \
 ## `policy` is always one of the four, so every open picker draws the same height.
 const WORK_INSPECTOR_POLICY_PICKER_HEIGHT := 32.0
 
+## …and the PRIORITY picker, when the row's `Priority` link has it open
+## (`docs/plan_standing_upkeep.md` §4.9 item 9b). **The floor picker's three cells plus ONE hint
+## line**: the two pickers are built from the same three-cell grid, and this one carries
+## `WORK_PRIORITY_HINT` beneath it at the same `ALLOC_SECTION_FONT_SIZE` and the same block gap every
+## other conditional line in this strip is measured at — so it is stated as the pair rather than as a
+## fresh number of its own, and moving the grid moves both.
+##
+## **THE TWO PICKERS ARE MUTUALLY EXCLUSIVE, so the strip pays for AT MOST ONE** — `_work_picker_open`
+## is a three-valued state precisely so that this is true by construction rather than by discipline.
+const WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT := WORK_INSPECTOR_POLICY_PICKER_HEIGHT \
+    + WORK_INSPECTOR_NOTE_HEIGHT
+
 ## **THE CEILING THESE TERMS ADD UP TO, stated because it is UNMEASURED rather than because it is
 ## reserved.** A model carrying every conditional child at once — the overdraw line, the `note`, the
-## `muted_note`, the `ArrivalStrip` and an open policy picker — reserves **190px** (84 + 3×20 + 14 +
-## 32) against the 104 the tallest row any fixture produces asks for. `BandCityPanel.PANEL_HEIGHT_WIDE`
-## is sized against that 104, so a row reaching this ceiling would take the work zone 86px past its
-## box on a horizontal dock.
+## `muted_note`, the `ArrivalStrip` and an open picker — reserves **210px** (84 + 3×20 + 14 + 52)
+## against the 104 the tallest row any fixture produces asks for. **The picker term is the TALLER of
+## the two**, the priority one: they cannot both be open (`_work_picker_open`), so the ceiling is a
+## max rather than a sum, and taking the floor picker's 32 here would understate it by the hint line.
+## `BandCityPanel.PANEL_HEIGHT_WIDE` is sized against that 104, so a row reaching this ceiling would
+## take the work zone 106px past its box on a horizontal dock.
 ##
 ## **NOTHING PADS FOR IT, DELIBERATELY.** No fixture produces the combination and it is not known to be
 ## reachable in play — `warn` and `note` are near-exclusive on the board's own rows, and the picker is
-## panel state a player opens — so the zone is not made 86px taller for a state nobody has seen. A
+## panel state a player opens — so the zone is not made 106px taller for a state nobody has seen. A
 ## KNOWN unmeasured worst case is the cheaper thing to carry; if one is ever observed, this is the
 ## figure both of that constant's levers move by.
 ## `band_panel_preview._assert_work_inspector_worst_case_fits` builds it and pins the strip's own
 ## arithmetic, which is what keeps the number above honest even though no zone reserves it.
 const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + 3.0 * WORK_INSPECTOR_NOTE_HEIGHT \
-    + WORK_INSPECTOR_ARRIVALS_HEIGHT + WORK_INSPECTOR_POLICY_PICKER_HEIGHT
+    + WORK_INSPECTOR_ARRIVALS_HEIGHT + WORK_INSPECTOR_PRIORITY_PICKER_HEIGHT
 
 ## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
 const WORK_ZONE_GAP_COUNT := 3.0
@@ -1149,6 +1163,116 @@ const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 ## queue. The count belongs to the queue, which is a list of its own.
 
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
+
+# ---- THE PLAYER'S OWN RANK ON A WORKED ROW (`docs/plan_standing_upkeep.md` §4.9 item 9b) --------
+#
+# **THE MARK IS A WORD ON EVERY LAYER IT CROSSES.** `LaborAssignment.priority` is a FlatBuffers enum
+# whose ordinals are `Normal = 0, High = 1, Low = 2` — Normal first because a scalar equal to its
+# default costs no wire bytes — while the order the band actually sheds in runs Low, Normal, High. The
+# two are not the same sequence, so the native decoder converts the ordinal to one of the three tokens
+# below and no GDScript reader is ever handed a number it could sort on. These are also exactly the
+# tokens `work_priority <faction> <band> <source…> <level>` takes, so the picker echoes back the word
+# it was shown and nothing between the button and the socket re-spells it.
+
+const WORK_PRIORITY_HIGH := "high"
+
+const WORK_PRIORITY_NORMAL := "normal"
+
+const WORK_PRIORITY_LOW := "low"
+
+## The picker's order, and the only place it is stated: **High · Normal · Low**, the band's own
+## shedding order read from the top so the leftmost button is the one that is kept longest. It is NOT
+## the wire ordering (`Normal, High, Low`) and must never be rebuilt from `SourcePriority`'s numbering.
+const WORK_PRIORITY_LEVELS: Array[String] = [WORK_PRIORITY_HIGH, WORK_PRIORITY_NORMAL,
+    WORK_PRIORITY_LOW]
+
+## The one-word faces the three picker buttons wear — the level itself, capitalised, with no verb and
+## no consequence clause. The consequence is stated ONCE, under the row of buttons
+## (`WORK_PRIORITY_HINT`), rather than three times across three faces that would then have to agree.
+const WORK_PRIORITY_FACES := {
+    WORK_PRIORITY_HIGH: "High",
+    WORK_PRIORITY_NORMAL: "Normal",
+    WORK_PRIORITY_LOW: "Low",
+}
+
+## **WHAT A MARKED ROW PUTS AT THE HEAD OF ITS LINE TWO.** Normal is deliberately ABSENT rather than
+## mapped to `""`: the default is the overwhelming majority of rows, and a prefix on it would spend the
+## board's scarcest resource — line width — saying nothing. `work_row_priority_prefix` reads this
+## table, so an absent key and a blank face are one answer.
+const WORK_ROW_PRIORITY_PREFIXES := {
+    WORK_PRIORITY_HIGH: "High priority",
+    WORK_PRIORITY_LOW: "Low priority",
+}
+
+## The sentence under the picker. **ONE sentence, and it names no resource on purpose**: the rank
+## orders the shedding walk's workers today and the pen-feed split as of the same slice, and a list of
+## the consumers it governs would have to grow every time another scarcity handler learns to read it.
+const WORK_PRIORITY_HINT := "When something runs short, the band spends it on high priority first."
+
+## The inspector strip's fourth inline link, between `Change policy` and `Unassign` — and the face the
+## CRAFTING panel's bench link wears too, read back as `HudWorkVocab.WORK_INSPECT_PRIORITY`. One word
+## for one control kind: the two links open the same `build_work_priority_picker`, and a second
+## spelling in `hud_crafting_vocab.gd` would be free to drift from this one.
+const WORK_INSPECT_PRIORITY := "Priority"
+
+## The stable handle on ONE picker button, valued the LEVEL it would send — `POLICY_RUNG_META`'s twin
+## one control over, and for its reason: the face is presentation (`WORK_PRIORITY_FACES`), so a
+## harness identifying a button by `text` would be asserting the string it had already composed.
+const WORK_PRIORITY_RUNG_META := &"work_priority_rung"
+
+## …and the handle on a row's PREFIX label, valued the level it states. Its own node rather than a
+## splice into the accounts string, so the accounts keep their `OVERRUN_TRIM_ELLIPSIS` + tooltip
+## treatment untouched (`BandPanelController._build_work_row_accounts`).
+const WORK_ROW_PRIORITY_META := &"work_row_priority"
+
+## The gap between that prefix and the accounts beside it, and it is **ZERO ON PURPOSE**: the prefix
+## carries `WORK_INSPECT_SENTENCE_SEPARATOR` inside its own text, exactly as the accounts carry the
+## one before the floor clause, so the spacing of line two is stated in one place instead of half in
+## a string and half in a container constant — where the two would drift by a pixel and the line would
+## read as two different sentences depending on which clause you looked at.
+const WORK_ROW_PRIORITY_SEPARATION := 0
+
+## **WHICH EXPANSION THE OPEN INSPECTOR IS SHOWING — a state with THREE values, not two bools.** The
+## floor picker and the priority picker are mutually exclusive: two bools would admit a fourth state
+## (both open) that reserves neither height, and the strip's tallest state is what the work zone's box
+## is sized against. Opening either therefore SETS this, which closes the other by construction.
+const WORK_PICKER_NONE := &"none"
+
+const WORK_PICKER_FLOOR := &"floor"
+
+const WORK_PICKER_PRIORITY := &"priority"
+
+## The level a value that is not one of the three tokens reads as — `upkeep_fund_mode`'s rule, and for
+## its reason: the control that renders this offers exactly three choices, so a fourth token would
+## light none of them and leave the row looking unset. It is a NORMALIZATION, not a missing-field
+## fallback — the decoder always inserts the key.
+static func work_priority_of(value: Variant) -> String:
+    var level := String(value).strip_edges().to_lower()
+    return level if WORK_PRIORITY_FACES.has(level) else WORK_PRIORITY_NORMAL
+
+## A row's line-two PREFIX, its separator included — `""` on a Normal row, whose line two must stay
+## byte-identical to what it printed before the mark existed.
+static func work_row_priority_prefix(level: String) -> String:
+    var face := String(WORK_ROW_PRIORITY_PREFIXES.get(work_priority_of(level), ""))
+    return "" if face == "" else face + WORK_INSPECT_SENTENCE_SEPARATOR
+
+## The ink a marked row's prefix wears. **`SIGNAL` for High and `DANGER` for Low** — this HUD's two
+## ends of "the player has singled this out": SIGNAL is what a surface wears when it is the thing being
+## attended to, DANGER what it wears when it is the thing that gets given up. A Normal row has no
+## prefix to tint and answers the quiet ink its accounts already use, so a caller that asks anyway is
+## never handed a colour that would make the default shout.
+##
+## Resolved in a FUNCTION rather than a `const` table: `HudStyle`'s palette entries are `static var`
+## (the theme is swappable), so a `const` initialised from one is a parse error — `hud_event_vocab.gd`
+## makes the same statement about its own rung table.
+static func work_priority_ink(level: String) -> Color:
+    match work_priority_of(level):
+        WORK_PRIORITY_HIGH:
+            return HudStyle.SIGNAL
+        WORK_PRIORITY_LOW:
+            return HudStyle.DANGER
+        _:
+            return HudStyle.INK_DIM
 
 ## **THE STANDING-INVESTMENT LINE AND ITS DISCARD CONFIRM ARE GONE** (issue #442). Three consts
 ## lived here — the WARN sentence, the confirm prompt and its OK label — and all three existed to

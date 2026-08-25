@@ -26,7 +26,8 @@ use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SnapshotHistory, StartingUnit, TileRegistry, UpkeepFundMode, DEFAULT_ESCAPEMENT_FLOOR,
+    SnapshotHistory, SourcePriority, StartingUnit, TileRegistry, UpkeepFundMode,
+    DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// **Three counts, three DIFFERENT numbers, none of them equal to another** — the whole point of the
@@ -123,18 +124,21 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     },
                     workers: TAKE_CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 // The keeping — a row of its own, on the band rather than the tile.
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: KEEP_CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
                 // …and so is the building, since §2.5.
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: BUILD_CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 },
             ],
             // The declaration the source row's `improvement` token is derived from.
@@ -289,6 +293,83 @@ fn the_bands_upkeep_fund_mode_reaches_the_client() {
 /// patch's is what the GROUND is committed to and is set only once a crew has worked it, while this
 /// is the selection the player made, which exists from the moment they make it. A compose sheet
 /// reopened on a patch nobody has worked yet has no other way to show the crop it is about to plant.
+/// **THE PLAYER'S RANK ON A WORKED ROW REACHES THE CLIENT**, read back off the encoded buffer.
+///
+/// Three things are pinned together, because each fails silently on its own: an unmarked row and a
+/// band-wide role both publish `Normal` (which is wire value `0`, so an unwritten slot would look
+/// identical to a correct one — hence the marked row beside them), and a marked row publishes the
+/// mark it carries rather than something derived from its place in the list.
+#[test]
+fn a_worked_rows_rank_reaches_the_client() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, source) = world_with_a_keeping_band();
+    {
+        let mut allocation = app
+            .world
+            .query::<&mut LaborAllocation>()
+            .iter_mut(&mut app.world)
+            .find(|allocation| {
+                allocation
+                    .assignments
+                    .first()
+                    .is_some_and(|row| row.workers == TAKE_CREW)
+            })
+            .expect("the fixture band exists");
+        assert!(
+            allocation.set_source_priority(
+                &LaborTarget::Forage {
+                    tile: source,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
+                },
+                SourcePriority::Low,
+            ),
+            "the fixture band works the source it is being asked to rank"
+        );
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let bytes = encoded_snapshot(&app);
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let ranks: Vec<(String, fb::SourcePriority)> = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .map(|assignment| {
+            (
+                assignment.kind().unwrap_or_default().to_string(),
+                assignment.priority(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        ranks
+            .iter()
+            .find(|(kind, _)| kind == "forage")
+            .map(|(_, rank)| *rank),
+        Some(fb::SourcePriority::Low),
+        "the marked worked row publishes the player's own rank: {ranks:?}"
+    );
+    for role in ["agriculture", "builders"] {
+        assert_eq!(
+            ranks
+                .iter()
+                .find(|(kind, _)| kind == role)
+                .map(|(_, rank)| *rank),
+            Some(fb::SourcePriority::Normal),
+            "a band-wide role is not a worked source and publishes the default: {ranks:?}"
+        );
+    }
+}
+
 #[test]
 fn the_crop_a_crew_asked_for_reaches_the_client() {
     let (app, _source) = world_with_a_keeping_band();

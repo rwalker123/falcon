@@ -909,6 +909,98 @@ twelve frames and one hundred and four `PASS`es (counted on the `: PASS` delimit
 assertions carrying the bare word in its prose); the band-compose arc three frames and twelve `PASS`es (the
 drawer pair's three, the dock frame's three, and the two-band compose pair below).
 
+**The band FODDER LEDGER arc is worth four frames and six `PASS`es** — measured, `1381 → 1387` and
+`490 → 494` on one windowed run. Five of the six are `band_expedition`'s
+(`band_hay_short` / `band_hay_covered` / `band_hay_empty_store` / `band_hay_and_pen`, whose block
+makes every claim over FOUR line-sets at once) and one is `herd_graze_pen`'s (the pen's hay need,
+appended to the existing self-feeding/foddered pair's block). `EXPECTED_CHECKPOINTS` moved 70 → 79
+and 71 → 72 respectively.
+
+**The PEN's `Fed:` ROW is worth one frame and five `PASS`** — measured, `1387 -> 1392` on one windowed
+run. The frame is `herd_pen_no_fodder`, appended LAST in `chapters/herd_graze_pen.gd` so no frame
+before it moves; the `PASS`es are that chapter's pen block growing from four assertions to nine, over
+FOUR line-sets in ONE block. The four states differ only in which optional terms are present -
+`all pasture`, a fodder share, `no fodder`, a shortfall clause with and without its `more` - so each
+is the others' control, and checking one in a frame of its own is exactly the gap this arc has lost
+three defects in. Two of the nine make claims no needle on a single state can: the fodder share pinned
+as `fed - pasture` on a fixture where a division answers 12% to the subtraction's 7%, and the CORRAL
+row pinned as the plain badge on both starving pens, which is the regression risk of collapsing
+`corral_built_label` down to it. `_lines_any_contain_ci` is the chapter's case-insensitive twin, for a
+RETIRED word that must not return in ANY spelling. The chapter's `EXPECTED_CHECKPOINTS` moved
+72 -> 78.
+
+**Its band frames are three states of ONE row and are judged together, not in three places.** Every
+claim in the block is a CONTRAST — draining against covered, rendered against absent, in the
+pull-down against on the row — and a contrast checked one half at a time is not checked: the runway
+alone passes on a row that always reads a number, the gate alone on a row that renders for every band
+in the game. So the fourth line-set is a plain forager band that must render NO Fodder row, and the
+assertions compare the four against each other rather than each against itself.
+
+**RESHAPING THAT ROW INTO THE FOOD ROW'S SHAPE cost one frame and six `PASS`** — measured,
+`1392 -> 1398`, `EXPECTED_CHECKPOINTS` 79 -> 86. The frame is `band_hay_breakdown`, the Fodder
+pull-down OPEN, appended after the block's dock frame is released so nothing before it moves; the
+block itself went from five assertions to nine and gained two outside it. **The open pull-down is a
+new STATE, so the four states stayed in the one block rather than splitting into a second family** —
+what an inline append produces is a perfectly plausible popover beside a row that ALSO carries the
+rows, which only a claim holding both halves at once can catch. So the block asserts the flows are in
+`fodder_breakdown_lines` AND that none of them is in the produced lines, and the frame then asks the
+opened POPOVER what it actually holds (a disclosure registered with an empty payload draws a card
+with nothing in it and looks fine in a thumbnail).
+
+**The WRAP is the thing that reshape removed, and it is MEASURED, not looked at**
+(`_assert_fodder_row_fits`): two lines of a rendered vitals block look exactly like two rows, and no
+`contains` can see the difference. The row's natural unwrapped run is measured in the drawer label's
+OWN font at its OWN size plus the `[table=2]` gutter — **216px in a 354px column** — with the run cut
+out of the parsed text by the row that FOLLOWS it, since `[table]` rows carry no line break into
+`get_parsed_text()`. It is asserted on `band_hay_short`, the state the long row wrapped in.
+
+**A pre-existing engine quirk visible in these frames:** the SECOND `[url]` row of a vitals table
+draws no meta underline. It was Morale's row before the Fodder row landed between them and it is the
+Fodder row's now; the BBCode is byte-identical for all of them (`_key_cell` builds every one), so it
+is Godot's table-cell underline pass and not a client difference. Do not "fix" it in the formatter.
+
+**MAKING THAT ROW UNCONDITIONAL cost one frame and fourteen `PASS`** — measured, `1504 -> 1518` on
+one windowed run, `EXPECTED_CHECKPOINTS` 86 -> 101. The frame is **`band_fodder_dormant`**, appended
+after the pull-down state so nothing before it moves, and it is the first in this chapter to hold a
+LIVE fodder row and a DORMANT one in ONE render — the dim treatment is a claim about a DIFFERENCE,
+and a difference photographed one half at a time is not photographed.
+
+**The setup ORDER is what makes two band-detail surfaces possible at all.** A selected player band is
+the DOCK's subject wherever a dock exists and the Occupants drawer then renders a one-line pointer at
+it, so a docked HUD has exactly ONE. The state selects the forager band with **no panel injected**
+(the drawer's own fallback path, which every hay state above renders on) and injects the dock
+afterwards; neither `set_band_city_panel` nor `render_band` re-renders the drawer. That precondition
+is itself asserted — a drawer that had flipped to the pointer would carry one fodder row instead of
+two and photograph perfectly tidily.
+
+**The block also moves the faction's Foddering and must put it back.** `_ingest_intensification`
+REPLACES a faction's whole row, and `band_expedition` is the FIRST chapter — every chapter after it
+inherits whatever this one leaves. The two dormant sentences need the track part-learned and then
+learned, so the block pushes both and restores the untouched zeros on the way out, the same restore
+`band_panel_preview` makes around its own five-track fixture.
+
+**A `[url=` SEARCH OVER PRODUCED LINES IS A VACUOUS CARET TEST.** A line producer emits plain
+`Key: value` strings and `detail_bbcode` is what draws the clickable run, so the needle can never
+fire — measured: a dormant branch wrongly registering a full disclosure left that assertion green,
+and only the rendered-surface half caught it. The honest question is `DisclosureController.state()`,
+read BETWEEN the two productions (`unit_summary_lines` clears its rows on entry), with the LIVE
+band's registration beside it so "registers nothing" cannot pass on a build that registers nothing
+anywhere.
+
+**Falsified four ways from this chapter**, each failing a disjoint set: dropping the dim treatment
+(2), dropping the hover (5), re-gating the row (9 — including the frame's own both-surfaces
+precondition), and registering a disclosure on the dormant row (2).
+
+**`band_hay_and_pen` is the frame that carries a BAND and a PEN at once**, which the drawer cannot do
+on its own: a player band's detail moves into the Band/City dock when one is present, so the dock
+states the band's `Fodder` ledger while the tile drawer states the starving pen's own
+`Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn` share of it — **one word across both**,
+the pen row saying `fodder` as the band's store row always has. The dock is `SIDE_RIGHT` on purpose — a vertical dock is the TALL
+tier, which keeps the Fodder row STANDALONE rather than merging it onto Food, the SHORT tier's merge
+being `band_panel_preview`'s to hold. The chapter releases the panel and hands the reference band
+back afterwards, the raid block's own restore idiom, so a stranded reserved edge cannot move frames
+in later chapters.
+
 **The bench's rate / finish / tint / clear block is worth sixteen of that hundred and four and one
 frame** — measured on the `: PASS` delimiter over the contiguous run from the crew-of-zero frame's
 first claim to the ✕-verb pair, the running bench's own five claims sitting up in state 1's block
@@ -1782,6 +1874,132 @@ assumption a single run can falsify.
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer
 > race (`labor-ui.md` → "THE SHEET DISMISSES ON PRESS **AND** RELEASE"). A run that fails only that
 > state's block is that race, not a regression; re-run before believing it.
+
+
+## `event_dock_crew_cut` also pins the two rungs' MARKS, sampled off the render
+
+The frame already staged all four `status=` rows plus a plain receipt in one fixture, which is what
+made the glyph claim possible without a new frame: **a trimmed line and a lapsed line are in one
+render**, and the whole defect was that they drew identically. A frame with only one of them is green
+with the fix and green with the defect restored.
+
+`_preview_dock_row_glyph` / `_preview_dock_row_glyph_color` find the row by the text of its LABEL
+column and answer its **glyph column's** text and ink — `_make_event_row` builds each row as an
+`HBoxContainer` whose first child is the glyph `Label`, so this reads what the player is looking at.
+The expectation is the vocab's named const; composing both sides through `HudEventVocab` would assert
+only that the table agrees with itself.
+
+**The set is five row-level claims plus two that a new status can actually break:**
+
+- the cut wears `STATUS_REDUCED_GLYPH`, the destroyed row wears `STATUS_SHED_GLYPH`, **the two are not
+  equal**, the narrowed take wears the cut's mark, and both keep `HudStyle.WARN`;
+- the **iff over the whole `DETAIL_STATUS_STYLE` table** — every token's glyph tracks its rung, in
+  both directions — because every claim above names a token the chapter already stages and a token
+  added later would pass all of them;
+- **and that the two consts differ**, which is the precondition without which the iff is vacuous.
+
+### Falsifications
+
+`ui_preview` before the change **1344 PASS / 0 FAIL**, after **1350 / 0**, exit 0 both.
+
+| Restored defect | Failures |
+|---|---|
+| `STATUS_REDUCED_GLYPH := "⚠"` (both marks the same const value) | **2** — `READ APART … ("⚠" vs "⚠")` and `the two marks BEING DIFFERENT` |
+| the `status=trimmed` ROW re-pointed at `STATUS_SHED_GLYPH` (the shipped defect, literally) | **4** — the cut's mark, `READ APART`, the narrowed take's mark, and the table iff naming the row: `["status=trimmed(⚠ wants ▾)"]` |
+
+**The first row is the honest finding.** With the two consts equal, the row-level equality claims and
+the table iff **all pass vacuously** — the const moved under them — and only the two inequality claims
+fail. That is exactly why the `BEING DIFFERENT` claim is in the set: it is not a restatement of the
+iff, it is the thing that keeps the iff from being satisfiable by a table that marks everything alike.
+
+
+### …and the SIXTH row: `status=stalled`, which is what that iff was for
+
+The crafting bench's third shed token was added to the same fixture rather than to a frame of its own,
+so all three rungs are in ONE render: five `▾` rows (both bench lines, the pruned take, the two
+trimmed crews) and one `⚠` on the lapsed row, which is also the only amber-labelled one.
+
+**The iff caught it the moment it was wrong, both ways** — under a `RUNG_ALERT` rung it named
+`["status=stalled(▾ wants ⚠)"]`, and under a `STATUS_SHED_GLYPH` mark `["status=stalled(⚠ wants ▾)"]`.
+That is the invariant behaving exactly as it was written for: a token added later passes every claim
+that names the tokens the chapter already stages, and only a rule over the whole table sees it.
+
+**Two staged bench rows, not one.** `announce_shed_bench` reuses `status=trimmed` with `kind=bench`
+where hands remain, so `SHED_BENCH_TRIMMED_*` is the negative that stops the new token quietly
+becoming *every* bench line. Confirmed rather than assumed: it reads Notable with the same `▾`.
+
+**The rung claim is really about `RUNG_BY_KIND`.** `craft` is absent from it, so the line takes
+`DEFAULT_RUNG` (`RUNG_ROUTINE`) — under the dock's own floor — and `…reaches the DEFAULT floor, which
+`craft` alone would not have` is the claim that a missing `DETAIL_STATUS_STYLE` row would break.
+
+> ⛔ **THE FRAME HAD TO OPEN THE LOG, AND THE BAR'S CAP IS WHY.** `RECENT_COUNT_MAX` is **4** and the
+> fixture now stages **six** status rows, so collapsed the two oldest are pushed off the bar — which
+> silently turned `trimmed` and the linked hunt row into rows nobody could sample, and showed up as
+> `a CUT crew is drawn with the reduction mark "▾" (got "")` plus two link claims. Expanded,
+> `_render_bar` draws a single title line and `_log_body` draws every visible event, so there is no
+> double-count and every floor claim is unaffected — they read `_visible_events()`, not the drawn bar.
+> **A fixture that grows past the bar's cap must open the log or it stops being one frame.**
+
+### Falsifications
+
+`ui_preview` before **1351 PASS / 0 FAIL**, after **1356 / 0**, exit 0 both. `band_panel_preview` is
+untouched at **805 / 0**.
+
+## The bench's RANK — one frame, twenty claims, three disjoint sabotages
+
+`docs/plan_standing_upkeep.md` §4.9 item 9b's crafting half. The behaviour is `crafting-panel.md`'s;
+what belongs here is the shape of the drive and the ONE measurement that moved the design.
+
+**`crafting_bench_priority` is appended LAST in `chapters/crafting_bench.gd`**, after the map-gesture
+block and before the chapter hands the HUD back, so no earlier frame moves. It is the whole new
+state in one picture: an IDLE bench (no job, hence no ✕), a HIGH mark leading its line two, the
+picker OPEN beneath it and its `High` rung lit against two unlit ones.
+
+**A MARKED BENCH AND AN UNMARKED ONE CANNOT SHARE A PNG** — the card renders one band's bench — so
+the unmarked half is a claim rather than a picture, made on the reference band in the same block and
+**PAIRED** with the marked one. Neither is worth anything alone: *prints a prefix* passes on a panel
+that always prints one, *prints nothing* on a panel that lost the mark entirely.
+
+**⛔ THE LINK COSTS THE WELL NO ROW, AND ONE ASSERTION IS WHY.** Built as a fourth line under the
+teach line, it added ~24px to every bench well — and `crafting_panel_band_dock_collapsed`'s ledger
+clears its 1072px room by **18px**, so the state whose `expect_overflow` is `false` began scrolling
+and the run failed there. The link rides the trailing edge of LINE TWO instead (the sub label expands
+into the slack), which is a placement measurement made by an existing assertion rather than by
+inspection.
+
+**Every press is REAL POINTER INPUT** through `InputProbe` — the link's and each rung's —
+`pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. The
+command is asserted on the LINE through `MAIN_SCRIPT.format_bench_priority`, the work board's own
+idiom, for **all three** levels: a commit hard-wired to `normal` satisfies any single-level claim.
+Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `clear_bench` satisfies
+a bare *something was emitted*.
+
+**The LIT test is the SAME one `band_panel_preview._assert_work_priority_picker_lit` makes** — the
+primary variant's own background — so the one control cannot be judged by two notions of "selected"
+on the two surfaces that mount it.
+
+### Falsifications
+
+`ui_preview` before **1356 PASS / 0 FAIL / 349 frames**, after **1376 / 0 / 350**, exit 0 both.
+`band_panel_preview` untouched at **805 / 0**, exit 0.
+
+| Restored defect | Failures |
+|---|---|
+| the commit emits `WORK_PRIORITY_NORMAL` whatever rung was pressed | **2** — the `high` and `low` line claims, each naming `got "bench_priority 0 4971 normal"`. The `normal` claim correctly stays green |
+| the link and the picker gated on `recipe_id != ""` (hidden on an idle bench) | **3** — `the bench well carries a \`Priority\` link to press`, `the picker renders on an IDLE bench`, `…opened on HIGH rather than on the default ()`. Both MARK claims stay green |
+| the line-two prefix never rendered | **3** — the HIGH mark, its ink, and the LOW mark's face-and-ink pair. `a NORMAL bench prints no rank prefix` correctly stays green |
+
+**None passed vacuously**, and each sabotage's green half is the pairing doing its job: the mark and
+the control are independent, so a defect in one must leave the other's claims standing.
+
+| Restored defect | Failures |
+|---|---|
+| `status=stalled` at `RUNG_ALERT` | **3** — `is Notable … (got alert)`; `NOT the Alert a lapsed row earns`; the iff naming `["status=stalled(▾ wants ⚠)"]` |
+| `status=stalled` wearing `STATUS_SHED_GLYPH` | **2** — `wears the reduction mark beside the cut … (got "⚠")`; the iff naming `["status=stalled(⚠ wants ▾)"]` |
+| its `DETAIL_STATUS_WORK_LINK` row removed | **2** — `exactly the 4 rows that NAME a band offer the jump (got 3 links)`; `asked [3, 5, 7], want [3, 5, 5, 7]` |
+
+None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
+one that reads the table.
 
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 

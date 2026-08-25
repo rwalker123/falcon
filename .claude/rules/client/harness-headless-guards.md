@@ -19,6 +19,10 @@ paths:
   - "clients/godot_thin_client/tools/patch_crossref_guard.gd"
   - "clients/godot_thin_client/tools/patch_crossref_guard.tscn"
   - "clients/godot_thin_client/tests/**"
+  # The fixture BUILDER, which is where every claim below about what the golden covers is actually
+  # decided — it lives in xtask rather than the client tree, and gating on the golden alone left the
+  # one file that can silently narrow this gate's coverage outside the rule that documents it.
+  - "xtask/src/decode_fixture.rs"
 ---
 
 <!-- Split out of .claude/rules/client/test-harnesses.md, which was itself extracted from
@@ -100,6 +104,41 @@ merely different. Integers are capped at 200 so a `u8` field cannot fail to dese
 why a fixed-point `Scalar` reads as e.g. `0.000015`: tiny, but a dropped `fixed64_to_f32` divide
 moves it six orders of magnitude, which is what the gate is for (verified — injecting a dropped
 divide and a misspelled key both fail it, with both named in the diff).
+
+**⛔ SATURATION SKIPS ENUMS, SO AN ENUM IS ONLY EVER COVERED AT ITS `Default` UNLESS THE FIXTURE
+WRITES IT.** The rule that keeps saturation type-safe — *replace a string leaf only when its default
+is empty* — is exactly what distinguishes free text from a serde enum, whose serialized form is a
+non-empty variant name. That is correct and load-bearing, and it has a consequence worth stating:
+**every scalar field is covered automatically forever, and every enum field is covered at one
+variant.** A decoder arm for any other variant has no end-to-end coverage at all.
+
+**It is invisible when the default is wire value `0`**, which is the shape a well-designed enum
+usually has: a FlatBuffers scalar equal to its default costs no bytes, so appending the field changed
+neither the fixture `.bin`s nor the golden, and the gap left no trace to notice. `LaborAssignment`'s
+`SourcePriority` was the instance that found it — the client's mapping ends in a `_ => "normal"`
+catch-all, so a `High` or `Low` arm wired to the wrong word decoded as `"normal"` and the guard
+passed. Measured: with the old all-defaults rows, breaking the codec's `High` mapping produced a
+**byte-identical** `snapshot_envelope.bin`, so no golden diff was even possible.
+
+`labor_assignments` is therefore the one repeated section sized by an **enum** rather than by `ROWS`
+— one row per `SourcePriority`, built from `EVERY_SOURCE_PRIORITY` so a variant added without a row
+here is a variant the guard does not cover. **A new enum on the wire needs the same treatment**, and
+adding it to the fixture is the only thing that gives its arms coverage.
+
+**`BenchState.priority` is the same enum in a place that can only reach TWO of its three arms.** A
+cohort carries exactly **one** bench, and the fixture has two cohorts, so `BENCHED_SOURCE_PRIORITIES`
+gives them `High` and `Low` — the two a wrong mapping can actually reach, because a decoder maps this
+enum with a `_ =>` catch-all on the default (the shipped labor mapping is `_ => "normal"`) and a wrong
+`Normal` arm is therefore unreachable by construction. The `Normal` arm is covered end to end at the
+**codec** level instead, by `core_sim/tests/crafting_wire.rs`, which asserts all three off the encoded
+envelope.
+
+> **AND THE FIXTURE ROWS BUY NOTHING UNTIL THE DECODER READS THE FIELD.** Measured: with the bench
+> rows in place, breaking the codec's bench `High` mapping left `decode-guard` **passing** and the
+> golden unmoved, because `dict/population.rs` has no `priority` key on the bench dict. That is not a
+> fault in the fixture — it is what this gate *is*, a guard over the client's decode path — but it
+> means "the fixture covers the arm" and "the guard covers the arm" are two claims, and the second
+> waits on the accessor. The `crafting_wire` test is what holds the line in the meantime.
 
 **The golden is STRUCTURAL, not byte-exact**: floats round to `FLOAT_DECIMALS` and an over-long
 packed array records `{type, len, head, tail, checksum}` rather than every sample, so an appended

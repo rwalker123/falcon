@@ -38,7 +38,7 @@ use core_sim::{
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
     SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     MSY_BIOMASS_FRACTION, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
@@ -241,6 +241,7 @@ fn spawn_hunters(
                     },
                     workers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },
@@ -702,6 +703,7 @@ fn spawn_resident_crew(
                     },
                     workers,
                     kit: None,
+                    priority: SourcePriority::default(),
                 })
                 // **The build's hands are a band-level pool** since
                 // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so the
@@ -712,6 +714,7 @@ fn spawn_resident_crew(
                     target: LaborTarget::Builders,
                     workers: build_crew,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }))
                 .collect(),
                 build_queue: improvement

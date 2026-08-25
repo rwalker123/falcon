@@ -22,8 +22,8 @@ use core_sim::{
     EffectTier, EquipmentConfig, EquipmentConfigHandle, EquipmentStat, Expedition,
     ExpeditionMission, ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
     HerdTelemetry, KitChoice, KitJob, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, SourceYield,
-    StartingUnit, TileRegistry, WearQuantum, DEFAULT_ESCAPEMENT_FLOOR,
+    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, SourcePriority,
+    SourceYield, StartingUnit, TileRegistry, WearQuantum, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
@@ -258,6 +258,7 @@ fn spawn_hunting_band(
                     },
                     workers: CREW,
                     kit,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },
@@ -510,6 +511,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                         },
                         workers: CREW,
                         kit: Some(chosen),
+                        priority: SourcePriority::default(),
                     }],
                     ..Default::default()
                 },
@@ -1373,11 +1375,13 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         workers: CREW,
                         // Named nothing — the wire must still say which kit it is working under.
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                     LaborAssignment {
                         target: LaborTarget::Scout,
                         workers: CREW,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                 ],
                 ..Default::default()
@@ -1767,6 +1771,7 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                     },
                     workers: CREW,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

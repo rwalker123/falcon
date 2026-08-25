@@ -34,8 +34,8 @@ use core_sim::{
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, selected_biomass_share,
     tile_flora_composition, FactionId, FloraConfigHandle, FloraShare, ForagePatch, ForageRegistry,
     GenerationId, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore,
-    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, StartingUnit,
-    TakeSelection, Tile, TileRegistry, WHOLE_BASKET,
+    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, SourcePriority,
+    StartingUnit, TakeSelection, Tile, TileRegistry, WHOLE_BASKET,
 };
 
 /// The map every fixture here stands on — the standard seed the flora suites are quoted against, so
@@ -1249,12 +1249,14 @@ fn build_rows(
         },
         workers,
         kit: None,
+        priority: SourcePriority::default(),
     }];
     if builders > 0 {
         rows.push(LaborAssignment {
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
+            priority: SourcePriority::default(),
         });
     }
     rows

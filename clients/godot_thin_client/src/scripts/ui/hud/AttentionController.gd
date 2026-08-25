@@ -355,7 +355,7 @@ func on_turn_orb_focus(x: int, y: int) -> void:
         return
     # A starving-pen or under-kept-herd row jumps to the HERD, not just its hex: `focus_labor_source`
     # (the very path the Band panel's Hunt row uses) recenters AND pins the herd, so the drawer that
-    # explains the alert — the "⚠ Starving" Corral row, the Pen feed cost, the husbandry rung's own
+    # explains the alert — the pen's marked `Fed:` row and its shortfall, the husbandry rung's own
     # under-kept note — is what actually opens.
     var alerted_herd := _alerted_herd_at(x, y)
     if alerted_herd != "":

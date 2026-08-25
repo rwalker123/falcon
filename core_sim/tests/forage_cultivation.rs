@@ -26,7 +26,7 @@ use core_sim::{
     HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfigHandle,
     LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
     PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     CULTIVATION_DISCOVERY_ID, FOOD, ONE_TENDER_LOAD, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
     WHOLLY_UNSUPPLIED,
@@ -249,6 +249,7 @@ fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
         },
         workers: foragers,
         kit: None,
+        priority: SourcePriority::default(),
     }
 }
 
@@ -289,6 +290,7 @@ fn set_forage_improvement(
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }),
             }
         }
@@ -434,6 +436,7 @@ fn spawn_forager_at(
                                 target: LaborTarget::Builders,
                                 workers: foragers,
                                 kit: None,
+                                priority: SourcePriority::default(),
                             },
                         ]
                     })
@@ -2810,6 +2813,7 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
                 target: LaborTarget::Builders,
                 workers,
                 kit: None,
+                priority: SourcePriority::default(),
             });
         // ⛔ **AN EMPTY LEDGER IS WHAT HOLDS THE GEAR AXIS AT ITS IDENTITY HERE.** Nothing is
         // queued on this patch, so there is no entry to carry the bare kit the pace fixtures use
@@ -3195,6 +3199,7 @@ fn spawn_band_keeping_two_patches(
         },
         workers: GATHERERS,
         kit: None,
+        priority: SourcePriority::default(),
     });
     let headroom = allocation.assigned_total() + keepers;
     allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
@@ -3363,6 +3368,7 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
+            priority: SourcePriority::default(),
         });
         let headroom = allocation.assigned_total() + keepers;
         allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
@@ -4279,6 +4285,7 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
+            priority: SourcePriority::default(),
         });
         assert!(allocation.enqueue_build(
             core_sim::BuildSource::Patch(coord),

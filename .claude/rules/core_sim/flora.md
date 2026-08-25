@@ -435,8 +435,9 @@ Sow.
 
 The arc's one reach into the animal web (`docs/plan_flora_roster.md` §5). **The one-sentence model:** a
 fodder crop (**hay_grass**) is a Field whose harvest fills a band's **`FODDER` store**; a pen that knows
-**Foddering** draws that store as *delivered graze-flow* — one term that both raises `K_pen` and pays down
-the pen's lossy provisions-larder bill, because hay *is* feed. `FODDER = "fodder"` (`components.rs`) is a
+**Foddering** draws that store as *delivered graze-flow* — one term that both raises `K_pen` and feeds the
+pen directly, because hay *is* feed. (It used to be described as paying down the pen's provisions-larder
+bill; that bill is retired — there is no food-unit feed left for hay to displace.) `FODDER = "fodder"` (`components.rs`) is a
 second commodity key on the *same* `LocalStore` as `FOOD`, so it round-trips through the snapshot for free
 and the two stores **never convert**.
 
@@ -453,12 +454,22 @@ and the two stores **never convert**.
 - **`Foddering`** (`FODDERING_DISCOVERY_ID = 2007`, `fauna.rs`) — a **capability** knowledge, **not** a
   rung with a verb or build meter. Earned by *running a pen* (the `animal:pen` rung's `earns_knowledge`,
   `null` → `foddering`), never start-granted. It unlocks a penned herd's store-draw only.
-- **The feed (§5.2), drawn BEFORE the larder** (`advance_labor_allocation`'s corral-tend branch):
-  `shortfall = max(0, fodder×biomass − footprint_intake)`, `fodder_draw = min(shortfall, FODDER store)`
-  **iff the faction knows Foddering**, then `larder_upkeep = upkeep×biomass×(1 − (footprint+hay)/demand)`.
-  Hay is subtracted before the lossy provisions path, so growing hay *shrinks* the bread bill but never
-  makes bread a better deal (property 2 — feeding a pen bread stays exactly as lossy). `pen_fed_fraction`
-  reads the hay-inclusive fed share, so starvation/shrink sees a hayed pen as fed.
+- **The feed (§5.2) — and hay is now the WHOLE of it beside the grass** (`advance_labor_allocation`,
+  struck across every pen the band keeps by `settle_pen_hay`): `shortfall = max(0, fodder×biomass −
+  footprint_intake)`, `fodder_draw = min(shortfall, FODDER store)` **iff the faction knows
+  Foddering**, and `pen_fed_fraction = (footprint_intake + fodder_draw) / demand`. **There is no
+  larder term after it** — the `larder_upkeep = upkeep×biomass×(1 − fed)` this bullet used to end on
+  is retired with the whole food-unit feed (human food is not animal feed; `husbandry.md` → "THE
+  PEN'S FEED IS ITS OWN MECHANISM"), so what grass and hay leave uncovered is a **shortfall** and the
+  herd shrinks for it. Growing hay no longer *shrinks a bread bill*; it is the only thing besides the
+  land that feeds a pen at all.
+- **The `shortfall` above is also the READOUT**, rolled up per band as `fodderNeed` against
+  `fodderIncome`: it is published **ungated**, before the Foddering test the draw applies, because a
+  band that cannot hay a herd still has a herd that is short. Per pen what rides the herd row is what
+  the shortfall leaves once `fodder_draw` is counted — `HerdTelemetryState.penFodderShortfall`,
+  ungated on the same rule, stamped on the same pass, and the only term of that subtraction on the
+  wire (the gap's own `penHayNeed` is `(deprecated)`: nothing read it). See `graze.md` → "The hay bill
+  is published as the GAP".
 - **The ceiling (§5.3) — `K_pen = (footprint_graze_flow + fodder_delivery_rate) / fodder_per_biomass`**,
   the fodder term added inside the one `K` seam `ecological_carrying_capacity`. **Critical for
   convergence: it reads the sustained FLOW, not the store stock** — `Herd::fodder_delivery_rate` is the
@@ -470,16 +481,24 @@ and the two stores **never convert**.
   honest feedlot: a barren footprint carried entirely by delivered hay.
 - **Convergence proven, not assumed** (`core_sim/tests/grazing_f3_fodder.rs`): a hay-carried pen reaches
   one stable fixed point from over- and under-stocked starts, deterministic across two runs. The
-  net-positive floor (`FaunaConfig::validate`) needs **no change** — hay only lowers the larder bill (like
-  pasture), so the best-case fully-larder-fed floor is unchanged. The pen-food ledger identity
-  (`pen_food_ledger.rs`) holds for a hayed pen too — hay is off-ledger, so `penFeedUpkeep` (provisions
-  paid) drops while `larder_delta == foodIncome − foodConsumption − penFeedUpkeep` still reconciles.
-- **Wire (append-only):** `PopulationCohortState.fodderStore`, `HerdTelemetryState.fodderDraw`,
+  **hay is now the ONLY thing that feeds a barren pen.** F3 shipped it as a term that *lowered* the
+  keeper's larder bill; the larder feed has since been retired (human food is not animal feed —
+  `husbandry.md` → "THE PEN'S FEED IS ITS OWN MECHANISM"), so a footprint that grows nothing and a band
+  that cannot hay leave the pen **unfed**, and it shrinks. That also retires the pen's net-positive
+  floor, which compared a food-unit upkeep against a food-unit yield. The pen-food ledger identity
+  (`pen_food_ledger.rs`) holds for a hayed pen and a starving one **identically** — hay is off-ledger,
+  and so is the feed it replaced, so `larder_delta == foodIncome − foodConsumption − raidForfeit`
+  reconciles either way.
+- **Wire (append-only):** `PopulationCohortState.fodderStore` — plus the band's hay **ledger**
+  `fodderNeed` / `fodderIncome` / `turnsOfFodder`, which is where `band_fodder_inflow` finally
+  reaches the client (`yield-forecast.md` → "The band's hay ledger", whose runway counts down the
+  **Foddering-gated** drain rather than that ungated need) — `HerdTelemetryState.fodderDraw` and its
+  `penFodderShortfall` twin (`penHayNeed` rode beside them until it turned out nothing read it, and
+  is `(deprecated)` in place),
   `FloraShareInfo.sowFodderPayoff` (the crop picker's hay payoff, so hay reads its fodder value instead of
-  a bare `0×` provisions ratio), plus the render-ready feed split `HerdTelemetryState.penLarderBill` (net
-  larder bill after pasture + hay) / `penHayFood` (hay's food-equivalent) — see "Corral" → "Display
-  snapshot" for the `pasture_food + penHayFood + penLarderBill == penUpkeep` invariant the client draws
-  the feed row from.
+  a bare `0×` provisions ratio). **`HerdTelemetryState.penLarderBill` / `penHayFood` are retired**
+  (slots `(deprecated)`) with the food-unit split they belonged to: the feed row is `penPastureFraction`
+  + `fodderDraw`, both fodder against one fodder demand — see "Corral" → "Display snapshot".
 
 ### Cash crops — the F4 coupling (a cash crop is paid in MATERIALS)
 

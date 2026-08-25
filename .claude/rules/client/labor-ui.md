@@ -3857,6 +3857,13 @@ the `∞` pair survives with a new denominator:
   `build_turns_remaining` from the wire alone and `build_pace` classifies it as a FOURTH arm
   (`BUILD_PACE_BLOCKED`). Blocked ≠ holding ≠ rotting ≠ silent, and a client rendering three of them
   cannot derive the fourth.
+- **A SIXTH ANSWER RIDES IT SINCE §4.9** — `BUILD_TURNS_NOT_YET_ESTIMATED` (`-5`), *the player
+  queued this since the last turn resolved, so no estimate pass has ever run for it*. It is not this
+  form's to return either, and for a sharper reason than `-4`'s: the client can evaluate arithmetic
+  and cannot know what the sim has LOOKED at. **It is the one member of the family that is not a
+  hazard** — `build_pace` answers `BUILD_PACE_UNKNOWN` and the face is a neutral `Queued N%` — and
+  collapsing it onto `-1` put `⚠ Stalled 0%` on a build one command old. The full split and the sweep
+  are in `selection-card.md` → "A build QUEUED THIS TURN IS NOT A STALLED ONE".
 - `core_sim/tests/build_turns_closed_form.rs` still pins the two producers equal at the committed
   crew, and `SourceForecast.BUILD_BALANCE_HOLDS` is still the ONE cut point the two `∞` answers fork
   on.
@@ -4406,7 +4413,7 @@ because the sheet has a crew stepper and a floor slider and the card has neither
 | surface | producer | why |
 |---|---|---|
 | compose sheet, both faces | `SourceForecast.build_turns_at` — the ceiling's discipline | there is a PROPOSAL to price: the stepper's crew, the slider's floor, the picker's kit. *Add hands and watch it drop* is the whole point of the reading, and it sits beside the control that moves it |
-| tile card · herd drawer | `SourceForecast.build_turns_remaining` — the `penFeedUpkeep` discipline | no crew control, so the only question is *what is happening here*, which is exactly what the sim's answer for the committed crew says |
+| tile card · herd drawer | `SourceForecast.build_turns_remaining` — the sim-answers/client-renders discipline | no crew control, so the only question is *what is happening here*, which is exactly what the sim's answer for the committed crew says |
 
 ```text
 working  = improvement ∈ {cultivate, tame} ⇒ max(0, biomass − floor × carryingCapacity) > 0
@@ -5286,21 +5293,40 @@ spelled and never a raw count.
       reads **`Preparing: +0.24 /turn → then +1.20 /turn`** — the deal, not a single rate — both halves
       scaled by the band's `output_multiplier` like every other forecast. The managed source reports
       per-worker == ceiling, so the stepper caps at **1 worker**, as it should.
-      **Corral's payoff is GROSS** (`corralYield` does NOT deduct the pen's feed), so its row never
-      shows the payoff bare (`FORECAST_FEED_KEYS`, the rungs with a running cost — Corral only; a
-      tended patch has none): `Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed`. `penUpkeep` is
-      **one field with one meaning on both sides of the decision** — the feed this pen demands, *or
-      would demand once built*, at the herd's current biomass, on the SAME basis `corralYield` uses —
-      so the subtraction is a pure difference of two numbers the sim exported for THIS herd and the
-      client models no ecology. (It is **demanded**, not paid: the *paid* figure is the cohort's
-      `penFeedUpkeep`, and `penFedFraction` is their ratio. Don't cross the wires.)
+      **CORRAL'S PAYOFF STANDS ALONE — there is no running cost to subtract from it.** The row read
+      `then +5.40 /turn − 1.74 feed`, quoting `penUpkeep` against a GROSS `corralYield` through a
+      `FORECAST_FEED_KEYS` table that held exactly one entry. That was a **modelling defect**: human
+      food is not animal feed. A pen eats the grass its fenced footprint grows and the hay its keeper
+      carries in (both FODDER), so there is no food-unit bill, `penUpkeep` is a retired `(deprecated)`
+      wire slot, and the table, the `feed_rung`/`feed` deal terms, `IMPROVEMENT_DEAL_FEED_FORMAT` and
+      the done face's `IMPROVEMENT_DONE_UPKEEP_FORMAT` clause are all gone with it. **The term is
+      deleted, not blanked** — no dangling separator, no empty slot, and both webs' done faces are now
+      the bare rung. What a built rung really costs to HOLD is WORK, and that is already stated where
+      every rung's is, on the work row's `⌃` tooltip. Do not mint a second feed term to put the
+      subtraction back. `ui_preview` `herd_corral` / `improvement_done_penned` are the frames.
+      **AND THE HAY BILL CANNOT TAKE ITS PLACE — checked, not assumed.** Quoting what the pen WILL
+      cost in hay would be a better row than the bare payoff, and it is **not expressible**:
+      every hay figure on the wire is a fact about a pen that EXISTS — `penFodderShortfall`
+      publishes `0` on the unpenned herd this row is composed for, and the gap it is drawn from
+      (`max(0, demand − footprint_intake)`) is not published per pen at all — while nothing else
+      on the wire reconstructs it: the herd's `fodderPerBiomass` is its YIELD rate, `0` on every
+      animal because no animal PAYS fodder, and the footprint intake of a fence that has not been
+      built is published nowhere. So a projected need would have to be synthesized from a ratio or
+      minted as a new wire field, both of which are forbidden here. **The row states the payoff alone
+      until the SIM publishes a projected demand for an unpenned herd** — server-side work, not a
+      client derivation.
       **A ZERO PAYOFF IS DATA — it must never be suppressed.** The pen harvests by constant
       escapement, so a herd at/below `K/2` honestly pays **+0.00** until it rebuilds: penning it would
-      eat feed forever and pay nothing. The row renders both zeros in full and **emphasizes** them —
+      eat feed forever and pay nothing. The row renders that zero in full and **emphasizes** it —
       WARN-amber plus `⚠ Too depleted to pen — it would eat feed and pay nothing until the herd
       rebuilds` (`INVESTMENT_FORECAST_DEPLETED_NOTE`) — rather than blanking the 0 as "no data". A
       player who pens a depleted herd because the UI declined to show them a zero has been actively
-      misled. ui_preview `herd_corral_depleted`.
+      misled. ui_preview `herd_corral_depleted`. **The note is gated on the CORRAL RUNG, not on a feed
+      magnitude** (`DrawerComposeController._pen_rung_pays_nothing`): it used to require a non-zero
+      `penUpkeep` beside the zero payoff, and a gate reading that retired field would be permanently
+      false — the note would silently never fire again. The rung is also the only subject its own words
+      fit ("Too depleted to PEN"); a plant rung paying zero is a different sentence and this note must
+      not start speaking it.
     - **TAME's dip — like EVERY herd ceiling — rides the list; its PAYOFF is a scalar.** A herd's only
       wire representation of a per-policy ceiling is the `huntPolicyCeilings` LIST, so no herd rung has a
       `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);

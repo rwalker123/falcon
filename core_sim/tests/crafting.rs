@@ -38,6 +38,12 @@ const POOR: &str = "poor";
 const GOOD: &str = "good";
 const EXCELLENT: &str = "excellent";
 const TANNING_FRAME: &str = "tanning_frame";
+/// The sled's **second** input and its two axes. A draw is all-or-nothing, so a fixture that stocks
+/// only the hide withdraws nothing whatever the code does — which is how a draw-gate assertion comes
+/// to pass against the very defect it is for.
+const FIBRE: &str = "fibre";
+const FINENESS: &str = "fineness";
+const STRENGTH: &str = "strength";
 const SLED: &str = "sled";
 /// The tier every shipped item's one quality rung carries — the flint age.
 const FLINT_TIER: &str = "flint";
@@ -764,5 +770,111 @@ fn a_delivered_item_carries_the_tier_that_ships_known() {
             .iter()
             .any(|batch| batch.grade.as_ref().is_some_and(|g| g.id == GOOD)),
         "and the crafted one carries the grade its draw selected: {batches:?}"
+    );
+}
+
+/// ⛔ **AN UNSTAFFED BENCH DRAWS NOTHING, AND THIS IS THE ONE THAT FAILS LOUDEST IF THE GATE IS
+/// MISSED.**
+///
+/// `advance_crafting` runs its draw **before** the workers term is used anywhere, so a bench at zero
+/// crew would keep withdrawing materials from the store for a pass it can never work — a famine
+/// quietly draining the material store into an idle bench, one pass's inputs a turn, for as long as
+/// the stock lasted.
+///
+/// **It is a state the sim reaches, not a defensive check.** The shedding order stalls a bench by
+/// taking its crew to zero and leaving the job standing (`LaborAllocation::normalize` — it must never
+/// call `clear_job`, which forfeits the drawn pile), so *"a running job with nobody on it"* did not
+/// exist before that slice and does now.
+///
+/// Asserted on the **store**, over several turns, because a single turn cannot tell "drew nothing"
+/// from "drew and finished".
+#[test]
+fn an_unstaffed_bench_draws_nothing_from_the_store() {
+    /// Enough turns that a per-turn draw would be unmistakable in the total.
+    const TURNS: u32 = 5;
+    /// A crew the bench is *stood down from*, so the fixture proves the gate rather than a bench
+    /// that was never staffed at all.
+    const NOBODY: u32 = 0;
+
+    let mut bench = Bench::shipped();
+    // **BOTH of the sled's inputs**, because a draw is all-or-nothing: a fixture short of fibre
+    // would withdraw nothing whatever the gate did, and would pass against the defect.
+    bench
+        .stock(HIDE, 60.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
+        .stock(FIBRE, 40.0, &[(FINENESS, 0.5), (STRENGTH, 0.5)])
+        .give_tool(TANNING_FRAME)
+        .start(SLED, CREW);
+    let stocked = (bench.stock_of(HIDE), bench.stock_of(FIBRE));
+
+    // The shed takes the crew to zero and leaves the job standing — exactly what `normalize` does.
+    bench
+        .app
+        .world
+        .get_mut::<BandBench>(bench.band)
+        .expect("the band has a bench")
+        .workers = NOBODY;
+    bench.turns(TURNS);
+
+    assert_eq!(
+        (bench.stock_of(HIDE), bench.stock_of(FIBRE)),
+        stocked,
+        "an idle bench withdrew materials for a pass it can never work — the store must be \
+         untouched across {TURNS} turns"
+    );
+    assert!(
+        bench.bench().drawn.is_none(),
+        "…and nothing was cut, so there is no pile sitting on a bench nobody is at"
+    );
+    assert_eq!(
+        bench.bench().recipe_id.as_deref(),
+        Some(SLED),
+        "the job is still the player's — a stalled bench is not a cleared one"
+    );
+}
+
+/// **THE GATE IS ON THE DRAW, NOT ON THE PILE.** A bench that had already cut its materials keeps
+/// them when its crew goes — they are the player's, and the job is still theirs. It simply banks no
+/// progress, which falls out of `rate_per_turn(0, …)` on its own.
+#[test]
+fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
+    const NOBODY: u32 = 0;
+
+    let mut bench = Bench::shipped();
+    bench
+        .stock(HIDE, 60.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
+        .stock(FIBRE, 40.0, &[(FINENESS, 0.5), (STRENGTH, 0.5)])
+        .give_tool(TANNING_FRAME)
+        // **A ONE-HAND crew**, so the pass is still in flight when the crew goes: a bench that
+        // finished and re-drew would be answering a different question.
+        .start(SLED, 1)
+        .turns(1);
+    assert!(
+        bench.bench().drawn.is_some(),
+        "fixture: the staffed turn drew a pile, or this test is about nothing"
+    );
+    let after_draw = (bench.stock_of(HIDE), bench.stock_of(FIBRE));
+    let banked = bench.bench().progress;
+
+    bench
+        .app
+        .world
+        .get_mut::<BandBench>(bench.band)
+        .expect("the band has a bench")
+        .workers = NOBODY;
+    bench.turns(3);
+
+    assert!(
+        bench.bench().drawn.is_some(),
+        "the materials already cut stay on the bench — they were spent for THIS job"
+    );
+    assert_eq!(
+        (bench.stock_of(HIDE), bench.stock_of(FIBRE)),
+        after_draw,
+        "…and no further draw happened while nobody was at it"
+    );
+    assert_eq!(
+        bench.bench().progress,
+        banked,
+        "nobody at the bench banks nothing, so the item does not creep forward"
     );
 }

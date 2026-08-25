@@ -21,8 +21,9 @@ use core_sim::{
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SourceYield, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle, FOOD,
+    SnapshotOverlaysConfigHandle, SourcePriority, SourceYield, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, TileRegistry,
+    WellbeingConfigHandle, FOOD,
 };
 
 /// The shipped carnivore — `Grey Wolf Pack` (`attack 3`, `aggression 0.6`), so its raid attack is
@@ -148,6 +149,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             target: LaborTarget::Warrior,
             workers: warriors,
             kit: None,
+            priority: SourcePriority::default(),
         }]
     } else {
         Vec::new()

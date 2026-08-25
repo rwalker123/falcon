@@ -97,10 +97,10 @@ pub(crate) struct FoodFlow {
     /// lumpy `actual`. A big-game hunt pays zero for six turns then spikes; fertility must not
     /// sawtooth with whole-animal timing.
     pub steady_income: Scalar,
-    /// What the band's pens ate (`LaborAllocation::last_pen_feed_upkeep`). Subtracting it is what
-    /// makes `net_flow` the negation of the same net drain the player-facing `turnsOfFood` runway
-    /// divides by, so the two readouts can never disagree about which way a band is heading.
-    pub pen_feed_upkeep: Scalar,
+    // **RETIRED: `pen_feed_upkeep`** — what the band's pens ate, subtracted here so `net_flow` was the
+    // negation of the `turnsOfFood` runway's net drain. A pen eats grass and hay now, so it takes
+    // nothing off the larder and cannot depress the flow the *people's* fertility reads. Both
+    // readouts lost the same term, so the two still cannot disagree.
 }
 
 /// One turn of [`advance_demographics`]: the resolved bracket/larder state **plus the fertility
@@ -160,7 +160,7 @@ fn trend_factor(flow: Option<FoodFlow>, demand: Scalar, cfg: &DemographicsTrend)
     if demand <= scalar_zero() {
         return scalar_one();
     }
-    let net_ratio = (flow.steady_income - demand - flow.pen_feed_upkeep) / demand;
+    let net_ratio = (flow.steady_income - demand) / demand;
     // A saturation of 0 would divide by zero; treat it as "any excursion is already full scale".
     let ramp = |excursion: Scalar, saturation: f32| {
         let saturation = scalar_from_f32(saturation);
@@ -173,10 +173,10 @@ fn trend_factor(flow: Option<FoodFlow>, demand: Scalar, cfg: &DemographicsTrend)
     if net_ratio >= scalar_zero() {
         scalar_one() + scalar_from_f32(cfg.surplus_gain) * ramp(net_ratio, cfg.surplus_saturation)
     } else {
-        // `net_ratio` has NO lower bound — `pen_feed_upkeep` is subtracted too, so a band whose pens
-        // out-eat its income goes past -1. What caps the penalty is `ramp`'s own `min(.., 1)`, never a
-        // floor on income: do not remove that clamp. The `max(.., 0)` below is belt-and-braces against
-        // a config with `deficit_penalty > 1`.
+        // `net_ratio` is bounded below by `-1` only while income cannot go negative, which is not a
+        // guarantee this expression makes for callers. What caps the penalty is `ramp`'s own
+        // `min(.., 1)`, never a floor on income: do not remove that clamp. The `max(.., 0)` below is
+        // belt-and-braces against a config with `deficit_penalty > 1`.
         max(
             scalar_one()
                 - scalar_from_f32(cfg.deficit_penalty) * ramp(-net_ratio, cfg.deficit_saturation),
@@ -234,7 +234,6 @@ fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
     }
     Some(FoodFlow {
         steady_income: scalar_from_f32(labor.last_yields.iter().map(|y| y.realized).sum::<f32>()),
-        pen_feed_upkeep: scalar_from_f32(labor.last_pen_feed_upkeep),
     })
 }
 
@@ -1108,7 +1107,6 @@ mod demographics_tests {
             MILD_TEMP,
             Some(FoodFlow {
                 steady_income: scalar_from_f32(income_turns * BREEDER_DEMAND),
-                pen_feed_upkeep: scalar_zero(),
             }),
         )
         .children
@@ -1282,7 +1280,6 @@ mod demographics_tests {
             breeders(20.0),
             Some(FoodFlow {
                 steady_income: scalar_zero(),
-                pen_feed_upkeep: scalar_zero(),
             }),
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(NO_CAP),
@@ -1323,7 +1320,6 @@ mod demographics_tests {
             start,
             Some(FoodFlow {
                 steady_income: scalar_zero(),
-                pen_feed_upkeep: scalar_zero(),
             }),
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(NO_CAP),
@@ -1392,25 +1388,27 @@ mod demographics_tests {
         );
     }
 
-    /// Pen feed is a real drain on the same larder, so it counts against the flow exactly as it
-    /// does in the player-facing `turnsOfFood` runway — a band whose income is entirely eaten by
-    /// its animals is in deficit, not at break-even.
+    /// **KEEPING PENS DOES NOT MAKE A BAND HUNGRY.** A pen eats grass and hay, never the larder, so
+    /// however many animals a band keeps its people's flow reads off its own income alone — a band at
+    /// break-even income is at break-even, not in deficit.
+    ///
+    /// The retired `FoodFlow::pen_feed_upkeep` subtracted the pens' bread bill here, which is the
+    /// fertility half of the same modelling error: your animals' appetite suppressed your births.
     #[test]
-    fn pen_feed_upkeep_counts_against_the_flow() {
-        let with_pens = run_with_flow(
+    fn a_bands_flow_reads_off_its_own_income_and_nothing_its_pens_ate() {
+        let at_break_even = run_with_flow(
             breeders(20.0),
             MILD_TEMP,
             Some(FoodFlow {
                 steady_income: scalar_from_f32(BREEDER_DEMAND),
-                pen_feed_upkeep: scalar_from_f32(BREEDER_DEMAND),
             }),
         )
         .children
         .to_f32();
         let without = births_at_income(20.0, 1.0);
         assert!(
-            with_pens < without,
-            "pen upkeep should push an otherwise break-even band into deficit: {with_pens} vs {without}"
+            (at_break_even - without).abs() < 1e-6,
+            "a break-even band is at break-even whatever it keeps: {at_break_even} vs {without}"
         );
     }
 
@@ -1536,7 +1534,7 @@ mod demographics_tests {
 mod food_flow_tests {
     use super::band_food_flow;
     use crate::components::{
-        LaborAllocation, LaborAssignment, LaborTarget, SourceYield, TakeSelection,
+        LaborAllocation, LaborAssignment, LaborTarget, SourcePriority, SourceYield, TakeSelection,
     };
 
     use bevy::math::UVec2;
@@ -1551,6 +1549,7 @@ mod food_flow_tests {
             },
             workers: 4,
             kit: None,
+            priority: SourcePriority::default(),
         }
     }
 
@@ -1567,8 +1566,10 @@ mod food_flow_tests {
         let labor = LaborAllocation {
             assignments: vec![forage_assignment()],
             last_yields: Vec::new(),
-            last_pen_feed_upkeep: 0.0,
             last_raid_forfeit: 0.0,
+            last_fodder_need: 0.0,
+            last_fodder_inflow: 0.0,
+            last_fodder_drain: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1607,8 +1608,10 @@ mod food_flow_tests {
                     ..SourceYield::ZERO
                 },
             ],
-            last_pen_feed_upkeep: 1.5,
             last_raid_forfeit: 0.0,
+            last_fodder_need: 0.0,
+            last_fodder_inflow: 0.0,
+            last_fodder_drain: 0.0,
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1620,7 +1623,6 @@ mod food_flow_tests {
             "should sum realized (2+3), not actual (12+0): {}",
             flow.steady_income.to_f32()
         );
-        assert!((flow.pen_feed_upkeep.to_f32() - 1.5).abs() < 1e-4);
     }
 }
 

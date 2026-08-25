@@ -456,6 +456,48 @@ one. Pinned by the liveness pair `server::tests::a_bench_crew_is_missing_from_th
 `::the_published_idle_count_is_what_assign_labor_will_staff` (the published number is exactly what the
 command path staffs — without it, a sim that stopped publishing idle at all would pass the first).
 
+### The shed can take the bench's crew, so a running job with nobody on it now exists
+
+The bench spends the band's people, so when a band cannot field what it is holding the **shedding
+order** takes hands off it like anything else — `LaborAllocation::normalize` ranks it in step 5 beside
+the worked rows and stalls it at step 5b (`yield-forecast.md` → "The crafting bench is a candidate in
+the walk" has the ordering and why the bench is not a learner). Three consequences land here:
+
+- ⛔ **The shed must never call `clear_job`.** It is `*self = Self::default()`, so it **forfeits the
+  drawn pile** — the materials are dropped rather than returned to the store, and the grade the draw
+  fixed is re-fixable against different stock. `BandBench::shed_one_worker` takes one hand and leaves
+  the recipe, the progress, `items_completed`, the last grade **and** the drawn pile alone, so
+  re-crewing **resumes**. That matches this system's own rule for a pass it cannot advance: *the
+  player chose this job, and silently emptying their bench is a worse answer than a job that makes no
+  progress.*
+- ⛔ **An unstaffed bench draws nothing** (`AN_IDLE_BENCH`). `advance_crafting` runs `draw_pass`
+  **before** the workers term is used anywhere, so a bench at zero crew would withdraw a pass's
+  inputs every turn for work it can never do — a famine quietly draining the material store into a
+  bench nobody is at. The gate is on the **draw**, not the pile: a bench that had already cut its
+  materials keeps them (they are the player's, and the job is still theirs) and simply banks no
+  progress, which `rate_per_turn(0, …)` gives for free. Pinned by
+  `crafting::an_unstaffed_bench_draws_nothing_from_the_store` — and that fixture stocks **both** of
+  the sled's inputs, because a draw is all-or-nothing and a fixture short of one of them withdraws
+  nothing whatever the code does.
+- **`BandBench::priority` is the bench's own mark**, set by `bench_priority <faction> <band>
+  high|normal|low`. Its own verb rather than a `work_priority` token: every other bench command is
+  addressed `<faction> <band>` with no source, and `work_priority`'s grammar reads a lone token as a
+  **herd id**, so `work_priority <f> <b> bench low` would be ambiguous with a herd named `bench`. It
+  rides `BandRecord::bench` with the rest of the bench, because a checkpoint that forgot it would
+  silently re-rank the band's work on rollback, and it is **on the wire** as
+  `BenchState.priority` — the *same* `SourcePriority` enum a worked row carries, reused rather than
+  duplicated, because it is one property of one kind. Captured **live** off the bench (as
+  `LaborAssignment.priority` is), so an edit lands on the command's own recapture and the client needs
+  no optimistic overlay. **It is published on an IDLE bench too**: a rank is a standing statement
+  about the bench rather than about the job on it, `bench_priority` is settable with nothing on it —
+  the moment a player is most likely to state it — and a capture that dropped the mark there would
+  make the control look like it had done nothing. `crafting_wire::the_benchs_rank_reaches_the_client_running_or_idle`
+  pins all three arms off the encoded envelope.
+
+**An unmarked bench is the first thing a short band thins**, because a craft pays into no food, fodder
+or material account — a statement about the accounts, not a judgement about crafting. That is the
+right default in a famine and is exactly what the mark exists to override.
+
 ## `advance_crafting`, and why every refusal is a zero
 
 Scheduled in the Population chain immediately after `advance_labor_allocation` — two reasons that

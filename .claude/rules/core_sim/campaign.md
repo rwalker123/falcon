@@ -120,21 +120,23 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 >   `reserve_saturation_turns_reproduces_the_old_curve_at_one`); the shipped **10.0** makes a band
 >   bank roughly a season to earn the full bonus.
 > - **`trend`** (flow, new) — two-sided around 1.0 off
->   `net_ratio = (steady_income − demand − pen_feed_upkeep) / demand`, so surplus *raises* fertility
->   as well as deficit lowering it. **`steady_income` is Σ per-source `SourceYield.realized`, never
->   Σ `actual`** — `actual` is lumpy by design (a big-game hunt pays 0 for six turns then spikes) and
->   fertility must not sawtooth with whole-animal timing. **Subtracting `pen_feed_upkeep` is what
->   makes `net_flow` the negation of the same net drain `turnsOfFood` divides by**, so a band whose
->   panel shows a shrinking runway is exactly a band whose `trend` is below 1 — the two readouts
->   cannot disagree about direction.
+>   `net_ratio = (steady_income − demand) / demand`, so surplus *raises* fertility as well as deficit
+>   lowering it. **`steady_income` is Σ per-source `SourceYield.realized`, never Σ `actual`** —
+>   `actual` is lumpy by design (a big-game hunt pays 0 for six turns then spikes) and fertility must
+>   not sawtooth with whole-animal timing. It is the negation of the same net drain `turnsOfFood`
+>   divides by, so a band whose panel shows a shrinking runway is exactly a band whose `trend` is
+>   below 1 — the two readouts cannot disagree about direction.
+>   > **`FoodFlow::pen_feed_upkeep` is RETIRED, and so is the runway's copy of it.** Both subtracted
+>   > what a band's pens ate from the food its people live on, which was the fertility (and runway)
+>   > half of *"human food is not animal feed"*: keeping animals suppressed your births. A pen eats
+>   > grass and hay. **Both readouts lost the same term**, so they still cannot disagree.
 >
 > **Damp, not stop.** `trend.deficit_penalty` (0.75) is the single damp-vs-stop lever: a collapsed
 > band still breeds at 25% of base, leaving starvation mortality as the real consequence of a deficit
 > rather than punishing one bad stretch twice. **`1.0` stops growth outright** — a config change, not
 > a code change (pinned by `deficit_penalty_of_one_stops_growth_outright`).
 >
-> **`None` flow is NO DATA, never a famine.** `last_yields`/`last_pen_feed_upkeep` are rebuilt each
-> turn, so `band_food_flow` must distinguish *unprojected* from *genuinely zero* — the same trap
+> **`None` flow is NO DATA, never a famine.** `last_yields` is rebuilt each turn, so `band_food_flow` must distinguish *unprojected* from *genuinely zero* — the same trap
 > already documented for the arrivals schedule in `larder_runway_turns`. **Staffed assignments with
 > empty `last_yields`** = telemetry no turn has written → `None` → neutral trend (otherwise a band
 > that has not resolved yet would be denied births); **empty `assignments`** = a really idle band → `Some` with zero income. The
@@ -313,17 +315,15 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 
 > #### `turnsOfFood` is `larder / net drain` — ONE formula for a band and an expedition
 >
-> **`runway = larder / (consumption + penFeedUpkeep − income)`.** An expedition has no labor income
-> and keeps no pens, so it reduces to `provisions / consumption` — **exactly** the historical
-> reading, unchanged (pinned by `snapshot::population::tests::an_expedition_reports_provisions_over_consumption`).
+> **`runway = larder / (consumption − income)`.** An expedition has no labor income, so it reduces
+> to `provisions / consumption` — **exactly** the historical reading, unchanged (pinned by `snapshot::population::tests::an_expedition_reports_provisions_over_consumption`).
 > A resident band with real income gets the honest number instead of the old `larder / demand`, which
 > **assumed the band stops gathering and hunting** and so read badly pessimistic — a header saying "4"
 > above a FOOD OUTLOOK chart showing ~9. Do not special-case the two actors.
 >
 > It is resolved the way that chart resolves it (`snapshot::population::larder_runway_turns`), so
 > they cannot disagree by a turn or two on the same panel: (1) walk the larder forward over the
-> **merged per-source `arrivals` schedules**, debiting `consumption + penFeedUpkeep` per turn and
-> clamping at 0 — the first turn to reach 0 is the answer; (2) it survives the horizon (or **no
+> **merged per-source `arrivals` schedules**, debiting `consumption` per turn and clamping at 0 — the first turn to reach 0 is the answer; (2) it survives the horizon (or **no
 > source was projected at all** — an empty schedule is *no data*, never a famine): fall back to the
 > smooth `larder / net_drain` on the **steady** income (Σ per-source `realized`, computed locally at
 > capture — see the retirement note below), capped at the sentinel; (3)
@@ -436,14 +436,14 @@ negligible-take floor that ends the loop). Reuses the shared model helpers (`reg
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
 it is: it is the real arrivals and is load-bearing for the
-`larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit + transferReceived −
+`larder_delta == foodIncome − foodConsumption − raidForfeit + transferReceived −
 transferSent` ledger identity.
 
 > **The last two terms are the food that CROSSED BETWEEN BANDS** —
 > `PopulationCohortState.transferReceived` / `transferSent`
 > (`LaborAllocation::last_transfer_received` / `last_transfer_sent`, arc #527). Every other term is
-> about *this* band: what its own workers produced, what its own people ate, what its own pen and its
-> own raid cost it. Food that **moves between larders** therefore fits nowhere in it, and three
+> about *this* band: what its own workers produced, what its own people ate, what its own raid cost
+> it. Food that **moves between larders** therefore fits nowhere in it, and three
 > things move food between larders: `balance_supply_networks`, every turn since turn one; a **trade
 > expedition** carrying a shipment (`.claude/rules/core_sim/expeditions.md` → "A shipment is a party
 > that walks it"); and a **band split** handing the new band its share of the parent's stores
@@ -452,7 +452,7 @@ transferSent` ledger identity.
 > **`found_settlement`'s `SETTLEMENT_PROVISION_COST` debit is a KNOWN-OPEN hole of a different
 > shape.** That food is *destroyed* — spent on standing a settlement up, not handed to another band —
 > so booking it as `transferSent` would name a recipient that does not exist. It wants a term of its
-> own (a consumption-outside-eating line, the shape `penFeedUpkeep` already has), which is a
+> own (a consumption-outside-eating line, the shape `raidForfeit` already has), which is a
 > deliberate decision rather than a mechanical fix, and it is not made here.
 >
 > **The supply-network half was a pre-existing hole, and it is measured rather than asserted.** The
@@ -465,7 +465,7 @@ transferSent` ledger identity.
 > shipment landing, an expedition's launch draw and a party's pack coming home are one fact — *food
 > that crossed between bands outside income and consumption* — and minting a term per mechanism is
 > how a ledger acquires five fields that answer one question. **Two named magnitudes rather than one
-> signed net**, matching `penFeedUpkeep` and `raidForfeit`: a band that both sends and receives in
+> signed net**, matching `raidForfeit`: a band that both sends and receives in
 > one turn is doing something, and a signed net would render that as nothing happening.
 >
 > **The window is the SNAPSHOT window, not the turn.** Unlike the other four terms this pair has
@@ -504,16 +504,19 @@ transferSent` ledger identity.
 > first published frame and touches nothing afterwards, and the shared fixture now publishes one
 > frame between its split and its forced larders so the counters it clears describe what happened.
 
-> **The ledger identity gained a fourth term with Predators Phase 3 (`combat.md`).**
+> **The ledger identity gained a term with Predators Phase 3 (`combat.md`).**
 > `PopulationCohortState.raidForfeit` (`LaborAllocation::last_raid_forfeit`) is the food a
 > casualty-causing predator raid forfeits — `predators.raid_yield_forfeit_fraction` of that turn's
-> income, a real `LocalStore::take` debit that lands in **neither** `foodIncome` nor `foodConsumption`,
-> exactly like `penFeedUpkeep`. It brought the identity to
-> `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit` (the transfer pair
-> above is the next two terms), pinned through a real
-> raid turn by `integration_tests/tests/raid_food_ledger.rs`. **It is a PAST-turn stochastic debit, not
-> a recurring cost, so — unlike `penFeedUpkeep` — it does NOT enter the `turnsOfFood` forward-runway
-> drain** (the runway drains only by `consumption + penFeedUpkeep`; see the runway callout above).
+> income, a real `LocalStore::take` debit that lands in **neither** `foodIncome` nor `foodConsumption`.
+> The identity is `larder_delta == foodIncome − foodConsumption − raidForfeit` (the transfer pair above
+> is the next two terms), pinned through a real raid turn by
+> `integration_tests/tests/raid_food_ledger.rs`. **It is a PAST-turn stochastic debit, not a recurring
+> cost, so it does NOT enter the `turnsOfFood` forward-runway drain** (the runway drains only by
+> `consumption`; see the runway callout above).
+>
+> **It once had a sibling: `penFeedUpkeep`, retired.** That was the food a band's pens drew from its
+> larder, the term `raidForfeit` was minted in the image of. Human food is not animal feed — a pen eats
+> grass and hay — so there is no such debit and the identity lost it.
 
 > **RETIRED: the band-level `PopulationCohortState.foodIncomeAverage` (= Σ `realized`).** The client
 > sums the Food line's income half **itself**, from the per-source `realizedYield` of the breakdown

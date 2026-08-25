@@ -71,6 +71,24 @@ const BENCH_RATE_PER_TURN_KEY := "rate_per_turn"
 const BENCH_DRAWN_INPUTS_KEY := "drawn_inputs"
 const DRAWN_INPUT_MATERIAL_ID_KEY := "material_id"
 const DRAWN_INPUT_AMOUNT_KEY := "amount"
+## **THE PLAYER'S OWN RANK ON THIS BENCH** (`docs/plan_standing_upkeep.md` §4.9 item 9b) — the same
+## `SourcePriority` a worked row carries, arriving as the LOWERCASE WORD the decoder converted the
+## ordinal into. The vocabulary itself is `HudWorkVocab`'s (`WORK_PRIORITY_LEVELS` / `_FACES` /
+## `work_priority_of`) and is deliberately NOT restated here: the bench competes with the gathering
+## rows in one shedding walk, so one property means one word list — a second spelling would be the
+## drift the wire's shared enum exists to prevent.
+##
+## `"normal"` on an unmarked bench, on an IDLE one and on a band with no bench at all, so the panel
+## reads it the same way in all three.
+const BENCH_PRIORITY_KEY := "priority"
+## How the rank's line-two prefix is found by IDENTITY — it is a `HudWorkVocab` face this panel does
+## not compose, so an assertion matching on its wording would be matching on the other module's
+## spelling. Valued the LEVEL, which is what the harness actually wants to read back.
+const BENCH_PRIORITY_META := "crafting_bench_priority"
+## …and the handle on the LINK that opens the picker. Its face is `HudWorkVocab.WORK_INSPECT_PRIORITY`,
+## the same word the work inspector's link wears, so a search by text finds a control in two panels and
+## cannot say which — the `CLEAR_BENCH_META` argument, one control over.
+const BENCH_PRIORITY_LINK_META := "crafting_bench_priority_link"
 
 ## `PopulationCohortState.craftOffers` — ONE ROW PER RECIPE, ALWAYS. `reason` + `severity` are the
 ## contract rather than `available`: *"Not needed yet"* is a shrug and *"Short 4.9 bone"* is a

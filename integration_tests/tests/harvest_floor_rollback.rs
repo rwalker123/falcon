@@ -6,7 +6,7 @@ use core_sim::TakeSelection;
 use core_sim::{
     build_test_app, scalar_from_f32, scalar_one, scalar_zero, BandId, FactionId, GenerationId,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    ResidentBand, SourcePriority, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// The band id the fixture's cohort carries. A checkpoint keys bands by `BandId` — a cohort without
@@ -140,6 +140,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         },
                         workers: 2,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                     LaborAssignment {
                         target: LaborTarget::Hunt {
@@ -148,6 +149,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         },
                         workers: 2,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                 ],
                 ..Default::default()

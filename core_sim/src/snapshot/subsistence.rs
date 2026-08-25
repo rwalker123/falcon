@@ -14,7 +14,8 @@ use crate::intensification::{
     NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
 };
 use sim_schema::{
-    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_QUEUE_BLOCKED, NO_BUILD_TURNS_ESTIMATE,
+    BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED,
+    NO_BUILD_TURNS_ESTIMATE,
 };
 
 /// **THE COUNTDOWN, ON THE WIRE** — the one place `BuildTurns` becomes an `i32`, so the plant and the
@@ -28,6 +29,47 @@ fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
         crate::intensification::BuildTurns::Holding => BUILD_METER_HOLDS,
         crate::intensification::BuildTurns::Rotting => BUILD_METER_ROTS,
         crate::intensification::BuildTurns::Blocked => BUILD_QUEUE_BLOCKED,
+    }
+}
+
+/// **THE COUNTDOWN A SOURCE ROW PUBLISHES, INCLUDING THE TWO WAYS OF HAVING NO ANSWER** — the one
+/// seam both webs' rows go through, so a patch and a herd can never resolve the same state to two
+/// different numbers.
+///
+/// `Some(turns)` is an answer and maps straight through [`published_build_turns`]. `None` is where
+/// two different facts used to be folded into one sentinel:
+///
+/// - **the estimate pass ran and had no number** — nobody works the source, its gate refuses, or a
+///   running build banked nothing and is genuinely **stalled** → [`NO_BUILD_TURNS_ESTIMATE`];
+/// - **no estimate pass has ever run for this entry** — the player queued it since the last turn
+///   resolved → [`sim_schema::BUILD_NOT_YET_ESTIMATED`].
+///
+/// # THE TEST IS THE ESTIMATE PASS, NEVER THE METER
+///
+/// A genuinely stalled build sits at `0%` too, so progress cannot separate them. What can is that
+/// `publish_build_chain` stamps **every entry it walks** with that entry's 0-based place in the line
+/// ([`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] otherwise), and the Logistics decay passes
+/// clear the place back to that sentinel every turn — so *"in a band's **live** queue **and** still
+/// carrying the cleared place"* is exactly *"queued since the last pass"*.
+///
+/// **Both terms are load-bearing.** The live-queue term is what stops every unworked patch on the map
+/// — which also carries the cleared place — reading as a build waiting to start; the position term is
+/// what stops a genuinely stalled entry, which *is* live-queued, reading the same way.
+///
+/// **`queued_live` is read off the bands' own queues** ([`BuildKitIds`]), not off the turn-written
+/// row, for the reason the kit beside it is: the row's scratch lags a command by a whole turn, and
+/// this state exists precisely in the frame before that turn.
+fn published_build_countdown(
+    turns: Option<crate::intensification::BuildTurns>,
+    stamped_position: i32,
+    queued_live: bool,
+) -> i32 {
+    match turns {
+        Some(turns) => published_build_turns(turns),
+        None if queued_live && stamped_position == NOT_IN_ANY_BUILD_QUEUE => {
+            BUILD_NOT_YET_ESTIMATED
+        }
+        None => NO_BUILD_TURNS_ESTIMATE,
     }
 }
 
@@ -129,6 +171,22 @@ impl BuildKitIds {
     /// The animal twin, keyed by herd id.
     fn herd(&self, id: &str) -> String {
         self.herds.get(id).cloned().unwrap_or_default()
+    }
+
+    /// **IS THIS PATCH IN SOME BAND'S LIVE QUEUE?** — membership of the same index the kit comes
+    /// out of, which is built by walking the bands' `build_queue`s rather than by reading the
+    /// turn-written row.
+    ///
+    /// It is asked, and cannot be replaced by a `!patch(tile).is_empty()` test, because a resolved
+    /// builders kit is **never** the empty string: `builders_kit_for` always names a roster entry,
+    /// the bare-handed one included.
+    fn patch_is_queued(&self, tile: UVec2) -> bool {
+        self.patches.contains_key(&tile)
+    }
+
+    /// The animal twin — see [`Self::patch_is_queued`].
+    fn herd_is_queued(&self, id: &str) -> bool {
+        self.herds.contains_key(id)
     }
 }
 
@@ -583,14 +641,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is
                 // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).
                 corral_yield: forecast.managed_yield.provisions,
-                // The pen as a managed population: what it EATS, and whether its keeper is paying.
-                // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
-                // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
-                // basis as `corral_yield`, so the pre-commit Corral row can show the running cost next
-                // to the payoff. `pen_fed_fraction` is the value the keeper's tend branch wrote this
-                // turn (Population runs before the capture), so the client reads the CURRENT turn's
-                // feeding, and `1.0` for anything unpenned.
-                pen_upkeep: herd.map(|herd| pen_upkeep(herd, fauna)).unwrap_or(0.0),
+                // The pen as a managed population: whether its grass and hay are feeding it.
+                // `pen_fed_fraction` is the value the keeper's tend branch wrote this turn (Population
+                // runs before the capture), so the client reads the CURRENT turn's feeding, and `1.0`
+                // for anything unpenned.
+                //
+                // **`pen_upkeep` is RETIRED** — `upkeep_per_biomass × biomass`, the running FOOD cost
+                // quoted here beside `corral_yield` so a pre-commit Corral row could subtract one from
+                // the other. A pen eats grass and hay, so there is no food-unit running cost to
+                // subtract and the payoff stands alone.
                 pen_fed_fraction: herd
                     .map(|herd| herd.pen_fed_fraction)
                     .unwrap_or(PEN_FULLY_FED),
@@ -785,16 +844,29 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     })
                     .unwrap_or_default(),
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
-                // the corral-tend branch wrote, so the client can render "fed by hay" beside the
-                // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
+                // the corral-tend branch wrote. **It is the whole of the feed split beside
+                // `pen_pasture_fraction`**: grass and hay in one unit against one demand, so the
+                // client draws "fed by pasture NN% · hay X.X" and the remainder, if any, is what the
+                // herd starves for. `0.0` for an unpenned/absent herd or one no hay reached.
+                //
+                // **`pen_larder_bill` and `pen_hay_food` are RETIRED with the larder feed** — the
+                // FOOD-unit third term and the hay-in-food-units conversion that only existed to sit
+                // in the same row as it.
                 fodder_draw: herd.map(|herd| herd.fodder_draw).unwrap_or(0.0),
-                // The render-ready feed split (Flora Roster F3): the NET larder bill after pasture +
-                // hay, and hay's food-equivalent, both the transient `Herd` scratch the corral-tend
-                // branch stamped, both in FOOD units. `0.0` for an unpenned/absent herd. With
-                // `pen_upkeep` (gross) and `pen_pasture_fraction`, the client draws "pasture NN% · hay
-                // X.X · larder Y.Y" with no arithmetic of its own.
-                pen_larder_bill: herd.map(|herd| herd.pen_larder_bill).unwrap_or(0.0),
-                pen_hay_food: herd.map(|herd| herd.pen_hay_food).unwrap_or(0.0),
+                // **How much more fodder this pen needs per turn** — `max(0, hay need −
+                // fodder_draw)`, in fodder units, where the hay need is the gap the pen's own
+                // footprint leaves (`max(0, demand_grass − footprint_intake)`). The row reads "40%
+                // pasture · 7% fodder · needs 11.3 more/turn" off it and `pen_pasture_fraction`.
+                //
+                // **The gap itself is not published** — it rode this row as `pen_hay_need` and
+                // nothing read it, because what a pen row states is how much MORE it needs. The band
+                // -level roll-up of the gross gap is `PopulationCohortState::fodder_need`.
+                //
+                // Stamped by the corral arm on the same pass as both its terms, so it cannot
+                // describe a different turn from them; **ungated by Foddering** unlike the draw, so a
+                // band that cannot hay at all publishes its whole need as its shortfall. `0.0` for an
+                // unpenned/absent herd and for a pen its own land feeds.
+                pen_fodder_shortfall: herd.map(|herd| herd.pen_fodder_shortfall).unwrap_or(0.0),
                 // Predators Phase 0 — the RAW combat components of this herd's species
                 // (`docs/plan_predators.md`). Danger is DERIVED client-side, never stored, because
                 // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression.
@@ -992,9 +1064,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         wrap_horizontal,
                     )
                 }),
-                build_turns_remaining: herd
-                    .and_then(|herd| herd.build_turns_remaining)
-                    .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
+                // **The countdown, with "queued but never estimated" told apart from "no answer"** —
+                // see [`published_build_countdown`]. A herd the viewer cannot see at all publishes
+                // the plain no-answer sentinel: an unseen source is not a build waiting to start.
+                build_turns_remaining: herd.map_or(NO_BUILD_TURNS_ESTIMATE, |herd| {
+                    published_build_countdown(
+                        herd.build_turns_remaining,
+                        herd.build_queue_position,
+                        build_kits.herd_is_queued(&entry.id),
+                    )
+                }),
                 // **What the keepers' tools ADD to the running build each turn** — quoted beside
                 // the `*WorkCost` above, never folded into it, so a readout can say "your hurdles:
                 // +9 work a turn" against a price no tool can move (§4.8).
@@ -1373,9 +1452,12 @@ pub(crate) fn snapshot_forage_patches(
                 // on this row is quoted per. **The reading already resolved once above**, never a
                 // second lookup: two producers of one number are two numbers.
                 tile_capacity,
-                build_turns_remaining: patch
-                    .build_turns_remaining
-                    .map_or(NO_BUILD_TURNS_ESTIMATE, published_build_turns),
+                // The plant twin — see [`published_build_countdown`] and the herd row above.
+                build_turns_remaining: published_build_countdown(
+                    patch.build_turns_remaining,
+                    patch.build_queue_position,
+                    build_kits.patch_is_queued(patch.tile),
+                ),
                 // The plant twin — the hoes' delivery, or `NO_BUILD_GEAR` for a pool sent out bare
                 // or carrying the animal web's hurdles.
                 build_work_from_gear: patch.build_work_from_gear,

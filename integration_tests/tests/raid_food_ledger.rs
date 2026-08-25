@@ -8,7 +8,7 @@
 //! extending the pen ledger identity by one term:
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+//! larder_delta == foodIncome − foodConsumption − raidForfeit
 //! ```
 //!
 //! Pinned against a **real turn** through the real systems and the real snapshot export — a foraging
@@ -19,7 +19,8 @@ use core_sim::TakeSelection;
 use core_sim::{
     available_workers, build_test_app, run_turn, scalar_from_f32, CommandEventKind,
     CommandEventLog, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
-    LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, Tile, FOOD,
+    LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, SourcePriority,
+    Tile, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own.
@@ -71,6 +72,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
             },
             workers: workers.max(1),
             kit: None,
+            priority: SourcePriority::default(),
         }],
         ..Default::default()
     });
@@ -152,23 +154,15 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         "the foraging band earned income to forfeit (got {})",
         cohort.food_income
     );
-    // This is a raid, not a pen, so there is no pen feed — the fourth term should be inert here.
-    assert_eq!(
-        cohort.pen_feed_upkeep, 0.0,
-        "a band with no pen pays no pen feed"
-    );
-
     // The extended identity holds against the real larder movement.
     let delta = after - before;
-    let ledger =
-        cohort.food_income - cohort.food_consumption - cohort.pen_feed_upkeep - cohort.raid_forfeit;
+    let ledger = cohort.food_income - cohort.food_consumption - cohort.raid_forfeit;
     assert!(
         (delta - ledger).abs() < EPSILON,
-        "larder_delta must equal foodIncome − foodConsumption − penFeedUpkeep − raidForfeit: \
-         delta={delta} vs ledger={ledger} (income={} consumption={} penFeed={} raidForfeit={})",
+        "larder_delta must equal foodIncome − foodConsumption − raidForfeit: \
+         delta={delta} vs ledger={ledger} (income={} consumption={} raidForfeit={})",
         cohort.food_income,
         cohort.food_consumption,
-        cohort.pen_feed_upkeep,
         cohort.raid_forfeit,
     );
 

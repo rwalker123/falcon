@@ -220,9 +220,38 @@ party with nothing left to deliver.
 the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
 NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's
 larder; and `raid_forfeit` ← `cohort.raidForfeit()` (`float`, `as f64`), the food this band lost to
-raids THIS turn — the raid twin of `pen_feed_upkeep`. Both are consumed client-side by the band panel:
+raids THIS turn — the ledger's only debit beyond consumption, `pen_feed_upkeep` having been retired
+(human food is not animal feed; see `band-readouts.md`). Both are consumed client-side by the band panel:
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
+
+**THE BAND'S HAY LEDGER, three cohort keys appended last** — `fodder_need` / `fodder_income` /
+`turns_of_fodder`, the fodder twins of `food_income` / `food_consumption` / `turns_of_food`, in FODDER
+units against the `fodder_store` above. `fodder_need` is the hay the band's pens are SHORT per turn,
+**summed by the sim** over every pen it keeps (each pen's own share is the gap its fenced footprint
+leaves, which the sim computes but does NOT publish per pen — see `pen_fodder_shortfall` below, which
+is a DIFFERENT quantity and does not sum to this one): herd rows are fog-filtered, so a client-side
+sum silently drops the pens it cannot see — the
+mistake the retired `pen_feed_upkeep` was minted to avoid. `fodder_income` is the raw harvest its
+fodder Fields took, not a Foddering-gated share. `turns_of_fodder` comes off the sim's own
+`larder_runway_turns`, **999 no-drain sentinel included**, so the client reads it through
+`BandFoodStatus.is_limited` / `DetailFormat.food_turns_text` exactly as it reads the food runway —
+one idea, one spelling, no second constant and no second branch.
+
+`herds_to_array` decodes the per-pen hay key **`pen_fodder_shortfall`**, beside `pen_pasture_fraction`:
+how much MORE fodder this pen needs per turn, in fodder units — `max(0, hay gap − fodderDraw)`, the
+gap its own fenced footprint leaves less the hay its keeper actually carried in. `0` on an unpenned
+herd and on a pen its land already feeds (so the readout says nothing rather than `needs 0.0`). It is
+**not gated on Foddering** — a keeper who cannot draw hay is short its WHOLE need, which is precisely
+the case the row exists for. A FIXED footprint under a growing herd is a RISING shortfall, which is
+the slow trap the field surfaces before an animal dies of it.
+
+**THE GAP ITSELF IS NOT DECODED, BECAUSE IT IS NOT PUBLISHED.** It rode this row as `penHayNeed` until
+it turned out nothing rendered it — the pen row states how much more is needed, not the gross gap —
+and the wire slot is now `(deprecated)`. The sim owns that subtraction and publishes only its result,
+which is what makes it impossible for the difference to describe a different turn from its terms; a
+decoder that re-derived the gap from `pen_fodder_shortfall + fodder_draw` would be minting a wire
+field client-side.
 
 `population_to_dict` also decodes the **minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the
 band's three consumable kits and the tiers they resolve to: `hunting_kit_durability` /
@@ -423,6 +452,28 @@ records **six** times. Two forcing functions sit under it, both in `xtask/src/de
 appending a **repeated** field fails the fixture build until it is seeded (`assert_no_empty_arrays`
 names the path), and appending to one of the state structs that has no `Default` fails the *compile*
 (those blanks are exhaustive literals on purpose).
+
+> #### ⛔ A FIXTURE COVERING AN ARM IS NOT THE GUARD COVERING IT — and the bench's rank is the worked example
+>
+> `BenchState.priority` reached the wire with `BENCHED_SOURCE_PRIORITIES` already seeding a `High`
+> bench and a `Low` one into the decode fixture, and the guard still passed with a deliberately broken
+> `High` mapping — because **no converter read the field**, so it never reached the decoded dictionary
+> and the golden had no line for it to move. *"The fixture covers the arm"* and *"the guard covers the
+> arm"* were two claims and only the first was true.
+>
+> Adding `priority` to `bench_dict` is what closed it, and the closure was DEMONSTRATED rather than
+> asserted: with the key in place and the golden re-recorded, emitting `"normal"` from every arm makes
+> `cargo xtask decode-guard` **FAIL**, naming both moved rows (`1827 "high" → "normal"`,
+> `2458 "low" → "normal"`); restoring it passes at 55 top-level keys. **A seeded fixture value proves
+> nothing until a golden line moves with it** — which is the enum form of the "decoded in
+> `native/src/lib.rs`" bug this file records six times, and the reason a new arm is worth breaking on
+> purpose once.
+>
+> **The `_ =>` catch-all is why only two of the three arms can be guarded here.** A cohort carries
+> exactly ONE bench, so two cohorts reach two of the three levels — and those are the two that matter:
+> a wrong `Normal` arm is unreachable by construction (the catch-all IS `Normal`), while a wrong `High`
+> or `Low` decodes silently as `normal`. The `Normal` arm is covered end to end at the codec level by
+> `core_sim/tests/crafting_wire.rs`.
 
 **Those two forcing functions reach CI; the golden diff does not.** CI has no Godot and the decoder
 returns a `VarDictionary`, so the diff is a **local** gate — but `xtask`'s own `cargo test` builds

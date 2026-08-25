@@ -35,9 +35,9 @@ use core_sim::{
     HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment,
     LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
-    SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
+    TileRegistry, WellbeingConfigHandle, FOOD, RUNG_COST_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
     WHOLLY_UNSUPPLIED,
 };
 
@@ -479,11 +479,13 @@ fn spawn_forager_of(
                         },
                         workers: foragers,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                     LaborAssignment {
                         target: LaborTarget::Agriculture,
                         workers: keepers,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
@@ -491,6 +493,7 @@ fn spawn_forager_of(
                         target: LaborTarget::Builders,
                         workers: foragers,
                         kit: None,
+                        priority: SourcePriority::default(),
                     },
                 ],
                 build_queue: improvement

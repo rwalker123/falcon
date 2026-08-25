@@ -301,14 +301,15 @@ mod tests {
         assert_eq!(herd.stayFraction(), NEUTRAL);
     }
 
-    /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
-    /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
-    /// (append-only discipline), and the client renders the feed as a negative row against the
-    /// **gross** `corralYield`. Encode → decode with the generated reader, so a field that silently
-    /// failed to serialize cannot pass.
+    /// **The pen-as-a-managed-population fields survive the wire.** `penFedFraction` (`< 1` =
+    /// starving) rides beside the **gross** `corralYield` on `HerdTelemetryState`. Encode → decode
+    /// with the generated reader, so a field that silently failed to serialize cannot pass.
+    ///
+    /// **`penUpkeep` is retired** (the slot is `(deprecated)`): it was the FOOD the pen demanded per
+    /// turn, drawn as a negative row against `corralYield`. A pen eats grass and hay, so there is no
+    /// food-unit running cost to draw and the fed fraction carries the whole of the feeding story.
     #[test]
-    fn herd_pen_upkeep_and_fed_fraction_round_trip_on_the_wire() {
-        const UPKEEP: f32 = 1.2;
+    fn herd_fed_fraction_round_trips_on_the_wire() {
         const FED: f32 = 0.25;
         const CORRAL_YIELD: f32 = 3.6;
         const PASTORAL_YIELD: f32 = 1.8;
@@ -319,7 +320,6 @@ mod tests {
             corralled: true,
             corral_yield: CORRAL_YIELD,
             pastoral_yield: PASTORAL_YIELD,
-            pen_upkeep: UPKEEP,
             pen_fed_fraction: FED,
             ..Default::default()
         });
@@ -337,14 +337,13 @@ mod tests {
         assert!(herd.corralled());
         assert!((herd.corralYield() - CORRAL_YIELD).abs() < 1e-6);
         assert!((herd.pastoralYield() - PASTORAL_YIELD).abs() < 1e-6);
-        assert!((herd.penUpkeep() - UPKEEP).abs() < 1e-6);
         assert!((herd.penFedFraction() - FED).abs() < 1e-6);
     }
 
-    /// A herd that is **not** penned eats nothing and is never starving — it decodes to the neutral
-    /// pair (the `= 0` / `= 1` schema defaults).
+    /// A herd that is **not** penned is never starving — it decodes to the neutral `= 1` schema
+    /// default.
     #[test]
-    fn an_unpenned_herd_defaults_to_no_upkeep_and_fully_fed() {
+    fn an_unpenned_herd_defaults_to_fully_fed() {
         let snapshot = snapshot_with_herd(HerdTelemetryState {
             id: "herd_wild".to_string(),
             ..Default::default()
@@ -360,7 +359,6 @@ mod tests {
             .herds()
             .expect("herds present")
             .get(0);
-        assert_eq!(herd.penUpkeep(), 0.0);
         assert_eq!(herd.penFedFraction(), 1.0);
     }
 
@@ -1427,7 +1425,7 @@ mod tests {
     /// **THE STANDING UPKEEP SURVIVES THE WIRE, on both webs, as FOUR terms**
     /// (`docs/plan_standing_upkeep.md` §2). The demand, what was supplied and what went unmet all
     /// ship rather than being left as a subtraction, because the sim answers and the client does
-    /// zero arithmetic — the `penFeedUpkeep` discipline — and `upkeepWorkersNeeded` beside them is
+    /// zero arithmetic — the sim answers, the client renders — and `upkeepWorkersNeeded` beside them is
     /// the **maintain** activity's own `workers_needed`, in its own unit.
     ///
     /// **There is no `maintain` flag.** *"Stop maintaining this"* is a crew of zero
@@ -1483,7 +1481,7 @@ mod tests {
             patch.upkeepDemand(),
             0.0,
             "a patch nothing has described bills nothing — an honest 0, always meaningful and \
-             never a sentinel (the `penUpkeep` rule)"
+             never a sentinel (the `corralYield` rule)"
         );
         assert_eq!(patch.upkeepSupplied(), 0.0);
         assert_eq!(patch.upkeepShortfall(), 0.0);

@@ -9,7 +9,7 @@ use core_sim::{
     GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
     LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
     MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
@@ -136,6 +136,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                     },
                     workers: HUNT_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

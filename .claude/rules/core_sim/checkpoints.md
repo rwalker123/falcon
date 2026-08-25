@@ -61,7 +61,7 @@ pen does not read as fed.
 `PopulationCohort` and `LaborAllocation` field rewinds too — the per-turn readouts
 (`last_food_consumption`, `last_morale_delta` / `_cause` / `_contributions`,
 `last_fertility_factors`, `discontent_fraction`, `last_emigrated` / `last_immigrated`) and the labor
-telemetry (`last_yields`, `last_pen_feed_upkeep`, `last_raid_forfeit`) alike, plus `BandTravel`,
+telemetry (`last_yields`, `last_raid_forfeit`) alike, plus `BandTravel`,
 which is why a restored band resumes its move rather than cancelling it. Two things this retires:
 
 - **The old restore rebuilt a `LaborAllocation` from its `*State` record**, via a

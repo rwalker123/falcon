@@ -160,6 +160,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "build_order <faction_id> <band_id> <x> <y> <position> | build_order <faction_id> <band_id> <herd_id> <position>",
     },
     CommandVerbHelp {
+        verb: "work_priority",
+        aliases: &[],
+        summary: "MARK ONE WORKED ROW WITH YOUR OWN RANK, on one band: 'high', 'normal' (the default) or 'low'. THE BAND'S SCARCITY HANDLERS READ IT FIRST. When the band loses a worker, the shedding walk still picks the step it would have picked - a spare scout before a spare builder, an unimproved source before an improved one - and then takes the hand off the LOWEST-RANKED candidate in that step, so a rank orders candidates and never moves a row between steps. When the band cannot feed every pen it keeps, a short FODDER store serves 'high' pens in full, then 'normal', then 'low', and pens on the same rank split what is left in proportion to what they asked for. THERE IS NO SECOND STORE BEHIND IT - the larder is what the PEOPLE eat, never feed, so a pen the hay does not reach is simply short and starves for it. With every row at 'normal' nothing changes at all. It is a value on the row, NOT a place in a list: it survives editing the row's crew. Two integer tokens name a TILE; one token names a HERD id; the trailing token is the level.",
+        usage: "work_priority <faction_id> <band_id> <x> <y> high|normal|low | work_priority <faction_id> <band_id> <herd_id> high|normal|low",
+    },
+    CommandVerbHelp {
         verb: "build_kit",
         aliases: &[],
         summary: "NAME THE KIT ONE QUEUED BUILD IS RAISED WITH, on every band of the faction that has the source queued. THE BUILDERS' KIT IS PER QUEUE ENTRY, NOT PER BAND: a build's default kit is derived from that entry's own food web - hoes for a Cultivate or Sow, hurdles for a Tame or Corral - so `assign_labor <faction> <band> builders <n>` takes NO `kit` token at all, and this is the only place the derivation is overridden. OMIT the `kit` token to CLEAR the override back to that derivation; name `none` to send the pool out bare-handed on this job alone, which is a real selection and not the same statement. A kit the roster does not carry, or one whose `jobs` does not list `builders`, is refused by name. Two integer tokens name a TILE; one token names a HERD id.",
@@ -188,6 +194,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &[],
         summary: "Change the crew on a band's running crafting bench, leaving the job and its progress alone. Clamped to the band's idle pool - the bench spends the same workers assign_labor does.",
         usage: "bench_crew <faction_id> <band_id> workers <n>",
+    },
+    CommandVerbHelp {
+        verb: "bench_priority",
+        aliases: &[],
+        summary: "MARK A BAND'S CRAFTING BENCH WITH YOUR OWN RANK: 'high', 'normal' (the default) or 'low' - the same mark `work_priority` puts on a worked row, and read by the same shedding order. WHY THE BENCH NEEDS ONE: it spends the same workers your gatherers do, so when the band runs short it competes with them - and a craft pays into no food, fodder or material account, so an unmarked bench is the FIRST thing thinned. That is the right default in a famine and this is how you override it. The bench is ranked in the same step as your worked sources, never a step of its own. Its LAST hand goes before any source is emptied, so a 'high' bench still stalls before a 'low' patch is given up - the steps say what is at stake, the mark says who goes first among equals. A stalled bench keeps its recipe, its progress and the materials it already drew; re-crew it and it carries on. Its own verb rather than a `work_priority` token because that grammar reads a lone token as a herd id.",
+        usage: "bench_priority <faction_id> <band_id> high|normal|low",
     },
     CommandVerbHelp {
         verb: "corral",
@@ -876,6 +888,32 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 position: parse_u32(position_str, "build_order position")?,
             })
         }
+        // **THE WORKED ROW'S RANK**, shaped exactly like `build_order` above — a band handle, then a
+        // source, then one trailing token — because it addresses the same thing in the same words and
+        // a second addressing shape for one family of verbs is how a client sends the wrong one.
+        // The level is lower-cased on the way in, as `upkeep_mode`'s mode is; an unknown level is the
+        // sim's to refuse **by name**, so the parser passes the token through rather than guessing.
+        "work_priority" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let tail: Vec<&str> = parts.collect();
+            let Some((level_str, source)) = tail.split_last() else {
+                return Err(CommandParseError::MissingArgument("level"));
+            };
+            let source = parse_build_source(source)?;
+            Ok(CommandPayload::WorkPriority {
+                faction_id: parse_u32(faction_str, "work_priority faction")?,
+                band_id: parse_u64(band_str, "work_priority band")?,
+                target_x: source.target_x,
+                target_y: source.target_y,
+                herd_id: source.herd_id,
+                level: level_str.to_ascii_lowercase(),
+            })
+        }
         "upkeep_mode" => {
             let faction_str = parts
                 .next()
@@ -954,6 +992,34 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "bench_crew faction")?,
                 band_id: parse_u64(band_str, "bench_crew band_id")?,
                 workers: parse_u32(&workers, "bench_crew workers")?,
+            })
+        }
+        // **THE BENCH'S RANK**, shaped like `upkeep_mode` — a band handle and one trailing token —
+        // because it addresses a band-level thing and the bench family it joins (`set_bench`,
+        // `clear_bench`, `bench_crew`) is addressed that way too. It is deliberately NOT a
+        // `work_priority` token: that grammar reads a bare single token as a HERD ID, so `bench`
+        // would be ambiguous with a herd of that name.
+        //
+        // The level is lower-cased on the way in, as `upkeep_mode`'s mode is; an unknown level is the
+        // sim's to refuse **by name**, so the parser passes the token through rather than guessing.
+        "bench_priority" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let level = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("level"))?
+                .to_ascii_lowercase();
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            Ok(CommandPayload::BenchPriority {
+                faction_id: parse_u32(faction_str, "bench_priority faction")?,
+                band_id: parse_u64(band_str, "bench_priority band_id")?,
+                level,
             })
         }
         "corral" => {
@@ -2847,6 +2913,103 @@ mod tests {
                 "the retired verb must not parse: {line}"
             );
         }
+    }
+
+    /// **`work_priority` names a BAND, a SOURCE and a LEVEL** — `build_order`'s grammar with a
+    /// different trailing token, because it addresses the same thing in the same words
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9b). Both source shapes, and the level case-folded
+    /// exactly as `upkeep_mode`'s mode is.
+    #[test]
+    fn parse_work_priority_reads_the_band_the_source_and_the_level() {
+        assert_eq!(
+            parse_command_line("work_priority 1 7 4 9 low").unwrap(),
+            CommandPayload::WorkPriority {
+                faction_id: 1,
+                band_id: 7,
+                target_x: Some(4),
+                target_y: Some(9),
+                herd_id: None,
+                level: "low".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command_line("work_priority 1 7 herd_aurochs HIGH").unwrap(),
+            CommandPayload::WorkPriority {
+                faction_id: 1,
+                band_id: 7,
+                target_x: None,
+                target_y: None,
+                herd_id: Some("herd_aurochs".to_string()),
+                level: "high".to_string(),
+            }
+        );
+    }
+
+    /// **The LEVEL is not validated here, and the arity is** — `upkeep_mode`'s rule, for its reason:
+    /// which levels exist is the sim's to say (it refuses an unknown one by name), but a missing or
+    /// extra token is a typo and guessing at one would rank a row the player never named.
+    #[test]
+    fn parse_work_priority_takes_any_level_token_but_needs_a_source() {
+        assert!(matches!(
+            parse_command_line("work_priority 1 7 4 9 sideways"),
+            Ok(CommandPayload::WorkPriority { .. })
+        ));
+        assert!(matches!(
+            parse_command_line("work_priority 1 7"),
+            Err(CommandParseError::MissingArgument("level"))
+        ));
+        assert!(matches!(
+            parse_command_line("work_priority 1 7 low"),
+            Err(CommandParseError::MissingArgument("source"))
+        ));
+        assert!(matches!(
+            parse_command_line("work_priority 1 7 4 9 extra low"),
+            Err(CommandParseError::UnexpectedToken(_))
+        ));
+    }
+
+    /// **`bench_priority` names a BAND and a LEVEL, and no source at all** — the bench family's own
+    /// shape (`set_bench` / `clear_bench` / `bench_crew` are all `<faction> <band> …`), and
+    /// deliberately not a `work_priority` token: that grammar reads a lone token as a **herd id**, so
+    /// `work_priority <f> <b> bench low` would be ambiguous with a herd named `bench`.
+    #[test]
+    fn parse_bench_priority_reads_the_band_and_the_level() {
+        assert_eq!(
+            parse_command_line("bench_priority 1 7 low").unwrap(),
+            CommandPayload::BenchPriority {
+                faction_id: 1,
+                band_id: 7,
+                level: "low".to_string(),
+            }
+        );
+        // Case-folded, exactly as `upkeep_mode`'s mode and `work_priority`'s level are.
+        assert_eq!(
+            parse_command_line("bench_priority 1 7 HIGH").unwrap(),
+            CommandPayload::BenchPriority {
+                faction_id: 1,
+                band_id: 7,
+                level: "high".to_string(),
+            }
+        );
+    }
+
+    /// **The LEVEL is not validated here, and the arity is** — the rule `upkeep_mode` and
+    /// `work_priority` both carry: which levels exist is the sim's to say (it refuses an unknown one
+    /// by name), but a missing or extra token is a typo.
+    #[test]
+    fn parse_bench_priority_takes_any_level_token_but_exactly_three() {
+        assert!(matches!(
+            parse_command_line("bench_priority 1 7 sideways"),
+            Ok(CommandPayload::BenchPriority { .. })
+        ));
+        assert!(matches!(
+            parse_command_line("bench_priority 1 7"),
+            Err(CommandParseError::MissingArgument("level"))
+        ));
+        assert!(matches!(
+            parse_command_line("bench_priority 1 7 low extra"),
+            Err(CommandParseError::UnexpectedToken(_))
+        ));
     }
 
     /// **`upkeep_mode` names a BAND and a MODE, and nothing else** — maintenance is a band-level

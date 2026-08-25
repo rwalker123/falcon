@@ -87,6 +87,30 @@ pub const BUILD_METER_ROTS: i32 = -3;
 /// Appended below its siblings (append-only wire; the three existing values keep their numbers).
 pub const BUILD_QUEUE_BLOCKED: i32 = -4;
 
+/// **"THIS BUILD HAS NOT HAD A TURN YET"** — the wire value of `buildTurnsRemaining` for an entry the
+/// player has queued since the last turn resolved, so **no estimate pass has ever run for it**.
+///
+/// **It is NOT [`NO_BUILD_TURNS_ESTIMATE`], and that is the whole reason it exists.** `-1` means the
+/// sim looked and had no number: nobody is working the source, its gate refuses, or a running build
+/// banked nothing and is genuinely **stalled**. This one means the sim has not looked. A build the
+/// player queued a second ago is not a hazard, and folding the two together is what put
+/// `⚠ Stalled 0%` on a freshly declared `Cultivate` with two builders standing on it — a warning
+/// that cleared itself on the next turn, which is the worst shape a warning can have.
+///
+/// **The distinguishing fact is the ESTIMATE PASS, never the meter.** A genuinely stalled build also
+/// sits at `0%`, so progress cannot tell them apart. What can is that `publish_build_chain` stamps
+/// every entry it walks with its 0-based place in the line, and the Logistics decay passes clear that
+/// place back to [`NOT_IN_ANY_BUILD_QUEUE`] every turn — so a source that is in a band's **live**
+/// queue and still carries the cleared place is one no pass has reached since it was queued.
+///
+/// **Both webs**: a patch and a herd share `publish_build_chain` and the same per-turn reset, so a
+/// fresh `Tame` or `Corral` reads this exactly as a fresh `Cultivate` does.
+///
+/// A reader should render it as **"queued — starts next turn"**, never as a warning, and never as the
+/// silence `-1` earns. Appended below its siblings (append-only wire; the four existing values keep
+/// their numbers).
+pub const BUILD_NOT_YET_ESTIMATED: i32 = -5;
+
 /// **"THIS SOURCE IS IN NO BAND'S BUILD QUEUE"** — the neutral of `buildQueuePosition`, whose real
 /// values are **0-based** places in the winning band's queue.
 ///
@@ -181,23 +205,19 @@ pub struct HerdTelemetryState {
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). With the `corral` row of [`Self::hunt_policy_ceilings`] (what the herd pays *while*
     /// the pen is being built), lets the client show "preparing X → then Y" pre-commit.
-    /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
+    /// **Gross and net both**: a pen's feed is grass and hay, so nothing is subtracted from this in
+    /// food.
     #[serde(default)]
     pub corral_yield: f32,
     // **RETIRED: `corral_trade`** (arc #527). The wire slot `corralTrade` is `(deprecated)` in place.
-    /// **The feed this pen demands — or WOULD demand once built** — at the herd's CURRENT biomass
-    /// (`pen.upkeep_per_biomass × biomass`), because a confined herd cannot graze. A **projection**
-    /// for an unpenned herd, the **live** demand for a penned one: always meaningful, never
-    /// `0`-because-unpenned. Computed on the same biomass basis as [`Self::corral_yield`], so the two
-    /// are a **matched pair** — the pre-commit `Corral` row must show the running cost beside the
-    /// payoff, since the herd it is deciding about is by definition *not yet penned*.
-    ///
-    /// **Demanded, not paid.** A starving pen demands more than it is paid ([`Self::pen_fed_fraction`]
-    /// is that ratio). The band's *actual* ledger debit is
-    /// `PopulationCohortState::pen_feed_upkeep` — draw **that** in the food ledger, not this.
-    #[serde(default)]
-    pub pen_upkeep: f32,
-    /// The fraction of `pen_upkeep` the keeper actually **paid** last turn. `1.0` = fully fed (also
+    // **RETIRED: `pen_upkeep`** — `pen.upkeep_per_biomass × biomass`, the FOOD a pen drew from its
+    // keeper's larder, quoted for every herd so a pre-commit `Corral` row could subtract the running
+    // cost from the payoff. **Human food is not animal feed**: a pen eats the grass its fenced
+    // footprint grows and the hay its keeper carries in, so there is no food-unit running cost left to
+    // quote. The wire slot `penUpkeep` is `(deprecated)` in place. What a pen still demands is
+    // fodder, and [`Self::pen_fed_fraction`] says whether it got it.
+    /// The fraction of its **fodder** demand this pen's grass and hay actually covered last turn —
+    /// `(footprint_intake + fodder_draw) / (fodder_per_biomass × biomass)`. `1.0` = fully fed (also
     /// the value for a herd that is not penned); `< 1` = **starving** — the
     /// herd is shrinking by `pen.starve_shrink_rate × (1 − this) × biomass` per turn, and its yield
     /// with it. It recovers when fed again (it never despawns and never loses the pen).
@@ -227,9 +247,10 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub pen_footprint_tiles: u32,
     /// **The share of a penned herd's feed its footprint covered** (`pasture_fraction`, Grazing 2d
-    /// §2.3): `1.0` = the fenced pasture feeds it for free, `0.0` = a barren footprint pays the full
-    /// larder bill. With `penUpkeep` the client shows "fed by pasture NN% · larder N/turn". `0.0` for an
-    /// unpenned herd. Appended (append-only).
+    /// §2.3): `1.0` = the fenced pasture feeds it for free, `0.0` = a barren footprint lives entirely
+    /// on hay. With [`Self::fodder_draw`] it is the whole feed split — grass and hay, one unit, one
+    /// demand — and whatever the two leave uncovered is what [`Self::pen_fed_fraction`] falls short
+    /// by. `0.0` for an unpenned herd. Appended (append-only).
     #[serde(default)]
     pub pen_pasture_fraction: f32,
     /// **The in-flight `ExtendPen` ring's build meter, in WORK UNITS** — the same unit-costed meter
@@ -295,27 +316,38 @@ pub struct HerdTelemetryState {
     // place.
     /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
     /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
-    /// own footprint already fed. Lets the client show "fed by hay" beside the `pen_upkeep` bread bill.
-    /// Appended last (append-only).
+    /// own footprint already fed. With [`Self::pen_pasture_fraction`] it is the whole feed split —
+    /// "fed by pasture NN% · hay X.X" — both in fodder units against one demand. Appended last
+    /// (append-only).
     #[serde(default)]
     pub fodder_draw: f32,
-    /// **The pen's NET larder bill after pasture + hay** (Flora Roster F3) — the food/turn its keeper
-    /// hauls from the `FOOD` larder once the footprint's pasture and any drawn hay have covered their
-    /// share (the corral-tend branch's own `demand` = `gross pen_upkeep × (1 − land_hay_fraction)`), in
-    /// **food** units. `0.0` when fully fed by pasture + hay, or unpenned. The render-ready larder term
-    /// of the feed split: with [`Self::pen_upkeep`] (gross) and [`Self::pen_pasture_fraction`],
-    /// `pen_upkeep × pen_pasture_fraction + pen_hay_food + pen_larder_bill == pen_upkeep` — three terms
-    /// of one demand, no double-count. Appended last (append-only).
+    // **RETIRED: `pen_hay_need`** — the hay a pen was short per turn, `max(0, fodder_per_biomass ×
+    // biomass − footprint_intake)`. Nothing read it: a pen row states how much MORE the pen needs,
+    // which is [`Self::pen_fodder_shortfall`] below, and that is struck sim-side from the same
+    // quantity. The sim still computes it (it is what the band-level `fodder_need` roll-up sums), but
+    // it is no longer a per-pen wire field. The wire slot `penHayNeed` is `(deprecated)` in place.
+    /// **How much more fodder this pen needs per turn** — `max(0, hay need − fodder_draw)`, in fodder
+    /// units, where the hay need is the gap the pen's own fenced footprint leaves. What the land did
+    /// not grow *and* the keeper did not carry in, so a pen row reads *"40% pasture · 7% fodder ·
+    /// needs 11.3 more/turn"* with no client-side subtraction.
+    ///
+    /// **The sim owns the arithmetic, and this is the only term published.** The gap it is taken from
+    /// is not on the wire: it is stamped on the same pass as [`Self::fodder_draw`] and so is this,
+    /// which is what makes it impossible for the difference to describe a different turn from its
+    /// terms.
+    ///
+    /// **Not gated on Foddering**, unlike [`Self::fodder_draw`]: a band that cannot draw hay draws
+    /// nothing, so its shortfall is its *whole* need — the case the readout is most for.
+    ///
+    /// **Clamped at zero**; `0` for an unpenned herd and for a pen its own land feeds. Appended last
+    /// (append-only).
     #[serde(default)]
-    pub pen_larder_bill: f32,
-    /// **Hay's contribution to the pen's feed, in food-equivalent units** (Flora Roster F3) — the food
-    /// it *displaced* from the larder (`pen_upkeep × fodder_draw / grass_demand`). [`Self::fodder_draw`]
-    /// is in grass units (~25× the food scale) and cannot share a row with the food-unit pasture/larder
-    /// terms; this can. `0.0` when no hay was drawn, the keeper lacks Foddering, or the herd is
-    /// unpenned. The hay term of the render-ready feed split (see [`Self::pen_larder_bill`]). Appended
-    /// last (append-only).
-    #[serde(default)]
-    pub pen_hay_food: f32,
+    pub pen_fodder_shortfall: f32,
+    // **RETIRED: `pen_larder_bill` and `pen_hay_food`** — the FOOD-unit third term of the old feed
+    // split (`pen_upkeep × pen_pasture_fraction + pen_hay_food + pen_larder_bill == pen_upkeep`) and
+    // the conversion that restated hay in the units the *people* eat in so it could share that row.
+    // Both die with the larder feed: the split is grass and hay, in fodder. The wire slots
+    // `penLarderBill` / `penHayFood` are `(deprecated)` in place.
     /// **The raw combat components of this herd's species** (Predators Phase 0, `docs/plan_predators.md`),
     /// so the client can DERIVE danger itself — it is never stored server-side, because strength ≠
     /// danger (hunt-danger ≈ `attack × ferocity`, camp-threat ≈ `attack × aggression`). `attack` /
@@ -356,7 +388,7 @@ pub struct HerdTelemetryState {
     // **RETIRED: `maintain`** — a per-source boolean toggle. *"Stop maintaining this"* is
     // `maintain <faction> hunt <herd> 0`: a flag beside a crew count would be a second way to say
     // what the number already says, and the two could disagree.
-    /// **What holding this herd's rung DEMANDS this turn**, in work units. Follows `pen_upkeep`'s
+    /// **What holding this herd's rung DEMANDS this turn**, in work units. Follows `corral_yield`'s
     /// rule — **always meaningful, never a sentinel**: a rung that declares no upkeep reads an honest
     /// `0`, which is every shipped rung today.
     #[serde(default)]
@@ -556,7 +588,7 @@ pub struct HerdTelemetryState {
     /// state a compose sheet is looking at. With an improvement in flight it counts down the running
     /// meter; with none it is what the rung this source would climb **next** would take the crew
     /// currently working it, from the work already banked on that rung. Always meaningful, never
-    /// `-1`-because-unstarted — the same rule `pen_upkeep` follows one field over.
+    /// `-1`-because-unstarted — the same always-meaningful rule `corral_yield` follows.
     ///
     /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
@@ -569,7 +601,7 @@ pub struct HerdTelemetryState {
     /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
     /// would actually go.
     ///
-    /// **FOUR NEGATIVES, FOUR FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **FIVE NEGATIVES, FIVE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
     /// reject), or a gate refuses a *waiting* entry — which may well be eligible by the time it
@@ -578,6 +610,13 @@ pub struct HerdTelemetryState {
     /// same build with a **negative** net: the meter is going backwards and banked work is being
     /// lost. [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) = the band's builders are **staffed and standing
     /// on this entry** and its own gate refuses it, so nothing banks and nothing behind it moves.
+    /// [`crate::BUILD_NOT_YET_ESTIMATED`] (`-5`) = the player queued this build **since the last turn
+    /// resolved**, so no estimate pass has ever run for it — *"the sim has not looked"*, as against
+    /// `-1`'s *"the sim looked and had no number"*.
+    ///
+    /// Render `-5` as **"queued — starts next turn"** and never as a warning: a build declared a
+    /// second ago with a staffed pool on it is not a hazard, and folding it into `-1` put
+    /// `⚠ Stalled 0%` on a fresh `Cultivate` until the next turn cleared it.
     ///
     /// Render `-2`/`-3` as **infinity**, and distinguish them — both are answers, and one of them is
     /// costing the player progress they already paid for. `-4` is neither: it is a **stuck queue**,
@@ -591,7 +630,7 @@ pub struct HerdTelemetryState {
     /// pool.
     ///
     /// **The client cannot compute this** — it holds neither the pool's output, nor the queue, nor
-    /// the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline. One field for
+    /// the kit's build rate — so the sim answers and the client does no arithmetic. One field for
     /// both of a web's rungs: at most one improvement is ever in flight on one source, and at most
     /// one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]
@@ -827,7 +866,6 @@ impl Default for HerdTelemetryState {
             corral_progress: 0.0,
             per_worker_yield: 0.0,
             corral_yield: 0.0,
-            pen_upkeep: 0.0,
             pen_fed_fraction: pen_fully_fed(),
             carrying_capacity: 0.0,
             graze_range_radius: 0,
@@ -842,8 +880,7 @@ impl Default for HerdTelemetryState {
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
             fodder_draw: 0.0,
-            pen_larder_bill: 0.0,
-            pen_hay_food: 0.0,
+            pen_fodder_shortfall: 0.0,
             attack: 0.0,
             defense: 0.0,
             ferocity: 0.0,
@@ -1228,7 +1265,7 @@ pub struct ForagePatchState {
     /// state a compose sheet is looking at. With an improvement in flight it counts down the running
     /// meter; with none it is what the rung this source would climb **next** would take the crew
     /// currently working it, from the work already banked on that rung. Always meaningful, never
-    /// `-1`-because-unstarted — the same rule `pen_upkeep` follows one field over.
+    /// `-1`-because-unstarted — the same always-meaningful rule `corral_yield` follows.
     ///
     /// **Which `*_work_cost` it belongs beside** is the assignment's own `improvement`, and the
     /// **next rung up** when that is empty (`is_cultivated` / `is_field`, `domestication` /
@@ -1241,7 +1278,7 @@ pub struct ForagePatchState {
     /// nothing queued is quoted at the **back of the line**, which is where a newly queued build
     /// would actually go.
     ///
-    /// **FOUR NEGATIVES, FOUR FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
+    /// **FIVE NEGATIVES, FIVE FACTS.** [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`) = **no estimate**,
     /// where there is genuinely no answer: the source is at the top of its ladder, the next rung's
     /// own gates refuse it for this faction (a projection must never quote a job the command would
     /// reject), or a gate refuses a *waiting* entry — which may well be eligible by the time it
@@ -1250,6 +1287,13 @@ pub struct ForagePatchState {
     /// same build with a **negative** net: the meter is going backwards and banked work is being
     /// lost. [`crate::BUILD_QUEUE_BLOCKED`] (`-4`) = the band's builders are **staffed and standing
     /// on this entry** and its own gate refuses it, so nothing banks and nothing behind it moves.
+    /// [`crate::BUILD_NOT_YET_ESTIMATED`] (`-5`) = the player queued this build **since the last turn
+    /// resolved**, so no estimate pass has ever run for it — *"the sim has not looked"*, as against
+    /// `-1`'s *"the sim looked and had no number"*.
+    ///
+    /// Render `-5` as **"queued — starts next turn"** and never as a warning: a build declared a
+    /// second ago with a staffed pool on it is not a hazard, and folding it into `-1` put
+    /// `⚠ Stalled 0%` on a fresh `Cultivate` until the next turn cleared it.
     ///
     /// Render `-2`/`-3` as **infinity**, and distinguish them — both are answers, and one of them is
     /// costing the player progress they already paid for. `-4` is neither: it is a **stuck queue**,
@@ -1263,7 +1307,7 @@ pub struct ForagePatchState {
     /// pool.
     ///
     /// **The client cannot compute this** — it holds neither the pool's output, nor the queue, nor
-    /// the kit's build rate — so the sim answers, the `pen_feed_upkeep` discipline. One field for
+    /// the kit's build rate — so the sim answers and the client does no arithmetic. One field for
     /// both of a web's rungs: at most one improvement is ever in flight on one source, and at most
     /// one rung is ever next. Appended (append-only).
     #[serde(default = "no_build_turns_estimate")]

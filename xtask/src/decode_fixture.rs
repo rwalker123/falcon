@@ -74,6 +74,30 @@ const GRID_CELLS: usize = (GRID_W * GRID_H) as usize;
 /// builder that returns the first element for every row (or reuses one offset) is visible.
 const ROWS: usize = 2;
 
+/// **THE TWO RANKS A BENCH CAN CARRY HERE — ONE PER COHORT, AND `Normal` IS NOT AMONG THEM.**
+///
+/// A cohort has exactly **one** bench, so a fixture cannot cycle a bench through the three ranks the
+/// way it cycles the labor rows; it can only give each cohort's bench a different one. These two are
+/// the **non-default** ranks, which is what a wrong mapping can move: `Normal` is the decoder's own
+/// catch-all arm, so a bench carrying it is indistinguishable from a bench whose rank was dropped —
+/// and it is covered where that distinction *is* observable, on the labor rows below
+/// ([`EVERY_SOURCE_PRIORITY`]), which is the codec-level coverage this array leans on.
+const BENCHED_SOURCE_PRIORITIES: [SourcePriorityState; 2] =
+    [SourcePriorityState::High, SourcePriorityState::Low];
+
+/// **EVERY `SourcePriority` THE WIRE CAN CARRY**, one per fixture labor row — the one repeated
+/// section that is deliberately sized by an *enum* rather than by [`ROWS`].
+///
+/// An enum survives saturation (its serialized form is a variant name, which is not the empty
+/// default a string leaf is replaced on), so the only way a non-default variant reaches the decoder
+/// is for it to be written here. Covering all three end to end is what makes a mis-mapped arm move
+/// the golden.
+const EVERY_SOURCE_PRIORITY: [SourcePriorityState; 3] = [
+    SourcePriorityState::Normal,
+    SourcePriorityState::High,
+    SourcePriorityState::Low,
+];
+
 /// The length of the seeded `regrowthSamples` curve — the **shipped** sample count
 /// (`core_sim::snapshot::REGROWTH_CURVE_SAMPLES`), restated here rather than imported because
 /// `xtask` does not depend on `core_sim`. It only has to be a plausible non-empty length: saturation
@@ -1022,7 +1046,27 @@ fn seed_snapshot() -> WorldSnapshot {
         // carries no element type, so the decode guard would never see the field at all. The rank
         // is the INDEX, so the golden's element ORDER is part of what it pins.
         cohort.build_queue = rows();
-        cohort.labor_assignments = rows();
+        // **ONE ROW PER `SourcePriority`, WHICH IS WHY THIS LIST IS NOT `rows()`.**
+        //
+        // The rank is a serde *enum*, so saturation leaves it alone (a variant name is a non-empty
+        // string — see the module docs' two saturation rules), and `Default` is `Normal`. A fixture
+        // built from `rows()` therefore exercised the decoder's **default arm only**: the client's
+        // mapping ends in a `_ => "normal"` catch-all, so a `High` or `Low` arm wired to the wrong
+        // word would decode as `"normal"` and the golden would not move.
+        //
+        // **It was invisible for a reason worth stating: `Normal` is wire value `0`**, and a
+        // FlatBuffers scalar equal to its default costs no bytes — so the fixture `.bin`s did not
+        // change at all when the field was appended, and neither did the golden.
+        //
+        // The three rows are the whole enum, in declaration order, so a variant added to
+        // `SourcePriorityState` without a row here is a variant this guard does not cover.
+        cohort.labor_assignments = EVERY_SOURCE_PRIORITY
+            .iter()
+            .map(|priority| LaborAssignmentState {
+                priority: *priority,
+                ..Default::default()
+            })
+            .collect();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];
             // The row's MATERIAL account (arc #527) — a nested repeated field, seeded for the same
@@ -1446,6 +1490,15 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         cohort.entity = 100 + i as u64;
         cohort.current_x = i as u32 % GRID_W;
         cohort.current_y = i as u32 % GRID_H;
+        // **THE BENCH'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
+        // labor rows' `EVERY_SOURCE_PRIORITY` closes (see that const). A cohort carries exactly ONE
+        // bench, so with two cohorts the fixture can reach two of the three arms, and these are the
+        // two it must reach: a decoder maps this enum with a `_ =>` catch-all on the DEFAULT (the
+        // shipped `LaborAssignment` mapping is `_ => "normal"`), so a wrong `Normal` arm is
+        // unreachable by construction while a wrong `High` or `Low` decodes silently as `normal`.
+        // The `Normal` arm is covered end-to-end at the codec level by
+        // `core_sim/tests/crafting_wire.rs`, which asserts it off the encoded envelope.
+        cohort.bench.priority = BENCHED_SOURCE_PRIORITIES[i % BENCHED_SOURCE_PRIORITIES.len()];
     }
     for (i, herd) in s.herds.iter_mut().enumerate() {
         herd.x = i as u32 % GRID_W;

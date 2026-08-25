@@ -22,7 +22,7 @@ use core_sim::{
     advance_crafting, build_test_app, recapture_snapshot_in_place, scalar_from_f32, BandBench,
     BandEquipment, BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
     LadderConfigHandle, MaterialsConfig, MaterialsConfigHandle, PopulationCohort,
-    RecipesConfigHandle, ResidentBand, SnapshotHistory,
+    RecipesConfigHandle, ResidentBand, SnapshotHistory, SourcePriority,
 };
 use std::collections::BTreeMap;
 
@@ -389,6 +389,9 @@ struct PublishedBench {
     rate_per_turn: f32,
     /// `(material id, withdrawn amount)` for the pile already cut, in the recipe's input order.
     drawn_inputs: Vec<(String, f32)>,
+    /// **The player's rank on the bench**, read as the wire's own enum rather than as a word, so a
+    /// codec that mapped an arm to the wrong variant cannot pass.
+    priority: shadow_scale_flatbuffers::generated::shadow_scale::sim::SourcePriority,
 }
 
 /// The band's published crafting rows, decoded off the **encoded** frame.
@@ -522,6 +525,7 @@ fn publish(app: &mut App, band: Entity) -> Published {
                     .collect()
             })
             .unwrap_or_default(),
+        priority: bench_row.priority(),
     };
     let offers = cohort
         .craftOffers()
@@ -2239,5 +2243,65 @@ fn an_offer_names_the_item_it_makes_so_the_ledger_can_join_the_two_halves() {
         named.len(),
         published.offers.len(),
         "each shipped recipe makes its own item, so the join is one-to-one"
+    );
+}
+
+/// **THE BENCH'S RANK REACHES THE CLIENT, AND ON AN IDLE BENCH TOO.**
+///
+/// The mark is what makes `bench_priority` a control rather than a dead command: without it the
+/// player can neither see the rank nor read back what they set. Asserted off the **encoded envelope**
+/// (the artifact a client parses), because a field can be right in the capture and absent from the
+/// buffer.
+///
+/// **Three arms, and each fails on its own:**
+/// 1. an unmarked bench publishes the default — which is wire value `0`, so an unwritten slot would
+///    look identical to a correct one, hence the two arms beside it;
+/// 2. a marked bench publishes its mark, read as the wire's own enum rather than as a word;
+/// 3. **an IDLE bench publishes it too.** `bench_priority` is settable with nothing on the bench —
+///    that is the moment a player is most likely to state it — so a capture that dropped the mark on
+///    the idle arm would make the control look like it had done nothing.
+#[test]
+fn the_benchs_rank_reaches_the_client_running_or_idle() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, band) = world();
+    stock_a_sleds_worth_of_material(&mut app, band);
+    set_bench(&mut app, band, 2);
+
+    assert_eq!(
+        publish(&mut app, band).bench.priority,
+        fb::SourcePriority::Normal,
+        "an unmarked bench publishes the default"
+    );
+
+    for (mark, published) in [
+        (SourcePriority::High, fb::SourcePriority::High),
+        (SourcePriority::Low, fb::SourcePriority::Low),
+    ] {
+        app.world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench")
+            .priority = mark;
+        assert_eq!(
+            publish(&mut app, band).bench.priority,
+            published,
+            "the bench publishes the mark the player set ({mark:?})"
+        );
+    }
+
+    // The job comes off; the rank does not. A rank is a standing statement about the BENCH.
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .recipe_id = None;
+    let idle = publish(&mut app, band).bench;
+    assert_eq!(
+        idle.recipe_id, "",
+        "fixture: the bench really is idle, or the last arm is about nothing"
+    );
+    assert_eq!(
+        idle.priority,
+        fb::SourcePriority::Low,
+        "an IDLE bench publishes its rank too — the command sets it either way"
     );
 }

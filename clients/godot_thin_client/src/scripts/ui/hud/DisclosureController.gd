@@ -142,6 +142,12 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             return DetailFormat.food_is_concerning(band)
         HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
             return DetailFormat.growth_is_concerning(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_FODDER:
+            # The FOOD test on the fodder account, through the same runway thresholds — see
+            # `DetailFormat.fodder_is_concerning`. The row's own amber `need` clause is retired, so
+            # this is the only place a fodder larder is judged worrying, and it judges it by the rule
+            # the food larder is judged by.
+            return DetailFormat.fodder_is_concerning(band)
         HudDisclosureVocab.BREAKDOWN_KIND_KIT:
             # A kit that has RUN OUT is concerning; one merely wearing down is not. There is no
             # replenishment path, so the step down is permanent — the caret is the one warning the
@@ -156,12 +162,14 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             return DetailFormat.morale_is_concerning(band)
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
-## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`
-## / `    ▼ −1.74  🐄 Pen feed (animals)` (income ▲ green, debits ▼ amber via the shared
-## indented-sub-line tint). Only categories above the floor — a band with no pen shows no feed row.
+## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten` (income ▲
+## green, debits ▼ amber via the shared indented-sub-line tint). Only categories above the floor.
 ##
-## THREE kinds of row, not two: the pen's feed is a debit on the same larder as the people's meals,
-## but it is a DIFFERENT decision (shrink the herd vs starve the band), so it gets its own line.
+## **THE PEN HAS NO ROW HERE**, and the `🐄 Pen feed (animals)` line that used to sit beside `Eaten` is
+## retired with `penFeedUpkeep`: human food is not animal feed, so a pen never draws on this larder at
+## all. The two-debit reading it existed for — *is my larder draining because of my people or my
+## herd?* — has only one answer left on this ledger, and the herd's side of it is the drawer's marked
+## `Fed:` row instead.
 func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var gathered := DetailFormat.sum_realized_yield(band, SourceForecast.LABOR_KIND_FORAGE)
@@ -173,23 +181,20 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var eaten := float(band.get("food_consumption", 0.0))
     if eaten >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-eaten, DetailFormat.FOOD_LABEL_EATEN))
-    var pen_feed := DetailFormat.band_pen_feed(band)
-    if pen_feed >= SourceForecast.FOOD_FLOW_MIN:
-        lines.append(DetailFormat.food_breakdown_row(-pen_feed, DetailFormat.FOOD_LABEL_PEN_FEED))
-    # The raid debit (Predators Phase 3): food a predator took off the larder this turn. A FOURTH kind
-    # of row beside Pen feed — same larder, different decision (guard the camp vs feed the herd) — so it
-    # gets its own line, and only when a raid actually landed (0 → omitted, like Pen feed).
+    # The raid debit (Predators Phase 3): food a predator took off the larder this turn. A THIRD kind
+    # of row beside Eaten — same larder, a different story (guard the camp vs feed the people) — so it
+    # gets its own line, and only when a raid actually landed (0 → omitted).
     var raid_forfeit := DetailFormat.band_raid_forfeit(band)
     if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
     # **THE TWO TRANSFER ROWS** (arc #527) — food that crossed between bands, which passes through
     # NEITHER of the income rows above (what THIS band's workers produced) nor either debit (what its
-    # own people and animals ate). A FIFTH and SIXTH kind of row, and they are not a trade feature:
+    # own people ate, what a raid took). A FOURTH and FIFTH kind of row, and they are not a trade feature:
     # `balance_supply_networks` pools between neighbours every turn, so before these rows a player
     # watching two co-networked bands saw both larders move for no stated reason.
     #
     # Rendered as income and debit respectively — `food_breakdown_row` takes the sign — and each is
-    # omitted at zero, exactly like Pen feed and Lost to raids.
+    # omitted at zero, exactly like Lost to raids.
     #
     # **THEY READ THE PER-TURN PAIR, NEVER THE ACCUMULATING ONE** (issue #517). `transferReceived` /
     # `transferSent` accumulate over the PUBLICATION window and are cleared the moment the turn's
@@ -205,6 +210,36 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var sent := DetailFormat.band_transfer_sent_turn(band)
     if sent >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-sent, DetailFormat.FOOD_LABEL_TRANSFER_SENT))
+    return lines
+
+## The FODDER larder's two flows, the rows under the `Fodder:` summary: what the band's fodder Fields
+## GREW this turn and what its pens ATE. The fodder twin of `food_breakdown_lines`, and the reason
+## that summary is two terms again.
+##
+## **THESE TWO RATES USED TO RIDE THE ROW ITSELF** — `Fodder: 100.0 · need 6.0/turn · growing
+## 5.0/turn · 100 turns` — which wrapped to two lines in the narrow drawer column. That is a SHAPE
+## problem, not a width one: the Food row has always split a two-term summary from a click-to-open
+## breakdown, and the comment at the top of this file says why the rows are never appended inline.
+##
+## **`fodder_need` IS THE SIM'S SUM over the band's pens** (each pen's own share is the gap its fenced
+## footprint leaves, which the sim computes but does not publish per pen — a herd row carries only
+## `pen_fodder_shortfall`, that same gap less the hay actually drawn, so this total is not a sum of
+## anything the herd rows carry), never re-summed here from the herd rows — those are fog-filtered, so
+## a pen out of sight would silently drop out of a bill the band certainly still owes. `fodder_income` is the RAW
+## harvest its fodder Fields took this turn.
+##
+## Each row is omitted below `SourceForecast.FODDER_FLOW_MIN` rather than printed as a zero, exactly
+## as the food rows are: a band with no pens owes nothing, and `-0.0 Pens` is a debit invented on a
+## band that pays none. A larder with neither flow registers no disclosure at all — `register`
+## declines an empty payload — so the row keeps its caret honest: no caret, nothing behind it.
+func fodder_breakdown_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var grown := float(band.get("fodder_income", 0.0))
+    if grown >= SourceForecast.FODDER_FLOW_MIN:
+        lines.append(DetailFormat.fodder_breakdown_row(grown, DetailFormat.FODDER_LABEL_GROWN))
+    var eaten := float(band.get("fodder_need", 0.0))
+    if eaten >= SourceForecast.FODDER_FLOW_MIN:
+        lines.append(DetailFormat.fodder_breakdown_row(-eaten, DetailFormat.FODDER_LABEL_PENS))
     return lines
 
 ## **`trade_breakdown_lines` IS RETIRED** (arc #527) with the Trade row it opened. It itemized the

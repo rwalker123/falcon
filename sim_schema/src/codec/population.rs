@@ -3,7 +3,7 @@
 use crate::codec::{create_known_fragments, FbBuilder};
 use crate::state::population::{
     AccessibleStockpileEntryState, GenerationState, MaterialShortfallState, PopulationCohortState,
-    PopulationDemographicsState,
+    PopulationDemographicsState, SourcePriorityState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -288,6 +288,15 @@ fn create_populations<'a>(
                                 // board's `+` gate reads it instead of dividing by a fightless
                                 // reach. `0` on every non-hunt row. Appended last.
                                 huntUsefulWorkers: assignment.hunt_useful_workers,
+                                // **THE PLAYER'S OWN RANK ON THIS ROW** — mapped rather than cast,
+                                // because the wire numbering puts the DEFAULT at 0 (so it costs no
+                                // bytes) while the shedding order runs Low → Normal → High. Appended
+                                // last.
+                                priority: match assignment.priority {
+                                    SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                                    SourcePriorityState::High => fb::SourcePriority::High,
+                                    SourcePriorityState::Low => fb::SourcePriority::Low,
+                                },
                             },
                         )
                     })
@@ -488,6 +497,15 @@ fn create_populations<'a>(
                         ratePerTurn: cohort.bench.rate_per_turn,
                         drawnInputs: Some(drawn_inputs),
                         blockedSeverity: Some(blocked_severity),
+                        // **THE PLAYER'S OWN RANK ON THE BENCH** — the same mapping the labor row's
+                        // takes, and mapped rather than cast for the same reason: the wire puts the
+                        // DEFAULT at `0` while the shedding order runs Low → Normal → High.
+                        // Appended last.
+                        priority: match cohort.bench.priority {
+                            SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                            SourcePriorityState::High => fb::SourcePriority::High,
+                            SourcePriorityState::Low => fb::SourcePriority::Low,
+                        },
                     },
                 )
             };
@@ -713,7 +731,6 @@ fn create_populations<'a>(
                     moraleUnrest: cohort.morale_unrest,
                     settlementStage: Some(settlement_stage),
                     foodIncome: cohort.food_income,
-                    penFeedUpkeep: cohort.pen_feed_upkeep,
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
@@ -807,6 +824,12 @@ fn create_populations<'a>(
                     // THE BAND'S OWN BUILD QUEUE — appended last. The rank is the index, so this
                     // vector's ORDER is the payload; a reader must not re-sort it.
                     buildQueue: build_queue,
+                    // The band's hay ledger — appended last, always written. `fodderNeed` is the
+                    // GAP the pens' own footprints leave, `fodderIncome` the raw harvest beside it,
+                    // and the runway is `turnsOfFood`'s own function and sentinel over the two.
+                    fodderNeed: cohort.fodder_need,
+                    fodderIncome: cohort.fodder_income,
+                    turnsOfFodder: cohort.turns_of_fodder,
                 },
             )
         })

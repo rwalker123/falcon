@@ -122,6 +122,19 @@ signal build_kit_requested(payload: Dictionary)
 ## ordering left to roll back.
 signal build_order_requested(payload: Dictionary)
 
+## Emitted when the player marks ONE worked row with their own rank — where the band gives it up when
+## it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item 9b). Payload keys:
+## { faction, band_id, x, y, herd_id, level }, `level` being `high` / `normal` / `low`. Main formats
+## `work_priority <faction> <band_id> <source…> <level>`.
+##
+## **THE MARK IS A WORD ALL THE WAY DOWN.** `SourcePriority`'s ordinals put Normal at 0 (a default
+## costs no wire bytes) while the band sheds Low, Normal, High, so the native decoder hands GDScript
+## the WORD and nothing on this path ever holds a number it could sort on.
+##
+## No optimistic overlay and so no `pending_entity`: the mark is captured live off the allocation, and
+## the server re-captures after every command, so it arrives on this command's own recapture.
+signal work_priority_requested(payload: Dictionary)
+
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
 ## `spread` or `priority`. Main formats `upkeep_mode <faction> <band_id> <mode>`.
@@ -147,6 +160,13 @@ signal bench_crew_requested(payload: Dictionary)
 ## { faction, band_id }. Main formats `clear_bench <faction> <band>`. RELAYED from
 ## `CraftingPanelController`.
 signal clear_bench_requested(payload: Dictionary)
+## Emitted when a rung of the bench's rank picker is pressed — the player's own answer to what the band
+## gives up first when it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item
+## 9b). Payload keys: { faction, band_id, level }, `level` one of `high` / `normal` / `low`. Main
+## formats `bench_priority <faction> <band> <level>` — a SIBLING verb of `work_priority`, not a token
+## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
+## `CraftingPanelController`.
+signal bench_priority_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -255,9 +275,14 @@ const STACK_ADDITIONAL_MARGIN := 16.0
 # The band's FODDER larder (Flora roster F3): hay stockpiled to feed penned animals — a SECOND stock
 # distinct from the food larder above, in fodder/grass units (the raw `FODDER` `LocalStore` value,
 # `fodder_per_biomass × biomass` scale, ~25× the food scale — NOT comparable to and never summed onto
-# the food larder; only `pen_hay_food` is the food-equivalent conversion). Shown as its own stat line
-# beneath Food, but ONLY for a band with a fodder economy (`fodder_store > 0`, or it pays a pen bread
-# bill — `pen_feed_upkeep > 0`), so a forager band with no animals never sprouts an empty Fodder line.
+# the food larder, and there is NO food-equivalent conversion of it: hay is feed, not food, and the
+# pen's food-unit terms are retired). The per-pen draw OUT of this stock is `fodder_draw`, the herd
+# drawer's feed-split hay term, in these same units. Shown as its own stat line beneath Food —
+# **mirroring that line beat for beat**: the stock, then the `fodder_need` / `fodder_income` rate pair
+# that moves it, then the `turns_of_fodder` runway (999 = infinity, the SAME sentinel and the same
+# renderer as `turns_of_food`). It renders for a band that HAS hay **or OWES a hay bill**, so the band
+# whose pens need hay it does not have is the first to see the row rather than the only one that
+# cannot; a forager band with no animals still sprouts no Fodder line at all.
 # (The larder-runway vocabulary — `DetailFormat.FOOD_UNLIMITED_GLYPH` / `DetailFormat.FOOD_RUNWAY_UNIT`
 # — travelled to that module with BOTH its readers: the one renderer (`food_turns_text`) and the one
 # Food/Provisions/Carried threshold tint that recognizes the row by looking for that same unit word.
@@ -579,7 +604,9 @@ func _ready() -> void:
     # `_herd_label_for_id` (it reads three collaborators here, so it cannot fold onto the labor model).
     # BOTH detail hosts render through this one instance: the Occupants-card drawer below, and
     # `BandPanelController`'s vitals label + parties inspector strip.
-    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id)
+    # `_topbar` rides along for ONE reading: the dormant `Fodder:` row's hover states the faction's
+    # live Foddering percent, and knowledge is held faction-scoped — no band dict carries it.
+    _banddetail = BandDetailLines.new(_band_labor, _disclosures, _herd_label_for_id, _topbar)
     # The Band/City panel. Constructed AFTER `_disclosures` (the vitals row wires its carets through
     # it) and `_banddetail` (it renders its rows), and handed the SAME state models, the selection card
     # it routes map focus through, the HUD CanvasLayer as the host it parents its confirm dialog into,
@@ -606,6 +633,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
     _bandpanel.build_order_requested.connect(
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
+    _bandpanel.work_priority_requested.connect(
+        func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
@@ -641,6 +670,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_crew_requested.emit(payload))
     _crafting.clear_bench_requested.connect(
         func(payload: Dictionary) -> void: clear_bench_requested.emit(payload))
+    _crafting.bench_priority_requested.connect(
+        func(payload: Dictionary) -> void: bench_priority_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,

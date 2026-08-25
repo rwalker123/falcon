@@ -21,6 +21,74 @@ paths:
 
 The Band/City dockable-panel PNG harness, and the arcs whose frames ride it.
 
+## The faction page's `Fodder:` row and its open drill-down
+
+**One frame and twelve `: PASS`** — measured `138 / 803` → `139 / 815` on one windowed run, `assert
+OK` unchanged at 436 (the claims go through `_assert_band_panel`, not the zone-fit helpers). The
+frame is **`band_panel_faction_fodder`**, the drill-down OPEN under `Fodder ▾ 100.0 · -1.0 /turn`.
+
+**IT RENDERS BEFORE THE PAGE'S OTHER ASSERTIONS, AND THAT IS LOAD-BEARING.** The breakdown popover is
+an EMBEDDED subwindow, so it hides the moment GUI focus moves — and `_assert_faction_page` drives real
+controls: `_assert_faction_party_row_jumps_home` presses a summary row's link, and the re-render that
+follows frees the focused button and takes the card down with it. Measured directly: the popover
+opened, and was gone one `process_frame` later, leaving a frame that photographed a CLOSED caret and
+an assertion that read `_breakdown_popover_key` as empty. So the state sits immediately after
+`band_panel_faction`'s own save, before anything is pressed, and closes its own popover behind it.
+**Do not move it below the assertions to keep the block tidy.**
+
+**`_faction_roster`'s SECOND band was given a fodder larder, and the first was deliberately left
+without one.** The faction stock is therefore one band's — distinguishable from an average, and from
+a drill-down filtered down to the bands that have a larder — and the open card carries a band WITH
+hay beside a band with none, which is the contrast a roster of two equal larders could not make. The
+numbers are `ui_preview`'s `band_hay_short` ledger, so the two harnesses describe one shape.
+
+**The rate is asserted AGAINST the food scale as well as for its own.** `format_yield_fodder` prints
+`-1.0 /turn` where `format_yield` would print `-1.00 /turn`; a page spelling its two larders' rates
+at two resolutions is the drift the paired claim exists to catch, and the positive alone passes on a
+build that prints both.
+
+**Falsified by registering the faction disclosure with an EMPTY row set: 7 failures**, and the split
+is the point — the summary row's sum and rate still PASS (the row renders fine), while every
+drill-down claim fails. A card with nothing in it looks entirely plausible in a thumbnail.
+
+### …and its DORMANT form, beside a live row
+
+**One more frame and thirteen `: PASS`** — measured `139 / 815` → `140 / 828`, `assert OK` still 436.
+The frame is **`band_panel_faction_fodder_dormant`**: the faction page's dim `Fodder  —` with no
+caret, beside a band's live `Fodder ▸ 100.0  (100 turns)` in the drawer.
+
+**BOTH STATES SHARE ONE RENDER, by DETACHING the panel rather than by selecting into it.** A selected
+player band is the dock's subject wherever a dock exists, so `set_band_city_panel(null)` is called
+*after* the dormant faction page has been painted: dropping the controller's reference does not touch
+the zones the panel is already drawing, so the page stays on screen while the drawer takes a band with
+a real hay ledger down its own fallback path. `ui_preview`'s `band_fodder_dormant` is the mirror image
+of the same trick. The frame asserts that precondition, because a drawer that had gone to the
+band-panel pointer would photograph one fodder row instead of two and look entirely tidy.
+
+**THE RESTORE MUST NOT CYCLE.** `_panel_is_faction` is never cleared by detaching, so a `CYCLE_PREV`
+on the way out walks OFF the page rather than back onto it — and every faction assertion below then
+reads a band's own vitals. Measured as four unrelated-looking failures (`PEOPLE reads the whole
+faction`, the Food alert, the runway, the weighted morale) before the cycle was dropped;
+`refresh_snapshot` re-renders the page on the push by itself.
+
+**TWO NEEDLES FOR ONE ROW, because `detail_bbcode` splits `Key: value` into two `[cell]`s.** The
+rendered BBCode never contains `Fodder: `, so the page is searched for the row's DIM run nested
+inside the neutral value tint, while the band's line — asked of the producer — still carries the key.
+Both come off `DetailFormat`'s own consts, so neither can drift from what is drawn. A needle written
+as the producer's line silently found nothing on the page (measured).
+
+**THE GATE CLAIM IS STAGED ON THE FLOOR, not on zero.** `_fodderless_faction_roster` strips every
+larder to HALF `SourceForecast.FODDER_FLOW_MIN` — a real quantity the shared per-band test refuses
+and a `store > 0` faction gate would admit — so "the two agree" is a discriminator rather than a
+restatement that zero is zero.
+
+**Falsified four ways.** Dropping the dim at the shared builder: **4** here and **2** in `ui_preview`,
+which is itself the evidence that one builder serves both scales. Registering a disclosure on the
+dormant row: **2** (the rendered caret and the registration, which are different claims — a payload
+the row merely failed to draw a caret for is still live). Swapping the fold for an independent
+`store > 0` gate: **8**, including the explicit agreement claim. Removing the page's new
+`clear_rows` call: **2** — the stale-caret defect this arc found, which is what that guard is for.
+
 ## The faction page lost its fourth zone (the knowledge screen, slice B)
 
 `docs/plan_knowledge_screen.md` §4 deleted the Know tab, so `band_panel_faction_knowledge` is **gone**
@@ -336,11 +404,21 @@ and PRINTS its extent, which reads **294 of the 300px box**.
 **`band_panel_vitals_worst_case`** is the state that pins it — one band carrying EVERY optional
 vitals row at once in the height-capped TOP dock, which no fixture had ever staged, run through the
 bounds assertion, `_assert_zone_content_fits` and the new **`_assert_merged_food_row_fits`** (the
-SHORT tier's merged `Food … · 128.4 hay` line measured against the column it must not wrap in —
+SHORT tier's merged `Food … · 128.4 fodder` line measured against the column it must not wrap in —
 353px of 380). Beside them **`_report_zone_content_extent` PRINTS each zone's content extent against
 its box** rather than asserting: it reads 299 of a 300px box, and a near-miss and a comfortable fit
 are the same green line otherwise. The rows, the merge and the flank widths are specified in
 `band-city-panel.md` / `band-readouts.md`.
+
+**Its fixture carries the band's whole FODDER LEDGER, not just the stock.** The Fodder row grew the Food
+line's other three beats (`fodder_need` / `fodder_income` / `turns_of_fodder`), which makes it by some
+distance the LONGEST optional vitals row a band can hold — so a worst case seeding `fodder_store`
+alone stopped being a worst case the moment the row grew, and `WORST_CASE_FODDER_NEED` /
+`_INCOME` / `WORST_CASE_TURNS_OF_FODDER` follow the same longest-form rule every other constant in
+that block does. The need deliberately outruns the income, so the frame is the WARN state as well as
+the widest one: at this tier the row is MERGED, so what it renders is ` · 128.4 fodder` in amber. **The
+tally did not move** (805 `PASS`, no frame count change) — the merged clause is the same width it
+was, which is the check that the widening did not reach the SHORT tier's measured column.
 
 **The PER-SOURCE CARRY AXIS contributes SEVEN `PASS` to `ui_preview`, ZERO frames and nothing at all
 to `band_panel_preview`.** Two of the seven are the husbandry-hint pair becoming a 2×2 (both kits
@@ -1650,3 +1728,120 @@ NAME is allocated at least the rate column's own width (1 of 46)`, and
 on the board reported outside the box. With the accounts on their own line both states read
 **354 / 356**, the name **146 of the 91 its own font needs**, and the four-crop line **322 of 218** —
 i.e. the defect is not merely bounded, it is unreachable at the shipped roster's widths.
+
+
+## The RANK's frames — one board carrying all three marks, with the picker open on it (§4.9 item 9b)
+
+`_render_work_priority_states` renders three states, and the FIRST is the one this arc keeps having to
+re-learn the need for.
+
+- **`band_panel_work_priority`** — the REQUIRED combined state: a LEFT-docked Work tab whose board
+  carries a **HIGH row, a NORMAL row and a LOW row at once**, with the inspector open on the low one
+  and the **priority picker showing in the same frame**. Two disjoint frame families with the defect
+  living in the gap has hidden three separate defects in this arc already (the strip's own reserved
+  height, the queue strip vs the inspector, the materials fall-through); a marked-rows frame beside a
+  picker frame is that shape again. `_assert_work_row_priority_marks` asserts both halves together —
+  exactly HIGH and LOW carry a mark, the NORMAL row carries none — because "the marked rows carry a
+  prefix" passes on a board that prefixes every row and "the normal one carries none" passes on a
+  board that dropped the feature.
+- **`band_panel_work_priority_floor_swap`** — the same row with the FLOOR picker in, reached by a real
+  press on `Change policy` while the priority picker was standing. **The mutual exclusion is
+  unassertable from any single-picker frame**: two pickers that are never asked for together always
+  look exclusive. The claim is that the priority picker is *gone, not merely covered*
+  (`_find_meta_control` answers null), and the reverse press is driven too so neither picker is the
+  privileged one.
+- **`band_panel_work_priority_widest`** — the four-cash-crop worst case with a HIGH mark on it. It is
+  what the LEADING placement exists for, and `_assert_marked_row_accounts_still_fit` prints the split:
+  **310px of a 322px line, 69 mark + 241 accounts**, with the accounts allocated 253 — so they still
+  render whole and the trim still lands on the trailing floor clause.
+
+**⛔ EVERY PRESS IS A REAL PRESS.** `_press_work_inspector_link` finds the inline link by FACE (an
+inline link carries no meta, and the four faces are fixed vocabulary) and drives it through
+`_drive_click`; `_assert_work_priority_click` drives each of the three picker buttons the same way and
+asserts the **command LINE** `Main.format_work_priority` produces, not the payload dict — so the token
+order, the source form and the level word are judged as the socket would see them. All three levels
+are driven, because a picker that sent one level whatever was pressed satisfies any single-button
+claim. The link is a TOGGLE, so the helper presses it only when the picker is shut, which after the
+first pick is every time (committing closes it — itself part of the contract, and asserted here rather
+than in a frame of its own).
+
+**The picker's LIT test is `_assert_lit_rung`'s**, the primary stylebox's own background colour, so
+the two pickers cannot be judged by two different notions of *selected*. Which button is primary is
+invisible in a thumbnail — three buttons in a row look the same — and a picker that lit nothing would
+read as a row with no rank at all.
+
+**`_assert_work_inspector_worst_case_fits` now stages the PRIORITY picker**, which is the taller of
+the two by its hint line. The two are mutually exclusive, so the strip's documented ceiling is a max
+over the pair rather than a sum; staging the floor picker there would understate it by that line and
+leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that is no longer the worst one.
+
+**Falsified, four ways, and every one of them failed loudly.** Baseline before the slice: **761 PASS,
+0 FAIL**; after: **789 PASS, 0 FAIL** (exit 0 both times — and the exit STATUS is the verdict, since a
+scene that fails to parse exits 0 with no assertions run at all, which is exactly what the first draft
+of this chapter did).
+
+| Restored defect | Failures |
+|---|---|
+| `work_row_priority_prefix` returns `""` (no mark) | **2** — `exactly the HIGH and LOW rows are marked … (got [])`, and `the widest row carries no priority mark, so this measures nothing` |
+| the priority picker renders under *any* open picker (both at once) | **7** — including `…and the priority picker is GONE with it, not merely covered` and both strips' `RESERVES what it DRAWS (96 reserved, 141 drawn)` |
+| the commit always sends `normal` | **2** — the `high` and `low` clicks by name; the `normal` one correctly still passes |
+| the `Priority` link set `MOUSE_FILTER_IGNORE` (a dead control) | **7** — the link claim, the picker's three buttons, the lit claim and the swap-back |
+
+The last of those is the one worth keeping in mind: it is `pressed.emit()`'s blind spot, the shape
+that shipped a completely dead drag green in #570, and it is caught only because the link is driven
+through `_drive_click` rather than called.
+
+
+## The `-5` frame — a fresh entry and a stalled one have to be in ONE frame (§4.9)
+
+`band_panel_build_queue_not_yet_estimated` renders a three-entry BUILD QUEUE whose rows read three
+different faces at once: `Queued 0%` (the `-5` head), `⚠ Stalled 0%` (the `-1` herd behind it) and
+`⚠ ∞ turns, losing ground (0%)` (the `-3` patch behind that).
+
+**ONE FRAME, BECAUSE THE DEFECT IS THAT TWO OF THEM LOOKED IDENTICAL.** A frame staging only the fresh
+entry proves nothing — it is green with the fix and green with the defect restored, on a board that
+has never drawn a genuine stall beside it. `_assert_not_yet_estimated_reads_apart` therefore asserts
+the pair AND their inequality: the head's exact composed face, that it carries no
+`RUNG_HAZARD_GLYPH`, that the entry behind it still carries one, that the two strings differ, and both
+inks (`INK` for the head, `WARN` for the stalled one) — because a neutral word in amber still says
+*warning*.
+
+**`_assert_not_yet_estimated_producers` IS PNG-LESS AND DELIBERATELY SO.** Three of the four swept
+producers cannot be seen in any one frame — a pace tints a compose face, a stall verdict marks a map
+badge — and the stated failure mode in this client is *two producers disagreeing about one meter*. It
+asks the producers themselves (`build_turns_remaining` passes `-5` through and specifically not onto
+`-1`; `build_pace` answers `BUILD_PACE_UNKNOWN` and neither stops the sheet nor paints it as climbing;
+`build_is_stalled` is false for a staffed `-5` **and still true for a `-3` beside it**, so the verdict
+has not simply stopped firing; `build_turns_clause` states no clause), so a consumer rendering
+correctly off a producer that has quietly stopped passing the sentinel still fails here.
+
+**Nothing on this frame is pressable**, so nothing is driven: it is a readout defect end to end.
+
+### `UNKNOWN_BUILD_TURNS_SENTINEL` had to be re-aimed, for the THIRD time
+
+`tools/ui_preview/chapters/improvements.gd` keeps a value *one past the last the schema defines* and
+asserts that an unrecognised negative renders as the STALLED hazard. It was `-5`. **The day the wire
+spelled `-5`, that claim stopped pinning the rule and started pinning the bug** — it was asserting the
+`⚠ Stalled` that this fix removes, and it is what failed the `ui_preview` run. It moves to `-6`; the
+constant's own doc has said since its second re-aim that this is required maintenance, and this is the
+third round. **It is the sharpest of the three**, because `-5` is the one value the client must render
+as a NEUTRAL face rather than merely a different one.
+
+### Falsifications
+
+Baseline before the slice: **789 PASS / 0 FAIL**; after: **805 PASS / 0 FAIL** (`band_panel_preview`,
+exit 0 both). `ui_preview` is **1344 PASS / 0 FAIL** before and after, the re-aim included.
+
+| Restored defect | Failures |
+|---|---|
+| `build_sentinel_value` folds `-5` onto the stalled face (the shipped pre-fix render) | **4** — the head's face, `carries NO hazard mark`, `the two READ APART … (["⚠ Stalled 0%", "⚠ Stalled 0%", …])`, and the head's ink |
+| …the same branch deleted outright instead | **1** — the head's face only, and it renders `Cultivating 0% · turn 37`: with `-5` still passed through, `build_completion_value` adds a NEGATIVE count to the turn and dates the job five turns in the PAST |
+| `build_pace` loses its `-5` arm (a swept consumer left un-swept) | **2** — `` `build_pace` answers no verdict for it (got "growing") `` and `neither stops the sheet nor paints it as climbing` |
+| `build_turns_remaining` collapses `-5` onto `-1` again (the root) | **6** — all four render claims plus both producer claims |
+
+**One of them is weaker than the others and it is worth saying so.** Deleting the branch outright
+(row 2) trips only ONE assertion, because the resulting face is neither the queued one nor the stalled
+one — so `carries NO hazard mark`, `READ APART` and the ink claim all pass on it. They are not
+vacuous (rows 1 and 4 fail all four), but the set's floor against *some other wrong face* is the exact
+string comparison alone.
+

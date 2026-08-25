@@ -36,8 +36,9 @@ use core_sim::{
     ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag,
     ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
     LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
-    RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection,
-    UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    RungKey, SiteRefusal, SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides,
+    TakeSelection, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
+    NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -685,6 +686,24 @@ enum Command {
         faction: FactionId,
         source: BuildSourceRef,
         kit_id: Option<String>,
+    },
+    /// **Mark one worked row with the player's own rank** — `high`, `normal` or `low`, on the named
+    /// band's assignment for this source (`docs/plan_standing_upkeep.md` §4.9 item 9b). The band's
+    /// scarcity handlers read it as the outermost level of their ordering. See
+    /// `handle_work_priority`.
+    WorkPriority {
+        faction: FactionId,
+        band_id: u64,
+        source: BuildSourceRef,
+        level: String,
+    },
+    /// **Mark one band's crafting bench with the player's own rank** — `high`, `normal` or `low`,
+    /// the same mark a worked row carries and read by the same shedding order. See
+    /// `handle_bench_priority`.
+    BenchPriority {
+        faction: FactionId,
+        band_id: u64,
+        level: String,
     },
     /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
     /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
@@ -6004,6 +6023,89 @@ fn handle_clear_bench(app: &mut bevy::prelude::App, faction: FactionId, band_id:
     );
 }
 
+/// **MARK A BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `bench_priority <faction> <band>
+/// high|normal|low` (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+///
+/// The same [`core_sim::SourcePriority`] a worked row carries, read by the same shedding order. It
+/// touches nothing else on the bench: the recipe, the crew, the progress and the drawn pile are all
+/// separate statements the player made.
+///
+/// # IT APPLIES TO AN IDLE BENCH TOO
+///
+/// Unlike `bench_crew`, which needs a running job to re-crew, a rank is a standing preference about
+/// *the bench* — so it is settable before a recipe is put on it and survives the job being swapped,
+/// exactly as a source row's mark survives an edit to its crew. Refusing it on an idle bench would
+/// mean the player could only rank the bench in the window where they were least likely to want to.
+///
+/// # AN UNKNOWN LEVEL IS REFUSED BY NAME
+///
+/// `upkeep_mode`'s rule, and `work_priority`'s: a rank the player mistyped must fail loudly rather
+/// than silently landing on the default, which is the one value that would look like it worked.
+fn handle_bench_priority(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    level: String,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(priority) = SourcePriority::from_token(level.trim().to_ascii_lowercase().as_str())
+    else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "Unknown bench priority '{}' — expected {}, {} or {}.",
+                level.trim(),
+                SourcePriority::High.as_str(),
+                SourcePriority::Normal.as_str(),
+                SourcePriority::Low.as_str()
+            ),
+        );
+        return;
+    };
+    let Some(band) =
+        select_starting_band(app, faction, Some(band_id), "bench_priority", event_kind)
+    else {
+        return;
+    };
+    if app.world.get::<BandBench>(band.entity).is_none() {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("bench_priority: {} has no crafting bench.", band.label),
+        );
+        return;
+    }
+    band_bench_mut(app, band.entity).priority = priority;
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "bench_priority",
+        faction = %faction.0,
+        band = band_id,
+        level = priority.as_str(),
+        "command.bench_priority.applied"
+    );
+    let sentence = match priority {
+        SourcePriority::High => format!("{}: the bench is held before anything else", band.label),
+        SourcePriority::Normal => format!("{}: the bench takes its turn like the rest", band.label),
+        SourcePriority::Low => format!("{}: the bench is the first thing given up", band.label),
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        sentence,
+        Some(format!(
+            "status=applied action=bench_priority level={} band={band_id}",
+            priority.as_str()
+        )),
+    );
+}
+
 /// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
 /// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
 /// the crew is a crew-side edit and must not restart a build the player committed to.
@@ -6436,6 +6538,106 @@ fn handle_build_order(
         ),
         Some(format!(
             "status=applied action=build_order source={label} position={landed} band={band_id}"
+        )),
+    );
+}
+
+/// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `work_priority <faction> <band> <x> <y>
+/// <level>` / `work_priority <faction> <band> <herd_id> <level>` (`docs/plan_standing_upkeep.md`
+/// §4.9 item 9b).
+///
+/// Sets [`core_sim::SourcePriority`] on the named band's assignment for that source. The take crew,
+/// the floor, the kit and the queue entry are untouched — this says only *where this row stands when
+/// the band runs short*.
+///
+/// # IT IS ONE BAND'S STATEMENT, WHICH IS WHY IT NAMES ONE
+///
+/// The ordering it feeds is a **band's**: the shedding walk partitions that band's own rows, and the
+/// pen-feed split serves that band's own stores. `build_order` names a band for exactly the same
+/// reason. The source-addressed verbs that reach *every* band working a source (`unqueue`,
+/// `build_kit`) are the ones whose subject is the ground rather than the holding.
+///
+/// # AN UNKNOWN LEVEL IS REFUSED BY NAME
+///
+/// `upkeep_mode`'s rule. A rank the player mistyped must fail loudly rather than silently landing on
+/// the default, which is the one value that would look like it worked.
+fn handle_work_priority(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    source: BuildSourceRef,
+    level: String,
+) {
+    let label = source.label();
+    let Some(target) = source.target() else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            "work_priority needs a source: two numbers name a tile, one token names a herd."
+                .to_string(),
+        );
+        return;
+    };
+    let Some(priority) = SourcePriority::from_token(level.trim().to_ascii_lowercase().as_str())
+    else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!(
+                "Unknown work priority '{}' — expected {}, {} or {}.",
+                level.trim(),
+                SourcePriority::High.as_str(),
+                SourcePriority::Normal.as_str(),
+                SourcePriority::Low.as_str()
+            ),
+        );
+        return;
+    };
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "work_priority",
+        CommandEventKind::CancelOrder,
+    ) else {
+        return;
+    };
+    let marked = band_allocation_mut(app, band.entity).set_source_priority(&target, priority);
+    if !marked {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("{} works nothing at {label} to rank.", band.label),
+        );
+        return;
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "work_priority",
+        faction = %faction.0,
+        band = band_id,
+        source = %label,
+        level = priority.as_str(),
+        "command.work_priority.applied"
+    );
+    let sentence = match priority {
+        SourcePriority::High => format!("{}: {label} is held before anything else", band.label),
+        SourcePriority::Normal => format!("{}: {label} takes its turn like the rest", band.label),
+        SourcePriority::Low => format!("{}: {label} is the first thing given up", band.label),
+    };
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        sentence,
+        Some(format!(
+            "status=applied action=work_priority source={label} level={} band={band_id}",
+            priority.as_str()
         )),
     );
 }
@@ -7483,6 +7685,32 @@ fn command_from_payload(
             },
             kit_id,
         }),
+        ProtoCommandPayload::WorkPriority {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+            herd_id,
+            level,
+        } => Some(Command::WorkPriority {
+            faction: FactionId(faction_id),
+            band_id,
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+            },
+            level,
+        }),
+        ProtoCommandPayload::BenchPriority {
+            faction_id,
+            band_id,
+            level,
+        } => Some(Command::BenchPriority {
+            faction: FactionId(faction_id),
+            band_id,
+            level,
+        }),
         ProtoCommandPayload::UpkeepMode {
             faction_id,
             band_id,
@@ -8393,6 +8621,14 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
         } => {
             handle_build_order(app, faction, band_id, source, position);
         }
+        Command::WorkPriority {
+            faction,
+            band_id,
+            source,
+            level,
+        } => {
+            handle_work_priority(app, faction, band_id, source, level);
+        }
         Command::ExtendPen {
             faction,
             target_x,
@@ -8417,6 +8653,13 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             workers,
         } => {
             handle_bench_crew(app, faction, band_id, workers);
+        }
+        Command::BenchPriority {
+            faction,
+            band_id,
+            level,
+        } => {
+            handle_bench_priority(app, faction, band_id, level);
         }
         Command::CancelOrder {
             faction,
@@ -8975,8 +9218,8 @@ mod tests {
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
         build_test_app, default_species_for_rung, EcologyPhase, FoodModule, FoodSiteEntry,
-        ForagePatch, CULTIVATION_DISCOVERY_ID, FABRICATED_BUILD_COST, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
+        ForagePatch, SourcePriority, CULTIVATION_DISCOVERY_ID, FABRICATED_BUILD_COST,
+        HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
@@ -9059,6 +9302,7 @@ mod tests {
                         target,
                         workers: BAND_WORKERS,
                         kit: None,
+                        priority: SourcePriority::default(),
                     }],
                     ..Default::default()
                 },
@@ -15572,6 +15816,159 @@ mod tests {
                 .contains(&destination.0.to_string()),
             "the feed line names the band by id when it has no name: {}",
             mission.destination_display()
+        );
+    }
+
+    /// **One band's published ranks, read off the ENCODED envelope** — `(kind, priority)` per labor
+    /// row, through the client's own accessor chain, because a field that never reached the codec
+    /// still passes an in-process assertion.
+    fn published_ranks(
+        app: &mut bevy::prelude::App,
+        band_id: u64,
+    ) -> Vec<(
+        String,
+        shadow_scale_flatbuffers::generated::shadow_scale::sim::SourcePriority,
+        u32,
+    )> {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section carries the band list")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .expect("the fixture band is published")
+            .laborAssignments()
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                (
+                    row.kind().unwrap_or_default().to_string(),
+                    row.priority(),
+                    row.workers(),
+                )
+            })
+            .collect()
+    }
+
+    /// **`work_priority` MARKS THE NAMED BAND'S ROW, AND THE MARK IS LIVE ON THE WIRE**
+    /// (`docs/plan_standing_upkeep.md` §4.9 item 9b).
+    ///
+    /// Four things in one run, because each fails silently on its own: the default is published, the
+    /// command changes it on its **own recapture** (no turn advanced — the rule `build_order` already
+    /// ships on), the mark **survives a re-assignment** of the row's crew, and an unknown level is
+    /// refused **by name** rather than landing on the default.
+    #[test]
+    fn work_priority_marks_a_row_lives_on_the_wire_and_survives_an_edit() {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let tile = UVec2::new(3, 3);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile,
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+                species: None,
+                take_species: TakeSelection::EVERYTHING,
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        // The ground has to admit a worked stand, or the `assign_labor` below is refused and the
+        // survives-an-edit assertion never sees an edit at all.
+        {
+            let entity = app
+                .world
+                .resource::<TileRegistry>()
+                .index(tile.x, tile.y)
+                .expect("the generated world carries this tile");
+            app.world
+                .get_mut::<Tile>(entity)
+                .expect("a registered tile carries its ground")
+                .terrain = SOURCE_BIOME;
+        }
+        seed_thriving_patch(&mut app, tile);
+
+        // **The rank AND the crew, together.** The crew is what makes the survives-an-edit
+        // assertion an assertion at all: an `assign_labor` the world refused would leave the mark
+        // standing for the wrong reason, and a rank-only reading cannot tell the two apart.
+        let forage_row = |app: &mut bevy::prelude::App| {
+            published_ranks(app, FIXTURE_BAND_ID)
+                .into_iter()
+                .find(|(kind, _, _)| kind == "forage")
+                .map(|(_, rank, workers)| (rank, workers))
+        };
+
+        let (_, crew_before) = forage_row(&mut app).expect("the fixture band publishes its row");
+        assert_eq!(
+            forage_row(&mut app).map(|(rank, _)| rank),
+            Some(fb::SourcePriority::Normal),
+            "an unmarked row publishes the default"
+        );
+
+        handle_work_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            patch_source(tile),
+            "LOW".to_string(),
+        );
+        assert_eq!(
+            forage_row(&mut app).map(|(rank, _)| rank),
+            Some(fb::SourcePriority::Low),
+            "the mark arrives on the command's own recapture, case-folded, with no turn advanced"
+        );
+
+        // The `−`/`+` the player presses next. `set_assignment` re-pushes the row to the END of the
+        // vector, which is the whole reason the rank is a stated value and not a list position.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "forage".to_string(),
+            crew_before + 1,
+            Some(tile.x),
+            Some(tile.y),
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
+        assert_eq!(
+            forage_row(&mut app),
+            Some((fb::SourcePriority::Low, crew_before + 1)),
+            "the edit LANDED and the mark survived it"
+        );
+
+        // An unknown level is refused by name — it must NOT silently land on the default, which is
+        // the one value that would look like it worked.
+        handle_work_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            patch_source(tile),
+            "sideways".to_string(),
+        );
+        assert_eq!(
+            forage_row(&mut app).map(|(rank, _)| rank),
+            Some(fb::SourcePriority::Low),
+            "a level the sim does not know changes nothing"
         );
     }
 

@@ -27,7 +27,7 @@ The shape is already in the sim. What is missing is that it is **one** thing.
 | Where | How it is expressed | Currency |
 |---|---|---|
 | A penned or tamed herd needs keepers | `herders_needed`, from `animals_per_herder` — a **headcount**. Fall short and the flock **sheds animals** | people |
-| A pen's animals must eat | `pen.upkeep_per_biomass × biomass`, offset by the footprint's grazing; hay and then the larder pay the remainder; underfed herds **shrink** | collected food |
+| A pen's animals must eat | `fodder_per_biomass × biomass`, offset by the footprint's grazing; **fodder pays the rest, and nothing else does** — the larder term was retired in #578, human food not being animal feed. Underfed herds **shrink** | collected fodder |
 | A plant improvement rots | `decay_fraction_per_turn × work_cost` bled off the meter every turn nobody works it, past `grace_turns` | **work units per turn** |
 
 The third row is the tell. **The plant bleed is already denominated in work units per turn** — it is
@@ -439,10 +439,20 @@ moves it. So hay and concrete are the same kind of thing, and grazing and the st
 both **not upkeep at all**.
 
 That makes the land's contribution an **offset**, which is exactly what the shipped pen already does:
-the footprint's grazing covers what it can, hay covers some, and the larder pays only the remainder
-(`pen_pasture_fraction`, `penHayFood`, `penLarderBill` — three terms of one demand, already asserted
-to sum to it). A pen on lush pasture is cheap because the land is doing the work; a pen on barren
-ground pays in full. **A route down a river valley versus one over a range is the same sentence**, and
+the footprint's grazing covers what it can and **hay covers the rest** (`pen_pasture_fraction` and
+`fodderDraw` — two terms of one demand, in one unit, asserted to sum to it). A pen on lush pasture is
+cheap because the land is doing the work; a pen on barren ground pays in full, and **if hay cannot
+cover it the herd starves** — the shortfall has nowhere else to go.
+
+> ⛔ **IT WAS THREE TERMS UNTIL #578, AND THE THIRD ONE WAS A DEFECT.** The pen also drew **human
+> food** from the keeper's larder for whatever grazing and hay left uncovered — the corral arm's
+> *"the keeper must bring it food"* read as the food the people eat. It is fodder. The larder term
+> was short-circuiting the starvation path this section's own model depends on: when the land and the
+> hay fall short the answer is an underfed herd, never people going hungry to feed livestock. Retired
+> with `pen.upkeep_per_biomass`, the food-unit lever that expressed it; `penFeedUpkeep`, `penUpkeep`,
+> `penLarderBill` and `penHayFood` are deprecated slots. **A resource upkeep generalised from this
+> pen must not reintroduce a human-food path** — the reference implementation is *land offsets a
+> collected good*, and nothing else. **A route down a river valley versus one over a range is the same sentence**, and
 `infrastructure_cost` is where that per-terrain answer is already written.
 
 **What is NOT upkeep**, and both were reached for during design:
@@ -1047,11 +1057,90 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > **NEITHER CONTROL NEEDS AN OPTIMISTIC OVERLAY**, which is 9a paying for itself: `buildQueue` is
    > captured live, so an arrow press and a drop both land on the command's own recapture.
 
-   **9b — THE WORKED ROWS TAKE THE EXPLICIT RANK, and the shedding order reads it.** Still open. The
-   player orders their worked rows; §2.9's walk consults that rank where it consults list position
-   nowhere, and a shed **names the row it took**. The rank sits **on top** of the shipped ordering,
-   which survives as the tie-break — most sources sit at the default, so a rule that only fires on an
-   explicit pick is what keeps the default behaviour exactly where it is.
+   **9b — THE WORKED ROWS TAKE AN EXPLICIT PRIORITY, and every scarcity reads it. LANDED.** The
+   player marks a row **High / Normal / Low**; §2.9's walk consults that mark where it consults list
+   position nowhere, and a shed **names the row it took** (`announce_shed_crew`, already shipped).
+   The mark sits **on top** of the shipped ordering, which survives as the tie-break — most sources
+   sit at Normal, so a rule that fires only on an explicit pick keeps the default behaviour exactly
+   where it is.
+
+   > **IT IS A THREE-TIER VALUE, NOT A RANKED LIST, AND §2.9 IS THE REASON.** Item 9 sketched
+   > "player-ordered, drag-and-drop" before the eleven steps existed, and a total order is a promise
+   > the walk cannot keep: it sheds from **four disjoint pools** selected on structure — step 5 thins
+   > a row holding two or more hands, 6 empties an unimproved unqueued row, 9 an improved one, 10 one
+   > carrying a build — so a wild patch ranked first is emptied at step 6 while an improved row
+   > ranked last is not a candidate until step 9. The player would build a nine-row ordering and
+   > watch it honoured in four unrelated pieces. A tier claims only a preference **within** a step,
+   > which is exactly what the walk can deliver, and "I am done with this source" already has a verb
+   > (`abandon`).
+   >
+   > **AND A TIER IS SELF-CANCELLING AT THE EXTREMES**, which is why it needs no guard: marking every
+   > row High leaves the level constant and the comparator falls straight through to what it did
+   > before. There is no degenerate config to defend against.
+
+   > **THE COMPARATOR GAINS A LEXICOGRAPHIC LEVEL, NEVER A COMBINED SCORE.** `least_productive_row`
+   > is three levels now — **priority → `pays_any_account` → `yield_per_worker`**, ties still to the
+   > earliest row. A tier is a sentence the player typed rather than a measured quantity, so ranking
+   > one above the presence test invents no exchange rate between food and materials;
+   > `labor_config.json`'s `_comment_weeding` still refuses exactly what it always refused. Only
+   > `least_productive_row` changed: the role steps (scout, warrior, keepers, builders) select by
+   > ROLE and are not ranked.
+   >
+   > **A PRIORITY NEVER MAKES A ROW INELIGIBLE.** It orders candidates and does nothing else, so the
+   > terminal step still takes the band's last worker off its last row. Pinned by test, because the
+   > tempting reading of "High" is a veto.
+
+   **THE PROPERTY IS GENERAL, AND WORKERS ARE ONLY ITS FIRST CONSUMER** — which is item 9's own
+   sentence ("pooled maintenance is its *first consumer*, not its owner"), now literal. Every verb
+   considered for the face — *shed*, *cut*, *keep running* — named the labor consumer and would have
+   lied the moment a second scarcity read the same field, so the face is a bare importance word and
+   each consumer states its own consequence. The picker's one line says it without naming a resource:
+   *"When something runs short, the band spends it on high priority first."*
+
+   > **SO THE PEN FEED WAS SETTLED IN THE SAME SLICE, because it was positional and nobody had
+   > noticed.** A band's pens drew hay and larder food inside
+   > `for (idx, assignment) in allocation.assignments.iter().enumerate()`, so when the `FODDER` store
+   > or the larder could not cover every pen, **the pen earliest in the vector ate and the last one
+   > starved** — and `set_assignment` re-pushes an edited row to the end, so the pen the player had
+   > just adjusted was the one fed last. That is §2.9's own defect living in a system that never got
+   > §2.9's fix.
+   >
+   > The settlement sees **every pen at once**: **High served whole, then Normal, then Low, and
+   > proportional to demand within a tier.** Proportional needs no new ordering rule to invent and
+   > cannot depend on vector position, which is the property that was missing. `last_pen_feed_upkeep`
+   > still sums the real debits and the pinned identity
+   > `larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit` still holds.
+   >
+   > **AND IT IS TWO PASSES, BECAUSE THE TWO STORES ARE NOT THE SAME KIND OF THING.** `settle_pen_hay`
+   > runs **before** the assignment loop and `settle_pen_larder` **after** it; the corral arm bids its
+   > bread bill rather than drawing it.
+   >
+   > - **Hay is a STOCK** — the buffer the overwintering carry rides — so it is settled off the store
+   >   standing at the top of the pass, and **a pen eats hay harvested on a previous turn.** What that
+   >   replaced was not same-turn hay as a rule: it was same-turn hay **iff** the pen's row happened
+   >   to sit after the hay Field's, which is the same accident being removed.
+   > - **The larder is a FLOW** — `FOOD` is credited *inside* the loop by every gather, hunt and pen
+   >   harvest — so settling it ahead of the loop would have meant **a band with an empty larder never
+   >   feeding its pens again**, however much it gathered that turn. It settles late, off the income
+   >   the turn actually produced. Found in review; the one-turn lag on starvation is what makes late
+   >   payment safe, since `pen_fed_fraction` is read in Logistics, a stage and a turn later.
+   >
+   > Rationale in `.claude/rules/core_sim/graze.md`.
+   >
+   > **A COMPARATOR TEST WOULD HAVE PROVED NOTHING**, so both consumers are driven end to end: a band
+   > at zero slack losing a worker with one Low row and one Normal, asserting which row gave; and two
+   > pens on a thin store asserting the same outcome across **three vector arrangements** — natural
+   > order, reversed, and after an edit re-pushed the fed row to the end. The first arrangement passes
+   > with the defect restored, which is why there are three.
+
+   > **THE FACE, AND WHY IT IS WORDS.** A glyph in line two's free 20px indent was drawn first and
+   > rejected in prototype: a symbol nobody was taught, on a line that is otherwise plain text. A
+   > ranked row prefixes line two with **`High priority ·`** / **`Low priority ·`** in the tier's
+   > colour, and a Normal row prints nothing at all. **LEADING, not trailing** — the four-cash-crop
+   > worst case already elides onto the floor clause, so a trailing mark would vanish exactly when a
+   > famine made it matter. The control is a fourth inspector link opening a three-button picker
+   > **mutually exclusive with the floor picker**, so the strip's tallest state is the one it already
+   > reserves in a zone reading 396 of 396.
 
    **9c — AND THE RANK NEEDS A SURFACE THAT REACHES EVERY ENTRY. LANDED.** The block draws at most
    `BUILD_QUEUE_ROWS_MAX` (3) rows plus `+N more`, and **the queue itself has no cap** — the sim
@@ -1325,7 +1414,17 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > **Routes are what force it.** A road wants hands *and* quarried stone, and it is the first
     > improvement whose resource draw does not already exist somewhere else — the pen's does. So this
     > lands before §4.13 rather than after, and generalising the pen's shipped
-    > pasture-offsets-hay-offsets-larder split is the reference implementation.
+    > **pasture-offsets-hay** split is the reference implementation. It is a TWO-term split since
+    > #578 — see §2.7's callout on the human-food term that was removed, and do not reintroduce one.
+    >
+    > **AND IT OWES A PROJECTED DEMAND, which #578 could not express.** A pen states its standing
+    > fodder bill once it exists (`penHayNeed`, the gap its footprint leaves), but the **pre-commit**
+    > row — the moment the player decides whether to build the thing — states only what it will earn,
+    > never what it will cost to hold. Nothing on the wire reconstructs it: a herd's
+    > `fodderPerBiomass` is its *yield* rate (structurally zero — no animal pays fodder), not its feed
+    > coefficient, and an unbuilt fence has no published footprint intake. **The cost of holding an
+    > improvement should be quotable BEFORE it is held**, which is this item's own subject, so the
+    > projection belongs here rather than as a pen special case.
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.
 14. **The tuning spread.** Config-only, and **last** — §4.10 changes what the numbers do to the curve,

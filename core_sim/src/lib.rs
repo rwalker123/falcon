@@ -112,9 +112,9 @@ pub use components::{
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, SourceShedFacts, SourceYield,
-    StartingUnit, TakeSelection, Tile, TownCenter, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-    FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, YieldRange,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -190,9 +190,9 @@ pub use fauna::{
     herd_upkeep_demand, herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed,
     hunt_crew_take_curve, hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers,
     hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws, hunt_take_workers,
-    hunt_useful_crew, next_turns_quarry, pen_upkeep, per_hunter_take_biomass,
-    project_arrivals_hunt, project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit,
-    regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight, retreat_seed,
+    hunt_useful_crew, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
+    project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrowth_delta_at,
+    repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight, retreat_seed,
     spawn_initial_herds, species_requires_denial, stay_fraction, unqueue_build_and_cancel_ring,
     would_be_herders_needed, AnimalTake, EcologyPhase, EngagementQuantum, EngagementStop,
     FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
@@ -363,7 +363,7 @@ pub use resources::{
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
     command_events_to_state, recapture_snapshot_in_place, FrameSink, SnapshotHistory,
-    StoredSnapshot,
+    StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{

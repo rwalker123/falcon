@@ -20,7 +20,7 @@ and it now buys three rows in three different ways — the differences are the r
 
 | row | what the SHORT tier does | why |
 |---|---|---|
-| `Fodder` | **MERGED** onto Food as a hay clause | a hay stock has no other home in the client |
+| `Fodder` | **MERGED** onto Food as a fodder clause | that larder has no other home in the client |
 | `Growth` | **MERGED** onto Morale as a clause | the fertility breakdown has no other home either |
 | `Kit` | **KEPT, at every tier** | a spent kit is stated NOWHERE else and is not recoverable |
 
@@ -42,7 +42,7 @@ carry disclosure carets, and they read naturally together.
 `RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause carries
 the identical clickable run a standalone row wears (`DetailFormat.inline_disclosure_label`, which
 delegates to the same `_key_cell`), on the same label — so both popovers keep working. The clause
-carries its OWN tint rather than inheriting the morale value cell's, exactly as the hay clause does.
+carries its OWN tint rather than inheriting the morale value cell's, exactly as the fodder clause does.
 
 **The carets have to be read from the CONTROLLER, not from the context, and that is a real trap.**
 Every other disclosure is drawn by `detail_bbcode` from a context this producer fills on its LAST
@@ -79,7 +79,7 @@ which is a property of the tier and not of the merge.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_kit_line`** (the three consumable kits and how much is left of each, registering a fifth `Kit` disclosure — see "The band's KIT" below) / `_band_morale_line` / `_morale_breakdown_lines` and the shared gate `_band_has_fodder_economy`. **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
+| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / **`_band_kit_line`** (the three consumable kits and how much is left of each, registering a fifth `Kit` disclosure — see "The band's KIT" below) / `_band_morale_line` / `_morale_breakdown_lines` and the DORMANT twin `_band_fodder_dormant_line` (the shared gate itself moved to `DetailFormat.band_has_fodder_economy` when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
 - **RETIRED — the demographics readout, and the wire section with no client reader.** The player
   faction's age structure (`PopulationDemographicsState`, snapshot `demographics[]`) rendered as the
@@ -178,11 +178,11 @@ which is a property of the tier and not of the merge.
   of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
   previous render's caret or food-runway tint behind;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
-  **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
-  **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
+  **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
+  decoded as `food_income`/`food_consumption`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
   `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 turns) · +0.76 /turn` —
-  where **net = `DetailFormat.band_net_food` = income − food_consumption − pen_feed_upkeep − raid_forfeit**, tinted green (≥0) /
+  where **net = `DetailFormat.band_net_food` = income − food_consumption − raid_forfeit**, tinted green (≥0) /
   red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
   `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
   as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
@@ -190,32 +190,41 @@ which is a property of the tier and not of the merge.
   breakdown rows rather than off any band-level wire total, so the net's income half can never disagree
   with the Gathered/Hunted rows beneath it. (A cohort-level `foodIncomeAverage` was added for exactly
   this and then **retired as redundant** — a separately-computed total is a second source of truth that
-  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has FOUR terms, not two:**
-  a band keeping a corral pays its penned herd's feed straight off the larder every turn (a confined
-  herd cannot graze), and that debit is in *neither* of the other two. Omitting it made the row **lie** —
-  a Red Deer pen overstated the surplus by ~1.74/turn against a band that eats ~1.2, and the larder then
-  drained with no explanation. **The fourth term is `raid_forfeit`** (Predators Phase 3,
-  `PopulationCohortState.raidForfeit`): food a predator raided off the larder THIS turn, the raid twin of
-  pen feed — same larder, a different decision (guard the camp vs feed the herd). Like pen feed the client
-  **must not** re-derive it; unlike pen feed raids are **EPISODIC**, so this term is present only the turn a
+  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has THREE terms:**
+  income, what the PEOPLE eat, and `raid_forfeit`.
+
+  **A PEN IS NOT A TERM, and the row that made it one is retired.** `penFeedUpkeep` was a fourth term —
+  the food a band handed its penned herds each turn — and it was a **modelling defect**: human food is
+  not animal feed. A pen eats the grass its fenced footprint grows plus the hay its keeper carries in
+  (FODDER, a separate store that never converts to FOOD), and what those two leave uncovered makes the
+  pen **UNDERFED** rather than billing the people. The larder draw was short-circuiting exactly that
+  starvation path — a pen whose pasture failed took food out of its keepers' mouths instead of
+  withering. So the wire field is `(deprecated)`, the decoder publishes no `pen_feed_upkeep` key, and
+  the `🐄 Pen feed (animals)` breakdown row is gone with `DetailFormat.band_pen_feed`. **Do not
+  reintroduce any of it**, and do not re-derive one client-side by summing herds.
+
+  **`raid_forfeit`** (Predators Phase 3, `PopulationCohortState.raidForfeit`) is the ledger's only debit
+  beyond consumption: food a predator raided off the larder THIS turn. The client
+  **must not** re-derive it, and raids are **EPISODIC**, so this term is present only the turn a
   raid lands and the forward FOOD OUTLOOK chart deliberately does NOT project it (a past loss is not a
-  steady drain). The full identity `larder_delta == income − consumption − pen_feed − raid_forfeit` is
-  pinned by `integration_tests/tests/raid_food_ledger.rs`.
-  `penFeedUpkeep` is the food the sim **actually paid** this turn summed across every pen the band
-  keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
-  yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity
-  `larder_delta == income − consumption − pen_feed` is pinned by `integration_tests/tests/pen_food_ledger.rs`).
+  steady drain). The full identity `larder_delta == income − consumption − raid_forfeit` is
+  pinned by `integration_tests/tests/{pen_food_ledger,raid_food_ledger}.rs`, and asserted client-side on
+  a pen-keeping band by `ui_preview`'s `band_pen_keeper` state — arithmetic AND the absence of any
+  animal-feed row, since a resurrected row is invisible in a PNG.
   The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-open disclosure** (a `▸/▾` caret) opening a
-  **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten
-  (people)` / `▼ −W  🐄 Pen feed (animals)` / `▼ −V  ⚔ Lost to raids` rows (Gathered/Hunted = Σ per-source `actual_yield`
-  by kind, Eaten = `food_consumption`, Pen feed = `pen_feed_upkeep`, shown only when a pen is kept;
+  **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten`
+  / `▼ −V  ⚔ Lost to raids` rows (Gathered/Hunted = Σ per-source `actual_yield`
+  by kind, Eaten = `food_consumption` — the label lost its `(people)` qualifier with the animals' row
+  it contrasted against;
   **Lost to raids = `raid_forfeit`, shown only the turn a raid landed** (`DisclosureController.food_breakdown_lines` /
   `DetailFormat.FOOD_LABEL_RAID_FORFEIT`, the crossed-swords glyph matching the `predator_raid` command-feed
-  alert) — **people, animals and raiders all draw the same larder but are DIFFERENT decisions**, so they are different
+  alert) — **the people and the raiders draw the same larder but are DIFFERENT stories**, so they are different
   rows), rendered through the **shared morale-breakdown path** in `DetailFormat.detail_bbcode` (income ▲
-  green, debits ▼ amber). ui_preview: `band_pen_feed` (fed pen: net +2.99 = 5.88 − 1.15 − 1.74) /
-  `band_pen_starving` (part-paid feed, net −0.53 red) / `predator_band_raided` (raided band: the
+  green, debits ▼ amber). ui_preview: `band_pen_keeper` (a pen-keeping band: net +4.73 = 5.88 − 1.15,
+  the pen a pure credit and no answering debit anywhere) /
+  `band_pen_starving` (the same pen underfed — income collapses to 1.32 with the shrinking herd, and
+  that is the ledger's ONLY trace of it; the alarm lives on the herd drawer) / `predator_band_raided` (raided band: the
   `⚔ Lost to raids −1.20` row + the crimson Warrior "⚠ Predator nearby" alert). No flow → the bare `Food N (N turns)` line,
   no net/disclosure.
   **THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE — and that is a correctness rule, not a style
@@ -268,15 +277,141 @@ which is a property of the tier and not of the merge.
   `HudLayer.update_stockpiles` (and `Main`'s dispatch to it) went with the card back in #381;
   `MapPanel.apply_update` still consumes the snapshot key for its scenario description.
 
-- **The band's FODDER (hay) larder — a ROW, or a CLAUSE on the Food line.** Shown only for a band
-  with a fodder economy at all: hay in store, or a pen feed bill it could offset with hay
-  (`_band_has_fodder_economy`, the ONE test behind both spellings, so the two can never disagree
-  about when the larder exists). `Fodder: 128.4` in its own right, at ONE decimal — the treatment the retired Trade row cited this row as its precedent for;
-  **in the `compact` (SHORT band-zone tier) host it is instead ` · 128.4 hay` appended to the Food
-  line** (`BAND_FOOD_HAY_CLAUSE_FORMAT`), in the `hay` vocabulary the flora basket rows already use,
-  carrying its own `INK_DIM` colour rather than inheriting the Food row's value tint — a starving
+- **The band's FODDER LEDGER — a ROW, or a CLAUSE on the Food line.** It **is the Food line, beat for
+  beat**: a two-term summary, with the flows that move it in a click-to-open disclosure beneath.
+
+  ```text
+  Fodder: 100.0  (100 turns)
+    ▲ +5.0  Grown
+    ▼ -6.0  Pens
+  ```
+
+  the STOCK (`fodder_store`) and the RUNWAY (`turns_of_fodder`) on the row; the two RATES
+  (`fodder_income` / `fodder_need`) behind the caret — the fodder twins of `food_income` /
+  `food_consumption` / `turns_of_food`, all in FODDER units.
+
+  - **THE RATES CAME OFF THE ROW, AND THAT IS A SHAPE FIX RATHER THAN A WIDTH ONE.** The row read
+    `Fodder: 100.0 · need 6.0/turn · growing 5.0/turn · 100 turns` and **wrapped to two lines in the
+    narrow drawer column** for it: it carried on ONE line what the Food row has always split between
+    a summary and a pull-down, in a client whose disclosure module states at the top of its own file
+    that breakdown rows are NEVER appended inline (inline growth in a fixed-height zone is what
+    clipped the Band panel once already). Shortening the clauses would have been a width answer to a
+    shape problem; the row is the Food row's shape now, and the pair is one click away.
+  - **THE RATE PAIR IS STILL THE POINT, and the slow trap is still why.** A pen's fenced footprint
+    has a FIXED carrying capacity and its herd does not, so a pen that feeds itself off the land
+    today becomes fodder-dependent as the herd grows — and nothing announced that until animals began
+    dying. `Grown` against `Pens` is that trap, and the popover is where it is now read.
+    `DisclosureController.fodder_breakdown_lines` builds the two rows through
+    `DetailFormat.fodder_breakdown_row`, which shares the food breakdown's indent, ▲/▼ and tint
+    (`_breakdown_row`) and differs in ONE thing: the number is at the fodder account's own ONE
+    decimal, because `+5.00 Grown` under a `100.0` stock would state one account at two precisions.
+  - **AND THE `need` CLAUSE'S AMBER WENT WITH THE CLAUSE.** The runway already says a larder is
+    draining — a finite, shrinking number under the shared thresholds — so a separate WARN on one
+    term was a second rule for one idea, and dropping it is what stops the two larders disagreeing
+    about what "worrying" looks like. What judges the fodder larder now is
+    `DetailFormat.fodder_is_concerning` — **the food test on the fodder account** (draining at all, or
+    a runway inside `BandFoodStatus.warn_turns()`) — and all it does is tint the row's CARET, exactly
+    as Food's does. The popover never opens itself.
+  - **`_band_fodder_falls_short` SURVIVED THE DELETION, with one reader left**: the `compact` tier's
+    merged clause, which is the only host with no room to state the pair it is a verdict about. It
+    was `_band_hay_falls_short` while the row said `hay`.
+  - **THE SIM SUMS `fodder_need`, AND THE CLIENT MUST NOT.** Herd rows are fog-filtered, so a pen out
+    of sight would silently drop out of a client-side total the band certainly still owes — the same
+    mistake the retired `pen_feed_upkeep` was minted to avoid.
+  - **THE RUNWAY IS THE FOOD LINE'S, NOT A SECOND SPELLING OF IT.** `turns_of_fodder` comes off the
+    sim's own `larder_runway_turns`, **999 sentinel included**, so it renders through
+    `DetailFormat.food_turns_text` and the whole value cell tints through
+    `BandFoodStatus.hex_for_turns` — the same renderer, the same map, and the same `Context` →
+    `_value_hex` handshake the Food row makes (`Context.fodder_turns`, reset per render beside
+    `food_turns`). There is no second constant, no second branch and no second phrasing of "turns of
+    buffer left" anywhere in the client.
+  - **THE ROW LABEL IS THE REGISTRATION KEY.** `BAND_FODDER_ROW_FORMAT` is spelled FROM
+    `HudDisclosureVocab.DETAIL_ROW_FODDER` rather than typed again, because a renamed row still
+    registering under the old key loses its caret silently.
+  - **EACH BREAKDOWN ROW IS OMITTED BELOW `SourceForecast.FODDER_FLOW_MIN` rather than printed as a
+    zero**, so a band with no Fields shows `Pens` alone rather than `+0.0 Grown`. A larder with
+    neither flow registers no disclosure at all — `register` declines an empty payload — so a caret
+    never promises rows that are not behind it.
+  - **The controller holds a DICTIONARY of registered rows**, keyed by row label, so this is the
+    FIFTH concurrent disclosure (Food, Fodder, Gear, Morale, Growth) rather than a second one
+    competing for a slot. `_is_concerning` gained a `BREAKDOWN_KIND_FODDER` case beside them.
+
+  **THE ROW IS UNCONDITIONAL, AND `HAS FODDER **OR** OWES A BILL` NOW PICKS ITS FORM.** The test is
+  `DetailFormat.band_has_fodder_economy` — the ONE test behind every spelling of "this band has a
+  fodder larder", so no two surfaces can disagree about when one exists. It was store-only for one
+  release and **that hid exactly the band that most needs the row**: pens owing hay, nothing
+  stockpiled, so `fodder_store == 0` and the line that would have said *you owe 6.0 a turn and grow
+  none of it* never rendered at all. (It had carried a second clause before that — *or it pays a pen
+  bread bill it could offset with hay* — which went out with the pen's FOOD bill; the replacement is
+  the same shape read off the right account.) The store term takes `FODDER_FLOW_MIN` rather than the
+  food-scale `FOOD_FLOW_MIN` it was written with: this is a fodder quantity printed at ONE decimal,
+  and the finer floor admitted a store it then rendered `Fodder: 0.0`.
+
+  > ⛔ **THE GATE NO LONGER DECIDES WHETHER THE ROW EXISTS, and the rule it replaces was the opposite
+  > one.** This file said *"a forager band with no animals never sprouts an empty Fodder line"*, and
+  > that reasoning is retired: an account a player has never met is invisible on precisely the bands
+  > whose player has never met it, which is where discoverability matters. Reported from play. Every
+  > player band renders a `Fodder:` row now; the gate chooses between the LIVE form above and the
+  > DORMANT form below. **A FOREIGN band still renders none** — that gate is `_is_player_unit` and is
+  > untouched, for the reason the Food row has it: a rival's larder is not ours to count.
+
+  **THE DORMANT ROW — `Fodder: —`, dim, with the reason on the block's hover.**
+  `BandDetailLines._band_fodder_dormant_line`, `BAND_FODDER_DORMANT_ROW_FORMAT`.
+  - **A DASH, NEVER A ZERO.** The live format on an empty larder renders `Fodder: 0.0  (∞)`, and a
+    full-ink zero beside a healthy infinity reads as *this band has fodder and is fine* — the exact
+    opposite of what the state means, and what a bare gate deletion ships. The em-dash is the glyph
+    this HUD already uses for an account with no quantity to state, and the const is read from
+    `HudComposeVocab.YIELD_LOCKED_GLYPH` rather than typed again (`HudFloraVocab.STOCK_UNKNOWN_GLYPH`
+    is the same idea one account over).
+  - **THE DIM IS A SELF-TINTED RUN INSIDE THE VALUE CELL**, the `BAND_FOOD_FODDER_CLAUSE_FORMAT`
+    idiom — `_value_hex`'s Fodder case keys on the RUNWAY spelling and would leave this in neutral
+    ink. The runway context stays at its `NAN` reset: writing this band's `turns_of_fodder` (999 for
+    a band that drains nothing) would tint the dash HEALTHY green.
+  - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
+    neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
+    dim key. An empty pull-down is worse than no pull-down.
+  - **TWO REASONS, TWO SENTENCES, because they are not the same news.** Without **Foddering** the
+    band cannot bank hay at any price — the craft is a whole rung away, taught by keeping a penned
+    herd — so the hover is the forage panel's own words:
+    `BAND_FODDER_LOCKED_TOOLTIP_FORMAT` is spelled from `HudFloraVocab.FODDERING_NOT_LEARNED_CLAUSE`,
+    the clause factored OUT of `GATE_REASON_WILD_FODDER_FORMAT` so both surfaces state one lock once
+    (the patch-only remedy — *or commit this patch to its crop* — stays on the gate reason, a band
+    row having no patch). With Foddering learned and no pen kept, nothing is wrong, so
+    `BAND_FODDER_DORMANT_TOOLTIP` says calmly what the row WILL hold.
+  - **THE LIVE FODDERING PERCENT IS REACHABLE, through a TYPED collaborator.** Knowledge is
+    faction-scoped and no band dict carries it, so `BandDetailLines` holds `FactionReadouts` for this
+    ONE reading — the cluster `BandPanelController` and `DrawerComposeController` already hold by type
+    — and the class header's *"the injection surface is ONE CALLABLE"* is unchanged. A producer built
+    without one answers `0.0`, which reads as "not learned": the honest answer for a client that has
+    been told nothing.
+  - **THE HOVER IS THE BLOCK'S, AND BOTH HOSTS MUST ATTACH IT.** `[hint=…]` does not parse in this
+    Godot build (`DetailFormat.block_tooltip`), so the sentence rides the label's `tooltip_text`.
+    `SubjectDrawerController` already did that for the Occupants drawer;
+    `BandPanelController._build_vitals_label` did NOT, so the same row was dim with no explanation in
+    the dock alone until it did.
+  - **THE `compact` (SHORT) TIER STAYS GATED.** That tier trades the row for a stock clause on the
+    Food line, and a dim `— fodder` clause states nothing the row it rides on does not — so a
+    dormant larder puts no clause there, and the tier's measured worst case is unmoved.
+
+  **The ONE decimal is `SourceForecast.format_fodder`, and `FODDER_DECIMALS` is the number
+  `FODDER_FLOW_MIN` is defined as half of.** Fodder is the coarse account — a stock in the hundreds
+  where a food rate is in hundredths — so a stock and the rate that drains it share one renderer here
+  where food splits them (`format_stock` vs `format_magnitude`); giving them two would only let them
+  drift. The `/turn` marking a rate rides the caller's format string in the tight, no-space spelling
+  `POLICY_CAP_FODDER_FORMAT` already uses, as distinct from `YIELD_PER_TURN_SUFFIX`'s spaced form.
+
+  **In the `compact` (SHORT band-zone tier) host it is instead ` · 128.4 fodder` appended to the Food
+  line** (`BAND_FOOD_FODDER_CLAUSE_FORMAT`) — **the word its own standalone row and the pen's `Fed:` row
+  use**; it read `hay` while the pen rows did, and one larder called two things across two tiers of the
+  same panel is the confusion that sweep removed (`herd-readouts.md`). Lowercase, which is what keeps
+  `band_panel_preview`'s merge guard honest: the standalone row's KEY is `Fodder`, the clause is
+  `128.4 fodder`, and `contains` is case-sensitive, so the two needles cannot both fire on one host,
+  carrying its own colour rather than inheriting the Food row's value tint — a starving
   band's hay stock is not itself a red reading, and the net rate beside it already sets the
-  precedent for a self-tinted run inside that value cell.
+  precedent for a self-tinted run inside that value cell. **That colour is the shortfall WARN**, on
+  the `_band_fodder_falls_short` condition that is now this clause's ONLY reader: the tier has no height
+  for the rate pair, and the widened gate now puts a `0.0 hay` clause on a band with a bill it cannot
+  pay, which in neutral ink would read as *fine*.
   - **Merged, not dropped, and the asymmetry with the retired Trade row is the whole point.**
     `compact` says HEIGHT is scarce and width is not — it is the horizontal dock — so a row with
     another home (Trade, on the WORK head) was dropped and the one with none is folded sideways.
@@ -292,6 +427,112 @@ which is a property of the tier and not of the merge.
     string (measured: 916px for three rows) — so a naive per-line split measures the entire block
     and reports a wrap on a label that fits comfortably. The row is cut out of the parsed text by
     **the NEXT row's key** (Morale), never by a newline.
+  - **Frames + assertions** (`ui_preview`, `chapters/band_expedition.gd`): `band_hay_short` (100
+    fodder, 6.0 owed against 5.0 grown — a comfortable-looking stock on a draining larder, so the
+    RUNWAY and the amber caret are what say so) / `band_hay_breakdown` (**the pull-down OPEN**, the
+    two flows in the shared popover — appended last in the block so no frame before it moves) /
+    `band_hay_covered` (4.0 owed against 6.0 grown, runway `∞`) /
+    `band_hay_empty_store` (pens owing 6.0, no Fields, an EMPTY store — **the case the old gate
+    hid**) / `band_hay_and_pen` (the band's ledger in the Band/City dock beside its pen's own
+    `Fed: ⚠ 47% — 40% pasture · 7% fodder · needs 11.3 more/turn` in the tile drawer, the two scales
+    of one fact in one frame) / **`band_fodder_dormant`** (a LIVE larder and a DORMANT one in ONE
+    render — see below).
+    **The five claims are made over FOUR line-sets in ONE block**, the fourth being a forager band,
+    which used to render no row and now renders the dormant one: every claim here is a CONTRAST —
+    warned against calm, live against dormant — and a contrast checked one half at a time is not
+    checked. Falsified: dropping the warn (2), restoring the store-only gate (1), printing the
+    sentinel raw (1), dropping the rate clauses (3), re-gating the row (9), dropping the dim
+    treatment (2), dropping the hover (5), putting a caret on the dormant row (2).
+    `band_panel_preview`'s `_vitals_worst_case_band_fixture` carries the ledger too: the widened row
+    is by some distance the longest optional row a band can hold, so a worst case seeding the stock
+    alone stopped being one.
+  - **`band_fodder_dormant` HOLDS BOTH FORMS AT ONCE, and the SETUP ORDER is what makes that
+    possible.** A selected player band is the DOCK's subject wherever a dock exists — the Occupants
+    drawer then renders a one-line pointer at it — so a docked HUD has exactly ONE band-detail
+    surface. The frame selects the forager band with **no panel injected**, which takes the drawer's
+    own fallback path, and injects the dock afterwards: neither `set_band_city_panel` nor
+    `render_band` re-renders the drawer, so the dormant row stays on the left while the hay band's
+    live row renders on the right. The frame asserts that precondition too — a drawer that had
+    flipped to the pointer would photograph one fodder row instead of two and look perfectly tidy.
+  - **A `[url=` SEARCH OVER THE PRODUCED LINES CANNOT SEE A CARET.** The producer emits plain
+    `Key: value` strings and `detail_bbcode` draws the clickable run, so that needle is VACUOUS —
+    measured: a dormant branch wrongly registering a disclosure left it green. The honest question is
+    `DisclosureController.state()`, read BETWEEN the two productions (`unit_summary_lines` clears the
+    rows on entry, so the dictionary describes the last band produced), with the live band's own
+    registration beside it as the paired positive.
+
+- **THE FACTION PAGE'S `Fodder:` ROW — the Food row, on the other larder** (`FactionRollup._fodder_line`).
+  `Fodder: 100.0 · −1.0 /turn` over a per-band drill-down, directly beneath Food and built beat for
+  beat like it: two terms, no faction runway, one clickable row per band, the alert in place of the
+  figure that would hide the band it is about.
+  - **IT SUMS THE WAY THE FOOD ROLLUP SUMS — client-side, per band, out of the answers that band's
+    own page gives.** `DetailFormat.band_fodder_store` for the stock and `band_net_fodder` for the
+    rate, never re-subtracted here, exactly as Food reads `band_provisions` / `band_net_food`. There
+    is no published faction total for either account and none may be invented: a rollup that did its
+    own arithmetic is a second source of truth for a figure the band page already states.
+    `band_fodder_store` was added for this — the fodder twin of `band_provisions` — and
+    `BandDetailLines` reads it too, so one key is spelled in one place.
+  - **NO FACTION RUNWAY, for the Food row's reason exactly**: turns-of-fodder is one larder against
+    one band's pens. The per-band rows carry it through `DetailFormat.food_turns_text`, **999
+    sentinel included**, and the ALERT — `BandFoodStatus.is_critical` on `turns_of_fodder`, in DANGER
+    ink — is what reaches the summary. One severity rule for both larders, the choice
+    `fodder_is_concerning` already made for the band row's caret.
+  - **THE RATE IS SPELLED AT THE FODDER ACCOUNT'S OWN RESOLUTION.** `SourceForecast.format_yield_fodder`
+    is `format_yield`'s twin at one decimal; the food scale's two would print `-1.00 /turn` and state
+    a precision this account does not have. It takes the SPACED `YIELD_PER_TURN_SUFFIX` rather than
+    the tight `POLICY_CAP_FODDER_FORMAT` spelling — that rule is about a fodder figure riding inside
+    a longer clause, and here the figure stands alone in the value cell the food rollup's own rate
+    fills one row above.
+  - **EVERY BAND GETS A DRILL-DOWN ROW, including one with no hay** (`Band 1  0.0 · +0.0  ∞`). The
+    Food drill-down lists the whole roster and this one does too: *which band holds the fodder* is
+    the question the page exists to answer and "none of them" is a real answer, while a filtered list
+    would state a faction total over a subset of the bands that make it up.
+  - ⛔ **AND IT HAS A DORMANT FORM TOO, ON THE BAND ROW'S OWN GATE FOLDED ACROSS THE ROSTER.** It
+    shipped for one round without one, on the reading that the faction page's Food row has no gate
+    and "exactly like Food" was the spec. That was wrong in the way that matters: a faction with no
+    fodder anywhere read `Fodder: 0.0 · +0.0 /turn` in FULL INK — a live-looking readout for an
+    economy that does not exist — while every one of its own bands read the dim `—`, so the two pages
+    disagreed about one fact and the disagreement read as a defect. The reason the band row got a
+    dormant form applies unchanged one scale up.
+  - **ONE GATE, NOT TWO SPELLINGS.** `_any_fodder_economy` is a FOLD of
+    `DetailFormat.band_has_fodder_economy` over the bands and nothing else — whatever the per-band
+    test admits, the page admits. A faction-scoped predicate of its own (`store > 0`, the obvious
+    one) goes LIVE on a sub-floor crumb every band on the page is already calling dormant, which is
+    the divergence the fold exists to make impossible. `band_panel_preview` stages the roster ON that
+    floor for exactly this reason.
+  - **THE DORMANT ROW IS BUILT BY THE BAND ROW'S OWN BUILDER.** `DetailFormat.fodder_dormant_row`
+    took the vocabulary and the two-sentence hover off `BandDetailLines` when this landed: a const
+    lives where every one of its readers can reach it, and a static rollup must not reach into a
+    stateful producer. One builder is also what stops the band's dim dash and the faction's coming to
+    mean different things. The faction's Foddering comes off the `knowledge` row threaded into
+    `build_band_zone` (through `RungGates.track`, the client's one reader of a `{track: progress}`
+    row) — a faction-scoped figure read at the scale it actually lives at.
+  - **A DORMANT FACTION ROW REGISTERS NO DISCLOSURE**, so it wears no caret: with no band holding a
+    larder there is nothing worth opening.
+  - ⛔ **THE FACTION PAGE NOW DROPS THE PREVIOUS RENDER'S CARETS, AND DID NOT BEFORE.**
+    `_build_vitals_label` calls `DisclosureController.clear_rows` before it builds its lines, exactly
+    as `BandDetailLines.unit_summary_lines` does and for the identical reason. `_disclosure_state` is
+    per-render and this page never cleared it, so a row that registers on one render and NOT on the
+    next kept the caret — and the stale payload — it had last time. **Found by eye on the dormant
+    `Fodder:` row**: a faction whose last pen is gone re-rendered a dim dash still wearing `▸`, over
+    a per-band card built from larders it no longer had. `Kit` and `Growth` both return `""` the same
+    way and carried the same latent bug; the one call fixes all three.
+  - **Frames + assertions** (`band_panel_preview`): the row is in `band_panel_faction`'s vitals-key
+    walk, `band_panel_faction_fodder` is the **drill-down OPEN**,
+    **`band_panel_faction_fodder_dormant`** holds the dormant faction row and a LIVE band row in ONE
+    render (the panel is DETACHED after the page is painted, so the drawer takes a band down its own
+    fallback path while the panel goes on drawing the page it already rendered — the mirror of
+    `ui_preview`'s `band_fodder_dormant` trick), and `_assert_faction_fodder_row`
+    carries the sum, the fodder-resolution rate (asserted AGAINST the food-scale spelling), the
+    row-per-band COUNT, and the runway/∞ pair. The roster's second band is given the `band_hay_short`
+    ledger and the first is left with none, so the faction total is one band's — distinguishable from
+    an average and from a list filtered down to the bands that have a larder.
+  - **THE OPEN-CARD FRAME RENDERS BEFORE THE PAGE'S OTHER ASSERTIONS, and that is load-bearing.** The
+    breakdown popover is an EMBEDDED subwindow and hides the moment GUI focus moves;
+    `_assert_faction_party_row_jumps_home` presses a summary row's link, and the re-render that
+    follows frees the focused button and takes the card down with it (measured — open, then gone one
+    process frame later). So the photographable state goes first and closes its own popover behind
+    it.
 - **Band morale readout** (snapshot `PopulationCohortState.morale`, decoded in `native/src/lib.rs`
   `population_to_dict` as `morale`, a 0–1 float on each cohort dict; flowed into the MapView unit marker
   in `_rebuild_unit_markers`): a band can shrink while well-fed when a harsh tile erodes morale until
@@ -792,7 +1033,7 @@ is sabotage-verified against a different mutation. The launch half and the vocab
 Arc #527, issue #517. The larder identity the sim pins is
 
 ```text
-larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit
+larder_delta == foodIncome − foodConsumption − raidForfeit
                 + transferReceived − transferSent
 ```
 
@@ -818,7 +1059,7 @@ turn, and that genuinely is a standing part of a band's economy. Closing it prop
 projecting steady transfers forward (issues #547 / #548) — a client-side fold-in of a past window is
 not that number and cannot be made into one.
 
-- **Two named magnitudes, never one signed net**, matching `penFeedUpkeep` and `raidForfeit` beside
+- **Two named magnitudes, never one signed net**, matching `raidForfeit` beside
   them: a band that both sends and receives inside one window is doing something, and a net renders
   that as nothing having happened.
 - **THE ROWS READ THE PER-TURN PAIR, AND THE LEDGER'S PAIR IS NOT RENDERABLE** (issue #517). The wire
@@ -847,10 +1088,10 @@ not that number and cannot be made into one.
   store, and a scalar total of hide and bone is the retired trade axis under a new name.
 
 **The breakdown gets a row each** (`DisclosureController.food_breakdown_lines`) — `⇄ From other
-bands` as an income row, `⇄ To other bands` as a debit — each omitted at zero exactly like Pen feed
+bands` as an income row, `⇄ To other bands` as a debit — each omitted at zero exactly like Lost to raids
 and Lost to raids, so a band nobody trades with renders the ledger it always did.
 
-**ONE glyph for both rows, and it is an ARROW rather than a handshake.** Pen feed and Lost to raids
+**ONE glyph for both rows, and it is an ARROW rather than a handshake.** Eaten and Lost to raids
 each carry their own mark because they are different debits; these two are one fact in two
 directions, and the row's own words say which way. The emoji that says "deal" (🤝) is **not in this
 client's fallback font and renders as an invisible gap** — no tofu box, nothing to notice — which is

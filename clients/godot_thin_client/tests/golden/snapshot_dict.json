@@ -1017,12 +1017,10 @@
       "pen_extend_cost": 91.480003,
       "pen_extend_progress": 34.240002,
       "pen_fed_fraction": 2.26,
+      "pen_fodder_shortfall": 61.66,
       "pen_footprint_tiles": 167,
-      "pen_hay_food": 81.709999,
-      "pen_larder_bill": 107.800003,
       "pen_pasture_fraction": 58.049999,
       "pen_radius": 8,
-      "pen_upkeep": 13.16,
       "per_worker_biomass": 8.51,
       "per_worker_material": [
         {
@@ -1144,12 +1142,10 @@
       "pen_extend_cost": 39.439999,
       "pen_extend_progress": 58.25,
       "pen_fed_fraction": 94.949997,
+      "pen_fodder_shortfall": 89.239998,
       "pen_footprint_tiles": 24,
-      "pen_hay_food": 36.400002,
-      "pen_larder_bill": 49.450001,
       "pen_pasture_fraction": 6.67,
       "pen_radius": 109,
-      "pen_upkeep": 26.040001,
       "per_worker_biomass": 22.99,
       "per_worker_material": [
         {
@@ -1824,6 +1820,7 @@
         ],
         "items_completed": 180,
         "output_grade": "populations[0].bench.output_grade",
+        "priority": "high",
         "progress": 103.739998,
         "rate_per_turn": 97.830002,
         "recipe_id": "populations[0].bench.recipe_id",
@@ -2057,6 +2054,8 @@
       "fertility_hunger": 0.000048,
       "fertility_reserve": 0.000077,
       "fertility_trend": 0.000084,
+      "fodder_income": 108.830002,
+      "fodder_need": 18.58,
       "fodder_store": 14.69,
       "food_consumption": 106.57,
       "food_income": 88.889999,
@@ -2222,6 +2221,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "normal",
           "realized_yield": 50.82,
           "species": "populations[0].labor_assignments[0].species",
           "sustainable_yield": 16.4,
@@ -2258,6 +2258,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
           "sustainable_yield": 35.830002,
@@ -2270,6 +2271,43 @@
           "wasted_yield": 32.889999,
           "workers": 1,
           "workers_needed": 77
+        },
+        {
+          "actual_yield": 93.540001,
+          "actual_yield_high": 56.189999,
+          "actual_yield_low": 110.970001,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [57.700001, 101.660004, 22.690001, 98.309998]},
+          "fauna_id": "populations[0].labor_assignments[2].fauna_id",
+          "floor": 97.739998,
+          "fodder_yield": 99.410004,
+          "hunt_useful_workers": 121,
+          "improvement": "populations[0].labor_assignments[2].improvement",
+          "kind": "populations[0].labor_assignments[2].kind",
+          "kit_id": "populations[0].labor_assignments[2].kit_id",
+          "material_yield": [
+            {
+              "amount": 72.800003,
+              "material_id": "populations[0].labor_assignments[2].material_yield[0].material_id"
+            },
+            {
+              "amount": 26.49,
+              "material_id": "populations[0].labor_assignments[2].material_yield[1].material_id"
+            }
+          ],
+          "overdraws": true,
+          "priority": "low",
+          "realized_yield": 40.889999,
+          "species": "populations[0].labor_assignments[2].species",
+          "sustainable_yield": 68.709999,
+          "take_species": [
+            "flax",
+            "wild_emmer"
+          ],
+          "target_x": 167,
+          "target_y": 178,
+          "wasted_yield": 56.630001,
+          "workers": 96,
+          "workers_needed": 166
         }
       ],
       "last_emigrated": 197,
@@ -2354,7 +2392,6 @@
       "morale_unrest": 0.000088,
       "output_multiplier": 0.000001,
       "pen_carry_per_worker_biomass": 24.940001,
-      "pen_feed_upkeep": 5.23,
       "pending_reveal_count": 2,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
@@ -2375,6 +2412,7 @@
       "transfer_sent_turn": 44.07,
       "travel_target_x": 79,
       "travel_target_y": 90,
+      "turns_of_fodder": 29.93,
       "turns_of_food": 62.830002,
       "upkeep_fund_mode": "populations[0].upkeep_fund_mode",
       "warrior_attack": 62.459999,
@@ -2415,6 +2453,7 @@
         ],
         "items_completed": 59,
         "output_grade": "populations[1].bench.output_grade",
+        "priority": "low",
         "progress": 89.18,
         "rate_per_turn": 41.959999,
         "recipe_id": "populations[1].bench.recipe_id",
@@ -2648,6 +2687,8 @@
       "fertility_hunger": 0.000157,
       "fertility_reserve": 0.000058,
       "fertility_trend": 0.000143,
+      "fodder_income": 65.330002,
+      "fodder_need": 40.869999,
       "fodder_store": 97.489998,
       "food_consumption": 0.92,
       "food_income": 52.610001,
@@ -2813,6 +2854,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
           "sustainable_yield": 23.76,
@@ -2849,6 +2891,7 @@
             }
           ],
           "overdraws": true,
+          "priority": "high",
           "realized_yield": 16.93,
           "species": "populations[1].labor_assignments[1].species",
           "sustainable_yield": 31.49,
@@ -2861,6 +2904,43 @@
           "wasted_yield": 58.150002,
           "workers": 120,
           "workers_needed": 78
+        },
+        {
+          "actual_yield": 109.07,
+          "actual_yield_high": 26.1,
+          "actual_yield_low": 105.809998,
+          "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [50.82, 70.839996, 97.290001, 53.330002]},
+          "fauna_id": "populations[1].labor_assignments[2].fauna_id",
+          "floor": 20.67,
+          "fodder_yield": 59.09,
+          "hunt_useful_workers": 184,
+          "improvement": "populations[1].labor_assignments[2].improvement",
+          "kind": "populations[1].labor_assignments[2].kind",
+          "kit_id": "populations[1].labor_assignments[2].kit_id",
+          "material_yield": [
+            {
+              "amount": 108.209999,
+              "material_id": "populations[1].labor_assignments[2].material_yield[0].material_id"
+            },
+            {
+              "amount": 73.0,
+              "material_id": "populations[1].labor_assignments[2].material_yield[1].material_id"
+            }
+          ],
+          "overdraws": true,
+          "priority": "low",
+          "realized_yield": 33.75,
+          "species": "populations[1].labor_assignments[2].species",
+          "sustainable_yield": 65.809998,
+          "take_species": [
+            "flax",
+            "wild_emmer"
+          ],
+          "target_x": 148,
+          "target_y": 137,
+          "wasted_yield": 31.450001,
+          "workers": 17,
+          "workers_needed": 5
         }
       ],
       "last_emigrated": 24,
@@ -2945,7 +3025,6 @@
       "morale_unrest": 0.000139,
       "output_multiplier": 0.000118,
       "pen_carry_per_worker_biomass": 4.73,
-      "pen_feed_upkeep": 77.650002,
       "pending_reveal_count": 2,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
@@ -2966,6 +3045,7 @@
       "transfer_sent_turn": 70.910004,
       "travel_target_x": 128,
       "travel_target_y": 117,
+      "turns_of_fodder": 8.24,
       "turns_of_food": 103.459999,
       "upkeep_fund_mode": "populations[1].upkeep_fund_mode",
       "warrior_attack": 96.199997,

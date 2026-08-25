@@ -31,7 +31,7 @@ use core_sim::{
     HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER,
     FODDERING_DISCOVERY_ID, FOOD,
 };
@@ -224,6 +224,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                     },
                     workers: KEEPER_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },
@@ -391,24 +392,33 @@ fn the_coupled_fodder_loop_is_deterministic_across_two_runs() {
     );
 }
 
-/// Read the keeper's per-turn PROVISIONS (bread) bill + the herd's `fodder_draw` (hay eaten).
-fn feed_split(app: &App, keeper: Entity, id: &str) -> (f32, f32) {
-    let bread = app
-        .world
-        .get::<LaborAllocation>(keeper)
-        .expect("keeper")
-        .last_pen_feed_upkeep;
-    let hay = app
+/// Read `(hay drawn this turn, fed fraction, what the keeper's FOOD larder still holds)` — the hay
+/// half of the feed, whether it was enough, and the store that must never move for either.
+fn feed_split(app: &App, keeper: Entity, id: &str) -> (f32, f32, f32) {
+    let (hay, fed) = app
         .world
         .resource::<HerdRegistry>()
         .find(id)
-        .map(|h| h.fodder_draw)
-        .unwrap_or(0.0);
-    (bread, hay)
+        .map(|h| (h.fodder_draw, h.pen_fed_fraction))
+        .unwrap_or((0.0, 0.0));
+    let larder = app
+        .world
+        .get::<PopulationCohort>(keeper)
+        .expect("keeper")
+        .stores
+        .get(FOOD)
+        .to_f32();
+    (hay, fed, larder)
 }
 
+/// **HAY IS WHAT FEEDS A BARREN PEN — AND WITHOUT IT THE PEN STARVES RATHER THAN EATING BREAD.**
+///
+/// The control half used to read *"a pen whose faction lacks Foddering pays the full lossy provisions
+/// bill"*: it sat on an undrawable hay pile and ate its keepers' food instead. That was the modelling
+/// error. It now goes **unfed** — `pen_fed_fraction` `0`, the herd shrinking — while the larder it
+/// used to drain stands exactly where the turn restocked it.
 #[test]
-fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill() {
+fn a_hay_fed_pen_is_fed_while_a_pen_that_cannot_draw_its_hay_starves() {
     const SETTLE_TURNS: u32 = 120;
     const START: f32 = 80.0;
 
@@ -422,40 +432,34 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     for _ in 0..SETTLE_TURNS {
         run_fodder_turn(&mut app, keeper, &id, HAY_FLOW, HAY_FLOW);
     }
-    let (hay_bread, hay_draw) = feed_split(&app, keeper, &id);
-    let hay_food_remaining = app
-        .world
-        .get::<PopulationCohort>(keeper)
-        .unwrap()
-        .stores
-        .get(FOOD)
-        .to_f32();
-    println!("HAY-FED: bread bill/turn {hay_bread:.5}, hay drawn/turn {hay_draw:.4}");
-    // The hay covers the whole (barren-footprint) demand, so the provisions bill is ~0 and real hay
-    // was drawn.
+    let (hay_draw, hay_fed, hay_food_remaining) = feed_split(&app, keeper, &id);
+    println!(
+        "HAY-FED: hay drawn/turn {hay_draw:.4}, fed {hay_fed:.4}, larder {hay_food_remaining:.4}"
+    );
+    // The hay covers the whole (barren-footprint) demand, so the pen reads fully fed on hay alone.
     assert!(
         hay_draw > 0.0,
         "a hay-fed pen must actually draw hay (got {hay_draw})"
     );
     assert!(
-        hay_bread < 1e-3,
-        "a hay-fed pen draws ~0 bread for the hay-covered share (paid {hay_bread}/turn)"
+        hay_fed > 0.99,
+        "and the hay feeds it in full (fed fraction {hay_fed})"
     );
-    // FODDER never became FOOD: the store is topped up to RESTOCK at the start of the turn and only the
-    // (tiny) bread bill is debited, so what remains is essentially the full RESTOCK.
+    // FODDER never became FOOD, and FOOD was never feed: the store is topped up to RESTOCK at the
+    // start of the turn and nothing leaves it.
     assert!(
         (food_before - hay_food_remaining) < 1e-2,
-        "the provisions store barely moved for a hay-fed pen — FODDER never converts to FOOD \
-         (spent {})",
+        "the provisions store did not move for a hay-fed pen — FODDER never converts to FOOD and \
+         FOOD is never feed (spent {})",
         food_before - hay_food_remaining
     );
 
-    // --- BREAD-FED CONTROL: identical pen, hay STILL grown into its store each turn (a hay Field
+    // --- STARVING CONTROL: identical pen, hay STILL grown into its store each turn (a hay Field
     // harvests regardless of Foddering), but the faction has NOT learned Foddering — so the K term is
-    // gated off (`k_rate = 0`, mirroring the labor arm's gate) and the hay is undrawable. The pen pays
-    // the full lossy provisions bill and the hay just piles up. The ledger is wiped immediately
-    // before every turn (`unlearn_foddering`) because keeping a pen *teaches* Foddering and no floor
-    // prevents it. ---
+    // gated off (`k_rate = 0`, mirroring the labor arm's gate) and the hay is undrawable. With a
+    // barren footprint under it the pen therefore has NO feed at all: it starves, and the hay just
+    // piles up beside it. The ledger is wiped immediately before every turn (`unlearn_foddering`)
+    // because keeping a pen *teaches* Foddering and no floor prevents it. ---
     let mut app = base_world();
     let tile = barren_pen_tile(&mut app);
     // (no learn_foddering)
@@ -472,45 +476,45 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     let feed_biomass = biomass_of(&app, &id); // post-regrow, pre-harvest = what FEED charges on
     unlearn_foddering(&mut app);
     app.world.run_system_once(advance_labor_allocation);
-    let (bread_bread, bread_draw) = feed_split(&app, keeper, &id);
-    let bread_hay_store = app
+    let (starved_draw, starved_fed, starved_larder) = feed_split(&app, keeper, &id);
+    let starved_hay_store = app
         .world
         .get::<PopulationCohort>(keeper)
         .unwrap()
         .stores
         .get(FODDER)
         .to_f32();
-    println!("BREAD-FED: bread bill/turn {bread_bread:.5}, hay drawn/turn {bread_draw:.4}");
-    // No Foddering → no hay draw, and the FODDER store only accumulates (never spent) — the plainest
-    // statement that FODDER never converts to FOOD: the pen paid bread while sitting on a hay pile.
+    println!(
+        "UNFODDERED: hay drawn/turn {starved_draw:.4}, fed {starved_fed:.4}, \
+         larder {starved_larder:.4}, biomass {feed_biomass:.3}"
+    );
+    // No Foddering → no hay draw, and the FODDER store only accumulates (never spent).
     assert!(
-        bread_draw.abs() < 1e-9,
-        "a pen whose faction lacks Foddering draws no hay (got {bread_draw})"
+        starved_draw.abs() < 1e-9,
+        "a pen whose faction lacks Foddering draws no hay (got {starved_draw})"
     );
     assert!(
-        bread_hay_store > HAY_FLOW,
-        "the hay store only accumulated for a non-foddering pen (got {bread_hay_store})"
+        starved_hay_store > HAY_FLOW,
+        "the hay store only accumulated for a non-foddering pen (got {starved_hay_store})"
     );
-    // It pays the FULL lossy bill — `upkeep_per_biomass × biomass` charged on the pre-harvest biomass.
-    let full_bill = 0.002 * feed_biomass; // pen.upkeep_per_biomass × biomass
+    // **And it STARVES rather than eating bread.** This is the behaviour the larder fallback hid.
     assert!(
-        bread_bread > 0.0 && (bread_bread - full_bill).abs() < full_bill * 0.02,
-        "a bread-fed pen pays the full lossy provisions bill: paid {bread_bread}/turn vs expected \
-         {full_bill} (upkeep × pre-harvest biomass {feed_biomass})"
+        starved_fed.abs() < 1e-6,
+        "with a barren footprint and undrawable hay the pen is fed NOTHING — it does not fall back \
+         on its keeper's larder (fed fraction {starved_fed})"
     );
-    // And the two stores are independent: the bread-fed pen spent provisions while its hay pile grew,
-    // where the hay-fed pen paid ~0 bread by drawing hay instead.
     assert!(
-        bread_bread > hay_bread * 100.0,
-        "feeding a pen bread ({bread_bread}) stays exactly as lossy as ever, while hay ({hay_bread}) \
-         pays it down — the two never trade"
+        feed_biomass > 0.0,
+        "the pen is still there to be starving, or the assertion above is vacuous"
+    );
+    assert!(
+        (RESTOCK - starved_larder) < 1e-2,
+        "and the larder is untouched: restocked to {RESTOCK}, still holds {starved_larder}"
     );
 }
 
-/// `pen.upkeep_per_biomass` (fauna_config.json `husbandry.pen`) — the pen's **gross** feed rate per
-/// unit biomass, the basis `penUpkeep`/`corralYield` share. Named so the split invariant asserts the
-/// stamped terms against an INDEPENDENT gross, not a re-derivation of themselves.
-const PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
+// **RETIRED: `PEN_UPKEEP_PER_BIOMASS`** — the food-unit gross the three-way split was asserted
+// against. A pen's feed demand is `FODDER_RATE × biomass` in fodder, which this file already names.
 
 /// The richest pasture tile WITHOUT stripping its graze — the feed-split test overrides
 /// `footprint_intake` directly, so the tile's own pasture is irrelevant and left intact.
@@ -522,20 +526,22 @@ fn pen_tile(app: &App) -> UVec2 {
         .0
 }
 
-/// Drive ONE corral-tend turn on a directly-posed pen and read back the three stamped feed terms.
+/// Drive ONE corral-tend turn on a directly-posed pen and read back the stamped feed terms.
 ///
 /// The pen at `biomass` demands `grass_demand = FODDER_RATE × biomass` of graze; we hand it exactly
 /// `pasture` from the footprint and `hay_in_store` in the keeper's `FODDER` store (drawn only if
 /// `foddering`), overriding the graze/grazing systems so each scenario is exact. `advance_labor_allocation`
 /// then runs the real corral-tend FEED+HARVEST, stamping the split on `Herd`. Returns
-/// `(gross, pasture_food, pen_hay_food, pen_larder_bill)` — the gross bread bill (`upkeep × biomass`,
-/// an INDEPENDENT reconstruction from the biomass we set) and the three NET food-unit shares.
+/// `(demand, pasture_share, hay_share, fed_fraction, larder_spent)` — the fodder demand
+/// (`FODDER_RATE × biomass`, an INDEPENDENT reconstruction from the biomass we set), the two fodder
+/// sources, the fraction they covered, and what the pen took out of the keeper's `FOOD` store, which
+/// must be nothing at all.
 fn feed_split_terms(
     biomass: f32,
     pasture: f32,
     foddering: bool,
     hay_in_store: f32,
-) -> (f32, f32, f32, f32) {
+) -> (f32, f32, f32, f32, f32) {
     let mut app = base_world();
     let tile = pen_tile(&app);
     if foddering {
@@ -560,68 +566,92 @@ fn feed_split_terms(
         herd.footprint_intake = pasture;
     }
     app.world.run_system_once(advance_labor_allocation);
+    let larder_spent = RESTOCK
+        - app
+            .world
+            .get::<PopulationCohort>(keeper)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&id).unwrap();
-    let gross = PEN_UPKEEP_PER_BIOMASS * biomass;
-    let pasture_food = gross * herd.pen_pasture_fraction;
-    (gross, pasture_food, herd.pen_hay_food, herd.pen_larder_bill)
+    let demand = FODDER_RATE * biomass;
+    let pasture_share = demand * herd.pen_pasture_fraction;
+    (
+        demand,
+        pasture_share,
+        herd.fodder_draw,
+        herd.pen_fed_fraction,
+        larder_spent,
+    )
 }
 
-/// **The F3 feed-split invariant: the three feed terms partition the gross bread bill.** The client's
-/// "Fed by pasture NN% · hay X.X · larder Y.Y" row must never over- or under-count, so
-/// `pasture_food + penHayFood + penLarderBill == penUpkeep` (gross) on a penned herd, with
-/// `pasture_food = penUpkeep × penPastureFraction`. Asserted across a pasture-only pen, a hay-fed pen,
-/// and a fully-fed pen — the last proving the larder term drops to 0 when pasture + hay cover it. This
-/// is the guarantee the pre-existing two-term (pasture + larder) split violated on any pen with
-/// pasture > 0.
+/// **The feed split is GRASS + HAY, in one unit, against one demand.** The client's "Fed by pasture
+/// NN% · hay X.X" row must never over- or under-count, so
+/// `pasture_share + hay_share == fed_fraction × demand`, where `demand = fodder_per_biomass × biomass`
+/// and `pasture_share = demand × penPastureFraction`.
+///
+/// **And the keeper's larder never moves.** The retired third term made this a
+/// `pasture_food + penHayFood + penLarderBill == penUpkeep` partition in FOOD units — a shortfall was
+/// paid in bread instead of being a shortfall. Asserted across a pasture-only pen, a hay-fed pen, and
+/// a fully-fed pen: the first two are **short**, and being short is now the whole of what happens.
 #[test]
-fn the_three_pen_feed_terms_sum_to_the_gross_upkeep() {
+fn the_pen_feed_terms_sum_to_the_fodder_demand_and_never_touch_the_larder() {
     const BIOMASS: f32 = 100.0; // grass_demand = FODDER_RATE × 100 = 10 grass/turn
     const EPS: f32 = 1e-5;
 
-    // (1) Pasture-only pen: the footprint covers 4 of the 10 grass demand, no hay. The larder pays the
-    //     uncovered 60% — pasture > 0, hay == 0, larder > 0.
-    let (gross, pasture, hay, larder) = feed_split_terms(BIOMASS, 4.0, false, 0.0);
-    println!(
-        "pasture-only: gross {gross:.6} = pasture {pasture:.6} + hay {hay:.6} + larder {larder:.6}"
-    );
+    // (1) Pasture-only pen: the footprint covers 4 of the 10 grass demand, no hay. The pen is 40% fed
+    //     and starves for the rest — pasture > 0, hay == 0, fed < 1.
+    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 4.0, false, 0.0);
+    println!("pasture-only: demand {demand:.6}, pasture {pasture:.6}, hay {hay:.6}, fed {fed:.6}");
     assert!(pasture > 0.0, "the footprint fed part of the pen");
-    assert!(hay.abs() < EPS, "no hay was drawn (pen_hay_food == 0)");
-    assert!(larder > 0.0, "the larder pays the uncovered share");
+    assert!(hay.abs() < EPS, "no hay was drawn (fodder_draw == 0)");
     assert!(
-        (pasture + hay + larder - gross).abs() < EPS,
-        "pasture-only: pasture + hay + larder must equal gross ({gross})"
+        fed > 0.0 && fed < 1.0 - EPS,
+        "a partly-pastured pen is partly fed and starves for the rest (fed {fed})"
+    );
+    assert!(
+        (pasture + hay - fed * demand).abs() < EPS,
+        "pasture-only: pasture + hay must equal fed × demand ({demand})"
+    );
+    assert!(
+        spent.abs() < EPS,
+        "and the shortfall was NOT paid out of the larder (spent {spent})"
     );
 
-    // (2) Hay-fed pen: barren footprint, hay in store covers 5 of the 10 demand. The larder pays the
-    //     rest — pasture == 0, hay > 0, larder > 0.
-    let (gross, pasture, hay, larder) = feed_split_terms(BIOMASS, 0.0, true, 5.0);
-    println!(
-        "hay-fed:      gross {gross:.6} = pasture {pasture:.6} + hay {hay:.6} + larder {larder:.6}"
-    );
+    // (2) Hay-fed pen: barren footprint, hay in store covers 5 of the 10 demand. Half fed, half
+    //     starving — pasture == 0, hay > 0, fed == 0.5.
+    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 0.0, true, 5.0);
+    println!("hay-fed:      demand {demand:.6}, pasture {pasture:.6}, hay {hay:.6}, fed {fed:.6}");
     assert!(pasture.abs() < EPS, "a barren footprint feeds nothing");
-    assert!(hay > 0.0, "hay was drawn (pen_hay_food > 0)");
-    assert!(larder > 0.0, "the larder pays what the partial hay left");
+    assert!(hay > 0.0, "hay was drawn (fodder_draw > 0)");
     assert!(
-        (pasture + hay + larder - gross).abs() < EPS,
-        "hay-fed: pasture + hay + larder must equal gross ({gross})"
+        fed > 0.0 && fed < 1.0 - EPS,
+        "partial hay leaves a partly-fed pen (fed {fed})"
+    );
+    assert!(
+        (pasture + hay - fed * demand).abs() < EPS,
+        "hay-fed: pasture + hay must equal fed × demand ({demand})"
+    );
+    assert!(
+        spent.abs() < EPS,
+        "and what the hay left short was NOT paid out of the larder (spent {spent})"
     );
 
-    // (3) Fully-fed pen: footprint 4 + ample hay together cover the whole demand → the larder bill
-    //     drops to 0. pasture > 0, hay > 0, larder == 0.
-    let (gross, pasture, hay, larder) = feed_split_terms(BIOMASS, 4.0, true, 100.0);
-    println!(
-        "fully-fed:    gross {gross:.6} = pasture {pasture:.6} + hay {hay:.6} + larder {larder:.6}"
-    );
+    // (3) Fully-fed pen: footprint 4 + ample hay together cover the whole demand → fed in full.
+    let (demand, pasture, hay, fed, spent) = feed_split_terms(BIOMASS, 4.0, true, 100.0);
+    println!("fully-fed:    demand {demand:.6}, pasture {pasture:.6}, hay {hay:.6}, fed {fed:.6}");
     assert!(pasture > 0.0 && hay > 0.0, "pasture and hay both feed it");
     assert!(
-        larder.abs() < EPS,
-        "fully fed by pasture + hay → the larder bill is 0 (got {larder})"
+        (fed - 1.0).abs() < EPS,
+        "pasture + hay cover the whole demand → fully fed (got {fed})"
     );
     assert!(
-        (pasture + hay + larder - gross).abs() < EPS,
-        "fully-fed: pasture + hay + larder must equal gross ({gross})"
+        (pasture + hay - demand).abs() < EPS,
+        "fully-fed: pasture + hay must equal the whole demand ({demand})"
     );
+    assert!(spent.abs() < EPS, "and still nothing left the larder");
 }
 
 /// **The F3 escape invariant, refined: a lost pen's stale hay rate cannot inflate anything because the

@@ -19,9 +19,9 @@ use core_sim::{
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MaterialsConfigHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    SupplyNetworkConfigHandle, SupplyNetworkMembership, TileRegistry, WellbeingConfigHandle,
-    FULL_TIE,
+    SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartingUnit, SupplyNetworkConfigHandle, SupplyNetworkMembership, TileRegistry,
+    WellbeingConfigHandle, FULL_TIE,
 };
 use std::collections::BTreeMap;
 
@@ -185,6 +185,7 @@ fn hunt_and_read_hide(floor: f32) -> (Scalar, Option<f32>, f32) {
                     },
                     workers: HUNT_WORKERS,
                     kit: None,
+                    priority: SourcePriority::default(),
                 }],
                 ..Default::default()
             },

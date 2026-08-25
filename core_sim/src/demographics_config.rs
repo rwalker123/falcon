@@ -78,8 +78,9 @@ pub struct DemographicsReserve {
 
 /// The **flow** fertility factor: is the larder growing or shrinking. Two-sided and centred at 1.0
 /// — net-positive food raises fertility, net-negative lowers it — driven by
-/// `net_ratio = (steady_income − demand − pen_feed_upkeep) / demand`, the negation of the same net
-/// drain the player-facing `turnsOfFood` runway divides by. See
+/// `net_ratio = (steady_income − demand) / demand`, the negation of the same net drain the
+/// player-facing `turnsOfFood` runway divides by (a pen eats grass and hay, so neither term counts
+/// livestock). See
 /// `docs/plan_population_growth_model.md`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]

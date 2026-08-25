@@ -77,10 +77,12 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
-## The merged Food line's hay clause, as it reads AFTER the BBCode is stripped — the needle proving the
-## SHORT tier really merged the two larders rather than dropping one. The word, not the number: the
-## stock is a fixture value and this is a claim about the CLAUSE.
-const MERGED_FOOD_HAY_NEEDLE := "hay"
+## The merged Food line's fodder clause, as it reads AFTER the BBCode is stripped — the needle proving
+## the SHORT tier really merged the two larders rather than dropping one. The word, not the number: the
+## stock is a fixture value and this is a claim about the CLAUSE. **Lowercase, and that is what tells
+## it from the row below**: the clause says `1.2 fodder`, the standalone row's KEY says `Fodder`, and
+## `contains` is case-sensitive, so the two needles cannot both fire on one host.
+const MERGED_FOOD_FODDER_NEEDLE := "fodder"
 ## The standalone `Fodder:` row's key, which must be ABSENT wherever the merge fired. Matched bare —
 ## `DetailFormat._split_kv` drops the `": "` separator into two table cells, so the colon is never in
 ## the rendered text.
@@ -329,11 +331,6 @@ const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
 ## comes from (staffed 2 < needed 4), so the two read from one const rather than two loose literals.
 const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
 
-## The pen feed the faction roster's herd-keeping band pays — the conditional Food row that makes the
-## faction band zone's worst case its worst case. The figure is the shipped pen upkeep the per-band
-## fixtures already quote, so the row measures what a live one does.
-const FACTION_PEN_FEED_UPKEEP := 1.74
-
 ## The faction roster's SECOND band — deliberately smaller and unhappier than the first, so a
 ## population-weighted mean and a plain one give different answers. See `_faction_roster`.
 const FACTION_SECOND_BAND_SIZE := 12
@@ -342,6 +339,23 @@ const FACTION_SECOND_BAND_MORALE := 0.30
 
 ## …and its age brackets scaled to match that size, since they are the same band counted twice.
 const FACTION_SECOND_BAND_SCALE := 0.4
+
+## **AND ITS FODDER LARDER — the only one on the roster, which is what makes the Fodder rollup say
+## anything.** The first band keeps no animals and carries no fodder key at all, so the faction's
+## stock is one band's and the drill-down lists a band with hay beside a band with none: a page that
+## had stopped summing, or one that quietly filtered the roster down to the bands with a larder,
+## renders differently from this. The numbers are the `band_hay_short` ledger — a comfortable-looking
+## stock on a draining account — so the two harnesses describe one shape.
+const FACTION_SECOND_BAND_FODDER_STORE := 100.0
+
+const FACTION_SECOND_BAND_FODDER_NEED := 6.0
+
+const FACTION_SECOND_BAND_FODDER_INCOME := 5.0
+
+## The sim's own answer, never divided out here: 100 / (6.0 − 5.0). The client never computes a
+## runway — `turnsOfFodder` comes off `larder_runway_turns`, the very function that answers
+## `turnsOfFood`.
+const FACTION_SECOND_BAND_FODDER_TURNS := 100.0
 
 ## THE HERDER-FLOOR ROW (`band_panel_work_herder_floor`) — a MANAGED herd whose crew requirement is
 ## LARGER than what its take saturates, which is the only shape that can expose the bug: the row flags
@@ -1042,7 +1056,7 @@ func _ready() -> void:
 	# TOP dock. Nothing in this harness had ever rendered one: each optional row had its own frame and
 	# each of those fixtures was otherwise ordinary, so the zone was never asked to hold all of them
 	# together — which is exactly how a band with the full set came to overflow a box that CLIPS.
-	# The fixture carries a hay larder AND a pen feed bill, productivity below full, a fertility
+	# The fixture carries a hay larder, productivity below full, a fertility
 	# reading, and the projected arrivals the FOOD OUTLOOK chart needs, so
 	# every gate in `build_band_zone` / `unit_summary_lines` is live at once.
 	#
@@ -1366,7 +1380,7 @@ func _ready() -> void:
 	_assert_work_fodder_readouts()
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
-	# until it got these (`_work_floor_open` is otherwise never true in either harness). Two rows: one
+	# until it got these (no harness otherwise opens `_work_picker_open`). Two rows: one
 	# BUILDING a pen beside one that is not, and the claim is that the picker cannot tell them apart.
 	# The standing-investment WARN line and the discard confirm that used to ride the first row are
 	# gone with issue #442 — a stance re-pick leaves the improvement alone, so there is nothing to warn
@@ -1402,7 +1416,7 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_lit_rung(EXTRACTIVE_ROW_PRESET)
 	_assert_policy_pick_confirms(EXTRACTIVE_ROW_HERD_ID, false)
-	_hud._bandpanel._work_floor_open = false
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_NONE
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# UNDER-CONTAINED managed herd in the WORK board (fauna neglect-escape arc): a Corralled herd that
@@ -2247,6 +2261,17 @@ func _ready() -> void:
 	_panel.set_active_tab(&"band")
 	await _settle()
 	await _save("band_panel_faction")
+	# **THE FODDER DRILL-DOWN, OPEN — and it renders HERE, before this block presses anything.** The
+	# breakdown popover is an EMBEDDED subwindow, so it hides the moment GUI focus moves, and every
+	# assertion below drives a real control: `_assert_faction_party_row_jumps_home` presses a summary
+	# row's link, and the re-render that follows frees the focused button and takes the card down with
+	# it. Measured — the popover opened, and was gone one process frame later. So the photographable
+	# state goes first, and it closes its own popover behind it.
+	await _assert_faction_fodder_disclosure()
+	# **AND THE SAME ROW WITH NO FODDER ANYWHERE ON THE ROSTER — dormant, beside a live one.** It
+	# follows the OPEN-card state and still precedes every assertion that presses a control, so the
+	# subwindow ordering above is unchanged; it puts the panel, the roster and the page back itself.
+	await _assert_faction_fodder_dormant()
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_faction")
@@ -2422,6 +2447,10 @@ func _ready() -> void:
 	await _render_work_inspector_width_states()
 
 	await _render_work_material_width_states()
+
+	await _render_work_priority_states()
+
+	await _render_not_yet_estimated_states()
 
 	_assert_pending_assign_rollback()
 
@@ -3494,11 +3523,15 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# A schedule with a zero in it is what `ArrivalStrip.has_gap` admits — the whole of what makes the
 	# strip mount at all.
 	model["schedule"] = PackedFloat32Array(WORST_CASE_INSPECTOR_SCHEDULE)
-	var was_open: bool = _hud._bandpanel._work_floor_open
-	_hud._bandpanel._work_floor_open = true
+	# **THE TALLER PICKER, WHICH IS THE PRIORITY ONE** (§4.9 item 9b). The two are mutually exclusive,
+	# so the strip's ceiling takes a max rather than a sum — and staging the FLOOR picker here would
+	# understate it by the hint line and leave `WORK_INSPECTOR_CEILING_HEIGHT` describing a state that
+	# is no longer the worst one.
+	var was_open: StringName = _hud._bandpanel._work_picker_open
+	_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_PRIORITY
 	var reserved: float = _hud._bandpanel._work_inspector_height(model)
 	var strip: Control = _hud._bandpanel._build_work_inspector(band, model)
-	_hud._bandpanel._work_floor_open = was_open
+	_hud._bandpanel._work_picker_open = was_open
 	strip.visible = false
 	add_child(strip)
 	await _settle()
@@ -6636,8 +6669,8 @@ func _contains_scroll(node: Node) -> bool:
 			return true
 	return false
 
-## GUARD: the SHORT tier merges the hay larder onto the Food line (`BandDetailLines`'
-## `BAND_FOOD_HAY_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
+## GUARD: the SHORT tier merges the fodder larder onto the Food line (`BandDetailLines`'
+## `BAND_FOOD_FODDER_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
 ## line too wide for the band zone WRAPS and costs back the very row the merge bought. A wrap is also
 ## invisible in the frame: two lines of a rendered vitals block look exactly like two rows.
 ##
@@ -6655,8 +6688,8 @@ func _assert_merged_food_row_fits() -> void:
 		_fail("merged-food-row assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
-	if not text.contains(MERGED_FOOD_HAY_NEEDLE):
-		_fail("the SHORT tier's Food row carries no hay clause — the merge is off (got: %s)" % text)
+	if not text.contains(MERGED_FOOD_FODDER_NEEDLE):
+		_fail("the SHORT tier's Food row carries no fodder clause — the merge is off (got: %s)" % text)
 		return
 	if text.contains(FODDER_ROW_NEEDLE):
 		_fail("the SHORT tier still renders a standalone Fodder row beside the merged Food line")
@@ -7285,19 +7318,16 @@ func _faction_discoveries_fixture() -> Dictionary:
 func _faction_roster() -> Array:
 	var second := _concerning_food_band_fixture()
 	# **THE SECOND BAND KEEPS A HERD**, the corralled aurochs `_under_herded_work_herd_fixtures` stages.
-	# Every other fixture band in this file hunts WILD game, so on an all-wild roster no band on this
-	# page pays a pen's feed — and the pen feed below is a real term of `band_net_food`, which is the
-	# headline the `band` zone's Food row is built on.
+	# It keeps one for the WORK board's sake, not the Food row's: a pen bills the food larder for
+	# nothing (its feed is its fenced pasture plus hay), so keeping a herd no longer moves
+	# `band_net_food` at all.
 	second["labor_assignments"] = [
 		{"kind": "hunt", "workers": 4, "fauna_id": UNDER_HERDED_WORK_HERD_ID, "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.30, "sustainable_yield": 0.30},
 	]
-	# …and PAYS ITS PEN'S FEED. It renders no row of its own — the Food block states a stock and a rate,
-	# not a ledger — but it is a real term of `band_net_food`, so without it the headline net on this
-	# page would be the one figure a live pen-keeping faction never sees. It is also what caught the
-	# zone at **328px of its 300px box** when the rows were briefly a four-row ledger at the vitals type
-	# size, which is why the fixture keeps paying it.
-	second["pen_feed_upkeep"] = FACTION_PEN_FEED_UPKEEP
+	# **IT SEEDS NO `pen_feed_upkeep`.** It used to pay 1.74 off the larder as a term of `band_net_food`;
+	# that field is retired with the pen's food bill, so a fixture still seeding it would be feeding a
+	# key nothing reads — a dead field dressed as a live one.
 	# **IT IS A SMALLER BAND WITH WORSE MORALE, and both halves are load-bearing.** Population-weighted
 	# and plain means agree exactly when every band is the same size, so a roster of two 30-person bands
 	# makes `_assert_faction_weighted_morale` vacuous — it would pass under either rule. At 12 people and
@@ -7305,6 +7335,13 @@ func _faction_roster() -> Array:
 	# only configuration in which that assertion says anything.
 	second["size"] = FACTION_SECOND_BAND_SIZE
 	second["morale"] = FACTION_SECOND_BAND_MORALE
+	# **IT IS ALSO THE ROSTER'S ONLY FODDER LARDER**, which is what its pen implies and what the
+	# faction's `Fodder:` row sums. The first band keeps none, so the total is distinguishable from a
+	# page that averaged the two, and the drill-down carries a band WITH hay beside one without.
+	second["fodder_store"] = FACTION_SECOND_BAND_FODDER_STORE
+	second["fodder_need"] = FACTION_SECOND_BAND_FODDER_NEED
+	second["fodder_income"] = FACTION_SECOND_BAND_FODDER_INCOME
+	second["turns_of_fodder"] = FACTION_SECOND_BAND_FODDER_TURNS
 	# The age brackets are scaled with it. They are a SECOND counting of the same band, and
 	# `band_panel_people`'s own rule is that the two must agree — a band of 12 carrying a 30-person age
 	# structure is a fixture no server can produce. **The workers take the REMAINDER**, so the three
@@ -7346,7 +7383,7 @@ func _assert_faction_page() -> void:
 	# missing from one that scrolled. The KEYS are what is checked — their values are the aggregation
 	# rules, which have their own assertions below.
 	var vitals := _faction_vitals_text(band_zone)
-	for row in [HudDisclosureVocab.DETAIL_ROW_FOOD,
+	for row in [HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.DETAIL_ROW_FODDER,
 			HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE,
 			HudDisclosureVocab.DETAIL_ROW_GROWTH]:
 		# The KEY alone, not `key + ": "` — `detail_bbcode` splits the pair and emits the key into its
@@ -7373,6 +7410,10 @@ func _assert_faction_page() -> void:
 	# **MORALE IS POPULATION-WEIGHTED, and the fixture is built so that a PLAIN mean gives a different
 	# answer** — otherwise the weighting is asserted by a number it would produce either way.
 	_assert_faction_weighted_morale(vitals)
+
+	# **AND THE FODDER ROW IS THE FOOD ROW ON THE OTHER LARDER**, summed the same way and stating the
+	# same shape. Its own block, because the claim is arithmetic rather than presence.
+	_assert_faction_fodder_row(vitals)
 
 	# **THE TYPE SCALE IS ASKED OF THE BAND ZONE, not the work one, and that is where the page's stat
 	# rows now live.** The work zone's own rows are `build_inline_link` BUTTONS (a row's name jumps to
@@ -7438,6 +7479,280 @@ func _assert_faction_page() -> void:
 	_assert_band_panel("faction page: a party row names the band it left",
 		parties_zone != null and _has_text_containing(parties_zone, HudFormat.band_display_name({}, 1)))
 	_assert_faction_party_row_jumps_home(parties_zone)
+
+## **THE FACTION'S FODDER ROW — THE FOOD ROW ON THE OTHER LARDER**, and every claim here is the Food
+## row's claim asked about fodder, because "exactly like Food" is the whole specification.
+##
+## **THE SUM IS THE DISCRIMINATOR.** The roster's second band holds the only hay on it, so the faction
+## stock is 100.0 and its net −1.0 — figures a page that averaged its two bands, or one that summed
+## only the bands WITH a larder, would not produce. Composed here out of the fixtures' own numbers
+## rather than by asking the client to add them up again, exactly as the head-count cross-check above
+## is.
+##
+## **NO FACTION RUNWAY**, for the reason the Food row states none: turns-of-fodder is one larder
+## against one band's pens. The page-wide "no parenthetical anywhere" claim covers the absence, so
+## what is asserted HERE is that the per-band rows carry it instead — including the ∞ a band with no
+## drain reads, which is the sim's 999 sentinel and must never reach the glass as a number.
+##
+## **EVERY BAND GETS A ROW, INCLUDING THE ONE WITH NO HAY.** *Which band holds the fodder* is the
+## question this page exists to answer and "none of them" is a real answer; a filtered list would
+## state a faction total over a subset of the bands that make it up. Asserted as a COUNT, because a
+## drill-down that dropped the empty band still names the band it kept.
+func _assert_faction_fodder_row(vitals: String) -> void:
+	var bands: Array = []
+	for entry in _faction_roster():
+		if not bool((entry as Dictionary).get("is_expedition", false)):
+			bands.append(entry)
+	var store := 0.0
+	var net := 0.0
+	for band_variant in bands:
+		var band: Dictionary = band_variant
+		store += float(band.get("fodder_store", 0.0))
+		net += float(band.get("fodder_income", 0.0)) - float(band.get("fodder_need", 0.0))
+	_assert_band_panel("faction page: Fodder sums the roster's larders (%s)"
+		% SourceForecast.format_fodder(store),
+		vitals.contains(SourceForecast.format_fodder(store)))
+	_assert_band_panel("faction page: …and its net rate is the roster's, at the fodder scale (%s)"
+		% SourceForecast.format_yield_fodder(net),
+		vitals.contains(SourceForecast.format_yield_fodder(net)))
+	# **THE RATE IS SPELLED AT THE FODDER ACCOUNT'S OWN RESOLUTION.** One decimal, never the food
+	# scale's two — the same figure through `format_yield` would read `-1.00 /turn`, which states a
+	# precision this account does not have and would be the two larders disagreeing on one page.
+	_assert_band_panel("faction page: …and NOT at the food row's two decimals (%s)"
+		% SourceForecast.format_yield(net),
+		not vitals.contains(SourceForecast.format_yield(net)))
+	# THE DRILL-DOWN, asked of the payload the popover would show rather than of the popover — that
+	# card is opened and photographed by `band_panel_faction_fodder` below, and this is the claim
+	# about WHAT IS IN IT.
+	var rows := _hud._disclosures._lines_for(DetailFormat.breakdown_key(
+		HudDisclosureVocab.BREAKDOWN_KIND_FODDER, {}))
+	_assert_band_panel("faction page: the Fodder drill-down lists EVERY band (%d of %d)" % [
+		rows.size(), bands.size()],
+		rows.size() == bands.size())
+	var with_hay := ""
+	var without_hay := ""
+	for line in rows:
+		if String(line).contains(SourceForecast.format_fodder(FACTION_SECOND_BAND_FODDER_STORE)):
+			with_hay = String(line)
+		elif String(line).contains(DetailFormat.FOOD_UNLIMITED_GLYPH):
+			without_hay = String(line)
+	# **THE BAND WITH HAY STATES ITS RUNWAY, THE BAND WITHOUT STATES ∞ — and both halves are the
+	# claim.** The runway alone passes on a page that prints a number for every band; the ∞ alone
+	# passes on one that has stopped printing runways at all.
+	_assert_band_panel("faction page: the band with hay carries its own runway (%s)"
+		% DetailFormat.food_turns_text(FACTION_SECOND_BAND_FODDER_TURNS),
+		with_hay.contains(DetailFormat.food_turns_text(FACTION_SECOND_BAND_FODDER_TURNS)))
+	_assert_band_panel("faction page: …while the band with none reads %s, never the raw sentinel"
+		% DetailFormat.FOOD_UNLIMITED_GLYPH,
+		without_hay != "" and not without_hay.contains(str(int(BandFoodStatus.UNLIMITED_TURNS))))
+	# …and each row is a LINK to its band, which is what makes the drill-down a way to act rather than
+	# a list. The same meta prefix the Food rows carry, so the two cannot drift.
+	_assert_band_panel("faction page: …and every Fodder row jumps to the band it names",
+		with_hay.contains(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX)
+			and without_hay.contains(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX))
+
+## **THE FODDER DRILL-DOWN, OPEN** — the faction page's `Fodder ▾` with its per-band card under it,
+## the frame the Food row has had since the page shipped.
+##
+## Driven through the REAL `meta_clicked` with the meta the row's own text carries, the idiom
+## `_assert_faction_caret_keeps_the_page` uses: a hand-opened popover would prove the card renders
+## while saying nothing about whether the row invites it.
+##
+## The popover is closed again before returning — it is a long-lived Window on the shared HUD, and a
+## stranded one sits over every frame after this for a reason unrelated to fodder.
+func _assert_faction_fodder_disclosure() -> void:
+	var key := DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FODDER, {})
+	var label := _first_rich_text(_panel._zones.get(BandCityPanel.ZONE_BAND))
+	if label == null:
+		_assert_band_panel("faction fodder: the vitals label is reachable", false)
+		return
+	label.meta_clicked.emit(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key)
+	await _settle()
+	await _save("band_panel_faction_fodder")
+	_assert_band_panel("faction fodder: the row's own caret opens the Fodder popover",
+		_hud._disclosures._breakdown_popover_key == key)
+	# **AND THE CARD IS ASKED WHAT IT HOLDS.** A disclosure registered with an empty payload opens a
+	# card with nothing in it and looks entirely plausible in a thumbnail — which is exactly what a
+	# `register_faction` handed an empty row set would produce.
+	var text := "" if _hud._disclosures._breakdown_popover_label == null \
+		else _hud._disclosures._breakdown_popover_label.get_parsed_text()
+	_assert_band_panel("faction fodder: the open card names the band that holds the hay (%s)"
+		% text.replace("\n", " · "),
+		text.contains(SourceForecast.format_fodder(FACTION_SECOND_BAND_FODDER_STORE))
+			and text.contains(DetailFormat.food_turns_text(FACTION_SECOND_BAND_FODDER_TURNS)))
+	_assert_band_panel("faction fodder: …and the band that holds none, beside it",
+		text.contains(DetailFormat.FOOD_UNLIMITED_GLYPH))
+	# …and it did not steal the page on the way, the defect the Food caret's own assertion exists for.
+	_assert_band_panel("faction fodder: the page survives its own caret",
+		_hud._bandpanel._panel_is_faction)
+	_hud._disclosures._close_popover()
+
+## HALF the shared flow floor — a REAL quantity that is still not an economy, and the whole point of
+## the fixture. `DetailFormat.band_has_fodder_economy` refuses it (the floor exists because a fodder
+## account prints at one decimal, so anything under it would render `Fodder: 0.0`), while any
+## faction-scoped gate written as `store > 0` would admit it. That is the exact divergence the ONE-gate
+## rule forbids, and staging the roster ON the floor is what makes the claim a discriminator rather
+## than a restatement of "zero is zero".
+const FACTION_SUB_FLOOR_FRACTION := 0.5
+
+const FACTION_SUB_FLOOR_FODDER := SourceForecast.FODDER_FLOW_MIN * FACTION_SUB_FLOOR_FRACTION
+
+## Foddering LEARNED, for the calm half of the dormant hover. The standing faction fixture carries
+## `foddering: 0.07`, which is the locked half — so the two sentences are staged by moving one track
+## and putting the fixture back, never by two rosters.
+const FACTION_FODDERING_LEARNED := 1.0
+
+## THE ROSTER WITH NO FODDER ECONOMY ANYWHERE — the same two bands, their larders stripped to a
+## sub-floor crumb. Built off `_faction_roster` rather than beside it, so every OTHER fact the page
+## sums (sizes, morale, kits, the party) is identical to the live state and the only thing the frame
+## can be showing a difference in is the fodder account.
+func _fodderless_faction_roster() -> Array:
+	var roster := _faction_roster()
+	for entry in roster:
+		var band: Dictionary = entry
+		band["fodder_store"] = FACTION_SUB_FLOOR_FODDER
+		band["fodder_need"] = 0.0
+		band["fodder_income"] = 0.0
+		band["turns_of_fodder"] = BandFoodStatus.UNLIMITED_TURNS
+	return roster
+
+## **THE FACTION'S DORMANT `Fodder:` ROW, BESIDE A LIVE ONE, IN ONE FRAME.**
+##
+## The row read `Fodder: 0.0 · +0.0 /turn` in FULL INK for a faction with no fodder anywhere — a
+## live-looking readout for an economy that does not exist, and one that disagreed with the dim `—`
+## every one of its own bands was already showing. Both scales say it the same way now, through
+## `DetailFormat.fodder_dormant_row`.
+##
+## **BOTH STATES SHARE ONE RENDER, because the dim treatment is a claim about a DIFFERENCE.** A
+## selected player band is the DOCK's subject wherever a dock exists, so the panel is DETACHED after
+## the faction page has been painted: `set_panel(null)` drops the controller's reference without
+## touching the zones the panel is already drawing, so the dormant faction row stays on screen while
+## the drawer takes a band with a real hay ledger down its own fallback path. `ui_preview`'s
+## `band_fodder_dormant` uses the mirror of this trick for the two BAND states.
+##
+## **THE CARET AND THE DISCLOSURE ARE READ BEFORE THE BAND IS SELECTED.** `unit_summary_lines` clears
+## the controller's rows on entry, and the band this frame puts in the drawer HAS a larder — so a
+## disclosure check made after it would be reading that band's registration and would pass on a
+## faction row that had wrongly registered one of its own.
+func _assert_faction_fodder_dormant() -> void:
+	_push_bands(_fodderless_faction_roster())
+	await _settle()
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var vitals := _faction_vitals_text(band_zone)
+	# **THE NEEDLE IS THE VALUE CELL AS RENDERED, not the producer's line.** `detail_bbcode` splits a
+	# `Key: value` row into two `[cell]`s, so the `": "` separator never survives into the BBCode —
+	# the same trap the vitals-key walk above documents. What lands is the row's own DIM run nested
+	# inside the neutral value tint `_value_hex` gives a key it has no runway for, and that nesting is
+	# exactly what "the row carries its own colour" means here: drop the dim and the inner tag goes.
+	var dormant_needle := "[color=#%s][color=#%s]%s[/color][/color]" % [
+		HudStyle.INK_HEX, HudStyle.INK_DIM_HEX, DetailFormat.FODDER_DORMANT_VALUE]
+	# **THE DIM DASH.** Dropping the dim treatment fails this and nothing else here, which is what
+	# makes it the treatment's own claim rather than a claim about the row existing.
+	_assert_band_panel("faction dormant: the row is the band page's dim dash (%s)" % dormant_needle,
+		vitals.contains(dormant_needle))
+	# …and never the live spelling on an empty larder, the full-ink zero this state replaced.
+	var live_zero := SourceForecast.format_yield_fodder(0.0)
+	_assert_band_panel("faction dormant: …and never the live row's own `%s`, the full-ink readout "
+		% live_zero + "for an economy that does not exist",
+		not vitals.contains(live_zero))
+	# **NO CARET, WITH THE FOOD ROW'S AS THE PAIRED POSITIVE.** The clickable run is `detail_bbcode`'s
+	# and lands in the KEY cell, so it can be read off this BBCode — but only the pair says anything:
+	# the absence alone passes on a page that had stopped drawing carets at all.
+	var fodder_meta := DetailFormat.DISCLOSURE_URL_OPEN + HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX \
+		+ DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FODDER, {})
+	var food_meta := DetailFormat.DISCLOSURE_URL_OPEN + HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX \
+		+ DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, {})
+	_assert_band_panel("faction dormant: the row offers no caret (%s absent)" % fodder_meta,
+		not vitals.contains(fodder_meta))
+	_assert_band_panel("faction dormant: …while Food's is still there, so carets are being drawn",
+		vitals.contains(food_meta))
+	# …and nothing was registered behind one either, which is the claim the BBCode cannot make: a
+	# registration with a payload the row simply failed to draw a caret for is still a live disclosure.
+	_assert_band_panel("faction dormant: …and no Fodder disclosure is registered at all",
+		not _hud._disclosures.state().has(HudDisclosureVocab.DETAIL_ROW_FODDER)
+			and _hud._disclosures.state().has(HudDisclosureVocab.DETAIL_ROW_FOOD))
+
+	# **ONE GATE, ASSERTED AS AGREEMENT ON THE AWKWARD VALUE.** The roster's larders are a sub-floor
+	# crumb, so `band_has_fodder_economy` says no — and the faction row must say no with it. A
+	# faction-scoped predicate of its own (`store > 0`) goes LIVE here while every band on the page
+	# stays dim, which is precisely the disagreement this state exists to keep from coming back.
+	var band_lines: Array[String] = _hud._banddetail.unit_summary_lines(
+		_fodderless_faction_roster()[0], "")
+	# The band's is asked of the PRODUCER's line, which still carries the `Fodder: ` key — the split
+	# happens in the renderer, so the two surfaces are searched with two different needles for the
+	# same row. Both come off `DetailFormat`'s own consts, so neither can drift from what is drawn.
+	var band_needle := DetailFormat.FODDER_DORMANT_ROW_FORMAT % [
+		HudStyle.INK_DIM_HEX, DetailFormat.FODDER_DORMANT_VALUE]
+	var band_dormant := false
+	for line in band_lines:
+		if String(line).contains(band_needle):
+			band_dormant = true
+	_assert_band_panel("faction dormant: a sub-floor %s crumb is dormant on the BAND row too"
+		% SourceForecast.format_fodder(FACTION_SUB_FLOOR_FODDER), band_dormant)
+	_assert_band_panel("faction dormant: …and the two agree, off the ONE shared gate",
+		band_dormant and vitals.contains(dormant_needle))
+
+	# **WHY IT IS DIM, SENTENCE ONE: THE CRAFT IS MISSING.** The standing faction fixture is 7% along
+	# Foddering, so the page states the forage panel's own lock — and it must reach a cursor, which on
+	# a `RichTextLabel` means the label's own `tooltip_text` (`[hint=…]` does not parse in this build).
+	var locked_expected := DetailFormat.FODDER_LOCKED_TOOLTIP_FORMAT % [
+		HudFormat.progress_percent(float(_faction_knowledge_fixture().get(
+			HudFloraVocab.KNOWLEDGE_TRACK_FODDERING, 0.0))),
+		FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL)]
+	var label := _first_rich_text(band_zone)
+	_assert_band_panel("faction dormant: the page says WHY, in the forage panel's words: %s"
+		% locked_expected,
+		label != null and label.tooltip_text.contains(locked_expected))
+
+	# **SENTENCE TWO: NOTHING IS WRONG.** Learn Foddering and the page is still dormant — nobody keeps
+	# a pen — but the reason is calm, and it must NOT be the lock's sentence. The inequality is the
+	# half that catches a build stating one sentence in both states.
+	var learned := _faction_knowledge_fixture()
+	learned[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING] = FACTION_FODDERING_LEARNED
+	_hud.update_intensification([learned])
+	_push_bands(_fodderless_faction_roster())
+	await _settle()
+	var calm_label := _first_rich_text(_panel._zones.get(BandCityPanel.ZONE_BAND))
+	_assert_band_panel("faction dormant: a faction that KNOWS Foddering and keeps no pen reads calm",
+		calm_label != null and calm_label.tooltip_text.contains(DetailFormat.FODDER_DORMANT_TOOLTIP))
+	_assert_band_panel("faction dormant: …which is NOT the lock's sentence",
+		calm_label != null and not calm_label.tooltip_text.contains(locked_expected))
+	_assert_band_panel("faction dormant: …and the row is dim either way — the craft is not an economy",
+		_faction_vitals_text(_panel._zones.get(BandCityPanel.ZONE_BAND)).contains(dormant_needle))
+	# The standing five-track row goes back before the frame: every claim above this line was made
+	# against it, and the rest of the faction block reads it too.
+	_hud.update_intensification([_faction_knowledge_fixture()])
+	_push_bands(_fodderless_faction_roster())
+	await _settle()
+
+	# **NOW THE LIVE HALF, ON THE OTHER SURFACE.** The dock is detached so the drawer will take a
+	# player band down its own fallback path instead of handing it to the panel; the panel keeps
+	# drawing the dormant faction page it has already rendered.
+	_hud.set_band_city_panel(null)
+	_hud.show_unit_selection(_faction_roster()[1])
+	await _settle()
+	await _save("band_panel_faction_fodder_dormant")
+	# **THE FRAME'S OWN PRECONDITION.** If the drawer had gone to the band-panel pointer instead, the
+	# PNG would carry ONE fodder row rather than two and would look entirely tidy — the contrast gone
+	# with nothing to say it was.
+	_assert_band_panel("faction dormant: the frame really holds BOTH — a live band row beside it",
+		_hud.occupant_detail.text.contains(SourceForecast.format_fodder(
+			FACTION_SECOND_BAND_FODDER_STORE)))
+
+	# Put the panel, the roster and the page back: every state below renders on this same panel, and a
+	# detached controller or a fodderless roster would follow the run out of this block.
+	# **NO CYCLE HERE.** `_panel_is_faction` was never cleared — detaching the controller's panel does
+	# not change its subject — so a `CYCLE_PREV` would walk OFF the page rather than back onto it, and
+	# every faction assertion below would then be reading a band's own vitals. `refresh_snapshot`
+	# re-renders the page on the push by itself, which is the "a snapshot leaves the page up" rule.
+	_hud.set_band_city_panel(_panel)
+	_hud.clear_selection()
+	_push_bands(_faction_roster())
+	await _settle()
+	_assert_band_panel("faction dormant: the page and the live roster are back for the states below",
+		_hud._bandpanel._panel_is_faction
+			and _faction_vitals_text(_panel._zones.get(BandCityPanel.ZONE_BAND)).contains(
+				SourceForecast.format_fodder(FACTION_SECOND_BAND_FODDER_STORE)))
 
 ## **THE PARTIES ROW'S NAME LINK GOES WHERE THE NAME SAYS.** The row is named for the band the party
 ## LEFT and the link used to be bound to the PARTY's entity, so a link reading `Band 2` selected the
@@ -10021,7 +10336,7 @@ func _collect_rung_labels(node: Node, out: Array) -> void:
 		_collect_rung_labels(child, out)
 
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
-## repage so the picker actually renders. `_work_floor_open` is otherwise never true in either
+## repage so the picker actually renders. No harness otherwise opens `_work_picker_open` in either
 ## harness, which is why this control had zero frame coverage.
 ## Open the work inspector on the row working a NAMED herd — the trade-row frames need a specific
 ## source (the wolf), not "the first row", which is the forage patch.
@@ -10046,7 +10361,7 @@ func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 		if String(model.get("herd_id", "")) != herd_id:
 			continue
 		_hud._bandpanel._work_open_key = String(model.get("key", ""))
-		_hud._bandpanel._work_floor_open = true
+		_hud._bandpanel._work_picker_open = HudWorkVocab.WORK_PICKER_FLOOR
 		_hud._bandpanel._repage_work_zone()
 		return
 	_fail("%s" % _work_row_absence_report(herd_id, band, models))
@@ -12425,18 +12740,33 @@ func _arrivals_band_fixture() -> Dictionary:
 ## combination (a big store draining slowly) and the widest the Food row can render: three digits of
 ## provisions, three digits of turns, a signed rate, and a three-digit hay stock beside them.
 const WORST_CASE_PROVISIONS := 248.0
-## `WORST_CASE_PROVISIONS` walked down at the net drain below (3.60 income − 4.60 eaten − 0.41 pen
-## feed = −1.41/turn), so the runway the row prints is the one the larder actually implies.
-const WORST_CASE_TURNS_OF_FOOD := 176.0
-## The hay larder (Flora roster F3) and the pen bill it offsets — either one alone lights the fodder
-## readout, and this fixture carries BOTH so neither gate can be the thing keeping it on.
+## `WORST_CASE_PROVISIONS` walked down at the net drain below (3.60 income − 4.60 eaten = −1.00/turn),
+## so the runway the row prints is the one the larder actually implies. It was 176 while a 0.41 pen
+## feed was a third term; that term is retired (a pen never bills the larder), and the row still
+## prints three digits of turns, which is what this fixture is measuring.
+const WORST_CASE_TURNS_OF_FOOD := 248.0
+## The hay larder (Flora roster F3), and the ledger that now rides beside it. **The Fodder row is no
+## longer a bare stock**: it mirrors the Food line with the band's hay bill, the harvest answering it
+## and the runway between them, which makes it by some distance the WIDEST optional row a band can
+## carry — so a worst case that seeded the stock alone stopped being a worst case the moment the row
+## grew. Three digits on the stock and a three-digit runway, the same "longest form" rule every other
+## constant in this block follows.
 const WORST_CASE_FODDER_STORE := 128.4
-const WORST_CASE_PEN_FEED_UPKEEP := 0.41
+
+## The pens owe more than the Fields grow, which is also the row's WARN state — the widest spelling
+## AND the loudest one, in one fixture.
+const WORST_CASE_FODDER_NEED := 12.4
+
+const WORST_CASE_FODDER_INCOME := 10.2
+
+## 128.4 / (12.4 - 10.2), as the sim's `larder_runway_turns` answers it — three digits, matching the
+## food runway beside it.
+const WORST_CASE_TURNS_OF_FODDER := 583.0
 ## Discontent below full, so the WORK head renders its Output item.
 const WORST_CASE_OUTPUT_MULTIPLIER := 0.62
-## Chosen against the two worked rows' realized income (3.60) and the pen bill so the net comes out
-## NEGATIVE — a signed rate is a character wider than an unsigned one, and a draining larder beside a
-## long runway is the shape a big-store band really shows.
+## Chosen against the two worked rows' realized income (3.60) so the net comes out NEGATIVE — a signed
+## rate is a character wider than an unsigned one, and a draining larder beside a long runway is the
+## shape a big-store band really shows.
 const WORST_CASE_FOOD_CONSUMPTION := 4.60
 
 ## THE WORST CASE: a band carrying EVERY optional vitals row it can simultaneously have. Built on the
@@ -12449,7 +12779,9 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
 	band["stores"] = {"provisions": WORST_CASE_PROVISIONS}
 	band["fodder_store"] = WORST_CASE_FODDER_STORE
-	band["pen_feed_upkeep"] = WORST_CASE_PEN_FEED_UPKEEP
+	band["fodder_need"] = WORST_CASE_FODDER_NEED
+	band["fodder_income"] = WORST_CASE_FODDER_INCOME
+	band["turns_of_fodder"] = WORST_CASE_TURNS_OF_FODDER
 	band["output_multiplier"] = WORST_CASE_OUTPUT_MULTIPLIER
 	band["food_consumption"] = WORST_CASE_FOOD_CONSUMPTION
 	# Falling morale with a named cause, so the Morale row renders its longest form beside the rest.
@@ -14092,7 +14424,7 @@ func _assert_queue_expanded_shape(where: String, entries: int) -> void:
 		chips == 0)
 	_assert_band_panel("…and the pager went with the pages (%d)" % pagers, pagers == 0)
 	_assert_band_panel("…and no work inspector can be open in this mode",
-		_hud._bandpanel._work_open_key == "" and not _hud._bandpanel._work_floor_open)
+		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
 	_assert_band_panel("…and there is no `+N more` row left, every entry having a row of its own",
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null)
 	# **WHAT IT KEEPS.** The zone's own head, so the player knows where they are; and the POOLS block
@@ -14148,7 +14480,7 @@ func _assert_queue_expansion_doors() -> void:
 	# ⛔ …AND ENTERING THE MODE CLEARED THE WORK INSPECTOR WITH IT.
 	_assert_band_panel("⛔ …and entering the mode CLEARED the open work inspector, so it cannot spring back on the collapse (`%s`)"
 			% _hud._bandpanel._work_open_key,
-		_hud._bandpanel._work_open_key == "" and not _hud._bandpanel._work_floor_open)
+		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
 	# ② THE HEADER FOLDS IT BACK — the expanded view has no overflow row left, so this is the only way.
 	var head := _queue_head_toggle()
 	if head == null:
@@ -14550,7 +14882,7 @@ func _assert_queue_expanded_settings() -> void:
 				and strip.global_position.y >= owner.global_position.y)
 	# ⛔ THE EXCLUSION, on the frame where both expansions are asked for at once.
 	_assert_band_panel("…and no work inspector is open beside it — entering the mode cleared it",
-		_hud._bandpanel._work_open_key == "" and not _hud._bandpanel._work_floor_open)
+		_hud._bandpanel._work_open_key == "" and _hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_scroll_only_where_sanctioned()
@@ -17072,3 +17404,487 @@ func _work_row_accounts_label(name_label: Label) -> Label:
 	if walk == null:
 		return null
 	return _find_meta_control(walk, HudWorkVocab.WORK_ROW_ACCOUNTS_META) as Label
+
+
+# =====================================================================================
+#  THE PLAYER'S OWN RANK ON A WORKED ROW (`docs/plan_standing_upkeep.md` §4.9 item 9b)
+# =====================================================================================
+#
+# **ONE FRAME CARRIES EVERY STATE AT ONCE, and that is the point of it.** This arc has hidden three
+# separate defects in the gap between two disjoint frame families — a strip-open frame with no picker
+# beside a picker-open frame with no strip, and so on — so the required state here is a board carrying
+# a HIGH row, a LOW row and a NORMAL row TOGETHER, with the inspector open on one of them and the
+# priority picker showing in the same frame. A second frame swaps the floor picker in on that very
+# row, which is the only way to see the mutual exclusion at all: two pickers that are never asked for
+# together always look exclusive.
+#
+# **THE CLICKS ARE REAL CLICKS.** `pressed.emit()` cannot see a covered, disabled, zero-size or
+# IGNORE-filtered control and a directly-called Callable cannot see any of it — which is how a
+# completely dead drag shipped green in #570 — so the link and every picker button are driven through
+# `_drive_click`, and the claim is the COMMAND LINE the press produced.
+
+## The three rows the board carries at once. The hunt row is the one the inspector opens on, so the
+## marked row and the picker are in one frame; the two forage rows carry the other two ranks.
+const PRIORITY_HIGH_TILE := Vector2i(71, 18)
+const PRIORITY_NORMAL_TILE := Vector2i(72, 19)
+const PRIORITY_LOW_HERD_ID := "game_deer_07"
+
+## The rank each of those rows is published at. Stated as the WORDS the decoder writes — this fixture
+## is shaped exactly like `dict::population`'s output, and a fixture spelling the wire ordinal would
+## be testing a decode this client deliberately does not do.
+const PRIORITY_HIGH_LEVEL := "high"
+const PRIORITY_NORMAL_LEVEL := "normal"
+const PRIORITY_LOW_LEVEL := "low"
+
+## A band working three sources at three different ranks. Everything else is
+## `_concerning_food_band_fixture`'s, which already gives the tab a POOLS block, a work board and the
+## chips above it.
+##
+## **THE NORMAL ROW STATES ITS RANK EXPLICITLY rather than omitting the key.** The wire always carries
+## the field, so a fixture that left it out would be asserting that a MISSING mark prints nothing —
+## a weaker claim than the one that matters, which is that the DEFAULT prints nothing.
+func _work_priority_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "target_x": PRIORITY_HIGH_TILE.x,
+			"target_y": PRIORITY_HIGH_TILE.y, "floor": 0.5,
+			"actual_yield": 0.15, "sustainable_yield": 0.15,
+			"priority": PRIORITY_HIGH_LEVEL},
+		{"kind": "forage", "workers": 2, "target_x": PRIORITY_NORMAL_TILE.x,
+			"target_y": PRIORITY_NORMAL_TILE.y, "floor": 0.5,
+			"actual_yield": 0.11, "sustainable_yield": 0.11,
+			"priority": PRIORITY_NORMAL_LEVEL},
+		{"kind": "hunt", "workers": 2, "fauna_id": PRIORITY_LOW_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17,
+			"actual_yield": 0.46, "sustainable_yield": 0.20, "realized_yield": 0.46,
+			"priority": PRIORITY_LOW_LEVEL},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+## …and the MEASURED WORST CASE with a mark on it: the four-cash-crop patch, whose line two already
+## elides onto its floor clause, marked HIGH. It is the state the leading placement exists for — a
+## trailing mark would be the first thing the trim took, on the one board where the rank matters most.
+func _work_priority_widest_band_fixture() -> Dictionary:
+	var band := _material_forage_band_fixture(
+		MATERIAL_CROPS_ROWS, Vector2i(MATERIAL_CROPS_X, MATERIAL_CROPS_Y))
+	var rows: Array = band["labor_assignments"]
+	(rows[0] as Dictionary)["priority"] = PRIORITY_HIGH_LEVEL
+	return band
+
+func _render_work_priority_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_push_bands([_work_priority_band_fixture()])
+	# The LEFT dock is the shipped default edge and the narrowest box the work zone is ever given, so
+	# every width claim below is measured where it binds.
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(PRIORITY_LOW_HERD_ID)
+	await _settle()
+	# ⛔ THE PICKER IS OPENED BY A REAL PRESS ON THE REAL LINK, never by poking `_work_picker_open`.
+	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	await _save("band_panel_work_priority")
+	_assert_shell_is_wide(false, "band_panel_work_priority")
+	_assert_band_panel("band_panel_work_priority: the `%s` link really opened the PRIORITY picker (%s)"
+			% [HudWorkVocab.WORK_INSPECT_PRIORITY, _hud._bandpanel._work_picker_open],
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY)
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_work_inspector_fits("band_panel_work_priority")
+	_report_zone_content_extent("band_panel_work_priority")
+	# THE COMBINED CLAIM: all three ranks on the board, in this frame, beside the open picker.
+	_assert_work_row_priority_marks("band_panel_work_priority")
+	_assert_work_priority_picker_lit("band_panel_work_priority", PRIORITY_LOW_LEVEL)
+	_report_work_links_row_width("band_panel_work_priority")
+
+	# ⛔ THE MUTUAL EXCLUSION, on the one row both pickers are offered on. Driven with a real press on
+	# `Change policy` while the priority picker is standing, so what is asserted is that opening one
+	# CLOSED the other — a claim no frame showing a single picker can make.
+	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_POLICY)
+	await _save("band_panel_work_priority_floor_swap")
+	_assert_band_panel("band_panel_work_priority_floor_swap: `%s` swapped the strip to the FLOOR picker (%s)"
+			% [HudWorkVocab.WORK_INSPECT_POLICY, _hud._bandpanel._work_picker_open],
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_FLOOR)
+	_assert_band_panel("…and the priority picker is GONE with it, not merely covered",
+		_find_meta_control(_panel, HudWorkVocab.WORK_PRIORITY_RUNG_META) == null)
+	_assert_band_panel("…and the floor picker really is the one showing",
+		_find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) != null)
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_work_inspector_fits("band_panel_work_priority_floor_swap")
+	# …and back the other way, so neither picker is the privileged one.
+	await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	_assert_band_panel("…and pressing `%s` again swaps back, closing the floor picker (%s)"
+			% [HudWorkVocab.WORK_INSPECT_PRIORITY, _hud._bandpanel._work_picker_open],
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_PRIORITY
+			and _find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) == null)
+
+	# ⛔ WHAT EACH BUTTON SENDS, read off the command LINE. All three, because a picker that sent one
+	# level whatever was pressed would satisfy any single-button claim.
+	for level in HudWorkVocab.WORK_PRIORITY_LEVELS:
+		await _assert_work_priority_click(String(level))
+
+	# THE WIDEST LINE TWO IN THE GAME, WITH A MARK ON IT.
+	_push_bands([_work_priority_widest_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_priority_widest")
+	_assert_shell_is_wide(false, "band_panel_work_priority_widest")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_work_priority_widest")
+	_assert_work_row_states_its_materials("band_panel_work_priority_widest",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y],
+		MATERIAL_CROPS_ROWS)
+	_assert_marked_row_accounts_still_fit("band_panel_work_priority_widest",
+		HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [MATERIAL_CROPS_X, MATERIAL_CROPS_Y])
+
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## Press one of the work inspector strip's inline links the way a player presses it — found by FACE,
+## because an inline link's face IS its identity (`HudWidgets.build_inline_link` carries no meta and
+## the four faces are fixed vocabulary), and driven through `_drive_click` so a link that is covered,
+## zero-size or filtered out fails here rather than passing on a Callable nobody could reach.
+func _press_work_inspector_link(face: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("work priority — no work inspector strip is open to press `%s` on" % face)
+		return
+	var buttons: Array[Button] = []
+	_collect_buttons_typed(strip, buttons)
+	for button in buttons:
+		if button.text != face:
+			continue
+		await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
+		await _settle()
+		return
+	_fail("work priority — the strip carries no `%s` link to press" % face)
+
+## GUARD: **all three ranks are on this board at once, and the DEFAULT one prints nothing.** The two
+## halves are asserted together because either alone is satisfiable by a defect: "the marked rows
+## carry a prefix" passes on a board that prefixes every row, and "the normal row carries none" passes
+## on a board that dropped the feature entirely.
+##
+## The mark is found by META rather than by text — the face is composed from the vocab, so a text
+## match would be asserting the string the assertion itself built.
+func _assert_work_row_priority_marks(state_name: String) -> void:
+	var found: Array[Control] = []
+	var marks := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_PRIORITY_META, found)
+	var levels: Array[String] = []
+	for mark in marks:
+		levels.append(String(mark.get_meta(HudWorkVocab.WORK_ROW_PRIORITY_META)))
+	levels.sort()
+	var want: Array[String] = [PRIORITY_HIGH_LEVEL, PRIORITY_LOW_LEVEL]
+	want.sort()
+	_assert_band_panel("%s: exactly the HIGH and LOW rows are marked — the NORMAL one prints no prefix (got %s)"
+		% [state_name, str(levels)], levels == want)
+	for mark in marks:
+		var level := String(mark.get_meta(HudWorkVocab.WORK_ROW_PRIORITY_META))
+		var label := mark as Label
+		if label == null:
+			_fail("%s — the %s mark is not a Label" % [state_name, level])
+			continue
+		# The FACE, which is the whole of what the player reads: the word, then the sentence joiner
+		# the rest of line two uses, and the ink that says which end of the scale it is.
+		_assert_band_panel("%s: the %s row leads line two with \"%s\" (got \"%s\")"
+				% [state_name, level, HudWorkVocab.work_row_priority_prefix(level), label.text],
+			label.text == HudWorkVocab.work_row_priority_prefix(level))
+		_assert_band_panel("%s: …in the %s ink" % [state_name, level],
+			label.get_theme_color("font_color") == HudWorkVocab.work_priority_ink(level))
+		# ⛔ **AND THE ACCOUNTS BESIDE IT ARE UNTOUCHED.** The prefix is its own node precisely so the
+		# accounts keep their own elide and their own hover; a prefix spliced into that string would
+		# be inside the text the trim measures AND inside the tooltip it repeats.
+		var accounts := _find_meta_control(mark.get_parent(),
+			HudWorkVocab.WORK_ROW_ACCOUNTS_META) as Label
+		if accounts == null:
+			_fail("%s — the %s row's mark has no accounts label beside it" % [state_name, level])
+			continue
+		_assert_band_panel("%s: …and the %s row's ACCOUNTS carry no rank text of their own (\"%s\")"
+				% [state_name, level, accounts.text],
+			not accounts.text.contains(String(HudWorkVocab.WORK_ROW_PRIORITY_PREFIXES[level]))
+				and accounts.tooltip_text == accounts.text)
+
+## GUARD: the open picker shows three buttons and lights the row's CURRENT rank. Lighting the wrong
+## one is invisible in a thumbnail — three buttons in a row look the same whichever is primary — and
+## a picker that lit nothing would read as a row with no rank at all.
+func _assert_work_priority_picker_lit(state_name: String, want_level: String) -> void:
+	var found: Array[Control] = []
+	var rungs := _collect_meta_controls(_panel, HudWorkVocab.WORK_PRIORITY_RUNG_META, found)
+	_assert_band_panel("%s: the priority picker offers all three levels (%d)"
+		% [state_name, rungs.size()], rungs.size() == HudWorkVocab.WORK_PRIORITY_LEVELS.size())
+	var lit: Array[String] = []
+	for rung in rungs:
+		# The SAME lit test `_assert_lit_rung` makes of a floor preset — the primary stylebox's own
+		# background — so the two pickers cannot be judged by two different notions of "selected".
+		var box := (rung as Button).get_theme_stylebox("normal")
+		if box is StyleBoxFlat \
+				and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG):
+			lit.append(String(rung.get_meta(HudWorkVocab.WORK_PRIORITY_RUNG_META)))
+	var want_lit: Array[String] = [want_level]
+	_assert_band_panel("%s: …and lights the row's own rank, %s, and only it (lit %s)"
+		% [state_name, want_level, str(lit)], lit == want_lit)
+
+## ⛔ GUARD: **one REAL click on one level button sends that level and no other.** Asserted on the
+## command LINE rather than on the payload dict, so the token order, the source form and the level
+## word are all judged as the socket would see them.
+##
+## The picker is re-opened by pressing the link again, because committing CLOSES it — which is itself
+## part of the contract and is asserted here rather than in a frame of its own.
+func _assert_work_priority_click(level: String) -> void:
+	# The link is a TOGGLE, so this presses it only when the picker is shut — which after the first
+	# pick is every time, the commit having closed it. Pressing unconditionally would close the picker
+	# the caller had just opened and the button would be gone before it could be found.
+	if _hud._bandpanel._work_picker_open != HudWorkVocab.WORK_PICKER_PRIORITY:
+		await _press_work_inspector_link(HudWorkVocab.WORK_INSPECT_PRIORITY)
+	var button := _find_meta_control_valued(_panel, HudWorkVocab.WORK_PRIORITY_RUNG_META, level) \
+		as Button
+	if button == null:
+		_fail("work priority — the open picker carries no `%s` button" % level)
+		return
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.work_priority_requested.connect(sink)
+	await _drive_click(_canvas_to_window(button.get_global_rect().get_center()))
+	await _settle()
+	_hud.work_priority_requested.disconnect(sink)
+	if seen.is_empty():
+		_fail("work priority — a REAL click on `%s` emitted no work_priority at all (this is the press the player makes)"
+			% level)
+		return
+	var payload: Dictionary = seen[0]
+	var line := String(MAIN_SCRIPT.format_work_priority(payload).get("line", ""))
+	var want := "work_priority %d %d %s %s" % [HudConst.PLAYER_FACTION_ID,
+		int(payload.get("band_id", HudConst.NO_BAND_ID)), PRIORITY_LOW_HERD_ID, level]
+	_assert_band_panel("work priority — a REAL click on `%s` sends `%s` (got \"%s\")"
+		% [level, want, line], line == want)
+	_assert_band_panel("…and the pick CLOSES the picker (%s)"
+		% _hud._bandpanel._work_picker_open,
+		_hud._bandpanel._work_picker_open == HudWorkVocab.WORK_PICKER_NONE)
+
+## GUARD + REPORT: **the mark did not cost the accounts their room.** Line two elides onto its floor
+## clause at the four-cash-crop worst case, and the whole placement argument is that a LEADING mark
+## still leaves the accounts whole — so this asserts what the two-line row promises (the accounts are
+## never cut) and PRINTS what the prefix actually spent, which is the figure a future account format
+## has to be measured against.
+func _assert_marked_row_accounts_still_fit(state_name: String, row_name: String) -> void:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	var name_label: Label = null
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.text == row_name:
+			name_label = label
+			break
+	if name_label == null:
+		_fail("%s — no work row named \"%s\" to judge the mark on" % [state_name, row_name])
+		return
+	var accounts := _work_row_accounts_label(name_label)
+	if accounts == null:
+		_fail("%s — the row has no accounts line to judge" % state_name)
+		return
+	var mark := _find_meta_control(accounts.get_parent(),
+		HudWorkVocab.WORK_ROW_PRIORITY_META) as Label
+	if mark == null:
+		_fail("%s — the widest row carries no priority mark, so this measures nothing" % state_name)
+		return
+	var accounts_width := _accounts_clause_width(accounts)
+	_assert_band_panel(
+		"%s: with the mark leading, every account still renders whole, un-elided (%.0f of the %.0f they need)"
+			% [state_name, accounts.size.x, accounts_width],
+		accounts.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= accounts_width)
+	# …and the mark itself is not the thing that got cut. It is fixed-width, so a shortfall here means
+	# the line ran out before the accounts even began.
+	_assert_band_panel("%s: …and the mark itself renders whole (%.0f of %.0f)"
+			% [state_name, mark.size.x, _label_text_width(mark)],
+		mark.size.x + KEYLESS_KEY_WIDTH_TOLERANCE >= _label_text_width(mark))
+	print("band_panel_preview: %s — line two is %.0fpx of a %.0fpx line: %.0f mark + %.0f accounts (the floor clause is what the trim takes)"
+		% [state_name, mark.size.x + accounts_width, mark.get_parent().size.x,
+			mark.size.x, accounts_width])
+
+## REPORT: **what the FOUR-link row asks of the zone's fixed box.** The strip gained a fourth inline
+## link (`Priority`) and the zone is 356px on a side dock with ~2px of margin on the widest state, so
+## the number is worth printing beside the fit claim: `_assert_zone_content_width_fits` fails loudly
+## if it overruns, and this says how close it came.
+##
+## **IT PRINTS RATHER THAN ASSERTS** — the fit assertion is the claim, and a second one against a
+## hand-picked threshold would state a design answer (a narrower face, a wider flank) this harness may
+## not choose. The `_report_zone_content_extent` rule.
+func _report_work_links_row_width(state_name: String) -> void:
+	var strip := _find_meta_control(_panel, HudWorkVocab.WORK_INSPECTOR_META)
+	if strip == null:
+		_fail("%s — no work inspector strip to measure the links row on" % state_name)
+		return
+	var buttons: Array[Button] = []
+	_collect_buttons_typed(strip, buttons)
+	var links: Control = null
+	for button in buttons:
+		if button.text == HudWorkVocab.WORK_INSPECT_PRIORITY:
+			links = button.get_parent() as Control
+			break
+	if links == null:
+		_fail("%s — the strip carries no `%s` link to measure from" % [
+			state_name, HudWorkVocab.WORK_INSPECT_PRIORITY])
+		return
+	var host: Control = _hud._bandpanel._work_zone_host
+	var box := host.size.x if host != null and is_instance_valid(host) else 0.0
+	print("band_panel_preview: %s — the %d-link row asks %.0fpx of a %.0fpx zone (%.0f spare)"
+		% [state_name, links.get_child_count(), links.get_combined_minimum_size().x, box,
+			box - links.get_combined_minimum_size().x])
+
+
+# =====================================================================================
+#  A BUILD QUEUED THIS TURN IS NOT A STALLED ONE (`sim_schema::BUILD_NOT_YET_ESTIMATED`, `-5`)
+# =====================================================================================
+#
+# **REPORTED FROM PLAY.** A fresh `Cultivate (4, 19)` rendered `⚠ Stalled 0%` in the BUILD QUEUE
+# block, with two builders staffed and nothing whatever wrong, and the next turn cleared it. The
+# warning said *something needs your attention* when the answer was *its first turn has not run yet* —
+# and a mark that appears when nothing is wrong and then vanishes on its own is how a player is taught
+# to ignore every other mark.
+#
+# **ONE WIRE VALUE WAS CARRYING TWO FACTS.** The sim now spells them apart: `-1` is *the estimate pass
+# ran and had no number* (a real stall), `-5` is *no pass has ever run for this entry*. The client had
+# never heard of `-5`, so `SourceForecast.build_turns_remaining` collapsed it onto `-1` and the whole
+# family of readers below it inherited the hazard.
+#
+# ⛔ **THE FRAME CARRIES BOTH AT ONCE, AND IT HAS TO.** The entire defect is that the two look
+# identical, so a frame showing only the fresh entry proves nothing — it would be green with the fix
+# and green with the defect restored on a board that had never seen a genuine stall. This block's
+# three rows therefore read three DIFFERENT faces in one render: `Queued 0%`, `⚠ Stalled 0%` and the
+# rotting `⚠ ∞`.
+
+## The head entry — queued since the last turn resolved, so the sim has not looked at it yet.
+const NOT_YET_ESTIMATED_TURNS := SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED
+## …and the herd behind it, genuinely stalled: the pass RAN for this one and had no number.
+const GENUINELY_STALLED_TURNS := SourceForecast.BUILD_TURNS_NO_ESTIMATE
+## The meter both of them sit at. **They sit at the SAME percentage on purpose** — progress is exactly
+## what cannot tell the two apart (a real stall is at `0%` too), which is why the sim answers on the
+## estimate pass and not on the meter.
+const NOT_YET_ESTIMATED_PERCENT := 0
+
+## The three-entry queue with a `-5` head and a `-1` herd behind it. Built from
+## `_build_queue_patches(3)` so the composition, the blocked-reason key and the positions stay the
+## block's own; only the two countdowns are stated here, because stating them is the whole fixture.
+func _not_yet_estimated_patches() -> Array:
+	var patches := _build_queue_patches(3)
+	for patch_variant in patches:
+		var patch: Dictionary = patch_variant
+		if Vector2i(int(patch["x"]), int(patch["y"])) == QUEUE_HEAD_PATCH:
+			patch["build_turns_remaining"] = NOT_YET_ESTIMATED_TURNS
+	return patches
+
+func _render_not_yet_estimated_states() -> void:
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_set_forage_patches(_not_yet_estimated_patches())
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1,
+		GENUINELY_STALLED_TURNS))
+	_push_bands([_build_queue_band_fixture(3)])
+	await _settle()
+	await _save("band_panel_build_queue_not_yet_estimated")
+	_assert_shell_is_wide(false, "band_panel_build_queue_not_yet_estimated")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_build_queue_not_yet_estimated")
+	_assert_build_queue_block(3, "the not-yet-estimated queue")
+	_assert_not_yet_estimated_reads_apart()
+	_assert_not_yet_estimated_producers()
+
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()
+
+## ⛔ GUARD: **the fresh entry and the stalled one read DIFFERENTLY, in one frame, off the rendered
+## block.** Three claims, and the set is what makes any of them worth anything:
+##
+##   1. the `-5` head reads `Queued 0%` — the exact composed face, with NO hazard glyph anywhere in it;
+##   2. the `-1` herd behind it still reads `⚠ Stalled 0%`, so the fix did not simply delete the
+##      hazard for everybody (which is what folding the two the other way would look like);
+##   3. the two faces are NOT EQUAL, which is the defect stated directly. Asked as its own claim
+##      because 1 and 2 are both satisfiable by a table that answers one string for every sentinel if
+##      the composed expectations ever collapsed onto each other.
+##
+## The expectations are composed from the shipped vocabulary rather than written as literals, so this
+## asserts the RENDER agrees with the format table and not that the table agrees with itself.
+func _assert_not_yet_estimated_reads_apart() -> void:
+	var rows := _build_queue_rows()
+	if rows.size() < 2:
+		_fail("not-yet-estimated — the block drew %d rows; the frame needs the head AND the herd"
+			% rows.size())
+		return
+	var faces: Array[String] = []
+	for row in rows:
+		var date := _find_meta_control(row, HudWorkVocab.BUILD_QUEUE_DATE_META)
+		faces.append("" if date == null \
+			else String(date.get_meta(HudWorkVocab.BUILD_QUEUE_DATE_META)))
+	var queued := HudSelectionVocab.RUNG_QUEUED_FORMAT % NOT_YET_ESTIMATED_PERCENT
+	var stalled := HudSelectionVocab.RUNG_STALLED_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, NOT_YET_ESTIMATED_PERCENT]
+	_assert_band_panel("not-yet-estimated: the head reads \"%s\" (got \"%s\")"
+		% [queued, faces[0]], faces[0] == queued)
+	_assert_band_panel("…and carries NO hazard mark, nothing being wrong with it",
+		not faces[0].contains(HudSelectionVocab.RUNG_HAZARD_GLYPH))
+	_assert_band_panel("…and the entry BEHIND it, genuinely stalled, still reads \"%s\" (got \"%s\")"
+		% [stalled, faces[1]], faces[1] == stalled)
+	_assert_band_panel("⛔ …so the two READ APART in one frame, which is the whole defect (%s)"
+		% str(faces), faces[0] != faces[1])
+	# **THE INK IS THE OTHER HALF OF THE FACE.** A neutral word in amber still says *warning*, and the
+	# one tint rule is what is being asserted: `Queued` carries neither needle and must fall through to
+	# `INK`, while the stalled row beside it must still earn `WARN` off its hazard mark.
+	_assert_band_panel("…the head's date is in the NEUTRAL ink (%s)"
+			% DetailFormat.rung_value_color(faces[0]).to_html(false),
+		DetailFormat.rung_value_color(faces[0]) == HudStyle.INK)
+	_assert_band_panel("…and the stalled one beside it is still AMBER (%s)"
+			% DetailFormat.rung_value_color(faces[1]).to_html(false),
+		DetailFormat.rung_value_color(faces[1]) == HudStyle.WARN)
+
+## GUARD: **the SWEEP — every producer that forks on this family answers neutrally for `-5`.** PNG-less
+## and deliberately so: three of the four cannot be seen in any one frame (a pace tints a compose
+## face, a stall verdict marks a map badge), and the stated failure mode in this client is exactly
+## *two producers disagreeing about one meter*. Asked of the producers themselves, so a consumer that
+## renders correctly off a producer that has quietly stopped passing the sentinel still fails here.
+func _assert_not_yet_estimated_producers() -> void:
+	# (1) THE ONE WIRE READER passes it through rather than collapsing it — the read that started the
+	# defect. Asked with the wire's own key spelling, off a bare source dict.
+	var wire := {SourceForecast.FORECAST_BUILD_TURNS_KEY: NOT_YET_ESTIMATED_TURNS}
+	var read := SourceForecast.build_turns_remaining(wire, HudComposeVocab.BARE_FORECAST_PREFIX)
+	_assert_band_panel("not-yet-estimated: `build_turns_remaining` passes `-5` through as itself (got %d)"
+		% read, read == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED)
+	_assert_band_panel("…and specifically does NOT collapse it onto `-1`, which is the defect",
+		read != SourceForecast.BUILD_TURNS_NO_ESTIMATE)
+	# (2) THE PACE CLASSIFIER answers *no verdict*, and NOT the growing arm it would otherwise fall
+	# through to — which paints a compose face HEALTHY green off a number that does not exist.
+	var pace := SourceForecast.build_pace(NOT_YET_ESTIMATED_TURNS, QUEUE_BUILDERS)
+	_assert_band_panel("…`build_pace` answers no verdict for it (got \"%s\")" % pace,
+		pace == SourceForecast.BUILD_PACE_UNKNOWN)
+	# The fallback is the caller's neutral in the shipped hosts, so it is what a pace with no verdict
+	# must come back as — and the GROWING arm beside it is what "not painted as climbing" is measured
+	# against rather than against a colour written here.
+	_assert_band_panel("…so it neither stops the sheet nor paints it as climbing",
+		not HudWidgets.improvement_pace_stops(pace)
+			and HudWidgets.improvement_pace_color(pace, HudStyle.INK) == HudStyle.INK
+			and HudWidgets.improvement_pace_color(pace, HudStyle.INK)
+				!= HudWidgets.improvement_pace_color(
+					SourceForecast.BUILD_PACE_GROWING, HudStyle.INK))
+	# (3) THE STALL VERDICT the map badge and the work row's rung slot BOTH call. A staffed entry the
+	# sim has not looked at is not stalled; the paired positive keeps it from passing on a function
+	# that has stopped answering `true` at all.
+	_assert_band_panel("…and `build_is_stalled` is FALSE for a staffed `-5` (map badge + work row)",
+		not SourceForecast.build_is_stalled(wire,
+			SourceForecast.BUILD_METER_UNSTARTED, QUEUE_BUILDERS))
+	_assert_band_panel("…while a `-3` beside it still IS stalled, so the verdict still fires",
+		SourceForecast.build_is_stalled(
+			{SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_ROTS},
+			SourceForecast.BUILD_METER_UNSTARTED, QUEUE_BUILDERS))
+	# (4) THE TURNS CLAUSE — the compose sheet's half — states no clause, exactly as it does for every
+	# reading with no number to state. A `≈-5 turns` is what a missing guard here would print.
+	_assert_band_panel("…and `build_turns_clause` states no clause for it (got \"%s\")"
+			% DetailFormat.build_turns_clause(NOT_YET_ESTIMATED_TURNS, QUEUE_BUILDERS),
+		DetailFormat.build_turns_clause(NOT_YET_ESTIMATED_TURNS, QUEUE_BUILDERS) == "")
