@@ -74,6 +74,17 @@ const GRID_CELLS: usize = (GRID_W * GRID_H) as usize;
 /// builder that returns the first element for every row (or reuses one offset) is visible.
 const ROWS: usize = 2;
 
+/// **THE TWO RANKS A BENCH CAN CARRY HERE — ONE PER COHORT, AND `Normal` IS NOT AMONG THEM.**
+///
+/// A cohort has exactly **one** bench, so a fixture cannot cycle a bench through the three ranks the
+/// way it cycles the labor rows; it can only give each cohort's bench a different one. These two are
+/// the **non-default** ranks, which is what a wrong mapping can move: `Normal` is the decoder's own
+/// catch-all arm, so a bench carrying it is indistinguishable from a bench whose rank was dropped —
+/// and it is covered where that distinction *is* observable, on the labor rows below
+/// ([`EVERY_SOURCE_PRIORITY`]), which is the codec-level coverage this array leans on.
+const BENCHED_SOURCE_PRIORITIES: [SourcePriorityState; 2] =
+    [SourcePriorityState::High, SourcePriorityState::Low];
+
 /// **EVERY `SourcePriority` THE WIRE CAN CARRY**, one per fixture labor row — the one repeated
 /// section that is deliberately sized by an *enum* rather than by [`ROWS`].
 ///
@@ -81,12 +92,6 @@ const ROWS: usize = 2;
 /// default a string leaf is replaced on), so the only way a non-default variant reaches the decoder
 /// is for it to be written here. Covering all three end to end is what makes a mis-mapped arm move
 /// the golden.
-/// **THE TWO NON-DEFAULT RANKS, ONE PER COHORT'S BENCH** — see the call site for why these two and
-/// not a cycle through all three: a cohort has exactly one bench, and the default arm of a decoder's
-/// mapping is its catch-all and therefore unreachable by a wrong mapping.
-const BENCHED_SOURCE_PRIORITIES: [SourcePriorityState; 2] =
-    [SourcePriorityState::High, SourcePriorityState::Low];
-
 const EVERY_SOURCE_PRIORITY: [SourcePriorityState; 3] = [
     SourcePriorityState::Normal,
     SourcePriorityState::High,

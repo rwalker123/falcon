@@ -2670,6 +2670,15 @@ fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
 fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
     const STARVE_TURNS: u32 = 40;
     const RECOVER_TURNS: u32 = 30;
+    /// **The keeper harvests NOTHING** — a floor of `1.0` leaves the whole stock standing, so the row
+    /// pays no provisions in.
+    ///
+    /// It is what makes "the larder is empty" true for the whole turn. The pen's feed is settled off
+    /// the larder as it stands at the **end** of the labor pass (`settle_pen_larder`), so a keeper who
+    /// slaughters out of the pen has that meat in hand when the feed is paid and can feed the herd
+    /// back some of it — which is honest, and is not the case this test is about. Draining the store
+    /// alone no longer starves a pen that pays for itself.
+    const LEAVE_THE_WHOLE_STOCK_STANDING: f32 = 1.0;
 
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
@@ -2679,7 +2688,7 @@ fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         fauna.husbandry.pen.ecology.extinction_floor * cap
     };
-    let keeper = spawn_hunter(&mut app, &id, 0.5);
+    let keeper = spawn_hunter(&mut app, &id, LEAVE_THE_WHOLE_STOCK_STANDING);
 
     // Starve it: drain the keeper's larder every turn, so the feed can never be paid.
     let mut previous = herd_of(&app, &id).biomass;

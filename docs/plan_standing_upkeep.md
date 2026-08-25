@@ -1095,19 +1095,27 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
    > just adjusted was the one fed last. That is §2.9's own defect living in a system that never got
    > §2.9's fix.
    >
-   > `settle_pen_feed` now runs **before** the assignment loop and sees every pen at once:
-   > **High served whole, then Normal, then Low, and proportional to demand within a tier.**
-   > Proportional needs no new ordering rule to invent and cannot depend on vector position, which is
-   > the property that was missing. The loop applies each pen's settled share instead of taking from
-   > the store itself; `last_pen_feed_upkeep` still sums the real debits and the pinned identity
+   > The settlement sees **every pen at once**: **High served whole, then Normal, then Low, and
+   > proportional to demand within a tier.** Proportional needs no new ordering rule to invent and
+   > cannot depend on vector position, which is the property that was missing. `last_pen_feed_upkeep`
+   > still sums the real debits and the pinned identity
    > `larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit` still holds.
    >
-   > **WHAT IT COSTS: a pen eats hay harvested on a PREVIOUS turn.** `FODDER` is credited inside the
-   > same loop, so settling ahead of it reads the store as it stands at the top of the pass. What
-   > that replaced was not same-turn hay as a rule — it was same-turn hay **iff** the pen's row
-   > happened to sit after the hay Field's, which is the same accident being removed. The store is
-   > documented as a stock (it is the buffer the overwintering carry rides), and that is the reading
-   > taken. Rationale in `.claude/rules/core_sim/graze.md`.
+   > **AND IT IS TWO PASSES, BECAUSE THE TWO STORES ARE NOT THE SAME KIND OF THING.** `settle_pen_hay`
+   > runs **before** the assignment loop and `settle_pen_larder` **after** it; the corral arm bids its
+   > bread bill rather than drawing it.
+   >
+   > - **Hay is a STOCK** — the buffer the overwintering carry rides — so it is settled off the store
+   >   standing at the top of the pass, and **a pen eats hay harvested on a previous turn.** What that
+   >   replaced was not same-turn hay as a rule: it was same-turn hay **iff** the pen's row happened
+   >   to sit after the hay Field's, which is the same accident being removed.
+   > - **The larder is a FLOW** — `FOOD` is credited *inside* the loop by every gather, hunt and pen
+   >   harvest — so settling it ahead of the loop would have meant **a band with an empty larder never
+   >   feeding its pens again**, however much it gathered that turn. It settles late, off the income
+   >   the turn actually produced. Found in review; the one-turn lag on starvation is what makes late
+   >   payment safe, since `pen_fed_fraction` is read in Logistics, a stage and a turn later.
+   >
+   > Rationale in `.claude/rules/core_sim/graze.md`.
    >
    > **A COMPARATOR TEST WOULD HAVE PROVED NOTHING**, so both consumers are driven end to end: a band
    > at zero slack losing a worker with one Low row and one Normal, asserting which row gave; and two

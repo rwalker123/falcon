@@ -2097,8 +2097,12 @@ const SMALLEST_THINNABLE_CREW: u32 = 2;
 const ONE_WORKER: u32 = 1;
 
 /// **NO LESSON IS AT STAKE ON THIS ROW** — the reading every step but the fifth hands
-/// [`LaborAllocation::least_productive_row_ordered_by`], which makes that level constant and the
-/// comparison exactly the four-level one those steps have always had.
+/// [`LaborAllocation::least_productive_row_ordered_by`], which makes that level constant and leaves
+/// those steps the **three**-level comparison `priority → pays → yield`, ties to the earliest row.
+/// (Four levels is step 5's own ordering; it is the only step that asks about a lesson.)
+///
+/// **The priority level is new, so this is not the ordering those steps used to run**: until the
+/// player's mark reached the shedding walk they compared `pays_any_account → yield_per_worker` alone.
 ///
 /// Named rather than a bare `false` at the call site because the literal there would read as *"this
 /// row is not learning"* — a claim about the row — when what it says is *"this step does not ask"*.
@@ -4524,7 +4528,12 @@ impl LaborAllocation {
     /// choice cannot depend on how the vector happens to be ordered.
     ///
     /// `learning` is [`NO_LESSON_AT_STAKE`] for every step but the fifth, which makes that level
-    /// constant and the comparison bit-identical to the four-level one those steps have always had.
+    /// constant and leaves those steps the **three**-level `priority → pays → yield` (ties to the
+    /// earliest row). Only step 5 runs all four.
+    ///
+    /// **The priority level is new to all of them**: until the player's mark reached the shedding
+    /// walk every step ordered on `pays_any_account → yield_per_worker` alone, so nothing the player
+    /// had said about a source was readable at any step but through the yield.
     fn least_productive_row_ordered_by(
         &self,
         admits: impl Fn(usize, &LaborAssignment) -> bool,

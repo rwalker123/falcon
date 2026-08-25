@@ -348,12 +348,13 @@ entirely from the larder) and becomes **a piece of fenced land the herd grazes**
 ### The pen feed is settled across every pen at once
 
 **A band keeps more than one pen, and the two stores that feed them are shared.** The FEED phase's
-draws — hay off `FODDER`, then bread off the larder — are struck by `settle_pen_feed`
-(`systems/labor.rs`) **before** the assignment loop, across every corralled-herd row the band holds;
-the corral-tend arm then spends each pen's settled share and takes no allocation decision of its own.
-`last_pen_feed_upkeep` keeps its meaning — the summed *actual* `LocalStore::take`, which is what the
-food-ledger identity `larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit`
-is closed with.
+draws are struck across every corralled-herd row the band holds, by one rule and in two passes
+(`systems/labor.rs`): `settle_pen_hay` splits the `FODDER` store **before** the assignment loop, and
+`settle_pen_larder` splits the larder **after** it. The corral-tend arm in between spends each pen's
+settled hay, stamps the herd, and *bids* its remaining bread bill; it takes no allocation decision of
+its own. `last_pen_feed_upkeep` keeps its meaning — the summed *actual* `LocalStore::take`, which is
+what the food-ledger identity
+`larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit` is closed with.
 
 **Each store is served by priority tier, and proportionally within one.** `High` pens in full, then
 `Normal`, then `Low`; when the remainder cannot cover a tier, every pen in it gets
@@ -373,11 +374,32 @@ row's own `SourcePriority` (`yield-forecast.md` → "The player's rank on a work
 > arrangements** — marked row first, marked row last, and marked row re-pushed to the end by an edit —
 > because a fixture with a single layout passes on the old code half the time.
 
-**The `FODDER` store it reads is the one standing at the top of the pass**, so a pen eats hay its band
-harvested on a *previous* turn. That is the store's own nature (a stock — the buffer the overwintering
-carry rides), and it is the deliberate consequence of settling before the loop: same-turn hay used to
-be reachable only by a pen whose row happened to sit after the hay Field's in `assignments`, which is
-the same positional artifact.
+**The two stores are settled at different moments, because they are different kinds of thing.**
+
+- **`FODDER` is a STOCK, settled before the loop**, against the store standing at the top of the pass —
+  so a pen eats hay its band harvested on a *previous* turn. That is the store's own nature (the buffer
+  the overwintering carry rides), and same-turn hay was reachable only by a pen whose row happened to
+  sit after the hay Field's in `assignments`, which is the same positional artifact.
+- **The larder is a FLOW, settled after the loop.** `FOOD` is credited *inside* the assignment loop —
+  forage provisions, the pen's own harvest, the hunt take — so a band living hand to mouth has always
+  paid its pens out of the same turn's income, back when the draws ran inline. Settling bread off the
+  top-of-pass store would have taken that away: a keeper who opened the turn with an empty larder would
+  see `larder_share = 0`, the fed fraction collapse to the land/hay share, `last_pen_feed_upkeep`
+  publish `0`, and next turn's `advance_husbandry` shrink a herd it was carrying food home for.
+
+**Paying late is safe because nothing in the pass reads what the payment writes.** `pen_fed_fraction`
+is consumed a stage *and* a turn later (`starve_underfed_pen` and `regrow_biomass`, both in Logistics,
+which runs ahead of Population), and `last_pen_feed_upkeep` is read by the snapshot in Finalize. The
+late settlement therefore changes only *when the store is read*. What it may not do is let one row's
+income reach only the rows behind it, which is why it is a settlement and not a walk:
+`a_pen_is_fed_from_the_same_turns_gather_when_the_larder_opened_empty` drives both vector orders and
+`the_mark_decides_who_eats_out_of_the_days_gather_whatever_the_vector_says` drives all three
+arrangements against a larder that is nothing but the day's gather.
+
+> A pen can therefore be part-fed **from its own slaughter** — the harvest is food in the larder like
+> any other. Draining a keeper's store no longer starves a pen that pays for itself; the fixtures that
+> want a genuinely unfed pen work it at a floor of `1.0` (`fauna_husbandry.rs`,
+> `integration_tests/tests/pen_food_ledger.rs`).
 
 **The Foddering gate is asked once, for the faction, in the settlement.** A band that has not learned
 it bids `0` hay, so every term downstream collapses to the pasture-only pen exactly as before hay

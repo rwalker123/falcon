@@ -6023,9 +6023,6 @@ fn handle_clear_bench(app: &mut bevy::prelude::App, faction: FactionId, band_id:
     );
 }
 
-/// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
-/// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
-/// the crew is a crew-side edit and must not restart a build the player committed to.
 /// **MARK A BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `bench_priority <faction> <band>
 /// high|normal|low` (`docs/plan_standing_upkeep.md` §4.9 item 9b).
 ///
@@ -6109,6 +6106,9 @@ fn handle_bench_priority(
     );
 }
 
+/// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
+/// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
+/// the crew is a crew-side edit and must not restart a build the player committed to.
 fn handle_bench_crew(
     app: &mut bevy::prelude::App,
     faction: FactionId,

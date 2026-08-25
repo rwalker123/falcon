@@ -5,6 +5,7 @@ paths:
   - "core_sim/src/snapshot/**"
   - "core_sim/src/data/labor_config.json"
   - "core_sim/tests/labor_allocation.rs"
+  - "core_sim/tests/bench_shed.rs"
 ---
 
 <!-- Extracted verbatim from lines 42-42;3430-3568 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -962,8 +963,10 @@ player's own.**
    order, and the derived `Ord` is what reads it). See "The player's rank on a worked row" below.
 2. **Is this row still accruing knowledge** — a learner ranks **last**, so it is passed over while
    any other candidate exists. **Step 5 only**: the four steps that *empty* a row
-   (`least_productive_row`) hand a constant here and are bit-identical to the three-level order they
-   have always had. See the callout below.
+   (`least_productive_row`) hand a constant here, so their order is the three-level one — rank, then
+   the two the shed has always used. **The rank itself is new**: before it, every step ordered on
+   `pays_any_account` → `yield_per_worker` alone, so "unchanged" here means *unchanged since the rank
+   landed*, not *untouched by it*. See the callout below.
 3. **Does this row pay into ANY account** — food, fodder or materials (`pays_any_account`, read off
    the same retained `SourceYield`). A row paying nothing ranks below one that pays something, so it
    is shed first.

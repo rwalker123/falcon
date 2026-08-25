@@ -16,6 +16,11 @@
 //!
 //! Pinned both when the band can pay the feed in full and when it can only **partially** pay (the
 //! field is the *actual* debit, not the demanded amount).
+//!
+//! **The feed is paid at the END of the labor pass** (`settle_pen_larder`), off a larder this turn's
+//! own income has already been paid into — a band living hand to mouth feeds its pens out of what its
+//! crews brought home today. The identity is indifferent to *when* within the turn the debit lands,
+//! which is why it reads the same either way; the partial case is not, and says so.
 
 use bevy::prelude::Entity;
 use core_sim::{
@@ -40,6 +45,17 @@ const AMPLE_LARDER: f32 = 500.0;
 const THIN_LARDER: f32 = 6.0;
 /// The exported floats are `f32` sums of `Scalar`-quantized takes; a few ULPs of slack, no more.
 const EPSILON: f32 = 0.01;
+/// The keeper's harvest floor for the cases where the pen should pay its keeper: hold the herd on its
+/// most productive biomass and carry the surplus home.
+const SUSTAIN: f32 = 0.5;
+/// **Leave the whole stock standing** — the keeper slaughters nothing, so the turn credits no food.
+///
+/// The partial-payment case needs it. A pen's feed is settled off the larder as it stands at the
+/// **end** of the labor pass (`settle_pen_larder`), so a keeper who harvested the pen has that meat in
+/// hand when the feed is paid: on this fixture the pen's own harvest is many times its feed bill, so a
+/// thin larder is no longer thin and the payment stops being partial. Taking nothing is what keeps
+/// "the band could only part-pay" the situation under test.
+const TAKE_NOTHING: f32 = 1.0;
 
 /// Stand a band up with a **penned herd it keeps**, seed its larder, run one real turn, and return
 /// `(larder_before, larder_after, food_income, food_consumption, pen_feed_upkeep, pen_fed_fraction)`.
@@ -50,7 +66,7 @@ const EPSILON: f32 = 0.01;
 /// much hay: the pen then draws hay *before* the larder, so its `penFeedUpkeep` (the **provisions**
 /// paid) drops — but the ledger identity is over the FOOD store alone, so it must still hold, because
 /// `FODDER` is a separate store that never converts to `FOOD`.
-fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f32) {
+fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32, f32, f32, f32) {
     let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -129,7 +145,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         assignments: vec![LaborAssignment {
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
-                floor: 0.5,
+                floor,
             },
             workers: workers.max(1),
             kit: None,
@@ -211,7 +227,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
 #[test]
 fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
     let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(AMPLE_LARDER, 0.0);
+        run_one_turn_with_a_pen(AMPLE_LARDER, 0.0, SUSTAIN);
 
     assert!(
         pen_feed > 0.0,
@@ -247,8 +263,16 @@ fn the_food_ledger_reconciles_with_the_larder_when_the_pen_is_fully_fed() {
 #[test]
 fn the_food_ledger_reconciles_when_the_pen_is_only_partly_fed() {
     let (before, after, income, consumption, pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(THIN_LARDER, 0.0);
+        run_one_turn_with_a_pen(THIN_LARDER, 0.0, TAKE_NOTHING);
 
+    // **Nothing came in.** The keeper leaves the whole stock standing, so the turn's only food flows
+    // are the people eating and the pen being part-paid — which is what makes the thin larder the whole
+    // of what the pen could be fed from (see `TAKE_NOTHING`).
+    assert!(
+        income.abs() < EPSILON,
+        "the keeper harvested nothing this turn, so the thin larder is all the pen could be paid \
+         from (income {income})"
+    );
     // The people ate first (in full — `THIN_LARDER` covers their demand), so the pen was paid only
     // the larder's *remainder*: a real, positive, but **partial** debit. `pen_fed_fraction < 1` is the
     // proof it is genuinely partial (the herd starves for the shortfall); `> 0` that it paid at all.
@@ -286,9 +310,9 @@ fn the_food_ledger_reconciles_when_the_pen_is_fed_hay() {
     // Ample provisions AND ample hay: the pen covers its whole feed from hay first, so almost nothing
     // is drawn from the FOOD store.
     let (before, after, income, consumption, hay_pen_feed, pen_fed_fraction) =
-        run_one_turn_with_a_pen(AMPLE_LARDER, 10_000.0);
+        run_one_turn_with_a_pen(AMPLE_LARDER, 10_000.0, SUSTAIN);
     // For contrast, the same pen with NO hay pays a real provisions feed (the fully-fed bread case).
-    let (_, _, _, _, bread_pen_feed, _) = run_one_turn_with_a_pen(AMPLE_LARDER, 0.0);
+    let (_, _, _, _, bread_pen_feed, _) = run_one_turn_with_a_pen(AMPLE_LARDER, 0.0, SUSTAIN);
 
     assert!(
         (pen_fed_fraction - 1.0).abs() < EPSILON,
