@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 68
+const EXPECTED_CHECKPOINTS := 69
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -770,6 +770,14 @@ func run(harness) -> void:
 	h._assert_hud("…and it is the ACTING band, whose ⌃ is the control the sentence points at",
 		link_bands.size() == 1
 			and int(link_bands[0]) == int(h._hud._band_labor.player_band().get("entity", -1)))
+	# **AND THE PRESS PUT THE SHEET AWAY** (`DrawerComposeController._navigate_to_work_tab`). Compose
+	# surfaces draw on `HudLayer.COMPOSE_LAYER_INDEX`, above `BandCityPanel.LAYER_INDEX` (103), and
+	# `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher — so a sheet left open
+	# would swallow the very `⌃` press this sentence just sent the player to the board to make. The
+	# link is the ONE control inside a compose surface that navigates rather than commits, so this is
+	# the whole of the claim.
+	h._assert_hud("…and the press CLOSED the sheet, so the board it sent the player to takes their next click",
+		not h._hud._drawercompose.is_compose_sheet_open())
 
 	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
 	# State 6b-sow-locked — Seed Selection is only 12% learned AND this ordinary prairie refuses seed,

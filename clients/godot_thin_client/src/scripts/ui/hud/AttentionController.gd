@@ -216,6 +216,58 @@ func _crew_handoff_attention() -> Array:
         })
     return items
 
+## **THE KNOWLEDGE SCREEN'S PRODUCER — A DISCOVERY FINISHED THIS TURN**
+## (`docs/plan_knowledge_screen.md` §5), over the flattened roster the screen itself draws
+## (`KnowledgePanelController.nodes`).
+##
+## **IT IS A `static func` AND TAKES NO COLLABORATOR, WHICH IS WHAT PUTS IT OUTSIDE THE ORDERING
+## HAZARD.** Every other producer here is a method because it reads the band/labor model; this one
+## reads nothing but the list handed to it, so it cannot be run against a model that has not caught
+## up. `HudLayer._refresh_knowledge_readouts` is the per-snapshot caller, and it rolls the screen's
+## turn diff on the line above — see that method for why the two must not be separated. (The world
+## boundary pushes this too, over a diff that has just been dropped rather than rolled.)
+##
+## NON-LOCATING and `info`: nothing is wrong — a track finished, which is the good news — so it sorts
+## below every real problem, the `crew_handoff` argument exactly.
+##
+## > ### ⛔ THE UNSPENT BACKLOG IS NOT A SECOND PRODUCER HERE, AND THAT IS A DECISION
+## >
+## > §5 asked for one — an aggregate `"N discoveries unspent"` row — and it was built, rendered and
+## > then cut. **THE ORB IS FOR EVENTS AND LOSSES IN PROGRESS; AN UNSPENT DISCOVERY IS A STANDING
+## > CONDITION**, so its row never went away and the orb never returned to the calm all-clear pulse.
+## > A permanently-lit attention hub teaches the player to stop looking at it, which costs more than
+## > the nudge is worth — and the nudge already has a home: §1 gave the unspent count to the action
+## > bar's PIP, which is mounted on all three of the Band/City panel's layouts including the
+## > collapsed rail. The row was the same fact on a second surface, and the surface that could least
+## > afford it.
+## >
+## > The player has also already been told: the discovery was announced HERE the turn it landed.
+## >
+## > `turn_orb.gd` asserts the ABSENCE — a faction sitting on four unspent discoveries raises no orb
+## > row at all — so re-adding one fails a test rather than quietly restoring the lit orb.
+static func knowledge_attention(nodes: Array) -> Array:
+    var items: Array = []
+    # ONE ROW PER TRACK COMPLETED THIS TURN, read off the roster's own `new_this_turn` rather than off
+    # the raw diff: the roster applies the "new implies KNOWN" conjunction, and taking the flag off the
+    # same nodes the columns draw is what stops the orb naming a discovery the screen's `New this turn`
+    # pill does not count.
+    for node_variant in nodes:
+        if not (node_variant is Dictionary):
+            continue
+        var node: Dictionary = node_variant
+        if not KnowledgeRoster.matches(node, HudKnowledgeVocab.FILTER_NEW):
+            continue
+        items.append({
+            "kind": HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED,
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_INFO,
+            "label": HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_LABEL_FORMAT % String(
+                node.get(HudKnowledgeVocab.NODE_LABEL, "")),
+            "detail": HudAttentionVocab.ATTENTION_KNOWLEDGE_LEARNED_DETAIL,
+            "x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+            "y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+        })
+    return items
+
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
     for i in player_bands.size():

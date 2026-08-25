@@ -53,6 +53,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/crafting_bench.gd",
 	"res://tools/ui_preview/chapters/trade.gd",
 	"res://tools/ui_preview/chapters/selective_gather.gd",
+	"res://tools/ui_preview/chapters/knowledge_panel.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -938,7 +939,11 @@ func _guard_frame_herd_fields(state: String) -> void:
 	_guard_herd_fields(_hud._selection._selected_tile_info, state)
 
 
+## The turn-orb chapter's own assertion sink. **IT COUNTS ITS CHECKPOINT, and it did not** — every
+## claim made through here escaped the completion tally `_assert_hud` says no claim can escape, so a
+## mid-chapter abort could silently drop the whole turn-orb guard set and still clear the floor.
 func _assert_turn_orb(label: String, ok: bool) -> void:
+	_checkpoint_count += 1
 	if ok:
 		print("ui_preview: PASS turn-orb — ", label)
 	else:

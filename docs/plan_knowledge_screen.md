@@ -1,7 +1,12 @@
 # The Knowledge Screen
 
-**Status:** design settled, not implemented. Prototype: `docs/knowledge_screen_ux_proposal.html`
-(the eight-option comparison it came from is `docs/knowledge_visibility_ux_proposal.html`).
+**Status: SHIPPED.** All four slices of §9 have landed — A (the overlay migration), B (the screen and
+its launcher), C (the two attention rows and the System note's retirement), D (the
+`ready_for_improvement` channel). Sections carrying an **AS BUILT** note say where the implementation
+corrected the design; the engineering rationale lives in `.claude/rules/client/knowledge-panel.md`,
+`turn-orb.md`, `band-readouts.md` and `overlay-channels.md`, which is where to edit it from here.
+Prototype: `docs/knowledge_screen_ux_proposal.html` (the eight-option comparison it came from is
+`docs/knowledge_visibility_ux_proposal.html`).
 
 The problem: the intensification ladder's knowledge is earned by practice, announced once into the
 event dock's System channel, and otherwise invisible. A player is never told a track finished, never
@@ -57,7 +62,16 @@ reinstall. Define it as **nothing is using this right now**:
 
 - **Ladder knowledge** — no source the faction works currently stands on the rung it unlocks
   (`forage::patch_rung` / `fauna::herd_rung` against the rung's `unlock_knowledge`).
-- **Craft knowledge** — no recipe requiring that craft appears in the faction's kit ledger.
+- **Craft knowledge** — the faction holds, or is making, nothing made of that craft: no recipe of it
+  whose output the bands carry (`count` / `amount`, never `remaining`), and none on a bench.
+
+> **AS BUILT (Slice B): the craft test is what the faction HOLDS, not what the ledger LISTS.** The
+> line above read *"no recipe requiring that craft appears in the faction's kit ledger"* and has been
+> corrected, because a plan that names the rejected test is a plan the next slice implements. The
+> crafting panel publishes **ONE ROW PER RECIPE, ALWAYS** — that is its stated contract — so a
+> recipe's mere presence is true of every craft on every turn and would answer *in use* for all of
+> them forever. The bench arm is the other half: without it, a faction building its first loom reads
+> unspent for the whole time the loom is being built.
 
 This needs **zero new state** and is arguably the better signal: it re-surfaces if the player
 abandons the thing. The label follows the meaning — *"Known · nothing is using it"*, not
@@ -104,7 +118,15 @@ in a Rust doc comment on `intensification_ladder.json`. It has to be authored as
 - Register a second action beside `ACTION_CRAFTING` in `BandCityPanel` — same
   `{id, glyph, tooltip, enabled}` descriptor, same `action_invoked` signal, same three mounts
   (bar / subject row / collapsed rail).
-- The **pip** on the button carries the unspent count and clears when the screen is opened.
+- The **pip** on the button carries the unspent count. It is derived fresh every push and **does not
+  clear when the screen is opened**.
+
+> **AS BUILT (Slice B): OPENING THE SCREEN DOES NOT CLEAR THE PIP, and this line said it did.** What
+> clears an unspent count is USING the knowledge; a pip that went quiet on a *look* would tell the
+> player they had dealt with something they had not. `unspent_count` is derived rather than latched,
+> so it goes away exactly when a source starts standing on the discovery — the honest trigger, and
+> the one the state's own definition already gives. **Slice C is implemented from §4 and §5**, which
+> is why the correction lands here rather than only in the rule file.
 - **Delete the Know tab**: the faction page drops to three zones. `FactionRollup.build_knowledge_zone`
   and its callers go with it; its Settling and Discoveries blocks are rehomed per §2.
 
@@ -126,6 +148,44 @@ branch renders an affordance that does nothing** — `hud_attention_vocab` says 
 The existing one-shot System note (`FactionReadouts._announce_knowledge_unlock`) is superseded by
 producer 1 and should be retired, not left to double-report.
 
+> ## ⛔ AS BUILT (Slice C): **ONE PRODUCER SHIPPED, NOT TWO. Producer 2 was cut.**
+>
+> Engineering rationale in `.claude/rules/client/turn-orb.md`; four corrections to the paragraphs
+> above.
+>
+> **PRODUCER 2 WAS BUILT, RENDERED, AND REMOVED BEFORE THE ARC LANDED — do not re-add it.** The orb
+> is for EVENTS and for LOSSES IN PROGRESS; an unspent discovery is a STANDING CONDITION, so its row
+> never went away and the orb never returned to its calm all-clear pulse. Measured: it moved 400 of
+> the render harness's frames simply by adding one to the count badge on every frame that draws the
+> orb. A permanently-lit attention hub teaches the player to stop looking at it, which costs more
+> than the nudge is worth — and **§1 had already given the unspent count a home**, the action bar's
+> PIP, which is mounted on all three of the Band/City panel's layouts including the collapsed rail
+> and clears on the same honest trigger. The row was the same standing fact on a second surface, and
+> on the one surface whose whole value is being quiet when nothing needs you. The player has also
+> already been told: producer 1 announced the discovery the turn it landed.
+>
+> `turn_orb.gd` asserts the ABSENCE against a faction sitting on four unspent discoveries, so
+> re-adding the row fails a test rather than quietly relighting the orb.
+>
+> **The surviving producer takes the branch, and it opens on `new`, not `unused`.** The paragraph
+> above names `unused` because it was written for producer 2's row; producer 1's row names a
+> discovery, so it lands on the list holding it. That still needed a new entry point —
+> `open_on_filter` — because the live filter is controller state that survives a close, so `open()`
+> reopens on whatever the player last set.
+>
+> **THE ORDERING WAS THE REAL WORK, AND IT IS NOT A COMMENT.** `build_band_attention` runs thirty
+> lines before the turn diff the producer reads is rolled, so a producer built beside the band ones
+> names the PREVIOUS turn's discovery in a row that renders perfectly plausibly. The knowledge row is
+> a THIRD registry half instead, filled by one `HudLayer` seam that rolls the diff and pushes the pip
+> and the row on adjacent lines — which also makes it correct on a delta carrying knowledge but no
+> populations, one that never reaches `update_band_alerts` at all.
+>
+> **RETIRING THE NOTE DID NOT RETIRE ITS COPY.** `KNOWLEDGE_UNLOCK_NOTES` is the knowledge screen's
+> *"what it lets you do"* line (`KnowledgeRoster` reads it); `KNOWLEDGE_UNLOCK_LABELS`,
+> `_knowledge_announced` and `FactionReadouts`' last Callable injection went. **A completed discovery
+> is now announced on the turn orb and nowhere else — it leaves the event log entirely**, which is
+> this section's intent rather than a side effect.
+
 ---
 
 ## 6. The overlay migration — modular, and no traces left
@@ -145,7 +205,7 @@ channel**. Moving it as-is relocates the problem. Split it:
 
 | New module | Kind | Holds |
 |---|---|---|
-| `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_to_climb` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
+| `OverlayChannels` | all-`const` + `static`, **a registry** | The **client-side** channel descriptors — `""` (No Overlay), `terrain_tags`, and later `ready_for_improvement` — each `{key, label, description, legend_kind, available}`. Merged with the server-published `overlays.channels` payload. **Adding a channel is one registry entry**, exactly as `WorkbenchPages.PAGES` works for pages. |
 | `OverlayLegend` | all-`static`, stateless | Renders a legend from a descriptor + `MapView.current_overlay_legend()`. **Generic**: a `ramp` channel gets that channel's own legend rows; a `facts` channel gets the count lines its provider returns. No channel is named here. |
 | `OverlayPicker` | the widget | The list + the legend mount + the selection, pushed to `MapView.set_overlay_channel`. Knows no channel by name. |
 
@@ -187,7 +247,12 @@ raster/derivation it needs, never an `if key ==` in `MapView`.
 
 ---
 
-## 7. The `ready_to_climb` channel
+## 7. The `ready_for_improvement` channel
+
+**"Climb a rung" is the intensification arc's INTERNAL vocabulary** — `RungGates`, `SourceForecast`
+and this plan keep it. It does not survive contact with a player: a hex asked to "climb a rung" is a
+metaphor the game never taught. The player-facing word is **improve**, which is why the channel
+shipped as `ready_for_improvement` and not as the `ready_to_climb` the slice was designed under.
 
 The map already draws `⌃` on any source that can climb a rung
 (`SecondaryMarkerRenderer`, driven off `RungGates` + the faction's knowledge row). What is missing is
@@ -225,20 +290,33 @@ Each slice is its own PR and lands on its own.
 |---|---|---|
 | **A** | The overlay migration — registry / legend / picker split, the minimap mount, the Inspector cleanup (§6) | nothing |
 | **B** | The knowledge screen + the action-bar launcher; delete the Know tab (§3, §4) | nothing |
-| **C** | The two attention producers + the `panel_requested` branch; retire the System note (§5) | B |
-| **D** | The `ready_to_climb` channel (§7) | A |
+| **C** | The attention producer + the `panel_requested` branch; retire the System note (§5) | B |
+| **D** | The `ready_for_improvement` channel (§7) | A |
+
+> **AS BUILT: C shipped ONE producer, not two.** This row said *two* — the freshly-learned row and an
+> aggregate `"N discoveries unspent"` row. The second was built, rendered and cut: the orb is for
+> events and losses in progress, and a standing backlog row never goes away, so the orb never returns
+> to its calm all-clear pulse. §1 had already given that count the action-bar PIP. The full reasoning
+> is in §5's banner and in `.claude/rules/client/turn-orb.md`, and `turn_orb.gd` asserts the row's
+> ABSENCE — so re-adding it fails a test rather than quietly relighting the orb.
 
 **A is independent of the whole knowledge arc** and is the cleanest thing to do first — it is a
 self-contained cleanup with a visible win, and it leaves the registry D needs.
 
 ---
 
-## 10. Known blocker
+## 10. Setting a fresh worktree up
 
-`main` currently fails to parse: `Identifier "HudPalette" not declared in the current scope`, which
-takes down `GameLaunch.gd` and every preview harness (`scripts/preview.sh` hangs until the
-watchdog reaps it at 180 s). Fix or confirm fixed before starting — every slice here needs the PNG
-harnesses.
+Both steps are one-time per checkout, and skipping either makes every scene fail to parse with
+`Identifier "X" not declared in the current scope` — which reads exactly like a broken tree.
+
+1. **`cargo xtask godot-build`** — a fresh worktree has no native extension, so every scene dies on a
+   missing `libshadow_scale_godot` dylib.
+2. **`godot --headless --path clients/godot_thin_client --import`** — a fresh worktree has no
+   `.godot/` cache, so the global class registry is empty and no `class_name` resolves.
+
+`workbench_preview` fails on `main` — *"content column is 15.0px wider than the surface allows
+(375.0 > 360.0)"* — and is unrelated to this arc. The other five render harnesses pass.
 
 ---
 

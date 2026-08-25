@@ -263,6 +263,7 @@ static func apply(id: String) -> void:
 	# re-read what `HudStyle` now holds.
 	HudEventVocab.apply_palette()
 	HudCraftingVocab.apply_palette()
+	HudKnowledgeVocab.apply_palette()
 	HudWidgets.apply_palette()
 	TellingPanel.apply_palette()
 	# THE WINDOW'S OWN BACKGROUND, and the third kind of baked colour this system has to reach.

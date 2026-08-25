@@ -982,6 +982,47 @@ signal that names the act rather than filtering ids it did not register. Registe
 (rather than from the crafting controller) is what keeps the button's presence a property of the
 panel: it is subject-independent chrome and must exist on a band page and the faction page alike.
 
+**AND THE KNOWLEDGE SCREEN'S `▲` IS THE SECOND ONE, which is the claim above made good.**
+`ACTION_KNOWLEDGE` + `knowledge_requested`, on the same footing and for the same reason — what your
+people know is a FACTION fact, so it must be reachable from a band page and the faction page alike
+(`knowledge-panel.md`). Adding it took a descriptor and a relay and **no geometry at all**: the bar
+absorbed it on every one of the three mounts, the vertical dock's card floor did not move, and the
+horizontal dock's strip did not move by a pixel. Its relay resolves NOTHING, unlike the `⚒`'s — a
+discovery unlocks a verb across the whole map and no band owns it, so there is no subject to look up.
+
+> **THE HARNESS'S REGISTRY ASSERTIONS MUST NOT HARD-CODE THE SHIPPED COUNT.** Four of them did — "the
+> ⚒ is registered", "a second action puts a second glyph on the bar", "retiring every action", and the
+> bar-height message — and all four broke the day the second launcher landed, one of them by
+> unregistering the `⚒` alone and then measuring a bar that was still carrying the `▲`.
+> `_assert_action_registry` reads `_panel._actions.size()` once and states every claim against it, so a
+> third launcher costs that block no edit.
+
+### A PIP IS NOT PART OF THE DESCRIPTOR, and the separation is load-bearing
+
+`set_action_pip(id, count)` / `action_pip(id)`. A registered action can wear a small count badge over
+its glyph — today the knowledge screen's unspent count, which is the one number on this header that is
+a NUDGE rather than a reading.
+
+**It comes in through its own seam because it moves on a different clock.** `register_action`'s whole
+contract is that a descriptor is DECLARED at wiring time and never a function of snapshot state — that
+is what keeps the bar's geometry off the render's hot path — while a pip is restated every turn. Three
+consequences, each of which was a defect first:
+
+- **The count is retained on `_action_pips`, not on the button.** `_rebuild_action_mount` throws every
+  button away whenever the panel re-homes its actions (a dock change, a collapse), so a count living
+  only on the node vanishes on a dock flip and comes back on the next turn tick — invisible in any
+  frame, which is why `band_panel_preview` asserts it across a `set_dock`.
+- **The pill is an ANCHORED, mouse-transparent CHILD of the button, inside its own rect.** A Button is
+  not a Container, so such a child contributes nothing to the parent's minimum size — exactly the
+  property wanted: a badge that took layout width would make the bar's minimum a function of a
+  snapshot count, i.e. the coupling the descriptor rule exists to prevent. `MOUSE_FILTER_IGNORE`, or
+  the one thing a player does on seeing a pip would stop working.
+- **`0` is "no pip", never a pip reading zero**, and `set_action_pip` is silent on an unregistered id:
+  a caller pushing a count before it has registered its action is a wiring order, not an error.
+
+It wears `WARN` on `GROUND` — the tab badge's own `hot` pair, so a pip and a hot tab read as one
+family.
+
 **An EMPTY bar costs nothing.** With no registrations the outer `MarginContainer` is hidden, and a
 hidden child contributes neither its own height nor the column's separation — measured, the body sits
 **flush** under the subject row (gap 0.0px, against 44.0 with the bar up). The bar is a seam, not a
@@ -1058,6 +1099,28 @@ scrolling surface.
 
 ## THE FACTION PAGE IS A SUBJECT, AND A SUBJECT DECLARES ITS OWN ZONES (issue #450)
 
+> #### ⛔ THE PAGE DECLARES **THREE** ZONES NOW — every "four" below is history
+>
+> `docs/plan_knowledge_screen.md` §4 deleted the KNOWLEDGE zone: the craft tracks went to the
+> knowledge screen (`knowledge-panel.md`), and SETTLING and DISCOVERIES were rehomed into the `band`
+> zone — neither is knowledge, neither is earned by practice, neither unlocks a verb. `ZONE_KNOWLEDGE`,
+> `ZONE_KNOWLEDGE_WIDTH`, `ZONE_TAB_KNOWLEDGE` and `FactionRollup.build_knowledge_zone` are all gone.
+>
+> **What that changes in the passages below, and nothing else:** the page declares three zones rather
+> than four, so `wide_shell_min_width()` sums two gaps instead of three and its threshold is the
+> **1190** a band's three cost rather than 1569; the tab strip reads `Faction · Work · Parties`; the
+> KNOWLEDGE zone's own section and its 300px budget row describe a zone that no longer exists; and the
+> height tier that dropped DISCOVERIES moved to the `band` zone as
+> `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`, **re-measured at 480** against a 461px block (it is NOT
+> the retired 480 arrived at from the old zone's 452 — the coincidence is worth knowing about).
+>
+> **Everything else in this section stands**, which is why it is banner-corrected rather than rewritten:
+> the ordered-list body, the declare-before-build ordering, the per-subject shell threshold, the three
+> exceptions a band's subject does not need, and the arithmetic rules are all unchanged by losing a
+> column. The roster rows at the top of this file still name the retired zone inside their own single
+> table cells; each cell is ONE atomic merge unit, so they are left for whichever change next has
+> reason to rewrite one.
+
 The all-band rollup — population, food stores and rates, herds and pens, knowledge, and a
 SUMMARY of workers and parties — is a **pinned first entry in the panel's existing cycler**, rendered
 through the same shell a band uses. `BandPanelController.render_faction` is its
@@ -1079,8 +1142,10 @@ to be hunted for, which is the opposite of what a standing overview is for.
 The panel hosted exactly three zones for as long as a band was the only subject. It hosts a **declared
 list** now: `BandCityPanel.set_zone_layout(specs)` takes an ordered array of `{key, label, width}`
 descriptors — one wide-shell column and one narrow-shell tab each — and `set_zones(contents)` fills
-them by key. A band declares **three** (`BandPanelController.BAND_ZONE_LAYOUT`); the faction page
-declares **four** (`FACTION_ZONE_LAYOUT`), the extra being `knowledge`.
+them by key. A band declares **three** (`BandPanelController.BAND_ZONE_LAYOUT`) and the faction page
+declares **three** (`FACTION_ZONE_LAYOUT`) — it declared a fourth, `knowledge`, until that zone was
+retired (see the banner above). **The seam is what matters, not the count**: the two lists are free to
+differ again the moment a subject has a column the other does not.
 
 - **THE LAYOUT IS DECLARED BEFORE THE ZONES ARE BUILT, and that ordering is load-bearing.** The shell
   threshold is a sum over the declared zones, so arriving from the four-zone page can flip the shell —
@@ -1103,9 +1168,19 @@ declares **four** (`FACTION_ZONE_LAYOUT`), the extra being `knowledge`.
 - **A content handed in for an UNDECLARED zone is FREED, not dropped.** Ownership passes on the call,
   so ignoring it silently would leak a whole zone's control tree once per render.
 - **The persisted tab is validated against `ZONE_KEYS`, not against the live layout.** Prefs load
-  before any subject has spoken, so a player who left on `knowledge` must not have that thrown away by
-  the bootstrap layout; `_effective_tab` falls back to the first zone that has content whenever the
-  live subject does not declare the selected one.
+  before any subject has spoken — what is standing at that moment is the bootstrap
+  `DEFAULT_ZONE_LAYOUT` — so a persisted tab must survive a check against a layout no SUBJECT has
+  authored yet; `_effective_tab` falls back to the first zone that has content whenever the live
+  subject does not declare the selected one.
+  **The example used to be `knowledge`, and this diff is what made it wrong**: that key was removed
+  from `ZONE_KEYS` with the tab, so a persisted `knowledge` pref is now REJECTED by the very list the
+  paragraph is about — the opposite of what it was illustrating.
+  ⛔ **AND THERE IS NO REPLACEMENT EXAMPLE, WHICH IS A FACT ABOUT THE GUARD RATHER THAN A GAP IN THE
+  PROSE.** `ZONE_KEYS` is down to `band` / `work` / `parties` and `DEFAULT_ZONE_LAYOUT` declares all
+  three, so **no currently existing key can demonstrate the rule by absence** — the first draft of this
+  correction said the bootstrap "declares no such zone" of `parties`, which is simply false. The rule
+  is unchanged and still load-bearing; what it has lost is a case that exercises it, and it gets one
+  back the moment a subject declares a zone the bootstrap does not.
 
 **THE PAGE IS READ-ONLY, DELIBERATELY.** The issue's scope is "counts and where they are, not
 per-worker controls": role steppers, labor assignment and both compose sheets stay on the per-band
@@ -1208,7 +1283,16 @@ went green). The direction was never wrong — the MAGNITUDE was — so an inequ
 cannot express the rule and only the constants can. Re-sabotaged after the rewrite: it fails naming
 `6 stray: [16, 16, 16, 16, 16, 16]`.
 
-### KNOWLEDGE IS ITS OWN ZONE, AND THE FOUR-ZONE BUDGET IS MEASURED
+### RETIRED — KNOWLEDGE AS ITS OWN ZONE, AND THE FOUR-ZONE BUDGET
+
+> **The zone this section is about is GONE** (`docs/plan_knowledge_screen.md` §4, and the banner at
+> the head of this section). The craft tracks are a free-floating screen now and SETTLING and
+> DISCOVERIES are `band`-zone blocks. What is kept below is the REASONING, which outlived the zone:
+> why a height tier is a real "can this box hold it" test rather than a round number between two
+> docks, why DISCOVERIES is the block that yields, why an unknown box must answer FULL, and the
+> `meter_bar` scale trap that bit both meters in opposite directions. The `band` zone's own tier
+> (`FACTION_BAND_FULL_MIN_HEIGHT`) was measured the same way and is recorded in `knowledge-panel.md`.
+
 
 The craft tracks began as the WORK zone's last block, and the placement argument for them there still
 stands as far as it went: a track is not a stock and not a population — it is what the faction's hands

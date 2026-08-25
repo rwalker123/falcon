@@ -3,7 +3,8 @@ extends RefCounted
 
 ## Owns the TURN-ORB / ATTENTION / FORK cluster (HUD decomposition Phase 1b, docs/plan_hud_decomposition.md):
 ## the bottom-right turn orb's wiring, the narrative-fork panel (The Telling), and the attention-registry
-## ASSEMBLY (the band/expedition half cached by HudLayer + the snapshot-driven fork producer). Built on the
+## ASSEMBLY (three halves: the band/expedition rows fed in by HudLayer, the knowledge rows fed in the same
+## way, and the snapshot-driven fork producer this controller owns outright). Built on the
 ## LegendController/FactionReadouts idiom — HudLayer holds one as `_turnorb`, keeps thin
 ## reflective delegators for the five methods Main reaches by reflection, and RELAYS this controller's own
 ## signals onto the HudLayer signals Main connects to (the controller never emits a HudLayer signal directly).
@@ -27,6 +28,12 @@ var _turn_orb: TurnOrb = null
 # The HUD CanvasLayer, so the RefCounted controller has a node to parent the fork panel into.
 var _host: Node = null
 var _telling: TellingPanel = null
+## The knowledge screen, so a knowledge attention row can open it on the filter that matches the
+## question the row asked. **Handed over AFTER construction** (`set_knowledge_panel`), not through
+## `_init`: this controller is built in `_ready` well before `KnowledgePanelController` is, and a
+## constructor argument would force one of the two to move for no reason but the wiring. The same
+## late hand-over `_bandpanel.set_attention(_attention)` makes, for the same shape of reason.
+var _knowledge: KnowledgePanelController = null
 ## Where a client-side note goes. It was the retired left-dock command feed; it is
 ## `HudLayer.note_system_event` now (→ `system_note_requested` → the event dock's System channel),
 ## injected as a Callable because the panel is `Main`'s and neither this controller nor the HUD owns
@@ -41,6 +48,10 @@ var _note_sink: Callable
 var _pending_forks: Array = []
 var _stance_axes: Array = []
 var _band_attention: Array = []
+## The KNOWLEDGE half of the registry (`docs/plan_knowledge_screen.md` §5), cached beside the band
+## half and for the same reason: `set_attention` is a full replace, so a fork arriving on its own
+## delta has to be able to rebuild the whole registry without re-running the other producers.
+var _knowledge_attention: Array = []
 # Beats already auto-opened this session, so a fork the player dismissed does not re-open on every
 # subsequent snapshot. Keyed by beat_id.
 var _auto_opened_forks: Dictionary = {}
@@ -138,19 +149,50 @@ func set_band_attention(attention: Array) -> void:
 	_band_attention = attention
 	_push_attention()
 
+## Store the KNOWLEDGE half of the registry and push the whole thing — the `set_band_attention` seam,
+## one field over.
+##
+## **IT IS A SEPARATE HALF BECAUSE OF WHEN ITS ROWS CAN BE BUILT, not for tidiness.** The band
+## producers run inside `HudLayer.update_band_alerts`, BEFORE that method ingests the snapshot; the
+## knowledge producer reads a roster that is only correct AFTER the screen's turn diff has rolled,
+## thirty lines later — and on a delta carrying knowledge but no populations, `update_band_alerts`
+## does not run at all. Folded into the band half they would have to be built at a moment that is
+## wrong for one of the two; as its own half each is built where its own inputs are ready.
+##
+## **AND IT ONLY PUSHES WHEN THE ROWS ACTUALLY CHANGED, which is rarely.** A discovery finishes on a
+## handful of turns in a campaign, so this half is EMPTY on nearly every snapshot — and re-pushing an
+## unchanged half costs a deep copy of the band half, a re-sort and an orb redraw, on a seam that runs
+## on every delta carrying populations, knowledge or catalogues. Unguarded, that is a SECOND full
+## registry push per snapshot beside `set_band_attention`'s.
+##
+## **The cost showed up as a FLAKE, not as a number.** `band_panel_preview`'s queue drag gestures are
+## bounded by a frame budget, and the extra push was enough to drop build orders the same harness
+## never drops on `main` — measured across paired runs, since a gesture that lands 53px of the 56px
+## it drives for reports as a mysterious intermittent failure rather than as a slowdown.
+func set_knowledge_attention(attention: Array) -> void:
+	if _knowledge_attention == attention:
+		return
+	_knowledge_attention = attention
+	_push_attention()
+
+## The knowledge screen, handed over once `HudLayer` has built it. See `_knowledge`.
+func set_knowledge_panel(knowledge: KnowledgePanelController) -> void:
+	_knowledge = knowledge
+
 ## Forward the authoritative snapshot turn to the orb, so HudLayer.update_overlay's fan-out no longer
 ## touches the orb node directly.
 func set_turn(turn: int) -> void:
 	if _turn_orb != null:
 		_turn_orb.set_turn(turn)
 
-## The orb registry = the cached band/expedition producers + the fork producer, pushed as ONE replace.
-## `TurnOrb.set_attention` replaces wholesale, so the fork producer must fold in here rather than call it
-## separately — a second call would wipe every band row.
+## The orb registry = the cached band/expedition producers + the cached knowledge producer + the fork
+## producer, pushed as ONE replace. `TurnOrb.set_attention` replaces wholesale, so every half must fold
+## in here rather than call it separately — a second call would wipe every row the others produced.
 func _push_attention() -> void:
 	if _turn_orb == null:
 		return
 	var attention: Array = _band_attention.duplicate(true)
+	attention.append_array(_knowledge_attention)
 	attention.append_array(_pending_fork_attention())
 	_turn_orb.set_attention(attention)
 
@@ -208,9 +250,22 @@ func _open_fork_panel() -> void:
 
 ## A non-locating orb row was activated. The orb reports only the KIND; this controller owns which panel a
 ## kind opens, so a future non-locating producer needs no orb change.
+##
+## **A KIND WITH NO BRANCH HERE RENDERS AN AFFORDANCE THAT DOES NOTHING** — the row still wears
+## `Open ▸` if `HudAttentionVocab.ATTENTION_KINDS_WITH_A_PANEL` lists it, and pressing it reaches this
+## method and falls off the end. So the two lists are one decision made twice, and adding a
+## non-locating producer means both.
+##
+## **THE KNOWLEDGE ROW OPENS ITS SCREEN ON `New this turn`** — the list holding the discovery it just
+## named. A row that opened on whatever filter the player last set would make them hunt for it.
 func _on_turn_orb_panel_requested(kind: String) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
+		return
+	if _knowledge == null:
+		return
+	if kind == HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED:
+		_knowledge.open_on_filter(HudKnowledgeVocab.FILTER_NEW)
 
 ## The player answered. Drop the fork from the local cache OPTIMISTICALLY (so the orb's gate lifts
 ## immediately) and let the next snapshot be authoritative.

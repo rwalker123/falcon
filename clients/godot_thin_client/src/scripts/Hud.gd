@@ -442,6 +442,12 @@ var _dockrow: DockRowController = null
 # controller's; `_bandpanel.crafting_requested` is the launch edge, so the two controllers never talk
 # to each other directly.
 var _crafting: CraftingPanelController = null
+# The KNOWLEDGE SCREEN cluster (`docs/plan_knowledge_screen.md` §3): its own free-floating panel,
+# launched from the Band/City panel HEADER beside the ⚒, showing what the faction knows, what it is
+# learning and what it has earned and is not using. It emits NO command signals at all — knowledge is
+# earned by practice, so the screen is a reading rather than a planner — which is why nothing is
+# relayed off it; `_bandpanel.knowledge_requested` is the launch edge.
+var _knowledge: KnowledgePanelController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -463,7 +469,59 @@ const RIGHT_DOCK_MARGIN_UNCAPTURED := -1
 var _right_dock_margin_bottom: int = RIGHT_DOCK_MARGIN_UNCAPTURED
 var _right_column_bottom_clearance: float = 0.0
 
+## ---- THE COMPOSE LAYER: the write surfaces are drawn ABOVE the overlay bar -----------------------
+##
+## **THE DEFECT IT CLOSES.** `HudLayer.tscn`'s root declares no `layer`, so the whole HUD sat on
+## CanvasLayer 1 until `Main` raised it to `HUD_LAYER` (101) — while `EventDockPanel` puts ITSELF on
+## 104 in its own `_ready`. A compose sheet parented onto this node therefore drew UNDER a top-docked
+## event bar and, worse, took none of the clicks over it: the bar is `MOUSE_FILTER_STOP` by design
+## (it eats its own clicks so the map beneath does not get them), so the sheet's `✕` and its Band /
+## Kit rows were simply unreachable under it. Reported from play with screenshots.
+##
+## **ONE LAYER ABOVE THE DOCK, STATED AS THAT RELATION rather than as the number it evaluates to.**
+## The ladder it joins is `BandCityPanel.LAYER_INDEX` (103) → `EventDockPanel.LAYER_INDEX` (104) →
+## this → `Main`'s `PauseLayer` (200), which still covers everything. No cycle: `EventDockPanel`
+## references nothing on `HudLayer` at class-load time, so the `const` direction runs one way only
+## (see `.claude/rules/client/hud-modules.md`).
+##
+## ⛔ **THE BAND/CITY PANEL CHANGED SIDES, AND THAT IS A DECISION RATHER THAN A SIDE EFFECT.** The
+## sheet used to sit at `HUD_LAYER` (101), i.e. UNDER the panel's 103; at 105 it is over it, and
+## `ComposeSheet` IS a full-viewport `MOUSE_FILTER_STOP` dismiss catcher. So with a sheet open, the
+## first click anywhere on the Band/City panel is swallowed as a dismissal instead of reaching the
+## panel. **Intended, and not to be re-litigated**: no integer is both above 104 and below 103, a
+## click on the panel IS a click outside the sheet, and one click to put a transient write surface
+## away before using the persistent command centre is the wanted behaviour. The one case where the
+## sheet would be sabotaging its own affordance — its `Work tab` link, which sends the player to a
+## board on 103 — is closed by `DrawerComposeController._navigate_to_work_tab` closing the sheet as
+## it navigates. `.claude/rules/client/panel-framework.md` carries the long form.
+const COMPOSE_LAYER_INDEX := EventDockPanel.LAYER_INDEX + 1
+## The node the const names, created in `_ready` (see `compose_host`).
+const COMPOSE_LAYER_NAME := &"ComposeLayer"
+var _compose_layer: CanvasLayer = null
+
+## The host a compose surface parents itself into — the sheet (`DrawerComposeController`) and the
+## Band panel's float (`BandPanelController`), which are the same sheet reached from two places.
+##
+## **NOT `self`, WHICH IS WHAT IT USED TO BE.** Everything else a `RefCounted` controller parents onto
+## this node (the fork panel, the targeting banner, the disclosure popover, the confirm dialog) is
+## content the event bar may legitimately overlap; a compose sheet is a MODAL WRITE surface, and a
+## surface you are typing into cannot be under an overlay that swallows the pointer.
+##
+## A sibling `CanvasLayer` carries an identity transform (no `offset` / `scale` / `transform` is set
+## on it), so the two surfaces' viewport arithmetic — `ComposeSheet._sync_to_viewport` and
+## `BandComposeFloat._room`, both of which read `get_viewport().get_visible_rect()` and write a
+## parent-local `position` — resolves to exactly the global coordinates it did as a child of the HUD.
+func compose_host() -> Node:
+    return _compose_layer
+
 func _ready() -> void:
+    # FIRST, before any controller is constructed: each is handed `self` as its host and reads
+    # `compose_host()` back off it lazily, and a null here would silently re-parent a sheet onto the
+    # HUD — the exact bug this layer exists to close, and one that shows only when a bar is docked.
+    _compose_layer = CanvasLayer.new()
+    _compose_layer.name = COMPOSE_LAYER_NAME
+    _compose_layer.layer = COMPOSE_LAYER_INDEX
+    add_child(_compose_layer)
     _selection = HudSelectionState.new()
     _band_labor = HudBandLaborState.new()
     # Both compose floors start on the sim's own default (the food peak); the number stays in
@@ -475,9 +533,10 @@ func _ready() -> void:
     # `knowledge` zones say all of it better. What survives is the INGEST — the per-faction snapshot
     # arrays, filtered to the player and retained, which that page reads back through
     # `faction_tracks` / `faction_sedentarization` / `faction_discovered_sites`.
-    # The one injection is `_note_sink`: the knowledge-unlock nudge is a System-channel note, and the
-    # panel it lands on is `Main`'s, not the HUD's.
-    _topbar = FactionReadouts.new(_note_sink)
+    # **IT TAKES NO INJECTION AT ALL NOW.** Its one collaborator was `_note_sink`, for the one-shot
+    # `"<Track> learned"` nudge onto the event dock's System channel; the turn orb's knowledge rows
+    # supersede that note (`docs/plan_knowledge_screen.md` §5), so the cluster is pure ingest again.
+    _topbar = FactionReadouts.new()
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -613,6 +672,18 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_priority_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
+    # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
+    # that cluster being where the player-faction filter over the intensification vector lives.
+    _knowledge = KnowledgePanelController.new()
+    _knowledge.setup(self, _band_labor, _topbar, floating_room)
+    # **THE LAUNCHER CARRIES NO SUBJECT**, unlike the ⚒'s: what your people know is a FACTION fact and
+    # no band owns it, so there is nothing for the relay to resolve.
+    _bandpanel.knowledge_requested.connect(func() -> void: _knowledge.toggle())
+    # **AND THE ORB'S KNOWLEDGE ROWS NEED THE SAME SCREEN TO OPEN** (§5): both are non-locating, so a
+    # press routes through `panel_requested` and `TurnOrbController` decides what that opens. Handed
+    # over HERE rather than in that controller's construction, which happens well above this line —
+    # the `_bandpanel.set_attention(_attention)` hand-over, for the same shape of reason.
+    _turnorb.set_knowledge_panel(_knowledge)
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -786,6 +857,17 @@ func update_intensification(intensification_variant: Variant) -> void:
     # than a derived mark model, and the derivation stays in `RungGates` where all three surfaces
     # reach it. Mirrors the `labor_pending_changed` → `Main` → `set_labor_pending` path exactly.
     emit_signal("faction_knowledge_changed", _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID))
+    # **AND RE-RUN THE KNOWLEDGE READOUTS, because `Main` dispatches each section INDEPENDENTLY and
+    # only when it CHANGED.** They are otherwise driven from `update_band_alerts`, which is skipped on
+    # a delta whose `populations` are byte-identical — so a turn that finishes a track and moves nobody
+    # would leave the pip, the orb's knowledge rows and the screen's own turn diff a turn stale, on the
+    # very surfaces that exist to announce exactly that. Populations move on nearly every turn, and
+    # "nearly" is what makes this latent rather than absent.
+    #
+    # `Main` dispatches `update_overlay` (which sets the live turn) BEFORE this section, so the diff
+    # rolls against the right turn; the roll is turn-keyed and idempotent within a turn, so the
+    # snapshot seam's own call stays and costs nothing.
+    _refresh_knowledge_readouts()
 
 func update_discoveries(discovered_variant: Variant) -> void:
     _topbar.update_discoveries(discovered_variant)
@@ -944,6 +1026,16 @@ func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_for
 func update_crafting_catalogues(materials: Variant, characteristic_bands: Variant,
         recipes: Variant, craft_knowledge: Variant) -> void:
     _crafting.set_catalogues(materials, characteristic_bands, recipes, craft_knowledge)
+    # The knowledge screen reads TWO of the four: the recipe book, for its "is anything made of this
+    # craft" join, and the craft tracks, which are its whole CRAFT column. Two readers of one wire
+    # field rather than a copy — re-deriving either would be a second answer to a question the
+    # crafting panel already asks.
+    _knowledge.set_catalogues(recipes, craft_knowledge)
+    # The craft half of the readouts, re-run for `update_intensification`'s reason: a world whose
+    # recipe book or craft tracks moved without its populations moving is a delta this section arrives
+    # alone on, so the pip, the orb's knowledge rows and the columns would otherwise disagree about
+    # what the faction knows. Idempotent within a turn.
+    _refresh_knowledge_readouts()
 
 ## Open Materials & Crafting on `band`. Reached BY NAME from the preview harnesses, which stand the
 ## panel up without a Band/City panel to launch it from.
@@ -956,6 +1048,79 @@ func close_crafting_panel() -> void:
 ## The panel's controller, for the harnesses' assertions.
 func crafting_panel() -> CraftingPanelController:
     return _crafting
+
+## Open / close the knowledge screen. Reached BY NAME from the preview harnesses, which stand the
+## panel up without a Band/City panel to launch it from — the `open_crafting_panel` idiom.
+func open_knowledge_panel() -> void:
+    _knowledge.open()
+
+func close_knowledge_panel() -> void:
+    _knowledge.close()
+
+## The knowledge screen's controller, for the harnesses' assertions — and for the pip below, which is
+## the one thing about that screen the rest of the HUD reads.
+func knowledge_panel() -> KnowledgePanelController:
+    return _knowledge
+
+## **ROLL THE KNOWLEDGE SCREEN'S TURN DIFF AND RE-PUSH BOTH READOUTS DERIVED FROM IT** — the
+## launcher's pip and the orb's knowledge row. Every caller takes this method; neither push it makes
+## has a caller of its own.
+##
+## **THIS IS THE ORDERING MECHANISM, AND IT IS THE WHOLE POINT OF THE METHOD.** The orb's row names the
+## track that finished THIS TURN, which is `refresh_snapshot`'s diff — and that diff rolls THIRTY
+## LINES BELOW `build_band_attention` in `update_band_alerts`. A knowledge producer built with the
+## band ones would therefore read the PREVIOUS turn's diff and name the wrong discovery, in a row that
+## renders perfectly plausibly. It happens to be right today only because `Main` dispatches
+## `update_intensification` ahead of `update_band_alerts` and that section rolls the diff too — a
+## coincidence of which sections a delta carries, not a guarantee. Putting the roll and the two pushes
+## in ONE method, adjacent, is what makes the ordering unbreakable by a reorder somewhere else.
+##
+## `refresh_snapshot` is turn-keyed and idempotent within a turn, so the three seams that call this
+## (the snapshot roster, the intensification section and the crafting catalogues) cost one roll
+## between them however many of them a given delta carries.
+func _refresh_knowledge_readouts() -> void:
+    if _knowledge == null:
+        return
+    _knowledge.refresh_snapshot()
+    # **ONE ROSTER BUILD FOR BOTH READOUTS.** The walk behind `nodes()` resolves the faction's
+    # patches, herds, kit and bench, and both readouts derive from it — so asking for it twice per
+    # snapshot is a second walk of the whole player world for one answer, on a seam that runs on
+    # every delta carrying populations, knowledge or catalogues. It shipped that way first, and the
+    # cost showed up as a FLAKE: `band_panel_preview`'s queue auto-scroll gesture is bounded by a
+    # frame budget, and the extra walk left it 53px short of the 56 it drives for.
+    var roster := _knowledge.nodes()
+    _push_knowledge_pip(roster)
+    _push_knowledge_attention(roster)
+
+## Push the orb's KNOWLEDGE row (`docs/plan_knowledge_screen.md` §5) — a discovery that finished this
+## turn. Built off the roster the columns draw and the pip counts, so the three surfaces are one answer.
+##
+## **TWO CALLERS, and the second deliberately does NOT roll the diff.**
+## `_refresh_knowledge_readouts` is the per-snapshot one, and it rolls on the line above — see its
+## docstring for why those two must not be separated. `reset_world_state` is the other: it pushes
+## straight after `_knowledge.reset_world_state()`, which has just DROPPED the diff, so there is
+## nothing to roll and what it pushes is the new world's nothing.
+func _push_knowledge_attention(roster: Array) -> void:
+    if _turnorb == null:
+        return
+    _turnorb.set_knowledge_attention(AttentionController.knowledge_attention(roster))
+
+## Push the launcher's PIP — how many discoveries the faction has earned and nothing is using.
+##
+## **IT IS DERIVED FRESH EVERY TURN, NEVER LATCHED, AND OPENING THE SCREEN DOES NOT CLEAR IT.** What
+## clears an unspent count is USING the knowledge; a pip that went quiet on a look would tell the
+## player they had dealt with something they had not. It answers with the panel closed and never
+## built, which is the point — the pip is what says there is something on a screen you have not opened.
+##
+## **AND IT IS THE ONLY SURFACE CARRYING THAT COUNT.** §5 asked for an orb row beside it; that row was
+## built and cut, because an unspent discovery is a STANDING condition and the orb never went quiet
+## again — see `AttentionController.knowledge_attention`. This pip is mounted on all three of the
+## Band/City panel's layouts, including the collapsed rail, so the nudge is always on screen.
+func _push_knowledge_pip(roster: Array) -> void:
+    if _bandpanel == null or not _bandpanel.has_panel():
+        return
+    _bandpanel.set_action_pip(BandCityPanel.ACTION_KNOWLEDGE,
+        KnowledgePanelController.unspent_count_of(roster))
 
 ## **THE FORECAST QUERY SEAM, for `Main` to wire the transport into.** `Main` owns the command client,
 ## so it injects the sender and pumps `CommandBridge.poll_query_replies` in once a frame; nothing in
@@ -1386,6 +1551,8 @@ func set_overlay_inset(id: StringName, edge: int, size: float) -> void:
 func _refit_floating_cards() -> void:
     if _crafting != null:
         _crafting.refit_room()
+    if _knowledge != null:
+        _knowledge.refit_room()
 
 ## Write the two rects every other surface measures itself against: `LayoutRoot`, which the docked
 ## reservations inset and the HUD lays out inside, and `FloatingRoom`, which is that rect pulled
@@ -1502,6 +1669,17 @@ func reset_world_state() -> void:
     # low range — so a panel left open would silently re-resolve onto a different band's bench and
     # rail. Closing is the honest answer: nothing about the previous world's crafting survives.
     _crafting.close()
+    # The knowledge screen holds a per-TURN diff of what was learned, keyed to the OLD world's turn
+    # counter, alongside its selection and filter. A new world's turn 0 differs from that stale
+    # `_diff_turn`, so the diff branch would run on the first observation and report every track the
+    # new world starts KNOWING as "New this turn" — exactly what the `UNSEEN_TURN` sentinel exists to
+    # prevent. See `KnowledgePanelController.reset_world_state`.
+    _knowledge.reset_world_state()
+    # …and the orb's knowledge row goes with it. It is a CACHED half of the registry, so a row naming
+    # the old world's discovery would otherwise sit on the orb until the next snapshot that happens
+    # to carry a section this pushes from. `_topbar.reset_world_state()` above has already emptied
+    # the tracks, so what this pushes is the new world's nothing.
+    _push_knowledge_attention(_knowledge.nodes())
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
@@ -1853,6 +2031,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # ledger's life all move every turn. Refreshed from the same seam as the dock, so the two can
     # never be a turn apart about the same band.
     _crafting.refresh_snapshot()
+    # The knowledge screen is live too, and its readouts run whether or not the panel is OPEN: the
+    # launcher's pip is on the Band/City header and the orb's knowledge rows are on the orb, and both
+    # have to be right on a turn nobody opened the screen.
+    _refresh_knowledge_readouts()
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
     # a herd/tile selection reads _band_labor.player_band(), which only just refreshed here).

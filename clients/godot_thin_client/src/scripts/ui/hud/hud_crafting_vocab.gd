@@ -151,6 +151,12 @@ const MATERIAL_AXES_KEY := "axes"
 const BAND_LEGEND_NAME_KEY := "name"
 const RECIPE_ID_KEY := "id"
 const RECIPE_DISPLAY_NAME_KEY := "display_name"
+## **THE CRAFT THIS RECIPE NEEDS** (`RecipeDefState.craft`) — the join from a craft KNOWLEDGE track to
+## the things that craft makes. Decoded all along (`native/src/dict/subsistence.rs`) and unread until
+## the knowledge screen: `KnowledgeRoster.craft_is_in_use` walks the book for recipes of one craft and
+## asks whether the faction holds or is making any of their outputs, which is the whole of that
+## panel's "nothing is using it" verdict for the craft half.
+const RECIPE_CRAFT_KEY := "craft"
 const RECIPE_GROUP_KEY := "group"
 const RECIPE_INPUTS_KEY := "inputs"
 const RECIPE_OUTPUTS_KEY := "outputs"

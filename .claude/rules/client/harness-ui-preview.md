@@ -1694,6 +1694,12 @@ line's own instruction being earned again.
 > - **Checkpoints, not assertions** — `_assert_hud` *and* `_save` both count, because `docks_legend`
 >   makes **zero** assertions and renders frames only; an assertion-only floor would be `0` there and
 >   leave the one chapter an abort truncates entirely unguarded.
+> - **EVERY assertion sink counts, and one of them did not.** `_assert_turn_orb` is a second sink
+>   beside `_assert_hud` — the turn-orb chapter's own — and it printed its PASS without touching the
+>   counter, so fifteen claims escaped the tally `_assert_hud`'s docstring says no claim can escape.
+>   An abort could have dropped the whole turn-orb guard set and still cleared that chapter's floor.
+>   A new sink must increment `_checkpoint_count`, or it is a hole in exactly the guard it looks like
+>   it is part of.
 > - **A floor, not an equality** — adding claims must never fail the run; losing them is the failure.
 > - **A chapter that declares nothing FAILS**, which is what makes it un-bypassable: were a missing
 >   const merely unguarded, deleting it would be the silent bypass and every new chapter would start
@@ -1707,6 +1713,130 @@ line's own instruction being earned again.
 >
 > **So `$?` now covers a chapter dying mid-run.** It still does not cover a claim that is *present and
 > wrong* — that is what the sabotage discipline is for.
+
+## The knowledge arc's two chapters — the screen (slice B) and its orb rows (slice C)
+
+`chapters/turn_orb.gd` grew the slice-C block; the screen's own chapter is below. Two things about
+the turn-orb one are the arc's, not the orb's, and both are about SHARED WALK STATE:
+
+- **It clears the faction's tracks for its band states and puts back what it inherited.** The
+  knowledge producer is faction-wide and rides the band rows' own registry, and earlier chapters push
+  tracks without always advancing the turn — so the screen's diff has not rolled since whichever of
+  them last did, and the first turn tick here rolls everything they taught in between onto one orb.
+  The ALL-CLEAR states stop being clear and the under-kept block's negative-control COUNT gains a row.
+  Restoring is the other half: `compose_rungs` runs three chapters later and gates its hunt-compose
+  frames on that knowledge, so leaving the tracks cleared moved four of its frames into judging a crew
+  stepper under knowledge nobody meant to change.
+- **It empties the band half at the CACHE (`set_band_attention([])`), never by ingesting a calm
+  band.** `update_band_alerts` is not inert — `ingest_snapshot_bands` overwrites the walk's
+  `player_band` / `player_bands` / `prev_band_sizes`, which later chapters render against. That was
+  the first cut, and it moved the same four frames a second way.
+- **It hands back the TURN as well**, which `docks_legend`'s `reserved_dock` draws on the orb face.
+  The tracks go back at two different turns, because the knowledge diff only rolls when the turn
+  moves and a single push would announce whatever the inherited tracks hold that the block's own
+  staging did not.
+
+**All three were found by PIXEL-DIFFING every frame against a run at `main`, not by the exit
+status** — the run was green through all of it. The tell was a frame moving outside the orb's own
+corner.
+
+> #### ⛔ A GITIGNORED BUILD ARTIFACT MOVES EVERY FRAME, AND IT IS NOT YOUR CHANGE
+>
+> `clients/godot_thin_client/build_stamp.txt` is written by the build and read by `ClientBuild` into
+> the bottom-centre `build cli … · srv ?` overlay, which **every frame draws**. It is absent on a
+> fresh worktree (the overlay reads `dev-unknown`) and appears the moment something stamps it — so a
+> baseline captured before that and a run captured after differ on **400+ frames**, in a 10px strip
+> nobody looks at. Move it aside before capturing either side, or the diff drowns the real movers.
+
+### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
+
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Four frames and 68 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured 72 — frames count too), and **most
+of it is PNG-less on purpose**: every claim this screen makes renders as a plausible picture whatever
+it says — a pill reading `2`, a greyed row, the clause *"nothing is using it"*, a `3` on the launcher's
+pip — so the derivation is asked of `KnowledgeRoster` directly, with models staged in the chapter, and
+the frames are for the LAYOUT alone. The behaviour is `knowledge-panel.md`'s; what belongs here is the
+shape of the drive.
+
+| what only IT can say | how |
+|---|---|
+| a faction that knows NOTHING renders every ladder track, all `not begun` | asked of an EMPTY tracks dict, which is what the wire really sends on turn one |
+| a domain with no nodes draws NO column | the craft fan is the only one that can be empty, the two ladder columns' nodes being DECLARED |
+| the tracks that unlock nothing are exactly `UNLOCKLESS_TRACKS` | the derived set against the declared one — the ONLY thing that tells a deliberate omission from a forgotten `RUNG_KNOWLEDGE_TRACKS` entry, which reads identically |
+| at-or-ABOVE, not the done FLAGS | a patch carrying `is_field` and NO `is_cultivated` must read Cultivation as in use — the reading a per-verb-flag test gets backwards |
+| the two webs' pools do not cross | a plant patch must not satisfy an animal knowledge |
+| a craft is in use four ways and NOT by a recipe existing | the negative runs FIRST with the whole recipe book present and nothing held, since "a recipe of this craft exists" is true of every craft on every turn |
+| the cross-craft negative | holding an awl must not make Tanning in use — without it every craft goes in use the moment the band holds anything |
+| a rival's patch, and a herd nobody works | asked of the CONTROLLER, where the two resolutions live, and staged the way the shipped scans read them (a different faction on the patch; the herd off the band's assignment list) |
+| the five filter counts, by EQUALITY | over a model whose five filters all answer DIFFERENTLY — a fixture where two coincide cannot tell those two apart |
+| a KNOWN track is never `close` | behind the precondition that there ARE known tracks for one to have leaked from |
+| the FIRST observation reports nothing new, the next TURN does, a second snapshot in the same turn keeps it | three claims, and the middle one is what stops the first passing on a diff that never fires |
+| "new this turn" implies KNOWN | an empty tracks row pushed with the diff still holding the key — the shape that rendered `New this turn 1` over a faction that knew nothing — with the diff's SURVIVAL asserted beside it, or the claim passes because the set was cleared |
+| the pip's count, and that it survives a dock change | on a REAL `BandCityPanel`; the retention is invisible in any frame |
+| a knowledge-only delta moves the pip | pushed with NOTHING else, which is what makes it a claim about the SECTION rather than about the frame |
+| the pip clears when a tended patch appears | the honest trigger — opening the screen deliberately does not clear it |
+
+**THE FIXTURES DERIVE THEIR STANDING RUNG** (`fixtures_rung.gd`), this tree's rule.
+⛔ **AND A HERD FIXTURE IS KEYED `id`, NOT `herd_id`** — `HudBandLaborState.find_world_herd` matches on
+`id`, so the other spelling is invisible to the assignment walk and every animal claim reads "nothing
+is using it" for a reason that has nothing to do with the code under test. It cost a run.
+
+⛔ **THE SECTIONS ARE PUSHED IN `Main`'s OWN ORDER** — knowledge, catalogues, patches, then
+populations. This chapter's first cut pushed `update_band_alerts` first, so the pip was computed
+against the previous block's tracks and read `2` where the controller read `1`: a fixture in any other
+order is staging a snapshot no server sends. **That mismatch is also what found the live defect** —
+the pip was pushed from `update_band_alerts` alone.
+
+**The row and the filter pill are DRIVEN with real pointer input**, never `pressed.emit()`: a node row
+is a `PanelContainer` with a `gui_input` handler and has no signal of its own to fake, and the harness
+contract's reason applies either way — an emitted signal passes on a control that is covered,
+zero-size or filtered out of the hit test, which is exactly the shape that row shipped in first (a
+`Button` whose face was never laid out).
+
+**Its FAILURE MESSAGES name what was FOUND, and the first cut named what was WANTED** — it printed
+`not wanted`, so a failure read `in use (got true)` and said nothing about the verdict. An ABSENT node
+is reported distinguishably too: a roster that dropped a track answers `false` to every question asked
+of it, and "the node is missing" is not the same failure as "the node says in use".
+
+**Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
+`knowledge_panel_detail` · `knowledge_panel_filtered`.
+
+**A clean run is 353 frames / 1405 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+recorded figure before this arc was 352 / 1302, and this arc added FOUR frames and sixty-one claims,
+which does not add up to the measurement — so the surplus is drift that had accumulated un-recorded,
+exactly as it had the three times before. Measure; do not sum.
+
+**NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
+
+| the forbidden implementation | fails, and only |
+|---|---|
+| the `progress <= 0.0` skip restored | the two greyed-track claims, plus the `all` pill (8 → 7) |
+| the per-verb done FLAG instead of the rung comparison | the two at-or-ABOVE claims (`a FIELD stands above Tended`, `a pen stands above pastoral`) |
+| a recipe of this craft merely EXISTING counts as in use | the three craft negatives |
+| `close` as a bare progress threshold | the `close` pill (2 → 5) and `a KNOWN track is never close (3 leaked)` |
+| `new this turn` no longer implying KNOWN | the coherence claim alone |
+| the pip pushed from `update_band_alerts` alone | the knowledge-only-delta claim alone — **the live defect, in its own words** |
+| the pip count living only on the button | the mount-rebuild claim and the inside-the-button claim |
+| patch ownership ignored | the RIVAL's-patch claim alone |
+| every herd on the wire counted as the faction's | the unworked-pen claim alone |
+
+### TWO FRAMES MOVED FOR A REASON THAT WAS NOT THIS ARC, and proving that took a revert run
+
+`band_morale_expanded` / `band_growth_expanded` came back different from a baseline captured earlier
+the same session — the disclosure popover OPEN where the baseline showed it closed, which is what those
+frames' own names and comments say they stage. **Neither carries an assertion**, so nothing in the run
+said so either way.
+
+It is not this arc: with the whole client reverted to the pre-change commit **in the same environment**
+the two frames still differed from the baseline and matched the changed tree, byte for byte. What sits
+between the two is a **`godot --import` pass**, run to register the new `class_name`s — the documented
+"a harness renders the IMPORT CACHE, not the art on disk" hazard, reaching a popover rather than a
+sprite. The new rendering is the correct one.
+
+**The method is the part worth keeping**: swap the changed files to the earlier ref with `git show`,
+re-run, compare, swap back, and confirm `git status` is clean. An unexplained frame move is not
+evidence of anything until it has been attributed, and "my change is the only thing that moved" is an
+assumption a single run can falsify.
 
 > **`compose_band_switch_forage` FLAKED ONCE DURING THIS PASS AND PASSED CLEAN ON RE-RUN** — five
 > failures cascading from one press that landed on the dismiss catcher, the documented synthetic-pointer
@@ -1839,3 +1969,101 @@ the control are independent, so a defect in one must leave the other's claims st
 None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
 one that reads the table.
 
+## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
+
+Four frames and twenty-five `PASS`, appended to the event-dock chapter before it frees its panel —
+so no earlier state moves and the chapter still hands the HUD back where it found it. RE-MEASURED off
+the run rather than hand-summed, as this file's own rule says: a first draft of this line read "three
+frames and fifteen", because `_assert_card_within_root` makes two claims per call and is called three
+times. The behaviour is `event-dock.md`'s and `panel-framework.md`'s; what belongs here is the shape
+of the drive.
+
+- **`_report_event_row_columns` PRINTS the derivation's own terms** — the long detail's natural width,
+  the cap, the widest row's minimum against the budget, and the log head / foot / card minimums
+  against the floor. `DETAIL_MAX_WIDTH` is derived from measurements, and a derivation nobody
+  re-measures goes stale silently; a red line there asks for a decision rather than a failing run.
+  **It reports the WIDEST row, never the last one**: `GLYPH_COLUMN_WIDTH` is a floor rather than a
+  clip, so an emoji kind glyph draws past it and two rows of different kinds do not cost the same —
+  a figure taken off whichever row rendered last is 9px optimistic, which is most of the slack.
+  It also splits a row's FURNITURE by whether the row carries a `Work tab` link (79 against 154 here,
+  the link itself 66), which is the split `ROW_FURNITURE_WIDTH` is derived across. Furniture is taken
+  as row minimum LESS the detail's, never as a sum of the controls the harness knows about — the
+  failure being guarded is a control added to the line and left out of the budget, and a hand-summed
+  figure would leave the new one out a second time.
+- **`_assert_card_within_root` asserts the DRAWN rect and the combined MINIMUM alike.** The rect says
+  what this window did; the minimum says what the card would demand of the narrowest strip the dock
+  can ever be handed, and only the second survives a change of viewport. Made on both surfaces, since
+  the expanded log is where a row's minimum propagates hardest (`_log_scroll` disables horizontal
+  scrolling, which passes a child's minimum width straight through).
+- **THREE DETAIL LENGTHS ON ONE FRAME, because the bound has three behaviours and no single row can
+  show more than one.** A SHORT one (untouched — asserted as `not clip_text`, the flags rather than a
+  width), a MEDIUM one past the bound that the row can still pay for in full, and the reported LONG
+  one that no strip can. Without the medium row, "it grows" is unprovable; without the short one, the
+  bound could be a fixed column trimming every row in the game with every other claim still green.
+  - ⛔ **The short one's key must not be one `HudEventVocab.DETAIL_KEY_HIDDEN` swallows** — the first
+    draft used `count=1`, which `detail_phrase` renders as `""`, so the row drew no detail label at
+    all and the claim was about a control that was not there.
+  - ⛔ **ITS CLAIM IS BOTH THE FLAGS AND A WIDTH, and the width half was lost once to a probe that
+    reported the wrong units.** A `Label` built detached shapes at the DEFAULT theme's font SIZE
+    rather than at its own override (33px against 27 for `Cold`), so `drawn >= probe natural` was
+    failing a row that is in fact whole and the claim was weakened to `not clip_text` alone. The
+    probe goes through `EventDockPanel.natural_label_width` now — which asks the font instead of the
+    label's theme cache — so it reports drawn pixels and the width claim is back beside the flags.
+    **A probe in the wrong units does not merely fail; it also silently weakens whatever assertion is
+    rewritten around it.**
+- **`event_dock_long_detail_floored` is where the growth half has to prove it did not undo the fix.**
+  Squeezed to `MIN_STRIP_WIDTH` there is no slack to hand out, so the phrase must fall back on
+  `DETAIL_MAX_WIDTH` exactly — asserted as trimmed AND as not below the bound, with
+  `_assert_card_within_root` beside it. A growth flag that let the label demand its natural width
+  again would put the card straight back outside its strip.
+- **The reported row's own LABEL is asserted beside its phrase.** The two share the shortfall in
+  proportion to what each wants, so the label keeps most of its text on the same row that grew the
+  phrase — the failure a constant stretch ratio produces in one direction or the other.
+- ⛔ **A FOURTH ROW MOUNTS A `Work tab` LINK, AND WITHOUT IT THE WHOLE BLOCK PROVED NOTHING ABOUT THE
+  ROW THE BUG CAME FROM.** `_make_event_row` appends that `Button` only for a `status=trimmed|lapsed|
+  pruned` detail carrying a `band=` id; the three rows above are a `died` and two `hunt`s, so no
+  fixture here mounted one and `ROW_FURNITURE_WIDTH` was measured — and passed — on rows with no link
+  column at all. Staged now as the reported shed line, with two preconditions that keep it honest: a
+  count of the links actually mounted, and `ROW_FURNITURE_WIDTH` asserted to cover the widest
+  furniture measured on the bar. **The second is the derivation itself as an assertion** — without it
+  a row that grows a control fails on a card rect three claims later, naming the symptom rather than
+  the stale term. A third claim pins the link drawn in full at the floored strip, which is what the
+  budget now pays for.
+- **`compose_sheet_over_event_dock` needs BOTH the frame and the index claim.** Stacking order is a
+  property of the CanvasLayer indices rather than of any rect, so no pixel comparison can state it;
+  and an index claim alone passes on a sheet that never opened. It also asserts the sheet's parent and
+  that `_sync_to_viewport` still resolves to the whole viewport under the new parent — the identity
+  transform of a sibling `CanvasLayer`, checked rather than assumed.
+- ⛔ **THAT FRAME PUSHES RAW ZERO INSETS FOR ITS ONE STATE, AND WITHOUT THEM IT IS A PICTURE OF
+  NOTHING.** The sheet floats beside the selection card, i.e. over the HUD's LEFT COLUMN — which is
+  exactly the band `_preview_push_event_dock_insets` keeps the bar out of — so at the ordinary insets
+  the two never share a pixel and the eye cannot judge which is on top. Zero insets are a real
+  configuration (a dock with no HUD column beside it); the state restores the ordinary ones after, and
+  a rect-intersection claim rides beside the frame as its non-vacuity guard.
+
+**A clean run is 357 frames / 1432 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says.
+
+### The frame diff that attributed this arc, and the one frame it could not explain
+
+Nineteen frames differ from the pre-arc tree, and **the diff was taken against a build of the pre-arc
+CLIENT rather than against the previous run of this one** — the `git show`/swap/re-run method above.
+That mattered: an intermediate build of this arc was itself trimming rows, so a diff against it read
+the fix as the regression.
+
+Sixteen of the nineteen differ by **2 to 20 pixels** — sub-pixel antialiasing where a bounded label's
+box rounds a pixel differently; the glyphs are complete and in the same place. Three are real and two
+of those are the arc landing: `event_dock_band_founded` (a two-sentence prose refusal, 918px drawn, now
+sharing its shortfall with its label instead of overflowing the card) and `event_dock_narrow_band`
+(the deliberately squeezed 496px band, where the bound is meant to bite).
+
+⛔ **THE THIRD IS `forage_take_default`, AND IT IS NOT A DETAIL-BOUND FRAME AT ALL** — its compose
+sheet's card renders ~56px taller than its content. Attributed by isolation and then by measurement,
+and the first attribution was WRONG: with the sheet parented back onto the HUD and the compose
+`CanvasLayer` still created the frame differs identically, which pointed at frame timing and so at
+`ComposeSheet.refit`'s discarding `_fit_pending` guard. That guard was a real defect and is fixed — it
+coalesces now (`labor-ui.md`) — but the frame measures **identically before and after** it (card 766,
+content 683, chrome 83): both of that state's two opens land before the first fit resumes from its
+await, so the one fit that runs already measures the final body. The actual cause is `refit`'s own
+`chrome` term over-counting the header row, which is left as a separate decision. **The lesson is the
+method**: a plausible mechanism that explains the symptom is not the cause until the fix for it moves
+the number.
