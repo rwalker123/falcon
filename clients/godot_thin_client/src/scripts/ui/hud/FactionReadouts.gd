@@ -158,10 +158,11 @@ func update_discoveries(discovered_variant: Variant) -> void:
 				break
 	_discovered_sites = sites
 
-## INGEST the intensification tracks — and fire the one-shot unlock nudge, which is the whole of what
-## this method still DOES beyond caching. **It renders nothing** — it was the `⚒ Your people know:`
-## strip until the top-right block was retired (issue #450), and the faction page's KNOWLEDGE zone
-## draws the tracks now, off `faction_tracks`.
+## INGEST the intensification tracks, which is now the whole of what this method does. **It renders
+## nothing** — it was the `⚒ Your people know:` strip until the top-right block was retired (issue
+## #450), and the faction page's KNOWLEDGE zone draws the tracks now, off `faction_tracks`. **And it
+## announces nothing** — the one-shot unlock nudge it used to fire is retired
+## (`docs/plan_knowledge_screen.md` §5); see `_ingest_intensification` below.
 ##
 ## The strip's own two display rules went with it: the `KNOWLEDGE_STRIP_TRACKS_PER_LINE` wrap (a
 ## content-sized top-bar block cannot autowrap, so a fifth track ran off the right edge) and the

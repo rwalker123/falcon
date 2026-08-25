@@ -1014,7 +1014,11 @@ func _refresh_knowledge_readouts() -> void:
 ## Push the orb's KNOWLEDGE row (`docs/plan_knowledge_screen.md` §5) — a discovery that finished this
 ## turn. Built off the roster the columns draw and the pip counts, so the three surfaces are one answer.
 ##
-## Never called except from `_refresh_knowledge_readouts` — see its docstring for why.
+## **TWO CALLERS, and the second deliberately does NOT roll the diff.**
+## `_refresh_knowledge_readouts` is the per-snapshot one, and it rolls on the line above — see its
+## docstring for why those two must not be separated. `reset_world_state` is the other: it pushes
+## straight after `_knowledge.reset_world_state()`, which has just DROPPED the diff, so there is
+## nothing to roll and what it pushes is the new world's nothing.
 func _push_knowledge_attention(roster: Array) -> void:
     if _turnorb == null:
         return

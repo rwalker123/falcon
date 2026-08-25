@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 72
+const EXPECTED_CHECKPOINTS := 75
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The rung derivation, shared with `map_preview` / `band_panel_preview` / `snapshot_alias_guard`.
@@ -98,6 +98,7 @@ func run(harness) -> void:
 	await _knowledge_frames()
 	await _assert_launcher_pip()
 	await _assert_opens_on_filter()
+	await _assert_late_catalogue_is_not_learned()
 
 # ---- the greyed `0.0` track --------------------------------------------------
 
@@ -461,8 +462,9 @@ func _assert_panel_renders() -> void:
 		NodeQuery.has_label_containing(panel, HudKnowledgeVocab.NODE_VALUE_NOT_BEGUN))
 
 ## The detail pane's three heads, once a node is selected. **The unlock copy is `FactionReadouts`'
-## own** — the same sentence the unlock announcement says — so this also pins that the panel reads it
-## rather than re-authoring one.
+## own table**, which OUTLIVED the one-shot announcement it was written for: that note is retired and
+## this pane is the table's reader now, so this also pins that the panel reads it rather than
+## re-authoring a second wording of the same sentence.
 func _assert_detail_pane() -> void:
 	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
 	if panel == null:
@@ -706,6 +708,69 @@ func _live_filter() -> StringName:
 			lit.append(StringName(key))
 	return lit[0] if lit.size() == 1 else &""
 
+# ---- a SECTION that arrives after the baseline was seeded -------------------
+
+## The two turns the late-catalogue block walks. **Its own pair**, for the reason the routing block
+## has one: the claim is about a baseline this block seeds ITSELF, and a turn the diff has already
+## been rolled on would seed it from whatever the previous block left behind.
+const TURN_LATE_CATALOGUE_SEED := 45
+const TURN_LATE_CATALOGUE := 46
+
+## **A CRAFT THE FACTION ALREADY KNEW MUST NOT REPORT AS LEARNED — and the real dispatch ORDER is what
+## makes that hard.** `Main._apply_snapshot` sends `update_intensification` BEFORE
+## `update_crafting_catalogues`, and both reach the diff. So the pass that seeds the baseline sees the
+## ladder tracks beside an EMPTY craft vector, and under a "the first PASS learns nothing" rule the
+## baseline is sealed with no crafts in it at all. On the next tick every long-known craft is then in
+## `known_now` and absent from the baseline: `learned_this_turn` names them, `KnowledgeRoster._is_new`
+## marks each node NEW, and the turn orb grows one *"<Craft> learned"* row per craft the faction has
+## held for a hundred turns. The rule that actually holds is per KEY — a key the roster has never
+## carried before is a section that has only just arrived, whatever pass it arrives on.
+##
+## **THE SECTIONS GO IN `Main`'s OWN ORDER, and that IS the claim.** Pushing the catalogues first
+## would stage a snapshot no server sends, and the block would pass with the guard deleted.
+func _assert_late_catalogue_is_not_learned() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	# **THE CRAFT VECTOR IS CLEARED FIRST, AND IT HAS TO BE CLEARED THROUGH THE WIRE.** A catalogue is
+	# the last value pushed and outlives `reset_world_state`, which drops the DIFF and not the wire's
+	# last section — so this long-lived HUD arrives here still holding the previous block's craft rows,
+	# and a seeding pass that can already see the three craft KEYS is not the shape a fresh connect
+	# has. Measured: without this the block failed for that reason alone, the fold under test never
+	# being reached.
+	h._hud.update_crafting_catalogues([], [], [], [])
+	controller.reset_world_state()
+	# THE SEEDING PASS — the turn, then the ladder tracks, and NO catalogues: exactly what the craft
+	# column looks like on the frame the baseline is seeded from.
+	h._hud.update_overlay(TURN_LATE_CATALOGUE_SEED, {})
+	h._hud.update_intensification([_wire_tracks({"cultivation": PROGRESS_KNOWN})])
+	await h._settle()
+	# …and the catalogues arriving AFTER it, on the SAME turn, carrying crafts the faction already
+	# knows — which is the ordinary case rather than an edge one: a faction that has ever crafted
+	# anything reconnects into exactly this.
+	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_all_known())
+	await h._settle()
+	# The next TURN, with nothing whatever changed: same tracks, same catalogues, one tick later.
+	h._hud.update_overlay(TURN_LATE_CATALOGUE, {})
+	h._hud.update_intensification([_wire_tracks({"cultivation": PROGRESS_KNOWN})])
+	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_all_known())
+	await h._settle()
+	# **NON-VACUOUS FIRST.** A fixture that staged no known craft at all satisfies both claims below
+	# for a reason that has nothing to do with the diff, so the roster is asked whether it is really
+	# carrying this craft as KNOWN before it is asked whether the craft is new.
+	var nodes := controller.nodes()
+	var tanning := _node_in(nodes, CRAFT_TANNING)
+	var tanning_state := String(tanning.get(HudKnowledgeVocab.NODE_STATE, "")) \
+		if not tanning.is_empty() else "absent from the roster"
+	h._assert_hud("knowledge late-catalogue — the fixture really does stage `%s` as KNOWN (%s)"
+			% [CRAFT_TANNING, tanning_state],
+		tanning_state == HudKnowledgeVocab.NODE_STATE_KNOWN)
+	h._assert_hud("knowledge late-catalogue — a craft known before the catalogues ARRIVED is not learned this turn (%s)"
+			% str(controller.learned_this_turn().keys()),
+		not controller.learned_this_turn().has(CRAFT_TANNING))
+	# …and the ROSTER agrees, which is the half the turn orb's row and the `new` pill actually read.
+	h._assert_hud("knowledge late-catalogue — …and its roster node does not carry `%s` either"
+			% HudKnowledgeVocab.NODE_NEW,
+		not bool(tanning.get(HudKnowledgeVocab.NODE_NEW, false)))
+
 ## The pip's rect must sit inside its button's. It is an anchored, mouse-transparent child of a
 ## `Button` — which is not a `Container`, so it contributes nothing to the parent's minimum size — and
 ## that is exactly the property wanted: a badge that took layout width would make the action bar's
@@ -760,7 +825,13 @@ func _unspent_keys(controller: KnowledgePanelController) -> Array[String]:
 	return keys
 
 func _roster_node(model: Dictionary, key: String) -> Dictionary:
-	for node in KnowledgeRoster.flatten(KnowledgeRoster.build_domains(model)):
+	return _node_in(KnowledgeRoster.flatten(KnowledgeRoster.build_domains(model)), key)
+
+## The node carrying this key in a roster the caller has ALREADY flattened. `{}` means the roster is
+## not carrying it at all — a different answer from "carrying it, not known", which is why the claims
+## that use this print the state they found rather than a bare bool.
+func _node_in(roster: Array, key: String) -> Dictionary:
+	for node in roster:
 		if String(node[HudKnowledgeVocab.NODE_KEY]) == key:
 			return node
 	return {}

@@ -143,16 +143,31 @@ freshly-learned row, and the row is built off THIS diff, through the roster. So 
 event from two independently-derived diffs is how they come to disagree about which turn it happened
 on.
 
-**THE FIRST OBSERVATION LEARNS NOTHING.** A fresh connect or a rehydrated save arrives with tracks
-already complete and no prior value to compare them against, so the first pass seeds the baseline and
-reports nothing — otherwise every discovery a returning player ever made lights up as new. That is the
-same trap met here
-with an explicit `UNSEEN_TURN` sentinel rather than an empty dictionary, an empty baseline being
-indistinguishable from a faction that knows nothing. (`_announce_knowledge_unlock` guarded the same
-trap with its "no prior value ⇒ not announced" rule.)
+**NO PRIOR VALUE MEANS NO DISCOVERY — and the grain is PER KEY, not per pass.** A fresh connect or a
+rehydrated save arrives with tracks already complete and nothing to compare them against, so what has
+never been observed seeds the baseline and reports nothing; otherwise every discovery a returning
+player ever made lights up as new. (`_announce_knowledge_unlock` guarded the same trap with the same
+rule before it was retired.) The empty baseline is distinguished from a faction that knows nothing by
+an explicit `UNSEEN_TURN` sentinel rather than by an empty dictionary.
+
+> #### ⛔ "THE FIRST PASS LEARNS NOTHING" WAS THE WRONG GRAIN, AND THE CRAFT HALF PAID FOR IT
+>
+> **A SECTION CAN ARRIVE LATER THAN THE FIRST PASS.** `Main` dispatches `update_intensification`
+> before `update_crafting_catalogues`, and both roll this diff — so the baseline was seeded while
+> `_craft_knowledge` was still empty, and the later same-turn refresh early-returned on
+> `turn == _diff_turn` and never repaired it. On the next tick every craft the faction had known for
+> a hundred turns was in `known_now`, absent from the baseline, and therefore *new*: one
+> `"<Craft> learned"` row apiece. It held for the ladder half and failed for the craft half, which is
+> the shape a per-pass rule will always have.
+>
+> `_seen_keys` records every key the roster has EVER carried, and a key not in it cannot be fresh —
+> it is folded into the baseline instead, including on the same-turn path, which is the one the
+> catalogues actually take. That generalises: any future section that lands after the seeding pass
+> gets the same treatment for free.
 
 **A second snapshot inside one turn must not re-arm it.** The server re-captures after every command,
-and the baseline is the TURN's rather than the frame's.
+and the baseline is the TURN's rather than the frame's — but a key seen for the FIRST time in such a
+snapshot still joins the baseline, or it reports as new on the next tick.
 
 ## DOMAINS ARE COLUMNS, IT IS NOT A GRAPH, AND AN EMPTY ONE IS NEVER DRAWN
 

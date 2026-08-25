@@ -223,8 +223,9 @@ func _crew_handoff_attention() -> Array:
 ## **IT IS A `static func` AND TAKES NO COLLABORATOR, WHICH IS WHAT PUTS IT OUTSIDE THE ORDERING
 ## HAZARD.** Every other producer here is a method because it reads the band/labor model; this one
 ## reads nothing but the list handed to it, so it cannot be run against a model that has not caught
-## up. `HudLayer._refresh_knowledge_readouts` is the one caller, and it rolls the screen's turn diff on
-## the line above — see that method for why the two must not be separated.
+## up. `HudLayer._refresh_knowledge_readouts` is the per-snapshot caller, and it rolls the screen's
+## turn diff on the line above — see that method for why the two must not be separated. (The world
+## boundary pushes this too, over a diff that has just been dropped rather than rolled.)
 ##
 ## NON-LOCATING and `info`: nothing is wrong — a track finished, which is the good news — so it sorts
 ## below every real problem, the `crew_handoff` argument exactly.

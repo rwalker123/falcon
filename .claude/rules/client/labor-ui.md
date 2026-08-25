@@ -5251,13 +5251,15 @@ spelled and never a raw count.
       A completed **Field** deliberately reads as a *different thing* from a Tended Patch — different
       word, different glyph — not as a bigger percentage; that IS rung 3's readout test.
       `Sowing`/`Building`/`Fencing` share one build-verb convention.
-    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks (all FIVE
+    - **The intensification tracks.** `_ingest_intensification` keeps the per-faction tracks (all FIVE
       since #485 added Foddering — the four rung gates plus the pen rung's own capability — driven off
       `KNOWLEDGE_TRACK_LABELS`, so adding a knowledge is a label entry + a decoder
-      field, never an edit there) and fires a ONE-SHOT `KNOWLEDGE_UNLOCK_NOTES` command-feed note the
-      turn a track crosses to complete. Only a real `<1 → >=1` transition fires it (a track already
-      complete on first snapshot / a rehydrated save is silent), player faction only, keyed per
-      faction+track.
+      field, never an edit there). **It no longer announces anything.** It used to fire a ONE-SHOT
+      `KNOWLEDGE_UNLOCK_NOTES` note to the event dock's System channel the turn a track crossed to
+      complete; the turn orb's freshly-learned row supersedes it and the nudge is retired
+      (`docs/plan_knowledge_screen.md` §5, `.claude/rules/client/band-readouts.md`). The `<1 → >=1`
+      transition it watched for is gone with it — the surviving "a track just completed" detector is
+      `KnowledgePanelController`'s per-turn diff.
     - **Wire fields decoded in `native/src/lib.rs`** (snapshot + delta share `herds_to_array` /
       `forage_patches_to_array`). **This decoder has now FOUR times silently dropped appended fields
       — check it FIRST when a new field "arrives as zero".** `ForagePatchState`: `ceilingCultivate` /

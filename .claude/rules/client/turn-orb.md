@@ -267,8 +267,10 @@ as unworked on the first snapshot after a load.
 **The mechanism is a THIRD REGISTRY HALF plus a single seam, not an ordering comment.**
 `TurnOrbController` caches `_knowledge_attention` beside `_band_attention` and `_push_attention`
 folds three arrays into the one `set_attention` replace. `HudLayer._refresh_knowledge_readouts` is
-the only thing that fills it: it rolls the diff and pushes the pip and the row on three adjacent
+what fills it on a snapshot: it rolls the diff and pushes the pip and the row on three adjacent
 lines, and every seam that used to call `refresh_snapshot` + `_push_knowledge_pip` calls it instead.
+(The world boundary pushes it once more, over a diff `KnowledgePanelController.reset_world_state`
+has just dropped — nothing to roll there, and the point is to clear the old world's row.)
 So the ordering cannot be broken by a reorder somewhere else, and the knowledge row is also correct
 on a delta carrying knowledge but no populations — which never reaches `update_band_alerts` at all.
 

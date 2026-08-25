@@ -290,8 +290,15 @@ Each slice is its own PR and lands on its own.
 |---|---|---|
 | **A** | The overlay migration — registry / legend / picker split, the minimap mount, the Inspector cleanup (§6) | nothing |
 | **B** | The knowledge screen + the action-bar launcher; delete the Know tab (§3, §4) | nothing |
-| **C** | The two attention producers + the `panel_requested` branch; retire the System note (§5) | B |
+| **C** | The attention producer + the `panel_requested` branch; retire the System note (§5) | B |
 | **D** | The `ready_for_improvement` channel (§7) | A |
+
+> **AS BUILT: C shipped ONE producer, not two.** This row said *two* — the freshly-learned row and an
+> aggregate `"N discoveries unspent"` row. The second was built, rendered and cut: the orb is for
+> events and losses in progress, and a standing backlog row never goes away, so the orb never returns
+> to its calm all-clear pulse. §1 had already given that count the action-bar PIP. The full reasoning
+> is in §5's banner and in `.claude/rules/client/turn-orb.md`, and `turn_orb.gd` asserts the row's
+> ABSENCE — so re-adding it fails a test rather than quietly relighting the orb.
 
 **A is independent of the whole knowledge arc** and is the cleanest thing to do first — it is a
 self-contained cleanup with a visible win, and it leaves the registry D needs.

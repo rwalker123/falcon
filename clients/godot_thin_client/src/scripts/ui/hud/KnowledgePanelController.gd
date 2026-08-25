@@ -26,24 +26,35 @@ extends RefCounted
 ##
 ## The live dict is the authority on a herd, never the assignment's launch-time target: herds MIGRATE.
 ##
-## ## "New this turn" is ONE diff over BOTH webs, and it is not `_announce_knowledge_unlock`'s
+## ## "New this turn" is ONE diff over BOTH webs, and it never was `_announce_knowledge_unlock`'s
 ##
 ## The ladder tracks and the craft tracks arrive through different ingests, so a diff per ingest would
 ## make the LAND column's "new" and the CRAFT column's "new" two different rules — and the one that
 ## drifted would be invisible, since both render as a plausible pill count. One diff over the SAME
 ## roster the panel draws cannot disagree with what is on screen.
 ##
-## **It deliberately does not reuse `FactionReadouts._announce_knowledge_unlock`'s diff**, which
-## answers a different question: that one is fire-once-EVER per faction+track and survives across
+## **It deliberately did not reuse `FactionReadouts._announce_knowledge_unlock`'s diff**, which
+## answered a different question: that one fired once EVER per faction+track and survived across
 ## turns, because a nudge repeated is noise. This one is "since the turn ticked", and has to go quiet
-## again next turn.
+## again next turn. **That announcement has since been deleted** — the turn orb's knowledge row
+## replaced it — which leaves the diff below as the client's ONLY "a track just completed" detector,
+## with nothing beside it to disagree with when it is wrong.
 ##
-## **THE FIRST OBSERVATION LEARNS NOTHING.** A fresh connect or a rehydrated save arrives with tracks
-## already complete and no prior value to compare them against, so seeding the baseline is all the
-## first pass does — otherwise every discovery a returning player ever made would light up as "new
-## this turn". That is the same trap `_announce_knowledge_unlock` guards with its "no prior value ⇒
-## not announced" rule, met here with an explicit `UNSEEN_TURN` sentinel rather than an empty
-## dictionary, because an empty baseline is indistinguishable from a faction that knows nothing.
+## **A KEY THE ROSTER HAS NEVER CARRIED BEFORE CANNOT BE A DISCOVERY.** A fresh connect or a
+## rehydrated save arrives with tracks already complete and no prior value to compare them against,
+## so a node the diff is meeting for the first time can only seed the baseline — otherwise every
+## discovery a returning player ever made would light up as "new this turn".
+##
+## **AND THE GRAIN OF THAT RULE IS PER KEY, NOT PER PASS**, because a SECTION can arrive later than
+## the first pass. `Main._apply_snapshot` dispatches `update_intensification` ahead of
+## `update_crafting_catalogues`, so the pass that seeds the baseline sees the ladder tracks and an
+## EMPTY craft vector: a "the first PASS learns nothing" rule seeds a baseline with no crafts in it,
+## and the next turn tick then reports every craft the faction has known for a hundred turns as newly
+## learned. `_seen_keys` answers the question per key instead, so a late-arriving section is folded
+## into the baseline when it arrives, whatever pass that is and whatever state it is in.
+##
+## The TURN still needs an explicit `UNSEEN_TURN` sentinel rather than an empty dictionary, because
+## an empty baseline is indistinguishable from a faction that knows nothing.
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -73,6 +84,11 @@ var _diff_turn: int = UNSEEN_TURN
 ## during it. Both are `{key: true}` sets.
 var _known_at_turn_start: Dictionary = {}
 var _learned_this_turn: Dictionary = {}
+## Every knowledge key the roster has EVER carried, `{key: true}` — the per-KEY "no prior value"
+## test. A key missing from here is a section that has only just arrived (see the class docstring on
+## the dispatch order), never something the faction just learned. Never pruned: a track that drops
+## out of a later snapshot has still been seen, and meeting it again is not learning it.
+var _seen_keys: Dictionary = {}
 
 func setup(host: Node, band_labor: HudBandLaborState, topbar: FactionReadouts,
 		room_bounds: Control = null) -> void:
@@ -181,6 +197,7 @@ func reset_world_state() -> void:
 	_diff_turn = UNSEEN_TURN
 	_known_at_turn_start.clear()
 	_learned_this_turn.clear()
+	_seen_keys.clear()
 
 ## **THE LAUNCHER'S PIP.** How many discoveries the faction has earned and nothing is using. Derived
 ## fresh, never latched — see `open()`.
@@ -260,11 +277,26 @@ func _on_filter_selected(key: StringName) -> void:
 
 # ---- the turn diff ----------------------------------------------------------
 
-## Roll the "new this turn" set forward. See the class docstring for why the first observation seeds
-## the baseline and reports nothing.
+## Roll the "new this turn" set forward. See the class docstring for why a key the roster has never
+## carried before seeds the baseline and reports nothing, and why that test is per KEY.
+##
+## ONE walk of the roster answers both questions this pass asks — which keys are KNOWN, and which
+## keys are PRESENT at all. Taken off the roster rather than off the two wire vectors, so the diff and
+## the columns can never disagree about what "known" means (a craft's `known` flag is not the
+## ladder's `>= KNOWLEDGE_COMPLETE`, and re-deriving either here would be a third reading of one
+## question); taken off ONE walk, because building it twice is both a second cost and a second chance
+## for the two sets to describe different rosters.
 func _update_learned_this_turn() -> void:
 	var turn := _band_labor.current_turn() if _band_labor != null else UNSEEN_TURN
-	var known_now := _known_keys()
+	var known_now := {}
+	var first_seen := {}
+	for node in KnowledgeRoster.flatten(KnowledgeRoster.build_domains(_diff_model())):
+		var key := String(node[HudKnowledgeVocab.NODE_KEY])
+		if String(node.get(HudKnowledgeVocab.NODE_STATE, "")) == HudKnowledgeVocab.NODE_STATE_KNOWN:
+			known_now[key] = true
+		if not _seen_keys.has(key):
+			first_seen[key] = true
+			_seen_keys[key] = true
 	if _diff_turn == UNSEEN_TURN:
 		_known_at_turn_start = known_now
 		_learned_this_turn = {}
@@ -273,25 +305,27 @@ func _update_learned_this_turn() -> void:
 	if turn == _diff_turn:
 		# A second snapshot inside one turn (an optimistic reconcile, a re-render) must not wipe what
 		# the turn has already taught — the baseline is the TURN's, not the frame's.
+		#
+		# **BUT A SECTION THAT ARRIVES ON ONE OF THOSE LATER FRAMES STILL HAS TO REACH THE BASELINE**,
+		# and this is the path the craft column actually takes: `update_intensification` seeds the
+		# baseline, `update_crafting_catalogues` lands afterwards on the SAME turn, and without this
+		# fold every craft the faction already knew reports as learned on the next tick.
+		for key in first_seen:
+			if known_now.has(key):
+				_known_at_turn_start[key] = true
 		return
 	var fresh := {}
 	for key in known_now:
+		# A key the roster is carrying for the FIRST time is a section that has just arrived, not a
+		# discovery — there is no prior value of it to have changed. The `_known_at_turn_start`
+		# assignment below folds it into the baseline, so it is judged normally from here on.
+		if first_seen.has(key):
+			continue
 		if not _known_at_turn_start.has(key):
 			fresh[key] = true
 	_learned_this_turn = fresh
 	_known_at_turn_start = known_now
 	_diff_turn = turn
-
-## Every knowledge key the faction currently KNOWS, both webs, taken off the roster itself rather than
-## off the two wire vectors — so the diff and the columns can never disagree about what "known" means
-## (a craft's `known` flag is not the ladder's `>= KNOWLEDGE_COMPLETE`, and re-deriving either here
-## would be a third reading of the same question).
-func _known_keys() -> Dictionary:
-	var known := {}
-	for node in KnowledgeRoster.flatten(KnowledgeRoster.build_domains(_diff_model())):
-		if String(node.get(HudKnowledgeVocab.NODE_STATE, "")) == HudKnowledgeVocab.NODE_STATE_KNOWN:
-			known[String(node[HudKnowledgeVocab.NODE_KEY])] = true
-	return known
 
 ## The model WITHOUT the turn diff — what `_known_keys` builds its roster from. It exists to break the
 ## cycle: `model()` carries `_learned_this_turn`, which is what this pass is computing.
