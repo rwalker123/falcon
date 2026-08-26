@@ -213,6 +213,22 @@ pub struct LaborAssignmentState {
     /// comment. Appended (append-only).
     #[serde(default)]
     pub material_yield: Vec<MaterialPayoff>,
+    /// **WHAT THIS ROW'S SOURCE WAS BILLED IN GOODS**, per material id — the good-side twin of the
+    /// work shortfall the source tables carry (`docs/plan_standing_upkeep.md` §2.7). Empty on every
+    /// rung that eats no material, which is every one on the shipped ladder but `animal:pen`.
+    ///
+    /// Published **beside** [`Self::material_upkeep_supplied`] rather than as their difference, on
+    /// the work trio's own rule: the sim states both terms and the client renders. It is what lets a
+    /// work-row note name the missing **good** — *"raise this band's Agriculture role"* is wrong
+    /// advice the moment the missing thing is stone.
+    ///
+    /// ⛔ **NEVER ADDED TO THE WORK FIGURES.** The amounts stay separate so a full store cannot paper
+    /// over missing hands; the decay rides the *worst* of the two fractions.
+    #[serde(default)]
+    pub material_upkeep_demand: Vec<MaterialPayoff>,
+    /// **WHAT THE BAND'S STORE ACTUALLY PAID** toward [`Self::material_upkeep_demand`], per material.
+    #[serde(default)]
+    pub material_upkeep_supplied: Vec<MaterialPayoff>,
     // **RETIRED: `improvement_workers`** — the per-source BUILD crew, the twin of the keeper crew
     // below and retired one slice after it (`docs/plan_standing_upkeep.md` §2.5).
     //
@@ -1256,6 +1272,30 @@ pub struct PopulationCohortState {
     /// nothing draws lasts forever. Appended last.
     #[serde(default)]
     pub turns_of_fodder: f32,
+    /// **THE STANDING MATERIAL BILL — what this band's holdings swallow per turn**, per material id
+    /// (`docs/plan_standing_upkeep.md` §2.7). The material twin of [`Self::fodder_need`], summed
+    /// across both webs.
+    ///
+    /// ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT**, for [`Self::fodder_need`]'s own reason: herd rows
+    /// are **fog-filtered**, so a client-side total silently drops a pen out of sight the band still
+    /// owes for.
+    ///
+    /// **Empty is "no row", never zero.** Published whether or not the band can pay — it is the
+    /// alarm, and a need zeroed because the store is empty would blank the case it exists for.
+    #[serde(default)]
+    pub material_upkeep_need: Vec<MaterialPayoff>,
+    /// **THE RATE THE SAME GOODS ARRIVE AT** — what this band's own sources credited this turn plus
+    /// what its bench finished, per material. The material twin of [`Self::fodder_income`].
+    ///
+    /// ⛔ **A RATE, NOT A TRAILING AVERAGE AND NOT AN EMA** — the same shape `fodder_income` carries,
+    /// which is this turn's harvest read as a per-turn flow.
+    #[serde(default)]
+    pub material_upkeep_income: Vec<MaterialPayoff>,
+    /// **WHAT THE BAND HOLDS RIGHT NOW**, summed over its batches, per material — a **stock**, read
+    /// against the two rates above rather than added to them. [`Self::material_batches`] beside it
+    /// carries the per-rating breakdown; this is the total the bill is judged against.
+    #[serde(default)]
+    pub material_store: Vec<MaterialPayoff>,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

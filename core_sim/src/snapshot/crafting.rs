@@ -54,7 +54,7 @@ const SEVERITY_GOOD: &str = "good";
 /// The three severities a life readout may carry. A separate vocabulary from the offers' on
 /// purpose: a life bar is a fuel gauge and a craft offer is an invitation, so `good` would mean
 /// nothing on one and `healthy` nothing on the other.
-const LIFE_HEALTHY: &str = "healthy";
+pub(crate) const LIFE_HEALTHY: &str = "healthy";
 const LIFE_WARN: &str = "warn";
 const LIFE_DANGER: &str = "danger";
 
@@ -188,6 +188,20 @@ pub(crate) struct BandCraftState {
     pub(crate) bench: BenchState,
     pub(crate) craft_offers: Vec<CraftOfferState>,
     pub(crate) equipment_batches: Vec<EquipmentBatchState>,
+    /// **WHAT THE BENCH IS MAKING, PER TURN, PER MATERIAL** — the forward half of a band's
+    /// `material_upkeep_income` (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// A bench finishes one item when its meter crosses the recipe's `work`, so its per-turn output
+    /// is `rate_per_turn / work × the output's amount` — **the same rate this row publishes**, which
+    /// is the one `advance_crafting` accrues with, so the projection and the accrual cannot describe
+    /// different benches. It is a **projection** rather than a trailing count, and it is empty for an
+    /// idle or blocked bench because that rate is `0`.
+    ///
+    /// **Only MATERIAL outputs count** — a bench making a sled adds nothing to a material ledger. It
+    /// is resolved here rather than beside the band's other ledgers because on the shipped roster the
+    /// pen's `hurdles` have **no producer but a bench**, so a ledger without this term would read
+    /// zero income for ever for the one material a pen actually eats.
+    pub(crate) bench_material_rate: BTreeMap<String, f32>,
 }
 
 pub(crate) fn band_craft_state(
@@ -218,12 +232,41 @@ pub(crate) fn band_craft_state(
             craft_offer(plan, &tiers, store, wear, inputs, running)
         })
         .collect();
+    let bench_row = bench_state(bench, store, inputs, &tiers_by_material);
+    let bench_material_rate = bench_material_rate(&bench_row, running, inputs);
     BandCraftState {
         material_batches: material_batches(store, inputs.materials),
-        bench: bench_state(bench, store, inputs, &tiers_by_material),
+        bench: bench_row,
         craft_offers,
         equipment_batches: equipment_batches(wear, inputs.equipment, inputs.reference_build_cost),
+        bench_material_rate,
     }
+}
+
+/// See [`BandCraftState::bench_material_rate`]. `passes` is deliberately fractional — a bench two
+/// turns from an item is making half of one a turn, which is exactly what a *rate* means.
+fn bench_material_rate(
+    row: &BenchState,
+    running: Option<&str>,
+    inputs: &BandCraftInputs<'_>,
+) -> BTreeMap<String, f32> {
+    let mut rates = BTreeMap::new();
+    let Some(id) = running else {
+        return rates;
+    };
+    let Some(plan) = inputs.plans.iter().find(|plan| plan.id == id) else {
+        return rates;
+    };
+    if row.work <= 0.0 || row.rate_per_turn <= 0.0 {
+        return rates;
+    }
+    let passes = row.rate_per_turn / row.work;
+    for output in &plan.recipe.outputs {
+        if let Some(material) = output.material_id() {
+            *rates.entry(material.to_string()).or_insert(0.0) += output.amount * passes;
+        }
+    }
+    rates
 }
 
 /// **What a recipe with no bench material resolves to: nothing works.** `validate` makes a recipe
@@ -832,7 +875,7 @@ fn life_wording(worn: f32, quanta_left: f32, quantum: WearQuantum) -> String {
 
 /// The bar's colour, off the two seams in `equipment.json`'s `life_readout`. See
 /// [`crate::equipment_config::LifeReadoutConfig`] for why they are fractions of one fresh unit.
-fn life_severity(fraction: f32, equipment: &EquipmentConfig) -> &'static str {
+pub(crate) fn life_severity(fraction: f32, equipment: &EquipmentConfig) -> &'static str {
     if fraction < equipment.life_readout.danger_fraction {
         LIFE_DANGER
     } else if fraction < equipment.life_readout.warn_fraction {
@@ -1010,7 +1053,8 @@ mod tests {
     ///
     /// **`hoes` are the item that made it reachable** — they wear on `build_progress` and on nothing
     /// else, so theirs is the first published `equipmentBatches` row that divides by anything. The
-    /// hurdles beside them declare `biomass_collected` first and still quote the slaughter.
+    /// **crook** beside them leads with the same quantum, so it divides too; the **sled** declares
+    /// `biomass_hauled` first and goes on quoting the haul.
     #[test]
     fn the_build_quanta_are_quoted_against_the_ladders_reference_job() {
         let reference = crate::intensification::LadderConfig::builtin().reference_build_cost();
@@ -1040,20 +1084,22 @@ mod tests {
         }
     }
 
-    /// **THE HURDLES HEADLINE THE SLAUGHTER, NOT THE BUILD** — `wear[0]` is the entry a life gauge
+    /// **THE SLED HEADLINES THE HAUL, NOT THE SLAUGHTER** — `wear[0]` is the entry a life gauge
     /// quotes (`ItemDefinition::headline_wear`), and the order is the model.
     ///
-    /// Pinned because it is a **readout** decision a config reorder would silently make: the gauge
-    /// would flip from *"≈2500 biomass butchered"* to *"≈12 gardens' worth"*, quoting a keeper's kit
-    /// in the plant web's reference job. `docs/plan_unit_costed_work.md` §6.3 assumed this item
-    /// already led with the build; it never has. **The hoes beside it are the item that does**, and
-    /// the second arm pins that too — the two orderings are one decision seen from both sides.
+    /// Pinned because it is a **readout** decision a config reorder would silently make. It used to
+    /// be asked of `hurdles`, whose `biomass_collected` entry moved onto the sled with the
+    /// `pen_carry` pair when the fence panels became a **material**
+    /// (`docs/plan_standing_upkeep.md` §2.7); the new entry was **appended**, precisely so the
+    /// sled's gauge goes on reading *"biomass hauled"* and no shipped item's life meter changed
+    /// units. **The hoes beside it are an item that leads with the build**, and the second arm pins
+    /// that too — the two orderings are one decision seen from both sides.
     #[test]
     fn the_handling_gears_life_gauge_reads_in_butchered_biomass() {
         let equipment = EquipmentConfig::builtin();
         let gear = equipment
-            .item("hurdles")
-            .expect("the shipped roster carries the hurdles");
+            .item("sled")
+            .expect("the shipped roster carries the sled");
         let hoes = equipment
             .item("hoes")
             .expect("the shipped roster carries the hoes");
@@ -1064,12 +1110,12 @@ mod tests {
         );
         assert_eq!(
             gear.headline_wear().per,
-            WearQuantum::BiomassCollected,
-            "the hurdles' gauge reads in butchered biomass"
+            WearQuantum::BiomassHauled,
+            "the sled's gauge reads in hauled biomass, unmoved by the appended pen quantum"
         );
         assert!(
-            gear.wears_on(WearQuantum::BuildProgress),
-            "fixture: it must still wear on the build, or the ordering claim is vacuous"
+            gear.wears_on(WearQuantum::BiomassCollected),
+            "fixture: it must still wear at a pen slaughter, or the ordering claim is vacuous"
         );
         assert_eq!(
             quantum_units_per_noun(

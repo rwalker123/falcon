@@ -535,6 +535,39 @@ there is any pen progress, `animal:pastoral` for any other managed herd.
   rungs declare `null` and their live grace is `upkeep.grace_turns`, because two numbers for one
   trigger is what that arrangement exists to prevent.
 
+### THE PEN COSTS HURDLES TOO — the material half of the same standing bill
+
+**Work was never the whole price of holding a fence** (`docs/plan_standing_upkeep.md` §2.7 / §4.9
+item 12). `animal:pen` is the shipped ladder's **one** declarer of a material on either term:
+**6 hurdles** on its build pile and **0.05 per keeper-load per turn** on its upkeep rate. The engine
+half — how a pile is drawn, how a short store stalls a build, and why the decay takes the *worst* of
+the two shortfall fractions — is `intensification.md` → "THE MATERIAL HALF"; what is animal-specific
+is here.
+
+- **THE RATE READS THE HERD, exactly as the work rate does** — `scaled_by: source_load`, so a pen
+  holding twice the herd mends twice the fence. `fauna::herd_upkeep_material_demand` interpolates it
+  on the position through the same `interpolate` the work demand goes through.
+- **AND IT STEPS AT THE FENCE, for free.** `animal:pen` is `partial_credit: on_completion`, so a herd
+  raising a fence interpolates between wild and *pastoral* — which names no material — and owes its
+  first hurdle only when the fence closes. **Half a fence is no fence**, and nothing here tests for
+  the pen rung to make that true.
+- **THE SHORTFALL SHEDS ANIMALS, and no new penalty was added.** `uncontained_overage` reads
+  `intensification::keeping_shortfall_fraction` now — the worst of the work fraction and each good's
+  — so a pen fully staffed with no hurdles to mend the fence sheds at the hurdles' rate, one with
+  hurdles and no hands at the hands' rate, and one short of both at the worse. The **same**
+  `neglect_turns` and the **same** `upkeep.grace_turns` govern both kinds.
+- **`Herd::upkeep_materials_demanded` is the STAMPED bill**, and it is written in the *same pre-loop
+  pass* as `upkeep_demanded` rather than in the arm. It has to be: the arm is skipped for a herd out
+  of the hunt leash or gone from the registry, and a work stamp without its material twin would read
+  as *"a band answered and this rung eats nothing"* — an abandoned pen judged short of hands and
+  fully supplied with hurdles.
+
+> ⛔ **IT IS NOT FEED, AND THE TWO ACCOUNTS NEVER MEET.** Hay is what the animals **eat**, settled by
+> `settle_pen_hay` in fodder units against the herd's appetite; this is what the **structure** costs to
+> stand, and an empty pen would owe it just the same. The material settlement draws the band's
+> **material batches** and touches neither the `FODDER` store nor the `FOOD` larder — which is what
+> keeps §2.7's retired human-food path retired.
+
 ### THE PEN'S FEED IS ITS OWN MECHANISM, and it is not the upkeep
 
 The `upkeep` block is the **work** half of holding a rung — hands, in work units. What a pen *eats* is

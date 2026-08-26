@@ -13,6 +13,8 @@
 //!
 //! Deterministic (a pinned map seed, no `Date`/rand), mirroring `grazing_2b_convergence.rs`.
 
+mod pen_materials_support;
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -27,7 +29,7 @@ use core_sim::{
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
     GenerationId, GenerationRegistry, GrazePatch, GrazeRegistry, Herd, HerdDensityMap,
     HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    LadderConfigHandle, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
@@ -221,7 +223,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 // the tenders alone would have `LaborAllocation::normalize` trim the ring away.
                 working: scalar_from_f32((KEEPER_WORKERS + KEEPER_WORKERS) as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,

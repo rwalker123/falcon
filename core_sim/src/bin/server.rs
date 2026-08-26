@@ -8109,6 +8109,8 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
         CommandEventKind::Craft => "Craft",
+        CommandEventKind::KitLife => "Kit life",
+        CommandEventKind::MaterialShortfall => "Material shortfall",
         CommandEventKind::HuntDanger => "Dangerous hunt",
         CommandEventKind::HuntReport => "Hunt report",
         CommandEventKind::PredatorRaid => "Predator raid",

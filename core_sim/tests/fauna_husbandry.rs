@@ -3,6 +3,8 @@
 //! overhunting collapse. Uses the source-centric labor allocation (a Hunt assignment) that replaced
 //! the retired persistent follow.
 
+mod pen_materials_support;
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
@@ -16,7 +18,7 @@ use core_sim::{
     FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry, GenerationId,
     GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement,
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
     StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER, FODDERING_DISCOVERY_ID, FOOD,
@@ -1040,7 +1042,7 @@ fn spawn_crew_of(
                 // have `normalize` trim the very row under measurement.
                 working: scalar_from_f32((hunters + builders + keepers + hunters) as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,
@@ -5066,7 +5068,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 children: scalar_zero(),
                 working: scalar_from_f32(staffed as f32),
                 elders: scalar_zero(),
-                stores: LocalStore::new(),
+                stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_turn_transfer_received: 0.0,

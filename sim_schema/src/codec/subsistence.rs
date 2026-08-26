@@ -431,6 +431,17 @@ fn create_herds<'a>(
         } else {
             Some(builder.create_vector(&herd.regrowth_samples))
         };
+        // **THE MATERIAL HALF OF THE LADDER'S PRICE** — three per-good vectors, built before the
+        // parent table opens (the ordinary FlatBuffers rule). An EMPTY vector is *"this rung eats no
+        // material"*, never *"zero of something"*.
+        let build_material_cost = create_material_payoffs(builder, &herd.build_material_cost);
+        let upkeep_material_demand = create_material_payoffs(builder, &herd.upkeep_material_demand);
+        let upkeep_material_supplied =
+            create_material_payoffs(builder, &herd.upkeep_material_supplied);
+        let tame_upkeep_material_demand =
+            create_material_payoffs(builder, &herd.tame_upkeep_material_demand);
+        let corral_upkeep_material_demand =
+            create_material_payoffs(builder, &herd.corral_upkeep_material_demand);
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -576,6 +587,14 @@ fn create_herds<'a>(
                 // **The rung this herd STANDS on** — appended last (append-only wire), the
                 // twin of `buildDestinationRung`'s spelling at the source's own position.
                 currentRung: Some(current_rung),
+                buildMaterialCost: Some(build_material_cost),
+                upkeepMaterialDemand: Some(upkeep_material_demand),
+                upkeepMaterialSupplied: Some(upkeep_material_supplied),
+                // **THE PRE-COMMIT MATERIAL QUOTE, PER RUNG** — see the plant twin. The `corral` one
+                // is the number the `⌃` track's aside needs on a PASTORAL herd, whose own rung
+                // declares no material at all.
+                tameUpkeepMaterialDemand: Some(tame_upkeep_material_demand),
+                corralUpkeepMaterialDemand: Some(corral_upkeep_material_demand),
             },
         );
         entries.push(entry);
@@ -674,6 +693,18 @@ fn create_forage_patches<'a>(
         } else {
             Some(builder.create_vector(&patch.regrowth_samples))
         };
+        // **THE MATERIAL HALF OF THE LADDER'S PRICE** — three per-good vectors, built before the
+        // parent table opens (the ordinary FlatBuffers rule). An EMPTY vector is *"this rung eats no
+        // material"*, never *"zero of something"*.
+        let build_material_cost = create_material_payoffs(builder, &patch.build_material_cost);
+        let upkeep_material_demand =
+            create_material_payoffs(builder, &patch.upkeep_material_demand);
+        let upkeep_material_supplied =
+            create_material_payoffs(builder, &patch.upkeep_material_supplied);
+        let cultivation_upkeep_material_demand =
+            create_material_payoffs(builder, &patch.cultivation_upkeep_material_demand);
+        let field_upkeep_material_demand =
+            create_material_payoffs(builder, &patch.field_upkeep_material_demand);
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -774,6 +805,14 @@ fn create_forage_patches<'a>(
                 // **The rung this patch STANDS on** — appended last (append-only wire); see the
                 // herd twin.
                 currentRung: Some(current_rung),
+                buildMaterialCost: Some(build_material_cost),
+                upkeepMaterialDemand: Some(upkeep_material_demand),
+                upkeepMaterialSupplied: Some(upkeep_material_supplied),
+                // **THE PRE-COMMIT MATERIAL QUOTE, PER RUNG** — the rung's own rate at this source's
+                // scale, NOT the stamped bill beside it. The two disagree mid-climb, and that is the
+                // point: one says what you were billed, the other what this rung costs.
+                cultivationUpkeepMaterialDemand: Some(cultivation_upkeep_material_demand),
+                fieldUpkeepMaterialDemand: Some(field_upkeep_material_demand),
             },
         );
         entries.push(entry);

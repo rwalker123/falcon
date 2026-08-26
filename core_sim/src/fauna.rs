@@ -748,6 +748,18 @@ pub struct Herd {
     /// **First write wins**, for the plant twin's reason: several bands may work one herd, the shares
     /// were all struck at the pre-accrual position, so the bill has to be too.
     pub upkeep_demanded: Option<f32>,
+    /// **THE MATERIAL HALF OF THE SAME STAMPED BILL**, per material id — the animal twin of
+    /// `ForagePatch::upkeep_materials_demanded`, present for the identical reason: the material
+    /// demand interpolates on the same position and rides the same Population→Logistics carry, so a
+    /// re-derived live value judges the settled draw against a bill nobody was handed.
+    ///
+    /// On the shipped ladder this is the pen's **hurdles**, and it is what the fence frays at
+    /// (`docs/plan_standing_upkeep.md` §2.7). **First write wins**, on the work stamp's own rule.
+    pub upkeep_materials_demanded: BTreeMap<String, f32>,
+    /// **WHAT THE BAND'S STORE ACTUALLY PAID TOWARD THAT BILL**, per material id — the material twin
+    /// of [`Self::upkeep_supplied`], **accumulated** across the bands keeping this herd and cleared
+    /// once a turn by `advance_husbandry`.
+    pub upkeep_materials_supplied: BTreeMap<String, f32>,
 }
 
 impl Herd {
@@ -835,6 +847,8 @@ impl Herd {
             neglect_pressure: NO_NEGLECT_PRESSURE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_demanded: None,
+            upkeep_materials_demanded: BTreeMap::new(),
+            upkeep_materials_supplied: BTreeMap::new(),
         }
     }
 
@@ -3822,9 +3836,13 @@ pub fn advance_husbandry(
         // neglect pressure below rides this, and `upkeep_supplied` / `upkeep_demanded` are both wiped
         // a few lines down — reading it after would score every turn as wholly unkept and the
         // pressure could never fall.
-        let shortfall_fraction_last_turn = crate::intensification::upkeep_shortfall_fraction(
+        // **The worst of the two currencies**, exactly as [`uncontained_overage`] takes it, so the
+        // pressure and the shed it accelerates ride one reading.
+        let shortfall_fraction_last_turn = crate::intensification::keeping_shortfall_fraction(
             herd_keeping_basis(herd, &fauna, &ladder),
             herd.upkeep_supplied,
+            &herd_material_keeping_basis(herd, &fauna, &ladder),
+            &herd.upkeep_materials_supplied,
         );
         // **And the field is cleared now**, on the one-turn cycle the plant twin runs: it describes
         // the keepers that held the herd, so a herd whose keepers have gone must stop reporting what
@@ -3834,6 +3852,11 @@ pub fn advance_husbandry(
         herd.upkeep_supplied = NO_UPKEEP_DEMAND;
         // …and the bill it was judged against, so "already stamped" always means *this* turn.
         herd.upkeep_demanded = None;
+        // **The material half rides the same cycle**, and for the same reason: it is this turn's bill
+        // and this turn's payment, so next turn's shortfall is the whole demand again unless a band
+        // restates it.
+        herd.upkeep_materials_demanded.clear();
+        herd.upkeep_materials_supplied.clear();
         // **Only a MANAGED herd sheds / feeds.** A wild herd is nobody's to keep, so it is neither fed
         // nor loses animals to under-containment — it simply roams. (Same scope the
         // retired tameness decay used: `is_corralled() || owner.is_some()`, never `is_domesticated()`,
@@ -4463,6 +4486,62 @@ pub fn herd_keeping_basis(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfi
         .unwrap_or_else(|| herd_upkeep_demand(herd, fauna, ladder))
 }
 
+/// **WHAT HOLDING THIS HERD SWALLOWS OF ONE MATERIAL, PER TURN** — the material twin of
+/// [`herd_upkeep_demand`], interpolated over the same [`RungStanding`] and scaled by the same
+/// keeper-load, because the rung reads one `scaled_by` for both currencies
+/// (`docs/plan_standing_upkeep.md` §2.7). **A pen holding twice the herd mends twice the fence**,
+/// exactly as it takes twice the hands.
+///
+/// [`NO_UPKEEP_DEMAND`] for a rung that names no material — which is `animal:pastoral` and both
+/// `wild` rungs. `animal:pen` is the shipped ladder's only declarer, and its material is `hurdles`.
+pub fn herd_upkeep_material_demand(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    material: &str,
+) -> f32 {
+    let load = herd_keeper_load(herd, fauna);
+    interpolate(&herd.standing(), |rung| {
+        ladder.rung(rung).upkeep_material_demand(material, load)
+    })
+}
+
+/// **EVERY MATERIAL THIS HERD'S KEEPING WILL BE BILLED FOR THIS TURN**, with the interpolated
+/// per-turn amount — the settlement's claim list, and the map the labor pass stamps onto
+/// [`Herd::upkeep_materials_demanded`]. The animal twin of `forage::patch_upkeep_material_demands`,
+/// walking both standing endpoints for that function's stated reason.
+pub fn herd_upkeep_material_demands(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+) -> BTreeMap<String, f32> {
+    let standing = herd.standing();
+    let mut demands = BTreeMap::new();
+    for id in crate::intensification::standing_material_ids(&standing, ladder) {
+        let amount = herd_upkeep_material_demand(herd, fauna, ladder, &id);
+        if amount > NO_UPKEEP_DEMAND {
+            demands.insert(id, amount);
+        }
+    }
+    demands
+}
+
+/// **THE MATERIAL BILL THE KEEPING IS JUDGED AGAINST** — the stamped
+/// [`Herd::upkeep_materials_demanded`] where a band answered for this herd, and the live
+/// [`herd_upkeep_material_demands`] where none did. [`herd_keeping_basis`]' own rule in the second
+/// currency, and for its reason.
+pub fn herd_material_keeping_basis<'a>(
+    herd: &'a Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+) -> std::borrow::Cow<'a, BTreeMap<String, f32>> {
+    if herd.upkeep_demanded.is_some() {
+        std::borrow::Cow::Borrowed(&herd.upkeep_materials_demanded)
+    } else {
+        std::borrow::Cow::Owned(herd_upkeep_material_demands(herd, fauna, ladder))
+    }
+}
+
 /// **HANDS TO MEET THIS HERD'S KEEPING BILL** — `ceil` of [`herd_keeping_basis`], and the animal twin
 /// of [`crate::forage::patch_upkeep_workers_needed`], seam for seam.
 ///
@@ -4579,11 +4658,18 @@ fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) 
     // fraction says the same thing without reconstructing a per-load rate, and it keeps working when
     // the supplier is a **build crew** rather than the keeping pool (a herd mid-`Tame` is owed the
     // same rate, from different hands).
-    let fraction = crate::intensification::upkeep_shortfall_fraction(
+    // **AND IT IS THE WORST OF THE TWO CURRENCIES** (`docs/plan_standing_upkeep.md` §4.9 item 12):
+    // a pen fully staffed with no hurdles to mend the fence sheds at the hurdles' rate, one with
+    // hurdles and no hands at the hands' rate, and one short of both at the worse. **No new
+    // penalty** — the shed is reached exactly as it is today, with a fraction that can now come from
+    // a good. The amounts stay separate, so a full store cannot paper over missing hands.
+    let fraction = crate::intensification::keeping_shortfall_fraction(
         // **THE BILL THE KEEPERS WERE HANDED**, not the one the turn's own build has since raised —
         // see `Herd::upkeep_demanded`.
         herd_keeping_basis(herd, fauna, ladder),
         herd.upkeep_supplied,
+        &herd_material_keeping_basis(herd, fauna, ladder),
+        &herd.upkeep_materials_supplied,
     );
     let head_count = herd.biomass / body_mass;
     let overage_animals = (fraction * head_count).max(0.0);

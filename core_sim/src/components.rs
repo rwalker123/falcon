@@ -3457,6 +3457,32 @@ pub struct LaborAllocation {
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_fodder_drain: f32,
+    /// **THE STANDING MATERIAL BILL THIS BAND'S HOLDINGS RAN UP THIS TURN**, per material id — the
+    /// material twin of [`Self::last_fodder_need`] (`docs/plan_standing_upkeep.md` §2.7), summed
+    /// across **both** webs' rows by `advance_labor_allocation`.
+    ///
+    /// ⛔ **The sim sums it, not the client** — [`Self::last_fodder_need`]'s own rule, and
+    /// load-bearing for its own reason: herd rows are **fog-filtered**, so a client-side total
+    /// silently drops a pen out of sight the band still owes for.
+    ///
+    /// Reset then re-summed every turn, and **excluded from equality** below, like the rest of the
+    /// per-turn telemetry.
+    pub last_material_need: std::collections::BTreeMap<String, f32>,
+    /// **THE MATERIALS THIS BAND'S OWN SOURCES CREDITED THIS TURN**, per material id — the take
+    /// side of the same ledger, and the twin of [`Self::last_fodder_inflow`].
+    ///
+    /// It is **reported, never recomputed**: the amounts `credit_material_yield` actually deposited,
+    /// which is the same discipline `SourceYield::materials` carries. What a **bench** adds is
+    /// resolved at capture off the bench's own rate, because a bench is not a source row.
+    pub last_material_income: std::collections::BTreeMap<String, f32>,
+    /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
+    /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
+    ///
+    /// **Transient and deliberately NOT checkpointed**, exactly as `Herd::pen_starving` is: a
+    /// rollback may re-announce once, which is cheaper than a second persisted flag and is the
+    /// concession that mechanic already makes. Excluded from equality below with the rest of the
+    /// per-turn telemetry — a warning already given is not *intent*.
+    pub material_shortfall_warned: Vec<String>,
     /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — the player's own choice
     /// between *everything degrades a little* and *the biggest investments stay whole*
     /// ([`crate::intensification::UpkeepFundMode`], `docs/plan_standing_upkeep.md` §2.5).

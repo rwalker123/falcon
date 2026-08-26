@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::*;
 
 pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> PendingMigrationState {
@@ -25,6 +27,11 @@ pub(crate) fn labor_assignment_to_state(
     // [`assigned_hunt_useful_crew`], which is where it is answered. Passed in for `build_job`'s
     // reason: resolving it needs the herd registry and two configs a row has no business holding.
     hunt_useful_workers: u32,
+    // **THE GOOD-SIDE SHORTFALL'S TWO TERMS**, resolved by the caller off the source itself — the
+    // stamped material bill and what the band's store paid toward it. Passed in for `build_job`'s
+    // reason: the lookup needs both webs' registries.
+    material_upkeep_demand: Vec<sim_runtime::MaterialPayoff>,
+    material_upkeep_supplied: Vec<sim_runtime::MaterialPayoff>,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -54,6 +61,13 @@ pub(crate) fn labor_assignment_to_state(
                 amount: payoff.amount,
             })
             .collect(),
+        // **THE GOOD-SIDE SHORTFALL, BOTH TERMS AND NEVER THEIR DIFFERENCE** — so a work-row note
+        // can name the missing **good** rather than pointing at a keeping stepper that cannot help.
+        // Empty on every rung that eats no material, which is every one on the shipped ladder but
+        // `animal:pen`. **Never added to the work figures**: the amounts stay separate so a full
+        // store cannot paper over missing hands.
+        material_upkeep_demand,
+        material_upkeep_supplied,
         // **The band the scalar above sits in the middle of** (§6.4). A seeded row carries the
         // real distribution; a resolved row carries the point it paid.
         actual_yield_low: yields.range.low,
@@ -423,6 +437,49 @@ pub(crate) struct BuildSourceInputs<'a> {
 ///
 /// A ring names no rung (a built pen has no meter for a verb to name), so it publishes the command's
 /// own name.
+/// **THE MATERIAL BILL AND THE PAYMENT FOR ONE WORK ROW'S SOURCE** — the two terms of the good-side
+/// shortfall (`docs/plan_standing_upkeep.md` §2.7), read off the source rather than off the row.
+///
+/// It is the **stamped** demand on both webs (through each web's `*_material_keeping_basis`), so the
+/// published pair satisfies the same `demand − supplied == shortfall` identity the work trio does.
+/// A band-wide role names no source and answers `(empty, empty)`, which is *"this row eats no
+/// material"* rather than *"zero of something"*.
+///
+/// **⛔ It reads the STAMP, never a live re-derivation**, exactly as `upkeepDemand` beside it does:
+/// the material demand interpolates on a position that moved later in the turn, so a live reading
+/// would publish a bill nobody was handed.
+fn row_material_keeping(
+    target: &LaborTarget,
+    sources: &BuildSourceInputs<'_>,
+) -> (
+    Vec<sim_runtime::MaterialPayoff>,
+    Vec<sim_runtime::MaterialPayoff>,
+) {
+    match target {
+        LaborTarget::Forage { tile, .. } => sources
+            .forage
+            .patch(*tile)
+            .map(|patch| {
+                (
+                    material_payoffs(&patch.upkeep_materials_demanded),
+                    material_payoffs(&patch.upkeep_materials_supplied),
+                )
+            })
+            .unwrap_or_default(),
+        LaborTarget::Hunt { fauna_id, .. } => sources
+            .herds
+            .find(fauna_id)
+            .map(|herd| {
+                (
+                    material_payoffs(&herd.upkeep_materials_demanded),
+                    material_payoffs(&herd.upkeep_materials_supplied),
+                )
+            })
+            .unwrap_or_default(),
+        _ => (Vec::new(), Vec::new()),
+    }
+}
+
 fn resolved_build_job(
     target: &LaborTarget,
     allocation: &LaborAllocation,
@@ -812,12 +869,20 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         hunt_crew_levers,
                         build_sources.herds,
                     );
+                    // **THE GOOD-SIDE SHORTFALL'S TWO TERMS** — read off the source itself, where
+                    // the stamped bill and the store's payment live, because a row holds neither.
+                    // `resolved_build_job`'s own rule: a resolution needing both registries is the
+                    // caller's, not the row's.
+                    let (material_demand, material_supplied) =
+                        row_material_keeping(&assignment.target, build_sources);
                     labor_assignment_to_state(
                         assignment,
                         a.last_yields.get(i).unwrap_or(&NO_YIELD),
                         resolved_build_job(&assignment.target, a, build_sources),
                         resolved_kit,
                         hunt_useful_workers,
+                        material_demand,
+                        material_supplied,
                     )
                 })
                 .collect()
@@ -1022,6 +1087,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         bench: bench_state,
         craft_offers,
         equipment_batches,
+        bench_material_rate,
     } = crate::snapshot::crafting::band_craft_state(&cohort.stores, bench, &kit, craft_inputs);
     PopulationCohortState {
         entity: entity.to_bits(),
@@ -1259,7 +1325,59 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         fodder_need,
         fodder_income,
         turns_of_fodder,
+        // **THE STANDING MATERIAL BILL** — the two rates and the stock, on the hay ledger's own
+        // rule: the sim sums it and the client renders. See `LaborAllocation::last_material_need`
+        // for why a client cannot sum the need itself.
+        material_upkeep_need: material_payoffs(
+            &allocation
+                .map(|a| a.last_material_need.clone())
+                .unwrap_or_default(),
+        ),
+        // **WHAT ARRIVES** — this turn's credited take **plus the bench's own per-turn output**. A
+        // bench is not a source row, so its contribution cannot ride the allocation's accumulator;
+        // it is resolved here, off the same `rate_per_turn` the bench publishes, which is what makes
+        // it a **rate** rather than a trailing figure. On the shipped roster the pen's `hurdles` have
+        // **no producer but a bench**, so a ledger without this term would read `0` income forever
+        // for the one material a pen actually eats.
+        material_upkeep_income: material_payoffs(&{
+            let mut income = allocation
+                .map(|a| a.last_material_income.clone())
+                .unwrap_or_default();
+            for (id, rate) in bench_material_rate {
+                *income.entry(id).or_insert(0.0) += rate;
+            }
+            income
+        }),
+        // **THE STOCK ON THE SHELF**, summed over the band's batches — the total the two rates above
+        // are read against. `material_batches` beside it carries the per-rating breakdown.
+        material_store: cohort
+            .stores
+            .materials()
+            .map(|(material, batches)| sim_runtime::MaterialPayoff {
+                material_id: material.to_string(),
+                amount: batches
+                    .values()
+                    .fold(crate::scalar::scalar_zero(), |total, batch| {
+                        total + batch.amount
+                    })
+                    .to_f32(),
+            })
+            .collect(),
     }
+}
+
+/// **A PER-GOOD LEDGER AS THE WIRE CARRIES IT** — a `BTreeMap` in id order, dropped where it holds
+/// nothing, because **empty means "no row" and never "zero of something"** (the `MaterialPayoff`
+/// contract every such list on this wire follows).
+fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<sim_runtime::MaterialPayoff> {
+    ledger
+        .iter()
+        .filter(|(_, amount)| **amount > 0.0)
+        .map(|(material_id, amount)| sim_runtime::MaterialPayoff {
+            material_id: material_id.clone(),
+            amount: *amount,
+        })
+        .collect()
 }
 
 /// **Publish one build-queue entry's SOURCE** — the whole of what a row of

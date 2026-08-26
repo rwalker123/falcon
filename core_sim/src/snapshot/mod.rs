@@ -1460,6 +1460,9 @@ mod tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1562,6 +1565,9 @@ mod tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1617,6 +1623,9 @@ mod tests {
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
+            last_material_need: Default::default(),
+            last_material_income: Default::default(),
+            material_shortfall_warned: Vec::new(),
             last_transfer_received: 0.0,
             last_transfer_sent: 0.0,
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
@@ -1664,6 +1673,10 @@ mod tests {
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
+            // …nor on the good-side shortfall, which is a fact about the SOURCE these row fixtures
+            // do not stand up.
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
@@ -1701,6 +1714,10 @@ mod tests {
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
+            // …nor on the good-side shortfall, which is a fact about the SOURCE these row fixtures
+            // do not stand up.
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
@@ -1716,6 +1733,10 @@ mod tests {
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
+            // …nor on the good-side shortfall, which is a fact about the SOURCE these row fixtures
+            // do not stand up.
+            Vec::new(),
+            Vec::new(),
         );
         assert_eq!(
             state.floor, 0.15,

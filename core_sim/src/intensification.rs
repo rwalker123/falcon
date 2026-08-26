@@ -80,6 +80,11 @@ use crate::{
     orders::FactionId,
     resources::DiscoveryProgressLedger,
     scalar::scalar_from_f32,
+    // The two settlement boundaries, borrowed rather than restated: a material draw of nothing is
+    // exactly `settle_scarce_store`'s "this claim asks for nothing", and a leg share of one is
+    // exactly its "the whole of a claim's demand". Two spellings of either would be twins free to
+    // drift.
+    systems::labor::{FULLY_SERVED, NOTHING_DEMANDED},
 };
 
 pub const BUILTIN_INTENSIFICATION_LADDER: &str = include_str!("data/intensification_ladder.json");
@@ -505,6 +510,20 @@ pub enum BuildGate {
     /// source (the row lapsed, the patch or herd left its registry), so there is no gate to report
     /// on and the honest cause is that nobody worked it.
     Unworked,
+    /// **THE STORE COULD NOT COVER A SINGLE UNIT OF WHAT THIS RUNG EATS**
+    /// (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12).
+    ///
+    /// ⛔ **IT IS NOT A CONJUNCT OF ANY RUNG'S `eligible`, AND MUST NEVER BECOME ONE.** There is no
+    /// affordability gate on a build — §2.5 retired the five verbs' own, and a build the store cannot
+    /// cover **queues and stalls** rather than being refused. So this is minted by the *countdown*
+    /// ([`BuildQuote::blocking_gate`]) off a coverage of zero, and the rung's own gate beside it is
+    /// still `Open`: the arm runs, banks `0 × accrual`, and wastes the crew's turn exactly as §2.5
+    /// says an indivisible supplier does.
+    ///
+    /// **The remedy is off the build line entirely**, like [`Self::Escapement`]'s: it is the bench,
+    /// or a trade. Naming the *good* is the whole point — *"raise this band's Builders role"* is
+    /// wrong advice the moment the missing thing is stone.
+    Materials,
 }
 
 impl BuildGate {
@@ -529,6 +548,7 @@ impl BuildGate {
             BuildGate::Undeclared => "undeclared",
             BuildGate::RingIdle => "ring_idle",
             BuildGate::Unworked => "unworked",
+            BuildGate::Materials => "materials",
         }
     }
 
@@ -591,6 +611,26 @@ pub struct BuildQuote {
     ///
     /// **Empty means the destination is already reached** — nothing left to climb.
     pub legs: Vec<BuildLeg>,
+    /// **THE SHARE OF THIS TURN'S MATERIAL PILE THE BAND'S STORE COULD PAY FOR**
+    /// (`docs/plan_standing_upkeep.md` §2.7) — the `s` that scales the accrual, carried here so the
+    /// **countdown scales with it too**.
+    ///
+    /// ⛔ **A FORECAST AND A TAKE MUST NOT DISAGREE.** The accrual has always been scaled; leaving
+    /// the countdown unscaled published *"≈20 turns"* for a build banking a quarter of its turn —
+    /// and it defeated the readout this slice exists to add, since the `⌃` track promises *"it will
+    /// stall at about a third"* and the queue then counted down as though it would not. So
+    /// [`Self::balance`] is struck at `supply × this − rot`: **a half-covered build honestly reads
+    /// about twice the turns**, with no new dial.
+    ///
+    /// **Zero publishes the existing blocked sentinel**, not a number — see
+    /// [`Self::blocking_gate`]. [`FULLY_SERVED`] for every rung that declares no material (which is
+    /// every one on the shipped ladder but `animal:pen`) and for every entry that is **not the
+    /// head**: a waiting entry's store draw is not decided until it is funded, and a quote for one
+    /// is a quote at the **full pool** by the same convention.
+    ///
+    /// **It is the coverage the settlement HANDED this entry**, never a fresh availability probe:
+    /// the store is settled once per turn, and a second read is a second answer free to disagree.
+    pub material_coverage: f32,
 }
 
 /// **ONE STEP OF A QUEUE ENTRY'S CLIMB** — a rung the entry has still to raise, and what it owes on
@@ -636,6 +676,19 @@ impl BuildQuote {
     /// `sow` on untended ground therefore quotes both legs from the first turn, which is the number
     /// the player is deciding against.
     pub fn turns(&self, builders: u32) -> Option<BuildTurns> {
+        if self.material_coverage <= NOTHING_DEMANDED && self.gate.holds() {
+            return Some(BuildTurns::Blocked);
+        }
+        // ⛔ **A BUILD THAT CANNOT DRAW A SINGLE UNIT OF WHAT IT EATS IS BLOCKED**, and it publishes
+        // the sentinel a head refused by its own gate publishes (`docs/plan_standing_upkeep.md`
+        // §4.6b / §2.7): nothing banks, so there is no finite date and a number would be a promise.
+        // Everything behind it chains off this exactly as it does off any other stall.
+        //
+        // **It is stated here rather than left to the arithmetic** because a zero-coverage balance
+        // is `−rot`, which reads `Holding` on the animal web (neither animal rung declares a
+        // `meter_decay`) and `Rotting` on the plant web — two different wrong answers for one state,
+        // and neither of them *"the store is empty"*.
+
         // **THE BANKED WORK STAYS IN THE PAIR, and the bar moves out to cover the whole climb.**
         // `build_turns_estimate` distinguishes *"nothing started"* from *"a meter carrying work"* by
         // `done`, and that is what mints `Holding` / `Rotting` — a meter the player has paid into has
@@ -648,6 +701,21 @@ impl BuildQuote {
             self.gate.holds(),
             builders,
         )
+    }
+
+    /// **WHY THIS ENTRY IS BLOCKED, IF IT IS** — the rung's own refusing conjunct where there is
+    /// one, and [`BuildGate::Materials`] where the rung's gate **holds** and the store is what
+    /// stopped it.
+    ///
+    /// **A blocked head must say WHY, down the whole queue.** That invariant is why this exists
+    /// rather than the chain pass reading [`Self::gate`] directly: a store-blocked head's rung gate
+    /// is `Open`, so reading it would publish a block with no cause — the exact silence that field
+    /// was added to end.
+    pub fn blocking_gate(&self) -> BuildGate {
+        if self.material_coverage <= NOTHING_DEMANDED && self.gate.holds() {
+            return BuildGate::Materials;
+        }
+        self.gate
     }
 
     /// Work still owed on the whole climb — `Σ legs`, or the rung's own remainder for a job whose
@@ -1345,6 +1413,87 @@ pub fn rung_span<F: Fn(RungKey) -> Option<f32>>(rung: RungKey, cost_at: &F) -> (
 /// payouts and upkeep demands, and it is enforced in [`LadderConfig::validate`] where a violation is
 /// a *config* fault — but some interpolated quantities are better when **lower** (the animal escape
 /// fraction runs pen `0.10` below pastoral `0.25`), and a runtime clamp would silently break those.
+/// **HOW SHORT A SOURCE'S KEEPING WAS THIS TURN, ACROSS BOTH CURRENCIES** — the fraction the decay
+/// rides, and it is the **WORST** of the work shortfall and each material's own
+/// (`docs/plan_standing_upkeep.md` §4.9 item 12).
+///
+/// ```text
+/// fraction = max( shortfall_fraction(work),  max over declared i of shortfall_fraction(materialᵢ) )
+/// ```
+///
+/// # ⛔ THE AMOUNTS ARE NEVER SUMMED, AND THE WORST IS WHY
+///
+/// Summing the two demands into one pair is exactly the papering-over item 12 forbids: a full store
+/// of hurdles would cover a band's missing hands and a fully-staffed keeping would cover an empty
+/// store. Taking the worst keeps the two separate and needs **no new dial** — fully staffed with no
+/// hurdles rots at the hurdles' rate, hurdles in hand with no hands rots at the hands' rate, short of
+/// both rots at the worse of the two.
+///
+/// **A material the bill does not name contributes nothing**, so a rung eating no material answers
+/// exactly the work fraction and every shipped plant rung is byte-identical.
+pub fn keeping_shortfall_fraction(
+    work_demand: f32,
+    work_supplied: f32,
+    material_demands: &BTreeMap<String, f32>,
+    material_supplied: &BTreeMap<String, f32>,
+) -> f32 {
+    let mut worst = upkeep_shortfall_fraction(work_demand, work_supplied);
+    for (id, demand) in material_demands {
+        let paid = material_supplied.get(id).copied().unwrap_or(FULLY_SUPPLIED);
+        worst = worst.max(upkeep_shortfall_fraction(*demand, paid));
+    }
+    worst
+}
+
+/// **IS ANY PART OF THIS SOURCE'S KEEPING UNMET** — the predicate the **single** neglect counter and
+/// the **single** `upkeep.grace_turns` ride (`docs/plan_standing_upkeep.md` §4.9 item 12).
+///
+/// A shortfall of *either* kind trips the rung's existing grace: the counter increments if **any** of
+/// them is short and resets only when **all** are met. There is deliberately no second counter and no
+/// second grace — a second dial is one free to disagree with the first.
+pub fn keeping_is_short(
+    work_demand: f32,
+    work_supplied: f32,
+    material_demands: &BTreeMap<String, f32>,
+    material_supplied: &BTreeMap<String, f32>,
+) -> bool {
+    if upkeep_shortfall(work_demand, work_supplied) > NO_UPKEEP_DEMAND {
+        return true;
+    }
+    material_demands.iter().any(|(id, demand)| {
+        let paid = material_supplied.get(id).copied().unwrap_or(FULLY_SUPPLIED);
+        upkeep_shortfall(*demand, paid) > NO_UPKEEP_DEMAND
+    })
+}
+
+/// **EVERY MATERIAL A SOURCE AT THIS STANDING CAN BE BILLED FOR** — the union of the ids named by the
+/// rung it **holds** and the rung it is **raising**, in id order.
+///
+/// ⛔ **BOTH ENDPOINTS, because [`interpolate`] reads both.** An id named by only the raising rung
+/// has an interpolated demand of `credit × rate` — positive from the first work banked — and an id
+/// named by only the held rung is billed at `(1 − credit) × rate` on the way up. A walk over one
+/// endpoint silently drops half the bill, and the shipped `animal:pen` rung is exactly that case:
+/// `animal:pastoral` beneath it names nothing at all.
+///
+/// It is the id list only; what each is owed comes from [`RungDef::upkeep_material_demand`] through
+/// [`interpolate`], so there is one arithmetic and this is one enumeration.
+pub fn standing_material_ids(standing: &RungStanding, ladder: &LadderConfig) -> Vec<String> {
+    let mut ids: Vec<String> = ladder
+        .rung(standing.held)
+        .upkeep_materials()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    if let Some(raising) = standing.raising {
+        for (id, _) in ladder.rung(raising).upkeep_materials() {
+            if !ids.iter().any(|held| held == id) {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    ids
+}
+
 pub fn interpolate<F: Fn(RungKey) -> f32>(standing: &RungStanding, value_at: F) -> f32 {
     let held = value_at(standing.held);
     match standing.raising {
@@ -1593,8 +1742,14 @@ impl RungSiteRequirement {
 }
 
 /// The **per-source build meter** dials of one rung: what it costs to climb it, in labor and in
-/// forgone yield.
-#[derive(Debug, Clone, Copy, Deserialize)]
+/// materials.
+///
+/// # ⛔ NOT `Copy`, and that is [`Self::materials`]'s doing
+///
+/// A `BTreeMap` field cannot be `Copy`, and the material pile is not an optional extra a derive may
+/// veto: work was never the whole price of a rung (`docs/plan_standing_upkeep.md` §2.7), so the pile
+/// belongs beside [`Self::work_cost`] and the `Copy` bound goes.
+#[derive(Debug, Clone, Deserialize)]
 pub struct RungBuild {
     /// **WHAT THIS RUNG COSTS, IN WORK UNITS** — the fixed size of the job
     /// (`docs/plan_unit_costed_work.md` §1). One unit is one worker-turn at the food peak with no
@@ -1633,6 +1788,23 @@ pub struct RungBuild {
     /// failure, in the time axis).
     #[serde(default)]
     pub grace_turns: Option<u32>,
+    /// **THE MATERIAL PILE — what raising this rung SWALLOWS**, by material id, in that material's
+    /// own units (`docs/plan_standing_upkeep.md` §2.7). A fence panel goes into the ground and stays
+    /// there; work is never the whole price.
+    ///
+    /// **It tracks the position exactly as [`Self::work_cost`] does** — the pile is drawn **in
+    /// proportion to the work banked**, not on completion, so a rung 30% raised has swallowed 30% of
+    /// every amount named here ([`RungDef::build_material_draw`]).
+    ///
+    /// **ABSENT ⇒ EMPTY, and an empty map and a missing key mean the same thing.** The overwhelming
+    /// majority of rungs declare no material at all, which is a statement rather than an omission —
+    /// there is no `null` spelling and no parked `0.0`. Every declared amount is validated finite and
+    /// `> 0` for the reason every rate on this record is: a `0.0` reads like a live dial while
+    /// meaning *"none"*, and the config already says *"none"* by saying nothing.
+    ///
+    /// A `BTreeMap` so the draw order — and therefore any published bill — is stable.
+    #[serde(default)]
+    pub materials: BTreeMap<String, f32>,
 }
 
 // **RETIRED: `RungBuild::decay_fraction_per_turn`** — the fraction of a rung's own cost bled per turn
@@ -1717,7 +1889,9 @@ impl UpkeepScale {
 /// ladder, where there is nothing built to hold. The whole block is optional for the same reason
 /// [`RungBuild::decay_fraction_per_turn`] is: a parked `0` says "no upkeep" while reading like a live
 /// dial, so the config states the absence by being absent.
-#[derive(Debug, Clone, Copy, Deserialize)]
+/// **⛔ NOT `Copy`** — [`Self::materials`] is a map, exactly as [`RungBuild::materials`] is; that
+/// record's own note carries the reasoning.
+#[derive(Debug, Clone, Deserialize)]
 pub struct RungUpkeep {
     /// **THE STANDING DEMAND, IN WORK UNITS PER TURN**, before [`Self::scaled_by`] scales it. One
     /// unit is one worker-turn at the food peak with no gear ([`PER_WORKER_OUTPUT`]) — the same
@@ -1749,6 +1923,21 @@ pub struct RungUpkeep {
     /// different questions — *how long may a build sit un-worked* and *how long may a standing cost go
     /// unpaid* — and a rung is free to be forgiving about one and strict about the other.
     pub grace_turns: u32,
+    /// **THE MATERIAL RATE — what HOLDING this rung swallows every turn**, by material id
+    /// (`docs/plan_standing_upkeep.md` §2.7). A road washes out and wants stone; a fence frays and
+    /// wants hurdles. The work half of the same bill is [`Self::work_per_turn`].
+    ///
+    /// **It reads the SAME [`Self::scaled_by`] the work term does** — one rule, two currencies. A pen
+    /// holding twice the herd mends twice the fence, exactly as it takes twice the hands
+    /// ([`RungDef::upkeep_material_demand`]), and it interpolates over the source's standing like
+    /// every other rung quantity.
+    ///
+    /// **ABSENT ⇒ EMPTY**, on [`RungBuild::materials`]'s own terms: no `null` spelling, no parked
+    /// `0.0`, every declared amount validated finite and `> 0`, and — like `work_per_turn` — at least
+    /// the rung below's for each id, since the demand interpolates as a delta and a negative delta is
+    /// a rung that is *cheaper* half-raised than the finished rung under it.
+    #[serde(default)]
+    pub materials: BTreeMap<String, f32>,
 }
 
 /// **WHAT AN UNMET DEMAND COSTS A RUNG WHOSE PENALTY IS A METER BLEED** — the third and fourth
@@ -2083,9 +2272,12 @@ impl RungDef {
         workers: u32,
         gear_per_worker: f32,
         rot_this_turn: f32,
+        material_coverage: f32,
     ) -> f32 {
         self.build_supply(improvement, eligible, workers, gear_per_worker)
-            .map_or(NO_BUILD_BALANCE, |supply| supply - rot_this_turn)
+            .map_or(NO_BUILD_BALANCE, |supply| {
+                supply * material_coverage.clamp(NOTHING_DEMANDED, FULLY_SERVED) - rot_this_turn
+            })
     }
 
     /// **WHAT THIS BUILD CREW SUPPLIES THIS TURN** — or `None` when this rung is not the one this
@@ -2120,6 +2312,49 @@ impl RungDef {
         self.build
             .as_ref()
             .map(|build| build.work_cost * cost_multiplier)
+    }
+
+    /// **The build seam — the MATERIAL side. Every material this rung's pile names**, with the whole
+    /// amount raising it swallows (`docs/plan_standing_upkeep.md` §2.7). Empty for a rung with
+    /// nothing to build and for the overwhelming majority that build with work alone.
+    ///
+    /// **It carries NO `cost_multiplier`.** A species' `taming_cost_multiplier` prices the *job* —
+    /// a Steppe Runner is five times the gentling — and there is no reading under which it is five
+    /// times the fence panels. The pile is the pile.
+    pub fn build_materials(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.build
+            .as_ref()
+            .into_iter()
+            .flat_map(|build| build.materials.iter())
+            .map(|(id, amount)| (id.as_str(), *amount))
+    }
+
+    /// **WHAT A LEG OF THIS BUILD DRAWS OF ONE MATERIAL** — the pile times the share of the leg this
+    /// turn's accrual covers:
+    ///
+    /// ```text
+    /// wanted = pile × (accrual_within_this_leg / leg_width)
+    /// ```
+    ///
+    /// **The pile is spent as the meter climbs, never on completion** (§2.7): a road 30% raised has
+    /// swallowed 12 of its 40 stone. [`NO_MATERIAL_DRAW`] for a rung that declares nothing, for a
+    /// material it does not name, and for a degenerate leg — a `leg_width` of zero is a rung with no
+    /// span left to buy, so there is nothing to draw against.
+    ///
+    /// **`leg_width` is THIS SOURCE'S priced width**, the same number `forage::patch_build_legs`
+    /// computes, so a Field leg quoted at a share multiplier draws its pile over that width rather
+    /// than the ladder's declared one. A queue entry spanning two legs asks each leg's own rung.
+    pub fn build_material_draw(&self, material: &str, accrual: f32, leg_width: f32) -> f32 {
+        if leg_width <= 0.0 || accrual <= 0.0 {
+            return NOTHING_DEMANDED;
+        }
+        let Some(build) = self.build.as_ref() else {
+            return NOTHING_DEMANDED;
+        };
+        let Some(pile) = build.materials.get(material) else {
+            return NOTHING_DEMANDED;
+        };
+        pile * (accrual / leg_width).clamp(NOTHING_DEMANDED, FULLY_SERVED)
     }
 
     /// **The build seam — the neglect grace.** How many consecutive un-worked turns this rung
@@ -2187,6 +2422,38 @@ impl RungDef {
         self.upkeep.as_ref().map_or(NO_UPKEEP_DEMAND, |upkeep| {
             upkeep.work_per_turn * upkeep.scaled_by.factor(source_measure)
         })
+    }
+
+    /// **The upkeep seam, IN A SECOND CURRENCY — what holding this rung swallows of ONE MATERIAL per
+    /// turn**: `rate × scaled_by(source_measure)` (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// ⛔ **IT READS THE SAME [`RungUpkeep::scaled_by`] THE WORK TERM READS.** A pen holding twice
+    /// the herd mends twice the fence, exactly as it takes twice the hands — that is the whole of
+    /// §2.7's *"the work half's own behaviour, restated in a second currency"*, and it is what keeps
+    /// the two terms from needing two scale primitives that could disagree.
+    ///
+    /// [`NO_UPKEEP_DEMAND`] for a rung that declares no upkeep at all, and for one whose upkeep does
+    /// not name this material — which is every rung on the shipped ladder but `animal:pen`.
+    pub fn upkeep_material_demand(&self, material: &str, source_measure: f32) -> f32 {
+        self.upkeep.as_ref().map_or(NO_UPKEEP_DEMAND, |upkeep| {
+            upkeep
+                .materials
+                .get(material)
+                .map_or(NO_UPKEEP_DEMAND, |rate| {
+                    rate * upkeep.scaled_by.factor(source_measure)
+                })
+        })
+    }
+
+    /// **Every material this rung's standing upkeep names**, with its per-turn rate *before*
+    /// [`RungUpkeep::scaled_by`] scales it — the id list a caller walks to ask
+    /// [`Self::upkeep_material_demand`] one material at a time. Empty for a rung with no upkeep.
+    pub fn upkeep_materials(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.upkeep
+            .as_ref()
+            .into_iter()
+            .flat_map(|upkeep| upkeep.materials.iter())
+            .map(|(id, rate)| (id.as_str(), *rate))
     }
 
     /// **Does this rung cost anything to HOLD?** — the predicate the ladder's own validation and the
@@ -2605,12 +2872,18 @@ impl LadderConfig {
         // **source's** live bleed ([`RungDef::meter_rot`] on the meter at risk), so a quote and the
         // card beside it describe one number. On ground nobody has started there is nothing banked
         // and therefore nothing to rot, so the answer is `work_cost / the pool's supply`.
+        // **A PROJECTION IS QUOTED AT FULL MATERIAL COVERAGE**, deliberately: it answers *"what
+        // would it cost to start"* for a rung this source is **not** building, so no settlement has
+        // handed it a share and there is none to read. The compose sheet's own material line is the
+        // `⌃` track's `buildMaterialCost` read against the band's `materialStore`, which is the
+        // surface that says *"you have 12 hurdles; it will stall at about a third"*.
         let balance = rung.build_balance(
             rung.verb_improvement(),
             gate.holds(),
             workers,
             gear_per_worker,
             rot_this_turn,
+            FULLY_SERVED,
         );
         // **A quoted crew that cannot out-raise the rot never gets there** — the same standing fact
         // a running build states, so a projection says so rather than withholding the line. And a
@@ -2625,6 +2898,7 @@ impl LadderConfig {
             // legs and `work_remaining` falls back to this rung's own remainder. It is a *"what would
             // it cost to start"* answer, and the player has declared no destination for it to chain to.
             legs: Vec::new(),
+            material_coverage: FULLY_SERVED,
         })
     }
 
@@ -2840,6 +3114,79 @@ impl LadderConfig {
                 ),
             });
         }
+        // **THE SAME RULE, PER MATERIAL ID** — the material rate interpolates over the standing on
+        // exactly the shape the work rate does, so a rung naming *less* of a good than the rung
+        // under it gives the identical negative derived delta. **An absent id is `0.0`**, which is
+        // what makes the rule total: a rung that stops eating hurdles is claiming a negative
+        // remainder for the half-raised positions between the two.
+        for (id, rate) in &upkeep.materials {
+            let beneath = below.materials.get(id).copied().unwrap_or(NO_UPKEEP_DEMAND);
+            if *rate < beneath {
+                return Err(LadderConfigError::Invalid {
+                    field: where_.to_string(),
+                    constraint: "swallow at least as much of each material per turn as the rung \
+                                 below it — a rung that holds for less makes the derived delta \
+                                 negative, exactly as it does on the work term"
+                        .to_string(),
+                    value: format!(
+                        "upkeep.materials[{id}] = {rate} against '{requires}' at {beneath}"
+                    ),
+                });
+            }
+        }
+        // And the other direction: an id the rung BELOW names and this one does not is that same
+        // negative delta written by omission, which the loop above cannot see.
+        for (id, beneath) in &below.materials {
+            if !upkeep.materials.contains_key(id) {
+                return Err(LadderConfigError::Invalid {
+                    field: where_.to_string(),
+                    constraint: "name every material the rung below it swallows — dropping an id \
+                                 states a rate of zero against a positive one beneath, which is \
+                                 the negative delta stated by omission"
+                        .to_string(),
+                    value: format!(
+                        "upkeep.materials[{id}] absent against '{requires}' at {beneath}"
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **EVERY MATERIAL THE LADDER NAMES MUST EXIST** — the cross-config reconciliation, run at boot
+    /// where the ladder and the materials table are both in scope (`core_sim/src/lib.rs`), on
+    /// `EquipmentConfig::validate_against_materials`' own pattern.
+    ///
+    /// It cannot live in [`Self::validate`]: that runs inside `from_json_str`, on every load path,
+    /// and a `LadderConfig` holds no materials table. A rung naming `hurdels` would otherwise parse,
+    /// validate, and then draw nothing forever — the improvement raised for free and held for free,
+    /// silently, which is the exact failure every bound in this module guards against.
+    pub fn validate_against_materials(
+        &self,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Result<(), LadderConfigError> {
+        for rung in &self.rungs {
+            let where_ = format!("rungs[{}:{}]", rung.branch.as_str(), rung.id);
+            let named = rung
+                .build_materials()
+                .map(|(id, _)| ("build.materials", id))
+                .chain(
+                    rung.upkeep_materials()
+                        .map(|(id, _)| ("upkeep.materials", id)),
+                );
+            for (block, id) in named {
+                if materials.material(id).is_none() {
+                    return Err(LadderConfigError::Invalid {
+                        field: format!("{where_}.{block}[{id}]"),
+                        constraint: "name a material the materials table declares — a rung that \
+                                     eats a material nobody defines draws nothing, for ever, with \
+                                     no fault reported anywhere"
+                            .to_string(),
+                        value: "unknown material".to_string(),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -3037,6 +3384,34 @@ fn validate_build(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
             });
         }
     }
+    validate_material_amounts(&build.materials, where_, "build.materials")
+}
+
+/// **THE MATERIAL AMOUNTS ON A PILE OR A RATE, bounded exactly as the work terms beside them are.**
+/// One function for both blocks, because the rule is the same and a second copy could only drift.
+///
+/// Finite and `> 0` per entry: a parked `0.0` reads like a live dial while meaning *"none"*, and the
+/// config already says *"none"* by leaving the id out entirely — the same statement
+/// [`RungUpkeep::work_per_turn`]'s own bound makes, and the retired `decay_fraction_per_turn`'s
+/// before it. **The id itself is resolved against the materials table**, which this validator cannot
+/// see — that is [`LadderConfig::validate_against_materials`].
+fn validate_material_amounts(
+    materials: &BTreeMap<String, f32>,
+    where_: &str,
+    field: &str,
+) -> Result<(), LadderConfigError> {
+    for (id, amount) in materials {
+        if !amount.is_finite() || *amount <= 0.0 {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.{field}[{id}]"),
+                constraint: "swallow a positive, finite amount — a rung that eats none of a \
+                             material says so by not naming it, rather than with a `0` that reads \
+                             like a live dial"
+                    .to_string(),
+                value: format!("{amount}"),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -3113,7 +3488,7 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
             });
         }
     }
-    Ok(())
+    validate_material_amounts(&upkeep.materials, where_, "upkeep.materials")
 }
 
 /// **THE knowledge gate.** Does `faction` know `discovery` well enough to act on it — i.e. has its
@@ -3981,6 +4356,8 @@ mod tests {
                 keepers,
                 per_worker,
                 ONE_SOURCE_LOAD,
+                // This fixture is about the GEAR term; the store is not what it varies.
+                FULLY_SERVED,
             )
         };
 

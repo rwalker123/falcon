@@ -844,6 +844,48 @@ pub struct HerdTelemetryState {
     /// untouched herd reads `animal:wild`. Appended (append-only).
     #[serde(default)]
     pub current_rung: String,
+    /// **THE WHOLE MATERIAL PILE THE RUNG THE `⌃` TRACK WOULD OFFER SWALLOWS**, per material id
+    /// (`docs/plan_standing_upkeep.md` §2.7) — the second currency beside that rung's `*_work_cost`.
+    ///
+    /// `work_cost`'s own rule: resolved at capture off the **ladder** and published whether or not a
+    /// build is in flight, because a compose sheet has to quote a price before the player commits.
+    /// The pile is drawn **in proportion to the work banked** rather than on completion, so a rung a
+    /// third raised has swallowed a third of this.
+    ///
+    /// **Empty is "no row", never zero** — every rung on the shipped ladder but `animal:pen`.
+    #[serde(default)]
+    pub build_material_cost: Vec<MaterialPayoff>,
+    /// **WHAT HOLDING THIS SOURCE'S OWN RUNG SWALLOWS PER TURN**, per material — interpolated on the
+    /// position and scaled by the **same** `scaled_by` the work demand reads, so a pen holding twice
+    /// the herd mends twice the fence. It is the **stamped** bill the keeping was judged against,
+    /// exactly as `upkeep_demand` beside it is.
+    #[serde(default)]
+    pub upkeep_material_demand: Vec<MaterialPayoff>,
+    /// **WHAT THE BAND'S STORE ACTUALLY PAID** toward it, per material — the good-side twin of
+    /// `upkeep_supplied`. Both terms are published rather than their difference, on the work trio's
+    /// own rule.
+    ///
+    /// ⛔ **A SHORTFALL OF EITHER KIND TRIPS THE SAME GRACE.** There is one neglect counter and one
+    /// `upkeep.grace_turns`; the decay rides the **worst** of the work fraction and each good's, and
+    /// the amounts are never summed — a full store must not paper over missing hands.
+    #[serde(default)]
+    pub upkeep_material_supplied: Vec<MaterialPayoff>,
+    /// **WHAT EACH ANIMAL RUNG WOULD COST TO HOLD IN GOODS, PER TURN** — the material twin of the
+    /// [`Self::tame_upkeep_demand`] / [`Self::corral_upkeep_demand`] pair, on the plant twin's own
+    /// rules: the rung's **rate** rather than the stamped bill, resolved **live** at capture, and
+    /// scaled by this herd's own keeper-load.
+    ///
+    /// ⛔ **THIS PAIR IS WHY THE FIELD EXISTS.** `tame_upkeep_material_demand` is always empty
+    /// (`animal:pastoral` names no material) and `corral_upkeep_material_demand` names `hurdles` —
+    /// and a **pastoral** herd is the only source a `⌃` track ever offers the Pen rung from. Its
+    /// *current* rung declares nothing, so the stamped [`Self::upkeep_material_demand`] is empty on
+    /// exactly the row where the player needs the number. Without this the material half of that
+    /// aside is unreachable in play.
+    #[serde(default)]
+    pub tame_upkeep_material_demand: Vec<MaterialPayoff>,
+    /// The rung-3 twin of [`Self::tame_upkeep_material_demand`], and the one that carries `hurdles`.
+    #[serde(default)]
+    pub corral_upkeep_material_demand: Vec<MaterialPayoff>,
 }
 
 impl Default for HerdTelemetryState {
@@ -941,6 +983,11 @@ impl Default for HerdTelemetryState {
             // hand-built fixture. Naming `animal:wild` here would put a second spelling of the
             // ladder in this crate, which is the duplication the field exists to remove.
             current_rung: String::new(),
+            build_material_cost: Vec::new(),
+            upkeep_material_demand: Vec::new(),
+            upkeep_material_supplied: Vec::new(),
+            tame_upkeep_material_demand: Vec::new(),
+            corral_upkeep_material_demand: Vec::new(),
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1557,6 +1604,55 @@ pub struct ForagePatchState {
     /// Appended (append-only).
     #[serde(default)]
     pub current_rung: String,
+    /// **THE WHOLE MATERIAL PILE THE RUNG THE `⌃` TRACK WOULD OFFER SWALLOWS**, per material id
+    /// (`docs/plan_standing_upkeep.md` §2.7) — the second currency beside that rung's `*_work_cost`.
+    ///
+    /// `work_cost`'s own rule: resolved at capture off the **ladder** and published whether or not a
+    /// build is in flight, because a compose sheet has to quote a price before the player commits.
+    /// The pile is drawn **in proportion to the work banked** rather than on completion, so a rung a
+    /// third raised has swallowed a third of this.
+    ///
+    /// **Empty is "no row", never zero** — every rung on the shipped ladder but `animal:pen`.
+    #[serde(default)]
+    pub build_material_cost: Vec<MaterialPayoff>,
+    /// **WHAT HOLDING THIS SOURCE'S OWN RUNG SWALLOWS PER TURN**, per material — interpolated on the
+    /// position and scaled by the **same** `scaled_by` the work demand reads, so a pen holding twice
+    /// the herd mends twice the fence. It is the **stamped** bill the keeping was judged against,
+    /// exactly as `upkeep_demand` beside it is.
+    #[serde(default)]
+    pub upkeep_material_demand: Vec<MaterialPayoff>,
+    /// **WHAT THE BAND'S STORE ACTUALLY PAID** toward it, per material — the good-side twin of
+    /// `upkeep_supplied`. Both terms are published rather than their difference, on the work trio's
+    /// own rule.
+    ///
+    /// ⛔ **A SHORTFALL OF EITHER KIND TRIPS THE SAME GRACE.** There is one neglect counter and one
+    /// `upkeep.grace_turns`; the decay rides the **worst** of the work fraction and each good's, and
+    /// the amounts are never summed — a full store must not paper over missing hands.
+    #[serde(default)]
+    pub upkeep_material_supplied: Vec<MaterialPayoff>,
+    /// **WHAT EACH PLANT RUNG WOULD COST TO HOLD IN GOODS, PER TURN** — the material twin of the
+    /// [`Self::cultivation_upkeep_demand`] / [`Self::field_upkeep_demand`] pair, read beside them by
+    /// the same rung-picking rule and quoted for the same reason: the `⌃` track's third aside prices
+    /// the rung it is **offering**, before the player commits.
+    ///
+    /// ⛔ **IT IS THE RUNG'S RATE, NOT THE STAMPED BILL.** [`Self::upkeep_material_demand`] answers
+    /// *"what was this source billed this turn"* through the rung it stands **on**; this answers
+    /// *"what would this rung cost to hold"* for a rung it may not have reached. On a source
+    /// mid-climb the two **disagree**, and that is correct — the work pair has exactly that
+    /// relationship.
+    ///
+    /// **Resolved LIVE at capture** rather than off the stamp: the stamp exists to stop an
+    /// interpolated demand moving across the Population→Logistics carry, and a pre-commit quote is
+    /// carried nowhere. Reading the stamp would publish an empty list for every rung the source is
+    /// not already on — which is every rung a track ever offers.
+    ///
+    /// **Scaled by the same tender-load measure the bill is**, since the rung reads one `scaled_by`
+    /// for both currencies. **Empty is "no row", never zero** — which is both plant rungs today.
+    #[serde(default)]
+    pub cultivation_upkeep_material_demand: Vec<MaterialPayoff>,
+    /// The rung-3 twin of [`Self::cultivation_upkeep_material_demand`].
+    #[serde(default)]
+    pub field_upkeep_material_demand: Vec<MaterialPayoff>,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from

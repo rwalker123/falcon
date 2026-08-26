@@ -210,7 +210,7 @@ than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a
   bounds verbatim: a grade *replaces* a number rather than adding one, and an excellent snare that
   dropped `max_body_mass` would quietly become a mammoth trap.
 - **A recipe with no `grades` block at all is a real statement**, not a missing value: five ship that
-  way (`hurdles`, `hoes`, `wayfinding`, and the three bench tools), because their payload is *shared*
+  way (`crook`, `hoes`, `wayfinding`, and the three bench tools), because their payload is *shared*
   rather than tier-bought (the husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a
   bench stat nothing yet grades. The old shape spelled that as three empty rungs each — fifteen inert
   config rows saying by convention what absence now says outright.
@@ -584,7 +584,7 @@ so *"tools are earned"* survives the flip by construction rather than by the old
 |---|---|
 | `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }` — plus the three **uncrafted** luxury crops **`tobacco`** / **`tea`** / **`grape`**, which name **no `craft`, no `hand_working` and no `varieties`** and carry the provisional axes `potency`/`keeping` (arc #527; see "A material with NO CRAFT is one nothing works"). Wood, stone, clay and metal still have no producer until the minerals arc, and an unreachable material is dead content the catalogue publishes — the three luxury crops are *uncrafted* rather than unreachable, which is a different thing. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material stating a **blank** craft (omit the key to say nothing works it — an empty string would put an unnameable craft in `crafts_declared_by`) or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
 
-| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Eleven ship: the eight kit items (`sled` 6 hide + 2 fibre / work 8; `hurdles` 4 hide + 3 fibre / 7; `hoes` 1 bone + 2 fibre / 5 — **ungraded**, deliberately, so plant and animal build gear stay consistent until both gain grades together (issue #561); `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the DERIVED anchor band — disagrees with the item's default tier** (see "ONE QUALITY LADDER"). |
+| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Eleven ship: **ten make EQUIPMENT and one makes a MATERIAL** — `hurdles` is the material (4 wood + 2 hide / work 7, reading hide's `suppleness`, so its bench is `tanning`; see "`hurdles` ARE A MATERIAL"), and the kit items are (`sled` 6 hide + 2 fibre / work 8; `crook` 1 bone + 2 fibre / 5, the animal web's build tool, reading bone's `length`; `hoes` 1 bone + 2 fibre / 5 — **ungraded**, deliberately, so plant and animal build gear stay consistent until both gain grades together (issue #561); `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the DERIVED anchor band — disagrees with the item's default tier** (see "ONE QUALITY LADDER"). |
 
 The two **yield edges** are rows on the rosters that own them — `fauna_config.json`'s
 `hunt_yield.materials` (`fauna.md`) and `flora_config.json`'s `yield.materials` (`flora.md`) — and
@@ -598,6 +598,68 @@ worn and counted exactly like a spear, which is what makes *"band-local, consuma
 > a material would therefore install cleanly and panic the **next New Game**, which is precisely the
 > failure that module exists to prevent. Band seams, costs, `work` and grade seams are safe; an id is
 > not.
+
+## `hurdles` ARE A MATERIAL, AND `wood` IS THE ROSTER'S ONE STOCKED-AT-SPAWN ROW
+
+**The test is whether the thing comes home with you** (`docs/plan_standing_upkeep.md` §2.7). A hoe
+goes to the next field, so it is **kit**. A fence **stays in the ground**, so it is **material**: it
+is spent by the `animal:pen` rung's build pile and its upkeep rate, and no number of hands replaces
+it. `hurdles` therefore left `equipment.json` for `materials.json`, and the recipe's output row went
+from `equipment` to `material` — the **only** shipped recipe that makes a material.
+
+- **`hurdles` declare no `craft` and no `hand_working`** — the luxury crops' shape. `craft` names the
+  craft that works a material **as an input**, and nothing takes hurdles as an input: they are
+  consumed by an *improvement*, not by a bench. They are **uncrafted, not unreachable**, and the
+  distinction is the same one `tobacco` / `tea` / `grape` already rest on.
+- **`wood` is new, and it is `weaving`** — the hurdles recipe *is* a weave, and minting a
+  `wood_working` would have needed a discovery id, a `lesson_costs` entry and a bench tool, none of
+  which that slice was. Its axes are the roster's own opposed pair: a **hard** wood resists and will
+  not bend, a **pliant** one weaves into withies and splits into long lengths.
+- ⛔ **NOTHING READS EITHER PAIR'S AXES, AND THAT IS DELIBERATE.** `stoutness` / `span` on hurdles and
+  `hardness` / `pliancy` on wood exist because `RecipeOutput::material` and `MaterialDef` **require** a
+  material to be rated. A quality axis a pen *read* would invite *"a better fence contains better"* —
+  the containment-scaling §4.9 item 12 defers — so no effect is wired to any of the four.
+
+### THE HURDLES RECIPE KEEPS ITS HIDE, AND THE `craft` FOLLOWS THE `reads`
+
+The recipe is **4 wood + 2 hide**, `work 7`, reading hide's **`suppleness`** — and the hide is
+**load-bearing**. It is the book's **only** reader of that axis, and `_comment_reads_pairs`' pillar is
+that each material's two axes are split between two recipes wanting opposite ends. A wood-only hurdle
+orphans `suppleness`, makes the Thunder Mammoth strictly the best hide, and deletes a decision the
+crafting arc built on purpose. A hurdle is woven withies **lashed with hide thong**, so keeping it is
+both true and what preserves the pillar.
+
+> **⛔ AND THAT IS WHY THE RECIPE'S `craft` IS STILL `tanning`, NOT `weaving`.** `craft` is **derived**
+> — `RecipeDef::bench_material()` is the input row carrying `reads`, and `validate_against` rejects
+> any `craft` but that material's own. So *"the hurdles are a weave off wood"* is true of the physical
+> object and false of the **bench**: reading `suppleness` makes hide the bench material, and hide's
+> craft is Tanning. **The two cannot both be satisfied** — a `pliancy` reading would make it `weaving`
+> and orphan hide's axis — and the pillar wins. Wood's own two axes therefore have no reader today,
+> which is the same standing hurdles' two have.
+
+### `MaterialDef::start_stock` — the roster's one spawn-stocked row
+
+**`StartKit.materials` was never a stock.** It is the materials *table*, carried into the spawn so an
+equipment batch can resolve its anchor grade through `recipes.anchor_grade_for_item`; **nothing in
+`StartKit` deposited a material batch**, and a spawned band's `LocalStore.materials` was empty. So the
+material half of the standing upkeep **added the path** rather than calling one.
+
+`MaterialStartStock { per_worker, characteristics }` is a `#[serde(default)]` block on `MaterialDef`,
+and **only `wood` declares one** (`per_worker 6.0`). It is seeded by
+`worldgen::spawn_population_entity`, off the **same floored worker count** the equipment stock is
+sized against, so *"a party's worth"* means one thing in that function; the readings must state
+**exactly** the material's declared axes, through the same `exact_axes_fault` a yield edge's row goes
+through.
+
+- **The lever lives on the MATERIAL rather than in a start profile** — the roster is where a material
+  is described, one home per fact.
+- **`per_worker` is a CONFIG LEVER, not a constant**: until forest foraging lands it is the only thing
+  between a band and its first pen, so it has to be tunable without a rebuild.
+- **It is seeded at the SPAWN rather than in `apply_starting_inventory_effects`** because it needs no
+  demographic split — the party's own worker count is the whole of it — and the nearby comment saying
+  brackets and larder are seeded at Startup stays true.
+- ⛔ **Wood has no producer, deliberately**, and that has its own tracker item. It is the one row on
+  this roster that is *unproduced* and still reachable.
 
 ## The shipped roster is authored so "there is no best hide" is REAL
 

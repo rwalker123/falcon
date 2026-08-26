@@ -536,6 +536,14 @@ pub fn build_headless_app() -> App {
     let flora_handle = flora_config::FloraConfigHandle::new(flora_config);
     let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
     let (ladder_config, ladder_metadata) = intensification::load_intensification_ladder_from_env();
+    // **The ladder's MATERIAL half is reconciled against the materials table**, the same
+    // `UnknownItem` debt the equipment roster and the two food webs' yield edges pay: a rung whose
+    // pile or upkeep names a material that does not exist would otherwise parse, validate, and then
+    // be raised and held for free for ever with no fault reported anywhere
+    // (`docs/plan_standing_upkeep.md` §2.7).
+    if let Err(err) = ladder_config.validate_against_materials(&materials_config) {
+        panic!("intensification ladder does not reconcile with the materials table: {err}");
+    }
     let ladder_handle = intensification::LadderConfigHandle::new(ladder_config);
     let (sedentarization_config, sedentarization_metadata) =
         sedentarization_config::load_sedentarization_config_from_env();

@@ -210,6 +210,18 @@ fn create_populations<'a>(
                             builder,
                             &assignment.material_yield,
                         );
+                        // **THE GOOD-SIDE SHORTFALL PAIR**, built here for the same reason: the
+                        // child vectors have to close before the parent table opens.
+                        let material_upkeep_demand =
+                            crate::codec::subsistence::create_material_payoffs(
+                                builder,
+                                &assignment.material_upkeep_demand,
+                            );
+                        let material_upkeep_supplied =
+                            crate::codec::subsistence::create_material_payoffs(
+                                builder,
+                                &assignment.material_upkeep_supplied,
+                            );
                         // The crop this crew asked for — `None` rather than an empty string, the
                         // `fauna_id`/`improvement` convention: an absent string is "no selection",
                         // which is what `""` means here.
@@ -270,6 +282,10 @@ fn create_populations<'a>(
                                 // cash Field or an inedible quarry pays into. Appended last. An
                                 // EMPTY vector is "no row", never "zero".
                                 materialYield: Some(material_yield),
+                                // THE GOOD-SIDE SHORTFALL — both terms, never their difference, so
+                                // a work-row note can name the missing GOOD. Appended last.
+                                materialUpkeepDemand: Some(material_upkeep_demand),
+                                materialUpkeepSupplied: Some(material_upkeep_supplied),
                                 // `improvementWorkers` and `maintainWorkers` are both `(deprecated)`
                                 // slots and are no longer written: the build and the keeping are
                                 // band-level standing roles (`docs/plan_standing_upkeep.md` §2.5)
@@ -653,6 +669,17 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_vector(&cohort.pending_reveal_y))
             };
+            // **THE STANDING MATERIAL BILL'S THREE VECTORS**, built before the parent table opens.
+            let material_upkeep_need = crate::codec::subsistence::create_material_payoffs(
+                builder,
+                &cohort.material_upkeep_need,
+            );
+            let material_upkeep_income = crate::codec::subsistence::create_material_payoffs(
+                builder,
+                &cohort.material_upkeep_income,
+            );
+            let material_store =
+                crate::codec::subsistence::create_material_payoffs(builder, &cohort.material_store);
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None
@@ -830,6 +857,12 @@ fn create_populations<'a>(
                     fodderNeed: cohort.fodder_need,
                     fodderIncome: cohort.fodder_income,
                     turnsOfFodder: cohort.turns_of_fodder,
+                    // The band's STANDING MATERIAL BILL — appended last, always written. The sim
+                    // sums it and a client must not: herd rows are fog-filtered, so a client-side
+                    // total drops a pen out of sight the band still owes for.
+                    materialUpkeepNeed: Some(material_upkeep_need),
+                    materialUpkeepIncome: Some(material_upkeep_income),
+                    materialStore: Some(material_store),
                 },
             )
         })
