@@ -2546,7 +2546,7 @@ something the source already publishes:**
 | rule | what it reads | who it withholds |
 |---|---|---|
 | **the weapon cannot reach the quarry** | `attack_against(kit, body_mass, bare)` through `SourceForecast.hunt_gate_model_at` | a snare against a Red Deer; anything bare-handed against a defended species |
-| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled`, **and** `kit_uses(…, build_work_per_worker)` against `RungGates.hunt_rung_remains` | the husbandry kit on a herd that is neither penned nor able to climb |
+| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled` **and** `kit_reaches_a_wild_hunt` (does it beat bare on `attack` or `hunt_carry`?), plus `kit_uses(…, build_work_per_worker)` against `RungGates.hunt_rung_remains` | **nothing on the shipped roster** — see "A SLED IS NOT PEN GEAR" below |
 
 - **`none` is NEVER greyed, and nothing spells its id to arrange that.** `kit_supplies_any` asks
   whether the kit beats the roster's bare-handed tier on *any* axis; a kit that beats none of them
@@ -2577,17 +2577,57 @@ something the source already publishes:**
 > while still holding this herd.
 >
 > **Pinned as a pairing, on the two species' real ceilings** (`ui_preview`, `compose_rungs`): a **Red
-> Deer** is `wild`-ceiling and never climbs, so the handling kit is still withheld there for its own
-> reason; a **Rabbit Warren** pens, so the same kit on the same roster in the same run is offered. A
-> rule that simply stopped greying anything fails the deer half.
+> Deer** is `wild`-ceiling and never climbs, so the handling kit is still withheld there — on the
+> WEAPON rule, since it carries a sled and no spear; a **Rabbit Warren** pens, so the same kit on the
+> same roster in the same run is offered. A rule that simply stopped greying anything fails the deer
+> half.
 
 - **A PEN is exempt from the weapon rule**, gated on the same `has_engagement_stage` predicate the
   gate LINE is mounted behind: a penned animal is slaughtered rather than stalked. Without it a
   corralled Red Deer would withhold every kit but the spear line.
-- **The pen rule is asked FIRST**, so a kit states the same reason on every quarry. The husbandry kit
-  fails both tests on a Red Deer — it carries no weapon either — and *"what it adds is only used on a
-  penned herd"* is the fact about the KIT, where *"nothing it carries can bring down a Red Deer"* is a
-  fact about the deer that would then go unsaid on a rabbit, where the same kit is withheld anyway.
+- **The pen rule is asked before the weapon rule**, so a kit that trips it states the same reason on
+  every quarry: *"what it adds is only used on a penned herd"* is a fact about the KIT, where
+  *"nothing it carries can bring down a Red Deer"* is a fact about the deer and would go unsaid on a
+  rabbit. **The husbandry kit is not that kit any more** — it carries a sled, so it reaches a wild
+  hunt on the haul axis and is greyed on a Red Deer by the WEAPON rule, which is what
+  `equipment.json`'s `_comment_kits` has always said of a bundle with no `attack`.
+> #### A SLED IS NOT PEN GEAR, AND FOR ONE RELEASE THE PICKER SAID IT WAS
+>
+> Reported from play: the ASSIGN HUNTERS sheet on a wild Red Deer greyed **all three** hunt kits with
+> one sentence — *"what it adds is only used on a penned herd"* — leaving `No kit` the only selectable
+> entry, so a wild hunt could not be equipped at all.
+>
+> The pen rule ran `kit_uses(pen_carry) and not penned`, which was a **proxy** for the rule the doc
+> above states — *the kit's contribution is an axis this source cannot read* — and the proxy held only
+> while the one item declaring `pen_carry` was pen-only gear. `hurdles` left the roster as equipment
+> and **both sides of `pen_carry` moved onto the `sled`** (`docs/plan_standing_upkeep.md` §4.9 item
+> 12; the crook took the build axis, the sled took the pen pair), and every hunt kit carries a
+> sled — so the proxy became true of **spears**. The fix asks the question directly:
+> `KitRoster.kit_reaches_a_wild_hunt` — does the kit beat the bare-handed tier on `attack` **or** on
+> `hunt_carry`? — and the pen rule withholds only when it does neither.
+>
+> **THE COLLAPSED DEFAULT WAS THE SYMPTOM, NOT A SECOND DEFECT.** `resolve_selection` skips a withheld
+> kit at every step, so with every kit but the null one greyed its `selectable` list held `none`
+> alone and the sheet opened on it — while the picker went on marking `Stalking kit (default)`, which
+> is `default_kit_for` and reads the ROSTER rather than the selection. Correcting the predicate
+> restores the opening selection; nothing else moved.
+>
+> ⛔ **THE RULE NOW MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather
+> than dead code.** `big_game` (spears + sled), `trapping` (traps + sled) and `husbandry` (sled) all
+> reach a wild hunt, so none of them trips it; what would is a kit supplying the pen axis and nothing
+> the range can read, which is what the retired hurdles bundle was and what item 12b's reshaped roster
+> may be again. Against a wild Red Deer the three now read: `big_game` **offered**, `trapping`
+> **withheld — cannot hurt** (a trap clears no defence), `husbandry` **withheld — cannot hurt** (no
+> weapon at all).
+>
+> **Pinned with the contrast, because a picker that offers everything everywhere is as wrong as one
+> that offers nothing** (`ui_preview`, `compose_rungs` → `_assert_a_sled_does_not_make_a_hunt_kit_pen_only`):
+> a roster whose sled kits carry the equipped pen tier, one **wild Red Deer** frame with the popup open
+> asserting the spear line selectable AND the other two greyed with the weapon's reason AND the pen
+> reason on no entry at all, then a **corralled Wild Boar** — defended and pennable — greying nothing
+> and priced on `pen_carry`. Falsified by restoring the old predicate: **six** of those claims fail,
+> including the reported face verbatim.
+
 - **Greyed, NOT hidden, and it states its reason on its own face.** *"A snare cannot hold a Red Deer"*
   is a fact about the world worth teaching once, and invisibility is exactly what let this ship
   unnoticed. The reason rides the entry's `label` and is repeated in its `tooltip`, because a disabled

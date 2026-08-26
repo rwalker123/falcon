@@ -749,6 +749,26 @@ const OFFER_REASON_KEY := "reason"
 static func kit_supplies_any(kit: Dictionary) -> bool:
 	return not kit_item_ids(kit).is_empty()
 
+## **CAN A WILD HUNT READ ANYTHING THIS KIT CARRIES?** — the two axes a hunt out on the range is
+## resolved on: the weapon that has to reach the animal (`attack`) and the haul that has to get it
+## home (`hunt_carry`). A kit beating the bare-handed tier on either can change the outcome of the
+## hunt in front of it, whatever else it also supplies.
+##
+## **IT EXISTS BECAUSE THE PEN RULE USED TO ASK A PROXY.** That rule withheld on
+## `kit_uses(pen_carry) and not penned` alone, reading *"this kit supplies the pen axis"* as *"this
+## kit contributes nothing a wild hunt can read"* — an equivalence that held only while the ONE item
+## declaring `pen_carry` was pen-only gear. `hurdles` left the roster as equipment and both sides of
+## that axis moved onto the **sled** (`docs/plan_standing_upkeep.md` §4.9 item 12), which every hunt
+## kit carries, so the proxy became true of SPEARS: all three hunt kits were greyed on every wild
+## quarry with *"what it adds is only used on a penned herd"*, and — `resolve_selection` skipping a
+## withheld kit at every step — the sheet fell through to the null kit while the picker went on
+## marking the stalking kit `(default)`. A wild hunt could not be equipped at all.
+##
+## The rule's INTENT was never wrong, only its proxy: it is asked directly now, so the pen rule fires
+## only on a kit that supplies `pen_carry` **and** nothing the range can use.
+static func kit_reaches_a_wild_hunt(kits: Array, kit: Dictionary) -> bool:
+	return kit_uses(kits, kit, KIT_ATTACK_KEY) or kit_uses(kits, kit, KIT_HUNT_CARRY_KEY)
+
 ## **THE OFFER TEST — `{offered, reason}` for ONE kit against ONE source.**
 ##
 ## > Offer a kit as selectable only if something it declares can change this source's outcome.
@@ -761,7 +781,10 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 ##    Deer, so the party is bare-handed, `max(0, 1 − 1)` is zero, and the sim refuses the hunt — the
 ##    sheet used to price that party a real take, and it brought home exactly nothing.
 ## 2. **A kit whose contribution is an axis this source cannot read.** `pen_carry` is read on a
-##    CORRALLED herd and nowhere else, so a kit supplying it adds nothing to a wild hunt.
+##    CORRALLED herd and nowhere else — but supplying it is not the same sentence as supplying
+##    NOTHING ELSE, so the rule asks both halves (`kit_reaches_a_wild_hunt`). Reading the first half
+##    as the whole rule is what greyed every hunt kit on every wild herd the day the sled took the
+##    pen axis over; see that helper for the mechanism.
 ## 3. **A BUILDERS kit whose tool serves the other web.** `build_branch` is the entry's own web and a
 ##    kit's `build_work_branch` is its tool's; outside its branch the contribution is the neutral
 ##    `0.0`, so the kit is exactly as inapplicable as a snare on a Red Deer. This rule needs no
@@ -772,10 +795,17 @@ static func kit_supplies_any(kit: Dictionary) -> bool:
 ##    entry's web cannot use. The withheld REASON it composes has no display surface until the
 ##    per-entry picker lands on the queue row.
 ##
-## **THE PEN RULE IS ASKED FIRST, so a kit reads the same reason on every quarry.** The husbandry kit
-## fails both tests on a Red Deer (it carries no weapon either), and *"what it adds is only used on a
-## penned herd"* is the fact about the kit; *"it cannot bring one down"* is a fact about the deer that
-## would then not be stated on a rabbit, where the same kit is withheld for the same reason.
+## **THE PEN RULE IS ASKED BEFORE THE WEAPON RULE, so a kit that trips it reads the same reason on
+## every quarry** — *"what it adds is only used on a penned herd"* is a fact about the KIT, where
+## *"it cannot bring one down"* is a fact about the animal and would go unsaid on a rabbit.
+##
+## ⛔ **IT MATCHES NO KIT ON THE SHIPPED ROSTER, and that is a fact about the roster rather than dead
+## code.** Every hunt kit carries a **sled**, and the sled supplies `hunt_carry` — so all three reach
+## a wild hunt and the rule declines to withhold any of them. What still trips it is a kit supplying
+## the pen axis and nothing the range can read, which is exactly what the retired `hurdles` bundle
+## was; `docs/plan_standing_upkeep.md` §4.9 item 12b reshapes this roster next. The husbandry kit is
+## therefore withheld on a Red Deer by the WEAPON rule below (it carries no weapon), which is what
+## `equipment.json`'s `_comment_kits` has always said of it.
 ##
 ## **A PEN IS NOT FOUGHT, so rule 1 does not run on one.** A penned animal is slaughtered rather than
 ## stalked and publishes no engagement stage — the same predicate the gate LINE is mounted behind —
@@ -814,11 +844,14 @@ static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Diction
 	# speeds a rung's build meter is applicable to any herd with a rung left to climb — which is
 	# exactly the climb the handling kit was being withheld from, on the strength of its OTHER axis
 	# being pen-only. A kit that can change this source's outcome is offered whatever else it lacks,
-	# so the weapon rule below never runs on it either: hurdles do not have to bring a deer down to
-	# be the right thing to carry while you are gentling one.
+	# so the weapon rule below never runs on it either: a crook does not have to bring a deer down to
+	# be the right thing to carry while you are gentling one. **The shipped `hurdling` kit is not on
+	# a hunt sheet to reach this** — it lists the `builders` and `husbandry` jobs, not `hunt` — so
+	# what this arm serves today is a build-capable hunt kit the roster does not currently carry.
 	if kit_uses(kits, kit, KIT_BUILD_WORK_KEY) and RungGates.hunt_rung_remains(quarry, prefix):
 		return _kit_offered()
-	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned:
+	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned \
+			and not kit_reaches_a_wild_hunt(kits, kit):
 		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)
 	if penned:
 		return _kit_offered()
