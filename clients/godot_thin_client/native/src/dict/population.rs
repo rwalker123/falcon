@@ -187,6 +187,40 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("fodder_need", cohort.fodderNeed() as f64);
     let _ = dict.insert("fodder_income", cohort.fodderIncome() as f64);
     let _ = dict.insert("turns_of_fodder", cohort.turnsOfFodder() as f64);
+    // THE BAND'S STANDING MATERIAL BILL (`docs/plan_standing_upkeep.md` §2.7) — the material twin
+    // of the two larder ledgers above, per good. A pen frays its fence every turn it stands; a road
+    // washes out. Work was never the whole price.
+    //   `material_upkeep_need`   = the SUMMED per-turn rate this band's improvements demand, across
+    //                              both webs. It is the ALARM, and it is published whether or not the
+    //                              band can pay it — `fodder_need`'s own rule.
+    //   `material_upkeep_income` = the rate the same goods ARRIVE at: what this band's own sources
+    //                              credited this turn plus what its bench finished. **A RATE, NOT A
+    //                              TRAILING AVERAGE AND NOT AN EMA**, the shape `fodder_income`
+    //                              above carries.
+    //   `material_store`         = what the band holds right now, summed over its batches. A STOCK,
+    //                              so a client reads it AGAINST the two rates rather than adding it
+    //                              to them; `material_batches` below carries the per-rating
+    //                              breakdown and this is the total the bill is judged against.
+    //
+    // **THE SIM SUMS IT AND THE CLIENT MUST NOT** — `fodder_need`'s rule one account over, and
+    // load-bearing for the same reason: herd rows are fog-filtered, so a client-side total silently
+    // drops a pen out of sight that the band still owes for.
+    //
+    // Three lists of `{ material_id, amount }`, on the `MaterialPayoff` rules every such list on this
+    // wire follows: **NEVER SUMMED ACROSS GOODS, EMPTY MEANS "NO ROW" AND NEVER ZERO**, key always
+    // present so "no bill" and "a bill of nothing" stay one answer rather than two.
+    let _ = dict.insert(
+        "material_upkeep_need",
+        &crate::dict::subsistence::material_payoffs_to_array(cohort.materialUpkeepNeed()),
+    );
+    let _ = dict.insert(
+        "material_upkeep_income",
+        &crate::dict::subsistence::material_payoffs_to_array(cohort.materialUpkeepIncome()),
+    );
+    let _ = dict.insert(
+        "material_store",
+        &crate::dict::subsistence::material_payoffs_to_array(cohort.materialStore()),
+    );
     // Predators Phase 3 (raid legibility pair, appended after fodderStore in the schema):
     //   raid_radius  — echo of `fauna.predators.raid_radius`: how close (odd-r hex distance) an
     //                  aggressive carnivore herd must be to raid this band's larder. The band panel
@@ -584,6 +618,32 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert(
                 "material_yield",
                 &crate::dict::subsistence::material_payoffs_to_array(assignment.materialYield()),
+            );
+            // THE GOOD-SIDE SHORTFALL, BOTH TERMS AND NEVER THEIR DIFFERENCE
+            // (`docs/plan_standing_upkeep.md` §2.7) — what this row's SOURCE was billed in goods to
+            // hold its rung, and what the band's store actually paid toward it. The sim publishes
+            // both terms precisely so the work row's note can read *"Short of hurdles — 0.03 of the
+            // 0.05 a turn this pen eats"* with no client arithmetic.
+            //
+            // **IT IS WHY THAT NOTE MUST NAME THE GOOD.** *"Raise this band's Agriculture role"* is
+            // wrong advice the moment the missing thing is a material: a dead kit makes a job want
+            // more hands, and a missing good stops the work outright.
+            //
+            // **EMPTY MEANS "THIS ROW'S RUNG EATS NO MATERIAL"**, which is every rung on the shipped
+            // ladder but `animal:pen` — never "zero of something". **NEVER SUMMED ACROSS GOODS** and
+            // never added to any work figure: a full store must not paper over missing hands, so the
+            // two accounts stay separate on every surface.
+            let _ = entry.insert(
+                "material_upkeep_demand",
+                &crate::dict::subsistence::material_payoffs_to_array(
+                    assignment.materialUpkeepDemand(),
+                ),
+            );
+            let _ = entry.insert(
+                "material_upkeep_supplied",
+                &crate::dict::subsistence::material_payoffs_to_array(
+                    assignment.materialUpkeepSupplied(),
+                ),
             );
             // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
             // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game

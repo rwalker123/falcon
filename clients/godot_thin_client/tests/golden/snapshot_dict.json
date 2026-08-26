@@ -446,6 +446,16 @@
           "work_remaining": 65.230003
         }
       ],
+      "build_material_cost": [
+        {
+          "amount": 17.01,
+          "material_id": "forage_patches[0].build_material_cost[0].material_id"
+        },
+        {
+          "amount": 21.120001,
+          "material_id": "forage_patches[0].build_material_cost[1].material_id"
+        }
+      ],
       "build_queue_position": 117,
       "build_turns_remaining": 171,
       "build_work_from_gear": 76.230003,
@@ -554,6 +564,16 @@
       ],
       "cultivation_progress": 14.53,
       "cultivation_upkeep_demand": 103.889999,
+      "cultivation_upkeep_material_demand": [
+        {
+          "amount": 85.510002,
+          "material_id": "forage_patches[0].cultivation_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 22.92,
+          "material_id": "forage_patches[0].cultivation_upkeep_material_demand[1].material_id"
+        }
+      ],
       "cultivation_work_cost": 7.12,
       "cultivation_work_done": 106.639999,
       "current_rung": "forage_patches[0].current_rung",
@@ -561,6 +581,16 @@
       "field_fodder": 51.360001,
       "field_progress": 67.019997,
       "field_upkeep_demand": 103.900002,
+      "field_upkeep_material_demand": [
+        {
+          "amount": 73.660004,
+          "material_id": "forage_patches[0].field_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 49.889999,
+          "material_id": "forage_patches[0].field_upkeep_material_demand[1].material_id"
+        }
+      ],
       "field_work_cost": 77.150002,
       "field_work_done": 98.610001,
       "field_yield": 78.199997,
@@ -602,6 +632,26 @@
       "tended_yield": 11.58,
       "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
+      "upkeep_material_demand": [
+        {
+          "amount": 64.879997,
+          "material_id": "forage_patches[0].upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 92.220001,
+          "material_id": "forage_patches[0].upkeep_material_demand[1].material_id"
+        }
+      ],
+      "upkeep_material_supplied": [
+        {
+          "amount": 25.610001,
+          "material_id": "forage_patches[0].upkeep_material_supplied[0].material_id"
+        },
+        {
+          "amount": 81.5,
+          "material_id": "forage_patches[0].upkeep_material_supplied[1].material_id"
+        }
+      ],
       "upkeep_shortfall": 85.980003,
       "upkeep_supplied": 28.360001,
       "upkeep_workers_needed": 99,
@@ -624,6 +674,16 @@
           "rung": "forage_patches[1].build_legs[1].rung",
           "turns_remaining": 198,
           "work_remaining": 90.489998
+        }
+      ],
+      "build_material_cost": [
+        {
+          "amount": 36.759998,
+          "material_id": "forage_patches[1].build_material_cost[0].material_id"
+        },
+        {
+          "amount": 112.43,
+          "material_id": "forage_patches[1].build_material_cost[1].material_id"
         }
       ],
       "build_queue_position": 144,
@@ -734,6 +794,16 @@
       ],
       "cultivation_progress": 85.480003,
       "cultivation_upkeep_demand": 28.77,
+      "cultivation_upkeep_material_demand": [
+        {
+          "amount": 54.509998,
+          "material_id": "forage_patches[1].cultivation_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 72.260002,
+          "material_id": "forage_patches[1].cultivation_upkeep_material_demand[1].material_id"
+        }
+      ],
       "cultivation_work_cost": 17.809999,
       "cultivation_work_done": 107.940002,
       "current_rung": "forage_patches[1].current_rung",
@@ -741,6 +811,16 @@
       "field_fodder": 98.510002,
       "field_progress": 6.39,
       "field_upkeep_demand": 90.160004,
+      "field_upkeep_material_demand": [
+        {
+          "amount": 14.24,
+          "material_id": "forage_patches[1].field_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 103.849998,
+          "material_id": "forage_patches[1].field_upkeep_material_demand[1].material_id"
+        }
+      ],
       "field_work_cost": 60.900002,
       "field_work_done": 43.169998,
       "field_yield": 75.790001,
@@ -782,6 +862,26 @@
       "tended_yield": 86.169998,
       "tile_capacity": 2.22,
       "upkeep_demand": 10.09,
+      "upkeep_material_demand": [
+        {
+          "amount": 99.330002,
+          "material_id": "forage_patches[1].upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 68.150002,
+          "material_id": "forage_patches[1].upkeep_material_demand[1].material_id"
+        }
+      ],
+      "upkeep_material_supplied": [
+        {
+          "amount": 69.5,
+          "material_id": "forage_patches[1].upkeep_material_supplied[0].material_id"
+        },
+        {
+          "amount": 83.889999,
+          "material_id": "forage_patches[1].upkeep_material_supplied[1].material_id"
+        }
+      ],
       "upkeep_shortfall": 34.380001,
       "upkeep_supplied": 37.41,
       "upkeep_workers_needed": 48,
@@ -947,6 +1047,16 @@
           "work_remaining": 29.16
         }
       ],
+      "build_material_cost": [
+        {
+          "amount": 103.0,
+          "material_id": "herds[0].build_material_cost[0].material_id"
+        },
+        {
+          "amount": 1.76,
+          "material_id": "herds[0].build_material_cost[1].material_id"
+        }
+      ],
       "build_queue_position": 84,
       "build_turns_remaining": 128,
       "build_work_from_gear": 61.02,
@@ -965,6 +1075,16 @@
       ],
       "corral_progress": 82.440002,
       "corral_upkeep_demand": 12.55,
+      "corral_upkeep_material_demand": [
+        {
+          "amount": 67.690002,
+          "material_id": "herds[0].corral_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 3.76,
+          "material_id": "herds[0].corral_upkeep_material_demand[1].material_id"
+        }
+      ],
       "corral_work_cost": 88.470001,
       "corral_work_done": 70.900002,
       "corral_yield": 50.880001,
@@ -1042,9 +1162,39 @@
       "stay_fraction": 26.790001,
       "stressed_fraction": 81.589996,
       "tame_upkeep_demand": 56.91,
+      "tame_upkeep_material_demand": [
+        {
+          "amount": 72.57,
+          "material_id": "herds[0].tame_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 30.870001,
+          "material_id": "herds[0].tame_upkeep_material_demand[1].material_id"
+        }
+      ],
       "tame_work_cost": 86.699997,
       "tame_work_done": 60.59,
       "upkeep_demand": 43.459999,
+      "upkeep_material_demand": [
+        {
+          "amount": 100.720001,
+          "material_id": "herds[0].upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 50.209999,
+          "material_id": "herds[0].upkeep_material_demand[1].material_id"
+        }
+      ],
+      "upkeep_material_supplied": [
+        {
+          "amount": 104.050003,
+          "material_id": "herds[0].upkeep_material_supplied[0].material_id"
+        },
+        {
+          "amount": 15.32,
+          "material_id": "herds[0].upkeep_material_supplied[1].material_id"
+        }
+      ],
       "upkeep_shortfall": 10.37,
       "upkeep_supplied": 24.889999,
       "upkeep_workers_needed": 156,
@@ -1072,6 +1222,16 @@
           "work_remaining": 21.709999
         }
       ],
+      "build_material_cost": [
+        {
+          "amount": 50.060001,
+          "material_id": "herds[1].build_material_cost[0].material_id"
+        },
+        {
+          "amount": 64.449997,
+          "material_id": "herds[1].build_material_cost[1].material_id"
+        }
+      ],
       "build_queue_position": 153,
       "build_turns_remaining": 111,
       "build_work_from_gear": 23.51,
@@ -1090,6 +1250,16 @@
       ],
       "corral_progress": 69.410004,
       "corral_upkeep_demand": 67.809998,
+      "corral_upkeep_material_demand": [
+        {
+          "amount": 24.67,
+          "material_id": "herds[1].corral_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 76.529999,
+          "material_id": "herds[1].corral_upkeep_material_demand[1].material_id"
+        }
+      ],
       "corral_work_cost": 8.6,
       "corral_work_done": 47.380001,
       "corral_yield": 35.5,
@@ -1167,9 +1337,39 @@
       "stay_fraction": 64.949997,
       "stressed_fraction": 10.21,
       "tame_upkeep_demand": 73.419998,
+      "tame_upkeep_material_demand": [
+        {
+          "amount": 54.849998,
+          "material_id": "herds[1].tame_upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 62.400002,
+          "material_id": "herds[1].tame_upkeep_material_demand[1].material_id"
+        }
+      ],
       "tame_work_cost": 84.620003,
       "tame_work_done": 10.41,
       "upkeep_demand": 25.92,
+      "upkeep_material_demand": [
+        {
+          "amount": 87.059998,
+          "material_id": "herds[1].upkeep_material_demand[0].material_id"
+        },
+        {
+          "amount": 25.809999,
+          "material_id": "herds[1].upkeep_material_demand[1].material_id"
+        }
+      ],
+      "upkeep_material_supplied": [
+        {
+          "amount": 18.610001,
+          "material_id": "herds[1].upkeep_material_supplied[0].material_id"
+        },
+        {
+          "amount": 100.980003,
+          "material_id": "herds[1].upkeep_material_supplied[1].material_id"
+        }
+      ],
       "upkeep_shortfall": 8.97,
       "upkeep_supplied": 47.07,
       "upkeep_workers_needed": 119,
@@ -2210,6 +2410,26 @@
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
+          "material_upkeep_demand": [
+            {
+              "amount": 51.790001,
+              "material_id": "populations[0].labor_assignments[0].material_upkeep_demand[0].material_id"
+            },
+            {
+              "amount": 75.559998,
+              "material_id": "populations[0].labor_assignments[0].material_upkeep_demand[1].material_id"
+            }
+          ],
+          "material_upkeep_supplied": [
+            {
+              "amount": 43.450001,
+              "material_id": "populations[0].labor_assignments[0].material_upkeep_supplied[0].material_id"
+            },
+            {
+              "amount": 27.540001,
+              "material_id": "populations[0].labor_assignments[0].material_upkeep_supplied[1].material_id"
+            }
+          ],
           "material_yield": [
             {
               "amount": 3.85,
@@ -2247,6 +2467,26 @@
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
+          "material_upkeep_demand": [
+            {
+              "amount": 31.91,
+              "material_id": "populations[0].labor_assignments[1].material_upkeep_demand[0].material_id"
+            },
+            {
+              "amount": 80.480003,
+              "material_id": "populations[0].labor_assignments[1].material_upkeep_demand[1].material_id"
+            }
+          ],
+          "material_upkeep_supplied": [
+            {
+              "amount": 49.830002,
+              "material_id": "populations[0].labor_assignments[1].material_upkeep_supplied[0].material_id"
+            },
+            {
+              "amount": 112.5,
+              "material_id": "populations[0].labor_assignments[1].material_upkeep_supplied[1].material_id"
+            }
+          ],
           "material_yield": [
             {
               "amount": 77.470001,
@@ -2284,6 +2524,26 @@
           "improvement": "populations[0].labor_assignments[2].improvement",
           "kind": "populations[0].labor_assignments[2].kind",
           "kit_id": "populations[0].labor_assignments[2].kit_id",
+          "material_upkeep_demand": [
+            {
+              "amount": 94.510002,
+              "material_id": "populations[0].labor_assignments[2].material_upkeep_demand[0].material_id"
+            },
+            {
+              "amount": 21.450001,
+              "material_id": "populations[0].labor_assignments[2].material_upkeep_demand[1].material_id"
+            }
+          ],
+          "material_upkeep_supplied": [
+            {
+              "amount": 98.779999,
+              "material_id": "populations[0].labor_assignments[2].material_upkeep_supplied[0].material_id"
+            },
+            {
+              "amount": 0.33,
+              "material_id": "populations[0].labor_assignments[2].material_upkeep_supplied[1].material_id"
+            }
+          ],
           "material_yield": [
             {
               "amount": 72.800003,
@@ -2363,6 +2623,36 @@
             }
           ],
           "variety_name": "populations[0].material_batches[2].variety_name"
+        }
+      ],
+      "material_store": [
+        {
+          "amount": 66.339996,
+          "material_id": "populations[0].material_store[0].material_id"
+        },
+        {
+          "amount": 82.099998,
+          "material_id": "populations[0].material_store[1].material_id"
+        }
+      ],
+      "material_upkeep_income": [
+        {
+          "amount": 95.739998,
+          "material_id": "populations[0].material_upkeep_income[0].material_id"
+        },
+        {
+          "amount": 30.700001,
+          "material_id": "populations[0].material_upkeep_income[1].material_id"
+        }
+      ],
+      "material_upkeep_need": [
+        {
+          "amount": 111.029999,
+          "material_id": "populations[0].material_upkeep_need[0].material_id"
+        },
+        {
+          "amount": 22.0,
+          "material_id": "populations[0].material_upkeep_need[1].material_id"
         }
       ],
       "migration": {
@@ -2843,6 +3133,26 @@
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
+          "material_upkeep_demand": [
+            {
+              "amount": 2.46,
+              "material_id": "populations[1].labor_assignments[0].material_upkeep_demand[0].material_id"
+            },
+            {
+              "amount": 40.209999,
+              "material_id": "populations[1].labor_assignments[0].material_upkeep_demand[1].material_id"
+            }
+          ],
+          "material_upkeep_supplied": [
+            {
+              "amount": 68.230003,
+              "material_id": "populations[1].labor_assignments[0].material_upkeep_supplied[0].material_id"
+            },
+            {
+              "amount": 0.54,
+              "material_id": "populations[1].labor_assignments[0].material_upkeep_supplied[1].material_id"
+            }
+          ],
           "material_yield": [
             {
               "amount": 27.16,
@@ -2880,6 +3190,26 @@
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
+          "material_upkeep_demand": [
+            {
+              "amount": 90.949997,
+              "material_id": "populations[1].labor_assignments[1].material_upkeep_demand[0].material_id"
+            },
+            {
+              "amount": 20.15,
+              "material_id": "populations[1].labor_assignments[1].material_upkeep_demand[1].material_id"
+            }
+          ],
+          "material_upkeep_supplied": [
+            {
+              "amount": 94.120003,
+              "material_id": "populations[1].labor_assignments[1].material_upkeep_supplied[0].material_id"
+            },
+            {
+              "amount": 90.010002,
+              "material_id": "populations[1].labor_assignments[1].material_upkeep_supplied[1].material_id"
+            }
+          ],
           "material_yield": [
             {
               "amount": 98.839996,
@@ -2917,6 +3247,26 @@
           "improvement": "populations[1].labor_assignments[2].improvement",
           "kind": "populations[1].labor_assignments[2].kind",
           "kit_id": "populations[1].labor_assignments[2].kit_id",
+          "material_upkeep_demand": [
+            {
+              "amount": 84.889999,
+              "material_id": "populations[1].labor_assignments[2].material_upkeep_demand[0].material_id"
+            },
+            {
+              "amount": 35.880001,
+              "material_id": "populations[1].labor_assignments[2].material_upkeep_demand[1].material_id"
+            }
+          ],
+          "material_upkeep_supplied": [
+            {
+              "amount": 63.169998,
+              "material_id": "populations[1].labor_assignments[2].material_upkeep_supplied[0].material_id"
+            },
+            {
+              "amount": 86.639999,
+              "material_id": "populations[1].labor_assignments[2].material_upkeep_supplied[1].material_id"
+            }
+          ],
           "material_yield": [
             {
               "amount": 108.209999,
@@ -2996,6 +3346,36 @@
             }
           ],
           "variety_name": "populations[1].material_batches[2].variety_name"
+        }
+      ],
+      "material_store": [
+        {
+          "amount": 88.330002,
+          "material_id": "populations[1].material_store[0].material_id"
+        },
+        {
+          "amount": 26.280001,
+          "material_id": "populations[1].material_store[1].material_id"
+        }
+      ],
+      "material_upkeep_income": [
+        {
+          "amount": 52.150002,
+          "material_id": "populations[1].material_upkeep_income[0].material_id"
+        },
+        {
+          "amount": 16.139999,
+          "material_id": "populations[1].material_upkeep_income[1].material_id"
+        }
+      ],
+      "material_upkeep_need": [
+        {
+          "amount": 34.220001,
+          "material_id": "populations[1].material_upkeep_need[0].material_id"
+        },
+        {
+          "amount": 44.080002,
+          "material_id": "populations[1].material_upkeep_need[1].material_id"
         }
       ],
       "migration": {

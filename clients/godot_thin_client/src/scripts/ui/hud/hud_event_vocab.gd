@@ -165,6 +165,22 @@ const RUNG_BY_KIND := {
 	# (`docs/plan_band_fission.md` §Q6, issue #510). The same kind carries the command's REFUSALS, and
 	# a refused irreversible order is exactly as loud as a taken one.
 	"band_founded": RUNG_ALERT,
+	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
+	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
+	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is
+	# wrong and not where is exactly what that path existed to avoid. An investment is about to start
+	# coming apart for want of a good, which is the Alert rung's own description
+	# (*violence, an investment lost, the client's own faults*).
+	#
+	# **THE SIM EDGE-GATES IT**, so this rung never means "every turn": one line per band per material
+	# on the crossing, not a level test.
+	"material_shortfall": RUNG_ALERT,
+	# **A KIT CROSSING A `life_readout` SEAM** — and its RUNG is the seam, not the kind, so this entry
+	# is the FALLBACK for a line carrying no `severity=` token at all. `DETAIL_STATUS_STYLE` below
+	# claims `severity=warn` (Notable) and `severity=danger` (Alert); the quieter of the two is the
+	# honest default for an unlabelled one, because a kit wearing out is a thing to know about and
+	# only the inner seam is a thing to stop for.
+	"kit_life": RUNG_NOTABLE,
 	# Notable — the world changed in a way worth knowing.
 	"died": RUNG_NOTABLE,
 	"migrated": RUNG_NOTABLE,
@@ -210,6 +226,14 @@ const RUNG_BY_KIND := {
 const CHANNEL_BY_KIND := {
 	KIND_SYSTEM: CHANNEL_SYSTEM,
 	KIND_COMMAND_ECHO: CHANNEL_SYSTEM,
+	# **A KIT WEARING OUT AND A GOOD RUNNING OUT ARE WORLD EVENTS**, on the channel that carries the
+	# births and the raids — they happen to a BAND, in the world, on the sim's own turn, exactly as a
+	# rung going feral does. They are stated rather than left to `DEFAULT_CHANNEL` for the reason the
+	# comment above gives about `KIND_COMMAND_ECHO`: a channel is a fact about the kind, and these
+	# two are the ones most easily mistaken for client chatter, since the remedy for both is
+	# something the PLAYER does.
+	"kit_life": DEFAULT_CHANNEL,
+	"material_shortfall": DEFAULT_CHANNEL,
 }
 
 # ---- rung → glyph + accent -------------------------------------------------
@@ -304,6 +328,24 @@ static var KIND_STYLE := {}
 ## reason this is written down beside the table rather than left to be inferred from it — the two
 ## consts are named for their RUNGS, so the wrong pairing does not even read as a sentence.
 ##
+## **THE TABLE IS NOT `status=`-ONLY, AND THE TWO `severity=` ROWS ARE WHY IT SAYS `key=value`**
+## (`docs/plan_standing_upkeep.md` §4.9 item 12). A `kit_life` line's rung is the `life_readout` SEAM
+## it crossed, which the sim writes as `severity=warn|danger` — resolved by
+## `snapshot::crafting::life_severity` off `equipment.json`'s own `warn_fraction` 0.34 /
+## `danger_fraction` 0.10, so ⛔ **no threshold is invented on this side.** The mechanism this table
+## already is — a rung overridden by a whole space-delimited fragment — is exactly the job, so the
+## split rides it rather than a parallel table beside it.
+##
+## **THE GLYPH TRACKS THE RUNG THERE TOO**: `⚠` on `severity=danger`, `▾` on `severity=warn`. A kit at
+## a tenth of its life is an investment about to be lost; one at a third is *less than you had*, which
+## is precisely what the reduced mark means everywhere else here.
+##
+## **`status=outrunning` AGREES WITH ITS KIND RATHER THAN OVERRIDING IT** — `material_shortfall` is
+## already Alert. It is listed for the two things only a member of this table gets: the `⚠` its rung
+## names, and eligibility for `DETAIL_STATUS_WORK_LINK`'s band jump, which `_detail_status_key`
+## returns no token for otherwise. **Warn amber, not the raid crimson**, exactly as `feral` and
+## `lapsed`: a loss the player can still head off by crafting or by holding less, not an attack.
+##
 ## **BUILT IN `apply_palette` BELOW, NOT HERE** — every entry carries a themed `HudStyle` colour,
 ## which is a `static var`, so a `const` table is a parse error. The `rung` beside the colour is NOT
 ## themed and does not change with the palette; it rides in the same entry because a row's rung and
@@ -346,6 +388,13 @@ static func apply_palette() -> void:
 		"status=trimmed": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 		"status=pruned": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 		"status=stalled": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
+		"severity=warn": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
+		"severity=danger": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_ALERT},
+
+		"status=outrunning": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_ALERT},
 	}
 	TURN_STAMP_COLOR = HudStyle.INK_DIM
 
@@ -378,6 +427,18 @@ const DETAIL_STATUS_WORK_LINK := {
 	"status=lapsed": true,
 	"status=pruned": true,
 	"status=stalled": true,
+	# **`status=outrunning` IS HOW THE MATERIAL ALERT NAMES ITS BAND**
+	# (`docs/plan_standing_upkeep.md` §4.9 item 12), and without it the line names none. The sim's
+	# label is *"Hurdles is running out"* — no band in it — so `SIM_BAND_LABEL_FORMAT` has nothing to
+	# rewrite, and `band` sits in `DETAIL_KEY_HIDDEN` on the premise that the label already said it.
+	# The link is what closes that gap, and closing it is the whole reason this kind exists: it
+	# replaces the faction `Gear` row's `⚠ 1 band` → *which band* drill-down, which was a jump.
+	#
+	# **AND THE WORK TAB IS THE RIGHT DESTINATION, not merely an available one.** The bill is what
+	# this band's improvements demand, and what the player can DO about it is on that tab: staff the
+	# bench that makes the good, or stop holding a rung. `announce_material_shortfall` writes `band=`
+	# as the durable `BandId`, so the link has the one token it needs.
+	"status=outrunning": true,
 }
 
 ## The link's own words. Deliberately the same string as `HudComposeVocab.WORK_TAB_LINK_TEXT` and

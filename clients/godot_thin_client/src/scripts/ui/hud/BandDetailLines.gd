@@ -98,15 +98,50 @@ const BAND_FODDER_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_FODDER + ": %s  (%
 # and the tall tiers carry the two numbers that explain it.
 const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 
+# ---- THE BAND'S STANDING MATERIAL BILL, beneath the two larders (`docs/plan_standing_upkeep.md`
+# §2.7) — `Upkeep: 2 hurdles  (7 turns)`. What the things this band has BUILT cost it to keep, in
+# goods: a pen frays its fence every turn it stands, a road washes out. Work was never the whole
+# price.
+#
+# **IT IS THE FODDER ROW, BEAT FOR BEAT**: a two-term summary — the STOCK and the RUNWAY — with the
+# flows that move it in a click-to-open disclosure beneath.
+#
+#   `Upkeep: 2 hurdles  (7 turns)`
+#     hurdles
+#       ▼ -0.05  Wanted
+#       ▲ +0.00  Arriving
+#       2  On the shelf
+#
+# ⛔ **THE VALUE NAMES ONE GOOD, AND THAT IS WHAT KEEPS IT HONEST.** Six hurdles and two rope are not
+# eight of anything; a summed materials figure here would be the retired `Trade:` scalar rebuilt out
+# of its own replacement, which is the flattening the whole materials model exists to refuse. The good
+# quoted is the one in the WORST state — the shortest runway, i.e. the one that runs out first and
+# therefore the one a player has to act on — and the rest are one click down.
+#
+# **THE LABEL IS THE REGISTRATION KEY**, `DETAIL_ROW_UPKEEP` rather than typed again: a renamed row
+# that still registered under the old key would lose its caret silently. The runway is
+# `DetailFormat.food_turns_text` over the worst good's shelf-against-gap, so `∞` here means what it
+# means on both larder rows (this bill is not draining) and there is no second constant, no second
+# branch and no second phrasing of "turns of buffer left" anywhere in the client. The whole value cell
+# tints through `BandFoodStatus.hex_for_turns` off the context, exactly as the two larder rows do —
+# which is how a short good takes the danger ink without a second severity rule beside it.
+const BAND_MATERIAL_UPKEEP_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_UPKEEP + ": %s  (%s)"
+
+## ONE GOOD'S AMOUNT AND ITS NAME — `2 hurdles`, `0.05 hurdles`. **A material names itself**: the
+## catalogue ships no display word, so the id IS the noun (`SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT`'s
+## rule), and the amount is trimmed so a shelf reads `2` while a mending rate reads `0.05`.
+const BAND_MATERIAL_TERM_FORMAT := "%s %s"
+
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
 # HEIGHT is what is scarce in a height-capped horizontal dock, and it has a whole screen of width.
 #
 # **MORALE AND GROWTH ARE THE RIGHT PAIR.** Both are player-band health scalars, both already carry
 # disclosure carets, and they read naturally together. The alternative — dropping a row — is not
-# available here: `Kit` is the row the tier gained and it is NOT droppable (a spent kit is stated
-# nowhere else in the client and is not recoverable from any other surface), and the one row this tier
-# used to drop — `Trade` — is retired outright (arc #527), so there is nothing left to give up.
+# available here: the one row this tier used to drop, `Trade`, is retired outright (arc #527), and the
+# row it gained after that, `Gear`, is retired too (`docs/plan_standing_upkeep.md` §4.9 item 12) — its
+# height went straight to the `Upkeep:` standing bill, which is stated nowhere else in this client.
+# So there is nothing left to give up.
 #
 # **BOTH `[url]` METAS SURVIVE, which is the whole reason a merge beats a drop.** The vitals block is
 # ONE `RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause
@@ -128,24 +163,25 @@ const BAND_MORALE_GROWTH_CLAUSE_FORMAT := BAND_MORALE_GROWTH_CLAUSE_SEPARATOR + 
 # LIST, not a vitals row: the Crafting panel's rail is where it reads, and no summary line here may
 # collapse it back into one number.
 
-# ---- The band's KIT row (`docs/plan_hunt_through_combat.md` §4.8) — `Kit: Spears 87 · Sled 54 ·
-# Baskets dry`. Three consumable kits, start-stocked and not craftable, each with its own condition
-# and its own job; a dry one has stepped its role down to bare hands FOR GOOD, so it reads DANGER
-# rather than merely dim.
+# ---- **THE BAND'S `Gear` ROW IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12), with
+# `BAND_KIT_ROW_PREFIX` / `_SEPARATOR` / `_ENTRY_FORMAT`, `_band_kit_line`, its `BAND_KIT_ROW_MAX_ENTRIES`
+# budget and the 22px `Zone_band` measurement that budget existed to respect.
 #
-# **THE ROW IS THE CLOCK, THE DISCLOSURE IS THE CLIFF.** What a player needs at a glance is how long
-# until each kit runs out and which side of the line they are already on — never a gauge, never a
-# bar, and never a number scaled by what is left, because performance is FLAT until expiry and any
-# gradient drawn here would claim a taper the model does not have. What each kit actually DOES lives
-# one click down, where there is room to say it and to say that it stops.
-# **"Gear", not "Kit" — the row lists ITEMS.** A kit is the named loadout a crew is SENT OUT WITH
-# and is chosen in the compose sheet's Kit picker; this row is the condition of the equipment the
-# band owns. Labelling item conditions "Kit" is the same two-nouns confusion the config carried until
-# the items were renamed off `*_kit`, and it read as "your kit is Spears, Sled, Baskets" — which is
-# not a kit at all.
-const BAND_KIT_ROW_PREFIX := "Gear: "
-const BAND_KIT_ROW_SEPARATOR := " · "
-const BAND_KIT_ROW_ENTRY_FORMAT := "%s [color=#%s]%s[/color]"
+# **IT DID NOT COMPRESS TO A LINE, AND SOMETHING ELSE ALREADY OWNS IT.** The row was a bounded summary
+# of an unbounded list — three of however many items the server publishes, ordered dry-first, with the
+# rest hidden behind a caret — because a fourth entry wrapped and overflowed the zone. The CRAFTING
+# panel's kit ledger states every item in full, with room for its condition and what it does; the
+# Builders card's own gear line was retired in §4.7 for exactly this reason.
+#
+# **WHAT REPLACES IT IS NOTIFICATION, NOT ANOTHER ROW.** `equipment.json`'s `life_readout` seams
+# (`warn_fraction` 0.34, `danger_fraction` 0.10) now reach the event dock as `kit_life` — warn →
+# Notable, danger → Alert — so a kit approaching its cliff announces itself instead of waiting to be
+# read off a vitals block.
+#
+# ⛔ **THE `DetailFormat` KIT LEAVES STAY** (`band_states_kit`, `kit_coverage`, `kit_condition_face`,
+# `kit_is_equipped`, the label and durability tables): the crafting panel's ledger and the compose
+# sheet still read every one of them, and `DisclosureController.kit_breakdown_lines` still composes
+# the popover the crafting surface opens.
 
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
@@ -309,6 +345,9 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # fodder economy emits no Fodder row, and a stale runway from the last band rendered would tint a
     # row that is not there — or, worse, the next band's.
     context.fodder_turns = NAN
+    # …and the standing bill's runway, for exactly the same reason: a band that owes no goods emits no
+    # `Upkeep:` row, and last render's tint would colour a row that is not there — or the next band's.
+    context.material_turns = NAN
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
     # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
@@ -348,16 +387,31 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 # **NOTHING IS REGISTERED HERE**, deliberately: there is no flow to put behind a
                 # caret, so the row renders as a plain dim key with no clickable run at all.
                 lines.append(_band_fodder_dormant_line(context))
-        # THE BAND'S KIT, beneath its larders and above its morale: three consumable tools whose
-        # condition only ever falls, and whose expiry silently drops a whole role to bare hands. It is
-        # our OWN bands' business, like Food — a rival's equipment is not ours to count.
-        # **Gated on the field being STATED, never on a value**: a dry kit is `0` and is the single
-        # most important reading here, so only an absent field may suppress the row.
-        if DetailFormat.band_states_kit(unit_data):
-            lines.append(_band_kit_line(unit_data))
-            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_KIT,
-                HudDisclosureVocab.BREAKDOWN_KIND_KIT, unit_data,
-                _disclosures.kit_breakdown_lines(unit_data))
+        # **THE STANDING MATERIAL BILL, BESIDE THE TWO LARDERS** (`docs/plan_standing_upkeep.md`
+        # §2.7) — what this band's holdings swallow every turn in GOODS. A pen frays its fence; a
+        # road washes out. It is the Fodder row beat for beat: one summary line naming the good in
+        # the worst state, and the three terms that explain it — wanted, arriving, on the shelf —
+        # in the click-to-open popover beneath, one block per good.
+        #
+        # **IT SURVIVES THE `compact` TIER, AND THE ROW IT SPENDS IS `Gear`'s.** The SHORT tier is
+        # short of HEIGHT, so a row added there has to come from somewhere — and the row this slice
+        # retired is exactly the one that tier had gained. Net zero rows in every tier, and the tier
+        # keeps a fact rather than trading one away.
+        #
+        # ⛔ **NO DORMANT FORM, WHICH IS THE ONE PLACE IT DIVERGES FROM FODDER.** A band with no
+        # fodder economy still gets a dim `Fodder: —` because there is a *"you could have this"*
+        # story to tell — the Foddering craft is a thing to go and learn. A band holding nothing
+        # that eats a good has no such story: the bill is a CONSEQUENCE of what you have built, so
+        # a row promising one before anything is built would be a readout for an economy the
+        # player has not chosen to have. It renders no row at all.
+        #
+        # **AND NOTHING IS REGISTERED WHEN THERE IS NO BILL** — `register` declines an empty
+        # payload, and a caret must never promise rows that are not there.
+        if DetailFormat.band_has_material_upkeep(unit_data):
+            lines.append(_band_material_upkeep_line(unit_data, context))
+            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_UPKEEP,
+                HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP, unit_data,
+                _disclosures.material_upkeep_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -689,6 +743,28 @@ func _band_fodder_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
         SourceForecast.format_fodder(DetailFormat.band_fodder_store(unit_data)),
         DetailFormat.food_turns_text(turns)]
 
+## The band's standing material bill as the Fodder row's twin: the STOCK and the RUNWAY of the good in
+## the WORST state, and nothing else. The per-good detail is the disclosure `unit_summary_lines`
+## registers on this row — see `BAND_MATERIAL_UPKEEP_ROW_FORMAT` for why the row names one good.
+##
+## Stashes the runway on the render context so `DetailFormat._value_hex` tints the value by the shared
+## runway thresholds, the same handshake `_band_food_line` and `_band_fodder_line` make above.
+##
+## **THE CALLER HAS ALREADY ASKED WHETHER THERE IS A BILL** (`band_has_material_upkeep`), which is why
+## this reads the worst row without a fallback: an empty answer here would be a row about nothing, and
+## the gate is what stops it being drawn at all.
+func _band_material_upkeep_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var worst := DetailFormat.band_material_worst(unit_data)
+    var turns := float(worst.get(DetailFormat.MATERIAL_BILL_RUNWAY_KEY,
+        BandFoodStatus.UNLIMITED_TURNS))
+    ctx.material_turns = turns
+    return BAND_MATERIAL_UPKEEP_ROW_FORMAT % [
+        BAND_MATERIAL_TERM_FORMAT % [
+            DetailFormat.format_trimmed(float(worst.get(DetailFormat.MATERIAL_BILL_STORE_KEY, 0.0)),
+                HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+            String(worst.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, ""))],
+        DetailFormat.food_turns_text(turns)]
+
 ## The SAME row on a band with no fodder economy — a dim em-dash and the reason on the block's hover,
 ## built by `DetailFormat.fodder_dormant_row` so this row and the FACTION page's twin cannot diverge.
 ##
@@ -735,75 +811,10 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
             fodder_hex, SourceForecast.format_fodder(float(unit_data.get("fodder_store", 0.0)))]
     return line
 
-## Selection-panel band KIT row: `Kit: Spears 87 · Sled 54 · Baskets dry` — the band's three
-## consumable kits and how much is left of each, with a spent one named in DANGER ink.
-##
-## **THE CONDITION IS A CLOCK, NOT A PERFORMANCE READING.** Durability and performance are orthogonal
-## axes: a kit works at its full tier until it hits zero and then the role steps down permanently. So
-## this row prints the number flat, tints only the ZERO, and draws no bar — a filled gauge here would
-## say "half a sled hauls half as much", which is exactly wrong.
-##
-## **ALL THREE ARE ALWAYS LISTED, including on a band that neither hunts nor forages today.** Each
-## kit wears on its own quantum (spears per animal killed, the sled per biomass hauled, baskets per
-## biomass gathered), so what a band is doing this turn does not predict which kit is closest to
-## running out — and a row that hid the idle ones would hide the very kit whose loss is about to
-## change what the band CAN do.
-##
-## **IT SURVIVES THE `compact` TIER.** A spent kit is stated nowhere else in the client at all, and
-## it is not recoverable from any other surface.
-## How many items the compact kit row can show before it wraps and overflows `Zone_band`. Three is
-## what the zone was sized for and what it carried for the whole of the minimal TOE; a fourth entry
-## overflowed it by 22px. **Raising it means re-measuring the zone**, not just changing this number.
-const BAND_KIT_ROW_MAX_ENTRIES := 3
-
-func _band_kit_line(unit_data: Dictionary) -> String:
-    var entries: Array[String] = []
-    # **THE ROW IS A FIXED-HEIGHT ZONE AND CANNOT GROW PER ITEM.** Listing every item the server
-    # publishes wrapped it to a second line and overflowed `Zone_band` by 22px the moment `traps`
-    # was added (caught by `band_panel_preview`'s `_assert_zone_content_fits`, not by eye) — and the
-    # item table is config, so the next item would do it again.
-    #
-    # So the row is a SUMMARY with a bounded budget: the items that need a decision first, then
-    # whatever fits. **Dry items lead, then SHORT ones** — running dry is a permanent step down to
-    # bare hands, and a shortfall is the other half of the party standing there with nothing; both
-    # are decisions, and the rest fill the remaining slots in roster order. The full per-item
-    # breakdown is the disclosure (`DisclosureController.kit_breakdown_lines`), which scrolls and
-    # therefore can carry them all.
-    #
-    # Nothing is hidden silently: `DetailFormat.band_kit_is_dry` and `band_kit_is_short` — what
-    # together tint the caret WARN — sweep EVERYTHING the server published, so an item pushed off
-    # this row still raises the warning that sends the player to the breakdown.
-    var conditions: Array = unit_data.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, [])
-    var ordered: Array = []
-    for row in conditions:
-        if float(row.get(DetailFormat.KIT_ITEM_REMAINING_KEY, DetailFormat.KIT_DRY)) \
-                <= DetailFormat.KIT_DRY:
-            ordered.append(row)
-    for row in conditions:
-        if not ordered.has(row) and int(DetailFormat.kit_coverage(unit_data,
-                String(row.get(DetailFormat.KIT_ITEM_ID_KEY, "")))["short"]) > 0:
-            ordered.append(row)
-    for row in conditions:
-        if not ordered.has(row):
-            ordered.append(row)
-    for row in ordered.slice(0, BAND_KIT_ROW_MAX_ENTRIES):
-        var item_id := String(row.get(DetailFormat.KIT_ITEM_ID_KEY, ""))
-        # **THREE STATES, NOT TWO** (issue #520). A live item that reaches everybody is neutral INK;
-        # one that has run out is DANGER, the permanent step down; one that is live but reaches only
-        # part of the party is WARN — its gear works perfectly for whoever holds it, which is exactly
-        # why it must not read as the cliff, and equally why it must not read as *fine*.
-        var coverage := DetailFormat.kit_coverage(unit_data, item_id)
-        var short := int(coverage["short"]) > 0
-        var face := DetailFormat.kit_condition_face(unit_data, item_id)
-        var hex := HudStyle.DANGER_HEX
-        if DetailFormat.kit_is_equipped(unit_data, item_id):
-            hex = HudStyle.WARN_HEX if short else HudStyle.INK_HEX
-        if short:
-            face = DetailFormat.KIT_COVERAGE_ROW_FORMAT % [
-                face, coverage["holding"], coverage["headcount"]]
-        entries.append(BAND_KIT_ROW_ENTRY_FORMAT % [
-            DetailFormat.kit_item_label(item_id), hex, face])
-    return BAND_KIT_ROW_PREFIX + BAND_KIT_ROW_SEPARATOR.join(entries)
+## **`_band_kit_line` AND `BAND_KIT_ROW_MAX_ENTRIES` ARE RETIRED** with the `Gear` row itself — see
+## the vocabulary block at the top of this file for why the row went and what replaced it. The 22px
+## `Zone_band` overflow the entry budget was measured against retires with them: no row here grows
+## per item any more.
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
 ## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict

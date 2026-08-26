@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 174
+const EXPECTED_CHECKPOINTS := 186
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -459,6 +459,19 @@ const BLOCKED_CAUSE_ONLY_LINES := 1
 ## to do with either the keeping or the floor, so a table that answered one sentence for every key
 ## cannot satisfy both it and the escapement claim.
 const BLOCKED_KNOWLEDGE_REASON := "knowledge"
+
+## The THIRD cause key, and the only one whose sentence NAMES something off the wire rather than
+## reading it out of a table (`docs/plan_standing_upkeep.md` §2.7). The good is the rung's own build
+## pile, so the fixture states one — `stone` because the route branch is what forces this term and a
+## plant rung eating hurdles would be a fixture no ladder can produce.
+const BLOCKED_MATERIAL := "stone"
+const BLOCKED_MATERIAL_PILE := 40.0
+
+## What the card-hover probe's source was billed in goods and what the band's store paid. Two figures
+## rather than their difference, because the sentence quotes both — the sim publishes both precisely
+## so no client has to subtract.
+const HOVER_MATERIAL_DEMAND := 2.0
+const HOVER_MATERIAL_SUPPLIED := 1.2
 
 ## The two sentences Ray cut out of the blocked block — the plant cause's own remedy tail and the
 ## KEEPING line (`HudSelectionVocab.RUNG_BLOCKED_REMEDY_FORMAT`, which took the web's role name).
@@ -1279,6 +1292,56 @@ func run(harness) -> void:
 			% blocked_visible.count(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT),
 		blocked_visible.count(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
 			== BLOCKED_STATED_ONCE)
+
+	# **AND THE CAUSE THAT NAMES A GOOD** (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12) — the
+	# same `-4` sentinel, a different refusal, and the one stuck reason whose remedy is off the build
+	# line in a direction no other cause points.
+	#
+	# ⛔ **"RAISE THIS BAND'S BUILDERS ROLE" IS WRONG ADVICE HERE.** There is no affordability gate on a
+	# rung — §2.5 retired the five verbs' own — so a build the store cannot cover QUEUES AND STALLS:
+	# the arm runs, banks nothing, and wastes the crew's turn. Adding builders changes none of that,
+	# and the lever is the bench that makes the good or a trade.
+	#
+	# **THE WIRE'S KEY IS ONLY `materials`; WHICH GOOD IS THE RUNG'S OWN PILE.** The sentence is
+	# composed from `buildMaterialCost` rather than looked up, which is the whole reason it can name
+	# the thing that ran out.
+	var blocked_materials := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	blocked_materials["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	blocked_materials["patch_build_blocked_reason"] = \
+		HudSelectionVocab.BUILD_BLOCKED_REASON_MATERIALS
+	BaseFx.price_plant_build(blocked_materials, SourceForecast.BUILD_TURNS_QUEUE_BLOCKED)
+	blocked_materials["patch_build_material_cost"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": BLOCKED_MATERIAL_PILE}]
+	h._hud.clear_selection()
+	h._show_tile(blocked_materials)
+	await h._settle()
+	await h._save("tile_meter_blocked_materials")
+	var materials_visible: String = h._hud.tile_detail.get_parsed_text()
+	var materials_sentence := HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT % BLOCKED_MATERIAL
+	h._assert_hud("a build the store cannot cover names the GOOD — \"%s\"" % materials_sentence,
+		materials_visible.contains(materials_sentence))
+	# **AND IT DOES NOT SEND THE PLAYER TO A STEPPER.** The role sentence is what every other short
+	# source on this card says, so its ABSENCE here is what makes the new arm worth anything.
+	h._assert_hud("…and never the role sentence, which no missing good is fixed by",
+		not materials_visible.contains(HudWorkVocab.under_kept_note_for_source(
+			SourceForecast.SOURCE_KIND_FORAGE)))
+	# **THE INK IS THE OTHER HALF OF THE RULE: a missing good is RED where missing hands are amber.**
+	# Read off the rendered BBCode rather than the parsed text, which has dropped every tag.
+	h._assert_hud("…in the DANGER ink, where a staffing shortfall takes the warn amber",
+		h._hud.tile_detail.text.contains("[color=#%s]%s%s" % [HudStyle.DANGER_HEX,
+			DetailFormat.MORALE_BREAKDOWN_INDENT, materials_sentence]))
+	# **AND THE UNNAMED FORM, PNG-LESS**: an empty pile means *this rung eats nothing*, which cannot be
+	# true of a build blocked ON materials — so the client says so rather than inventing a good.
+	var blocked_unnamed := blocked_materials.duplicate()
+	blocked_unnamed["patch_build_material_cost"] = []
+	var unnamed_lines := DetailFormat.build_blocked_lines(blocked_unnamed,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.SOURCE_KIND_FORAGE)
+	h._assert_hud("a materials block with no pile on the wire names no good rather than guessing (%s)"
+			% str(unnamed_lines),
+		unnamed_lines.size() == BLOCKED_CAUSE_ONLY_LINES
+			and String(unnamed_lines[0]).contains(
+				HudSelectionVocab.BUILD_BLOCKED_MATERIALS_UNNAMED))
+
 	# …and the PNG-less companion: a source short of keeping and blocked on a cause the keeping was
 	# never a lever for. **It was already right** — the suppression only ever fired on `escapement` — so
 	# it is here to say the deletion took the special case away and left this case alone. Asked of the
@@ -1300,6 +1363,53 @@ func run(harness) -> void:
 	# producer, no fork, and the two causes no longer read differently about who pays.
 	h._assert_hud("…and the ESCAPEMENT source short of keeping answers exactly the same (%s)"
 			% _under_kept_hover(blocked), _under_kept_hover(blocked) == short_knowledge_hover)
+
+	# **AND THE CARD'S OWN GOOD-SHORTFALL ARM** (`docs/plan_standing_upkeep.md` §2.7) — the source-row
+	# twin of the work board's note, read off `upkeepMaterialDemand` / `upkeepMaterialSupplied` on the
+	# SOURCE rather than off a labor row's copy, because a card has no assignment in hand.
+	#
+	# ⛔ **THE REMEDY DIFFERS IN KIND, SO THE SENTENCE MUST.** No staffing stepper mends a fence with
+	# no hurdles, and the role sentence is what every other short source on this card says — so the
+	# claim is the PAIR: the good named, and the role sentence gone.
+	#
+	# **PNG-LESS, because a hover is a `tooltip_text` and no capture can show one.** Driven through
+	# `note_under_kept_hover`, which is the one producer both source cards call.
+	var short_good := BaseFx.unbuilt(BaseFx.food_tile_fixture())
+	short_good["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	short_good["patch_upkeep_demand"] = BLOCKED_UPKEEP_DEMAND
+	short_good["patch_upkeep_supplied"] = BLOCKED_UPKEEP_SUPPLIED
+	short_good["patch_upkeep_shortfall"] = BLOCKED_UPKEEP_DEMAND - BLOCKED_UPKEEP_SUPPLIED
+	short_good["patch_upkeep_workers_needed"] = BLOCKED_UPKEEP_KEEPERS
+	short_good["patch_has_neglect_grace"] = true
+	short_good["patch_neglect_grace_remaining"] = BLOCKED_GRACE_TURNS
+	short_good["patch_upkeep_material_demand"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_DEMAND}]
+	short_good["patch_upkeep_material_supplied"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_SUPPLIED}]
+	var good_hover := _under_kept_hover(short_good)
+	# Composed from the FORMAT and the fixture's own numbers, never asked of `material_short_note` —
+	# an expectation re-derived through the code under test collapses to `""` with the arm restored to
+	# a stub and passes over the very defect it exists to catch.
+	var good_sentence := HudWorkVocab.WORK_ROW_MATERIAL_SHORT_FORMAT % [
+		BLOCKED_MATERIAL,
+		DetailFormat.format_trimmed(HOVER_MATERIAL_SUPPLIED,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+		DetailFormat.format_trimmed(HOVER_MATERIAL_DEMAND,
+			HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
+		HudWorkVocab.MATERIAL_SHORT_NOUN_PATCH]
+	h._assert_hud("a source short of a GOOD names it on the card's hover — \"%s\" (got \"%s\")"
+		% [good_sentence, good_hover], good_hover == good_sentence)
+	h._assert_hud("…and never the role sentence, which no missing good is fixed by",
+		not good_hover.contains(under_kept))
+	# **AND THE SOURCE WHOSE GOODS ARE PAID IS UNTOUCHED**, which is what stops the new arm swallowing
+	# the old one: a client that worded every short source as a material shortfall passes the pair
+	# above. Same patch, the supplied term raised to meet the demand.
+	var paid_good := short_good.duplicate()
+	paid_good["patch_upkeep_material_supplied"] = [
+		{"material_id": BLOCKED_MATERIAL, "amount": HOVER_MATERIAL_DEMAND}]
+	h._assert_hud("…while a source whose GOODS are covered keeps the role sentence (%s)"
+		% _under_kept_hover(paid_good), _under_kept_hover(paid_good) == under_kept)
+
 	# **AND THE HOVER CARRIES NO COUNTDOWN, which is the asymmetry with the work board stated as a
 	# claim** — that board takes the same first sentence plus `Tended is lost in 3 turns.`, because
 	# staffing is decided there and *how long you have* is actionable there. A single-surface check

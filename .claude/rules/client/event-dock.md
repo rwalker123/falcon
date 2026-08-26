@@ -1001,3 +1001,52 @@ because a notification the player has to go and find is the thing this arc exist
   `HudLayer.note_system_event` → the `system_note_requested` signal → `Main` → the dock. The HUD
   emits rather than reaching for a panel it does not own — the coordinator mediates, as everywhere
   else.
+
+## The material half's two kinds (`docs/plan_standing_upkeep.md` §4.9 item 12)
+
+**NEITHER COULD HAVE INHERITED A RUNG, AND ONE OF THEM DOES NOT TAKE ITS KIND'S.** `kit_life` and
+`material_shortfall` are the sim's two new `CommandEventKind`s, and importance is resolved entirely
+client-side — **no schema change**.
+
+- **`material_shortfall` → `RUNG_ALERT`, and IT NAMES THE BAND.** An investment is about to start
+  coming apart for want of a good, which is the Alert rung's own description. The sim edge-gates it on
+  `LaborAllocation::material_shortfall_warned`, so the rung never means "every turn".
+- **`kit_life` → `RUNG_NOTABLE` in `RUNG_BY_KIND`, and that entry is the FALLBACK.** The line's real
+  rung is the `life_readout` SEAM it crossed, which the sim writes as `severity=warn|danger` —
+  resolved by `snapshot::crafting::life_severity` off `equipment.json`'s own `warn_fraction` 0.34 /
+  `danger_fraction` 0.10. ⛔ **No threshold is invented on this side.** The quieter of the two is the
+  honest default for a line carrying no token at all.
+
+**THE SPLIT RIDES `DETAIL_STATUS_STYLE`, NOT A PARALLEL TABLE.** That table already overrides a kind's
+rung from a whole space-delimited `key=value` fragment, which is exactly the job — so `severity=warn`
+(Notable, `▾`) and `severity=danger` (Alert, `⚠`) are rows in it, and the table's own rule that **the
+glyph tracks the rung** covers them for free. `_detail_status_key` matches whole fragments, so a
+`severity=` token can only match the field it names. It is why that table's contract is `key=value` and
+not `status=`.
+
+**`status=outrunning` IS IN THE TABLE TOO, AND IT AGREES WITH ITS KIND RATHER THAN OVERRIDING IT.**
+`material_shortfall` is already Alert; the row exists for the two things only a member of that table
+gets — the `⚠` its rung names, and eligibility for `DETAIL_STATUS_WORK_LINK`, which
+`_detail_status_key` returns no token for otherwise. **Warn amber, not the raid crimson**, exactly as
+`feral` and `lapsed`: a loss the player can still head off by crafting or by holding less.
+
+> ### ⛔ WITHOUT THE `Work tab` LINK THE MATERIAL ALERT NAMES NO BAND AT ALL
+>
+> The sim's label is *"Hurdles is running out"* — no band in it — so `SIM_BAND_LABEL_FORMAT` has
+> nothing to rewrite, and `band` sits in `DETAIL_KEY_HIDDEN` on the premise that the label already said
+> it. **This kind exists to replace the faction `Gear` row's `⚠ 1 band` → *which band* drill-down,
+> which was a JUMP**, so the link is not a convenience: without it the discovery path would have been
+> deleted rather than moved. `announce_material_shortfall` writes `band=` as the durable `BandId`.
+>
+> **The Work tab is the right destination rather than merely an available one.** The bill is what this
+> band's improvements demand, and what the player can DO about it is on that tab: staff the bench that
+> makes the good, or stop holding a rung. A `kit_life` row deliberately offers NO such jump — a worn
+> spear is not a labor row the sim changed unasked, and a link mounted on every new kind means nothing.
+
+**Both kinds are stated in `CHANNEL_BY_KIND`** rather than left to `DEFAULT_CHANNEL`, for the reason
+that table gives about `KIND_COMMAND_ECHO`: a channel is a fact about the kind, and these two are the
+ones most easily mistaken for client chatter, since the remedy for both is something the PLAYER does.
+
+**Frame:** `event_dock_material` (`chapters/event_dock.gd`) carries all three rows at once — the whole
+claim is that the two kit seams read APART, and a split asserted one row at a time passes on a client
+that files every `kit_life` line at one rung.

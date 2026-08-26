@@ -4388,11 +4388,24 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String)
     var suffix := String(readout["label_suffix"])
     if suffix != "":
         text += HudComposeVocab.STANDING_SUMMARY_SEPARATOR + suffix
+    # **THE GOOD-SHORTFALL ARM, KEPT IN STEP WITH THE WORK BOARD'S ROW**
+    # (`docs/plan_standing_upkeep.md` §2.7). This surface and `BandPanelController`'s inspector render
+    # the same `note` / `muted_note` pair, so a third arm added to one and not the other is exactly the
+    # drift this repo keeps paying for. `material_short_note` supersedes whatever the readout put in
+    # the slot, for the reason it does there: it names a remedy no stepper on this sheet can reach.
+    var material_note := HudWorkVocab.material_short_note(kind,
+        SourceForecast.material_payoff_rows(assignment.get(
+            SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
+        SourceForecast.material_payoff_rows(assignment.get(
+            SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY, [])))
     return {
         "text": text.strip_edges(),
         "tooltip": String(readout["tooltip"]),
         "warn": bool(readout["warn"]),
-        "note": String(readout["note"]),
+        "note": material_note if material_note != "" else String(readout["note"]),
+        # **THE INK IS MODEL STATE HERE TOO** — DANGER for a missing good, WARN for the staffing note
+        # the readout produces. One table (`HudWorkVocab.note_color`) shared with the work board.
+        "note_severity": HudWorkVocab.under_kept_note_severity(material_note),
         "muted_note": String(readout["muted_note"]),
     }
 
@@ -4413,7 +4426,9 @@ func _build_standing_summary_from_model(model: Dictionary) -> Control:
         flow.add_child(HudWidgets.build_row_note_label(HudComposeVocab.OVERHUNT_FLAG, HudStyle.WARN, tooltip))
     var note := String(model["note"])
     if note != "":
-        flow.add_child(HudWidgets.build_row_note_label(note, HudStyle.WARN, tooltip))
+        flow.add_child(HudWidgets.build_row_note_label(note,
+            HudWorkVocab.note_color(String(model.get("note_severity",
+                HudWorkVocab.NOTE_SEVERITY_WARN))), tooltip))
     var muted_note := String(model["muted_note"])
     if muted_note != "":
         flow.add_child(HudWidgets.build_row_note_label(muted_note, HudStyle.INK_FAINT, tooltip))
@@ -4437,6 +4452,12 @@ func _update_standing_summary(flow: HFlowContainer, model: Dictionary) -> void:
     if note != "":
         var note_label := flow.get_child(idx) as Label
         note_label.text = note
+        # **THE INK IS PATCHED WITH THE TEXT, and skipping it would have been a silent stale colour.**
+        # The shape signature carries the note's PRESENCE, not its severity, so a row whose note went
+        # from *short of hands* to *short of hurdles* patches in place — and a `font_color` written
+        # only at build time would leave the danger sentence wearing the staffing amber.
+        note_label.add_theme_color_override("font_color", HudWorkVocab.note_color(
+            String(model.get("note_severity", HudWorkVocab.NOTE_SEVERITY_WARN))))
         HudWidgets.set_label_tooltip(note_label, tooltip)
         idx += 1
     var muted_note := String(model["muted_note"])

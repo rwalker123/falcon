@@ -272,16 +272,11 @@ const FACTION_ALERT_ONE := "1 band"
 
 const FACTION_ALERT_MANY := "%d bands"
 
-## The Kit row's two states. It carries NO durabilities — a mean of three per band describes no band
-## that exists — so it is the alert, or the word saying there is none.
-const FACTION_KIT_ALL_EQUIPPED := "all equipped"
-
-const FACTION_KIT_DRY_NOTE := "a kit has run out"
-
-## The SHORTFALL note (issue #520) — a band whose gear works and does not go round. It is worded away
-## from `FACTION_KIT_DRY_NOTE`'s finality on purpose: running out is permanent and a shortfall is the
-## band outgrowing its gear, which crafting can answer.
-const FACTION_KIT_SHORT_NOTE := "a kit does not go round"
+## **THE FACTION `Kit` ROW'S VOCABULARY IS RETIRED** (`docs/plan_standing_upkeep.md` §4.9 item 12) —
+## `FACTION_KIT_ALL_EQUIPPED`, `FACTION_KIT_DRY_NOTE` and `FACTION_KIT_SHORT_NOTE` went with the row
+## that was their only reader. The durabilities never aggregated, so the row was an alert and a
+## drill-down; the crafting panel's kit ledger states the items in full, and the event dock's
+## `kit_life` line pushes the two `life_readout` seams the row could only be read for.
 
 ## **THE SUMMARY TABS' VOCABULARY.** Work and Parties are one idea in two scopes — a row per thing,
 ## flagged when it wants attention — so they share every word below rather than each growing its own.
@@ -1088,15 +1083,115 @@ const UNDER_KEPT_LOST_ONE_TURN := "%s is lost next turn."
 
 const UNDER_KEPT_LOST_NOW := "%s is being lost now."
 
+## ---- THE THIRD ARM: WHEN THE MISSING THING IS A GOOD (`docs/plan_standing_upkeep.md` §2.7) --------
+##
+## ⛔ **THE ROLE SENTENCE IS WRONG ADVICE THE MOMENT THE MISSING THING IS A MATERIAL.** Twelve keepers
+## do not mend a fence with no hurdles — *"raise this band's Agriculture role"* points the player at a
+## stepper that cannot help. **A dead kit makes a job want more hands; a missing material stops the
+## work outright**, and the two must not read alike.
+##
+## **THREE SHORTFALLS, THREE REMEDIES, AND THREE REGISTERS**:
+##   • a MISSING GOOD — the DANGER ink, and this sentence. No stepper fixes it; the remedy is the
+##     bench, or fewer things standing.
+##   • MISSING HANDS — the WARN ink and the role sentence above. The stepper IS the lever.
+##   • a DEAD KIT — the FAINT ink, quiet. It costs hands and takes nothing away, and it is the event
+##     dock's `kit_life` line rather than a note on this row at all.
+##
+## **IT STATES BOTH TERMS, NEVER THEIR DIFFERENCE** — `Short of hurdles — 0.03 of the 0.05 a turn this
+## pen eats` — because the sim publishes both precisely so this sentence needs no client arithmetic.
+## The noun at the end is the SOURCE, so the sentence says what is eating the good as well as which
+## good it is.
+## **THE LEAD-IN IS SHARED WITH THE BLOCKED-BUILD CAUSE, and that is what makes both red.**
+## `HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD` is the one prefix in this client that means
+## *a good is missing*, and `DetailFormat.detail_bbcode` tints an indented sub-line DANGER on it — so
+## the work row's note and the queue's stuck reason take one ink from one string, and neither can drift
+## into the amber that means *missing hands*.
+const WORK_ROW_MATERIAL_SHORT_FORMAT := HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
+    + "%s — %s of the %s a turn this %s eats."
+
+## The two source nouns the sentence ends on, keyed by web the way every other pair in this file is —
+## one picker, so the plant and animal wordings cannot drift.
+const MATERIAL_SHORT_NOUN_HERD := "pen"
+const MATERIAL_SHORT_NOUN_PATCH := "patch"
+
+## **THE NOTE'S SEVERITY, CARRIED ON THE MODEL RATHER THAN GUESSED AT THE RENDER SITE.** The work
+## inspector and the drawer's standing summary both drew this note in a hard-coded `HudStyle.WARN`,
+## which is right for a staffing shortfall and wrong for a missing good — so the producer that knows
+## which shortfall it is says so, and neither renderer sniffs the sentence for a hazard word.
+##
+## ⛔ **AND IT IS NOT BBCODE SMUGGLED INTO THE STRING.** Both hosts render the note as a plain `Label`
+## with a `font_color` override; a `[color=…]` run in the text would print its own markup.
+const NOTE_SEVERITY_WARN := "warn"
+const NOTE_SEVERITY_DANGER := "danger"
+
+## The ink each severity draws in — the ONE table, read by both render sites, so the two surfaces
+## cannot colour one note two ways.
+static func note_color(severity: String) -> Color:
+    return HudStyle.DANGER if severity == NOTE_SEVERITY_DANGER else HudStyle.WARN
+
+## **THE GOOD-SHORTFALL SENTENCE FOR ONE ROW, OR `""`** — `""` meaning *this row went short of no
+## good*, which is every row on the shipped ladder but a pen's.
+##
+## `demand` / `supplied` are the row's own published pair (`LaborAssignment.materialUpkeepDemand` /
+## `materialUpkeepSupplied`); the WORST good is the one named, because a note has one sentence and the
+## good furthest behind is the one to act on. **Never a total across goods** — that is the currency
+## this model does not have.
+static func material_short_note(kind: String, demand: Array[Dictionary],
+        supplied: Array[Dictionary]) -> String:
+    var worst := _worst_material_shortfall(demand, supplied)
+    if worst.is_empty():
+        return ""
+    return WORK_ROW_MATERIAL_SHORT_FORMAT % [
+        String(worst[SourceForecast.MATERIAL_PAYOFF_ID_KEY]),
+        DetailFormat.format_trimmed(float(worst[SourceForecast.MATERIAL_UPKEEP_SUPPLIED_KEY]),
+            RUNG_TRACK_MATERIAL_DECIMALS),
+        DetailFormat.format_trimmed(float(worst[SourceForecast.MATERIAL_UPKEEP_DEMAND_KEY]),
+            RUNG_TRACK_MATERIAL_DECIMALS),
+        MATERIAL_SHORT_NOUN_HERD if kind == SourceForecast.LABOR_KIND_HUNT \
+            else MATERIAL_SHORT_NOUN_PATCH]
+
+## The good furthest behind its bill, by the SHARE paid rather than the raw gap: a rung wanting 6 of
+## one good and 0.05 of another is not worse off for the larger number, it is worse off for the one it
+## covered least of. `{}` when every good was covered.
+static func _worst_material_shortfall(demand: Array[Dictionary],
+        supplied: Array[Dictionary]) -> Dictionary:
+    var worst := {}
+    var worst_share := 1.0
+    for row in SourceForecast.material_upkeep_shortfalls(demand, supplied):
+        var wanted := float(row[SourceForecast.MATERIAL_UPKEEP_DEMAND_KEY])
+        if wanted < SourceForecast.MATERIAL_FLOW_MIN:
+            continue
+        var share := float(row[SourceForecast.MATERIAL_UPKEEP_SUPPLIED_KEY]) / wanted
+        if worst.is_empty() or share < worst_share:
+            worst_share = share
+            worst = row
+    return worst
+
 ## Which of the pair this row takes, off the row's own labor kind — one picker, so the note and the
 ## tooltip can never end up describing two different webs.
-static func under_kept_note(kind: String) -> String:
+##
+## **A GOOD-SHORTFALL SENTENCE SUPERSEDES BOTH** where the caller has one to pass: it is the arm that
+## names a remedy the stepper cannot reach, so a row short of hands AND of hurdles is told about the
+## hurdles. Callers with no material pair in hand pass nothing and get the staffing pair, which is
+## every caller that existed before this arm.
+static func under_kept_note(kind: String, material_note: String = "") -> String:
+    if material_note != "":
+        return material_note
     return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_NOTE
 
+## **AND ITS SEVERITY, ASKED THE SAME WAY** — DANGER for a missing good, WARN for missing hands. One
+## producer for the pair, so a note and its ink can never describe different shortfalls.
+static func under_kept_note_severity(material_note: String = "") -> String:
+    return NOTE_SEVERITY_DANGER if material_note != "" else NOTE_SEVERITY_WARN
+
+## **THE COUNTDOWN RIDES THE GOOD-SHORTFALL ARM TOO**, unchanged: a material shortfall drives the same
+## decay through the same `grace_turns` and the same neglect counter as a staffing one — one grace,
+## one counter, the decay riding the worst of the two fractions — so the hover says how long you have
+## whichever term came up short.
 static func under_kept_tooltip(kind: String, rung_word: String = "",
-        grace: int = UNDER_KEPT_NO_COUNTDOWN) -> String:
-    var note := under_kept_note(kind)
+        grace: int = UNDER_KEPT_NO_COUNTDOWN, material_note: String = "") -> String:
+    var note := under_kept_note(kind, material_note)
     if rung_word == "" or grace == UNDER_KEPT_NO_COUNTDOWN:
         return note
     var countdown := UNDER_KEPT_LOST_NOW % rung_word
@@ -1111,14 +1206,25 @@ static func under_kept_tooltip(kind: String, rung_word: String = "",
 ## `"hunt"`, so handing one straight to the labor-keyed pickers above silently answers with the PLANT
 ## web's sentence on an animal source — a wrong answer that looks like a right one. It delegates
 ## rather than re-spelling the pair, so the two webs' wording still has exactly one home.
-static func under_kept_note_for_source(source_kind: String) -> String:
-    return under_kept_note(_labor_kind_of(source_kind))
+static func under_kept_note_for_source(source_kind: String,
+        material_note: String = "") -> String:
+    return under_kept_note(_labor_kind_of(source_kind), material_note)
+
+## **THE CARD-SIDE GOOD-SHORTFALL SENTENCE**, asked with a SOURCE kind — `SOURCE_KIND_HERD` is
+## `"herd"` while `LABOR_KIND_HUNT` is `"hunt"`, so handing one straight to the labor-keyed producer
+## silently words an animal source's note for the plant web. It delegates rather than re-spelling, the
+## same shape the note and tooltip pair above already have.
+static func material_short_note_for_source(source_kind: String, demand: Array[Dictionary],
+        supplied: Array[Dictionary]) -> String:
+    return material_short_note(_labor_kind_of(source_kind), demand, supplied)
 
 ## …and the HOVER asked the same way, which is the form both source CARDS use. It supplies no
 ## countdown by construction: the card states no figure at all, and the one surface that does states
 ## it by passing the pair above.
-static func under_kept_tooltip_for_source(source_kind: String) -> String:
-    return under_kept_tooltip(_labor_kind_of(source_kind))
+static func under_kept_tooltip_for_source(source_kind: String,
+        material_note: String = "") -> String:
+    return under_kept_tooltip(_labor_kind_of(source_kind), "", UNDER_KEPT_NO_COUNTDOWN,
+        material_note)
 
 ## **WHICH BAND ROLE PAYS THIS SOURCE'S KEEPING** — `Husbandry` on the animal web, `Agriculture` on
 ## the plant one. It is the role NAME the two notes above already name in prose, pulled out so the
@@ -2075,6 +2181,83 @@ const RUNG_TRACK_STATE_OPEN := "open"
 const RUNG_TRACK_COST_FORMAT := "%s work · %s"
 
 const RUNG_TRACK_COST_UNDATED_FORMAT := "%s work"
+
+# ---- THE PRICE ASIDES — the material half of a rung's price (`docs/plan_standing_upkeep.md` §2.7) --
+#
+# **WORK WAS NEVER THE WHOLE PRICE, AND THE RIGHT-HAND FACE HAS NO ROOM TO SAY SO.** A rung's face is
+# already `75 work · ≈12 turns` in a 292px card; a fence's six hurdles and its 0.05-a-turn mending
+# bill are two more statements about the same rung, so they take the ASIDE shape a locked rung's
+# reason and a crop row's payoff face already use — beneath the row, wrapped, in the quiet ink.
+#
+# ⛔ **THEY ARE NOT REFUSALS AND DO NOT RIDE `ROW_REASONS_KEY`.** That array means *why this rung is
+# refused*; a price is not a refusal. A LOCKED rung keeps its reason **and** states its price, which
+# was settled deliberately: hiding the price behind the refusal means a player who has never made a
+# hurdle cannot see what a pen would cost, so they cannot plan toward one.
+#
+# ⛔ **AND THEY ARE THE `⌃` TRACK'S, NOT THE COMPOSE SHEET'S.** Foraging and hunting have no hold cost
+# to state; the improvement is chosen from the work row's `⌃`, which is why this whole readout lives
+# on one surface.
+
+## `+ 6 hurdles to raise it` — the WHOLE pile the rung swallows, at full coverage, drawn as the meter
+## climbs. Rendered only where the wire quotes a pile, which is the rung DIRECTLY ABOVE where the
+## source stands and no other: `buildMaterialCost` prices one rung, so a row two rungs up states
+## nothing rather than repeating the rung below it.
+const RUNG_TRACK_BUILD_MATERIAL_FORMAT := "+ %s to raise it"
+
+## `you have 2 hurdles — it will stall at about a third` — the store against the pile, on the good
+## that binds. **A short store STALLS a build and never refuses it** (the ladder's own rule): the
+## coverage fraction scales the work banked and the materials drawn together, so the honest warning is
+## *how far this gets* rather than *you may not*.
+##
+## **THE BINDING GOOD IS NAMED, NEVER A TOTAL.** With two goods in a pile the fraction is the WORST of
+## them and the clause names that one — summing across goods is the currency this model does not have.
+const RUNG_TRACK_STALL_FORMAT := "you have %s — it will stall at about %s"
+
+## The fraction in words, and the ladder is the words' OWN values — the rung chosen is simply the
+## nearest of them, so there is no threshold table to tune and no boundary to get wrong. Below the
+## lowest rung the answer is `RUNG_TRACK_STALL_BARELY`, because *a tenth* overstates a store that
+## covers a fortieth.
+const RUNG_TRACK_STALL_STEPS := [
+    [0.10, "a tenth"],
+    [0.25, "a quarter"],
+    [0.33, "a third"],
+    [0.50, "half"],
+    [0.67, "two thirds"],
+    [0.75, "three quarters"],
+]
+
+## What the fraction reads as under the lowest named rung — a store that would buy almost none of the
+## pile. Half the smallest named fraction is the cut, which is that fraction's own nearest-neighbour
+## boundary rather than a dial: a store under it is nearer to nothing than to a tenth.
+const RUNG_TRACK_STALL_BARELY := "barely at all"
+
+## `then 1 work · 0.05 hurdles a turn to hold` — the STANDING price of the rung being offered, beside
+## the one-off pile above it. **Every rung above the standing one states it, materials or not**: what
+## a player is agreeing to is a one-off cost AND a bill for as long as the thing stands, and the
+## one-off figure on the row cannot say the second half.
+##
+## **THE WORK TERM IS THE RUNG'S OWN RATE** (`SourceForecast.build_upkeep_demand`) — the per-rung pair
+## the compose sheet's `BUILD_PRICE_UPKEEP_FORMAT` quotes, at every fullness, not the bill this source
+## was handed this turn. It is rendered through `DetailFormat.format_work_units`, so the track and the
+## sheet print one rate one way.
+const RUNG_TRACK_HOLD_FORMAT := "then %s a turn to hold"
+
+const RUNG_TRACK_HOLD_WORK_TERM := "%s work"
+
+## ONE MATERIAL TERM — `0.05 hurdles`, `6 hurdles`. **A material names itself** (the rule
+## `SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT` states: the catalogue ships no display name, so the
+## id IS the word), and the amount is trimmed rather than fixed-width so a whole pile reads `6` while
+## a mending rate reads `0.05`.
+const RUNG_TRACK_MATERIAL_TERM := "%s %s"
+
+## What separates two goods in one clause — the client's standing clause joiner, so `6 hurdles · 2
+## rope` reads exactly as every other multi-account run in this HUD does.
+const RUNG_TRACK_PRICE_SEPARATOR := " · "
+
+## The decimals a material amount is printed to before its trailing zeros come off. Two, which is what
+## every other material figure in this client prints at (`FLORA_CROP_MATERIAL_CLAUSE_FORMAT`, the
+## picker's product line) and is one step finer than the shipped pen's 0.05-a-turn fence bill.
+const RUNG_TRACK_MATERIAL_DECIMALS := 2
 
 # ---- THE CROP STEP — the second page of the same card (`docs/plan_standing_upkeep.md` §2.8) --------
 #

@@ -398,6 +398,41 @@ const BUILD_BLOCKED_REASONS := {
 # you leave standing"* quotes the control the player would move; a second sentence telling them to move
 # it says the same thing twice. **ONE line is the budget** — measure a rewrite in
 # `ui_preview_out/tile_meter_blocked.png` rather than in characters.
+# **THE ONE CAUSE THAT NAMES A GOOD** (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12), and the
+# second cause worded off the table above rather than in it — because the table is keyed by wire key
+# and the wire's key is just `materials`: WHICH good is read from the rung's own pile
+# (`SourceForecast.build_material_cost`), so the sentence names the thing the store ran out of.
+#
+# ⛔ **THE REMEDY IS NOT THE BUILDERS ROLE, AND SAYING SO IS THE POINT.** A build the store cannot
+# cover is not short of hands — there is no affordability gate on a rung (§2.5 retired the five verbs'
+# own), so it QUEUES AND STALLS: the arm runs, banks nothing and wastes the crew's turn. Adding
+# builders changes none of that. The lever is the bench that makes the good, or a trade, and both are
+# off the build line entirely — the same shape `escapement`'s remedy has.
+#
+# **IT FUSES ITS LEVER INTO THE CAUSE with an em-dash**, which is this table's own rule for a key that
+# survives whole, and it measures 58 characters against the card's ~120 budget.
+const BUILD_BLOCKED_REASON_MATERIALS := "materials"
+
+# **THE SHARED LEAD-IN THAT MEANS *A GOOD IS MISSING*, and it is load-bearing beyond its words.**
+# `DetailFormat.detail_bbcode` tints an indented sub-line DANGER on exactly this prefix, which is what
+# gives a missing MATERIAL the red the work row's own good-shortfall note takes
+# (`HudWorkVocab.WORK_ROW_MATERIAL_SHORT_FORMAT`, which is built from it). **Missing hands are amber
+# and a missing good is red** — one rule, two surfaces, one string.
+#
+# ⛔ **IT MAY NOT CARRY BBCODE.** These sentences go verbatim into the build queue row's plain-text
+# `tooltip_text` as well as into the card's BBCode, so a `[color=…]` run here would print its own
+# markup on the hover. The ink is the RENDERER's, keyed on this named prefix.
+const BUILD_BLOCKED_MATERIAL_SHORT_LEAD := "Short of "
+
+const BUILD_BLOCKED_MATERIALS_FORMAT := BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
+    + "%s — the bench or a trade, not more builders."
+
+# …and the same sentence where the wire quotes no pile at all. **An empty `buildMaterialCost` means
+# "this rung eats nothing"**, which cannot be true of a build blocked ON materials — so this is the
+# honest reading of a wire this client is behind on, and it names no good rather than inventing one.
+const BUILD_BLOCKED_MATERIALS_UNNAMED := BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
+    + "what this needs — the bench or a trade, not more builders."
+
 const BUILD_BLOCKED_ESCAPEMENT_HERD := "Fewer animals here than you leave standing."
 
 const BUILD_BLOCKED_ESCAPEMENT_PLANT := "Less growing here than you leave standing."

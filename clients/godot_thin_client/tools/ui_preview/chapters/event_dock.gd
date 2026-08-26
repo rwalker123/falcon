@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 165
+const EXPECTED_CHECKPOINTS := 186
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -323,6 +323,63 @@ func _event_dock_shed_fixture() -> Array:
 		{"tick": 84, "kind": "craft", "faction": 0,
 			"label": SHED_BENCH_TRIMMED_LABEL, "detail": SHED_BENCH_TRIMMED_DETAIL, "seq": 957},
 	]
+
+
+# ---- THE MATERIAL HALF'S TWO KINDS (`docs/plan_standing_upkeep.md` §4.9 item 12) -----------------
+#
+# **NEITHER KIND HAD A RUNG, AND NEITHER COULD HAVE INHERITED ONE.** `kit_life` splits on a `severity=`
+# token the sim resolves off `equipment.json`'s own `life_readout` seams, and `material_shortfall` is
+# the line that replaced the retired faction `Gear` row's `⚠ 1 band` → *which band* drill-down. The
+# labels and details below are the sim's own, spelled out here so the expectations are not composed
+# through the code under test.
+const KIT_LIFE_KIND := "kit_life"
+
+## The WARN seam — an item down to about a third of a fresh one. Notable: a thing to know about.
+const KIT_LIFE_WARN_LABEL := "Baskets are wearing out"
+
+const KIT_LIFE_WARN_DETAIL := \
+	"status=wearing severity=warn item=baskets remaining=0.32 action=craft band=7"
+
+## …and the DANGER seam, deliberately set INSIDE the item's own rebuild time. Alert: an investment
+## about to be lost, and the point at which starting a replacement stops being optional.
+const KIT_LIFE_DANGER_LABEL := "Spears are wearing out"
+
+const KIT_LIFE_DANGER_DETAIL := \
+	"status=wearing severity=danger item=spears remaining=0.08 action=craft band=7"
+
+## The band both kit rows name. It carries no `Work tab` jump — a worn spear is not a labor row the
+## sim changed unasked, and its remedy is the bench.
+const KIT_LIFE_BAND := 7
+
+## **A GOOD THE STANDING BILLS EAT FASTER THAN IT ARRIVES.** The sim's label names the MATERIAL and
+## never the band, which is exactly why the row needs the jump: `band` sits in `DETAIL_KEY_HIDDEN` on
+## the premise that the label already said it, and here it does not.
+const MATERIAL_SHORT_LABEL := "Hurdles is running out"
+
+const MATERIAL_SHORT_DETAIL := \
+	"status=outrunning material=hurdles short=0.03 held=0.40 action=craft band=9"
+
+const MATERIAL_SHORT_BAND := 9
+
+func _event_dock_material_fixture() -> Array:
+	return [
+		{"tick": 90, "kind": KIT_LIFE_KIND, "faction": 0,
+			"label": KIT_LIFE_WARN_LABEL, "detail": KIT_LIFE_WARN_DETAIL, "seq": 961},
+		{"tick": 90, "kind": KIT_LIFE_KIND, "faction": 0,
+			"label": KIT_LIFE_DANGER_LABEL, "detail": KIT_LIFE_DANGER_DETAIL, "seq": 962},
+		{"tick": 90, "kind": "material_shortfall", "faction": 0,
+			"label": MATERIAL_SHORT_LABEL, "detail": MATERIAL_SHORT_DETAIL, "seq": 963},
+	]
+
+## Every band a drawn `Work tab` link would ask for, without pressing anything — the presence claim,
+## where `_preview_dock_work_links` answers the controls and the press claim spends them.
+func _preview_dock_link_bands(dock: EventDockPanel) -> Array[int]:
+	var bands: Array[int] = []
+	for event in dock._events:
+		var band_id := dock._work_tab_link_band(event)
+		if band_id != HudConst.NO_BAND_ID:
+			bands.append(band_id)
+	return bands
 
 ## The tick one RETAINED row carries — the stamp `note_system` took off the dock's current turn.
 ## Read off the accumulator like its label twin, because the claim is about the stamp applied at
@@ -2033,6 +2090,63 @@ func run(harness) -> void:
 	asked_bands.sort()
 	h._assert_hud("…each carrying the band ITS OWN row named (asked %s, want %s)"
 			% [str(asked_bands), str(SHED_LINK_BANDS)], asked_bands == SHED_LINK_BANDS)
+
+
+	# ---- THE MATERIAL HALF'S TWO KINDS (`docs/plan_standing_upkeep.md` §4.9 item 12) -------------
+	# **A KIT WEARING OUT AND A GOOD RUNNING OUT, ON ONE FRAME.** Both are new to the wire and neither
+	# had a rung; the `kit_life` pair is what replaced the retired `Gear` row on both pages, and the
+	# `material_shortfall` line is what replaced that row's `⚠ 1 band` → *which band* drill-down.
+	#
+	# **THE FRAME CARRIES BOTH KIT SEAMS AT ONCE**, because the whole claim is that they read APART: a
+	# split asserted one row at a time passes on a client that files every `kit_life` line at one rung.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_material_fixture())
+	event_dock.set_expanded(true)
+	await h._settle()
+	await h._save("event_dock_material")
+	# **THE SEAM IS THE RUNG, and `severity=` is how the sim states which one was crossed.** The
+	# thresholds are `equipment.json`'s own `warn_fraction` / `danger_fraction`, resolved sim-side —
+	# ⛔ nothing here invents a number, which is why the fixture carries the WORD and not a fraction.
+	h._assert_hud("a kit crossing the WARN seam is Notable — a thing to know, not to stop for (got %s)"
+			% _preview_event_rung(event_dock, KIT_LIFE_WARN_LABEL),
+		_preview_event_rung(event_dock, KIT_LIFE_WARN_LABEL) == HudEventVocab.RUNG_NOTABLE)
+	h._assert_hud("…and one crossing the DANGER seam is an Alert — an investment about to be lost (got %s)"
+			% _preview_event_rung(event_dock, KIT_LIFE_DANGER_LABEL),
+		_preview_event_rung(event_dock, KIT_LIFE_DANGER_LABEL) == HudEventVocab.RUNG_ALERT)
+	# **AND THE TWO ARE DRAWN APART**, which is this table's own rule: the hazard on the Alert, the
+	# reduction mark on the Notable. A split that filtered correctly and drew identically is the exact
+	# defect the `trimmed`/`lapsed` pair was fixed for one block above.
+	h._assert_hud("…so the danger row wears the hazard and the warn row the reduction mark (\"%s\" vs \"%s\")"
+			% [_preview_dock_row_glyph(event_dock, KIT_LIFE_DANGER_LABEL),
+				_preview_dock_row_glyph(event_dock, KIT_LIFE_WARN_LABEL)],
+		_preview_dock_row_glyph(event_dock, KIT_LIFE_DANGER_LABEL)
+				== HudEventVocab.STATUS_SHED_GLYPH
+			and _preview_dock_row_glyph(event_dock, KIT_LIFE_WARN_LABEL)
+				== HudEventVocab.STATUS_REDUCED_GLYPH)
+	# **THE KIND'S OWN RUNG IS THE FALLBACK, NOT THE ANSWER.** A `kit_life` line carrying no
+	# `severity=` at all still has to land somewhere, and the quieter of the two is the honest place —
+	# asserted PNG-less, because the row is the same row and only its detail differs.
+	h._assert_hud("a kit_life line with no severity token falls back to its KIND's Notable rung",
+		String(HudEventVocab.RUNG_BY_KIND[KIT_LIFE_KIND]) == HudEventVocab.RUNG_NOTABLE)
+	# **A GOOD RUNNING OUT IS AN ALERT, AND IT REACHES THE BAND.** The sim's label names the material
+	# and not the band, and `band` is in `DETAIL_KEY_HIDDEN` on the premise that the label already said
+	# it — so without the `Work tab` link this row would name no band at all, and the discovery path
+	# the faction `Gear` row owned would simply have been deleted.
+	h._assert_hud("a material the standing bills outrun is an Alert (got %s)"
+			% _preview_event_rung(event_dock, MATERIAL_SHORT_LABEL),
+		_preview_event_rung(event_dock, MATERIAL_SHORT_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…and it reaches the DEFAULT floor rather than waiting to be looked for",
+		_preview_visible_label_count(event_dock, MATERIAL_SHORT_LABEL) == 1)
+	h._assert_hud("…and carries a jump to the band it is about (band %d)" % MATERIAL_SHORT_BAND,
+		_preview_dock_link_bands(event_dock).has(MATERIAL_SHORT_BAND))
+	# **THE NEGATIVE: a kit_life row offers NO such jump.** The link means *the sim changed a labor row
+	# without being asked, go and look at what is left of it*, and a worn spear is neither — a client
+	# that mounted the link on every new kind would have made it mean nothing.
+	h._assert_hud("…while a worn kit offers no Work-tab jump, its remedy being the bench",
+		not _preview_dock_link_bands(event_dock).has(KIT_LIFE_BAND))
 
 	# ---- A LONG DETAIL IS TRIMMED, NOT ALLOWED TO WIDEN THE CARD ------------------------------
 	# The defect this closes is NOT that the strip is computed too wide: `Main._update_event_dock_insets`

@@ -148,16 +148,18 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             # this is the only place a fodder larder is judged worrying, and it judges it by the rule
             # the food larder is judged by.
             return DetailFormat.fodder_is_concerning(band)
-        HudDisclosureVocab.BREAKDOWN_KIND_KIT:
-            # A kit that has RUN OUT is concerning; one merely wearing down is not. There is no
-            # replenishment path, so the step down is permanent — the caret is the one warning the
-            # player gets, and gating it on a remaining-condition threshold would either cry wolf
-            # every turn or fire after the loss it was meant to announce.
-            #
-            # **A SHORTFALL COUNTS TOO** (issue #520). A band holding ten spears for seventeen
-            # hunters has no dry item and is still fighting with half a party; the caret is the
-            # invitation to open the popover that says which item and by how many.
-            return DetailFormat.band_kit_is_dry(band) or DetailFormat.band_kit_is_short(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP:
+            # A bill whose goods are ARRIVING SLOWER THAN THEY ARE EATEN is worth opening; one the
+            # band's bench and fields keep up with is not. The test is the row's own runway — the
+            # same `BandFoodStatus` thresholds both larders' carets read — so "worrying" is one rule
+            # for every account in this client that can run out, and the three cannot disagree.
+            return DetailFormat.material_upkeep_is_concerning(band)
+        # **THE KIT ARM IS RETIRED** with the `Gear` row that owned it (`docs/plan_standing_upkeep.md`
+        # §4.9 item 12). It asked whether a kit had run out or would not go round, which is what
+        # tinted that row's caret; the row is gone from both the band and the faction page, and what
+        # replaced it is the event dock's `kit_life` line — the same two seams, pushed rather than
+        # waited for. `DetailFormat.band_kit_is_dry` / `band_kit_is_short` were its only readers and
+        # went with it; the kit leaves the crafting panel and the compose sheet still read stayed.
         _:
             return DetailFormat.morale_is_concerning(band)
 
@@ -240,6 +242,40 @@ func fodder_breakdown_lines(band: Dictionary) -> Array[String]:
     var eaten := float(band.get("fodder_need", 0.0))
     if eaten >= SourceForecast.FODDER_FLOW_MIN:
         lines.append(DetailFormat.fodder_breakdown_row(-eaten, DetailFormat.FODDER_LABEL_PENS))
+    return lines
+
+## **THE STANDING MATERIAL BILL, ONE BLOCK PER GOOD** (`docs/plan_standing_upkeep.md` §2.7) — the rows
+## under the `Upkeep:` summary, and the only place every good the band owes is stated. The summary
+## names ONE good (the one in the worst state); this is the rest of them.
+##
+## **THREE TERMS PER GOOD, IN THE ORDER A PLAYER ASKS THEM**: what is wanted, what arrives, what is on
+## the shelf. The first two are signed flows and take the two-tone treatment every breakdown family in
+## this client uses (▼ amber for the debit, ▲ green for the credit); the shelf carries NO sign and
+## therefore renders in neutral ink, which is right — a stock is not good news or bad news, the
+## runway on the row above already said which.
+##
+## ⛔ **`material_upkeep_need` IS THE SIM'S SUM ACROSS THIS BAND'S SOURCES**, per good, and it is never
+## re-summed here from the pens on screen: herd rows are FOG-FILTERED, so a client-side total silently
+## drops one out of sight the band still owes for. That is `fodder_need`'s own rule, one account over.
+##
+## ⛔ **AND NOTHING IS EVER SUMMED ACROSS GOODS.** One block per good is the whole contract — a total
+## is the retired trade axis under a new name.
+##
+## Empty for a band with no bill, which registers no disclosure at all (`register` declines an empty
+## payload), so the row keeps its caret honest: no caret, nothing behind it.
+func material_upkeep_breakdown_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    for row in DetailFormat.band_material_bill(band):
+        lines.append(DetailFormat.material_bill_heading(
+            String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY])))
+        lines.append(DetailFormat.material_bill_row(
+            -float(row[DetailFormat.MATERIAL_BILL_NEED_KEY]),
+            DetailFormat.MATERIAL_LABEL_WANTED))
+        lines.append(DetailFormat.material_bill_row(
+            float(row[DetailFormat.MATERIAL_BILL_INCOME_KEY]),
+            DetailFormat.MATERIAL_LABEL_ARRIVING))
+        lines.append(DetailFormat.material_bill_stock_row(
+            float(row[DetailFormat.MATERIAL_BILL_STORE_KEY])))
     return lines
 
 ## **`trade_breakdown_lines` IS RETIRED** (arc #527) with the Trade row it opened. It itemized the
