@@ -998,6 +998,7 @@ mod tests {
             fallback_party: &fallback,
             // The fog fixtures queue nothing, so no source names a builders kit.
             build_kits: &crate::snapshot::subsistence::BuildKitIds::default(),
+            upkeep_kits: &crate::snapshot::subsistence::UpkeepKitIds::default(),
         })
     }
 
@@ -1411,6 +1412,7 @@ mod tests {
                     workers: 10,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1420,6 +1422,7 @@ mod tests {
                     workers: 5,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: Vec::new(),
@@ -1539,6 +1542,7 @@ mod tests {
                     workers: 10,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1548,6 +1552,7 @@ mod tests {
                     workers: 5,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: Vec::new(),
@@ -1616,6 +1621,7 @@ mod tests {
                 workers: 10,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             build_queue: Vec::new(),
             last_yields: Vec::new(),
@@ -1665,6 +1671,7 @@ mod tests {
             workers: 6,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1704,6 +1711,7 @@ mod tests {
             workers: 6,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -2255,6 +2263,7 @@ mod tests {
             &FloraQuoteCache::default(),
             // Nothing is queued in this fixture, so no patch names a builders kit.
             &crate::snapshot::subsistence::BuildKitIds::default(),
+            &crate::snapshot::subsistence::UpkeepKitIds::default(),
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
@@ -2310,6 +2319,7 @@ mod tests {
             &HashMap::new(),
             &FloraQuoteCache::default(),
             &crate::snapshot::subsistence::BuildKitIds::default(),
+            &crate::snapshot::subsistence::UpkeepKitIds::default(),
         );
 
         let published: Vec<&str> = patches
@@ -2726,6 +2736,7 @@ mod tests {
                 &tile_capacities,
                 &FloraQuoteCache::default(),
                 &crate::snapshot::subsistence::BuildKitIds::default(),
+                &crate::snapshot::subsistence::UpkeepKitIds::default(),
             );
             let row = &rows[0];
             assert_eq!(

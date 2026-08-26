@@ -423,6 +423,7 @@ fn spawn_the_holding_band(
                     workers: gatherers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 // **The builders are a band-level POOL** (`docs/plan_standing_upkeep.md` §2.5), and
                 // the whole of it goes on the head of the queue below. `builders == 0` is the
@@ -433,6 +434,7 @@ fn spawn_the_holding_band(
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: declared

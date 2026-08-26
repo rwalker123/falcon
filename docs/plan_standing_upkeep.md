@@ -396,6 +396,33 @@ When the pool cannot cover the sum, there are two defensible answers and the cho
 
 The mode rides the band's allocation, so it is `SimState` and survives a rollback.
 
+#### THE POOL IS WORKERS AND GOODS; THE TOOL IS THE WORK SITE'S
+
+The band is what a site draws **from** — it does not decide what the hands it lends carry. So the
+keeping **kit** is a property of the worked row (`upkeep_kit <faction> <source…> [kit <id>]`,
+`LaborAssignment::upkeep_kit`), while the keepers and the store stay one pool per band. There is no
+tension between the two: the pool decides how many hands each site gets, the site decides what those
+hands carry.
+
+It was one stored id on the band's `agriculture` / `husbandry` **role row** until this note, which
+could not say *hoes on the Field, bare hands on the scrub patch beside it* — one pick put the same
+tool on every site that band kept, with no way back, and the wear of that one tool was charged
+against the work of all of them. It is the identical argument §4.7a ② makes for the builders' kit
+being per **queue entry**, and the take kit was already per row; keeping was the last one still
+band-scoped.
+
+**What that changes in the split**: with one rate per web, dividing the work pool in proportion to
+demand and dividing the worker pool in proportion to worker-need are the same arithmetic. With a tool
+per site they are not — two sites owing the same work but worked with different tools ask for
+**different numbers of hands** — so what is split is the **head count**, in units of `demand ÷ what
+one of that site's own keepers delivers`, under the same two modes above. Where the rates agree, which
+is every branch on the shipped roster, the answer does not move by a bit.
+
+**And sites naming the same kit share its scarcity.** A band's three hoes cannot arm two keepers on
+one patch *and* three on another, so the coverage read is taken once per distinct kit rather than once
+per site. Sites naming different kits do not compete; sites naming the same one degrade together,
+exactly as the single band-wide pool did.
+
 #### The per-source readouts STAY, and they answer a better question
 
 `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` remain per patch and per herd, with `supplied`
@@ -1501,9 +1528,9 @@ invisible*. Tuning is therefore **last**, and after §4.10, which changes what t
     > faction `Gear` row's `⚠ 1 band` discovery path.
     >
     > ⛔ **THREE THINGS THIS SLICE DELIBERATELY DOES NOT DO.** It does not put a kit line on the
-    > Agriculture and Husbandry cards: the keeping kit is derived per *branch*, one answer per web,
-    > and that is a simplification rather than a fact about the band — the kit belongs where the rung
-    > is known. It does not make the pen's containment gains (`pen_gain`, `pen_density`,
+    > Agriculture and Husbandry cards: those cards are the band's **head count** for a web, and the
+    > keeping kit is a property of the **work site** (§2.5) — so the kit belongs where the rung is
+    > known, on the source, and never on a band-wide role card. It does not make the pen's containment gains (`pen_gain`, `pen_density`,
     > `herd_engage_rate`) **scale** with how well the fence is kept; that is a real idea, it is
     > tuning-shaped, and it would make this slice's failure mode impossible to falsify against the one
     > that already exists. And it does not touch the feed settlement (§2.7).
@@ -1540,6 +1567,64 @@ lands after it, sharing only the kit roster that item 12 has to rewrite anyway.
 > resolves no fight; the moment one does, a weaponless kit is obviously wrong and it collapses
 > into `big_game` — the hunters who took the herd wild are the hunters who take it penned, with
 > the gear they already carry.
+
+**12c — ONE WORD FOR THE TAKE CREW, AND THE WORK STRIP STATES BOTH KITS.** The readout half of the
+per-site upkeep kit (§2.5), and **the next slice after item 12**. Rides on it: the strip's Upkeep
+picker only means what it looks like once the kit belongs to the site.
+
+> **THE PLANT WEB'S TAKE CREW HAD TWO NAMES AND THE SECOND ONE WAS TAKEN.** The noun follows the
+> standing rung — *Foragers* on wild ground, *Tenders* on a Tended Patch or a Field — so on a Field
+> the sheet reads `ASSIGN TENDERS` and then offers the Gathering kit, which looks like a bug and is
+> not: the tending is the **Agriculture pool's**, and a hoe does nothing for a harvest. Reported
+> from play by Ray, who knows how it works and was still caught by it in the moment.
+>
+> **`Harvest` REPLACES BOTH, AT EVERY RUNG.** It is already this repo's cross-web word for taking
+> from a source (a *pen harvest*, the *harvest floor*), it is neutral between wild and cultivated —
+> which is the whole defect — and it survives the tech ladder, where *gatherers* would not. The
+> rung mark on the row still says which ground it is; what stops changing is the crew's name,
+> because the crew never changed. **The hunt sheet is NOT renamed**: `Hunters` is specific and
+> collides with nothing.
+>
+> **`HudFormat.plant_crew_label` is the seam** — the one place the Foragers/Tenders fork is spelled.
+> The one mismatch the choice costs is harvesters holding a *Gathering kit*; the kit's **id** stays
+> `gathering` and only its `display_name` is player-facing, so closing it is a one-field config edit
+> with no id or save churn.
+>
+> **THE STRIP IS THE SURFACE, because it is the one place the RUNG is known.** That is item 12's own
+> phrase, used when it declined a kit line on the Agriculture and Husbandry cards. The work board's
+> inspector strip already knows which source is selected and states none of it — not the rung, and
+> neither kit. It gains: the **rung state on the head line** (`Harvest (28, 16) · ▦ Field 100%`,
+> through `DetailFormat.rung_row_value`, so the strip and the tile card cannot word it differently),
+> and **one line carrying both kits** — `Harvest [Gathering kit ▾]  Upkeep [Tillage kit ▾]`.
+>
+> **BOTH ARE PICKERS, and both reach exactly this row.** `agriculture` offers what `forage` offers —
+> one real kit plus `none` — and `none` is a real choice, being how a site is worked bare-handed to
+> conserve the tool. Reasoning from today's thin roster is what nearly made the upkeep one read-only;
+> the roster is early and will not stay thin.
+>
+> **THE PAIR IS ONE `flex-wrap` ROW, NOT TWO HAND-PLACED ONES.** It rides one line where there is
+> room and drops the second onto its own line where there is not, so a narrow dock tier costs a row
+> instead of clipping a control and the strip needs no width branch. That also inverts the usual
+> trap: a wrapped line normally costs back the row it saved, *invisibly* — here the wrap is the
+> intended behaviour, so the height to reserve is the stacked one and the single line is the saving.
+>
+> **The metrics are the shipped ones** and the arithmetic is unmeasured until it renders: the strip
+> is 356px, its base `WORK_INSPECTOR_EXTENT` 58 + `WORK_INSPECTOR_SLACK` 6 = **64px**, a text line
+> `14 + 6 = 20px`, a picker `32 + 6 = 38px`. The rung costs **+0** (it rides a line already there)
+> and the kit line **+38**. Both pickers measure ~307 of the 336 usable width. `WORK_INSPECTOR_EXTENT`'s
+> own note says to re-measure after touching the strip's base children — do that rather than trusting
+> the sum.
+>
+> ⛔ **THREE THINGS THE DESIGN REJECTED, so they are not re-proposed.** A **second picker on the
+> Agriculture pool card** — redundant once upkeep is settable on the row, and two controls writing one
+> value is a drift surface. A **read-only upkeep line** beside an editable harvest one — it was written
+> when the kit was per-band, and a control with one visible option today is not a control with one
+> option tomorrow. And a **scope warning** on the upkeep picker (hover, or a `(band)` word on the
+> label) — that existed only to admit that setting it on one row changed every row, which §2.5's
+> per-site kit deletes outright.
+>
+> **UX prototype**, drawn against the shipped surfaces at their real metrics:
+> `https://claude.ai/code/artifact/9ea539e6-9a65-4ca2-9fc1-32dda77d2d14`
 
 13. **The route branch (#532 proper).** Routes as the ladder's third branch, `infrastructure_cost`
     wired for the first time, traversal-driven progress from supply links, shipments and movement.

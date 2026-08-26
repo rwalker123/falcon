@@ -480,12 +480,14 @@ fn spawn_forager_of(
                         workers: foragers,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     LaborAssignment {
                         target: LaborTarget::Agriculture,
                         workers: keepers,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
@@ -494,6 +496,7 @@ fn spawn_forager_of(
                         workers: foragers,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement

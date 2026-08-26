@@ -172,6 +172,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "build_kit <faction_id> <x> <y> [kit <kit_id>] | build_kit <faction_id> <herd_id> [kit <kit_id>]",
     },
     CommandVerbHelp {
+        verb: "upkeep_kit",
+        aliases: &[],
+        summary: "NAME THE KIT ONE WORK SITE IS KEPT WITH, on every band of the faction that works the source. THE KEEPING KIT IS PER WORK SITE, NOT PER BAND: the band is only the pool of workers and goods to draw from, so `assign_labor <faction> <band> agriculture <n>` says how MANY keepers a patch's web gets and this says what the keepers on THIS patch carry. Its default is derived from the site's own food web - hoes for a patch, hurdles for a herd - so OMIT the `kit` token to CLEAR the override back to that derivation; name `none` to keep this one site bare-handed while its neighbour keeps the tool, which is a real selection and not the same statement. A kit the roster does not carry, or one that does not serve this site's web (a plant keeping kit on a herd), is refused by name. Two integer tokens name a TILE; one token names a HERD id.",
+        usage: "upkeep_kit <faction_id> <x> <y> [kit <kit_id>] | upkeep_kit <faction_id> <herd_id> [kit <kit_id>]",
+    },
+    CommandVerbHelp {
         verb: "upkeep_mode",
         aliases: &[],
         summary: "Say how one band splits its MAINTENANCE POOL when it cannot cover everything it holds. Maintenance is a band-level standing role, not a per-source crew: staff it with `assign_labor <faction> <band> agriculture <n>` for the plant web and `husbandry <n>` for the animal one, and the band's demand is the SUM over every tended patch, Field, tamed herd and pen it works. When the pool falls short, 'spread' funds every source in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
@@ -228,7 +234,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the third band-wide pool: it serves both webs and its whole output goes on the head of the band's build queue, so zero stops building altogether.",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the third band-wide pool: it serves both webs and its whole output goes on the head of the band's build queue, so zero stops building altogether. NONE OF THE THREE POOLS TAKES A `kit` TOKEN, and naming one is refused: a pool is HOW MANY hands, never what they carry. What a build is raised with is set per queue entry with `build_kit`, and what a site's keepers carry is set per work site with `upkeep_kit`.",
         usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | builders <workers>",
     },
     CommandVerbHelp {
@@ -860,6 +866,26 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let kit_id = take_named_token(&mut tail, "kit", "build_kit kit id")?;
             let source = parse_build_source(&tail)?;
             Ok(CommandPayload::BuildKit {
+                faction_id,
+                target_x: source.target_x,
+                target_y: source.target_y,
+                herd_id: source.herd_id,
+                kit_id,
+            })
+        }
+        // **The keeping kit's twin one account over** — `build_kit`'s shape line for line, because it
+        // is the same statement about a different job: the `kit` token is lifted out of the tail
+        // before the source's own shape is read, and an ABSENT token is *"clear the override"*
+        // rather than a parse error.
+        "upkeep_kit" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let faction_id = parse_u32(faction_str, "upkeep_kit faction")?;
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "upkeep_kit kit id")?;
+            let source = parse_build_source(&tail)?;
+            Ok(CommandPayload::UpkeepKit {
                 faction_id,
                 target_x: source.target_x,
                 target_y: source.target_y,
@@ -1751,6 +1777,53 @@ mod tests {
         );
         assert!(
             parse_command_line("build_kit 0 12 34 kit").is_err(),
+            "a `kit` token with no id names nothing and must not read as 'clear it'"
+        );
+    }
+
+    /// **`upkeep_kit` READS THE SAME SHAPE ONE ACCOUNT OVER** — both source forms, an optional `kit`
+    /// token, and an absent token meaning *"back to the site's own web derivation"*.
+    ///
+    /// It is `build_kit`'s twin because it is the same statement about a different job: the keeping
+    /// kit is per **work site** where the builders' is per **queue entry**
+    /// (`docs/plan_standing_upkeep.md` §2.7), and neither is per band.
+    #[test]
+    fn parse_upkeep_kit_reads_both_source_forms_and_an_optional_kit() {
+        assert_eq!(
+            parse_command_line("upkeep_kit 0 12 34 kit tillage").unwrap(),
+            CommandPayload::UpkeepKit {
+                faction_id: 0,
+                target_x: Some(12),
+                target_y: Some(34),
+                herd_id: None,
+                kit_id: Some("tillage".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command_line("upkeep_kit 0 game_deer_07 kit none").unwrap(),
+            CommandPayload::UpkeepKit {
+                faction_id: 0,
+                target_x: None,
+                target_y: None,
+                herd_id: Some("game_deer_07".to_string()),
+                kit_id: Some("none".to_string()),
+            },
+            "`kit none` keeps ONE site bare-handed while its neighbour goes on using the tool — a \
+             real selection, not an absence"
+        );
+        assert_eq!(
+            parse_command_line("upkeep_kit 0 12 34").unwrap(),
+            CommandPayload::UpkeepKit {
+                faction_id: 0,
+                target_x: Some(12),
+                target_y: Some(34),
+                herd_id: None,
+                kit_id: None,
+            },
+            "an ABSENT `kit` token clears the override back to the site's own derivation"
+        );
+        assert!(
+            parse_command_line("upkeep_kit 0 12 34 kit").is_err(),
             "a `kit` token with no id names nothing and must not read as 'clear it'"
         );
     }

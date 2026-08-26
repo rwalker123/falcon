@@ -1683,6 +1683,7 @@ mod tests {
                 workers: 4,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -1813,6 +1814,7 @@ mod tests {
                 workers: 4,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()
@@ -1919,6 +1921,7 @@ mod tests {
                     workers: 1,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 })
                 .collect(),
             build_queue: queue

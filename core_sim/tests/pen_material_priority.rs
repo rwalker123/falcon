@@ -162,6 +162,7 @@ fn hunt_row(herd_id: &str, priority: SourcePriority) -> LaborAssignment {
         workers: KEEPER_WORKERS,
         kit: None,
         priority,
+        upkeep_kit: None,
     }
 }
 
@@ -529,6 +530,7 @@ fn queue_a_build(
         workers: RING_BUILDERS,
         kit: None,
         priority: SourcePriority::default(),
+        upkeep_kit: None,
     });
     assert!(
         allocation.enqueue_build(source.clone(), job),

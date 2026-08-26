@@ -251,6 +251,104 @@ pub(crate) fn resolve_build_kit_ids<'a>(
     resolved
 }
 
+/// **WHAT EACH WORKED SOURCE IS KEPT WITH**, keyed the two ways a source is named
+/// (`docs/plan_standing_upkeep.md` §2.7) — the wire's `upkeepKitId` / `upkeepKitNamed` on both
+/// source tables.
+///
+/// # IT IS READ LIVE, NOT STAMPED BY THE TURN
+///
+/// [`BuildKitIds`]'s rule, for its reason: the server re-captures and broadcasts after **every**
+/// dispatched command, so a kit picked on a row has to be visible in that frame where a turn-written
+/// field would lag a whole turn. This walks the bands' live assignment rows.
+///
+/// # A STATED OVERRIDE BEATS A DERIVATION, AND THE FIRST STATED ONE WINS
+///
+/// Several bands may work one source. Every band that named nothing answers the **same** derived
+/// kit — it is a pure function of the site's web — so the only way two bands can disagree is that one
+/// of them stated something, and publishing the derivation over a real pick would hide the pick
+/// entirely. Among two bands that both stated one the first in iteration order wins, which is the
+/// same arbitrary-but-deterministic fallback `BuildKitIds` uses for a source no band claims.
+#[derive(Default)]
+pub(crate) struct UpkeepKitIds {
+    patches: HashMap<UVec2, ResolvedUpkeepKit>,
+    herds: HashMap<String, ResolvedUpkeepKit>,
+}
+
+/// One site's answer: the kit its keepers carry, and whether a band stated it.
+#[derive(Clone, Default)]
+struct ResolvedUpkeepKit {
+    id: String,
+    /// **Not recoverable from the id** — a player may name the very kit the derivation would have
+    /// picked — which is why it rides the wire beside it rather than being re-derived on the client.
+    named: bool,
+}
+
+impl UpkeepKitIds {
+    /// The kit this patch's keepers carry and whether it was stated, `("", false)` when no band of
+    /// the faction works it.
+    fn patch(&self, tile: UVec2) -> (String, bool) {
+        self.patches
+            .get(&tile)
+            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
+    }
+
+    /// The animal twin, keyed by herd id.
+    fn herd(&self, id: &str) -> (String, bool) {
+        self.herds
+            .get(id)
+            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
+    }
+}
+
+/// **The one place a band's live rows become the wire's `upkeepKitId`** — see [`UpkeepKitIds`].
+pub(crate) fn resolve_upkeep_kits<'a>(
+    allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
+    equipment: &crate::equipment_config::EquipmentConfig,
+) -> UpkeepKitIds {
+    let mut resolved = UpkeepKitIds::default();
+    for allocation in allocations {
+        for assignment in &allocation.assignments {
+            let (branch, key) = match &assignment.target {
+                crate::components::LaborTarget::Forage { tile, .. } => (
+                    crate::intensification::RungBranch::Plant,
+                    SourceKey::Patch(*tile),
+                ),
+                crate::components::LaborTarget::Hunt { fauna_id, .. } => (
+                    crate::intensification::RungBranch::Animal,
+                    SourceKey::Herd(fauna_id.clone()),
+                ),
+                // A band-wide role stands on no ground, so it keeps nothing.
+                _ => continue,
+            };
+            // **The one resolution seam**, so the row cannot state a kit the keepers are not using.
+            let entry = ResolvedUpkeepKit {
+                id: equipment
+                    .keeping_kit_for(assignment.upkeep_kit.as_ref(), branch)
+                    .id()
+                    .to_string(),
+                named: assignment.upkeep_kit.is_some(),
+            };
+            let slot = match key {
+                SourceKey::Patch(tile) => resolved.patches.entry(tile).or_default(),
+                SourceKey::Herd(id) => resolved.herds.entry(id).or_default(),
+            };
+            // A stated override beats a derivation; among two stated ones the first wins, so a slot
+            // already carrying a named pick is never displaced. An empty slot is the fresh entry in
+            // the map, which every band fills.
+            if (entry.named && !slot.named) || slot.id.is_empty() {
+                *slot = entry;
+            }
+        }
+    }
+    resolved
+}
+
+/// The two ways a worked source is named, so [`resolve_upkeep_kits`]'s two arms share one body.
+enum SourceKey {
+    Patch(UVec2),
+    Herd(String),
+}
+
 pub(crate) fn snapshot_sedentarization(
     score: &SedentarizationScore,
 ) -> Vec<SchemaSedentarizationState> {
@@ -431,6 +529,9 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// **The live builders kit per queued source** — the animal half of the same map the patch rows
     /// read, resolved off the bands' queues at capture. See [`BuildKitIds`].
     pub(crate) build_kits: &'a BuildKitIds,
+    /// **The live keeping kit per worked source** — the animal half of the same map the patch rows
+    /// read, resolved off the bands' rows at capture. See [`UpkeepKitIds`].
+    pub(crate) upkeep_kits: &'a UpkeepKitIds,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -477,6 +578,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         penned_parties,
         fallback_party,
         build_kits,
+        upkeep_kits,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -1168,6 +1270,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // **What this herd's build is being raised with** — the animal twin of the patch
                 // row's, resolved live off the winning band's queue entry.
                 build_kit_id: build_kits.herd(&entry.id),
+                upkeep_kit_id: upkeep_kits.herd(&entry.id).0,
+                upkeep_kit_named: upkeep_kits.herd(&entry.id).1,
             }
         })
         .collect()
@@ -1223,6 +1327,9 @@ pub(crate) fn snapshot_forage_patches(
     // **The live builders kit per queued source** — read off the bands' queues at capture rather
     // than off the patch, so a kit picked this turn shows in the recapture. See [`BuildKitIds`].
     build_kits: &BuildKitIds,
+    // **The live keeping kit per worked source**, on the same rule one account over. See
+    // [`UpkeepKitIds`].
+    upkeep_kits: &UpkeepKitIds,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
         .patches
@@ -1526,6 +1633,8 @@ pub(crate) fn snapshot_forage_patches(
                 // **What this patch's build is being raised with** — the RESOLVED kit of the winning
                 // band's queue entry, read live so a pick shows in this frame rather than next turn.
                 build_kit_id: build_kits.patch(patch.tile),
+                upkeep_kit_id: upkeep_kits.patch(patch.tile).0,
+                upkeep_kit_named: upkeep_kits.patch(patch.tile).1,
                 // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
                 // fog-safe twin of `carrying_capacity` above and the denominator every upkeep figure
                 // on this row is quoted per. **The reading already resolved once above**, never a

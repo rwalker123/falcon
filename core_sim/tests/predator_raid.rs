@@ -150,6 +150,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             workers: warriors,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }]
     } else {
         Vec::new()

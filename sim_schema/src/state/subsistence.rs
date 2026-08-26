@@ -886,6 +886,12 @@ pub struct HerdTelemetryState {
     /// The rung-3 twin of [`Self::tame_upkeep_material_demand`], and the one that carries `hurdles`.
     #[serde(default)]
     pub corral_upkeep_material_demand: Vec<MaterialPayoff>,
+    /// The animal twin of [`ForagePatchState::upkeep_kit_id`] — see it for the whole rationale.
+    #[serde(default)]
+    pub upkeep_kit_id: String,
+    /// The animal twin of [`ForagePatchState::upkeep_kit_named`].
+    #[serde(default)]
+    pub upkeep_kit_named: bool,
 }
 
 impl Default for HerdTelemetryState {
@@ -988,6 +994,8 @@ impl Default for HerdTelemetryState {
             upkeep_material_supplied: Vec::new(),
             tame_upkeep_material_demand: Vec::new(),
             corral_upkeep_material_demand: Vec::new(),
+            upkeep_kit_id: String::new(),
+            upkeep_kit_named: false,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1653,6 +1661,20 @@ pub struct ForagePatchState {
     /// The rung-3 twin of [`Self::cultivation_upkeep_material_demand`].
     #[serde(default)]
     pub field_upkeep_material_demand: Vec<MaterialPayoff>,
+    /// **THE KIT THE KEEPERS OF THIS SITE ARE ACTUALLY CARRYING**, resolved — never *"the player
+    /// named none"* (`docs/plan_standing_upkeep.md` §2.7). `""` only when no band of the viewing
+    /// faction works this source at all.
+    ///
+    /// **The keeping kit is per WORK SITE, not per band**, so this is a property of the worked row —
+    /// `buildKitId`'s shape one account over, and read live off the bands' rows rather than stamped
+    /// by the turn, so a pick is visible in the frame the command is answered in.
+    #[serde(default)]
+    pub upkeep_kit_id: String,
+    /// **Is that id an OVERRIDE the player stated**, as against the site's own web derivation? Not
+    /// recoverable from the id alone — a player may name the very kit the derivation would have
+    /// picked — and a picker needs it to draw its `(default)` mark.
+    #[serde(default)]
+    pub upkeep_kit_named: bool,
 }
 
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from

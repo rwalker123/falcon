@@ -1550,6 +1550,7 @@ mod food_flow_tests {
             workers: 4,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }
     }
 

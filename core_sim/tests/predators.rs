@@ -131,6 +131,7 @@ fn hunting_band(
         workers: hunters,
         kit: None,
         priority: SourcePriority::default(),
+        upkeep_kit: None,
     }];
     app.world
         .spawn((

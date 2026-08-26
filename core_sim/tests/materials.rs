@@ -186,6 +186,7 @@ fn hunt_and_read_hide(floor: f32) -> (Scalar, Option<f32>, f32) {
                     workers: HUNT_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

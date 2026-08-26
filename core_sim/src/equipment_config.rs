@@ -1454,7 +1454,7 @@ impl EquipmentConfig {
     }
 
     /// **THE KEEPING ROLE THIS FOOD WEB'S UPKEEP IS STAFFED ON** — plant → `agriculture`, animal →
-    /// `husbandry`. The one place that mapping lives, so the pool's kit, its supply and the role the
+    /// `husbandry`. The one place that mapping lives, so a site's kit, its supply and the role the
     /// player types cannot come to name three different things.
     ///
     /// **It is the branch tag doing the same job it already does for builds**
@@ -1467,15 +1467,16 @@ impl EquipmentConfig {
         }
     }
 
-    /// **THE KEEPING KIT THIS FOOD WEB'S POOL WANTS** — [`Self::build_kit_for_branch`]'s twin one
+    /// **THE KEEPING KIT THIS FOOD WEB'S SITES WANT** — [`Self::build_kit_for_branch`]'s twin one
     /// account over, and the same roster lookup: the earliest entry serving this web's keeping role
     /// whose `build_work` serves `branch` at the fresh tier.
     ///
     /// **It exists because upkeep reads the same supply expression a build does** (§4.8), so a
-    /// keeper holding a hoe covers more of a patch's demand than one holding nothing — and there is
-    /// no keeping-kit picker in the client, so nothing would resolve a kit for these pools if the
-    /// roster did not answer. `default_kits.agriculture` / `.husbandry` are both `none`, which would
-    /// have made the whole change a silent no-op.
+    /// keeper holding a hoe covers more of a patch's demand than one holding nothing — and
+    /// `default_kits.agriculture` / `.husbandry` are both `none`, so a site that waited to be handed
+    /// a kit would resolve bare and the whole seam would be a silent no-op. The roster answering is
+    /// what makes the derivation the **default** a named override departs from, rather than a
+    /// prerequisite.
     pub fn keeping_kit_for_branch(
         &self,
         branch: crate::intensification::RungBranch,
@@ -1483,23 +1484,28 @@ impl EquipmentConfig {
         self.work_kit_for(Self::keeping_job(branch), branch)
     }
 
-    /// **THE KIT A BAND'S KEEPING POOL IS ACTUALLY WORKING WITH** — [`Self::builders_kit_for`]'s
-    /// twin, on the same three rules: a named kit wins (`none` included), else the roster answers
-    /// for this web, else the job's own default.
+    /// **THE KIT ONE WORK SITE IS ACTUALLY KEPT WITH** — [`Self::builders_kit_for`]'s twin, on the
+    /// same three rules: the kit named on **this site's row** wins (`none` included), else the
+    /// roster answers for this site's web, else the job's own default.
     ///
-    /// **The selection is on the ROW here, and that is not an inconsistency**: a keeping role is a
-    /// standing pool over every source on its web, so *"which tool are the keepers holding"* has one
-    /// answer per band. A build is one job, so the builders' selection is on the **entry**.
+    /// ⛔ **THE SELECTION IS PER WORK SITE, NEVER PER BAND** (`docs/plan_standing_upkeep.md` §2.7).
+    /// The band is the pool of workers and goods to draw from; it does not decide which tool a given
+    /// site is worked with. `site_kit` is therefore [`crate::components::LaborAssignment::upkeep_kit`]
+    /// — the same place the take kit lives and one account over from
+    /// [`crate::components::BuildQueueEntry::kit`], which makes the identical argument: *a single
+    /// stored id per band cannot be right for both food webs*. It was read off the band's
+    /// `agriculture` / `husbandry` **role row** until §2.7, which pinned one tool onto every site
+    /// that band kept with no way back.
     ///
-    /// It takes no `Option<branch>` where the builders' seam does, because a keeping role **is** a
-    /// web: `agriculture` keeps plants and nothing else, so there is no *"nothing is being worked"*
-    /// case for a branch to be absent in.
+    /// It takes no `Option<branch>` where the builders' seam does, because a site **is** a web: a
+    /// patch is plant and a herd is animal, so there is no *"nothing is being worked"* case for a
+    /// branch to be absent in.
     pub fn keeping_kit_for(
         &self,
-        row_kit: Option<&KitChoice>,
+        site_kit: Option<&KitChoice>,
         branch: crate::intensification::RungBranch,
     ) -> KitChoice {
-        row_kit
+        site_kit
             .cloned()
             .or_else(|| self.keeping_kit_for_branch(branch))
             .unwrap_or_else(|| self.default_kit(Self::keeping_job(branch)))

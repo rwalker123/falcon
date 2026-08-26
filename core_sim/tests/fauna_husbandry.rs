@@ -1083,6 +1083,7 @@ fn spawn_crew_of(
                             workers: hunters,
                             kit: None,
                             priority: SourcePriority::default(),
+                            upkeep_kit: None,
                         }],
                         improvement.map_or(0, |_| hunters),
                     ),
@@ -1759,6 +1760,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
                 workers: keepers,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             });
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
@@ -3382,6 +3384,7 @@ fn set_hunt_improvement(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     }),
                 }
                 assert!(
@@ -4052,6 +4055,7 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
                     .expect("the shipped roster carries the empty kit"),
             ),
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     rows
@@ -4066,6 +4070,7 @@ fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborA
             workers: keepers,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
     }
     rows
@@ -5054,6 +5059,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             workers: DIP_VISIBLE_HUNTERS,
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         };
         let rows = with_keeping_role(
             with_builders_pool(vec![hunt_row(&holding), hunt_row(&build)], BUILDERS),

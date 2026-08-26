@@ -231,18 +231,21 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
                     workers: A_GATHERER,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: A_MEASURED_BUILD_POOL,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: A_FULL_KEEPING_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {

@@ -199,6 +199,7 @@ fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssig
         workers,
         kit: None,
         priority,
+        upkeep_kit: None,
     }
 }
 

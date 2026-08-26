@@ -2903,6 +2903,16 @@ pub fn capture_snapshot(
         &herd_registry,
         &equipment_config,
     );
+    // **THE LIVE KEEPING KIT PER WORKED SOURCE**, on the same rule one account over
+    // (`docs/plan_standing_upkeep.md` §2.7): the keeping kit is a property of the band's **row**, so
+    // it is read off the rows rather than off the patch/herd scratch, and an `upkeep_kit` command is
+    // answered by a recapture in the same dispatch.
+    let upkeep_kit_ids = crate::snapshot::subsistence::resolve_upkeep_kits(
+        populations
+            .iter()
+            .filter_map(|(_, _, allocation, ..)| allocation),
+        &equipment_config,
+    );
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2937,6 +2947,7 @@ pub fn capture_snapshot(
         penned_parties: &penned_parties,
         fallback_party: &quoted_fallback,
         build_kits: &build_kit_ids,
+        upkeep_kits: &upkeep_kit_ids,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
@@ -2976,6 +2987,7 @@ pub fn capture_snapshot(
         &tile_capacities,
         &flora_quotes,
         &build_kit_ids,
+        &upkeep_kit_ids,
     );
     drop(forage_patches_scope);
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);

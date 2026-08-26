@@ -2940,6 +2940,41 @@ table ForagePatchState {
   // them.
   cultivationUpkeepMaterialDemand:[MaterialPayoff];
   fieldUpkeepMaterialDemand:[MaterialPayoff];
+  // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
+  // THE KEEPING KIT IS PER WORK SITE, NOT PER BAND (docs/plan_standing_upkeep.md 2.7). The band is
+  // the pool of workers and goods to draw from; it does not decide which tool a given site is worked
+  // with. So this is a property of the WORKED ROW, set by `upkeep_kit <faction> <x> <y> [kit <id>]`,
+  // exactly as `buildKitId` above is a property of the queue entry.
+  //
+  // upkeepKitId = THE KIT THE KEEPERS OF THIS SITE ARE ACTUALLY CARRYING, resolved - never "the
+  //               player named none". `kitId`'s standing rule, and it matters here for `buildKitId`'s
+  //               reason one account over: the default is DERIVED from this site's own food web, so a
+  //               row that named nothing would otherwise publish "" while the keepers were out with
+  //               hoes. An explicit bare-handed pick crosses as the roster's own bare kit id, which
+  //               is a real selection and reads differently from the empty string. "" only when NO
+  //               band of the viewing faction works this source at all.
+  // upkeepKitNamed = whether that id is an OVERRIDE the player stated, as opposed to the web's
+  //               derivation. The two are NOT recoverable from the id alone - a player may name the
+  //               very kit the derivation would have picked - and a picker has to be able to draw its
+  //               `(default)` mark and offer "back to default" without guessing.
+  //
+  // WHICH KITS A CLIENT MAY OFFER HERE IS ALREADY ON THE WIRE, and there is deliberately NO second
+  // roster: `KitOption.jobs` lists "agriculture" for the kits that keep a PLANT site and "husbandry"
+  // for the kits that keep an ANIMAL one, and `buildWorkPerWorker`/`buildWorkBranch` beside it say
+  // what each is worth on which web. A kit named for a job outside that list is a COMMAND FAILURE,
+  // so the picker must filter by the site's web exactly as it filters a builders kit.
+  //
+  // IT IS CAPTURED LIVE off the bands' rows, NOT stamped by the turn - `buildKitId`'s rule, for its
+  // reason: the server re-captures and broadcasts after every dispatched command, so a kit picked on
+  // a row has to be visible in that frame where a turn-written one would lag a whole turn.
+  //
+  // WHEN SEVERAL BANDS WORK ONE SOURCE, A STATED OVERRIDE WINS over a band that left the derivation
+  // alone, and the first stated one wins among several. Every band that left it alone answers the
+  // SAME derived kit - it is a pure function of the site's web - so the only way two bands can
+  // disagree is that one of them named something, and publishing the derivation over a real pick
+  // would hide the pick entirely.
+  upkeepKitId:string;
+  upkeepKitNamed:bool = false;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -4335,6 +4370,13 @@ table HerdTelemetryState {
   // them.
   tameUpkeepMaterialDemand:[MaterialPayoff];
   corralUpkeepMaterialDemand:[MaterialPayoff];
+  // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
+  // The animal twin of `ForagePatchState.upkeepKitId` / `upkeepKitNamed`; that field carries the
+  // whole rationale, including why the wire states the RESOLVED kit, why the "named" flag is not
+  // recoverable from the id, and which published roster a picker filters for a HERD (`KitOption.jobs`
+  // containing "husbandry").
+  upkeepKitId:string;
+  upkeepKitNamed:bool = false;
 }
 
 table CommandEventState {
@@ -4627,11 +4669,17 @@ table KitOption {
   // LaborAssignment.kitId / PopulationCohortState.kitId / the estimate-table kit ids carry.
   id:string;
   displayName:string;
-  // Which verbs this kit may be sent on — any of "hunt", "forage", "scout", "warrior". A kit named
-  // for a job outside this list is a COMMAND FAILURE, never a silent fall back to the default — so
-  // the picker must filter by the job it is composing. THE BAND-WIDE ROLES HAVE A KIT AXIS NOW: they
-  // used to list none on the grounds that they consumed no component, and the expanded roster gave
-  // them one each (`wayfinding` -> ["scout"], `warrior` -> ["warrior"]) while `none` lists all four.
+  // Which verbs this kit may be sent on — any of "hunt", "forage", "scout", "warrior",
+  // "agriculture", "husbandry", "builders". A kit named for a job outside this list is a COMMAND
+  // FAILURE, never a silent fall back to the default — so the picker must filter by the job it is
+  // composing. THE BAND-WIDE ROLES HAVE A KIT AXIS NOW: they used to list none on the grounds that
+  // they consumed no component, and the expanded roster gave them one each (`wayfinding` ->
+  // ["scout"], `warrior` -> ["warrior"]) while `none` lists them all.
+  //
+  // THE LAST THREE ARE THE WORK JOBS, and they are what a KEEPING or BUILD picker filters on:
+  // "agriculture" is the kit list for keeping a PLANT site (`ForagePatchState.upkeepKitId`),
+  // "husbandry" for keeping an ANIMAL one (`HerdTelemetryState.upkeepKitId`), and "builders" for a
+  // queue entry (`buildKitId`). There is no second roster for any of them.
   jobs:[string];
   // A fresh-kit hunter's combat `attack` under this kit — the number the combat gate
   // max(0, attack - defense) compares against a herd's `defense`. Below a species' defense that

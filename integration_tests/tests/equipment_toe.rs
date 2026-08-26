@@ -116,6 +116,7 @@ fn hunting_world_of(
                 workers: crew.unwrap_or(workers).max(1),
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -149,6 +150,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                 workers: workers.max(1),
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -168,6 +170,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             workers: workers.max(1),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }],
         ..Default::default()
     });
@@ -1981,6 +1984,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
             workers: workers.max(1),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }],
         ..Default::default()
     });

@@ -313,6 +313,7 @@ fn spawn_keepers_of(
                         workers: KEEPERS,
                         kit: Some(kit.clone()),
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     // **The build is staffed by the band's own POOL**, at the crew the caller
                     // named (`docs/plan_standing_upkeep.md` §2.5). **The row carries no kit** — a
@@ -324,6 +325,7 @@ fn spawn_keepers_of(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement
@@ -1264,6 +1266,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: GATHERERS,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     // **The builders are a band-level pool** since `docs/plan_standing_upkeep.md` §2.5,
                     // and the whole of it goes on the head of the queue below — which is this patch.
@@ -1274,6 +1277,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: BUILDERS,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 build_queue: vec![core_sim::BuildQueueEntry {

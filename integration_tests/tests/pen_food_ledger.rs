@@ -136,6 +136,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
             workers: workers.max(1),
             kit: None,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         }],
         ..Default::default()
     });

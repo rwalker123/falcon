@@ -393,8 +393,8 @@ fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
     }
 }
 
-/// **WHAT ONE OF THE BAND'S KEEPERS DELIVERS PER TURN, PER WEB** — [`BuildersGear`]'s twin one
-/// account over (`docs/plan_standing_upkeep.md` §4.8).
+/// **WHAT ONE KEEPER DELIVERS ON ONE WORK SITE, AND WHAT THAT WORK WEARS DOWN** — [`BuildersGear`]'s
+/// twin one account over (`docs/plan_standing_upkeep.md` §4.8), resolved **per site**.
 ///
 /// # ONE SUPPLY EXPRESSION, TWO CONSUMERS
 ///
@@ -408,71 +408,183 @@ fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
 /// changes is what a keeper *supplies* against it. That is the build rule's mirror — *the job's work
 /// requirement never changes* — stated about a rate instead of a pile.
 ///
-/// # THE KIT IS DERIVED PER WEB, BECAUSE NOTHING ELSE WOULD RESOLVE ONE
+/// # ⛔ THE KIT IS THE SITE'S, NOT THE BAND'S
 ///
-/// There is **no keeping-kit picker in the client**, and `default_kits.agriculture` /
-/// `.husbandry` are both `none`, so a pool that waited to be handed a kit would resolve bare and
-/// this whole seam would be a silent no-op. `agriculture` therefore derives the plant tool and
-/// `husbandry` the animal one off the roster ([`EquipmentConfig::keeping_kit_for`]), with no player
-/// action required — exactly as the builders row derives per queue entry. A picker becomes an
-/// **override** later, not a prerequisite.
-struct KeepingGear {
-    plant: KeepingBranchGear,
-    animal: KeepingBranchGear,
-}
-
-/// One web's keeping answer: what a keeper of that web delivers, and the kit that delivered it.
-struct KeepingBranchGear {
-    /// **The coverage-weighted per-keeper contribution** — the term
-    /// [`crate::intensification::pool_work_supply`] raises the pool by.
-    work_per_worker: f32,
-    /// **The kit the pool keeps with, narrowed to the tools that actually serve this web** — what
-    /// the [`crate::equipment_config::WearQuantum::UpkeepWork`] charge is billed against, resolved
+/// The band is the pool of workers and goods to draw from; it does not decide which tool a given
+/// site is worked with. So the rate is resolved per **claim** off that claim's own row
+/// ([`crate::components::LaborAssignment::upkeep_kit`]), exactly as a build's is resolved per queue
+/// entry — and `None` on the row is the **web's derived default**
+/// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]), which is what keeps the whole
+/// seam live with no player action. A single stored id on the `agriculture` / `husbandry` role row
+/// could not say *hoes on the Field, bare hands on the scrub beside it*.
+struct KeepingRate {
+    /// **What one of this site's keepers banks per turn**, bare hands included — the `r` a claim's
+    /// worker need `demand ÷ r` divides by.
+    ///
+    /// It cannot be zero: [`crate::intensification::build_work_per_worker_turn`] floors its gear
+    /// term at bare hands and adds a positive `PER_WORKER_OUTPUT`. [`Self::worker_need`] checks
+    /// anyway, because a division whose safety lives in another module is one config edit from a
+    /// `NaN` share.
+    per_worker: f32,
+    /// **The site's kit, narrowed to the tools that actually serve its web** — what the
+    /// [`crate::equipment_config::WearQuantum::UpkeepWork`] charge is billed against, resolved
     /// through the same [`crate::equipment_config::EquipmentConfig::build_gear_kit`] the builders'
-    /// wear kit is. The narrowing is what stops a pool holding the *other* web's tool from spending
-    /// it on work that tool contributed nothing to — wear follows the work actually done.
+    /// wear kit is. The narrowing is what stops a site whose kit holds the *other* web's tool from
+    /// spending it on work that tool contributed nothing to — wear follows the work actually done.
     wear_kit: crate::equipment_config::KitChoice,
 }
 
-impl KeepingGear {
-    fn resolve(
-        equipment: &crate::equipment_config::EquipmentConfig,
-        allocation: &LaborAllocation,
-        band_kit: &BandEquipment,
-    ) -> Self {
-        let on = |branch: crate::intensification::RungBranch| {
-            let role = match branch {
-                crate::intensification::RungBranch::Plant => LaborTarget::Agriculture,
-                crate::intensification::RungBranch::Animal => LaborTarget::Husbandry,
-            };
-            let kit = equipment.keeping_kit_for(allocation.named_kit_on(&role).as_ref(), branch);
-            // **The coverage is over the POOL**, exactly as the builders' is: the seam arms a
-            // prefix, so a part-equipped keeping pool gets the share it actually carries and the
-            // bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
-            let keepers = allocation.workers_on(&role);
-            KeepingBranchGear {
-                work_per_worker: equipment
-                    .coverage(&kit, keepers as f32, band_kit)
-                    .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch)),
-                wear_kit: equipment.build_gear_kit(&kit, band_kit, branch),
-            }
-        };
+/// **THE KEEPING RATE AT WHICH NOBODY DELIVERS ANYTHING** — the zero
+/// [`KeepingRate::worker_need`] refuses to divide by.
+const NO_KEEPING_RATE: f32 = 0.0;
+
+impl KeepingRate {
+    /// **HOW MANY KEEPERS THIS SITE'S BILL NEEDS** — `demand ÷ r`, and **the unit the pool is split
+    /// in** since the kit became per site.
+    ///
+    /// The split has to be in *workers* rather than in work, because the two stopped being
+    /// interchangeable: with one rate for the whole web, splitting the work pool in proportion to
+    /// demand and splitting the worker pool in proportion to worker-need are the same arithmetic,
+    /// and with two rates they are not. Two sites owing the same demand, one hoed and one bare, ask
+    /// for **different numbers of hands** — which is exactly what a per-site tool means.
+    fn worker_need(&self, demand: f32) -> f32 {
+        if self.per_worker > NO_KEEPING_RATE {
+            demand / self.per_worker
+        } else {
+            NO_UPKEEP_DEMAND
+        }
+    }
+}
+
+/// **WHAT ONE ASSIGNMENT ROW WAS AWARDED FROM ITS WEB'S KEEPING POOL THIS TURN** —
+/// [`maintenance_shares`]'s answer, index-aligned with `allocation.assignments`.
+///
+/// **The work and the kit that did it travel together**, because the wear charge is billed on what
+/// the pool *supplied* to that source and the two must describe one site: paying one site's hours
+/// against another site's tool is the defect a per-band kit made unavoidable.
+#[derive(Clone)]
+struct KeepingAward {
+    /// This source's share of its web's pool, in **work** units.
+    work: f32,
+    /// The kit that work was done with, already narrowed to the tools serving this web. `None` for a
+    /// row that made no claim — it was supplied nothing, so it wore nothing.
+    wear_kit: Option<crate::equipment_config::KitChoice>,
+}
+
+impl Default for KeepingAward {
+    fn default() -> Self {
         Self {
-            plant: on(crate::intensification::RungBranch::Plant),
-            animal: on(crate::intensification::RungBranch::Animal),
+            work: NO_UPKEEP_DEMAND,
+            wear_kit: None,
         }
     }
+}
 
-    fn on(&self, branch: crate::intensification::RungBranch) -> f32 {
-        self.branch(branch).work_per_worker
+/// **WHAT EACH CLAIM'S KEEPERS DELIVER, AND WHAT THEIR WORK WEARS** — index-aligned with `claims`.
+///
+/// # ⛔ SITES SHARING A KIT SHARE ITS SCARCITY
+///
+/// [`crate::equipment_config::EquipmentConfig::coverage`] answers *"of these workers, how many
+/// actually carry the kit's items, given what the band owns"*. Asked naively per site it
+/// **double-counts**: a band owning three hoes, with two keepers on one patch and three on another,
+/// would arm two on the first and three on the second — five equipped hands off three hoes.
+///
+/// So the claims are **grouped by their resolved kit** and coverage is taken **once** per group,
+/// over that group's whole share of the pool. Sites naming different kits do not compete for each
+/// other's gear; sites naming the same one degrade together, exactly as the single band-wide pool
+/// did. With one distinct kit on a branch — which is every branch on the shipped roster — this is
+/// one call over the whole role, bit for bit what shipped before the kit moved to the site.
+///
+/// **THE GROUPING KEY IS THE KIT ID, so two DIFFERENT kits sharing an ITEM still double-count it** —
+/// two plant kits both listing `hoes` would each arm their own group off the same stock. No shipped
+/// kit shares an item with another on its own web, and the band-wide code this replaced had the
+/// identical property across the two branches, so nothing regressed and nothing is reachable today.
+/// Closing it means grouping by the item rather than by the kit, which is a real change to what
+/// "sharing scarcity" means and wants a case in front of it first.
+///
+/// # THE GROUP'S SHARE OF THE POOL IS STRUCK OFF THE BILL, AND IT HAS TO BE
+///
+/// A group's *rate* depends on how many hands stand in it, and how many hands stand in it depends on
+/// every group's rate — so the coverage read cannot be taken over the split it is an input to. It is
+/// taken over the group's share of the **demand** instead, which is the one measure of *how much of
+/// this band's keeping is this group* that does not mention a kit. The split proper
+/// ([`maintenance_shares`]) then runs in worker-need units against these rates and may land
+/// somewhere else — a group whose tool is efficient needs fewer hands than its share of the bill.
+fn keeping_rates(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    branch: crate::intensification::RungBranch,
+    keepers: u32,
+    claims: &[KeepingClaim],
+) -> Vec<KeepingRate> {
+    let total_demand = keeping_demand(claims);
+    // The distinct kits on this branch, and what each group's sites ask for between them. Keyed by
+    // roster id: an id determines the kit's items, so two claims that resolved the same id resolved
+    // the same gear.
+    let mut group_kits: Vec<crate::equipment_config::KitChoice> = Vec::new();
+    let mut group_demand: Vec<f32> = Vec::new();
+    let mut group_of_claim: Vec<usize> = Vec::with_capacity(claims.len());
+    for claim in claims {
+        let group = group_kits
+            .iter()
+            .position(|kit| kit.id() == claim.kit.id())
+            .unwrap_or_else(|| {
+                group_kits.push(claim.kit.clone());
+                group_demand.push(NO_UPKEEP_DEMAND);
+                group_kits.len() - 1
+            });
+        group_demand[group] += claim.demand;
+        group_of_claim.push(group);
     }
+    let resolved: Vec<KeepingRate> = group_kits
+        .iter()
+        .zip(&group_demand)
+        .map(|(kit, demand)| {
+            // **The coverage is over the GROUP**, exactly as the builders' is over their pool: the
+            // seam arms a prefix, so a part-equipped group gets the share it actually carries and
+            // the bare hands beside it still bring their own `PER_WORKER_OUTPUT`.
+            let share = if total_demand > NO_UPKEEP_DEMAND {
+                keepers as f32 * (demand / total_demand)
+            } else {
+                NO_UPKEEP_DEMAND
+            };
+            let gear = equipment
+                .coverage(kit, share, band_kit)
+                .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch));
+            KeepingRate {
+                per_worker: crate::intensification::build_work_per_worker_turn(gear),
+                wear_kit: equipment.build_gear_kit(kit, band_kit, branch),
+            }
+        })
+        .collect();
+    group_of_claim
+        .into_iter()
+        .map(|group| KeepingRate {
+            per_worker: resolved[group].per_worker,
+            wear_kit: resolved[group].wear_kit.clone(),
+        })
+        .collect()
+}
 
-    fn branch(&self, branch: crate::intensification::RungBranch) -> &KeepingBranchGear {
-        match branch {
-            crate::intensification::RungBranch::Plant => &self.plant,
-            crate::intensification::RungBranch::Animal => &self.animal,
-        }
-    }
+/// **HOW MANY KEEPERS ONE WEB'S BILL NEEDS THIS TURN** — the sum of every claim's
+/// [`KeepingRate::worker_need`], and the number [`spare_keepers`] strikes a role's head count
+/// against.
+///
+/// **It is struck through the same seam the split is** ([`keeping_rates`]), so *"more keepers than
+/// the bill needs"* and *"what each site is owed"* cannot come from two different readings of the
+/// same gear.
+fn keeping_worker_need(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    branch: crate::intensification::RungBranch,
+    keepers: u32,
+    claims: &[KeepingClaim],
+) -> f32 {
+    keeping_rates(equipment, band_kit, branch, keepers, claims)
+        .iter()
+        .zip(claims)
+        .map(|(rate, claim)| rate.worker_need(claim.demand))
+        .sum()
 }
 
 /// **THE ONE SOURCE THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung it
@@ -785,11 +897,16 @@ fn head_rung_gate(
     }
 }
 
-/// One source's claim on its web's pool: where to write the share back, what it asks for, and
-/// the two keys that make *most-invested first* a total order.
+/// One source's claim on its web's pool: where to write the share back, what it asks for, **what it
+/// is worked with**, and the two keys that make *most-invested first* a total order.
 struct KeepingClaim {
     index: usize,
     demand: f32,
+    /// **THE KIT THIS SITE IS KEPT WITH** — its own row's selection, else its web's derivation
+    /// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]). Resolved here, with the
+    /// claim, because the rate a claim is funded at and the wear that rate spends are two readings
+    /// of one choice and must not be taken from two places.
+    kit: crate::equipment_config::KitChoice,
     invested: f32,
     tiebreak: String,
 }
@@ -805,6 +922,9 @@ struct KeepingClaim {
 fn keeping_claims(
     allocation: &LaborAllocation,
     banking: &SourceBankingFirstWork,
+    // **The roster the site kits resolve against** — a claim carries the kit it is worked with, so
+    // the derivation that answers for a row naming none is read here rather than a seam later.
+    equipment: &crate::equipment_config::EquipmentConfig,
     forage_registry: &ForageRegistry,
     // **The ground under each plant claim**, resolved by coord: the plant demand is quoted per
     // tender-load of the TILE's own `K` (`forage::patch_tender_loads`), so a claim cannot be priced
@@ -846,6 +966,10 @@ fn keeping_claims(
                 }
                 plant.push(KeepingClaim {
                     index,
+                    kit: equipment.keeping_kit_for(
+                        assignment.upkeep_kit.as_ref(),
+                        crate::intensification::RungBranch::Plant,
+                    ),
                     // **The DEMAND takes no verb any more** — it interpolates on the patch's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
@@ -881,6 +1005,10 @@ fn keeping_claims(
                 }
                 animal.push(KeepingClaim {
                     index,
+                    kit: equipment.keeping_kit_for(
+                        assignment.upkeep_kit.as_ref(),
+                        crate::intensification::RungBranch::Animal,
+                    ),
                     // **The DEMAND takes no verb any more** — it interpolates on the herd's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
                     // survives one line up, where it still answers *does this source claim at all
@@ -912,17 +1040,16 @@ fn keeping_demand(claims: &[KeepingClaim]) -> f32 {
 }
 
 /// **HANDS ON A KEEPING ROLE THE BILL DOES NOT NEED** — the largest number that can leave the role
-/// with what remains still covering `demand` in full. The shedding order's step 3 spends exactly
+/// with what remains still covering every claim in full. The shedding order's step 3 spends exactly
 /// these, and only these, before anything that costs output.
 ///
-/// A pool does not divide into whole people, so the crew that must stay is `ceil(demand ÷ what one
-/// keeper supplies)` — the same [`crate::intensification::build_work_per_worker_turn`] rate
-/// [`crate::intensification::pool_work_supply`] multiplies up, so the surplus is struck against the
-/// supply the split will actually make. That rate floors its gear term at bare hands and bare hands
-/// deliver a positive `PER_WORKER_OUTPUT`, so the division cannot be by zero.
-fn spare_keepers(workers: u32, gear_per_worker: f32, demand: f32) -> u32 {
-    let per_keeper = crate::intensification::build_work_per_worker_turn(gear_per_worker);
-    let needed = (demand / per_keeper).ceil().max(0.0) as u32;
+/// A pool does not divide into whole people, so the crew that must stay is `ceil(worker_need)` —
+/// [`keeping_worker_need`], which is each site's own `demand ÷ its own keeper rate` summed. **The
+/// sum is over sites rather than one division of the web's whole bill**, because since the kit
+/// became per site the web has no single rate to divide by: a hoed Field and a bare patch owing the
+/// same demand need different numbers of hands.
+fn spare_keepers(workers: u32, worker_need: f32) -> u32 {
+    let needed = worker_need.ceil().max(0.0) as u32;
     workers.saturating_sub(needed)
 }
 
@@ -1064,13 +1191,15 @@ fn resolve_shed_facts(
     ladder: &LadderConfig,
     discovery: &DiscoveryProgressLedger,
     knowledge_threshold: f32,
-    keeping_gear: &KeepingGear,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
     width: u32,
     wrap: bool,
 ) -> ShedFacts {
     let (plant_claims, animal_claims) = keeping_claims(
         allocation,
         banking,
+        equipment,
         forage_registry,
         tile_capacity_of,
         forage,
@@ -1124,13 +1253,23 @@ fn resolve_shed_facts(
         threatened: band_is_threatened(band_pos, herds, fauna, width, wrap),
         spare_agriculture_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Agriculture),
-            keeping_gear.on(crate::intensification::RungBranch::Plant),
-            keeping_demand(&plant_claims),
+            keeping_worker_need(
+                equipment,
+                band_kit,
+                crate::intensification::RungBranch::Plant,
+                allocation.workers_on(&LaborTarget::Agriculture),
+                &plant_claims,
+            ),
         ),
         spare_husbandry_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Husbandry),
-            keeping_gear.on(crate::intensification::RungBranch::Animal),
-            keeping_demand(&animal_claims),
+            keeping_worker_need(
+                equipment,
+                band_kit,
+                crate::intensification::RungBranch::Animal,
+                allocation.workers_on(&LaborTarget::Husbandry),
+                &animal_claims,
+            ),
         ),
     }
 }
@@ -1145,12 +1284,14 @@ fn maintenance_shares(
     herds: &HerdRegistry,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
-    keeping_gear: &KeepingGear,
-) -> Vec<f32> {
-    let mut shares = vec![NO_UPKEEP_DEMAND; allocation.assignments.len()];
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+) -> Vec<KeepingAward> {
+    let mut awards = vec![KeepingAward::default(); allocation.assignments.len()];
     let (mut plant, mut animal) = keeping_claims(
         allocation,
         banking,
+        equipment,
         forage_registry,
         tile_capacity_of,
         forage,
@@ -1178,20 +1319,41 @@ fn maintenance_shares(
         });
         // **THE SAME SUPPLY EXPRESSION A BUILD DIVIDES ITS PILE BY** (§4.8) — an equipped keeper
         // covers more demand than a bare one, and the rung's demand is untouched by either. See
-        // [`KeepingGear`] for why the kit is derived rather than named.
-        let pool = crate::intensification::pool_work_supply(
-            allocation.workers_on(&role),
-            keeping_gear.on(branch),
-        );
-        let demands: Vec<f32> = claims.iter().map(|claim| claim.demand).collect();
-        for (claim, share) in claims
+        // [`KeepingRate`] for where each site's kit comes from.
+        //
+        // # ⛔ WHAT IS SPLIT IS THE WORKERS, AND THE UNIT IS EACH SITE'S OWN WORKER-NEED
+        //
+        // The pool used to be one work total struck at one rate for the whole web, divided in
+        // proportion to **work demand**. With the kit on the site there is no one rate to strike it
+        // at, so the **head count** is what the band actually has to divide and a site's claim on it
+        // is `demand ÷ what one of its own keepers delivers`. What each site is then supplied is
+        // `its hands × its own rate`.
+        //
+        // **It is the same arithmetic wherever the rates agree**, which is every branch on the
+        // shipped roster: with one `r`, `d_i / r` is `d_i` scaled by a constant, `distribute_upkeep_pool`
+        // is homogeneous in that constant under both modes, and `w_i × r` lands exactly on the share
+        // the work-unit split produced. The proof that this change moves nothing that ships is that
+        // equality — see `upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`.
+        let keepers = allocation.workers_on(&role);
+        let rates = keeping_rates(equipment, band_kit, branch, keepers, claims);
+        let needs: Vec<f32> = claims
             .iter()
-            .zip(distribute_upkeep_pool(pool, &demands, mode))
+            .zip(&rates)
+            .map(|(claim, rate)| rate.worker_need(claim.demand))
+            .collect();
+        for ((claim, rate), hands) in
+            claims
+                .iter()
+                .zip(&rates)
+                .zip(distribute_upkeep_pool(keepers as f32, &needs, mode))
         {
-            shares[claim.index] = share;
+            awards[claim.index] = KeepingAward {
+                work: hands * rate.per_worker,
+                wear_kit: Some(rate.wear_kit.clone()),
+            };
         }
     }
-    shares
+    awards
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -2029,7 +2191,6 @@ pub fn advance_labor_allocation(
         // bill needs*, *is anything coming for it*, *what is standing on each row's ground* — so the
         // gear and the funded head are resolved here against that allocation, and resolved again
         // below against whatever survives, which is the reading the split funds.
-        let shed_keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
         let shed_banking = band_banking(
             &allocation,
             &forage_registry,
@@ -2063,7 +2224,8 @@ pub fn advance_labor_allocation(
             &ladder,
             &discovery,
             knowledge_threshold,
-            &shed_keeping_gear,
+            &equipment_cfg,
+            &band_kit,
             grid_width,
             wrap_horizontal,
         );
@@ -2137,9 +2299,6 @@ pub fn advance_labor_allocation(
         // assignment index (`maintenance_shares`). Resolved **before** the loop because the split is
         // a property of the band's *whole* holding on a web: what one patch gets depends on what
         // every other one asked for, which nothing inside a per-assignment pass can see.
-        // **THE KEEPING POOLS' OWN GEAR, ONE READING PER FOOD WEB** — derived off the roster, since
-        // no picker names one (see [`KeepingGear`]).
-        let keeping_gear = KeepingGear::resolve(&equipment_cfg, &allocation, &band_kit);
         // **THE FUNDED HEAD, AND ONLY IF ITS OWN GATE HOLDS** — the claim side's verb term
         // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
         // stands there, so letting it claim would dilute the share of everything the band really
@@ -2173,7 +2332,8 @@ pub fn advance_labor_allocation(
             &registry,
             &fauna,
             &ladder,
-            &keeping_gear,
+            &equipment_cfg,
+            &band_kit,
         );
         // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
         //
@@ -2490,7 +2650,16 @@ pub fn advance_labor_allocation(
             // crew standing on the tile (`docs/plan_standing_upkeep.md` §2.5). It is already work
             // rather than workers, because a share of a pool does not divide into whole people and
             // that indivisibility is exactly the waste the pool retired.
-            let keeping_share = upkeep_shares.get(idx).copied().unwrap_or(NO_UPKEEP_DEMAND);
+            let keeping_share = upkeep_shares
+                .get(idx)
+                .map_or(NO_UPKEEP_DEMAND, |award| award.work);
+            // **AND THE KIT THAT SHARE WAS WORKED WITH** — this site's own, resolved with the share
+            // it pays for (`docs/plan_standing_upkeep.md` §2.7). It travels beside the work rather
+            // than being re-derived here, so the hours charged and the tool charged for them can
+            // never describe two different sites.
+            let keeping_wear_kit = upkeep_shares
+                .get(idx)
+                .and_then(|award| award.wear_kit.as_ref());
             // **THE KIT THIS CREW WAS SENT OUT WITH** (`equipment.json`'s roster) — the mask that
             // decides which of the three components serve it at all, re-resolved from the
             // *assignment* every turn and never from what the band happens to hold. `None` = the
@@ -2941,9 +3110,7 @@ pub fn advance_labor_allocation(
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
-                        &keeping_gear
-                            .branch(crate::intensification::RungBranch::Plant)
-                            .wear_kit,
+                        keeping_wear_kit,
                         keeping_supplied,
                     );
                     // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
@@ -3749,9 +3916,7 @@ pub fn advance_labor_allocation(
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
-                        &keeping_gear
-                            .branch(crate::intensification::RungBranch::Animal)
-                            .wear_kit,
+                        keeping_wear_kit,
                         keeping_supplied,
                     );
                     // **WHAT THE METER IS LOSING** — the plant twin's seam, and on the shipped
@@ -5933,13 +6098,20 @@ fn announce_material_shortfall(
     allocation.material_shortfall_warned = names;
 }
 
+/// **SPEND THIS SITE'S KEEPING TOOLS ON THE WORK ITS KEEPERS ACTUALLY DID** — the
+/// [`crate::equipment_config::WearQuantum::UpkeepWork`] charge.
+///
+/// `kit` is **the site's own** ([`KeepingAward::wear_kit`]), never the band's: two patches this band
+/// keeps with two different tools wear two different tools, and billing both against one would run
+/// down gear that was never in that site's hands. `None` is a row that claimed nothing, which
+/// therefore wore nothing.
 fn charge_keeping_wear(
     equipment: Option<&mut BandEquipment>,
     config: &crate::equipment_config::EquipmentConfig,
-    kit: &crate::equipment_config::KitChoice,
+    kit: Option<&crate::equipment_config::KitChoice>,
     supplied: f32,
 ) {
-    if let Some(wear) = equipment {
+    if let (Some(wear), Some(kit)) = (equipment, kit) {
         wear.wear_kit(
             config,
             kit,
@@ -6927,6 +7099,118 @@ pub fn advance_predator_raids(
 }
 
 #[cfg(test)]
+mod keeping_split_tests {
+    //! The per-site keeping split, at the level the labor loop cannot reach: how many keepers a
+    //! web's bill needs when its sites are worked with different tools
+    //! (`docs/plan_standing_upkeep.md` §2.7).
+
+    use super::*;
+
+    /// A claim on `demand`, worked with the roster kit `kit_id` — the shape
+    /// [`keeping_claims`] builds and the split consumes.
+    fn claim(index: usize, demand: f32, kit_id: &str) -> KeepingClaim {
+        KeepingClaim {
+            index,
+            demand,
+            kit: crate::equipment_config::EquipmentConfig::builtin()
+                .kit(kit_id)
+                .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'")),
+            invested: demand,
+            tiebreak: format!("{index:010}"),
+        }
+    }
+
+    /// **THE CREW A WEB'S BILL NEEDS IS SUMMED OVER ITS SITES, NOT DIVIDED OUT OF ITS TOTAL.**
+    ///
+    /// The shedding order spends *spare* keepers before anything that costs output, so *"how many
+    /// hands must stay"* has to be struck at the tools the sites are actually worked with. With one
+    /// rate per web the answer was `bill ÷ that rate`; with a tool per site there is no single rate
+    /// to divide by, and a hoed site and a bare one owing the same work need **different numbers of
+    /// hands**.
+    ///
+    /// **Both halves.** The mixed pair lands strictly between the two uniform answers — which is
+    /// what a per-site sum means and what any single-rate reading gets wrong in one direction or the
+    /// other — and the uniform pair still lands exactly on `bill ÷ the one rate`, so the
+    /// generalisation did not move the case that ships.
+    #[test]
+    fn a_webs_keeper_need_is_the_sum_of_each_sites_own_and_not_one_division_of_the_bill() {
+        /// Two equal bills, so the only thing that can move the answer is the tool.
+        const A_BILL: f32 = 3.0;
+        /// Enough hands that the coverage read arms every keeper — the band's scarcity is the
+        /// grouping test's subject, not this one.
+        const KEEPERS: u32 = 8;
+
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let stocked = BandEquipment::start_stocked_for(&equipment, KEEPERS as f32);
+        let need = |kits: [&str; 2]| -> f32 {
+            keeping_worker_need(
+                &equipment,
+                &stocked,
+                crate::intensification::RungBranch::Plant,
+                KEEPERS,
+                &[claim(0, A_BILL, kits[0]), claim(1, A_BILL, kits[1])],
+            )
+        };
+
+        let bare = need(["none", "none"]);
+        let hoed = need(["tillage", "tillage"]);
+        let mixed = need(["tillage", "none"]);
+
+        assert_eq!(
+            bare,
+            2.0 * A_BILL / crate::intensification::PER_WORKER_OUTPUT,
+            "two bare sites need their whole bill in hands — {bare}"
+        );
+        assert!(
+            hoed < bare,
+            "fixture: the hoes must actually save hands, or every comparison below is vacuous — \
+             {hoed} against {bare}"
+        );
+        assert!(
+            mixed > hoed && mixed < bare,
+            "one hoed site and one bare needs strictly between the two uniform answers: {mixed} \
+             against {hoed} and {bare}"
+        );
+        assert!(
+            (mixed - (hoed + bare) / 2.0).abs() < 1e-5,
+            "…and exactly each site's own need summed, which for two equal bills is the mean of \
+             the uniform pair: {mixed} against {}",
+            (hoed + bare) / 2.0
+        );
+    }
+
+    /// **SPARE KEEPERS ARE THE HANDS THE BILL DOES NOT NEED, AND A FRACTION OF A HAND IS A HAND.**
+    ///
+    /// A pool does not divide into whole people, so the crew that must stay is `ceil(need)`. Rounding
+    /// the other way hands the shedding order a keeper the bill is still relying on, and the source
+    /// it was holding starts to rot on the turn the band merely got smaller.
+    #[test]
+    fn a_fractional_keeper_need_still_holds_a_whole_keeper_back() {
+        const A_CREW: u32 = 4;
+        assert_eq!(
+            spare_keepers(A_CREW, 2.1),
+            1,
+            "a need of 2.1 keeps THREE hands: the tenth of a keeper is a whole person"
+        );
+        assert_eq!(
+            spare_keepers(A_CREW, 2.0),
+            2,
+            "…and a need that lands on a whole number keeps exactly that many"
+        );
+        assert_eq!(
+            spare_keepers(A_CREW, NO_UPKEEP_DEMAND),
+            A_CREW,
+            "a web with nothing to hold needs nobody, so every hand on the role is spare"
+        );
+        assert_eq!(
+            spare_keepers(A_CREW, A_CREW as f32 * 2.0),
+            0,
+            "…and a bill bigger than the role can cover leaves nothing spare, never a wrap-around"
+        );
+    }
+}
+
+#[cfg(test)]
 mod labor_yield_tests {
 
     //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): a depletable
@@ -7298,6 +7582,7 @@ mod labor_yield_tests {
             kit: None,
             workers: builders,
             priority: SourcePriority::default(),
+            upkeep_kit: None,
         });
         assert!(
             allocation.enqueue_build(source.clone(), declared),
@@ -7487,6 +7772,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -7496,6 +7782,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -7568,6 +7855,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -7609,6 +7897,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -7752,6 +8041,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -7783,6 +8073,7 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -7849,6 +8140,7 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -7928,6 +8220,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let keeper = spawn_band(
@@ -7948,6 +8241,7 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -8101,6 +8395,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -8236,6 +8531,7 @@ mod labor_yield_tests {
                 workers: GATHERERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -8298,6 +8594,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -8409,6 +8706,7 @@ mod labor_yield_tests {
                 workers,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -8431,6 +8729,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -8661,6 +8960,7 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -8869,6 +9169,7 @@ mod labor_yield_tests {
                             workers,
                             kit: None,
                             priority: SourcePriority::default(),
+                            upkeep_kit: None,
                         }],
                     );
                     if let Some(declared) = improvement {
@@ -8957,6 +9258,7 @@ mod labor_yield_tests {
                                 workers,
                                 kit: None,
                                 priority: SourcePriority::default(),
+                                upkeep_kit: None,
                             }],
                         );
                         if let Some(declared) = improvement {
@@ -9167,6 +9469,7 @@ mod labor_yield_tests {
                 workers: field_workers_needed,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         let short_handed = spawn_band(
@@ -9192,6 +9495,7 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the husbandry kit"),
                 ),
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -9300,6 +9604,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -9396,6 +9701,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -9478,6 +9784,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -9496,6 +9803,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -9543,6 +9851,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
 
@@ -9645,6 +9954,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -9676,6 +9986,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -9769,6 +10080,7 @@ mod labor_yield_tests {
                     workers: SOLE_FORAGER,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -9864,6 +10176,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -9901,6 +10214,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -9971,6 +10285,7 @@ mod labor_yield_tests {
                     workers: SOLE_HUNTER,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -10162,6 +10477,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -10317,12 +10633,14 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -10455,12 +10773,14 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -10615,6 +10935,7 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: Some(kit.clone()),
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
                 // because a build's gear is a property of the queue ENTRY and not of the band.
@@ -10623,6 +10944,7 @@ mod labor_yield_tests {
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
         );
@@ -10848,6 +11170,7 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the hurdling kit"),
                 ),
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world
@@ -11024,6 +11347,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -11669,6 +11993,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -11753,6 +12078,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -11783,6 +12109,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -11814,6 +12141,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -11858,6 +12186,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -11878,6 +12207,7 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
+                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);

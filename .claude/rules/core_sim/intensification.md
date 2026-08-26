@@ -324,18 +324,39 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   smaller. `build_fraction` and `build_turns_remaining` both read the raw stamped cost, because there
   is no longer a second cost for them to disagree about.
 
-  **AND THE SAME SUPPLY REACHES KEEPING NOW.** `maintenance_shares` pools
-  `workers × (PER_WORKER_OUTPUT + gear)` for the web's keeping role, so an equipped keeper covers more
-  of a rung's demand — the demand itself is untouched, which is the build rule's mirror one account
-  over. `tillage` gained the `agriculture` job and `hurdling` the `husbandry` one so the pools have
-  something to derive; the derivation is per web, needing no player pick, exactly as the builders row's
-  is per entry. **`default_kits` for both is `none`, and a stored `none` could beat that derivation
-  the way it did on the builders row** — the same fork guards all three now.
+  **AND THE SAME SUPPLY REACHES KEEPING NOW.** An equipped keeper covers more of a rung's demand,
+  where the demand itself is untouched — the build rule's mirror one account over. `tillage` gained
+  the `agriculture` job and `hurdling` the `husbandry` one so a site has something to derive;
+  **`default_kits` for both is `none`, and a stored `none` could beat that derivation the way it did
+  on the builders row** — the same fork guards all three.
 
-  > **KNOWN HOLE — a keeping tool never wears.** `WearQuantum` has `BuildProgress` and no upkeep
-  > quantum, so a hoe raises what a keeper supplies **forever, free**. A wear quantum for upkeep is a
-  > new charge site and would move `_comment_durability`'s tuning and the `headline_wear` readouts,
-  > so it is not in this slice.
+  > ⛔ **THE KEEPING KIT IS PER WORK SITE, AND SO IS THE WEAR IT SPENDS**
+  > (`docs/plan_standing_upkeep.md` §2.7). The kit comes off the worked row
+  > (`LaborAssignment::upkeep_kit`, `None` = the web's derivation), never off the band's `agriculture`
+  > / `husbandry` role — the band is the pool of workers and goods to draw from, and it does not
+  > decide which tool a given site is worked with. The command is `upkeep_kit`; see `equipment.md`
+  > → "The build axis" for its grammar, its refusals and what it puts on the wire.
+  >
+  > **SO WHAT IS SPLIT IS THE WORKER POOL, IN WORKER-NEED UNITS.** With one rate per web the split was
+  > one work total divided in proportion to demand. There is no single rate now, so `maintenance_shares`
+  > divides the **head count**: a claim asks for `demand ÷ what one of its own keepers delivers`, the
+  > pool is split across those needs by the same `distribute_upkeep_pool` under the same
+  > `upkeep_fund_mode`, and each site is supplied `its hands × its own rate`. Where the rates agree —
+  > every branch on the shipped roster — the two are the same expression scaled by a constant and the
+  > answer does not move by a bit (`upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`).
+  >
+  > **AND SITES SHARING A KIT SHARE ITS SCARCITY.** `coverage` answers *"of these workers, how many
+  > carry the kit, given what the band owns"*, so asking it once per site double-counts: three hoes
+  > would arm two keepers on one patch and three on another. `keeping_rates` groups the claims by
+  > their **resolved kit** and takes coverage once per group. The group's share of the pool is struck
+  > off its share of the **demand**, because a group's rate depends on how many hands stand in it and
+  > that is what the split is solving for — the demand is the one measure of *how much of this band's
+  > keeping is this group* that does not mention a kit.
+  >
+  > **THE WEAR FOLLOWS THE SITE.** `WearQuantum::UpkeepWork` is charged against **that site's own**
+  > kit, on **what the pool supplied to that site** and never on the rung's demand. Two patches kept
+  > with two different tools wear two different tools; the retired per-band wear kit billed both
+  > against one.
 - **NO `learn_multiplier(floor)` TERM** — see "THE FLOOR CAME OFF THE BUILD RATE". `build_accrual`
   takes no floor at all, and neither does the upkeep: what an improvement loses is the work its
   keepers did not supply, which is a fact about a crew and a rung rather than about how hard anyone
@@ -1890,6 +1911,9 @@ free** — `WearQuantum` had `BuildProgress` and no upkeep quantum. `UpkeepWork`
 - **Charged on work SUPPLIED, not demand and not head count** — the value `patch_upkeep_supply` /
   `herd_upkeep_supply` returns, which the distributor already caps at the demand. So an over-large pool
   spends only what it was asked for, and a pool with nothing at risk claims no share and wears nothing.
+- **Against THIS SITE'S OWN kit** (§2.7), which travels beside the share it pays for (`KeepingAward`).
+  Two patches one band keeps with two different tools wear two different tools; the retired per-band
+  wear kit billed both against one, so a bare-handed site ran the hoes down beside it.
 - **`0.16` per work unit, and there is NO conversion to invert** — unlike `build_work`'s `0.5` (an exact
   round trip) this quantum never existed. What the model does supply is that **both quanta count the
   same unit**, so a tool holds one life measured in work whichever account spends it: `100 / 0.16 = 625`

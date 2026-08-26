@@ -342,9 +342,35 @@ are unmoved; only which item holds which half changed.)
 > > web's tool with no way back (`none` means bare-handed, which is a different statement, not an
 > > undo). §4.6b deleted the client picker rather than leave it harmful; §4.7 gave the override its
 > > home. The refusal is by name — a silently-dropped token is the same class of defect as the
-> > pinning it replaces. **The two KEEPING roles are untouched**: `agriculture` / `husbandry` are
-> > standing pools over a whole web, so one answer per band is right there and the selection stays
-> > on the row (`keeping_kit_for`).
+> > pinning it replaces.
+>
+> > ⛔ **AND THE KEEPING KIT IS PER WORK SITE, ON THE SAME ARGUMENT** (§2.7). The band is the pool of
+> > workers and goods to draw from; it does not decide which tool a given site is worked with. So
+> > `keeping_kit_for(site_kit, branch)` reads **`LaborAssignment::upkeep_kit`** — the worked row's own
+> > selection, the same place the take kit lives — and `None` is the web's derivation (`tillage` for a
+> > patch, `hurdling` for a herd). It was read off the band's `agriculture` / `husbandry` **role row**
+> > until §2.7, which could not say *hoes on the Field, bare hands on the scrub beside it*: one pick
+> > put the same tool on every site that band kept, and its wear was charged against the work of all
+> > of them. `LaborAllocation::named_kit_on` retired with that reading — it had no other caller, and
+> > `assign_labor` refuses a `kit` token on `agriculture` / `husbandry` exactly as it does on
+> > `builders`: **none of the three standing pools takes one**, because a pool is *how many hands*
+> > and never *what they carry*.
+> >
+> > **THE COMMAND IS `upkeep_kit <faction> <source…> [kit <id>]`**, `build_kit` line for line: same
+> > `BuildSourceRef` addressing, an absent token CLEARS back to the derivation, `kit none` is a real
+> > selection, and a kit that does not serve **this site's web** (`keeping_job(branch)` →
+> > `agriculture` for a patch, `husbandry` for a herd) is refused by name. Its reach is every band of
+> > the faction that **works** the source — wider than `build_kit`'s, because a keeping bill is owed
+> > by every band holding the ground and not only by whoever queued a build on it.
+> >
+> > **THE WIRE** states the RESOLVED kit per source — `ForagePatchState.upkeepKitId` /
+> > `HerdTelemetryState.upkeepKitId`, `""` only when no band of the faction works it — beside
+> > `upkeepKitNamed`, which says whether that id is a stated override or the derivation. The flag is
+> > not recoverable from the id (a player may name the very kit the derivation would have picked), so
+> > it rides the wire rather than being re-derived. Captured LIVE off the bands' rows
+> > (`snapshot::subsistence::resolve_upkeep_kits`) for `buildKitId`'s reason; where several bands work
+> > one source a **stated override beats a derivation** and the first stated one wins. A picker's
+> > option list is `KitOption.jobs` containing `agriculture` / `husbandry` — there is no second roster.
 >
 > **THE COMMAND IS `build_kit <faction> <source…> [kit <id>]`** — the fourth member of the queue
 > family, addressing a source through the same `BuildSourceRef` as `abandon` / `unqueue` /

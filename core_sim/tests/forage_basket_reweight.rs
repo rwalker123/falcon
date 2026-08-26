@@ -1535,6 +1535,7 @@ fn spawn_forager(
                     workers: FORAGE_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

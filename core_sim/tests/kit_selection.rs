@@ -259,6 +259,7 @@ fn spawn_hunting_band(
                     workers: CREW,
                     kit,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -512,6 +513,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                         workers: CREW,
                         kit: Some(chosen),
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     }],
                     ..Default::default()
                 },
@@ -1396,12 +1398,14 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         // Named nothing — the wire must still say which kit it is working under.
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                     LaborAssignment {
                         target: LaborTarget::Scout,
                         workers: CREW,
                         kit: None,
                         priority: SourcePriority::default(),
+                        upkeep_kit: None,
                     },
                 ],
                 ..Default::default()
@@ -1798,6 +1802,7 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                     workers: CREW,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

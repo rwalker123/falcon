@@ -312,18 +312,21 @@ fn spawn_the_farming_band(
                     workers: gatherers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
@@ -698,18 +701,21 @@ fn spawn_the_herding_band(
                     workers: hunters,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Builders,
                     workers: A_STEADY_BUILD_POOL,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
+                    upkeep_kit: None,
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
